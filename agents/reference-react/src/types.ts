@@ -276,7 +276,6 @@ export interface HandoffToBuildAction {
 export interface SwitchModeAction {
   kind: "switch_mode";
   mode: "chat" | "plan" | "build";
-  message: string;
 }
 
 export type CommandExecutionRole =

@@ -20,6 +20,7 @@ import type {
   FinalizeAction,
   SwitchModeAction,
 } from "./shared.js";
+import { buildModeSwitchMessage } from "../../modeSwitch.js";
 
 export async function handleSwitchModeAction(input: {
   action: SwitchModeAction;
@@ -29,8 +30,9 @@ export async function handleSwitchModeAction(input: {
   stepIndex: number;
   io: StepIO;
 }): Promise<Transition> {
+  const assistantText = buildModeSwitchMessage(input.action.mode);
   const finalToolResult = await input.io.useTool!(input.config.finalizeToolName, {
-    message: input.action.message,
+    message: assistantText,
     data: {
       modeSwitch: {
         mode: input.action.mode,
@@ -38,14 +40,12 @@ export async function handleSwitchModeAction(input: {
     },
   });
   const finalOutput = unwrapAgentToolOutput(finalToolResult);
-  const assistantText = input.action.message.trim();
   const modelTranscript = appendModelTranscriptItems(
     appendToolResultToTranscript({
       transcript: input.reactState.modelTranscript,
       toolName: "kestrel.switch_mode",
       toolInput: {
         mode: input.action.mode,
-        message: input.action.message,
       },
       toolOutput: finalToolResult,
       stepIndex: input.stepIndex,

@@ -127,7 +127,9 @@ function hasExplicitActiveTaskState(reactState: Record<string, unknown>): boolea
 }
 
 function isTerminalAgentTaskState(reactState: Record<string, unknown>): boolean {
-  return asString(reactState.phase) === "DONE" || asRecord(reactState.terminal) !== undefined;
+  return reactState.finalized === true ||
+    asString(reactState.phase) === "DONE" ||
+    asRecord(reactState.terminal) !== undefined;
 }
 
 function transcriptHasTaskExecutionState(value: unknown): boolean {

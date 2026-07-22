@@ -1551,7 +1551,6 @@ contractTest("runtime.hermetic", "exec.finalize commits switch_mode as a termina
             nextAction: {
               kind: "switch_mode",
               mode: "build",
-              message: "Switched to Build mode.",
             },
           },
         },
@@ -1579,14 +1578,14 @@ contractTest("runtime.hermetic", "exec.finalize commits switch_mode as a termina
   const finalOutput = react.finalOutput as Record<string, unknown>;
   assert.equal(transition.status, "COMPLETED");
   assert.deepEqual(finalizedInput, {
-    message: "Switched to Build mode.",
+    message: "Build mode is selected and will apply to your next message.",
     data: { modeSwitch: { mode: "build" } },
   });
   assert.deepEqual(finalOutput, {
     finalized: true,
     payload: finalizedInput,
   });
-  assert.equal(react.assistantText, "Switched to Build mode.");
+  assert.equal(react.assistantText, "Build mode is selected and will apply to your next message.");
 });
 
 contractTest("runtime.hermetic", "exec.wait_user clears stale waitingFor when action is no longer ask_user", async () => {

@@ -493,6 +493,11 @@ export const threads = pgTable(
     mode: text("mode", { enum: ["chat", "admin"] })
       .notNull()
       .default("chat"),
+    interactionMode: text("interaction_mode", {
+      enum: ["chat", "plan", "build"],
+    })
+      .notNull()
+      .default("chat"),
     activeStreamId: text("active_stream_id"),
     isPublic: boolean("is_public").notNull().default(false),
     shareToken: text("share_token"),

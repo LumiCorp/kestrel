@@ -675,6 +675,58 @@ contractTest(
         policy: publishPolicy,
       });
 
+    let failNextGatewayRefresh = true;
+    globalThis.fetch = (async (request) => {
+      const url = String(request);
+      if (url.endsWith("/internal/config/refresh") && failNextGatewayRefresh) {
+        failNextGatewayRefresh = false;
+        return new Response("gateway unavailable", { status: 503 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    await assert.rejects(
+      invokePreview({
+        capability: "publish",
+        method: "POST",
+        path: ["previews"],
+        body: { port: 40_999 },
+      }),
+      (error: unknown) =>
+        error instanceof appRuntime.AppRuntimeError &&
+        error.code === "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE",
+    );
+    const [failedActivation] = await sql<Array<{
+      id: string;
+      status: string;
+      failureCode: string | null;
+      closedAt: Date | null;
+    }>>`
+      SELECT "id", "status", "failure_code" AS "failureCode", "closed_at" AS "closedAt"
+      FROM "workspace_preview_leases"
+      WHERE "workspace_id" = ${workspaceId} AND "port" = 40999
+      ORDER BY "created_at" DESC
+      LIMIT 1
+    `;
+    assert.equal(failedActivation?.status, "failed");
+    assert.equal(failedActivation?.failureCode, "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE");
+    assert.notEqual(failedActivation?.closedAt, null);
+    const recoveredActivation = await invokePreview({
+      capability: "publish",
+      method: "POST",
+      path: ["previews"],
+      body: { port: 40_999 },
+    });
+    const recoveredActivationBody = await recoveredActivation.json() as {
+      preview: { id: string; status: string };
+    };
+    assert.notEqual(recoveredActivationBody.preview.id, failedActivation?.id);
+    assert.equal(recoveredActivationBody.preview.status, "available");
+    await invokePreview({
+      capability: "close",
+      method: "DELETE",
+      path: ["previews", recoveredActivationBody.preview.id],
+    });
+
     const concurrentPublishes = await Promise.allSettled(
       [41_001, 41_002, 41_003, 41_004, 41_005, 41_006].map((port) =>
         invokePreview({
@@ -705,6 +757,7 @@ contractTest(
       SELECT "id", "port", "status", "expires_at" AS "expiresAt"
       FROM "workspace_preview_leases"
       WHERE "workspace_id" = ${workspaceId}
+        AND "status" IN ('provisioning', 'active', 'closing')
       ORDER BY "port"
     `;
     assert.equal(activePreviews.length, 5);
@@ -754,7 +807,7 @@ contractTest(
         activePreviews[0]!.expiresAt.getTime(),
     );
 
-    let failNextGatewayRefresh = true;
+    failNextGatewayRefresh = true;
     globalThis.fetch = (async (request) => {
       const url = String(request);
       if (url.endsWith("/internal/config/refresh") && failNextGatewayRefresh) {
@@ -820,6 +873,82 @@ contractTest(
         AND "status" IN ('provisioning', 'active', 'closing')
     `;
     assert.equal(samePortRows[0]?.count, "1");
+
+    await sql`
+      UPDATE "environments"
+      SET "gateway_service_token_hash" = ${environmentServiceTokens.hashEnvironmentServiceToken("gateway-service-token")}
+      WHERE "id" = ${environmentId}
+    `;
+    await sql`
+      UPDATE "workspace_preview_leases"
+      SET "status" = 'provisioning'
+      WHERE "id" = ${samePortBodies[0]!.preview.id}
+    `;
+    await environmentGatewayConfig.reportEnvironmentGatewayNgrokStatus({
+      environmentId,
+      authorization: "Bearer gateway-service-token",
+      connectionId: ngrokConnection.id,
+      status: "degraded",
+      failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
+      failureMessage: "authentication failed",
+    });
+    const [degradedConnection] = await sql<Array<{
+      status: string;
+      failureCode: string | null;
+      failureMessage: string | null;
+    }>>`
+      SELECT "status", "failure_code" AS "failureCode", "failure_message" AS "failureMessage"
+      FROM "app_connections"
+      WHERE "id" = ${ngrokConnection.id}
+    `;
+    assert.deepEqual(degradedConnection, {
+      status: "degraded",
+      failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
+      failureMessage: "authentication failed",
+    });
+    const [failedProvisioningLease] = await sql<Array<{
+      status: string;
+      failureCode: string | null;
+      closedAt: Date | null;
+    }>>`
+      SELECT "status", "failure_code" AS "failureCode", "closed_at" AS "closedAt"
+      FROM "workspace_preview_leases"
+      WHERE "id" = ${samePortBodies[0]!.preview.id}
+    `;
+    assert.equal(failedProvisioningLease?.status, "failed");
+    assert.equal(failedProvisioningLease?.failureCode, "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE");
+    assert.notEqual(failedProvisioningLease?.closedAt, null);
+    await environmentGatewayConfig.reportEnvironmentGatewayNgrokStatus({
+      environmentId,
+      authorization: "Bearer gateway-service-token",
+      connectionId: ngrokConnection.id,
+      status: "connected",
+    });
+    const [healthyConnection] = await sql<Array<{
+      status: string;
+      failureCode: string | null;
+      failureMessage: string | null;
+    }>>`
+      SELECT "status", "failure_code" AS "failureCode", "failure_message" AS "failureMessage"
+      FROM "app_connections"
+      WHERE "id" = ${ngrokConnection.id}
+    `;
+    assert.deepEqual(healthyConnection, {
+      status: "connected",
+      failureCode: null,
+      failureMessage: null,
+    });
+    const replacementPublish = await invokePreview({
+      capability: "publish",
+      method: "POST",
+      path: ["previews"],
+      body: { port: 41_100 },
+    });
+    const replacementBody = await replacementPublish.json() as {
+      preview: { id: string; status: string };
+    };
+    assert.notEqual(replacementBody.preview.id, samePortBodies[0]!.preview.id);
+    assert.equal(replacementBody.preview.status, "available");
 
     failNextGatewayRefresh = true;
     await assert.rejects(

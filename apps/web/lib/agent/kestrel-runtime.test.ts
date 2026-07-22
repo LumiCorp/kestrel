@@ -150,6 +150,42 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse streams completed ru
   );
   assert.equal(typeof (persistedMeta as { assistantMessageId?: unknown })?.assistantMessageId, "string");
   assert.equal((persistedMeta as { runId?: unknown })?.runId, "run_123");
+  assert.equal(persistedMeta?.selectedInteractionMode, null);
+});
+
+contractTest("web.hermetic", "runtime-owned mode switches are exposed to server persistence", async () => {
+  let persistedMode: string | null | undefined;
+  const response = createKestrelOneAgentResponseFromAgent({
+    request: new Request("http://example.test/api/chats/chat_mode_switch", { method: "POST" }),
+    agent: fakeAgent({
+      terminal: completedTerminal(
+        "Build mode is selected and will apply to your next message.",
+        {
+          payload: {
+            data: { modeSwitch: { mode: "build" } },
+          },
+        },
+      ),
+    }),
+    ownsAgent: false,
+    session,
+    organizationId: "org_123",
+    correlation: { requestId: "req_mode", correlationId: "req_mode" },
+    threadId: "chat_mode_switch",
+    interactionMode: "chat",
+    messages: [{
+      id: "msg_mode",
+      role: "user",
+      parts: [{ type: "text", text: "Switch to Build mode." }],
+    }],
+    onFinishPersist: async (_messages, meta) => {
+      persistedMode = meta.selectedInteractionMode;
+    },
+  });
+
+  const body = await response.text();
+  assert.equal(persistedMode, "build");
+  assert.match(body, /data-interaction-mode/u);
 });
 
 contractTest("web.hermetic", "createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn", async () => {

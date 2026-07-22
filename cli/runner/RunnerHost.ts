@@ -159,6 +159,9 @@ export interface RunnerRuntime {
   cancelActiveRun?:
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined;
+  recoverOrphanedActiveRun?:
+    | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
+    | undefined;
   describeSession?:
     | ((sessionId: string) => Promise<
         | {
@@ -489,6 +492,10 @@ export class RunnerHost {
   >();
   private readonly threadIdBySession = new Map<string, string>();
   private readonly activeRuns = new Map<string, ActiveRunEntry>();
+  private readonly orphanRecoveryBySession = new Map<
+    string,
+    Promise<{ runId?: string | undefined }>
+  >();
   private readonly activeExecutions = new Set<Promise<void>>();
   private readonly runtimeUsage = new AsyncLocalStorage<Set<RuntimeLease>>();
   private readonly runtimeLeases = new WeakMap<RunnerRuntime, RuntimeLease>();
@@ -625,6 +632,77 @@ export class RunnerHost {
       return;
     }
     const runtime = this.getRuntime(profile);
+    if (runtime.recoverOrphanedActiveRun !== undefined) {
+      let recovery = this.orphanRecoveryBySession.get(turn.sessionId);
+      if (recovery === undefined) {
+        recovery = runtime.recoverOrphanedActiveRun(turn.sessionId);
+        this.orphanRecoveryBySession.set(turn.sessionId, recovery);
+      }
+      try {
+        await recovery;
+      } catch (error) {
+        const failure = this.normalizeTerminalError(error);
+        this.writer.emit(
+          "run.failed",
+          {
+            result: buildNonResponsiveTerminalResult({
+              status: "FAILED",
+              sessionId: turn.sessionId,
+              runId: requestedRunId ?? commandId,
+              error: failure,
+            }),
+            error: {
+              code: failure.code,
+              message: failure.message,
+              ...(failure.details !== undefined
+                ? { details: failure.details }
+                : {}),
+            },
+          },
+          {
+            commandId,
+            ...(requestedRunId !== undefined ? { runId: requestedRunId } : {}),
+            sessionId: turn.sessionId,
+          },
+        );
+        await this.appendTerminalHandoffDiagnostic({
+          scope: "terminal_handoff.runner_exception",
+          summary: "Runner failed while reconciling persisted session ownership.",
+          sessionId: turn.sessionId,
+          profileId: profile.id,
+          details: {
+            commandId,
+            code: failure.code,
+            message: failure.message,
+            ...(failure.details !== undefined
+              ? { details: failure.details }
+              : {}),
+          },
+        });
+        return;
+      } finally {
+        if (this.orphanRecoveryBySession.get(turn.sessionId) === recovery) {
+          this.orphanRecoveryBySession.delete(turn.sessionId);
+        }
+      }
+      const concurrent = this.activeRuns.get(turn.sessionId);
+      if (concurrent !== undefined) {
+        this.writer.emit(
+          "run.started",
+          {
+            sessionId: turn.sessionId,
+            ...(concurrent.runId !== undefined ? { runId: concurrent.runId } : {}),
+            eventType: turn.eventType,
+          },
+          {
+            commandId,
+            sessionId: turn.sessionId,
+            ...(concurrent.runId !== undefined ? { runId: concurrent.runId } : {}),
+          },
+        );
+        return;
+      }
+    }
     const reasoningVaultStatus = runtime.getProviderReasoningVaultStatus?.();
     this.commandBySession.set(turn.sessionId, commandId);
     this.commandTypeBySession.set(turn.sessionId, "run.start");

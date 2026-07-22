@@ -862,7 +862,7 @@ contractTest("runtime.hermetic", "build-mode fresh user messages replace transcr
   assert.equal(readActiveTaskGoalFromTranscript(agentPatch.modelTranscript), followUp);
 });
 
-contractTest("runtime.hermetic", "terminal user messages start a fresh task epoch and clear task-scoped state", async () => {
+contractTest("runtime.hermetic", "mode-switch finalization followed by an ordinary user message starts a fresh task epoch", async () => {
   let capturedRequest: ModelRequest | undefined;
   const oldTask = "Tell me about this workspace pls.";
   const buildRequest = "Build a bookmark manager with auth, bookmark CRUD, tags, and search.";
@@ -875,12 +875,12 @@ contractTest("runtime.hermetic", "terminal user messages start a fresh task epoc
         agent: {
           goal: "Stale legacy task",
           interactionMode: "build",
-          phase: "DONE",
-          terminal: {
-            status: "DONE",
-          },
+          finalized: true,
           finalOutput: {
-            message: "Old workspace summary.",
+            payload: {
+              message: "Build mode is selected and will apply to your next message.",
+              data: { modeSwitch: { mode: "build" } },
+            },
           },
           observations: [
             {
@@ -1007,6 +1007,7 @@ contractTest("runtime.hermetic", "terminal user messages start a fresh task epoc
   assert.equal(agentPatch.loopGuard, undefined);
   assert.equal(agentPatch.terminal, undefined);
   assert.equal(agentPatch.finalOutput, undefined);
+  assert.equal(agentPatch.finalized, undefined);
   assert.equal(Object.hasOwn(transition.statePatch ?? {}, "evidenceLedger"), true);
   assert.equal(transition.statePatch?.evidenceLedger, undefined);
   assert.doesNotMatch(JSON.stringify(agentPatch), /visible_todo_finalize_continuation/u);

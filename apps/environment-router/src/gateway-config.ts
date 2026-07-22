@@ -78,6 +78,7 @@ export class EnvironmentGatewayConfigClient {
     connectionId: string;
     status: "connected" | "degraded";
     failureCode?: string | undefined;
+    failureMessage?: string | undefined;
   }) {
     const response = await (this.input.fetchImpl ?? fetch)(
       new URL(

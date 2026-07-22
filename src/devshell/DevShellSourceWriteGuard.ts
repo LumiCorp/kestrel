@@ -217,7 +217,8 @@ export async function enforceDevShellSourceWriteGuard(
     .filter((absolutePath) =>
       guard.directorySnapshot.has(absolutePath) === false &&
       guard.config.sourceRoots.includes(absolutePath) === false &&
-      isAllowedWritePath(guard.config, absolutePath) === false
+      isAllowedWritePath(guard.config, absolutePath) === false &&
+      isInternalStateDirectoryPath(guard.config, absolutePath) === false
     )
     .sort((left, right) => right.length - left.length);
   for (const absolutePath of createdDirectories) {
@@ -471,6 +472,15 @@ function isInternalStatePath(
   candidate: string,
 ): boolean {
   return config.internalStateRoots.some((root) => isWithinRoot(candidate, root));
+}
+
+function isInternalStateDirectoryPath(
+  config: NormalizedGuardConfig,
+  candidate: string,
+): boolean {
+  return config.internalStateRoots.some(
+    (root) => isWithinRoot(candidate, root) || isWithinRoot(root, candidate),
+  );
 }
 
 function isWithinRoot(candidate: string, root: string): boolean {

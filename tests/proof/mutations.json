@@ -92,6 +92,16 @@
       "testFiles": ["tests/unit/dev-shell-supervisor.test.ts"]
     },
     {
+      "id": "source-write-guard-internal-state-inclusion",
+      "contractId": "runtime.source-write-guard",
+      "target": "src/devshell/DevShellSupervisor.ts",
+      "find": "        join(workspaceRoot, \".kestrel\"),\n        join(workspaceRoot, \".local\", \"share\", \"kestrel\"),\n",
+      "replace": "",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=excludes Kestrel internal state", "tests/unit/dev-shell-supervisor.test.ts"],
+      "testFiles": ["tests/unit/dev-shell-supervisor.test.ts"]
+    },
+    {
       "id": "local-core-authority-lock-theft",
       "contractId": "local-core.authority-lock",
       "target": "src/localCore/api.ts",

@@ -155,7 +155,7 @@ function validateCompiledActionShape(
     if (mode !== "chat" && mode !== "plan" && mode !== "build") {
       return parseFailure("state.agent.nextAction.mode", "invalid_compiled_next_action", "switch_mode action requires mode chat, plan, or build.");
     }
-    return requireNonEmptyString(action.message, "state.agent.nextAction.message");
+    return;
   }
   return requireRecord(action.input, "state.agent.nextAction.input") ??
     requireNonEmptyString(asRecord(action.input)?.message, "state.agent.nextAction.input.message");

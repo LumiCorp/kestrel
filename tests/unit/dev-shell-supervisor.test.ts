@@ -549,6 +549,54 @@ contractTest("runtime.process", "DevShellSupervisor source-write guard ignores i
   }
 });
 
+contractTest("runtime.source-write-guard", "DevShellSupervisor source-write guard excludes Kestrel internal state but still rejects adjacent source writes", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  const pagePath = path.join(workspaceRoot, "app", "page.tsx");
+  await mkdir(path.dirname(pagePath), { recursive: true });
+  await writeFile(pagePath, "original", "utf8");
+  try {
+    const internalOnly = await supervisor.startProcess({
+      workspaceRoot,
+      command: "mkdir -p .kestrel/runtime .local/share/kestrel/state/0.6; printf 'db' > .kestrel/runtime/runtime.db; printf 'log' > .kestrel/runtime/runner.log; printf 'legacy' > .local/share/kestrel/state/0.6/runtime.db; sleep 5",
+      yieldTimeMs: 300,
+      maxOutputBytes: 4096,
+      sourceWriteGuard: {
+        enabled: true,
+      },
+    });
+
+    assert.equal(internalOnly.status, "RUNNING");
+    assert.notEqual(internalOnly.processId, undefined);
+    if (internalOnly.processId !== undefined) {
+      await supervisor.stopProcess({ processId: internalOnly.processId });
+    }
+
+    const sourceWrite = await supervisor.startProcess({
+      workspaceRoot,
+      command: "printf 'changed' > app/page.tsx; sleep 5",
+      yieldTimeMs: 300,
+      maxOutputBytes: 4096,
+      sourceWriteGuard: {
+        enabled: true,
+      },
+    });
+    const sourceResult = sourceWrite.status === "RUNNING" && sourceWrite.processId !== undefined
+      ? await readProcessUntilTerminal({
+          supervisor,
+          processId: sourceWrite.processId,
+          timeoutMs: TEST_COMMAND_TIMEOUT_MS,
+        })
+      : sourceWrite;
+
+    assert.equal(sourceResult.status, "FAILED");
+    assert.equal(sourceResult.exitCode, 126);
+    assert.deepEqual(sourceResult.unauthorizedSourceWrites?.map((item) => item.path), ["app/page.tsx"]);
+    assert.equal(await readFile(pagePath, "utf8"), "original");
+  } finally {
+    await supervisor.close();
+  }
+});
+
 contractTest("runtime.process", "DevShellSupervisor source-write guard removes created directories after restoring files", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const generatedDir = path.join(workspaceRoot, "generated");

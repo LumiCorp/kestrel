@@ -734,6 +734,42 @@ export class RuntimeIO {
       const resultRecord = asPlainRecord(result);
       const auditRecord = asPlainRecord(resultRecord?.auditRecord);
       const toolOutput = asPlainRecord(auditRecord?.output ?? result);
+      if (result.status === "FAILED") {
+        const durationMs = Date.now() - startedAt;
+        const returnedError = readReturnedToolFailure(result);
+        await this.options.emitProgressFromSequence({
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          seq: progress.sequence(),
+          kind: "tool",
+          phase: progress.phase,
+          code: "TOOL_CALL_FAILED",
+          message: `Tool '${name}' failed.`,
+          stepIndex: progress.stepIndex,
+          stepAgent: progress.stepAgent,
+          tool: {
+            name,
+            status: "FAILED",
+            latencyMs: durationMs,
+          },
+          ...toolInputMetadata,
+          ...(queueDepthRun !== undefined ? { queueDepthRun } : {}),
+          ...(queueDepthGlobal !== undefined ? { queueDepthGlobal } : {}),
+          ...(queueWaitMs !== undefined ? { queueWaitMs } : {}),
+          persist: true,
+        });
+        await this.emitToolUpdate({
+          phase: "failed",
+          toolCallId,
+          toolName: name,
+          input: effectiveToolInput,
+          output: result,
+          error: returnedError,
+          durationMs,
+        });
+        await consoleBridge.emitStatus("failed", result.auditRecord.output);
+        return result;
+      }
       const execCommandRunning = name === "exec_command" &&
         typeof toolOutput?.status === "string" &&
         toolOutput.status.trim().toLowerCase() === "running";
@@ -971,6 +1007,24 @@ export class RuntimeIO {
       persist: true,
     });
   }
+}
+
+function readReturnedToolFailure(result: AgentToolResult): RuntimeError {
+  const error = asPlainRecord(result.auditRecord.error);
+  const output = asPlainRecord(result.auditRecord.output);
+  const details = asPlainRecord(error?.details);
+  return {
+    code:
+      readNonEmptyString(error?.code) ??
+      readNonEmptyString(output?.errorCode) ??
+      "TOOL_EXECUTION_FAILED",
+    message:
+      readNonEmptyString(error?.message) ??
+      readNonEmptyString(output?.message) ??
+      readNonEmptyString(output?.failureReason) ??
+      "Tool execution failed.",
+    ...(details !== undefined ? { details } : {}),
+  };
 }
 
 function throwIfRuntimeIOAborted(signal: AbortSignal | undefined): void {

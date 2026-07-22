@@ -20,7 +20,10 @@ import {
   revokeProjectContextGrant,
 } from "@/lib/projects/context-grants";
 import { formatProjectSystemContext } from "@/lib/projects/runtime-context";
-import { updateThreadTitleForUser } from "@/lib/threads/store";
+import {
+  updateThreadInteractionModeForUser,
+  updateThreadTitleForUser,
+} from "@/lib/threads/store";
 import { assertVisibleCompletedOutcome } from "@/lib/turns/outcome-invariant";
 import { DURABLE_TURN_STOP_GRACE_MS } from "@/lib/turns/contracts";
 import {
@@ -210,8 +213,32 @@ export async function processDurableThreadTurn(
   let persistedAssistantMessageCount = 0;
   let environmentExecutionId = turn.environmentExecutionId;
   let runtimeStartedRecorded = false;
-  let runtimeStartedEventId: string | null = null;
-  let effectiveInteractionMode: string | null = null;
+  let runtimeStartedEvent: {
+    eventId: string;
+    runtimeRunId: string;
+    effectiveInteractionMode: string | null;
+  } | null = null;
+  const recordRuntimeStarted = async () => {
+    if (
+      runtimeStartedRecorded ||
+      !environmentExecutionId ||
+      !runtimeStartedEvent
+    ) {
+      return;
+    }
+    await appendDurableTurnEvent({
+      turnId: turn.id,
+      type: "runtime.started",
+      data: {
+        eventId: runtimeStartedEvent.eventId,
+        executionId: environmentExecutionId,
+        runtimeRunId: runtimeStartedEvent.runtimeRunId,
+        requestedInteractionMode: turn.requestedInteractionMode,
+        effectiveInteractionMode: runtimeStartedEvent.effectiveInteractionMode,
+      },
+    });
+    runtimeStartedRecorded = true;
+  };
   const cancellation = new AbortController();
   let cancellationRequested = false;
   let workerInterrupted = false;
@@ -304,33 +331,23 @@ export async function processDurableThreadTurn(
       signal: cancellation.signal,
       onExecutionRouted: (executionId) => {
         environmentExecutionId = executionId;
+        eventWrites = eventWrites.then(recordRuntimeStarted);
       },
       onRuntimeEvent(event) {
         eventWrites = eventWrites.then(async () => {
           try {
             if (event.type === "run.started") {
-              runtimeStartedEventId = event.id;
-              effectiveInteractionMode = event.payload.interactionMode ?? null;
-            }
-            if (
-              !runtimeStartedRecorded &&
-              environmentExecutionId &&
-              event.runId
-            ) {
-              await appendDurableTurnEvent({
-                turnId: turn.id,
-                type: "runtime.started",
-                data: {
-                  eventId: runtimeStartedEventId ?? event.id,
-                  executionId: environmentExecutionId,
+              if (event.runId) {
+                runtimeStartedEvent = {
+                  eventId: event.id,
                   runtimeRunId: event.runId,
-                  requestedInteractionMode: turn.requestedInteractionMode,
-                  effectiveInteractionMode,
-                },
-              });
-              runtimeStartedRecorded = true;
+                  effectiveInteractionMode:
+                    event.payload.interactionMode ?? null,
+                };
+              }
+              await recordRuntimeStarted();
+              return;
             }
-            if (event.type === "run.started") return;
             await recordMobileTurnRuntimeActivity({
               turnId: turn.id,
               eventId: event.id,
@@ -389,6 +406,14 @@ export async function processDurableThreadTurn(
             userId: turn.authorUserId,
             organizationId: turn.organizationId,
             title: meta.title,
+          });
+        }
+        if (meta.selectedInteractionMode) {
+          await updateThreadInteractionModeForUser({
+            id: turn.threadId,
+            userId: turn.authorUserId,
+            organizationId: turn.organizationId,
+            interactionMode: meta.selectedInteractionMode,
           });
         }
       },

@@ -2,6 +2,7 @@ import { asArray, asRecord, asString } from "../../shared/valueAccess.js";
 import { DecisionCompileError } from "./decision/DecisionCompileError.js";
 import type { ReactAction } from "./types.js";
 import { findUserVisibleTextViolation } from "./userVisibleTextPolicy.js";
+import { buildModeSwitchMessage } from "./modeSwitch.js";
 
 export function validateFinalizationDecision(input: {
   action: ReactAction;
@@ -12,8 +13,10 @@ export function validateFinalizationDecision(input: {
 
   const actionInput = input.action.kind === "finalize" ? asRecord(input.action.input) : undefined;
   const message = asString(
-    input.action.kind === "handoff_to_build" || input.action.kind === "switch_mode"
+    input.action.kind === "handoff_to_build"
       ? input.action.message
+      : input.action.kind === "switch_mode"
+        ? buildModeSwitchMessage(input.action.mode)
       : actionInput?.message,
   )?.trim();
   if (message === undefined || message.length === 0) {

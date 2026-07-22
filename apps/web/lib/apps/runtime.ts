@@ -113,6 +113,7 @@ export async function markAppConnectionDegraded(input: {
   appKey: string;
   connectionId: string;
   failureCode: string;
+  failureMessage?: string | null | undefined;
 }) {
   const now = new Date();
   await knowledgeDb
@@ -120,7 +121,7 @@ export async function markAppConnectionDegraded(input: {
     .set({
       status: "degraded",
       failureCode: input.failureCode,
-      failureMessage: null,
+      failureMessage: input.failureMessage ?? null,
       lastHealthAt: now,
       updatedAt: now,
     })

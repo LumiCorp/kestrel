@@ -582,6 +582,61 @@ contractTest("runtime.process", "run.start accepts build interactionMode and for
   await host.close();
 });
 
+contractTest("runtime.process", "run.start reconciles process-owned orphan state once before reserving an in-memory run", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let recoverCount = 0;
+  let releaseRecovery: (() => void) | undefined;
+  const recoveryBlocked = new Promise<void>((resolve) => {
+    releaseRecovery = resolve;
+  });
+  let releaseRun: (() => void) | undefined;
+  const runBlocked = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
+  const host = new RunnerHost(writer, () => ({
+    recoverOrphanedActiveRun: async (sessionId) => {
+      assert.equal(sessionId, "session-orphan-recovery");
+      recoverCount += 1;
+      await recoveryBlocked;
+      return { runId: "run-orphaned" };
+    },
+    runTurn: async (input) => {
+      await runBlocked;
+      return {
+        assistantText: "done",
+        output: {
+          status: "COMPLETED",
+          sessionId: input.sessionId,
+          runId: input.runId ?? "run-recovered",
+          errors: [],
+          quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+          telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+        },
+      };
+    },
+    close: async () => {},
+  }));
+  const turn = {
+    sessionId: "session-orphan-recovery",
+    runId: "run-recovered",
+    message: "continue",
+    eventType: "user.message" as const,
+  };
+
+  const first = host.runStart("cmd-recover-first", { profile, turn });
+  await tick();
+  const duplicate = host.runStart("cmd-recover-duplicate", { profile, turn });
+  await tick();
+
+  assert.equal(recoverCount, 1);
+  releaseRecovery?.();
+  await duplicate;
+  releaseRun?.();
+  await first;
+  await host.close();
+});
+
 contractTest("runtime.process", "run.start forwards only normalized hosted MCP grant context", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);

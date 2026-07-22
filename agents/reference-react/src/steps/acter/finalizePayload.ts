@@ -843,6 +843,7 @@ function buildConsoleArtifactFromDevShellResult(input: {
   const text = readCleanedDevShellOutputText(input.output.text ?? input.output.output);
   const chunk = readCleanedDevShellOutputText(input.output.chunk);
   const chunkPreview = readCleanedDevShellOutputText(input.output.chunkPreview);
+  const durationMs = asPositiveNumber(input.output.durationMs);
   const toolContext = buildDevShellToolContext(input.output, processId);
 
   return {
@@ -861,6 +862,7 @@ function buildConsoleArtifactFromDevShellResult(input: {
     ...(chunk !== undefined ? { chunk } : {}),
     ...(chunkPreview !== undefined ? { chunkPreview } : {}),
     ...(input.output.truncated === true ? { truncated: true } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
     ...(toolContext !== undefined ? { toolContext } : {}),
   };
 }
@@ -883,6 +885,7 @@ const DEV_SHELL_TOOL_CONTEXT_FIELDS = [
   "startedAt",
   "updatedAt",
   "completedAt",
+  "durationMs",
   "securityMode",
   "failureReason",
   "truncated",

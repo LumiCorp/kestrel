@@ -94,6 +94,7 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
         id={chat?.id ?? id}
         initialChatExists={Boolean(chat)}
         initialChatModel={initialChatModel}
+        initialInteractionMode={chat?.interactionMode ?? "chat"}
         initialConversationState={{
           interactions: interactions.map((interaction) => ({
             ...interaction,

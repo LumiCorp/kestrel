@@ -443,6 +443,7 @@ async function createDurableThreadTurnInTransaction(
   const sequence = queueState?.nextSequence ?? 1;
   const turnId = crypto.randomUUID();
   const now = new Date();
+  const requestedInteractionMode = input.requestedInteractionMode ?? "chat";
   if (input.messageId) {
     const [insertedMessage] = await tx
       .insert(schema.threadMessages)
@@ -485,7 +486,7 @@ async function createDurableThreadTurnInTransaction(
       queueOrdinal: sequence,
       source: input.source,
       requestedModelId: input.requestedModelId ?? null,
-      requestedInteractionMode: input.requestedInteractionMode ?? "chat",
+      requestedInteractionMode,
       status: "queued",
       createdAt: now,
       updatedAt: now,
@@ -494,6 +495,10 @@ async function createDurableThreadTurnInTransaction(
   if (!turn) {
     throw new Error("Durable turn insert failed.");
   }
+  await tx
+    .update(schema.threads)
+    .set({ interactionMode: requestedInteractionMode, updatedAt: now })
+    .where(eq(schema.threads.id, input.threadId));
   await updateMobileTurnPresentation(tx, { turnId, stage: "queued", now });
   if (input.messageId) {
     await tx

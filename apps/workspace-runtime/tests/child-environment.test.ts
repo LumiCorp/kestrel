@@ -50,6 +50,7 @@ contractTest(
         PATH: "/usr/bin",
         KESTREL_ONE_APP_URL: "https://kestrel.example",
         HOME: "/workspace",
+        KESTREL_CORE_HOME: "/workspace/.kestrel/runtime",
         KESTREL_WORKSPACE_SERVICE_TOKEN: "workspace-secret",
         KESTREL_WORKSPACE_RUNTIME_URL: "http://127.0.0.1:43104",
         KESTREL_RUNNER_SERVICE_HOST: "127.0.0.1",

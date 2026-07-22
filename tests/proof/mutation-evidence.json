@@ -5,11 +5,11 @@
       "id": "cross-tenant-authorization-acceptance",
       "contractId": "security.cross-tenant-authorization",
       "target": "cli/runner/RunnerHost.ts",
-      "sourceSha256": "7d1d9b604aef846625042bc51f3020c833cfcab6d0388b52b46b8fee239487b3",
+      "sourceSha256": "dec0642668728417aec05c263aec34941cd786f31c69bf8060599a368895420f",
       "testFiles": [
         "tests/integration/runner-protocol.test.ts"
       ],
-      "testsSha256": "144e3c87d41823316bab86fb4c22d8f0279d77733a25a6db6bec03ac3808b06f",
+      "testsSha256": "f69eccefc7f425b657c836740b53aa005868dee321ef18e91604fa36d7b99db8",
       "command": "node --import tsx --test --test-name-pattern=binds a gateway-managed credential tests/integration/runner-protocol.test.ts",
       "result": "killed"
     },
@@ -17,11 +17,11 @@
       "id": "interaction-request-identity-bypass",
       "contractId": "web.interaction-request-identity",
       "target": "apps/web/lib/turns/store.ts",
-      "sourceSha256": "82e9adefbcc9e3fd8038e87bab95d101d2075c0cd33d7a55ace57f7ceaead56b",
+      "sourceSha256": "b266d1d86849fdee5878be9e3356f03304fba674634a0264d2e2fa7812146858",
       "testFiles": [
         "apps/web/lib/turns/store.postgres.test.ts"
       ],
-      "testsSha256": "5204213be0a44a5a0368d7ef08c77e68f99d6aaa874313676ee0d3402b2d1c44",
+      "testsSha256": "e8ff23cfa5955779921b523f3aa19c7cf88ff3a208864fa5e8b2112d3dcbe2ed",
       "command": "pnpm --dir apps/web exec node --conditions=react-server --import tsx --test --test-name-pattern=durable turns converge lib/turns/store.postgres.test.ts",
       "result": "killed"
     },
@@ -53,12 +53,24 @@
       "id": "source-write-guard-fail-open",
       "contractId": "runtime.source-write-guard",
       "target": "src/devshell/DevShellSupervisor.ts",
-      "sourceSha256": "932bb27de8039e9984a83d600af64b8dfd76a268bd026de1b1a0e23cd164bc7d",
+      "sourceSha256": "0629528ddb6ed2bcf03ef9e47c29158cebe8ca258fdbee5a8d17bfaa72fe4a42",
       "testFiles": [
         "tests/unit/dev-shell-supervisor.test.ts"
       ],
-      "testsSha256": "0bd011e0577c619aad863d987d3cb691ae35a1068f758a078a880a4a56f1fd6d",
+      "testsSha256": "a5bf549cfddd2d22f1408de0ba981a50e2e17fe097a208ac5abccc840ea754da",
       "command": "node --import tsx --test --test-name-pattern=source-write guard fails tests/unit/dev-shell-supervisor.test.ts",
+      "result": "killed"
+    },
+    {
+      "id": "source-write-guard-internal-state-inclusion",
+      "contractId": "runtime.source-write-guard",
+      "target": "src/devshell/DevShellSupervisor.ts",
+      "sourceSha256": "0629528ddb6ed2bcf03ef9e47c29158cebe8ca258fdbee5a8d17bfaa72fe4a42",
+      "testFiles": [
+        "tests/unit/dev-shell-supervisor.test.ts"
+      ],
+      "testsSha256": "a5bf549cfddd2d22f1408de0ba981a50e2e17fe097a208ac5abccc840ea754da",
+      "command": "node --import tsx --test --test-name-pattern=excludes Kestrel internal state tests/unit/dev-shell-supervisor.test.ts",
       "result": "killed"
     },
     {
@@ -77,7 +89,7 @@
       "id": "turn-idempotency-bypass",
       "contractId": "web.idempotency",
       "target": "apps/web/lib/turns/store.ts",
-      "sourceSha256": "82e9adefbcc9e3fd8038e87bab95d101d2075c0cd33d7a55ace57f7ceaead56b",
+      "sourceSha256": "b266d1d86849fdee5878be9e3356f03304fba674634a0264d2e2fa7812146858",
       "testFiles": [
         "apps/web/lib/turns/mobile-store.postgres.test.ts"
       ],
@@ -89,7 +101,7 @@
       "id": "turn-partial-transaction-commit",
       "contractId": "web.turn-transaction",
       "target": "apps/web/lib/turns/store.ts",
-      "sourceSha256": "82e9adefbcc9e3fd8038e87bab95d101d2075c0cd33d7a55ace57f7ceaead56b",
+      "sourceSha256": "b266d1d86849fdee5878be9e3356f03304fba674634a0264d2e2fa7812146858",
       "testFiles": [
         "apps/web/lib/turns/mobile-store.postgres.test.ts"
       ],
@@ -101,7 +113,7 @@
       "id": "turn-retry-lineage-loss",
       "contractId": "web.turn-retry-lineage",
       "target": "apps/web/lib/turns/store.ts",
-      "sourceSha256": "82e9adefbcc9e3fd8038e87bab95d101d2075c0cd33d7a55ace57f7ceaead56b",
+      "sourceSha256": "b266d1d86849fdee5878be9e3356f03304fba674634a0264d2e2fa7812146858",
       "testFiles": [
         "apps/web/lib/turns/mobile-store.postgres.test.ts"
       ],
@@ -113,11 +125,11 @@
       "id": "worker-claim-recovery-disabled",
       "contractId": "web.worker-claim-recovery",
       "target": "apps/web/lib/turns/queue.ts",
-      "sourceSha256": "07870fe755f83f9d28dbc378f629c93a2567010ff194e134596eac1be39cfe42",
+      "sourceSha256": "0e03c54da20620bf21073bd7ca4f53df880b69f8a08fb77daec26038a6ebb0ad",
       "testFiles": [
         "apps/web/lib/turns/store.postgres.test.ts"
       ],
-      "testsSha256": "5204213be0a44a5a0368d7ef08c77e68f99d6aaa874313676ee0d3402b2d1c44",
+      "testsSha256": "e8ff23cfa5955779921b523f3aa19c7cf88ff3a208864fa5e8b2112d3dcbe2ed",
       "command": "pnpm --dir apps/web exec node --conditions=react-server --import tsx --test --test-name-pattern=durable turns converge lib/turns/store.postgres.test.ts",
       "result": "killed"
     }

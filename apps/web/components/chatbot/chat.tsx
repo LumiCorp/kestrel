@@ -197,7 +197,11 @@ function isUserPartsMessage(
   );
 }
 
-function useSharedChatState(initialChatModel: string, threadId: string) {
+function useSharedChatState(
+  initialChatModel: string,
+  threadId: string,
+  initialInteractionMode: KestrelOneInteractionMode = DEFAULT_KESTREL_ONE_INTERACTION_MODE,
+) {
   const { setDataStream } = useDataStream(threadId);
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -205,9 +209,13 @@ function useSharedChatState(initialChatModel: string, threadId: string) {
   const [currentModelId, setCurrentModelId] = useState(initialChatModel);
   const currentModelIdRef = useRef(currentModelId);
   const [interactionMode, setInteractionMode] = useState<KestrelOneInteractionMode>(
-    DEFAULT_KESTREL_ONE_INTERACTION_MODE
+    initialInteractionMode
   );
   const interactionModeRef = useRef(interactionMode);
+  const updateInteractionMode = useCallback((mode: KestrelOneInteractionMode) => {
+    interactionModeRef.current = mode;
+    setInteractionMode(mode);
+  }, []);
   const [feedbackOverrides, setFeedbackOverrides] = useState<
     Record<string, "positive" | "negative" | null>
   >({});
@@ -221,8 +229,8 @@ function useSharedChatState(initialChatModel: string, threadId: string) {
   }, [interactionMode]);
 
   useEffect(() => {
-    setInteractionMode(DEFAULT_KESTREL_ONE_INTERACTION_MODE);
-  }, [threadId]);
+    updateInteractionMode(initialInteractionMode);
+  }, [initialInteractionMode, threadId, updateInteractionMode]);
 
   return {
     attachments,
@@ -237,7 +245,7 @@ function useSharedChatState(initialChatModel: string, threadId: string) {
     setDataStream,
     setFeedbackOverrides,
     setInput,
-    setInteractionMode,
+    setInteractionMode: updateInteractionMode,
     setShowCreditCardAlert,
     showCreditCardAlert,
   };
@@ -684,6 +692,7 @@ export function Chat({
   id,
   initialMessages,
   initialChatModel,
+  initialInteractionMode,
   initialVisibilityType,
   initialShareToken,
   initialChatExists,
@@ -700,6 +709,7 @@ export function Chat({
   id: string;
   initialMessages: ChatMessage[];
   initialChatModel: string;
+  initialInteractionMode: KestrelOneInteractionMode;
   initialVisibilityType: VisibilityType;
   initialShareToken?: string | null;
   initialChatExists: boolean;
@@ -721,7 +731,7 @@ export function Chat({
     initialShareToken,
   });
   const { mutate } = useSWRConfig();
-  const shared = useSharedChatState(initialChatModel, id);
+  const shared = useSharedChatState(initialChatModel, id, initialInteractionMode);
   const hasShownResumeWarningRef = useRef(false);
   const hasShownResumedToastRef = useRef(false);
   const hasShownStreamWarningRef = useRef(false);
@@ -809,6 +819,31 @@ export function Chat({
     setInteractionMode: shared.setInteractionMode,
     setShowCreditCardAlert: shared.setShowCreditCardAlert,
   });
+
+  const changeInteractionMode = useCallback(async (
+    nextMode: KestrelOneInteractionMode,
+  ) => {
+    const previousMode = shared.interactionModeRef.current;
+    if (nextMode === previousMode) return;
+    shared.setInteractionMode(nextMode);
+    if (!chatExists) return;
+    try {
+      const response = await fetch(`/api/threads/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ interactionMode: nextMode }),
+      });
+      if (!response.ok) throw new Error("Mode selection could not be saved.");
+    } catch {
+      if (shared.interactionModeRef.current === nextMode) {
+        shared.setInteractionMode(previousMode);
+      }
+      toast({
+        type: "error",
+        description: "Mode selection could not be saved.",
+      });
+    }
+  }, [chatExists, id, shared.interactionModeRef, shared.setInteractionMode]);
 
   const chatTransport = useMemo(
     () =>
@@ -1179,7 +1214,7 @@ export function Chat({
           }));
         }}
         onInterrupt={interruptActiveTurn}
-        onInteractionModeChange={shared.setInteractionMode}
+        onInteractionModeChange={(mode) => void changeInteractionMode(mode)}
         onModelChange={shared.setCurrentModelId}
         onRefreshConversationState={refreshConversationState}
         onRuntimeInteractionResponse={respondToRuntimeInteraction}
