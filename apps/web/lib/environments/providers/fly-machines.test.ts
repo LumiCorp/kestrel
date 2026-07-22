@@ -272,6 +272,45 @@ contractTest("web.hermetic", "Fly start retries a transient stopped-state reject
   assert.deepEqual(sleeps, [1000]);
 });
 
+contractTest("web.hermetic", "Fly start retries while a replacement Machine is created", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  const sleeps: number[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    sleepImpl: async (milliseconds) => {
+      sleeps.push(milliseconds);
+    },
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      const request = { method: init?.method ?? "GET", url: String(url) };
+      requests.push(request);
+      if (request.method === "POST" && requests.length === 1) {
+        return new Response(null, { status: 412 });
+      }
+      if (request.method === "GET") {
+        return Response.json({
+          id: "machine-1",
+          state: "created",
+          region: "iad",
+          config: {},
+        });
+      }
+      return Response.json({ ok: true });
+    }) as typeof fetch,
+  });
+
+  await client.startMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+  });
+
+  assert.deepEqual(
+    requests.map((request) => request.method),
+    ["POST", "GET", "POST"]
+  );
+  assert.deepEqual(sleeps, [1000]);
+});
+
 contractTest("web.hermetic", "Fly start fails closed after ten stopped-state retries", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const sleeps: number[] = [];

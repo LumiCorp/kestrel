@@ -568,7 +568,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             state: "stopped",
             timeoutSeconds: 60,
           });
-        } else if (machine?.state !== "stopped") {
+        } else if (
+          machine?.state !== "stopped" &&
+          machine?.state !== "created"
+        ) {
           throw new EnvironmentProviderError(
             "FLY_PROVIDER_REJECTED",
             `Fly Machine start was rejected while the authoritative Machine state was ${machine?.state ?? "unavailable"}.`,
