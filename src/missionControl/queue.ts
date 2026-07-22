@@ -57,7 +57,9 @@ export function applyTaskQueueAction(queue: TaskQueue, action: TaskAction): Task
     case "task.create":
       return createTask(current, action, "user", "queued");
     case "task.propose":
-      return createTask(current, action, "agent", "proposed");
+      return action.taskId === undefined
+        ? createTask(current, action, "agent", "proposed")
+        : reviseProposedTask(current, action);
     case "task.approve":
       return updateTask(current, requireTask(current, action.taskId), action, {
         status: "queued",
@@ -74,7 +76,7 @@ export function applyTaskQueueAction(queue: TaskQueue, action: TaskAction): Task
         ...(action.projectLabel !== undefined ? { projectLabel: cleanOptionalString(action.projectLabel) } : {}),
       });
     case "task.reorder":
-      return updateTask(current, requireTask(current, action.taskId), action, { order: action.order });
+      return updateTask(current, requireTask(current, action.taskId), action, {}, action.order);
     case "task.claim":
     case "task.mark_running":
       return claimTask(current, action);
@@ -167,14 +169,45 @@ function createTask(
     ...(action.projectLabel !== undefined ? { projectLabel: cleanOptionalString(action.projectLabel) } : {}),
     evidence: [makeEvidence(action, status === "proposed" ? "Task proposed." : "Task created.")],
   };
+  const tasks = {
+    ...queue.tasks,
+    [taskId]: task,
+  };
   return bumpQueue({
     ...queue,
     nextTaskNumber: queue.nextTaskNumber + 1,
-    tasks: {
-      ...queue.tasks,
-      [taskId]: task,
-    },
+    tasks: action.type === "task.propose" && action.order !== undefined
+      ? moveTaskToOrder(tasks, taskId, action.order)
+      : tasks,
   });
+}
+
+function reviseProposedTask(
+  queue: TaskQueue,
+  action: Extract<TaskAction, { type: "task.propose" }>,
+): TaskQueue {
+  const task = requireTask(queue, action.taskId);
+  if (task.createdBy !== "agent" || task.status !== "proposed") {
+    throw createRuntimeFailure(
+      "MISSION_CONTROL_TASK_PROPOSAL_REVISION_INVALID",
+      "Only agent-created proposed tasks can be revised through task.propose.",
+      {
+        taskId: task.id,
+        createdBy: task.createdBy,
+        status: task.status,
+      },
+    );
+  }
+  return updateTask(queue, task, action, {
+    title: requiredString(action.title, "title"),
+    instructions: requiredString(action.instructions, "instructions"),
+    ...(action.acceptanceCriteria !== undefined
+      ? { acceptanceCriteria: cleanOptionalString(action.acceptanceCriteria) }
+      : {}),
+    ...(action.priority !== undefined ? { priority: normalizePriority(action.priority) } : {}),
+    ...(action.projectPath !== undefined ? { projectPath: cleanOptionalString(action.projectPath) } : {}),
+    ...(action.projectLabel !== undefined ? { projectLabel: cleanOptionalString(action.projectLabel) } : {}),
+  }, action.order);
 }
 
 function claimTask(
@@ -196,6 +229,7 @@ function updateTask(
   task: Task,
   action: TaskAction,
   patch: Partial<Task>,
+  requestedOrder?: number | undefined,
 ): TaskQueue {
   const next: Task = {
     ...task,
@@ -206,13 +240,35 @@ function updateTask(
       makeEvidence(action, action.summary ?? defaultActionSummary(action.type)),
     ],
   };
+  const tasks = {
+    ...queue.tasks,
+    [next.id]: next,
+  };
   return bumpQueue({
     ...queue,
-    tasks: {
-      ...queue.tasks,
-      [next.id]: next,
-    },
+    tasks: requestedOrder === undefined
+      ? tasks
+      : moveTaskToOrder(tasks, next.id, requestedOrder),
   });
+}
+
+function moveTaskToOrder(
+  tasks: Record<string, Task>,
+  taskId: string,
+  requestedOrder: number,
+): Record<string, Task> {
+  const target = tasks[taskId];
+  if (target === undefined) {
+    return tasks;
+  }
+  const ordered = Object.values(tasks)
+    .filter((task) => task.id !== taskId)
+    .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
+  const targetIndex = Math.min(Math.max(Math.trunc(requestedOrder) - 1, 0), ordered.length);
+  ordered.splice(targetIndex, 0, target);
+  return Object.fromEntries(
+    ordered.map((task, index) => [task.id, { ...task, order: index + 1 }]),
+  );
 }
 
 function requireTask(queue: TaskQueue, taskId: string | undefined): Task {

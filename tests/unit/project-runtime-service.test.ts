@@ -111,6 +111,31 @@ contractTest("runtime.hermetic", "task.propose handler creates proposed Mission 
   assert.equal(task?.instructions, "Repair the auth callback regression and verify login succeeds with a regression test.");
   assert.equal(task?.evidence.at(-1)?.source, "agent");
   assert.equal(task?.evidence.at(-1)?.summary, "Proposed from the current conversation.");
+
+  const revisedResult = await handler({
+    sessionId,
+    taskId: "T-1",
+    title: "Fix Plan-mode auth callback",
+    instructions: "Repair the callback and preserve the proposal approval gate.",
+    order: 1,
+    summary: "Reconciled with the current session plan.",
+  });
+  const revisedSnapshot = (revisedResult as {
+    snapshot: Awaited<ReturnType<ProductProjectStateStore["getSnapshot"]>>;
+  }).snapshot;
+  assert.equal(revisedSnapshot.taskQueue.tasks["T-1"]?.title, "Fix Plan-mode auth callback");
+  assert.equal(revisedSnapshot.taskQueue.tasks["T-1"]?.status, "proposed");
+  assert.equal(revisedSnapshot.taskQueue.tasks["T-1"]?.evidence.at(-1)?.summary, "Reconciled with the current session plan.");
+
+  await assert.rejects(
+    () => handler({
+      sessionId,
+      title: "Invalid proposal order",
+      instructions: "Reject this input before it reaches the project store.",
+      order: 0,
+    }),
+    /order must be a positive integer/u,
+  );
 });
 
 contractTest("runtime.hermetic", "ProductProjectRuntimeService applies manual board moves before aborting assigned runs", async () => {
