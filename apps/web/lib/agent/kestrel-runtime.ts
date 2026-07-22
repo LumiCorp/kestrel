@@ -34,6 +34,10 @@ import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
 import {
+  persistRuntimeDialogMessage,
+  readRuntimeDialogMessage,
+} from "@/lib/turns/dialog-messages";
+import {
   resolveEnvironmentExecutionRoute,
   updateEnvironmentExecutionRuntimeIdentity,
   updateEnvironmentExecutionStatus,
@@ -231,6 +235,19 @@ function createModelAwareKestrelOneAgent(input: {
         let client: KestrelOneRunnerClient | null = null;
         let executionId: string | null = null;
         let environmentProgressSequence = 0;
+        const pendingDialogs = new Set<string>();
+        const dialogAbort = new AbortController();
+        let dialogDrain: Promise<void> | null = null;
+        let mainTerminal = false;
+        let retainClientForDialog = false;
+        const handleDialogEvent = async (event: Parameters<typeof readRuntimeDialogMessage>[0]) => {
+          const message = readRuntimeDialogMessage(event);
+          if (message === null) return;
+          if (message.sender === "kestrel" && message.status === undefined) pendingDialogs.add(message.dialogId);
+          else pendingDialogs.delete(message.dialogId);
+          await persistRuntimeDialogMessage({ threadId: input.threadId, message });
+          if (mainTerminal && pendingDialogs.size === 0) dialogAbort.abort();
+        };
         try {
           const route = await resolveEnvironmentExecutionRoute({
             organizationId: input.organizationId,
@@ -277,6 +294,20 @@ function createModelAwareKestrelOneAgent(input: {
             },
           });
           clients.add(client);
+          const dialogEvents = client.subscribe(
+            { threadId: input.threadId, eventTypes: ["task.updated"] },
+            context,
+            { signal: dialogAbort.signal },
+          );
+          dialogDrain = (async () => {
+            try {
+              for await (const event of dialogEvents) await handleDialogEvent(event);
+            } catch (error) {
+              if (!dialogAbort.signal.aborted) {
+                console.error("Collaborator dialog subscription failed", error);
+              }
+            }
+          })();
           const { signal, resumeRequestId, ...turn } = turnInput;
           const eventType = turn.eventType || "user.message";
           const normalizedTurn = {
@@ -321,6 +352,7 @@ function createModelAwareKestrelOneAgent(input: {
           );
           routed.attachCancel(() => downstream.cancel());
           for await (const event of downstream) {
+            if (event.type === "task.updated") await handleDialogEvent(event);
             if (event.type === "run.started" && event.runId) {
               await updateEnvironmentExecutionRuntimeIdentity({
                 organizationId: input.organizationId,
@@ -334,6 +366,9 @@ function createModelAwareKestrelOneAgent(input: {
             routed.push(event);
           }
           const terminal = await downstream.result;
+          mainTerminal = true;
+          if (pendingDialogs.size === 0) dialogAbort.abort();
+          else retainClientForDialog = true;
           await recordGitHubActionApprovalRequest({
             identity: {
               organizationId: input.organizationId,
@@ -363,8 +398,18 @@ function createModelAwareKestrelOneAgent(input: {
           routed.fail(error);
         } finally {
           if (client) {
-            clients.delete(client);
-            await client.close();
+            if (retainClientForDialog && dialogDrain !== null) {
+              const retainedClient = client;
+              void dialogDrain.finally(async () => {
+                clients.delete(retainedClient);
+                await retainedClient.close();
+              });
+            } else {
+              dialogAbort.abort();
+              await dialogDrain?.catch(() => {});
+              clients.delete(client);
+              await client.close();
+            }
           }
         }
       })();

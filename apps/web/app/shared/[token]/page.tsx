@@ -49,6 +49,17 @@ function SharedMessageCard({ message }: { message: ChatMessage }) {
             );
           }
 
+          if (part.type === "data-kestrel-dialog-message") {
+            return (
+              <div className="text-sm" key={`${message.id}-${index}`}>
+                <div className="mb-1 font-medium">
+                  {part.data.sender === "collaborator" ? part.data.name : part.data.sender === "kestrel" ? "Kestrel" : "System"}
+                </div>
+                <div className="whitespace-pre-wrap">{part.data.text}</div>
+              </div>
+            );
+          }
+
           return null;
         })}
       </CardContent>

@@ -517,6 +517,33 @@ export const threads = pgTable(
   ]
 );
 
+export const threadDialogs = pgTable(
+  "thread_dialogs",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    runtimeChildThreadId: text("runtime_child_thread_id").notNull(),
+    name: text("name").notNull(),
+    status: text("status", { enum: ["open", "closed"] })
+      .notNull()
+      .default("open"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("thread_dialogs_thread_id_idx").on(table.threadId),
+    uniqueIndex("thread_dialogs_open_name_idx")
+      .on(table.threadId, sql`lower(${table.name})`)
+      .where(sql`${table.status} = 'open'`),
+  ]
+);
+
 export const threadMessages = pgTable(
   "thread_messages",
   {
@@ -549,6 +576,14 @@ export const threadMessages = pgTable(
       .notNull()
       .default("web"),
     sourceMessageId: text("source_message_id"),
+    dialogId: text("dialog_id").references(() => threadDialogs.id, {
+      onDelete: "cascade",
+    }),
+    dialogMessageId: text("dialog_message_id"),
+    dialogName: text("dialog_name"),
+    dialogSender: text("dialog_sender", {
+      enum: ["kestrel", "collaborator", "system"],
+    }),
     ...knowledgeTimestamps,
   },
   (table) => [
@@ -567,6 +602,10 @@ export const threadMessages = pgTable(
     uniqueIndex("thread_messages_external_message_idx").on(
       table.threadId,
       table.externalMessageId
+    ),
+    uniqueIndex("thread_messages_dialog_message_idx").on(
+      table.threadId,
+      table.dialogMessageId
     ),
   ]
 );
