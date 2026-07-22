@@ -45,13 +45,16 @@ export type { KestrelBenchmarkContext, KestrelBenchmarkSource } from "./benchmar
 export {
   buildKestrelAgentCompactedTranscript,
   buildKestrelAgentCompactionMessages,
+  buildKestrelCompactionSummarySchema,
   buildKestrelTerminalBenchRepairPrompt,
   KESTREL_COMPACTION_SUMMARY_SCHEMA,
   parseKestrelCompactionSummaryV1,
+  planKestrelAgentCompaction,
   shouldCompactKestrelAgentContext,
   type KestrelCompactionSummaryV1,
   type KestrelAgentCompactedTranscriptInput,
   type KestrelAgentCompactionBuildInput,
+  type KestrelAgentCompactionPlan,
   type KestrelAgentCompactionPolicyInput,
   type KestrelTerminalBenchRepairPromptInput,
 } from "./maintenancePrompts.js";

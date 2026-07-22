@@ -94,16 +94,15 @@ export function readActiveTaskGoalFromTranscript(value: unknown): string | undef
   if (transcript === undefined) {
     return ;
   }
-  for (const item of transcript.items) {
-    if (item.kind !== "user") {
-      continue;
-    }
-    const content = item.content?.trim();
-    if (content !== undefined && content.length > 0) {
-      return content;
-    }
+  return readActiveTaskItemFromTranscript(transcript)?.content?.trim();
+}
+
+export function readActiveTaskItemIdFromTranscript(value: unknown): string | undefined {
+  const transcript = normalizeModelTranscript(value);
+  if (transcript === undefined) {
+    return ;
   }
-  return ;
+  return readActiveTaskItemFromTranscript(transcript)?.id;
 }
 
 export function appendModelTranscriptItems(

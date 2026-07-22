@@ -11,6 +11,7 @@ import {
 import {
   buildKestrelAgentContext as buildContextRequest,
   buildKestrelAgentCompactionMessages,
+  buildKestrelCompactionSummarySchema,
   buildKestrelAgentContext,
   buildKestrelAgentCompactedTranscript,
   buildKestrelAgentToolModelContext,
@@ -19,6 +20,7 @@ import {
   buildKestrelAgentValidationFeedbackMessage,
   buildKestrelTerminalBenchRepairPrompt,
   shouldCompactKestrelAgentContext,
+  type KestrelCompactionSummaryV1,
 } from "../../src/runtime/KestrelAgentContextBuilder.js";
 import { contractTest } from "../helpers/contract-test.js";
 import { readActiveTaskGoalFromTranscript } from "../../src/runtime/modelTranscript.js";
@@ -532,6 +534,8 @@ contractTest("runtime.hermetic", "Kestrel deliberator system prompt keeps contex
 
 contractTest("runtime.hermetic", "Kestrel agent context builder owns compaction prompt messages", () => {
   const messages = buildKestrelAgentCompactionMessages({
+    activeTaskItemId: "user_1_1",
+    replacedItemIds: [],
     contextMessages: [
       {
         role: "user",
@@ -545,7 +549,26 @@ contractTest("runtime.hermetic", "Kestrel agent context builder owns compaction 
   assert.equal(messages[1]?.role, "user");
   assert.match(String(messages[1]?.content), /Task: Continue/u);
   assert.equal(messages[2]?.role, "user");
-  assert.equal(messages[2]?.content, "Write the compact continuation summary now.");
+  assert.match(String(messages[0]?.content), /Set activeTaskItemId to the exact retained active task item id supplied below/u);
+  assert.match(String(messages[2]?.content), /Retained active task item id: "user_1_1"/u);
+  assert.deepEqual(
+    (buildKestrelCompactionSummarySchema("user_1_1", []).properties as Record<string, unknown>).activeTaskItemId,
+    { type: "string", enum: ["user_1_1"] },
+  );
+  assert.deepEqual(
+    (buildKestrelCompactionSummarySchema("user_1_1", []).properties as Record<string, unknown>).coveredItemIds,
+    { type: "array", items: { type: "string" }, maxItems: 0 },
+  );
+  assert.deepEqual(
+    (buildKestrelCompactionSummarySchema("user_1_1", ["item-2", "item-3"]).properties as Record<string, unknown>).coveredItemIds,
+    {
+      type: "array",
+      items: { type: "string", enum: ["item-2", "item-3"] },
+      minItems: 2,
+      maxItems: 2,
+      uniqueItems: true,
+    },
+  );
   assert.equal(shouldCompactKestrelAgentContext({ transcript: { version: 1, windowId: 1, items: [] } }), false);
   const transcript = {
       version: 1,
@@ -558,12 +581,33 @@ contractTest("runtime.hermetic", "Kestrel agent context builder owns compaction 
           content: "Older work.",
           stepIndex: 1,
         },
+        {
+          id: "user_1_2",
+          createdAt: "2026-07-22T00:01:00.000Z",
+          kind: "user",
+          content: "A later follow-up.",
+          stepIndex: 2,
+        },
       ],
     };
   assert.throws(() => buildKestrelAgentCompactedTranscript({
     transcript,
     summary: undefined,
   }), /must be an object/u);
+  assert.throws(() => buildKestrelAgentCompactedTranscript({
+    transcript,
+    summary: {
+      version: 1,
+      activeTaskItemId: "user_1_2",
+      decisions: [],
+      constraints: [],
+      evidence: [],
+      fileState: [],
+      blockers: [],
+      nextActions: [],
+      coveredItemIds: [],
+    },
+  }), /does not identify the retained active task item/u);
   const compacted = buildKestrelAgentCompactedTranscript({
     transcript,
     summary: {
@@ -657,6 +701,67 @@ contractTest("runtime.hermetic", "Kestrel compaction fails closed when a replace
       coveredItemIds: [],
     },
   }), /does not preserve replaced item/u);
+});
+
+contractTest("runtime.hermetic", "Kestrel compaction treats a matched tool call and result as one semantic anchor", () => {
+  const transcript = {
+    version: 1,
+    windowId: 1,
+    items: [
+      {
+        id: "mt_1_0001_user",
+        createdAt: "2026-07-22T00:00:00.000Z",
+        kind: "user",
+        content: "Complete the long-running task.",
+      },
+      {
+        id: "mt_1_0002_tool_call",
+        createdAt: "2026-07-22T00:00:01.000Z",
+        kind: "tool_call",
+        toolName: "fs.read_text",
+        toolInput: { path: "src/app.ts" },
+        toolCallId: "call-1",
+      },
+      {
+        id: "mt_1_0003_tool_result",
+        createdAt: "2026-07-22T00:00:02.000Z",
+        kind: "tool_result",
+        toolName: "fs.read_text",
+        toolCallId: "call-1",
+        toolOutput: { text: "export const ready = true;" },
+      },
+      ...Array.from({ length: 24 }, (_, index) => ({
+        id: `tail-${index}`,
+        createdAt: `2026-07-22T00:01:${String(index).padStart(2, "0")}.000Z`,
+        kind: "assistant_text",
+        content: `Later retained work ${index}`,
+      })),
+    ],
+  };
+
+  const compacted = buildKestrelAgentCompactedTranscript({
+    transcript,
+    summary: {
+      version: 1,
+      activeTaskItemId: "mt_1_0001_user",
+      decisions: [],
+      constraints: [],
+      evidence: [{
+        text: "The inspected file reported the ready export.",
+        sourceItemIds: ["mt_1_0003_tool_result"],
+      }],
+      fileState: [],
+      blockers: [],
+      nextActions: [],
+      coveredItemIds: ["mt_1_0002_tool_call", "mt_1_0003_tool_result"],
+    },
+  });
+
+  const summary = JSON.parse(compacted.items[0]?.content ?? "null") as KestrelCompactionSummaryV1;
+  assert.deepEqual(summary.evidence[0]?.sourceItemIds, [
+    "mt_1_0003_tool_result",
+    "mt_1_0002_tool_call",
+  ]);
 });
 
 contractTest("runtime.hermetic", "repeated compaction preserves the active task and explicit semantic-anchor provenance", () => {

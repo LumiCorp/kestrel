@@ -4,6 +4,7 @@ import {
   estimateModelTranscriptChars,
   normalizeModelTranscript,
   planModelTranscriptCompaction,
+  readActiveTaskItemIdFromTranscript,
   type ModelTranscriptItem,
   type ModelTranscript,
 } from "../modelTranscript.js";
@@ -12,7 +13,16 @@ import type { HarnessEconomicsPolicyV1, ModelEconomicsProfileV1 } from "../../ec
 
 export interface KestrelAgentCompactionBuildInput {
   contextMessages: ModelMessage[];
+  activeTaskItemId: string;
+  replacedItemIds: string[];
   sourceItems?: ModelTranscriptItem[] | undefined;
+}
+
+export interface KestrelAgentCompactionPlan {
+  transcript: ModelTranscript;
+  activeTaskItemId: string;
+  retainedItemIds: string[];
+  replacedItemIds: string[];
 }
 
 export interface KestrelAgentCompactionPolicyInput {
@@ -75,6 +85,50 @@ export const KESTREL_COMPACTION_SUMMARY_SCHEMA = {
   required: ["version", "activeTaskItemId", "decisions", "constraints", "evidence", "fileState", "blockers", "nextActions", "coveredItemIds"],
 } as const;
 
+export function buildKestrelCompactionSummarySchema(
+  activeTaskItemId: string,
+  replacedItemIds: string[],
+): Record<string, unknown> {
+  const exactCoveredItemsSchema = replacedItemIds.length === 0
+    ? { type: "array", items: { type: "string" }, maxItems: 0 }
+    : {
+        type: "array",
+        items: { type: "string", enum: replacedItemIds },
+        minItems: replacedItemIds.length,
+        maxItems: replacedItemIds.length,
+        uniqueItems: true,
+      };
+  return {
+    ...KESTREL_COMPACTION_SUMMARY_SCHEMA,
+    properties: {
+      ...KESTREL_COMPACTION_SUMMARY_SCHEMA.properties,
+      activeTaskItemId: { type: "string", enum: [activeTaskItemId] },
+      coveredItemIds: exactCoveredItemsSchema,
+    },
+  };
+}
+
+export function planKestrelAgentCompaction(transcriptInput: unknown): KestrelAgentCompactionPlan {
+  const transcript = normalizeModelTranscript(transcriptInput);
+  if (transcript === undefined) {
+    throw createRuntimeFailure("HARNESS_ECONOMICS_COMPACTION_TRANSCRIPT_INVALID", "Compaction requires a valid model transcript.");
+  }
+  const plan = planModelTranscriptCompaction({
+    transcript,
+    retainedTailItems: MODEL_TRANSCRIPT_RETAINED_TAIL_ITEMS,
+  });
+  const activeTaskItemId = readActiveTaskItemIdFromTranscript(transcript);
+  if (activeTaskItemId === undefined) {
+    throw createRuntimeFailure("HARNESS_ECONOMICS_COMPACTION_TRANSCRIPT_INVALID", "Compaction requires a retained active task item.");
+  }
+  return {
+    transcript,
+    activeTaskItemId,
+    retainedItemIds: plan.retainedItems.map((item) => item.id),
+    replacedItemIds: plan.replacedItems.map((item) => item.id),
+  };
+}
+
 export function buildKestrelAgentCompactionMessages(
   input: KestrelAgentCompactionBuildInput,
 ): ModelMessage[] {
@@ -85,7 +139,10 @@ export function buildKestrelAgentCompactionMessages(
         "Summarize the older transcript for continuation.",
         "Preserve durable user intent, completed work, current files/results known from the transcript, open todos or blockers, and the next useful handoff.",
         "Preserve constraint facts, zero-result searches, the chronologically latest successful or failed tool results, exact mutation summaries, open todos, and current blockers.",
-        "Return the required JSON object. Every replaced transcript item id must appear in coveredItemIds and in at least one semantic anchor sourceItemIds list.",
+        "Set activeTaskItemId to the exact retained active task item id supplied below. Do not select a newer follow-up user item.",
+        "Set coveredItemIds to exactly the supplied replaced item ids. Do not include retained item ids.",
+        "Every replaced semantic item must appear in at least one semantic anchor sourceItemIds list.",
+        "A matched tool_call and tool_result are one semantic unit: cite either item id in the relevant anchor and Kestrel will preserve provenance for the complete pair.",
         "Do not invent evidence or hidden state.",
       ].join("\n"),
     },
@@ -93,11 +150,23 @@ export function buildKestrelAgentCompactionMessages(
     {
       role: "user",
       content: input.sourceItems === undefined || input.sourceItems.length === 0
-        ? "Write the compact continuation summary now."
+        ? [
+            "Write the compact continuation summary now.",
+            `Retained active task item id: ${JSON.stringify(input.activeTaskItemId)}`,
+            `Exact replaced item ids: ${JSON.stringify(input.replacedItemIds)}`,
+          ].join("\n")
         : [
             "Write the compact continuation summary now.",
+            `Retained active task item id: ${JSON.stringify(input.activeTaskItemId)}`,
+            `Exact replaced item ids: ${JSON.stringify(input.replacedItemIds)}`,
             "Source transcript items:",
-            JSON.stringify(input.sourceItems.map((item) => ({ id: item.id, kind: item.kind, toolName: item.toolName }))),
+            JSON.stringify(input.sourceItems.map((item) => ({
+              id: item.id,
+              kind: item.kind,
+              toolName: item.toolName,
+              toolCallId: item.toolCallId,
+              disposition: input.replacedItemIds.includes(item.id) ? "replaced" : "retained",
+            }))),
           ].join("\n"),
     },
   ];
@@ -126,21 +195,76 @@ export function shouldCompactKestrelAgentContext(
 export function buildKestrelAgentCompactedTranscript(
   input: KestrelAgentCompactedTranscriptInput,
 ): ModelTranscript {
-  const transcript = normalizeModelTranscript(input.transcript);
-  if (transcript === undefined) {
-    throw createRuntimeFailure("HARNESS_ECONOMICS_COMPACTION_TRANSCRIPT_INVALID", "Compaction requires a valid model transcript.");
-  }
+  const compactionPlan = planKestrelAgentCompaction(input.transcript);
+  const transcript = compactionPlan.transcript;
   const plan = planModelTranscriptCompaction({
     transcript,
     retainedTailItems: MODEL_TRANSCRIPT_RETAINED_TAIL_ITEMS,
   });
-  const summary = parseKestrelCompactionSummaryV1(input.summary);
+  const summary = normalizeToolPairAnchorProvenance({
+    transcript,
+    plan,
+    summary: parseKestrelCompactionSummaryV1(input.summary),
+  });
   validateCompactionSufficiency(transcript, plan, summary);
   return compactModelTranscript({
     transcript,
     summary: JSON.stringify(summary),
     retainedTailItems: MODEL_TRANSCRIPT_RETAINED_TAIL_ITEMS,
   });
+}
+
+function normalizeToolPairAnchorProvenance(input: {
+  transcript: ModelTranscript;
+  plan: ReturnType<typeof planModelTranscriptCompaction>;
+  summary: KestrelCompactionSummaryV1;
+}): KestrelCompactionSummaryV1 {
+  const replacedIds = new Set(input.plan.replacedItems.map((item) => item.id));
+  const itemsById = new Map(input.transcript.items.map((item) => [item.id, item]));
+  const pairIdsByToolCallId = new Map<string, string[]>();
+  for (const item of input.transcript.items) {
+    const toolCallId = item.kind === "tool_call"
+      ? item.toolCallId ?? item.id
+      : item.kind === "tool_result"
+        ? item.toolCallId
+        : undefined;
+    if (toolCallId === undefined || replacedIds.has(item.id) === false) {
+      continue;
+    }
+    pairIdsByToolCallId.set(toolCallId, [
+      ...(pairIdsByToolCallId.get(toolCallId) ?? []),
+      item.id,
+    ]);
+  }
+
+  const normalizeAnchors = (anchors: KestrelCompactionAnchorV1[]): KestrelCompactionAnchorV1[] => anchors.map((anchor) => {
+    const sourceItemIds = new Set(anchor.sourceItemIds);
+    for (const sourceItemId of anchor.sourceItemIds) {
+      const item = itemsById.get(sourceItemId);
+      const toolCallId = item?.kind === "tool_call"
+        ? item.toolCallId ?? item.id
+        : item?.kind === "tool_result"
+          ? item.toolCallId
+          : undefined;
+      if (toolCallId === undefined) {
+        continue;
+      }
+      for (const pairItemId of pairIdsByToolCallId.get(toolCallId) ?? []) {
+        sourceItemIds.add(pairItemId);
+      }
+    }
+    return { ...anchor, sourceItemIds: [...sourceItemIds] };
+  });
+
+  return {
+    ...input.summary,
+    decisions: normalizeAnchors(input.summary.decisions),
+    constraints: normalizeAnchors(input.summary.constraints),
+    evidence: normalizeAnchors(input.summary.evidence),
+    fileState: normalizeAnchors(input.summary.fileState),
+    blockers: normalizeAnchors(input.summary.blockers),
+    nextActions: normalizeAnchors(input.summary.nextActions),
+  };
 }
 
 export function parseKestrelCompactionSummaryV1(value: unknown): KestrelCompactionSummaryV1 {
@@ -167,8 +291,8 @@ function validateCompactionSufficiency(
   plan: ReturnType<typeof planModelTranscriptCompaction>,
   summary: KestrelCompactionSummaryV1,
 ): void {
-  const activeTask = transcript.items.find((item) => item.kind === "user" && item.content?.trim());
-  if (activeTask === undefined || summary.activeTaskItemId !== activeTask.id) {
+  const activeTaskItemId = readActiveTaskItemIdFromTranscript(transcript);
+  if (activeTaskItemId === undefined || summary.activeTaskItemId !== activeTaskItemId) {
     throw compactionFailure("Compaction summary does not identify the retained active task item.");
   }
   const knownIds = new Set(transcript.items.map((item) => item.id));

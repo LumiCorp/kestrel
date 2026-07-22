@@ -45,9 +45,10 @@ import {
   buildKestrelAgentContext as buildContextRequest,
   buildKestrelAgentCompactedTranscript,
   buildKestrelAgentCompactionMessages,
+  buildKestrelCompactionSummarySchema,
   buildKestrelAgentValidationFeedbackMessage,
+  planKestrelAgentCompaction,
   shouldCompactKestrelAgentContext,
-  KESTREL_COMPACTION_SUMMARY_SCHEMA,
   type KestrelAgentCannotSatisfyReasonCode,
   type KestrelAgentFinalizeStatus,
 } from "../../../../src/runtime/KestrelAgentContextBuilder.js";
@@ -1102,6 +1103,8 @@ async function compactContextRequestIfNeeded(input: {
   if (compactionSource === undefined) {
     throw new Error("Compaction requires a valid model transcript.");
   }
+  const compactionPlan = planKestrelAgentCompaction(compactionSource);
+  const { activeTaskItemId, replacedItemIds } = compactionPlan;
   const response = await input.io.useModel<ModelResponse<unknown>>({
     model: input.config.agentModel,
     input: {
@@ -1110,10 +1113,12 @@ async function compactContextRequestIfNeeded(input: {
     },
     messages: buildKestrelAgentCompactionMessages({
       contextMessages: input.contextRequest.contextMessages,
+      activeTaskItemId,
+      replacedItemIds,
       sourceItems: compactionSource.items,
     }),
     responseFormat: "json",
-    responseSchema: KESTREL_COMPACTION_SUMMARY_SCHEMA as unknown as Record<string, unknown>,
+    responseSchema: buildKestrelCompactionSummarySchema(activeTaskItemId, replacedItemIds),
     reasoning: { mode: "off" },
     providerOptions: {
       openrouter: { endpoint: "chat", toolChoice: "none" },

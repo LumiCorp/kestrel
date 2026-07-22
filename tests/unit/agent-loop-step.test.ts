@@ -2002,6 +2002,12 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
           kind: "user",
           content: originalTask,
         },
+        {
+          id: "mt_1_0002_user",
+          createdAt: "2026-06-15T12:01:00.000Z",
+          kind: "user",
+          content: "Later follow-up that must not replace the active task identity.",
+        },
       ],
     },
   };
@@ -2046,6 +2052,19 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
   assert.match(
     systemContent as string,
     /Preserve constraint facts, zero-result searches, the chronologically latest successful or failed tool results, exact mutation summaries, open todos, and current blockers/u,
+  );
+  assert.match(systemContent as string, /Do not select a newer follow-up user item/u);
+  const compactionInstruction = compactionRequest.messages?.at(-1)?.content;
+  assert.equal(typeof compactionInstruction, "string");
+  assert.match(compactionInstruction as string, /Retained active task item id: "mt_1_0001_user"/u);
+  assert.match(compactionInstruction as string, /Exact replaced item ids: \[\]/u);
+  assert.deepEqual(
+    (compactionRequest.responseSchema?.properties as Record<string, unknown>).activeTaskItemId,
+    { type: "string", enum: ["mt_1_0001_user"] },
+  );
+  assert.deepEqual(
+    (compactionRequest.responseSchema?.properties as Record<string, unknown>).coveredItemIds,
+    { type: "array", items: { type: "string" }, maxItems: 0 },
   );
   const finalRequest = requests.find((request) => request.metadata?.phase === "agent.loop");
   assert.ok(finalRequest);
