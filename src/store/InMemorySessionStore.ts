@@ -1016,6 +1016,10 @@ export class InMemorySessionStore implements SessionStore {
     return this.orchestrationStore.upsertContextPolicyDefinition(record);
   }
 
+  async getContextPolicyDefinition(contextPolicyId: string) {
+    return this.orchestrationStore.getContextPolicyDefinition(contextPolicyId);
+  }
+
   async listContextPolicyDefinitions() {
     return this.orchestrationStore.listContextPolicyDefinitions();
   }

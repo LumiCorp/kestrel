@@ -16,6 +16,10 @@ import {
 import type {
   GuardrailConfig,
 } from "../../src/kestrel/contracts/execution.js";
+import {
+  parseHarnessEconomicsPolicyV1,
+  parseModelEconomicsProfileV1,
+} from "../../src/economics/policy.js";
 import type {
   McpServerConfig,
 } from "../../src/mcp/contracts.js";
@@ -401,6 +405,12 @@ function validateProfile(value: unknown, version: 2 | 3 | 4, notices: string[]):
   const theme = version >= 3 ? parseTheme(item.theme, id, notices) : undefined;
   const delegation = version >= 3 ? parseDelegation(item.delegation) : undefined;
   const reasoning = version >= 4 ? parseReasoningPolicy(item.reasoning, id) : undefined;
+  const harnessEconomicsPolicy = item.harnessEconomicsPolicy === undefined
+    ? undefined
+    : parseHarnessEconomicsPolicyV1(item.harnessEconomicsPolicy);
+  const modelEconomicsProfile = item.modelEconomicsProfile === undefined
+    ? undefined
+    : parseModelEconomicsProfileV1(item.modelEconomicsProfile);
 
   return {
     id,
@@ -429,6 +439,8 @@ function validateProfile(value: unknown, version: 2 | 3 | 4, notices: string[]):
     ...(delegation !== undefined ? { delegation } : {}),
     ...(theme !== undefined ? { theme } : {}),
     ...(reasoning !== undefined ? { reasoning } : {}),
+    ...(harnessEconomicsPolicy !== undefined ? { harnessEconomicsPolicy } : {}),
+    ...(modelEconomicsProfile !== undefined ? { modelEconomicsProfile } : {}),
     ...(defaultFlag !== undefined ? { default: defaultFlag } : {}),
   };
 }

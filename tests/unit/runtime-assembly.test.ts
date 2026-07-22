@@ -14,9 +14,11 @@ contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, speci
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
-    profile: buildProfile({
-      toolAllowlist: ["fs.read_text", "web.search"],
-    }),
+    profile: {
+      ...buildProfile({ toolAllowlist: ["fs.read_text", "web.search"] }),
+      harnessEconomicsPolicy: economicsPolicy(),
+      modelEconomicsProfile: economicsModelProfile(),
+    },
   });
 
   const defaults = await catalog.ensureDefaults();
@@ -25,6 +27,7 @@ contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, speci
   assert.equal(defaults.defaultBundle?.bundleId, "bundle:reference:default");
   assert.equal(defaults.defaultBundle?.label, "Reference on web:web_balanced");
   assert.equal(defaults.defaultContextPolicy.contextPolicyId, "context-policy:reference:default");
+  assert.equal(defaults.defaultContextPolicy.economicsPolicy?.mode, "observe");
   assert.equal(defaults.specialists[0]?.specialistId, "specialist:reference:delegation");
   assert.deepEqual(persistedBundle?.toolAllowlist, ["fs.read_text", "web.search"]);
   assert.equal(persistedBundle?.metadata?.agentProfileId, "reference");
@@ -37,6 +40,7 @@ contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, speci
   assert.equal(persistedBundle?.metadata?.modelProvider, "openrouter");
   assert.equal(persistedBundle?.metadata?.promptVariant, "reference-react:chat");
   assert.equal(persistedBundle?.metadata?.compatibilityProfile, "router.chat");
+  assert.deepEqual(persistedBundle?.metadata?.modelEconomicsProfile, economicsModelProfile());
 });
 
 contractTest("runtime.hermetic", "AssemblyPolicyEvaluator rejects unknown bundles and requires approval for model widening", () => {
@@ -377,6 +381,43 @@ function buildProfile(input?: { toolAllowlist?: string[] | undefined }): TuiProf
     delegation: {
       allowAgentSpawn: true,
       maxConcurrentChildSessions: 2,
+    },
+  };
+}
+
+function economicsPolicy(): NonNullable<TuiProfile["harnessEconomicsPolicy"]> {
+  return {
+    version: 1,
+    policyId: "economics:reference:observe:v1",
+    mode: "observe",
+    counting: { estimatorVersion: "utf8-byte-upper-bound:v1", allowEstimatedEnforcement: false },
+    context: {
+      outputReserveTokens: 8_000,
+      safetyReserveTokens: 2_000,
+      sections: [{ id: "active-task", priority: "required" }],
+    },
+    compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
+    tools: {
+      exposure: "assembly_allowlist",
+      modelContextMaxTokens: 4_000,
+      allowedFamiliesByPhase: { agent: ["filesystem"] },
+    },
+  };
+}
+
+function economicsModelProfile(): NonNullable<TuiProfile["modelEconomicsProfile"]> {
+  return {
+    version: 1,
+    profileId: "openrouter:mock-model:v1",
+    provider: "openrouter",
+    model: "mock-model",
+    contextWindowTokens: 100_000,
+    maxOutputTokens: 8_000,
+    counting: {
+      counter: "mock-tokenizer",
+      counterVersion: "1",
+      method: "exact",
+      confidence: "exact",
     },
   };
 }

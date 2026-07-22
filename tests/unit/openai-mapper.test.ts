@@ -15,6 +15,28 @@ const env = {
   baseUrl: "https://api.openai.com",
 };
 
+contractTest("runtime.hermetic", "OpenAI mapper preserves cache and reasoning token classes", () => {
+  const mapped = mapOpenAiResponse({
+    model: "gpt-5.2",
+    choices: [{ message: { content: "done" } }],
+    usage: {
+      prompt_tokens: 20,
+      completion_tokens: 10,
+      total_tokens: 30,
+      prompt_tokens_details: { cached_tokens: 8 },
+      completion_tokens_details: { reasoning_tokens: 4 },
+    },
+  }, { providerName: "openai", requestedModel: "gpt-5.2" });
+
+  assert.deepEqual(mapped.usage, {
+    inputTokens: 20,
+    outputTokens: 10,
+    totalTokens: 30,
+    cachedInputTokens: 8,
+    reasoningTokens: 4,
+  });
+});
+
 contractTest("runtime.hermetic", "OpenAI request builder enables native parallel tool calls", () => {
   const request: ModelRequest = {
     input: {

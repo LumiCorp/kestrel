@@ -67,6 +67,7 @@ export type ModelGatewayStreamEvent =
   | {
       type: "attempt.started";
       attempt: number;
+      maxAttempts: number;
     }
   | {
       type: "reasoning.started";
@@ -102,6 +103,18 @@ export type ModelGatewayStreamEvent =
   | {
       type: "attempt.completed";
       attempt: number;
+      latencyMs: number;
+    }
+  | {
+      type: "attempt.failed";
+      attempt: number;
+      latencyMs: number;
+      failureCode?: string | undefined;
+      failureClass?: string | undefined;
+      retryable: boolean;
+      willRetry: boolean;
+      visibleOutputStarted: boolean;
+      retryDelayMs?: number | undefined;
     };
 
 export type ModelGatewayEventSink = (
@@ -208,6 +221,9 @@ export interface ModelUsage {
   inputTokens?: number | undefined;
   outputTokens?: number | undefined;
   totalTokens?: number | undefined;
+  cachedInputTokens?: number | undefined;
+  cacheWriteInputTokens?: number | undefined;
+  reasoningTokens?: number | undefined;
 }
 
 export interface ProviderOptions {

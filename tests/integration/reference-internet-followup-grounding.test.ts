@@ -5,6 +5,7 @@ import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -74,7 +75,7 @@ contractTest("runtime.process", "reference harness grounds a prior news headline
     async call<T>(name: string, input: unknown): Promise<T> {
       toolCalls.push({ name, input });
       if (name === "internet.news") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           status: "ok",
           provider: "tavily",
           attempts: 1,
@@ -89,10 +90,10 @@ contractTest("runtime.process", "reference harness grounds a prior news headline
               snippet: "The Ravens pivoted after the Maxx Crosby deal fell through.",
             },
           ],
-        } as T;
+        } }) as T;
       }
       if (name === "internet.search") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           status: "ok",
           provider: "tavily",
           attempts: 1,
@@ -128,10 +129,10 @@ contractTest("runtime.process", "reference harness grounds a prior news headline
               source: "WLWT",
             },
           ],
-        } as T;
+        } }) as T;
       }
       if (name === "internet.extract") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           status: "ok",
           provider: "tavily",
           attempts: 1,
@@ -145,14 +146,14 @@ contractTest("runtime.process", "reference harness grounds a prior news headline
           quality: "high",
           truncated: false,
           contentIssues: [],
-        } as T;
+        } }) as T;
       }
       if (name === "FinalizeAnswer") {
         finalized.push(input as Record<string, unknown>);
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           accepted: true,
           payload: input,
-        } as T;
+        } }) as T;
       }
       throw new Error(`Unexpected tool call '${name}'`);
     },

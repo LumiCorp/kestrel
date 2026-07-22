@@ -1,4 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   accessSync,
   constants,
@@ -21,6 +22,14 @@ import {
 import {
   buildKestrelTerminalBenchRepairPrompt,
 } from "../src/runtime/KestrelAgentContextBuilder.js";
+import {
+  createHarnessEfficiencyLedgerV1,
+  createHarnessEfficiencyResultV1,
+  emptyHarnessEfficiencyEconomics,
+  hashHarnessEfficiencyValue,
+  readHarnessEfficiencyEconomicsFromLedger,
+  readHarnessEfficiencyEconomicsFromReplayBundle,
+} from "../src/economics/index.js";
 
 type Adapter = "kestrel";
 type LegacyAdapterSelection = "runtime" | "cli" | "both";
@@ -1801,7 +1810,7 @@ function runBenchmarkCommand(input: {
     adapter: input.command.adapter,
     outcome,
   });
-  return {
+  const run: BenchmarkRunRecord = {
     adapter: input.command.adapter,
     runId,
     args,
@@ -1815,6 +1824,190 @@ function runBenchmarkCommand(input: {
         }
       : {}),
   };
+  writeTerminalBenchEfficiencyResults({
+    run,
+    command: input.command,
+    dataset: readArgumentValue(input.command.args, "--dataset") ?? DEFAULT_DATASET,
+    env: input.env,
+  });
+  return run;
+}
+
+export function writeTerminalBenchEfficiencyResults(input: {
+  run: BenchmarkRunRecord;
+  command: TerminalBenchCommand;
+  dataset: string;
+  env: NodeJS.ProcessEnv;
+}): string[] {
+  const adapterResults = readAdapterResultRecords(input.run.runDir, input.run.adapter);
+  if (adapterResults.length === 0) return [];
+  const outputDir = path.join(input.run.runDir, "harness-efficiency");
+  mkdirSync(outputDir, { recursive: true });
+  const outputs: string[] = [];
+  for (const adapterResult of adapterResults) {
+    const record = adapterResult.record;
+    const taskId = readNonEmptyRecordString(record, "task_id") ?? "unknown";
+    const adapterStatus = readNonEmptyRecordString(record, "status") ?? "failed";
+    const explicitlyUnresolved = input.run.outcome?.unresolvedIds.includes(taskId) === true;
+    const hasEvaluatorOutcome = input.run.outcome !== undefined &&
+      (input.run.outcome.nResolved + input.run.outcome.nUnresolved > 0);
+    const accepted = hasEvaluatorOutcome && explicitlyUnresolved === false && adapterStatus === "completed" &&
+      input.run.outcome?.artifactPassedButAgentFailed !== true;
+    const acceptance = hasEvaluatorOutcome === false ? "not_evaluated" : accepted ? "accepted" : "rejected";
+    const recordedAt = new Date().toISOString();
+    const outcome = {
+      evaluatorId: "terminal-bench",
+      evaluatorVersion: "1",
+      independentlyEvaluated: hasEvaluatorOutcome,
+      acceptance,
+      failureClass: acceptance === "accepted"
+        ? "none"
+        : readNonEmptyRecordString(record, "failure_kind") ?? input.run.failureKind ?? "terminal_bench_unresolved",
+    } as const;
+    const replayBundlePath = resolveRecordedArtifactPath(input.run.runDir, record.runtime_replay_bundle_path);
+    const replayBundle = replayBundlePath === undefined ? undefined : readJsonRecord(replayBundlePath);
+    let economics = replayBundle === undefined
+      ? emptyHarnessEfficiencyEconomics(["runtimeReplayBundle", "efficiencyLedger"])
+      : readHarnessEfficiencyEconomicsFromReplayBundle(replayBundle, acceptance);
+    const safeTaskId = taskId.replace(/[^a-zA-Z0-9_.-]+/gu, "_");
+    const ledgerPath = path.join(outputDir, `${safeTaskId}.ledger.json`);
+    let ledgerWritten = false;
+    if (replayBundle !== undefined) {
+      try {
+        const ledger = createHarnessEfficiencyLedgerV1({
+          replayBundle,
+          recordedAt,
+          runId: readNonEmptyRecordString(record, "kestrel_run_id"),
+          sessionId: readNonEmptyRecordString(record, "kestrel_session_id"),
+          outcome,
+        });
+        writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2) + "\n", "utf8");
+        economics = readHarnessEfficiencyEconomicsFromLedger(ledger);
+        ledgerWritten = true;
+      } catch {
+        economics = {
+          ...economics,
+          status: "incomplete",
+          missingFields: [...new Set([...economics.missingFields, "efficiencyLedger"])],
+          tokensPerAcceptedSuccess: null,
+          costPerAcceptedSuccessUsd: null,
+        };
+      }
+    }
+    const harnessRevision = readNonEmptyRecordString(record, "harness_revision");
+    if (harnessRevision === undefined) {
+      economics = { ...economics, status: "incomplete", missingFields: [...new Set([...economics.missingFields, "frozen.harnessRevision"])] };
+    }
+    const jobInputPath = resolveRecordedArtifactPath(input.run.runDir, record.job_input_path);
+    const jobInput = jobInputPath === undefined ? undefined : readJsonRecord(jobInputPath);
+    const profile = isRecord(jobInput?.profile) ? jobInput.profile : undefined;
+    const modelProvider = readNonEmptyRecordString(record, "model_provider") ?? "unknown";
+    const model = readNonEmptyRecordString(record, "model") ?? "unknown";
+    const trial = readTerminalBenchTrial(input.env.KESTREL_BENCHMARK_TRIAL);
+    const taskInputHash = readHashRecordString(record, "job_input_sha256") ?? hashHarnessEfficiencyValue({ dataset: input.dataset, taskId });
+    const result = createHarnessEfficiencyResultV1({
+      pairId: input.env.KESTREL_BENCHMARK_PAIR_ID?.trim() || `terminal_bench:${input.dataset}:${taskId}:trial:${trial}`,
+      lane: "terminal_bench",
+      dataset: input.dataset,
+      taskId,
+      attemptId: input.run.runId,
+      trial,
+      recordedAt,
+      durationMs: readNonNegativeRecordNumber(record, "duration_ms") ?? 0,
+      frozen: {
+        protocolHash: hashHarnessEfficiencyValue({ lane: "terminal_bench", version: 1, evaluator: "terminal-bench" }),
+        taskInputHash,
+        benchmarkConfigHash: hashHarnessEfficiencyValue({
+          dataset: input.dataset,
+          args: input.command.args,
+          modelProvider,
+          model,
+          guardrails: profile?.guardrails,
+          toolAllowlist: profile?.toolAllowlist,
+          defaultInteractionMode: profile?.defaultInteractionMode,
+          defaultActSubmode: profile?.defaultActSubmode,
+        }),
+        controlVariantHash: hashHarnessEfficiencyValue({
+          harnessRevision,
+          harnessEconomicsPolicy: profile?.harnessEconomicsPolicy,
+          modelEconomicsProfile: profile?.modelEconomicsProfile,
+        }),
+        harnessRevision: harnessRevision ?? "unknown",
+        modelProvider,
+        model,
+      },
+      runtime: {
+        ...(readNonEmptyRecordString(record, "kestrel_run_id") !== undefined ? { runId: readNonEmptyRecordString(record, "kestrel_run_id") } : {}),
+        ...(readNonEmptyRecordString(record, "kestrel_session_id") !== undefined ? { sessionId: readNonEmptyRecordString(record, "kestrel_session_id") } : {}),
+        ...(readNonEmptyRecordString(record, "kestrel_thread_id") !== undefined ? { threadId: readNonEmptyRecordString(record, "kestrel_thread_id") } : {}),
+      },
+      outcome,
+      economics,
+      artifacts: [
+        terminalArtifactRef("adapter_result", adapterResult.path),
+        ...(jobInputPath !== undefined ? [terminalArtifactRef("job_input", jobInputPath)] : []),
+        ...(resolveRecordedArtifactPath(input.run.runDir, record.job_output_path) !== undefined
+          ? [terminalArtifactRef("job_output", resolveRecordedArtifactPath(input.run.runDir, record.job_output_path) as string)]
+          : []),
+        ...(replayBundlePath !== undefined ? [terminalArtifactRef("runtime_replay_bundle", replayBundlePath)] : []),
+        ...(ledgerWritten ? [terminalArtifactRef("efficiency_ledger", ledgerPath)] : []),
+        ...(existsSync(path.join(input.run.runDir, "results.json")) ? [terminalArtifactRef("evaluator_results", path.join(input.run.runDir, "results.json"))] : []),
+      ],
+    });
+    const outputPath = path.join(outputDir, `${safeTaskId}.json`);
+    writeFileSync(outputPath, JSON.stringify(result, null, 2) + "\n", "utf8");
+    outputs.push(outputPath);
+  }
+  return outputs;
+}
+
+function readAdapterResultRecords(runDir: string, adapter: Adapter): Array<{ path: string; record: Record<string, unknown> }> {
+  if (existsSync(runDir) === false) return [];
+  return listJsonFiles(runDir)
+    .filter((jsonPath) => jsonPath.includes(`${path.sep}agent-logs${path.sep}${adapterResultPrefix(adapter)}-`))
+    .map((jsonPath) => ({ path: jsonPath, record: readJsonRecord(jsonPath) }))
+    .filter((entry): entry is { path: string; record: Record<string, unknown> } =>
+      entry.record !== undefined &&
+      typeof entry.record.task_id === "string" &&
+      typeof entry.record.status === "string"
+    );
+}
+
+function terminalArtifactRef(kind: string, filePath: string): { kind: string; path: string; sha256?: string | undefined } {
+  return { kind, path: filePath, ...(existsSync(filePath) ? { sha256: createHash("sha256").update(readFileSync(filePath)).digest("hex") } : {}) };
+}
+
+function resolveRecordedArtifactPath(runDir: string, value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) return ;
+  return path.isAbsolute(value) ? value : path.join(runDir, value);
+}
+
+function readNonEmptyRecordString(record: Record<string, unknown>, field: string): string | undefined {
+  const value = record[field];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readHashRecordString(record: Record<string, unknown>, field: string): string | undefined {
+  const value = readNonEmptyRecordString(record, field);
+  return value !== undefined && /^[a-f0-9]{64}$/u.test(value) ? value : undefined;
+}
+
+function readNonNegativeRecordNumber(record: Record<string, unknown>, field: string): number | undefined {
+  const value = record[field];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function readArgumentValue(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  const value = index < 0 ? undefined : args[index + 1];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readTerminalBenchTrial(value: string | undefined): number {
+  if (value === undefined || value.trim().length === 0) return 1;
+  const parsed = Number(value);
+  if (Number.isSafeInteger(parsed) === false || parsed <= 0) throw new Error("KESTREL_BENCHMARK_TRIAL must be a positive integer.");
+  return parsed;
 }
 
 function readTerminalBenchCommandTimeoutMs(env: NodeJS.ProcessEnv): number {

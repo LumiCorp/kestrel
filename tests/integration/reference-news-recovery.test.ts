@@ -5,6 +5,7 @@ import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -90,7 +91,7 @@ contractTest("runtime.process", "reference harness pivots from weak headlines to
     async call<T>(name: string, input: unknown): Promise<T> {
       toolCalls.push({ name, input });
       if (name === "internet.news") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           status: "ok",
           provider: "tavily",
           query: "top us news headlines today",
@@ -113,10 +114,10 @@ contractTest("runtime.process", "reference harness pivots from weak headlines to
               source: "AP",
             },
           ],
-        } as T;
+        } }) as T;
       }
       if (name === "internet.news") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           status: "ok",
           provider: "tavily",
           query: "top us news headlines today",
@@ -144,24 +145,24 @@ contractTest("runtime.process", "reference harness pivots from weak headlines to
               source: "CBS News",
             },
           ],
-        } as T;
+        } }) as T;
       }
       if (name === "internet.extract") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           status: "ok",
           provider: "tavily",
           url: (input as { url: string }).url,
           quality: "low",
           truncated: true,
           contentIssues: ["low_text_density"],
-        } as T;
+        } }) as T;
       }
       if (name === "FinalizeAnswer") {
         finalized.push(input as Record<string, unknown>);
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           accepted: true,
           payload: input,
-        } as T;
+        } }) as T;
       }
       throw new Error(`Unexpected tool call '${name}'`);
     },

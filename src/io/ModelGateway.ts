@@ -52,7 +52,8 @@ export class RetryingModelGateway implements ModelGateway {
       let visibleOutputStarted = false;
       const startedReasoningFormats = new Set<"summary" | "provider_thinking" | "provider_reasoning_text">();
       const attemptNumber = attempt + 1;
-      await options.onEvent?.({ type: "attempt.started", attempt: attemptNumber });
+      const attemptStartedAtMs = Date.now();
+      await options.onEvent?.({ type: "attempt.started", attempt: attemptNumber, maxAttempts });
       const onEvent: ModelGatewayEventSink | undefined = options.onEvent === undefined
         ? undefined
         : async (event) => {
@@ -98,7 +99,11 @@ export class RetryingModelGateway implements ModelGateway {
           options.signal,
           timeoutMetadata,
         ).then(async (result) => {
-          await options.onEvent?.({ type: "attempt.completed", attempt: attemptNumber });
+          await options.onEvent?.({
+            type: "attempt.completed",
+            attempt: attemptNumber,
+            latencyMs: Date.now() - attemptStartedAtMs,
+          });
           return result;
         });
       } catch (error) {
@@ -111,17 +116,29 @@ export class RetryingModelGateway implements ModelGateway {
             format,
           });
         }
-        if (
+        const retryable = isRetryableModelError(error);
+        const willRetry =
           attempt < maxAttempts - 1 &&
           visibleOutputStarted === false &&
-          isRetryableModelError(error) &&
+          retryable &&
           hasBudgetForAnotherAttempt(
             request.metadata,
             this.config.timingPolicy,
             Date.now() - startedAtMs,
-          )
-        ) {
-          const retryDelayMs = resolveRetryDelayMs(error, attempt);
+          );
+        const retryDelayMs = willRetry ? resolveRetryDelayMs(error, attempt) : undefined;
+        await options.onEvent?.({
+          type: "attempt.failed",
+          attempt: attemptNumber,
+          latencyMs: Date.now() - attemptStartedAtMs,
+          ...(readFailureCode(error) !== undefined ? { failureCode: readFailureCode(error) } : {}),
+          ...(readFailureClass(error) !== undefined ? { failureClass: readFailureClass(error) } : {}),
+          retryable,
+          willRetry,
+          visibleOutputStarted,
+          ...(retryDelayMs !== undefined ? { retryDelayMs } : {}),
+        });
+        if (willRetry && retryDelayMs !== undefined) {
           retryDelaysMs.push(retryDelayMs);
           await sleep(retryDelayMs, options.signal);
           continue;
@@ -424,6 +441,21 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     return ;
   }
   return value as Record<string, unknown>;
+}
+
+function readFailureCode(value: unknown): string | undefined {
+  const record = asRecord(value);
+  return typeof record?.code === "string" && record.code.trim().length > 0
+    ? record.code
+    : undefined;
+}
+
+function readFailureClass(value: unknown): string | undefined {
+  const record = asRecord(value);
+  const details = asRecord(record?.details);
+  return typeof details?.classification === "string" && details.classification.trim().length > 0
+    ? details.classification
+    : undefined;
 }
 
 function readPositiveNumber(value: unknown): number | undefined {

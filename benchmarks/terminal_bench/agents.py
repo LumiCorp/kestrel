@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -76,6 +77,7 @@ class KestrelTerminalBenchAgent(AbstractInstalledAgent):
         timeout_sec = resolve_agent_timeout_sec(task_id, timeout_sec)
         repo_root = resolve_repo_root()
         repo_tarball = create_repo_tarball(repo_root)
+        harness_revision = hash_repo_source(repo_root)
         try:
             session.copy_to_container(
                 repo_tarball,
@@ -152,6 +154,8 @@ class KestrelTerminalBenchAgent(AbstractInstalledAgent):
                     event_log_path=parsed.get("event_log_path"),
                     bridge_log_path=parsed.get("bridge_log_path"),
                     job_input_sha256=parsed.get("job_input_sha256"),
+                    runtime_replay_bundle_path=parsed.get("runtime_replay_bundle_path"),
+                    harness_revision=harness_revision,
                     failure_details=(
                         parsed.get("failure_details")
                         if isinstance(parsed.get("failure_details"), dict)
@@ -594,6 +598,7 @@ def copy_cli_job_artifacts(
     for result_key, suffix in (
         ("job_input_path", "job-input.json"),
         ("job_output_path", "job-output.json"),
+        ("runtime_replay_bundle_path", "runtime-replay-bundle.json"),
     ):
         raw_path = parsed_result.get(result_key)
         if not isinstance(raw_path, str) or not raw_path:
@@ -604,3 +609,15 @@ def copy_cli_job_artifacts(
         host_path = logging_dir / f"kestrel-terminal-bench-{task_id}.{suffix}"
         host_path.write_text(content, encoding="utf-8")
         parsed_result[result_key] = str(host_path)
+
+
+def hash_repo_source(repo_root: Path) -> str:
+    digest = hashlib.sha256()
+    for source_path in iter_repo_files(repo_root):
+        relative = source_path.relative_to(repo_root).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        content = source_path.read_bytes()
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()

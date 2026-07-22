@@ -4,6 +4,27 @@ import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import { buildAnthropicHttpRequest, mapAnthropicResponse } from "../../models/index.js";
 import { contractTest } from "../helpers/contract-test.js";
 
+contractTest("runtime.hermetic", "Anthropic mapper preserves cache read and cache write token classes", () => {
+  const mapped = mapAnthropicResponse({
+    model: "claude-test",
+    content: [{ type: "text", text: "done" }],
+    usage: {
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_read_input_tokens: 20,
+      cache_creation_input_tokens: 7,
+    },
+  }, { requestedModel: "claude-test" });
+
+  assert.deepEqual(mapped.usage, {
+    inputTokens: 37,
+    outputTokens: 5,
+    totalTokens: 42,
+    cachedInputTokens: 20,
+    cacheWriteInputTokens: 7,
+  });
+});
+
 
 contractTest("runtime.hermetic", "Anthropic request builder serializes assistant tool-call history with provider aliases", () => {
   const request: ModelRequest = {

@@ -51,6 +51,8 @@ class BenchmarkResult:
     event_log_path: str | None = None
     bridge_log_path: str | None = None
     job_input_sha256: str | None = None
+    runtime_replay_bundle_path: str | None = None
+    harness_revision: str | None = None
     failure_details: dict[str, Any] | None = None
 
 

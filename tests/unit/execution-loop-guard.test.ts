@@ -10,6 +10,7 @@ import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -1417,7 +1418,11 @@ contractTest("runtime.hermetic", "ExecutionEngine records normalized tool input 
         ...(input as Record<string, unknown>),
         domainAllow: ["local12.com", "fox19.com"],
       }),
-      call: async () => ({ ok: true }) as never,
+      call: async (name, input) => buildAgentToolSuccessResult({
+        toolName: name,
+        input,
+        output: { ok: true },
+      }),
     },
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
@@ -1805,13 +1810,17 @@ contractTest("runtime.hermetic", "ExecutionEngine clamps dev.shell.run timeout t
     toolGateway: {
       call: async <T>(_name: string, input: unknown) => {
         seenInput = input as Record<string, unknown>;
-        return {
-          status: "COMPLETED",
-          stdout: "trained\n",
-          text: "trained\n",
-          truncated: false,
-          exitCode: 0,
-        } as T;
+        return buildAgentToolSuccessResult({
+          toolName: _name,
+          input,
+          output: {
+            status: "COMPLETED",
+            stdout: "trained\n",
+            text: "trained\n",
+            truncated: false,
+            exitCode: 0,
+          },
+        }) as T;
       },
     },
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),

@@ -27,6 +27,14 @@ import type {
   SweWorkspaceBaselineReport,
   SweWorkspacePatchReport,
 } from "./swe-verified-workspace-patch.js";
+import {
+  createHarnessEfficiencyLedgerV1,
+  createHarnessEfficiencyResultV1,
+  emptyHarnessEfficiencyEconomics,
+  hashHarnessEfficiencyValue,
+  readHarnessEfficiencyEconomicsFromLedger,
+  readHarnessEfficiencyEconomicsFromReplayBundle,
+} from "../src/economics/index.js";
 
 type CommandMode = "preflight" | "run" | "evaluate" | "list";
 
@@ -99,6 +107,9 @@ interface SweVerifiedEvaluationResult {
 }
 
 interface KestrelJobStatusSummary {
+  runId?: string | undefined;
+  sessionId?: string | undefined;
+  threadId?: string | undefined;
   terminalEventType?: string | undefined;
   status?: string | undefined;
   waitEventType?: string | undefined;
@@ -610,6 +621,8 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
   const baselineReportPath = path.join(attemptPaths.attemptDir, SWE_VERIFIED_BASELINE_REPORT_FILE);
   const baselineOutputPath = path.join(attemptPaths.attemptDir, SWE_VERIFIED_BASELINE_OUTPUT_FILE);
   const runScriptPath = path.join(attemptPaths.attemptDir, "run-kestrel.sh");
+  const replayBundlePath = path.join(attemptPaths.attemptDir, "runtime-replay-bundle.json");
+  const attemptStartedAt = Date.now();
   let modelSelection: ReturnType<typeof resolveSweVerifiedModelSelection>;
   try {
     modelSelection = resolveSweVerifiedModelSelection(deps.env);
@@ -748,6 +761,27 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     deps.stderr.write(`[bench:swe] ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
+  const writeUnevaluatedEfficiencyResult = (failureClass: string): void => {
+    writeSweVerifiedEfficiencyResult({
+      outputPath: path.join(attemptPaths.attemptDir, "harness-efficiency-result.json"),
+      replayBundlePath,
+      jobInputPath,
+      jobOutputPath,
+      evaluatorReportPath: path.join(attemptPaths.attemptDir, "evaluator-report.json"),
+      dataset: options.dataset,
+      split: options.split,
+      instance,
+      attemptId,
+      durationMs: Date.now() - attemptStartedAt,
+      sourceHash,
+      modelName,
+      jobInput,
+      failureClass,
+      kestrelJobSummary: readKestrelJobStatusIfPresent(jobOutputPath),
+      options,
+      env: deps.env,
+    });
+  };
   const runnerImageTag = buildSweVerifiedRunnerImageTag({
     instanceImageKey: imageInfo.instanceImageKey,
     sourceHash,
@@ -825,6 +859,7 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     kestrelOutputPath: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, path.basename(kestrelOutputPath)),
     modelPatchPath: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, path.basename(modelPatchPath)),
     patchReportPath: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, path.basename(patchReportPath)),
+    replayBundlePath: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, path.basename(replayBundlePath)),
   });
   const kestrel = deps.spawn("docker", buildSweVerifiedDockerRunArgs({
     deps: { ...deps, env: benchmarkEnv },
@@ -865,6 +900,7 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
       baselineReportPath,
     });
     deps.stderr.write(`[bench:swe] workspace patch harvesting failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    writeUnevaluatedEfficiencyResult("patch_harvest_failed");
     return 1;
   }
   if (!spawnPassed(kestrel)) {
@@ -889,6 +925,7 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     deps.stderr.write(
       `[bench:swe] workspace patch harvesting failed at ${String(patchReport.failureStage)}: ${String(patchReport.failureMessage)}\n`,
     );
+    writeUnevaluatedEfficiencyResult("patch_harvest_failed");
     return 1;
   }
 
@@ -924,6 +961,7 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
       baselineReportPath,
     });
     deps.stderr.write("[bench:swe] workspace export verified that the final submission is empty. Skipping evaluation.\n");
+    writeUnevaluatedEfficiencyResult("empty_patch");
     return 1;
   }
 
@@ -956,6 +994,25 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     patchReportPath,
     baselineReport,
     baselineReportPath,
+  });
+  writeSweVerifiedEfficiencyResult({
+    outputPath: path.join(attemptPaths.attemptDir, "harness-efficiency-result.json"),
+    replayBundlePath,
+    jobInputPath,
+    jobOutputPath,
+    evaluatorReportPath: evaluation.reportPath,
+    dataset: options.dataset,
+    split: options.split,
+    instance,
+    attemptId,
+    durationMs: Date.now() - attemptStartedAt,
+    sourceHash,
+    modelName,
+    jobInput,
+    evaluation,
+    kestrelJobSummary,
+    options,
+    env: deps.env,
   });
   return evaluation.status;
 }
@@ -1178,17 +1235,25 @@ function writeSweVerifiedContainerRunScript(input: {
   kestrelOutputPath: string;
   modelPatchPath: string;
   patchReportPath: string;
+  replayBundlePath: string;
 }): void {
   writeFileSync(
     input.runScriptPath,
     [
       "#!/usr/bin/env bash",
       "set +e",
+      `export KESTREL_HOME=${shellQuote(path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, "kestrel-home"))}`,
+      `export KESTREL_STORE_DRIVER=sqlite`,
+      `export KESTREL_SQLITE_PATH=${shellQuote(path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, "runtime.db"))}`,
       `cd ${SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT}`,
       "node /opt/kestrel/bin/kestrel.js job run \\",
       `  --json-in ${shellQuote(input.jobInputPath)} \\`,
       `  --json-out ${shellQuote(input.jobOutputPath)} > ${shellQuote(input.kestrelOutputPath)} 2>&1`,
       "kestrel_status=$?",
+      `run_id=$(node -e 'const fs=require("fs");try{const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.job?.runId??"")}catch{}' ${shellQuote(input.jobOutputPath)})`,
+      "if [ -n \"$run_id\" ]; then",
+      `  node /opt/kestrel/bin/kestrel.js runtime bundle --run-id "$run_id" --out ${shellQuote(input.replayBundlePath)} >> ${shellQuote(input.kestrelOutputPath)} 2>&1`,
+      "fi",
       "cd /opt/kestrel",
       "node --import tsx /opt/kestrel/scripts/swe-verified-workspace-patch.ts \\",
       "  --mode export \\",
@@ -1880,11 +1945,22 @@ function readKestrelJobStatus(jobOutputPath: string): KestrelJobStatusSummary {
   const waitFor = asRecord(job?.waitFor);
   const waitMetadata = asRecord(waitFor?.metadata);
   return {
+    runId: typeof job?.runId === "string" ? job.runId : undefined,
+    sessionId: typeof job?.sessionId === "string" ? job.sessionId : undefined,
+    threadId: typeof job?.threadId === "string" ? job.threadId : undefined,
     terminalEventType: typeof output?.terminalEventType === "string" ? output.terminalEventType : undefined,
     status: typeof job?.status === "string" ? job.status : undefined,
     waitEventType: typeof waitFor?.eventType === "string" ? waitFor.eventType : undefined,
     waitReason: typeof waitMetadata?.reason === "string" ? waitMetadata.reason : undefined,
   };
+}
+
+function readKestrelJobStatusIfPresent(jobOutputPath: string): KestrelJobStatusSummary | undefined {
+  try {
+    return readKestrelJobStatus(jobOutputPath);
+  } catch {
+    return ;
+  }
 }
 
 function loadInstance(input: {
@@ -1994,6 +2070,158 @@ function readNonNegativeNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.trunc(value)
     : undefined;
+}
+
+export function writeSweVerifiedEfficiencyResult(input: {
+  outputPath: string;
+  replayBundlePath: string;
+  jobInputPath: string;
+  jobOutputPath: string;
+  evaluatorReportPath: string;
+  dataset: string;
+  split: string;
+  instance: SweVerifiedInstance;
+  attemptId: string;
+  durationMs: number;
+  sourceHash: string;
+  modelName: string;
+  jobInput: Record<string, unknown>;
+  evaluation?: SweVerifiedEvaluationResult | undefined;
+  failureClass?: string | undefined;
+  kestrelJobSummary?: KestrelJobStatusSummary | undefined;
+  options: Pick<SweVerifiedBenchOptions, "maxWorkers" | "timeout">;
+  env: NodeJS.ProcessEnv;
+}): void {
+  const report = input.evaluation?.report;
+  const hasEvaluationOutcome = report !== undefined && (
+    report.resolved_instances !== undefined ||
+    report.unresolved_instances !== undefined ||
+    report.resolved_ids !== undefined ||
+    report.unresolved_ids !== undefined
+  );
+  const accepted = report?.resolved_ids?.includes(input.instance.instance_id) === true ||
+    (report?.resolved_instances === 1 && (report.unresolved_instances ?? 0) === 0);
+  const acceptance = hasEvaluationOutcome === false ? "not_evaluated" : accepted ? "accepted" : "rejected";
+  const replayBundle = readJsonIfPresent(input.replayBundlePath);
+  const recordedAt = new Date().toISOString();
+  const outcome = {
+    evaluatorId: "official-swebench",
+    evaluatorVersion: "1",
+    independentlyEvaluated: hasEvaluationOutcome,
+    acceptance,
+    failureClass: acceptance === "accepted"
+      ? "none"
+      : input.failureClass ?? (hasEvaluationOutcome ? "swe_verifier_failed" : "evaluator_outcome_missing"),
+  } as const;
+  const ledgerPath = path.join(path.dirname(input.outputPath), "harness-efficiency-ledger.json");
+  let ledgerWritten = false;
+  let economics = replayBundle === undefined
+    ? emptyHarnessEfficiencyEconomics(["runtimeReplayBundle", "efficiencyLedger"])
+    : readHarnessEfficiencyEconomicsFromReplayBundle(replayBundle, acceptance);
+  if (replayBundle !== undefined) {
+    try {
+      const ledger = createHarnessEfficiencyLedgerV1({
+        replayBundle,
+        recordedAt,
+        runId: input.kestrelJobSummary?.runId,
+        sessionId: input.kestrelJobSummary?.sessionId,
+        outcome,
+      });
+      writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2) + "\n", "utf8");
+      economics = readHarnessEfficiencyEconomicsFromLedger(ledger);
+      ledgerWritten = true;
+    } catch {
+      economics = {
+        ...economics,
+        status: "incomplete",
+        missingFields: [...new Set([...economics.missingFields, "efficiencyLedger"])],
+        tokensPerAcceptedSuccess: null,
+        costPerAcceptedSuccessUsd: null,
+      };
+    }
+  }
+  const profile = asRecord(input.jobInput.profile);
+  const trial = readPositiveTrial(input.env.KESTREL_BENCHMARK_TRIAL);
+  const result = createHarnessEfficiencyResultV1({
+    pairId: input.env.KESTREL_BENCHMARK_PAIR_ID?.trim() || `swe_verified:${input.dataset}:${input.instance.instance_id}:trial:${trial}`,
+    lane: "swe_verified",
+    dataset: input.dataset,
+    taskId: input.instance.instance_id,
+    attemptId: input.attemptId,
+    trial,
+    recordedAt,
+    durationMs: input.durationMs,
+    frozen: {
+      protocolHash: hashHarnessEfficiencyValue({
+        lane: "swe_verified",
+        version: 1,
+        evaluator: "official-swebench",
+        split: input.split,
+      }),
+      taskInputHash: hashHarnessEfficiencyValue(input.instance),
+      benchmarkConfigHash: hashHarnessEfficiencyValue({
+        dataset: input.dataset,
+        split: input.split,
+        maxWorkers: input.options.maxWorkers,
+        timeout: input.options.timeout,
+        modelProvider: "openrouter",
+        model: input.modelName,
+        guardrails: profile?.guardrails,
+        toolAllowlist: profile?.toolAllowlist,
+        defaultInteractionMode: profile?.defaultInteractionMode,
+        defaultActSubmode: profile?.defaultActSubmode,
+      }),
+      controlVariantHash: hashHarnessEfficiencyValue({
+        sourceHash: input.sourceHash,
+        harnessEconomicsPolicy: profile?.harnessEconomicsPolicy,
+        modelEconomicsProfile: profile?.modelEconomicsProfile,
+      }),
+      harnessRevision: input.sourceHash,
+      modelProvider: "openrouter",
+      model: input.modelName,
+    },
+    runtime: {
+      ...(input.kestrelJobSummary?.runId !== undefined ? { runId: input.kestrelJobSummary.runId } : {}),
+      ...(input.kestrelJobSummary?.sessionId !== undefined ? { sessionId: input.kestrelJobSummary.sessionId } : {}),
+      ...(input.kestrelJobSummary?.threadId !== undefined ? { threadId: input.kestrelJobSummary.threadId } : {}),
+    },
+    outcome,
+    economics,
+    artifacts: [
+      artifactRef("job_input", input.jobInputPath),
+      artifactRef("job_output", input.jobOutputPath),
+      ...(input.evaluation !== undefined ? [artifactRef("evaluator_report", input.evaluatorReportPath)] : []),
+      ...(existsSync(input.replayBundlePath) ? [artifactRef("runtime_replay_bundle", input.replayBundlePath)] : []),
+      ...(ledgerWritten ? [artifactRef("efficiency_ledger", ledgerPath)] : []),
+    ],
+  });
+  writeFileSync(input.outputPath, JSON.stringify(result, null, 2) + "\n", "utf8");
+}
+
+function artifactRef(kind: string, filePath: string): { kind: string; path: string; sha256?: string | undefined } {
+  return {
+    kind,
+    path: filePath,
+    ...(existsSync(filePath)
+      ? { sha256: createHash("sha256").update(readFileSync(filePath)).digest("hex") }
+      : {}),
+  };
+}
+
+function readJsonIfPresent(filePath: string): unknown | undefined {
+  if (existsSync(filePath) === false) return ;
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+  } catch {
+    return ;
+  }
+}
+
+function readPositiveTrial(value: string | undefined): number {
+  if (value === undefined || value.trim().length === 0) return 1;
+  const parsed = Number(value);
+  if (Number.isSafeInteger(parsed) === false || parsed <= 0) throw new Error("KESTREL_BENCHMARK_TRIAL must be a positive integer.");
+  return parsed;
 }
 
 function readTrimmedEnv(value: string | undefined): string | undefined {

@@ -71,6 +71,7 @@ def main() -> int:
     home = Path(tempfile.mkdtemp(prefix="kestrel-tbench-cli-home-"))
     job_in = home / "job-input.json"
     job_out = home / "job-output.json"
+    replay_bundle = home / "runtime-replay-bundle.json"
     event_log = Path("/installed-agent/kestrel-cli-events.jsonl")
     bridge_log = Path("/installed-agent/kestrel-cli-bridge.jsonl")
     task_id = args.task_id
@@ -143,6 +144,7 @@ def main() -> int:
         write_debug_job_output(job_out)
         notes = completed.stdout[-2000:]
         payload = runtime_identity_payload(job_out, event_log)
+        export_runtime_replay_bundle(payload.get("kestrel_run_id"), replay_bundle, env)
         failure_details = failure_details_payload(
             job_out,
             event_log,
@@ -164,6 +166,7 @@ def main() -> int:
             "event_log_path": str(event_log),
             "bridge_log_path": str(bridge_log),
             "job_input_sha256": job_input_hash,
+            **({"runtime_replay_bundle_path": str(replay_bundle)} if replay_bundle.exists() else {}),
             **benchmark_provider_artifact_payload(),
             **payload,
         }
@@ -274,6 +277,33 @@ def write_debug_job_output(
         if job_output_path.exists():
             destination.write_text(job_output_path.read_text(encoding="utf-8"), encoding="utf-8")
     except OSError:
+        return
+
+
+def export_runtime_replay_bundle(run_id: object, destination: Path, env: dict[str, str]) -> None:
+    if not isinstance(run_id, str) or not run_id:
+        return
+    try:
+        subprocess.run(
+            [
+                "node",
+                "/opt/kestrel/bin/kestrel.js",
+                "runtime",
+                "bundle",
+                "--run-id",
+                run_id,
+                "--out",
+                str(destination),
+            ],
+            cwd="/opt/kestrel",
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
         return
 
 

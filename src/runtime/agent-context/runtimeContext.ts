@@ -46,6 +46,13 @@ export interface ActiveProjectContext {
   content: string;
 }
 
+export interface RuntimeContextSection {
+  id: string;
+  origin: string;
+  content: string;
+  revision?: string | undefined;
+}
+
 export function buildRuntimeContextFragment(input: {
   taskInstruction?: string | undefined;
   eventType: string;
@@ -66,46 +73,60 @@ export function buildRuntimeContextFragment(input: {
   correction?: string | undefined;
   activeWait?: unknown;
 }): string {
-  const lines = input.taskInstruction !== undefined && input.taskInstruction.trim().length > 0
-    ? [
-      "Task:",
-      input.taskInstruction,
-      "",
-    ]
-    : [];
-  lines.push(
+  return buildRuntimeContextSections(input).map((section) => section.content).join("\n\n");
+}
+
+export function buildRuntimeContextSections(input: Parameters<typeof buildRuntimeContextFragment>[0]): RuntimeContextSection[] {
+  const sections: RuntimeContextSection[] = [];
+  if (input.taskInstruction !== undefined && input.taskInstruction.trim().length > 0) {
+    sections.push({ id: "task", origin: "turn", content: ["Task:", input.taskInstruction].join("\n") });
+  }
+  const mode = [
     "Mode:",
     `- event: ${input.eventType}`,
     `- interaction: ${input.interactionMode}`,
-  );
+  ];
   if (input.actSubmode !== undefined) {
-    lines.push(`- submode: ${input.actSubmode}`);
+    mode.push(`- submode: ${input.actSubmode}`);
   }
   if (input.promptVariant !== undefined) {
-    lines.push(`- promptVariant: ${input.promptVariant}`);
+    mode.push(`- promptVariant: ${input.promptVariant}`);
   }
+  sections.push({ id: "mode", origin: "turn", content: mode.join("\n") });
   const workspace = renderWorkspaceContext(input.workspaceContext);
   if (workspace !== undefined) {
-    lines.push("", workspace);
+    sections.push({ id: "workspace", origin: "workspace", content: workspace });
   }
   const projectContext = renderProjectContext(input.projectContext);
   if (projectContext !== undefined) {
-    lines.push("", projectContext);
+    const project = readActiveProjectContext(input.projectContext);
+    sections.push({
+      id: "projectContext",
+      origin: "project",
+      content: projectContext,
+      ...(project !== undefined ? { revision: project.contextRevisionId } : {}),
+    });
   }
   const skillPack = renderSkillPackContext(input.skillPackContext);
   if (skillPack !== undefined) {
-    lines.push("", skillPack);
+    const skill = readActiveSkillPackContext(input.skillPackContext);
+    sections.push({
+      id: "skillPack",
+      origin: "skill-pack",
+      content: skillPack,
+      ...(skill !== undefined ? { revision: skill.id } : {}),
+    });
   }
   const workState = renderWorkState(input.visibleTodos, input.activeWait);
   if (workState !== undefined) {
-    lines.push("", workState);
+    sections.push({ id: "workState", origin: "runtime-state", content: workState });
   }
   const workspaceStatus = renderWorkspaceStatus(
     input.workspaceFreshness,
     input.activeExecCommandSessions,
   );
   if (workspaceStatus !== undefined) {
-    lines.push("", workspaceStatus);
+    sections.push({ id: "workspaceFreshness", origin: "runtime-evidence", content: workspaceStatus });
   }
   const evidence = renderEvidence({
     activeProcessEvidence: input.activeProcessEvidence,
@@ -114,24 +135,25 @@ export function buildRuntimeContextFragment(input: {
     projectTaskQueueContext: input.projectTaskQueueContext,
   });
   if (evidence !== undefined) {
-    lines.push("", evidence);
+    sections.push({ id: "evidence", origin: "runtime-evidence", content: evidence });
   }
   const recoveryContext = renderObjectBlock("Recovery checkpoint", input.recoveryContext);
   if (recoveryContext !== undefined) {
-    lines.push(
-      "",
-      [
+    sections.push({
+      id: "recovery",
+      origin: "runtime-state",
+      content: [
         "Recovery:",
         recoveryContext,
         "Do not issue the blocked action from this checkpoint again.",
         "Use existing evidence and choose a different next action, finalize, or ask the user.",
       ].join("\n"),
-    );
+    });
   }
   if (input.correction !== undefined && input.correction.trim().length > 0) {
-    lines.push("", `Correction needed: ${input.correction.trim()}`);
+    sections.push({ id: "correction", origin: "feedback", content: `Correction needed: ${input.correction.trim()}` });
   }
-  return lines.join("\n");
+  return sections;
 }
 
 function renderWorkspaceStatus(

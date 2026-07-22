@@ -373,8 +373,14 @@ function mapUsage(value: Record<string, unknown> | undefined) {
   if (value === undefined) {
     return ;
   }
-  const inputTokens = asNumber(value.input_tokens);
+  const directInputTokens = asNumber(value.input_tokens);
   const outputTokens = asNumber(value.output_tokens);
+  const cachedInputTokens = asNumber(value.cache_read_input_tokens);
+  const cacheWriteInputTokens = asNumber(value.cache_creation_input_tokens);
+  const inputTokens =
+    directInputTokens !== undefined || cachedInputTokens !== undefined || cacheWriteInputTokens !== undefined
+      ? (directInputTokens ?? 0) + (cachedInputTokens ?? 0) + (cacheWriteInputTokens ?? 0)
+      : undefined;
   const totalTokens =
     inputTokens !== undefined || outputTokens !== undefined
       ? (inputTokens ?? 0) + (outputTokens ?? 0)
@@ -383,6 +389,8 @@ function mapUsage(value: Record<string, unknown> | undefined) {
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens } : {}),
   };
 }
 

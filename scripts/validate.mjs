@@ -446,6 +446,7 @@ async function startPostgres() {
     name,
     port,
     environment: {
+      KESTREL_DISABLE_DOTENV: "1",
       KESTREL_VALIDATION_POSTGRES_CONTAINER: name,
       KESTREL_VALIDATION_POSTGRES_BASE_URL: base,
       KESTREL_TURN_DB_TEST_URL: `${base}/kestrel_turns`,

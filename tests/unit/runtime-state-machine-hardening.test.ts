@@ -352,7 +352,11 @@ contractTest("runtime.process", "spoofed managed worktree payload does not enabl
   const kestrel = createRuntime(store, {}, {
     workspaceCheckpointService: checkpointService,
     toolGateway: {
-      call: async <T>() => ({ status: "completed" } as T),
+      call: async <T>(name: string, input: unknown) => buildAgentToolSuccessResult({
+        toolName: name,
+        input,
+        output: { status: "completed" },
+      }) as T,
     },
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
@@ -443,9 +447,9 @@ contractTest("runtime.process", "managed worktree approval binds resumed mutatio
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
       },
-      call: async <T>(name: string) => {
+      call: async <T>(name: string, input: unknown) => {
         toolCalls.push(name);
-        return { ok: true } as T;
+        return buildAgentToolSuccessResult({ toolName: name, input, output: { ok: true } }) as T;
       },
     },
   });
@@ -539,9 +543,9 @@ contractTest("runtime.process", "filesystem mutation tools auto-provision manage
         const exec = (agent.exec ?? {}) as Record<string, unknown>;
         preRunBindings.push((exec.managedWorktreeBinding ?? undefined) as Record<string, unknown> | undefined);
       },
-      call: async <T>(name: string) => {
+      call: async <T>(name: string, input: unknown) => {
         toolCalls.push(name);
-        return { ok: true } as T;
+        return buildAgentToolSuccessResult({ toolName: name, input, output: { ok: true } }) as T;
       },
     },
   });
@@ -666,9 +670,9 @@ contractTest("runtime.process", "filesystem mutation batches auto-provision mana
         const exec = (agent.exec ?? {}) as Record<string, unknown>;
         preRunBindings.push((exec.managedWorktreeBinding ?? undefined) as Record<string, unknown> | undefined);
       },
-      call: async <T>(name: string) => {
+      call: async <T>(name: string, input: unknown) => {
         toolCalls.push(name);
-        return { ok: true } as T;
+        return buildAgentToolSuccessResult({ toolName: name, input, output: { ok: true } }) as T;
       },
     },
   });
@@ -761,7 +765,7 @@ contractTest("runtime.process", "dev shell tools auto-provision managed worktree
       },
       call: async <T>(name: string, input: unknown) => {
         toolCalls.push({ name, input });
-        return { stdout: "/managed/worktree\n" } as T;
+        return buildAgentToolSuccessResult({ toolName: name, input, output: { stdout: "/managed/worktree\n" } }) as T;
       },
     },
   });
@@ -962,7 +966,11 @@ contractTest("runtime.process", "terminal managed worktree runs emit fan-in cand
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService: new ManagedTaskWorktreeService({ homeDir: home }),
     toolGateway: {
-      call: async <T>() => ({ stdout: "ok\n" }) as T,
+      call: async <T>(name: string, input: unknown) => buildAgentToolSuccessResult({
+        toolName: name,
+        input,
+        output: { stdout: "ok\n" },
+      }) as T,
     },
   });
   kestrel.registerStep("agent.exec.dispatch", async (ctx, io) => {
@@ -1016,7 +1024,11 @@ contractTest("runtime.process", "managed worktree auto-provision uses session is
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
     toolGateway: {
-      call: async <T>() => ({ stdout: "ok\n" }) as T,
+      call: async <T>(name: string, input: unknown) => buildAgentToolSuccessResult({
+        toolName: name,
+        input,
+        output: { stdout: "ok\n" },
+      }) as T,
     },
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
@@ -1098,7 +1110,7 @@ contractTest("runtime.process", "dev shell tools do not auto-provision managed w
       },
       call: async <T>(name: string, input: unknown) => {
         toolCalls.push({ name, input });
-        return { stdout: `${repo}\n` } as T;
+        return buildAgentToolSuccessResult({ toolName: name, input, output: { stdout: `${repo}\n` } }) as T;
       },
     },
   });
@@ -1155,7 +1167,11 @@ contractTest("runtime.process", "dev shell auto-provision reuses workspace-scope
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
       },
-      call: async <T>() => ({ stdout: "ok\n" }) as T,
+      call: async <T>(name: string, input: unknown) => buildAgentToolSuccessResult({
+        toolName: name,
+        input,
+        output: { stdout: "ok\n" },
+      }) as T,
     },
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
@@ -1260,7 +1276,11 @@ contractTest("runtime.process", "dev process tools auto-provision managed worktr
       },
       call: async <T>(name: string, input: unknown) => {
         toolCalls.push({ name, input });
-        return { processId: "proc-1", status: "running" } as T;
+        return buildAgentToolSuccessResult({
+          toolName: name,
+          input,
+          output: { processId: "proc-1", status: "running" },
+        }) as T;
       },
     },
   });
@@ -1369,7 +1389,11 @@ contractTest("runtime.process", "dev shell tools reuse valid persisted managed w
       },
       call: async <T>(name: string, input: unknown) => {
         toolCalls.push({ name, input });
-        return { stdout: `${provisioned.binding.worktreeRoot}\n` } as T;
+        return buildAgentToolSuccessResult({
+          toolName: name,
+          input,
+          output: { stdout: `${provisioned.binding.worktreeRoot}\n` },
+        }) as T;
       },
     },
   });
@@ -1617,7 +1641,11 @@ contractTest("runtime.process", "dev shell tools clear missing persisted managed
       },
       call: async <T>(name: string, input: unknown) => {
         toolCalls.push({ name, input });
-        return { stdout: `${provisioned.binding.worktreeRoot}\n` } as T;
+        return buildAgentToolSuccessResult({
+          toolName: name,
+          input,
+          output: { stdout: `${provisioned.binding.worktreeRoot}\n` },
+        }) as T;
       },
     },
   });
@@ -1803,7 +1831,11 @@ contractTest("runtime.process", "auto-provisioned dev tools reclaim orphaned det
     toolGateway: {
       call: async <T>(name: string, input: unknown) => {
         toolCalls.push({ name, input });
-        return { stdout: `${provisioned.binding.worktreeRoot}\n` } as T;
+        return buildAgentToolSuccessResult({
+          toolName: name,
+          input,
+          output: { stdout: `${provisioned.binding.worktreeRoot}\n` },
+        }) as T;
       },
     },
   });
@@ -2089,9 +2121,9 @@ contractTest("runtime.process", "reference-react registration uses source filesy
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService: new ManagedTaskWorktreeService({ homeDir: home }),
     toolGateway: {
-      call: async <T>() => {
+      call: async <T>(name: string, input: unknown) => {
         toolCalled = true;
-        return { ok: true } as T;
+        return buildAgentToolSuccessResult({ toolName: name, input, output: { ok: true } }) as T;
       },
     },
   });

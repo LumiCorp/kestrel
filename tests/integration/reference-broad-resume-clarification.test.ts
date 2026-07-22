@@ -5,6 +5,7 @@ import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -73,20 +74,20 @@ contractTest("runtime.process", "reference harness asks for a narrower slice ins
     async call<T>(name: string, input: unknown): Promise<T> {
       toolCalls.push({ name, input });
       if (name === "fs.list") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           path: ".",
           entries: [
             { path: "app", kind: "directory" },
             { path: "app/page.tsx", kind: "file" },
             { path: "package.json", kind: "file" },
           ],
-        } as T;
+        } }) as T;
       }
       if (name === "fs.read_text") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           path: "app/page.tsx",
           content: "export default function Page() { return <main>Time Travel Rentals</main>; }\n",
-        } as T;
+        } }) as T;
       }
       throw new Error(`Unexpected tool call '${name}'`);
     },

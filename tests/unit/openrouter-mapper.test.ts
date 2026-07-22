@@ -34,6 +34,8 @@ contractTest("runtime.hermetic", "OpenRouter chat mapper returns normalized Mode
         prompt_tokens: 12,
         completion_tokens: 7,
         total_tokens: 19,
+        prompt_tokens_details: { cached_tokens: 5 },
+        completion_tokens_details: { reasoning_tokens: 3 },
       },
     },
     {
@@ -52,6 +54,8 @@ contractTest("runtime.hermetic", "OpenRouter chat mapper returns normalized Mode
   assert.equal(mapped.usage?.inputTokens, 12);
   assert.equal(mapped.usage?.outputTokens, 7);
   assert.equal(mapped.usage?.totalTokens, 19);
+  assert.equal(mapped.usage?.cachedInputTokens, 5);
+  assert.equal(mapped.usage?.reasoningTokens, 3);
 });
 
 contractTest("runtime.hermetic", "OpenRouter responses mapper returns normalized ModelResponse", () => {
@@ -75,6 +79,8 @@ contractTest("runtime.hermetic", "OpenRouter responses mapper returns normalized
         input_tokens: 8,
         output_tokens: 4,
         total_tokens: 12,
+        input_tokens_details: { cached_tokens: 2 },
+        output_tokens_details: { reasoning_tokens: 1 },
       },
     },
     {
@@ -88,6 +94,8 @@ contractTest("runtime.hermetic", "OpenRouter responses mapper returns normalized
   assert.equal(mapped.toolIntents.length, 1);
   assert.equal(mapped.toolIntents[0]?.name, "free.weather.current");
   assert.equal(mapped.usage?.totalTokens, 12);
+  assert.equal(mapped.usage?.cachedInputTokens, 2);
+  assert.equal(mapped.usage?.reasoningTokens, 1);
 });
 
 contractTest("runtime.hermetic", "OpenRouter mapper ignores JSON toolIntents when native calls are absent", () => {

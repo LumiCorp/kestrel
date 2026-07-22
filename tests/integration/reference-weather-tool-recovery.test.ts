@@ -6,6 +6,7 @@ import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
 import { weatherForecastTool } from "../../tools/free/weatherForecast.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -92,21 +93,21 @@ contractTest("runtime.process", "reference harness uses free.weather.current for
     async call<T>(name: string, input: unknown): Promise<T> {
       toolCalls.push({ name, input });
       if (name === "free.weather.current") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           source: "test-weather",
           temperatureC: 12,
           apparentTemperatureC: 11,
           humidityPct: 55,
           windSpeedKph: 6,
           observedAt: "2026-03-12T13:24:00.000Z",
-        } as T;
+        } }) as T;
       }
       if (name === "FinalizeAnswer") {
         finalized.push(input as Record<string, unknown>);
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           accepted: true,
           payload: input,
-        } as T;
+        } }) as T;
       }
       throw new Error(`Unexpected tool call '${name}'`);
     },
@@ -500,14 +501,18 @@ async function runReferenceRecoveryScenario(input: {
         const toolResult = typeof input.toolResult === "function"
           ? await input.toolResult(payload)
           : input.toolResult;
-        return toolResult as T;
+        return buildAgentToolSuccessResult({
+          toolName: name,
+          input: payload,
+          output: toolResult,
+        }) as T;
       }
       if (name === "FinalizeAnswer") {
         finalized.push(payload as Record<string, unknown>);
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input: payload, output: {
           accepted: true,
           payload,
-        } as T;
+        } }) as T;
       }
       throw new Error(`Unexpected tool call '${name}'`);
     },
