@@ -74,6 +74,22 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
       capabilityKey: "searchKnowledgeDocuments",
     },
   ],
+  [
+    "workspace.preview.publish",
+    { appKey: "ngrok", capabilityKey: "publish" },
+  ],
+  [
+    "workspace.preview.list",
+    { appKey: "ngrok", capabilityKey: "list" },
+  ],
+  [
+    "workspace.preview.renew",
+    { appKey: "ngrok", capabilityKey: "renew" },
+  ],
+  [
+    "workspace.preview.close",
+    { appKey: "ngrok", capabilityKey: "close" },
+  ],
   ["bash", { appKey: "built_in.sandbox", capabilityKey: "bash" }],
   ["bash_batch", { appKey: "built_in.sandbox", capabilityKey: "bash_batch" }],
   [

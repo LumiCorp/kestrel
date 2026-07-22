@@ -39,6 +39,7 @@ import {
   readRuntimeDialogMessage,
 } from "@/lib/turns/dialog-messages";
 import {
+  activateEnvironmentModelGrant,
   resolveEnvironmentExecutionRoute,
   updateEnvironmentExecutionRuntimeIdentity,
   updateEnvironmentExecutionStatus,
@@ -74,16 +75,27 @@ class KestrelOneRunnerClient extends KestrelClient {
     );
   }
 
-  async runWithProfileObservingStart(
+  async runWithProfileObservingRuntimeIdentity(
     input: { profile: RunnerProfile; turn: RunnerTurnInput },
     context: KestrelRequestContext,
-    onStarted: (
-      event: Extract<RunnerRunStreamEvent, { type: "run.started" }>
+    onRuntimeIdentity: (
+      identity: { runId: string; reasoningKeyReady?: boolean | undefined }
     ) => void | Promise<void>
   ): Promise<RunnerRunTerminalEvent> {
     const stream = this.streamRunWithProfile(input, context);
+    let observedRuntimeIdentity = false;
+    let reasoningKeyReady: boolean | undefined;
     for await (const event of stream) {
-      if (event.type === "run.started") await onStarted(event);
+      if (event.type === "run.started") {
+        reasoningKeyReady = event.payload.reasoningKeyReady;
+      }
+      if (!observedRuntimeIdentity && event.runId) {
+        await onRuntimeIdentity({
+          runId: event.runId,
+          ...(reasoningKeyReady !== undefined ? { reasoningKeyReady } : {}),
+        });
+        observedRuntimeIdentity = true;
+      }
     }
     return await stream.result;
   }
@@ -282,6 +294,17 @@ function createModelAwareKestrelOneAgent(input: {
           });
           executionId = route.runId;
           await input.onExecutionRouted?.(executionId);
+          if (runtimeModel) {
+            await activateEnvironmentModelGrant({
+              organizationId: input.organizationId,
+              environmentId: route.environmentId,
+              workspaceId: route.workspaceId,
+              threadId: input.threadId,
+              runId: route.runId,
+              gatewayId: runtimeModel.gatewayId,
+              rawModelId: runtimeModel.model,
+            });
+          }
           await updateEnvironmentExecutionStatus({
             organizationId: input.organizationId,
             executionId,
@@ -313,7 +336,6 @@ function createModelAwareKestrelOneAgent(input: {
           const eventType = turn.eventType || "user.message";
           const normalizedTurn = {
             ...turn,
-            runId: route.runId,
             eventType,
             ...(resumeRequestId !== undefined
               ? {
@@ -335,7 +357,11 @@ function createModelAwareKestrelOneAgent(input: {
             context
           );
           const selectedProfile = runtimeModel
-            ? applyKestrelOneModelToProfile(baseProfile, runtimeModel)
+            ? applyKestrelOneModelToProfile(
+                baseProfile,
+                runtimeModel,
+                route.runId
+              )
             : baseProfile;
           const downstream = client.streamRunWithProfile(
             {
@@ -352,17 +378,23 @@ function createModelAwareKestrelOneAgent(input: {
             context
           );
           routed.attachCancel(() => downstream.cancel());
+          let observedRuntimeIdentity = false;
+          let reasoningKeyReady: boolean | undefined;
           for await (const event of downstream) {
             if (event.type === "task.updated") await handleDialogEvent(event);
-            if (event.type === "run.started" && event.runId) {
+            if (event.type === "run.started") {
+              reasoningKeyReady = event.payload.reasoningKeyReady;
+            }
+            if (!observedRuntimeIdentity && event.runId) {
               await updateEnvironmentExecutionRuntimeIdentity({
                 organizationId: input.organizationId,
                 executionId: route.runId,
                 runtimeRunId: event.runId,
-                ...(event.payload.reasoningKeyReady !== undefined
-                  ? { reasoningKeyReady: event.payload.reasoningKeyReady }
+                ...(reasoningKeyReady !== undefined
+                  ? { reasoningKeyReady }
                   : {}),
               });
+              observedRuntimeIdentity = true;
             }
             routed.push(event);
           }
@@ -546,6 +578,20 @@ export async function generateKestrelOneExternalReply(input: {
         })
       );
     }
+    const runtimeModel = toKestrelOneRuntimeModelSelection({
+      ...resolvedModel.model,
+      organizationId: input.organizationId,
+      environmentId: route.environmentId,
+    });
+    await activateEnvironmentModelGrant({
+      organizationId: input.organizationId,
+      environmentId: route.environmentId,
+      workspaceId: route.workspaceId,
+      threadId: input.sessionId,
+      runId: route.runId,
+      gatewayId: runtimeModel.gatewayId,
+      rawModelId: runtimeModel.model,
+    });
     const baseProfile = await client.getProfile(
       getKestrelOneProfileId(),
       context
@@ -553,11 +599,8 @@ export async function generateKestrelOneExternalReply(input: {
     const profile = restrictKestrelOneProfileTools({
       profile: applyKestrelOneModelToProfile(
         { ...baseProfile, reasoning: route.reasoningPolicy },
-        toKestrelOneRuntimeModelSelection({
-          ...resolvedModel.model,
-          organizationId: input.organizationId,
-          environmentId: route.environmentId,
-        })
+        runtimeModel,
+        route.runId
       ),
       effectiveCapabilities: route.effectiveCapabilities,
     });
@@ -565,23 +608,21 @@ export async function generateKestrelOneExternalReply(input: {
       agent: createProfileBoundExternalReplyAgent({
         profile,
         run: (request, requestContext) =>
-          client.runWithProfileObservingStart(
+          client.runWithProfileObservingRuntimeIdentity(
             request,
             requestContext,
-            async (event) => {
-              if (!event.runId) return;
+            async (identity) => {
               await updateEnvironmentExecutionRuntimeIdentity({
                 organizationId: input.organizationId,
                 executionId: route.runId,
-                runtimeRunId: event.runId,
-                ...(event.payload.reasoningKeyReady !== undefined
-                  ? { reasoningKeyReady: event.payload.reasoningKeyReady }
+                runtimeRunId: identity.runId,
+                ...(identity.reasoningKeyReady !== undefined
+                  ? { reasoningKeyReady: identity.reasoningKeyReady }
                   : {}),
               });
             }
           ),
       }),
-      runId: route.runId,
       sessionId: input.sessionId,
       prompt: input.prompt,
       context,

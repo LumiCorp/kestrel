@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import {
+  ENVIRONMENT_TOOL_CREDENTIAL_AUDIENCE,
+  ENVIRONMENT_TOOL_CREDENTIAL_VERSION,
   ENVIRONMENT_ROUTER_AUDIENCE,
   signEnvironmentExecutionTicket,
+  signEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
+import { authorizeConfigRefreshToken } from "../src/config-refresh-auth.js";
 import {
   authorizeEnvironmentHttpRequest,
   authorizeEnvironmentRequest,
@@ -266,6 +270,45 @@ contractTest("services.hermetic", "router rejects a ticket issued for another En
     }).status,
     403
   );
+});
+
+contractTest("services.hermetic", "gateway refresh accepts only an exactly scoped control-plane credential", () => {
+  const credential = signEnvironmentToolCredential({
+    privateKey,
+    ticket: {
+      version: ENVIRONMENT_TOOL_CREDENTIAL_VERSION,
+      audience: ENVIRONMENT_TOOL_CREDENTIAL_AUDIENCE,
+      organizationId: "org-1",
+      environmentId: "env-1",
+      workspaceId: "environment-gateway",
+      threadId: "environment-gateway",
+      runId: "refresh-1",
+      actorId: "kestrel-control-plane",
+      agentId: "kestrel-control-plane",
+      providerKey: "kestrel-control-plane",
+      resourceId: "env-1",
+      capability: "gateway.config.refresh",
+      operation: "refresh",
+      operationBinding: null,
+      issuedAt: 1000,
+      expiresAt: 1060,
+      nonce: "refresh-nonce",
+    },
+  });
+  assert.doesNotThrow(() => authorizeConfigRefreshToken({
+    token: credential,
+    publicKey,
+    environmentId: "env-1",
+    expectedAppName: "kestrel-env-1",
+    now: 1030,
+  }));
+  assert.throws(() => authorizeConfigRefreshToken({
+    token: credential,
+    publicKey,
+    environmentId: "env-2",
+    expectedAppName: "kestrel-env-2",
+    now: 1030,
+  }));
 });
 
 contractTest("services.hermetic", "router rejects cross-organization and cross-Thread commands", () => {

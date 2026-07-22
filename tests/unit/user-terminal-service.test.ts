@@ -13,8 +13,14 @@ contractTest("runtime.hermetic", "UserTerminalService runs an interactive PTY wi
   const metadataPath = path.join(root, "terminal-state.json");
   await mkdir(workspaceRoot);
   const service = new UserTerminalService({ metadataPath, maxOutputBytes: 4096 });
+  const originalToken = process.env.KESTREL_WORKSPACE_SERVICE_TOKEN;
+  process.env.KESTREL_WORKSPACE_SERVICE_TOKEN = "workspace-secret";
   await service.initialize();
-  context.after(async () => service.close());
+  context.after(async () => {
+    await service.close();
+    if (originalToken === undefined) delete process.env.KESTREL_WORKSPACE_SERVICE_TOKEN;
+    else process.env.KESTREL_WORKSPACE_SERVICE_TOKEN = originalToken;
+  });
 
   const terminal = await service.start({
     sessionId: "session-1",
@@ -40,6 +46,18 @@ contractTest("runtime.hermetic", "UserTerminalService runs an interactive PTY wi
   );
   assert.match(ready.output, /PTY_READY:/u);
   assert.match(ready.output, new RegExp(escapeRegExp(terminal.workspaceRoot), "u"));
+
+  service.write({
+    terminalId: terminal.terminalId,
+    sessionId: "session-1",
+    data: "printf 'TOKEN:%s\\n' \"${KESTREL_WORKSPACE_SERVICE_TOKEN:-missing}\"\n",
+  });
+  const tokenOutput = await waitForTerminal(
+    service,
+    terminal.terminalId,
+    (output) => output.includes("TOKEN:missing"),
+  );
+  assert.doesNotMatch(tokenOutput.output, /workspace-secret/u);
 
   const resized = service.resize({
     terminalId: terminal.terminalId,

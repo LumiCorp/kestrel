@@ -30,8 +30,8 @@ contractTest(
       randomBytes(32).toString("base64");
     process.env.KESTREL_WORKSPACE_BACKUP_KEY_ID = "test-backup-v1";
     process.env.KESTREL_ONE_APP_URL = "https://kestrel.example";
-    process.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN = "broker-secret";
     process.env.KESTREL_ONE_TOOL_TOKEN = "tool-secret";
+    process.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN = "legacy-broker-secret";
     process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = "test-key";
     process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = JSON.stringify({
       "test-key": randomBytes(32).toString("base64"),

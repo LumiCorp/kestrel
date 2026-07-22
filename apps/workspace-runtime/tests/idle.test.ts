@@ -28,7 +28,7 @@ contractTest("services.hermetic", "Workspace idle notification binds the runtime
   assert.equal(accepted, true);
   assert.equal(
     request?.url,
-    "https://kestrel-one.example/api/runtime/environments/idle"
+    "https://kestrel-one.example/internal/workspaces/idle"
   );
   assert.equal(request?.headers.get("authorization"), "Bearer runtime-secret");
   assert.deepEqual(await request?.json(), {

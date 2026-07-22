@@ -912,6 +912,15 @@ export async function requestWorkspaceIdleStop(input: {
         "Workspace idle identity does not match the provisioned Machine."
       );
     }
+    const activePreview = await transaction.query.workspacePreviewLeases.findFirst({
+      where: (table, { and, eq, gt, inArray }) => and(
+        eq(table.workspaceId, workspace.id),
+        inArray(table.status, ["provisioning", "active"]),
+        gt(table.expiresAt, new Date())
+      ),
+      columns: { id: true },
+    });
+    if (activePreview) return null;
     const active = await transaction.query.environmentOperations.findFirst({
       where: (table, { and, eq, inArray }) =>
         and(

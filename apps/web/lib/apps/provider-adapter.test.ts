@@ -3,10 +3,10 @@ import { getAppProviderAdapter, listAppProviderAdapters } from "./provider-adapt
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "provider adapter registry exposes Weather and Tavily through the shared contract", () => {
+contractTest("web.hermetic", "provider adapter registry exposes request proxies and ngrok lifecycle through the shared contract", () => {
   assert.deepEqual(
     listAppProviderAdapters().map((adapter) => adapter.appKey),
-    ["built_in.weather", "tavily"]
+    ["built_in.weather", "tavily", "ngrok"]
   );
   const adapter = getAppProviderAdapter("tavily");
   assert.ok(adapter?.runtime);
@@ -42,6 +42,8 @@ contractTest("web.hermetic", "Weather adapter stores only Visual Crossing creden
   });
   const runtime = adapter?.runtime;
   assert.ok(runtime);
+  assert.equal(runtime.mode, "request_proxy");
+  if (runtime.mode !== "request_proxy") throw new Error("Expected request proxy.");
   assert.deepEqual(runtime.capabilityKeys, ["getWeather", "forecast"]);
   runtime.assertTarget({
     capability: "getWeather",
@@ -88,6 +90,8 @@ contractTest("web.hermetic", "Weather adapter stores only Visual Crossing creden
 contractTest("web.hermetic", "Tavily adapter constructs only an allowlisted credentialed request", () => {
   const runtime = getAppProviderAdapter("tavily")?.runtime;
   assert.ok(runtime);
+  assert.equal(runtime.mode, "request_proxy");
+  if (runtime.mode !== "request_proxy") throw new Error("Expected request proxy.");
   runtime.assertTarget({
     capability: "search",
     method: "POST",

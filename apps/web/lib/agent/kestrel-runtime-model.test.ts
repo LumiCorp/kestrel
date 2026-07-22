@@ -51,10 +51,14 @@ contractTest("web.hermetic", "runtime model selection preserves the base profile
       environmentId: "env-1",
       model: "gpt-5.4",
       provider: "openai",
-    }
+    },
+    "run-1"
   );
 
-  assert.equal(profile.id, "kestrel-one:model:preferred-model");
+  assert.equal(
+    profile.id,
+    "kestrel-one:model:preferred-model:run:run-1"
+  );
   assert.equal(profile.modelProvider, "openai");
   assert.equal(profile.model, "gpt-5.4");
   assert.deepEqual(profile.agentStageConfig, {
@@ -66,10 +70,12 @@ contractTest("web.hermetic", "runtime model selection preserves the base profile
   });
   assert.deepEqual(profile.modelCredential, {
     source: "kestrel-one",
+    runId: "run-1",
     gatewayId: "gateway-openai",
     organizationId: "org-1",
     environmentId: "env-1",
     rawModelId: "gpt-5.4",
+    provider: "openai",
   });
   assert.equal(JSON.stringify(profile).includes("provider-secret"), false);
   assert.deepEqual(profile.toolAllowlist, [

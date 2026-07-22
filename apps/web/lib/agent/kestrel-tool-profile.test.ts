@@ -46,6 +46,35 @@ contractTest("web.hermetic", "calendar tools are removed when the user has no ef
   assert.deepEqual(restricted.toolAllowlist, []);
 });
 
+contractTest("web.hermetic", "Workspace preview tools follow Environment App approval capabilities", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: {
+      ...profile,
+      toolAllowlist: [
+        "workspace.preview.publish",
+        "workspace.preview.list",
+        "workspace.preview.renew",
+        "workspace.preview.close",
+      ],
+    },
+    effectiveCapabilities: [
+      "app:ngrok.publish:auto",
+      "app:ngrok.list:auto",
+      "app:ngrok.close:ask",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "workspace.preview.publish",
+    "workspace.preview.list",
+    "workspace.preview.close",
+  ]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "workspace.preview.publish": "auto",
+    "workspace.preview.list": "auto",
+    "workspace.preview.close": "ask",
+  });
+});
+
 contractTest("web.hermetic", "GitHub tools are exposed only for effective Project capabilities", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile: {

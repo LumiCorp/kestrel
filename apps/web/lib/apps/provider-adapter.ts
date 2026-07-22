@@ -6,17 +6,21 @@ import {
 } from "./tavily-contract";
 import { validateTavilyConnection } from "./tavily-connection";
 import { validateVisualCrossingConnection } from "./weather-connection";
+import { validateNgrokConnection } from "./ngrok-connection";
 
 export type AppProviderAuthMethod =
   | "none"
   | "api_key"
+  | "agent_token"
   | "oauth_personal"
   | "oauth_environment"
   | "deployment_managed";
 
 export type AppConnectionHealth = {
-  status: "connected";
+  status: "connected" | "degraded";
   checkedAt: Date;
+  failureCode?: string | undefined;
+  failureMessage?: string | undefined;
 };
 
 export type AppProviderRuntimeRequest = {
@@ -45,6 +49,7 @@ export type AppProviderAdapter = {
     input: CreateEnvironmentAppConnectionInput
   ) => AppCredentialPayload;
   runtime?: {
+    mode: "request_proxy";
     capabilityKeys: readonly string[];
     assertTarget: (input: {
       capability: string;
@@ -60,6 +65,14 @@ export type AppProviderAdapter = {
     }) => AppProviderRuntimeRequest;
     degradedStatusCodes: readonly number[];
     reconnectFailureCode: string;
+  } | {
+    mode: "lifecycle";
+    capabilityKeys: readonly string[];
+    assertTarget: (input: {
+      capability: string;
+      method: string;
+      path: string[];
+    }) => void;
   };
 };
 
@@ -68,8 +81,16 @@ const DEFAULT_TAVILY_BASE_URL = "https://api.tavily.com";
 const tavilyAdapter: AppProviderAdapter = {
   appKey: "tavily",
   authMethods: ["api_key"],
-  validateEnvironmentConnection: validateTavilyConnection,
+  validateEnvironmentConnection(input) {
+    if (input.kind === "ngrok_agent") {
+      throw new Error("Tavily requires an API-key credential.");
+    }
+    return validateTavilyConnection(input);
+  },
   createEnvironmentCredential(input) {
+    if (input.kind === "ngrok_agent") {
+      throw new Error("Tavily requires an API-key credential.");
+    }
     return {
       kind: "api_key",
       apiKey: input.apiKey,
@@ -78,6 +99,7 @@ const tavilyAdapter: AppProviderAdapter = {
     };
   },
   runtime: {
+    mode: "request_proxy",
     capabilityKeys: TAVILY_RUNTIME_CAPABILITIES,
     assertTarget(input) {
       assertTavilyProxyTarget({
@@ -124,8 +146,16 @@ const tavilyAdapter: AppProviderAdapter = {
 const weatherAdapter: AppProviderAdapter = {
   appKey: "built_in.weather",
   authMethods: ["api_key"],
-  validateEnvironmentConnection: validateVisualCrossingConnection,
+  validateEnvironmentConnection(input) {
+    if (input.kind === "ngrok_agent") {
+      throw new Error("Visual Crossing requires an API-key credential.");
+    }
+    return validateVisualCrossingConnection(input);
+  },
   createEnvironmentCredential(input) {
+    if (input.kind === "ngrok_agent") {
+      throw new Error("Visual Crossing requires an API-key credential.");
+    }
     return {
       kind: "api_key",
       apiKey: input.apiKey,
@@ -133,6 +163,7 @@ const weatherAdapter: AppProviderAdapter = {
     };
   },
   runtime: {
+    mode: "request_proxy",
     capabilityKeys: ["getWeather", "forecast"],
     assertTarget(input) {
       if (
@@ -185,8 +216,53 @@ const weatherAdapter: AppProviderAdapter = {
   },
 };
 
+const ngrokAdapter: AppProviderAdapter = {
+  appKey: "ngrok",
+  authMethods: ["agent_token"],
+  validateEnvironmentConnection: validateNgrokConnection,
+  createEnvironmentCredential(input) {
+    if (input.kind !== "ngrok_agent") {
+      throw new Error("Ngrok requires an agent credential.");
+    }
+    return {
+      kind: "ngrok_agent",
+      authtoken: input.authtoken,
+      wildcardDomain: input.wildcardDomain,
+    };
+  },
+  runtime: {
+    mode: "lifecycle",
+    capabilityKeys: ["publish", "list", "renew", "close"],
+    assertTarget(input) {
+      const [resource, previewId] = input.path;
+      const allowed =
+        resource === "previews" &&
+        ((input.capability === "publish" &&
+          input.method === "POST" &&
+          input.path.length === 1) ||
+          (input.capability === "list" &&
+            input.method === "GET" &&
+            input.path.length === 1) ||
+          (input.capability === "renew" &&
+            input.method === "POST" &&
+            input.path.length === 2 &&
+            Boolean(previewId)) ||
+          (input.capability === "close" &&
+            input.method === "DELETE" &&
+            input.path.length === 2 &&
+            Boolean(previewId)));
+      if (!allowed) {
+        throw new AppProviderRuntimeContractError(
+          "NGROK_PREVIEW_TARGET_DENIED",
+          404
+        );
+      }
+    },
+  },
+};
+
 const PROVIDER_ADAPTERS = new Map(
-  [weatherAdapter, tavilyAdapter].map((adapter) => [adapter.appKey, adapter])
+  [weatherAdapter, tavilyAdapter, ngrokAdapter].map((adapter) => [adapter.appKey, adapter])
 );
 
 export function getAppProviderAdapter(appKey: string) {

@@ -1233,6 +1233,7 @@ export const environments = pgTable(
     flyAppName: text("fly_app_name"),
     flyNetworkName: text("fly_network_name"),
     flyGatewayMachineId: text("fly_gateway_machine_id"),
+    gatewayServiceTokenHash: text("gateway_service_token_hash"),
     routerUrl: text("router_url"),
     routerImage: text("router_image"),
     runtimeTemplate: text("runtime_template")
@@ -1337,6 +1338,7 @@ export const environmentWorkspaces = pgTable(
     flyMachineId: text("fly_machine_id"),
     flyVolumeId: text("fly_volume_id"),
     runtimeImage: text("runtime_image"),
+    serviceTokenHash: text("service_token_hash"),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
     lastHealthAt: timestamp("last_health_at", { withTimezone: true }),
     failureCode: text("failure_code"),
@@ -2017,7 +2019,15 @@ export const appDefinitions = pgTable(
       .notNull()
       .default("required"),
     delivery: text("delivery", {
-      enum: ["native", "oauth", "api_key", "mcp", "webhook", "source"],
+      enum: [
+        "native",
+        "lifecycle",
+        "oauth",
+        "api_key",
+        "mcp",
+        "webhook",
+        "source",
+      ],
     }).notNull(),
     installMode: text("install_mode", {
       enum: ["inherited", "explicit"],
@@ -2144,7 +2154,7 @@ export const appCredentials = pgTable(
       .references(() => appDefinitions.key, { onDelete: "restrict" }),
     name: text("name").notNull(),
     kind: text("kind", {
-      enum: ["api_key", "oauth", "secret_headers"],
+      enum: ["api_key", "oauth", "secret_headers", "ngrok_agent"],
     }).notNull(),
     encryptedPayload: text("encrypted_payload").notNull(),
     envelopeVersion: text("envelope_version").notNull().default("kapp:v1"),
@@ -2251,6 +2261,11 @@ export const appConnections = pgTable(
     uniqueIndex("app_connections_environment_name_idx")
       .on(table.environmentId, table.appKey, table.name)
       .where(sql`${table.ownerType} in ('environment', 'deployment_managed')`),
+    uniqueIndex("app_connections_ngrok_wildcard_domain_idx")
+      .on(sql`(${table.deliveryConfig} ->> 'wildcardDomain')`)
+      .where(
+        sql`${table.appKey} = 'ngrok' and ${table.ownerType} = 'environment' and ${table.status} in ('connected', 'degraded')`
+      ),
     index("app_connections_org_app_status_idx").on(
       table.organizationId,
       table.appKey,
@@ -2268,6 +2283,95 @@ export const appConnections = pgTable(
         or
         (${table.ownerType} in ('environment', 'deployment_managed') and ${table.environmentId} is not null and ${table.userId} is null)
       )`
+    ),
+  ]
+);
+
+export const workspacePreviewLeases = pgTable(
+  "workspace_preview_leases",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id").notNull(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => environmentWorkspaces.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").notNull(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => appConnections.id, { onDelete: "restrict" }),
+    port: integer("port").notNull(),
+    name: text("name"),
+    hostname: text("hostname").notNull(),
+    status: text("status", {
+      enum: [
+        "provisioning",
+        "active",
+        "closing",
+        "closed",
+        "expired",
+        "failed",
+      ],
+    })
+      .notNull()
+      .default("provisioning"),
+    failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    maximumExpiresAt: timestamp("maximum_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "workspace_preview_leases_organization_environment_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("workspace_preview_leases_hostname_idx").on(table.hostname),
+    uniqueIndex("workspace_preview_leases_active_port_idx")
+      .on(table.workspaceId, table.port)
+      .where(
+        sql`${table.status} in ('provisioning', 'active', 'closing')`
+      ),
+    index("workspace_preview_leases_environment_status_idx").on(
+      table.environmentId,
+      table.status
+    ),
+    index("workspace_preview_leases_workspace_status_idx").on(
+      table.workspaceId,
+      table.status
+    ),
+    index("workspace_preview_leases_expiry_idx").on(
+      table.status,
+      table.expiresAt
+    ),
+    check(
+      "workspace_preview_leases_port_check",
+      sql`${table.port} between 1024 and 65535 and ${table.port} not in (43104, 43105)`
+    ),
+    check(
+      "workspace_preview_leases_expiry_check",
+      sql`${table.expiresAt} <= ${table.maximumExpiresAt}`
     ),
   ]
 );
@@ -3744,6 +3848,59 @@ export const aiGatewayModels = pgTable(
   ]
 );
 
+export const environmentModelGrants = pgTable(
+  "environment_model_grants",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id").notNull(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => environmentWorkspaces.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    gatewayId: text("gateway_id")
+      .notNull()
+      .references(() => aiGateways.id, { onDelete: "restrict" }),
+    rawModelId: text("raw_model_id").notNull(),
+    status: text("status", { enum: ["active", "closed"] })
+      .notNull()
+      .default("active"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "environment_model_grants_organization_environment_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.gatewayId, table.rawModelId],
+      foreignColumns: [aiGatewayModels.gatewayId, aiGatewayModels.rawModelId],
+      name: "environment_model_grants_gateway_model_fk",
+    }).onDelete("restrict"),
+    index("environment_model_grants_environment_status_idx").on(
+      table.environmentId,
+      table.status
+    ),
+    index("environment_model_grants_workspace_status_idx").on(
+      table.workspaceId,
+      table.status
+    ),
+  ]
+);
+
 export const environmentAiModelDefaults = pgTable(
   "environment_ai_model_defaults",
   {
@@ -4644,8 +4801,14 @@ export type AppCapability = InferSelectModel<typeof appCapabilities>;
 export type AppInstallation = InferSelectModel<typeof appInstallations>;
 export type AppCredential = InferSelectModel<typeof appCredentials>;
 export type AppConnection = InferSelectModel<typeof appConnections>;
+export type WorkspacePreviewLease = InferSelectModel<
+  typeof workspacePreviewLeases
+>;
 export type AppConnectionResource = InferSelectModel<
   typeof appConnectionResources
+>;
+export type EnvironmentModelGrant = InferSelectModel<
+  typeof environmentModelGrants
 >;
 export type EnvironmentAppCapabilityGrant = InferSelectModel<
   typeof environmentAppCapabilityGrants

@@ -188,10 +188,12 @@ export interface ToolQueueProfileConfig {
 
 export interface ModelCredentialReference {
   source: "kestrel-one";
+  runId: string;
   gatewayId: string;
   organizationId: string;
   environmentId: string;
   rawModelId: string;
+  provider: Exclude<ModelProviderId, "lmstudio">;
 }
 
 export interface TuiProfile {

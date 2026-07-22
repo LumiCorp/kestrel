@@ -19,10 +19,12 @@ const GATEWAY_CREDENTIAL_CACHE_MAX_ENTRIES = 64;
 
 export interface GatewayCredentialReference {
   source: "kestrel-one";
+  runId: string;
   gatewayId: string;
   organizationId: string;
   environmentId: string;
   rawModelId: string;
+  provider: "openai" | "openrouter" | "anthropic" | "ollama";
 }
 
 export interface GatewayCredentialLease {
@@ -65,62 +67,6 @@ export class GatewayCredentialBrokerError extends Error {
     this.name = "GatewayCredentialBrokerError";
     this.code = code;
     this.status = status;
-  }
-}
-
-export class GatewayCredentialBrokerClient {
-  private readonly endpoint: string;
-  private readonly token: string;
-  private readonly fetchImpl: typeof fetch;
-
-  constructor(input: {
-    appUrl: string;
-    token: string;
-    fetchImpl?: typeof fetch | undefined;
-  }) {
-    this.endpoint = resolveBrokerEndpoint(input.appUrl);
-    this.token = requireNonEmpty(input.token, "credential broker token");
-    this.fetchImpl = input.fetchImpl ?? fetch;
-  }
-
-  async issueLease(
-    reference: GatewayCredentialReference
-  ): Promise<GatewayCredentialLease> {
-    let response: Response;
-    try {
-      response = await this.fetchImpl(this.endpoint, {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          authorization: `Bearer ${this.token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          version: GATEWAY_CREDENTIAL_LEASE_VERSION,
-          gatewayId: reference.gatewayId,
-          organizationId: reference.organizationId,
-          environmentId: reference.environmentId,
-          rawModelId: reference.rawModelId,
-        }),
-      });
-    } catch (error) {
-      throw new GatewayCredentialBrokerError(
-        "GATEWAY_CREDENTIAL_BROKER_UNAVAILABLE",
-        "Gateway credential broker request failed."
-      );
-    }
-
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const errorPayload = asRecord(payload);
-      throw new GatewayCredentialBrokerError(
-        asNonEmptyString(errorPayload?.code) ??
-          "GATEWAY_CREDENTIAL_BROKER_REJECTED",
-        `Gateway credential broker rejected the lease request (${response.status}).`,
-        response.status
-      );
-    }
-    return parseGatewayCredentialLease(payload, reference);
   }
 }
 
@@ -341,20 +287,44 @@ function getDefaultCredentialCache() {
   if (defaultCredentialCache) {
     return defaultCredentialCache;
   }
-  const appUrl = requireNonEmpty(
-    process.env.KESTREL_ONE_APP_URL,
-    "KESTREL_ONE_APP_URL"
+  const gatewayUrl = requireSecureGatewayUrl(
+    requireNonEmpty(
+      process.env.KESTREL_ENVIRONMENT_GATEWAY_URL,
+      "KESTREL_ENVIRONMENT_GATEWAY_URL"
+    )
   );
-  const token = requireNonEmpty(
-    process.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN,
-    "KESTREL_ONE_CREDENTIAL_BROKER_TOKEN"
+  const workspaceToken = requireNonEmpty(
+    process.env.KESTREL_WORKSPACE_SERVICE_TOKEN,
+    "KESTREL_WORKSPACE_SERVICE_TOKEN"
   );
-  const client = new GatewayCredentialBrokerClient({ appUrl, token });
   defaultCredentialCache = new GatewayCredentialLeaseCache({
-    load: (reference) => client.issueLease(reference),
+    load: async (reference) => ({
+      version: GATEWAY_CREDENTIAL_LEASE_VERSION,
+      leaseId: `${reference.runId}:${reference.gatewayId}`,
+      gatewayId: reference.gatewayId,
+      organizationId: reference.organizationId,
+      environmentId: reference.environmentId,
+      rawModelId: reference.rawModelId,
+      provider: reference.provider,
+      protocol: reference.provider === "anthropic" ? "anthropic" : "openai",
+      baseUrl: `${gatewayUrl}/internal/models/${encodeURIComponent(reference.runId)}`,
+      apiKey: workspaceToken,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    }),
     onEvent: logCredentialCacheEvent,
   });
   return defaultCredentialCache;
+}
+
+function requireSecureGatewayUrl(value: string) {
+  const url = new URL(value);
+  if (url.protocol !== "https:" && !isLoopbackHostname(url.hostname)) {
+    throw new GatewayCredentialBrokerError(
+      "MODEL_RELAY_INSECURE",
+      "The Environment model relay requires HTTPS outside loopback development."
+    );
+  }
+  return url.toString().replace(/\/+$/u, "");
 }
 
 export function createProviderGatewayForLease(
@@ -420,56 +390,6 @@ export function createProviderGatewayForLease(
   });
 }
 
-function parseGatewayCredentialLease(
-  value: unknown,
-  reference: GatewayCredentialReference
-): GatewayCredentialLease {
-  const lease = asRecord(value);
-  const provider = lease?.provider;
-  const protocol = lease?.protocol;
-  const expiresAt = asNonEmptyString(lease?.expiresAt);
-  if (
-    lease?.version !== GATEWAY_CREDENTIAL_LEASE_VERSION ||
-    asNonEmptyString(lease.leaseId) === undefined ||
-    lease.gatewayId !== reference.gatewayId ||
-    lease.organizationId !== reference.organizationId ||
-    lease.environmentId !== reference.environmentId ||
-    lease.rawModelId !== reference.rawModelId ||
-    ![
-      "openai",
-      "openrouter",
-      "anthropic",
-      "ollama",
-      "lumi",
-      "runpod",
-    ].includes(
-      String(provider)
-    ) ||
-    (protocol !== "openai" && protocol !== "anthropic") ||
-    (lease.baseUrl !== null && asNonEmptyString(lease.baseUrl) === undefined) ||
-    (lease.apiKey !== null && asNonEmptyString(lease.apiKey) === undefined) ||
-    expiresAt === undefined ||
-    !Number.isFinite(Date.parse(expiresAt))
-  ) {
-    throw new GatewayCredentialBrokerError(
-      "GATEWAY_CREDENTIAL_LEASE_INVALID",
-      "Gateway credential broker returned an invalid lease contract."
-    );
-  }
-  return lease as unknown as GatewayCredentialLease;
-}
-
-function resolveBrokerEndpoint(appUrl: string) {
-  const url = new URL("/api/kestrel/gateway-credentials/lease", appUrl);
-  if (url.protocol !== "https:" && !isLoopbackHostname(url.hostname)) {
-    throw new GatewayCredentialBrokerError(
-      "GATEWAY_CREDENTIAL_BROKER_INSECURE",
-      "Gateway credential broker requires HTTPS outside loopback development."
-    );
-  }
-  return url.toString();
-}
-
 function isLoopbackHostname(hostname: string) {
   return (
     hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
@@ -477,7 +397,7 @@ function isLoopbackHostname(hostname: string) {
 }
 
 function credentialCacheKey(reference: GatewayCredentialReference) {
-  return `${reference.organizationId}\u0000${reference.environmentId}\u0000${reference.gatewayId}\u0000${reference.rawModelId}`;
+  return `${reference.organizationId}\u0000${reference.environmentId}\u0000${reference.runId}\u0000${reference.gatewayId}\u0000${reference.rawModelId}`;
 }
 
 function isModelAuthenticationError(error: unknown) {

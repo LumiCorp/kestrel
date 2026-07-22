@@ -20,6 +20,8 @@ const NO_STORE_HEADERS = {
   Pragma: "no-cache",
 } as const;
 
+// Compatibility boundary for Workspace Machines running the previous image.
+// New images use the Environment gateway model relay and never receive this token.
 export async function POST(request: NextRequest) {
   try {
     authorizeGatewayCredentialBroker({

@@ -10,6 +10,9 @@ import { contractTest } from "../../../../tests/helpers/contract-test.js";
 contractTest("web.hermetic", "tool registry includes seeded built-in and external providers", () => {
   const providers = listToolProviders();
   assert.ok(providers.some((provider) => provider.key === "built_in.weather"));
+  assert.ok(
+    providers.some((provider) => provider.key === "ngrok")
+  );
   assert.ok(providers.some((provider) => provider.key === "built_in.time"));
   assert.ok(
     providers.some((provider) => provider.key === "built_in.geocoding")

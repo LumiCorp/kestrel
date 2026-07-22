@@ -24,8 +24,6 @@ export async function processEnvironmentOperation(operationId: string) {
         ticketPublicKey:
           process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
         controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
-        credentialBrokerToken:
-          process.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN ?? "",
       });
       const result = await provisioner.process(operationId);
       if (result === "deferred") {

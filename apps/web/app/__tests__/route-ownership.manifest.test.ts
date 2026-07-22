@@ -142,7 +142,7 @@ contractTest("web.hermetic", "Kestrel-One API route classes have matching app-bo
     if (entry.access === "service-boundary") {
       assert.match(
         source,
-        /\b(?:authorizeEnvironmentReconcileCron|authorizeWorkspaceIdleNotification|authorizeGatewayCredentialBroker|verifyEnvironmentExecutionTicket|verifyEnvironmentToolCredential|handleAppRuntimeRequest)\b/,
+        /\b(?:authorizeEnvironmentReconcileCron|authorizeWorkspaceIdleNotification|authorizeGatewayCredentialBroker|resolveEnvironmentGatewayConfig|reportEnvironmentGatewayNgrokStatus|verifyEnvironmentExecutionTicket|verifyEnvironmentServiceToken|verifyEnvironmentToolCredential|handleAppRuntimeRequest)\b/,
         `${entry.file} must validate its service credential`
       );
       continue;

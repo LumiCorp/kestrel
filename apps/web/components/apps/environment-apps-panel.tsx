@@ -54,12 +54,14 @@ function ConnectionDialog({
   onSaved: (connection: AppConnectionSummary) => void;
 }) {
   const isWeather = app.key === "built_in.weather";
+  const isNgrok = app.key === "ngrok";
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(
     isWeather ? "Visual Crossing fallback" : "Primary"
   );
   const [apiKey, setApiKey] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [wildcardDomain, setWildcardDomain] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -71,10 +73,14 @@ function ConnectionDialog({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            kind: "api_key",
+            kind: isNgrok ? "ngrok_agent" : "api_key",
             name,
-            apiKey,
-            ...(projectId.trim() ? { projectId } : {}),
+            ...(isNgrok
+              ? { authtoken: apiKey, wildcardDomain }
+              : {
+                  apiKey,
+                  ...(projectId.trim() ? { projectId } : {}),
+                }),
           }),
         }
       );
@@ -88,10 +94,13 @@ function ConnectionDialog({
       onSaved(body.connection);
       setApiKey("");
       setProjectId("");
+      setWildcardDomain("");
       setOpen(false);
       toast.success(
         isWeather
           ? "Visual Crossing fallback is ready for this Environment."
+          : isNgrok
+            ? "ngrok validation has been sent to the Environment gateway."
           : `${app.displayName} is connected to this Environment.`,
         {
           description:
@@ -106,7 +115,8 @@ function ConnectionDialog({
   }
 
   if (
-    !app.authMethods.includes("api_key") ||
+    (!app.authMethods.includes("api_key") &&
+      !app.authMethods.includes("agent_token")) ||
     (app.connectionModel !== "environment" && app.connectionModel !== "hybrid")
   ) {
     return null;
@@ -129,7 +139,9 @@ function ConnectionDialog({
           <DialogDescription>
             {isWeather
               ? "Open-Meteo remains the free primary provider. Kestrel verifies and encrypts this key, then makes the fallback available to Projects in this Environment."
-              : "This shared connection can be attached to Projects in this Environment. Kestrel encrypts the key before it is stored."}
+              : isNgrok
+                ? "Kestrel encrypts this Environment's ngrok agent token. Only the trusted Environment gateway can use it; Workspaces never receive it."
+                : "This shared connection can be attached to Projects in this Environment. Kestrel encrypts the key before it is stored."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
@@ -146,7 +158,11 @@ function ConnectionDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor={`${app.key}-connection-key`}>
-              {isWeather ? "Visual Crossing API key" : "Connection key"}
+              {isWeather
+                ? "Visual Crossing API key"
+                : isNgrok
+                  ? "ngrok agent authtoken"
+                  : "Connection key"}
             </Label>
             <Input
               autoComplete="off"
@@ -155,12 +171,30 @@ function ConnectionDialog({
               placeholder={
                 isWeather
                   ? "Paste your Visual Crossing API key"
+                  : isNgrok
+                    ? "Paste a wildcard-scoped ngrok authtoken"
                   : `Paste the key from ${app.displayName}`
               }
               type="password"
               value={apiKey}
             />
           </div>
+          {isNgrok ? (
+            <div className="space-y-2">
+              <Label htmlFor={`${app.key}-wildcard-domain`}>
+                Reserved wildcard domain
+              </Label>
+              <Input
+                autoCapitalize="none"
+                autoComplete="off"
+                id={`${app.key}-wildcard-domain`}
+                onChange={(event) => setWildcardDomain(event.target.value)}
+                placeholder="*.previews.example.com"
+                spellCheck={false}
+                value={wildcardDomain}
+              />
+            </div>
+          ) : null}
           {app.key === "tavily" ? (
             <details className="rounded-lg border px-4 py-3">
               <summary className="cursor-pointer font-medium text-sm">
@@ -185,14 +219,21 @@ function ConnectionDialog({
             Cancel
           </Button>
           <Button
-            disabled={saving || !name.trim() || !apiKey.trim()}
+            disabled={
+              saving ||
+              !name.trim() ||
+              !apiKey.trim() ||
+              (isNgrok && !wildcardDomain.trim())
+            }
             onClick={() => void save()}
           >
             {saving
               ? "Verifying…"
               : isWeather
                 ? "Verify and add fallback"
-                : "Verify and connect"}
+                : isNgrok
+                  ? "Save and validate"
+                  : "Verify and connect"}
           </Button>
         </DialogFooter>
       </DialogContent>

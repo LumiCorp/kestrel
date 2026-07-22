@@ -159,10 +159,12 @@ contractTest("runtime.hermetic", "ProfileStore never persists transient gateway 
           model: "openai/gpt-5.4",
           modelCredential: {
             source: "kestrel-one",
+            runId: "run-active",
             organizationId: "org-acme",
             environmentId: "env-production",
             gatewayId: "gateway-openrouter",
             rawModelId: "openai/gpt-5.4",
+            provider: "openrouter",
           },
         },
       ],
@@ -174,8 +176,8 @@ contractTest("runtime.hermetic", "ProfileStore never persists transient gateway 
   const profiles = await store.load();
   assert.equal(
     profiles.find((profile) => profile.id === "reference")?.modelCredential
-      ?.gatewayId,
-    "gateway-openrouter"
+      ?.runId,
+    "run-active"
   );
 
   const persisted = JSON.parse(await readFile(filePath, "utf8")) as {

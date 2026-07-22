@@ -41,6 +41,9 @@ const ROUTE_CAPABILITIES = [
   "workspace.terminal.exec",
   "workspace.apps.read",
   "workspace.apps.write",
+  "workspace.previews.read",
+  "workspace.previews.write",
+  "gateway.config.refresh",
   "workspace.backups.export",
   "workspace.backups.restore",
   "workspace.skills.read",
@@ -365,21 +368,62 @@ export async function updateEnvironmentExecutionStatus(input: {
   status: "running" | "completed" | "failed" | "cancelled";
 }) {
   const now = new Date();
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction
+      .update(schema.environmentRunExecutions)
+      .set({
+        status: input.status,
+        ...(input.status === "running"
+          ? { startedAt: now }
+          : { completedAt: now }),
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.environmentRunExecutions.id, input.executionId),
+          eq(schema.environmentRunExecutions.organizationId, input.organizationId)
+        )
+      );
+    if (input.status !== "running") {
+      await transaction
+        .update(schema.environmentModelGrants)
+        .set({ status: "closed", closedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(schema.environmentModelGrants.runId, input.executionId),
+            eq(
+              schema.environmentModelGrants.organizationId,
+              input.organizationId
+            )
+          )
+        );
+    }
+  });
+}
+
+export async function activateEnvironmentModelGrant(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  threadId: string;
+  runId: string;
+  gatewayId: string;
+  rawModelId: string;
+}) {
+  const now = new Date();
   await knowledgeDb
-    .update(schema.environmentRunExecutions)
-    .set({
-      status: input.status,
-      ...(input.status === "running"
-        ? { startedAt: now }
-        : { completedAt: now }),
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(schema.environmentRunExecutions.id, input.executionId),
-        eq(schema.environmentRunExecutions.organizationId, input.organizationId)
-      )
-    );
+    .insert(schema.environmentModelGrants)
+    .values({ ...input, status: "active", createdAt: now, updatedAt: now })
+    .onConflictDoUpdate({
+      target: schema.environmentModelGrants.runId,
+      set: {
+        gatewayId: input.gatewayId,
+        rawModelId: input.rawModelId,
+        status: "active",
+        closedAt: null,
+        updatedAt: now,
+      },
+    });
 }
 
 export async function updateEnvironmentExecutionRuntimeIdentity(input: {

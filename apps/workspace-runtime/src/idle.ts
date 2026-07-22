@@ -15,7 +15,7 @@ export async function notifyWorkspaceIdle(input: {
   let response: Response;
   try {
     response = await fetchImpl(
-      new URL("/api/runtime/environments/idle", input.controlPlaneUrl),
+      new URL("/internal/workspaces/idle", input.controlPlaneUrl),
       {
         method: "POST",
         headers: {

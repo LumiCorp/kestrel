@@ -17,6 +17,10 @@ import {
   resolveEnvironmentExecutionRoute,
 } from "./execution-route";
 import { createFlyProviderClient } from "./fly-connection";
+import {
+  createEnvironmentServiceToken,
+  hashEnvironmentServiceToken,
+} from "./service-tokens";
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
 
@@ -415,6 +419,7 @@ export async function restoreWorkspaceBackup(input: {
   let replacementMachineId: string | null = null;
   let rebound = false;
   try {
+    const workspaceServiceToken = createEnvironmentServiceToken();
     const replacementVolume = await provider.createReplacementWorkspaceVolume({
       appName: flyAppName,
       workspaceId: workspace.id,
@@ -434,8 +439,7 @@ export async function restoreWorkspaceBackup(input: {
         ticketPublicKey:
           process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
         controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
-        credentialBrokerToken:
-          process.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN ?? "",
+        serviceToken: workspaceServiceToken,
         source: {
           type: workspace.sourceType,
           ...(workspace.sourceRepository
@@ -528,6 +532,9 @@ export async function restoreWorkspaceBackup(input: {
           flyVolumeId: replacementVolume.id,
           flyMachineId: replacementMachine.id,
           runtimeImage,
+          serviceTokenHash: hashEnvironmentServiceToken(
+            workspaceServiceToken
+          ),
           status: "ready",
           lastHealthAt: completedAt,
           updatedAt: completedAt,

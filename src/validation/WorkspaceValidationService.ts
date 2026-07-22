@@ -4,6 +4,7 @@ import { access, mkdir, readFile, realpath, rename, stat, writeFile } from "node
 import path from "node:path";
 
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { agentChildEnvironment } from "../runtime/agentChildEnvironment.js";
 import { redactDiagnosticText } from "../diagnostics/redaction.js";
 import type {
   WorkspaceValidationAction,
@@ -247,7 +248,7 @@ export class WorkspaceValidationService {
     void this.persist();
     const child = spawn(action.command, action.args, {
       cwd: action.cwd,
-      env: process.env,
+      env: agentChildEnvironment(),
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });

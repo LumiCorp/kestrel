@@ -32,6 +32,74 @@ function createCapability(
 
 export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
   {
+    key: "ngrok",
+    displayName: "ngrok Previews",
+    description:
+      "Publish short-lived anonymous HTTPS URLs for HTTP apps through the trusted Environment gateway.",
+    type: "api_key",
+    authType: "api_key",
+    app: {
+      category: "engineering",
+      connectionModel: "environment",
+      connectionRequirement: "required",
+      authMethods: ["agent_token"],
+      delivery: "lifecycle",
+      installMode: "inherited",
+      icon: "external-link",
+    },
+    metadata: {
+      icon: "external-link",
+      category: "engineering",
+      provider: "ngrok",
+    },
+    capabilities: [
+      createCapability({
+        key: "publish",
+        runtimeName: "workspace.preview.publish",
+        displayName: "Publish preview",
+        description: "Expose a listening local HTTP port at a temporary public URL.",
+        accessMode: "write",
+        defaultPolicy: {
+          loggingMode: "metadata_only",
+          rateLimitMode: "off",
+        },
+      }),
+      createCapability({
+        key: "list",
+        runtimeName: "workspace.preview.list",
+        displayName: "List previews",
+        description: "List active public Workspace previews.",
+        accessMode: "status",
+        defaultPolicy: {
+          loggingMode: "metadata_only",
+          rateLimitMode: "off",
+        },
+      }),
+      createCapability({
+        key: "renew",
+        runtimeName: "workspace.preview.renew",
+        displayName: "Renew preview",
+        description: "Extend a preview within its maximum lifetime.",
+        accessMode: "write",
+        defaultPolicy: {
+          loggingMode: "metadata_only",
+          rateLimitMode: "off",
+        },
+      }),
+      createCapability({
+        key: "close",
+        runtimeName: "workspace.preview.close",
+        displayName: "Close preview",
+        description: "Permanently close a public preview URL.",
+        accessMode: "write",
+        defaultPolicy: {
+          loggingMode: "metadata_only",
+          rateLimitMode: "off",
+        },
+      }),
+    ],
+  },
+  {
     key: "built_in.weather",
     displayName: "Weather",
     description:

@@ -7,6 +7,7 @@ import { logAdminEvent } from "@/lib/admin/logs";
 import { errorResponse } from "@/lib/knowledge/http";
 import { getAppProviderAdapter } from "./provider-adapter";
 import { appProviderHealthTransition } from "./provider-health";
+import { handleNgrokPreviewLifecycle } from "./ngrok-preview-lifecycle";
 import {
   AppRuntimeError,
   authorizeAppRuntime,
@@ -65,6 +66,39 @@ export async function handleAppRuntimeRequest(input: {
       approval: input.approval,
     });
     connectionId = policy.connectionId;
+    if (runtime.mode === "lifecycle") {
+      if (input.appKey !== "ngrok") {
+        throw new AppRuntimeError("APP_RUNTIME_PROVIDER_NOT_FOUND", 404);
+      }
+      const response = await handleNgrokPreviewLifecycle({
+        request: input.request,
+        path: input.path,
+        capability: input.capabilityKey,
+        authorization: input.request.headers.get("authorization") ?? "",
+        ticket,
+        policy,
+      });
+      await logAdminEvent({
+        organizationId: ticket.organizationId,
+        actorUserId: ticket.actorId,
+        category: "environment-tools",
+        action: `${input.appKey}.${input.capabilityKey}`,
+        targetType: "environment",
+        targetId: ticket.environmentId,
+        message: `Executed ${input.capabilityKey} through ${input.appKey}.`,
+        metadata: {
+          projectId: policy.projectId,
+          workspaceId: ticket.workspaceId,
+          threadId: ticket.threadId,
+          runId: ticket.runId,
+          agentId: ticket.agentId,
+          connectionId: policy.connectionId,
+          approvalMode: policy.capability.approvalMode,
+          loggingMode: policy.capability.loggingMode,
+        },
+      });
+      return response;
+    }
     const body =
       input.request.method === "POST"
         ? await readBoundedBody(input.request)

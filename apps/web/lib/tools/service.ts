@@ -345,6 +345,19 @@ const tavilyAdapter: ToolProviderAdapter = {
   },
 };
 
+const environmentManagedAdapter: ToolProviderAdapter = {
+  async getConnectionStatus() {
+    return {
+      authSource: "api_key",
+      status: "not_configured",
+      isReady: false,
+      label: "Configure per Environment",
+      lastError: null,
+      metadata: { connectionModel: "environment" },
+    };
+  },
+};
+
 const discordAdapter: ToolProviderAdapter = {
   async getConnectionStatus({ organizationId, origin }) {
     const status = await getDiscordIntegrationStatus(
@@ -463,6 +476,7 @@ const youtubeSourceAdapter: ToolProviderAdapter = {
 };
 
 const providerAdapters = new Map<ToolProviderKey, ToolProviderAdapter>([
+  ["ngrok", environmentManagedAdapter],
   ["built_in.weather", builtInSystemAdapter],
   ["built_in.time", builtInSystemAdapter],
   ["built_in.geocoding", builtInSystemAdapter],

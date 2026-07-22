@@ -18,11 +18,17 @@ import { Readable } from "node:stream";
 import path from "node:path";
 import { WorkspaceApplicationRegistry } from "./applications.js";
 import { WorkspaceBackupImportRegistry } from "./backup-imports.js";
+import {
+  workspaceChildEnvironment,
+  workspaceRunnerEnvironment,
+} from "./child-environment.js";
 import { readWorkspaceFile, writeWorkspaceFile } from "./files.js";
 import { requestGitHubToolCredential } from "./github-credentials.js";
 import { notifyWorkspaceIdle } from "./idle.js";
 import { workspaceListenHost } from "./network.js";
+import { isPortListening } from "./previews.js";
 import { buildWorkspaceProxyHeaders } from "./proxy.js";
+import { handlePreviewRelayHttp, handlePreviewRelayUpgrade, isPreviewRelayRequest } from "./preview-relay.js";
 import { resolveRunnerServiceEntrypoint } from "./runner-entrypoint.js";
 import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
 import { WorkspaceTerminalRegistry } from "./terminals.js";
@@ -37,9 +43,10 @@ await mkdir(path.join(config.workspaceRoot, ".kestrel"), { recursive: true });
 const applications = new WorkspaceApplicationRegistry(config.workspaceRoot);
 await applications.restore();
 const backupImports = new WorkspaceBackupImportRegistry(config.workspaceRoot);
-const terminals = new WorkspaceTerminalRegistry();
+const terminals = new WorkspaceTerminalRegistry(workspaceChildEnvironment);
 let lastActivityAt = Date.now();
 let activeRequests = 0;
+let activePreviewSockets = 0;
 let idleNotificationInFlight = false;
 let idleStopAccepted = false;
 let drainingForIdleStop = false;
@@ -75,6 +82,20 @@ const server = createServer(async (request, response) => {
   activeRequests += 1;
   lastActivityAt = Date.now();
   try {
+    if (isPreviewRelayRequest(request.url)) {
+      await handlePreviewRelayHttp({
+        request,
+        response,
+        scope: {
+          publicKey: config.ticketPublicKey,
+          organizationId: config.organizationId,
+          environmentId: config.environmentId,
+          workspaceId: config.workspaceId,
+          machineId: config.machineId,
+        },
+      });
+      return;
+    }
     const ticket = authorizeWorkspaceRequest({
       authorization: request.headers.authorization,
       publicKey: config.ticketPublicKey,
@@ -158,6 +179,28 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/v1/apps") {
       requireCapability(ticket.capabilities, "workspace.apps.read");
       writeJson(response, 200, { applications: applications.list() });
+      return;
+    }
+    const previewPort = url.pathname.match(/^\/v1\/preview-ports\/(\d+)$/u);
+    if (request.method === "GET" && previewPort?.[1]) {
+      requireCapability(ticket.capabilities, "workspace.previews.write");
+      const port = Number.parseInt(previewPort[1], 10);
+      if (
+        !Number.isSafeInteger(port) ||
+        port < 1024 ||
+        port > 65_535 ||
+        port === 43_104 ||
+        port === 43_105
+      ) {
+        throw new WorkspaceRequestError(400, "WORKSPACE_PREVIEW_PORT_INVALID");
+      }
+      if (!(await isPortListening(port))) {
+        throw new WorkspaceRequestError(
+          409,
+          "WORKSPACE_PREVIEW_PORT_NOT_LISTENING"
+        );
+      }
+      writeJson(response, 200, { ok: true, port });
       return;
     }
     if (request.method === "GET" && url.pathname === "/v1/promotions") {
@@ -418,10 +461,35 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(config.port, config.listenHost);
+server.on("upgrade", (request, socket, head) => {
+  if (!isPreviewRelayRequest(request.url) || drainingForIdleStop) {
+    socket.destroy();
+    return;
+  }
+  lastActivityAt = Date.now();
+  activePreviewSockets += 1;
+  socket.once("close", () => {
+    activePreviewSockets = Math.max(0, activePreviewSockets - 1);
+    lastActivityAt = Date.now();
+  });
+  handlePreviewRelayUpgrade({
+    request,
+    socket,
+    head,
+    scope: {
+      publicKey: config.ticketPublicKey,
+      organizationId: config.organizationId,
+      environmentId: config.environmentId,
+      workspaceId: config.workspaceId,
+      machineId: config.machineId,
+    },
+  });
+});
 const idleTimer = setInterval(() => {
   if (
     !(idleNotificationInFlight ||idleStopAccepted ) &&
     activeRequests === 0 &&
+    activePreviewSockets === 0 &&
     terminals.activeCount === 0 &&
     Date.now() - lastActivityAt >= config.idleTimeoutMinutes * 60_000
   ) {
@@ -429,8 +497,8 @@ const idleTimer = setInterval(() => {
     idleNotificationInFlight = true;
     drainingForIdleStop = true;
     void notifyWorkspaceIdle({
-      controlPlaneUrl: config.controlPlaneUrl,
-      authorizationToken: config.credentialBrokerToken,
+      controlPlaneUrl: config.environmentGatewayUrl,
+      authorizationToken: config.workspaceServiceToken,
       organizationId: config.organizationId,
       environmentId: config.environmentId,
       workspaceId: config.workspaceId,
@@ -456,13 +524,12 @@ function startRunner(authToken: string): ChildProcess {
   const child = spawn(process.execPath, [entrypoint], {
     cwd: config.workspaceRoot,
     stdio: ["ignore", "inherit", "inherit"],
-    env: {
-      ...process.env,
-      HOME: config.workspaceRoot,
-      KESTREL_RUNNER_SERVICE_HOST: "127.0.0.1",
-      KESTREL_RUNNER_SERVICE_PORT: "43105",
-      KESTREL_RUNNER_SERVICE_TOKEN: authToken,
-    },
+    env: workspaceRunnerEnvironment({
+      home: config.workspaceRoot,
+      runtimeUrl: `http://127.0.0.1:${config.port}`,
+      serviceToken: authToken,
+      workspaceServiceToken: config.workspaceServiceToken,
+    }),
   });
   child.once("exit", (code) => {
     if (runner === child) runner = null;
@@ -843,7 +910,10 @@ async function listDirectory(directory: string, root: string) {
 
 function executeCommand(command: string, cwd: string) {
   return new Promise<{ exitCode: number | null; stdout: string; stderr: string }>((resolve) => {
-    const child = spawn("/bin/sh", ["-lc", command], { cwd, env: process.env });
+    const child = spawn("/bin/sh", ["-lc", command], {
+      cwd,
+      env: workspaceChildEnvironment(),
+    });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
@@ -912,9 +982,8 @@ function readConfig() {
     ticketPublicKey: required("KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY"),
     profileId: process.env.KESTREL_ONE_PROFILE_ID?.trim() || "kestrel-one",
     controlPlaneUrl: required("KESTREL_CONTROL_PLANE_URL"),
-    credentialBrokerToken: required(
-      "KESTREL_ONE_CREDENTIAL_BROKER_TOKEN"
-    ),
+    environmentGatewayUrl: required("KESTREL_ENVIRONMENT_GATEWAY_URL"),
+    workspaceServiceToken: required("KESTREL_WORKSPACE_SERVICE_TOKEN"),
     sourceType: process.env.KESTREL_WORKSPACE_SOURCE_TYPE?.trim() ?? "blank",
     sourceResourceId:
       process.env.KESTREL_WORKSPACE_SOURCE_RESOURCE_ID?.trim() ?? "",
@@ -952,11 +1021,15 @@ function writeJson(response: ServerResponse, status: number, body: unknown) {
   response.end(JSON.stringify(body));
 }
 
+let shutdownStarted = false;
 function shutdown(code: number) {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
   clearInterval(idleTimer);
-  void applications.stopAll();
-  void backupImports.closeAll();
   terminals.closeAll();
   runner?.kill("SIGTERM");
-  server.close(() => process.exit(code));
+  void Promise.allSettled([
+    applications.stopAll(),
+    backupImports.closeAll(),
+  ]).finally(() => server.close(() => process.exit(code)));
 }

@@ -1973,6 +1973,10 @@ function createRuntimeWithStore(
     devShell: profile.devShell,
     kestrelOne: {
       appUrl: parseEnvString("KESTREL_ONE_APP_URL", runtimeEnv),
+      workspaceRuntimeUrl: parseEnvString(
+        "KESTREL_WORKSPACE_RUNTIME_URL",
+        runtimeEnv
+      ),
       toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN", runtimeEnv),
       appApprovalModes: profile.kestrelOneAppApprovalModes,
     },

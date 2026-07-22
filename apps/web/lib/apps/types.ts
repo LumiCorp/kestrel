@@ -25,11 +25,13 @@ export type AppConnectionRequirement = "none" | "optional" | "required";
 export type AppAuthMethod =
   | "none"
   | "api_key"
+  | "agent_token"
   | "oauth_personal"
   | "oauth_environment"
   | "deployment_managed";
 export type AppDelivery =
   | "native"
+  | "lifecycle"
   | "oauth"
   | "api_key"
   | "mcp"

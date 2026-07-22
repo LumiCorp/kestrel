@@ -7,15 +7,14 @@ import {
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "gateway credential authority readiness requires broker and encryption configuration", () => {
+contractTest("web.hermetic", "gateway credential authority readiness requires encryption configuration", () => {
   assert.deepEqual(getGatewayCredentialAuthorityHealth({ NODE_ENV: "test" }), {
     ok: false,
-    code: "GATEWAY_CREDENTIAL_BROKER_NOT_CONFIGURED",
+    code: "GATEWAY_CREDENTIAL_ENCRYPTION_NOT_CONFIGURED",
   });
   assert.deepEqual(
     getGatewayCredentialAuthorityHealth({
       NODE_ENV: "test",
-      KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "broker-token",
       KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID: "primary",
       KESTREL_GATEWAY_CREDENTIAL_KEYS: JSON.stringify({
         primary: Buffer.alloc(32, 5).toString("base64"),

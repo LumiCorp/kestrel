@@ -395,7 +395,7 @@ contractTest("web.hermetic", "Workspace provisioning requests encrypted storage 
     ticketPublicKey:
       "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
     controlPlaneUrl: "https://kestrel.example",
-    credentialBrokerToken: "credential-broker-token",
+    serviceToken: "workspace-service-token",
     source: { type: "blank" },
     idleTimeoutMinutes: 15,
   });
@@ -436,7 +436,16 @@ contractTest("web.hermetic", "Workspace provisioning requests encrypted storage 
   );
   assert.equal(
     machineBody.config.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN,
-    "credential-broker-token"
+    undefined
+  );
+  assert.equal(
+    machineBody.config.env.KESTREL_WORKSPACE_PREVIEWS_ENABLED,
+    undefined
+  );
+  assert.equal(machineBody.config.env.NGROK_AUTHTOKEN, undefined);
+  assert.equal(
+    machineBody.config.env.KESTREL_WORKSPACE_SERVICE_TOKEN,
+    "workspace-service-token"
   );
   assert.equal(machineBody.config.env.OPENAI_API_KEY, undefined);
   assert.equal(machineBody.config.env.ANTHROPIC_API_KEY, undefined);
@@ -485,6 +494,7 @@ contractTest("web.hermetic", "Environment gateway owns public ingress while Work
     runtimeImage: "registry.fly.io/router@sha256:abc",
     ticketPublicKey:
       "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+    controlPlaneUrl: "https://kestrel.example",
   });
   assert.equal(gateway.routerUrl, "https://kestrel-env-abc.fly.dev");
   assert.equal(gateway.sharedIp, "203.0.113.1");
@@ -546,6 +556,7 @@ contractTest("web.hermetic", "Environment gateway rejects an existing Machine wi
       region: "iad",
       runtimeImage: "registry.fly.io/router@sha256:current",
       ticketPublicKey: "current-key",
+      controlPlaneUrl: "https://kestrel.example",
     }),
     /immutable ingress contract/u
   );
@@ -626,6 +637,120 @@ contractTest("web.hermetic", "Fly image updates are idempotent across tag aliase
   );
 });
 
+contractTest("web.hermetic", "Fly workspace updates reconcile preview environment without replacing unrelated configuration", async () => {
+  const requests: Array<{ method: string; body: unknown }> = [];
+  const digest = `sha256:${"a".repeat(64)}`;
+  const currentConfig = {
+    image: `registry.fly.io/kestrel-one-runner@${digest}`,
+    env: {
+      KESTREL_WORKSPACE_ID: "workspace-1",
+      KESTREL_WORKSPACE_PREVIEWS_ENABLED: "true",
+      NGROK_AUTHTOKEN: "old-token",
+    },
+  };
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ method: init?.method ?? "GET", body });
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        instance_id: "instance-1",
+        config: body?.config ?? currentConfig,
+      });
+    }) as typeof fetch,
+  });
+
+  await client.updateMachineImage({
+    appName: "app-1",
+    machineId: "machine-1",
+    runtimeImage: `registry.fly.io/kestrel-one-runner:current@${digest}`,
+    envPatch: {
+      KESTREL_WORKSPACE_PREVIEWS_ENABLED: "true",
+      NGROK_AUTHTOKEN: "new-token",
+    },
+  });
+
+  assert.deepEqual(requests.map(({ method }) => method), ["GET", "POST"]);
+  const update = requests[1]?.body as {
+    config?: { env?: Record<string, string> };
+  };
+  assert.deepEqual(update.config?.env, {
+    KESTREL_WORKSPACE_ID: "workspace-1",
+    KESTREL_WORKSPACE_PREVIEWS_ENABLED: "true",
+    NGROK_AUTHTOKEN: "new-token",
+  });
+
+  await client.updateMachineImage({
+    appName: "app-1",
+    machineId: "machine-1",
+    runtimeImage: `registry.fly.io/kestrel-one-runner@${digest}`,
+    envPatch: {
+      KESTREL_WORKSPACE_PREVIEWS_ENABLED: undefined,
+      NGROK_AUTHTOKEN: undefined,
+    },
+  });
+  const disableUpdate = requests[3]?.body as {
+    config?: { env?: Record<string, string> };
+  };
+  assert.deepEqual(disableUpdate.config?.env, {
+    KESTREL_WORKSPACE_ID: "workspace-1",
+  });
+});
+
+contractTest("web.hermetic", "Fly idempotent Workspace provisioning rotates the scoped service identity", async () => {
+  const requests: Array<{ method: string; body: unknown }> = [];
+  const current = {
+    id: "machine-1",
+    state: "started",
+    region: "iad",
+    config: {
+      image: "registry.fly.io/runtime@sha256:abc",
+      metadata: { kestrel_workspace_id: "workspace-1" },
+      env: {
+        KESTREL_WORKSPACE_ID: "workspace-1",
+        KESTREL_WORKSPACE_SERVICE_TOKEN: "old-token",
+      },
+    },
+  };
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ method: init?.method ?? "GET", body });
+      return Response.json(
+        init?.method === "POST"
+          ? { ...current, config: body.config }
+          : [current]
+      );
+    }) as typeof fetch,
+  });
+  await client.ensureWorkspaceMachine({
+    appName: "app-1",
+    environmentId: "environment-1",
+    organizationId: "organization-1",
+    workspaceId: "workspace-1",
+    volumeId: "volume-1",
+    region: "iad",
+    runtimeImage: "registry.fly.io/runtime@sha256:abc",
+    ticketPublicKey: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+    controlPlaneUrl: "https://kestrel.example",
+    serviceToken: "new-token",
+    source: { type: "blank" },
+    idleTimeoutMinutes: 15,
+  });
+  assert.deepEqual(requests.map(({ method }) => method), ["GET", "POST"]);
+  const update = requests[1]?.body as { config?: { env?: Record<string, string> } };
+  assert.deepEqual(update.config?.env, {
+    KESTREL_WORKSPACE_ID: "workspace-1",
+    KESTREL_WORKSPACE_SERVICE_TOKEN: "new-token",
+  });
+});
+
 contractTest("web.hermetic", "Fly deletion operations are idempotent on missing resources", async () => {
   const requests: Array<{ url: string; method: string | undefined }> = [];
   const client = new FlyMachinesClient({
@@ -695,7 +820,6 @@ contractTest("web.hermetic", "replacement resources are idempotently namespaced 
     ticketPublicKey:
       "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
     controlPlaneUrl: "https://kestrel.example",
-    credentialBrokerToken: "credential-broker-token",
     source: { type: "blank" },
     idleTimeoutMinutes: 15,
     replacementId: "restore-operation-1",

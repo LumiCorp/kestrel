@@ -1275,6 +1275,32 @@ contractTest("runtime.process", "DevShellSupervisor rebinds pnpm workspace env t
   }
 });
 
+contractTest("runtime.process", "DevShellSupervisor strips trusted runner credentials from inherited shell env", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  const originalWorkspaceToken = process.env.KESTREL_WORKSPACE_SERVICE_TOKEN;
+  const originalRunnerToken = process.env.KESTREL_RUNNER_SERVICE_TOKEN;
+  process.env.KESTREL_WORKSPACE_SERVICE_TOKEN = "workspace-secret";
+  process.env.KESTREL_RUNNER_SERVICE_TOKEN = "runner-secret";
+  try {
+    const result = await supervisor.runCommand({
+      workspaceRoot,
+      command: "node -e \"console.log(process.env.KESTREL_WORKSPACE_SERVICE_TOKEN ?? 'missing'); console.log(process.env.KESTREL_RUNNER_SERVICE_TOKEN ?? 'missing')\"",
+      envMode: "inherit",
+      envNames: ["KESTREL_WORKSPACE_SERVICE_TOKEN", "KESTREL_RUNNER_SERVICE_TOKEN"],
+      timeoutMs: 10_000,
+    });
+
+    assert.equal(result.status, "COMPLETED");
+    assert.equal(result.stdout.trim(), "missing\nmissing");
+  } finally {
+    if (originalWorkspaceToken === undefined) delete process.env.KESTREL_WORKSPACE_SERVICE_TOKEN;
+    else process.env.KESTREL_WORKSPACE_SERVICE_TOKEN = originalWorkspaceToken;
+    if (originalRunnerToken === undefined) delete process.env.KESTREL_RUNNER_SERVICE_TOKEN;
+    else process.env.KESTREL_RUNNER_SERVICE_TOKEN = originalRunnerToken;
+    await supervisor.close();
+  }
+});
+
 contractTest("runtime.process", "DevShellSupervisor stops a live process and rejects writes after completion", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {

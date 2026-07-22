@@ -67,6 +67,10 @@ const KESTREL_ONE_TOOL_NAMES = [
   "kestrel_one.search_knowledge_documents",
   "kestrel_one.github_repository_read",
   "kestrel_one.github_push_agent_branch",
+  "workspace.preview.publish",
+  "workspace.preview.list",
+  "workspace.preview.renew",
+  "workspace.preview.close",
   "kestrel_one.github_issue_create",
   "kestrel_one.github_pull_request_create",
   "kestrel_one.github_pull_request_merge",
@@ -557,6 +561,8 @@ function parseModelCredential(
   const candidate = value as Record<string, unknown>;
   if (
     candidate.source !== "kestrel-one" ||
+    typeof candidate.runId !== "string" ||
+    candidate.runId.trim().length === 0 ||
     typeof candidate.gatewayId !== "string" ||
     candidate.gatewayId.trim().length === 0 ||
     typeof candidate.organizationId !== "string" ||
@@ -564,16 +570,22 @@ function parseModelCredential(
     typeof candidate.environmentId !== "string" ||
     candidate.environmentId.trim().length === 0 ||
     typeof candidate.rawModelId !== "string" ||
-    candidate.rawModelId.trim().length === 0
+    candidate.rawModelId.trim().length === 0 ||
+    (candidate.provider !== "openai" &&
+      candidate.provider !== "openrouter" &&
+      candidate.provider !== "anthropic" &&
+      candidate.provider !== "ollama")
   ) {
     throw new Error(`Profile '${profileId}' has invalid modelCredential`);
   }
   return {
     source: "kestrel-one",
+    runId: candidate.runId.trim(),
     gatewayId: candidate.gatewayId.trim(),
     organizationId: candidate.organizationId.trim(),
     environmentId: candidate.environmentId.trim(),
     rawModelId: candidate.rawModelId.trim(),
+    provider: candidate.provider,
   };
 }
 

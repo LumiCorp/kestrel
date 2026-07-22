@@ -94,10 +94,12 @@ contractTest("runtime.hermetic", "gateway-managed profiles use the credential br
       model: "openai/gpt-5.4",
       modelCredential: {
         source: "kestrel-one",
+        runId: "run-managed",
         organizationId: "org-acme",
         environmentId: "environment-default",
         gatewayId: "gateway-openrouter",
         rawModelId: "openai/gpt-5.4",
+        provider: "openrouter",
       },
     },
     {

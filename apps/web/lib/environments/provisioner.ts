@@ -17,6 +17,10 @@ import {
   flyEnvironmentAppName,
   flyEnvironmentNetworkName,
 } from "./providers/fly-machines";
+import {
+  createEnvironmentServiceToken,
+  hashEnvironmentServiceToken,
+} from "./service-tokens";
 
 export type ProvisioningOperation = {
   id: string;
@@ -61,6 +65,11 @@ export interface EnvironmentProvisioningRepository {
     }>
   >;
   setEnvironmentProvisioning(environmentId: string): Promise<void>;
+  stageEnvironmentGatewayIdentity(input: {
+    environmentId: string;
+    appName: string;
+    gatewayServiceTokenHash: string;
+  }): Promise<void>;
   setEnvironmentDeleting(environmentId: string): Promise<void>;
   completeEnvironment(input: {
     environmentId: string;
@@ -70,6 +79,7 @@ export interface EnvironmentProvisioningRepository {
     routerUrl: string;
     routerImage: string;
     runtimeImage: string;
+    gatewayServiceTokenHash: string;
   }): Promise<void>;
   failEnvironment(input: {
     environmentId: string;
@@ -84,6 +94,7 @@ export interface EnvironmentProvisioningRepository {
   completeEnvironmentGatewayUpdate(input: {
     environmentId: string;
     routerImage: string;
+    gatewayServiceTokenHash: string;
   }): Promise<void>;
   completeEnvironmentRuntimeUpdate(input: {
     environmentId: string;
@@ -96,6 +107,7 @@ export interface EnvironmentProvisioningRepository {
     volumeId: string;
     machineId: string;
     runtimeImage: string;
+    serviceTokenHash: string;
   }): Promise<void>;
   failWorkspace(input: {
     workspaceId: string;
@@ -111,6 +123,7 @@ export interface EnvironmentProvisioningRepository {
   completeWorkspaceRebuild(input: {
     workspaceId: string;
     runtimeImage: string;
+    serviceTokenHash: string;
   }): Promise<void>;
   updateOperationStage(input: {
     operationId: string;
@@ -141,7 +154,6 @@ export class EnvironmentProvisioner {
   private readonly routerImage: string;
   private readonly ticketPublicKey: string;
   private readonly controlPlaneUrl: string;
-  private readonly credentialBrokerToken: string;
   private readonly backupWorkspace: (input: {
     organizationId: string;
     environmentId: string;
@@ -158,7 +170,6 @@ export class EnvironmentProvisioner {
     routerImage: string;
     ticketPublicKey: string;
     controlPlaneUrl: string;
-    credentialBrokerToken: string;
     backupWorkspace?:
       | ((input: {
           organizationId: string;
@@ -177,7 +188,6 @@ export class EnvironmentProvisioner {
       routerImage,
       ticketPublicKey,
       controlPlaneUrl,
-      credentialBrokerToken,
       backupWorkspace,
     } = input;
     if (!runtimeImage.trim()) {
@@ -192,16 +202,12 @@ export class EnvironmentProvisioner {
     if (!/^https?:\/\//u.test(controlPlaneUrl)) {
       throw new Error("Kestrel One control plane URL is not configured.");
     }
-    if (!credentialBrokerToken.trim()) {
-      throw new Error("Gateway credential broker token is not configured.");
-    }
     this.repository = repository;
     this.provider = provider;
     this.runtimeImage = runtimeImage;
     this.routerImage = routerImage;
     this.ticketPublicKey = ticketPublicKey;
     this.controlPlaneUrl = controlPlaneUrl;
-    this.credentialBrokerToken = credentialBrokerToken;
     this.backupWorkspace =
       backupWorkspace ??
       (async (backupInput) => {
@@ -323,12 +329,20 @@ export class EnvironmentProvisioner {
       operationId: operation.id,
       stage: "environment.machine.starting",
     });
+    const gatewayServiceToken = createEnvironmentServiceToken();
     const gateway = await this.provider.ensureEnvironmentGateway({
       appName,
       environmentId: environment.id,
       region: environment.region,
       runtimeImage: this.routerImage,
       ticketPublicKey: this.ticketPublicKey,
+      controlPlaneUrl: this.controlPlaneUrl,
+      serviceToken: gatewayServiceToken,
+    });
+    await this.repository.stageEnvironmentGatewayIdentity({
+      environmentId: environment.id,
+      appName,
+      gatewayServiceTokenHash: hashEnvironmentServiceToken(gateway.serviceToken),
     });
     if (gateway.state !== "started") {
       await this.provider.waitForMachine({
@@ -356,6 +370,9 @@ export class EnvironmentProvisioner {
       routerUrl: gateway.routerUrl,
       routerImage: this.routerImage,
       runtimeImage: this.runtimeImage,
+      gatewayServiceTokenHash: hashEnvironmentServiceToken(
+        gateway.serviceToken
+      ),
     });
     await this.repository.completeOperation({
       operationId: operation.id,
@@ -416,11 +433,24 @@ export class EnvironmentProvisioner {
       operationId: operation.id,
       stage: "environment.update.gateway",
     });
+    const gatewayServiceToken = createEnvironmentServiceToken();
     try {
       const gateway = await this.provider.updateMachineImage({
         appName: environment.flyAppName,
         machineId: environment.flyGatewayMachineId,
         runtimeImage: routerImage,
+        envPatch: {
+          KESTREL_ENVIRONMENT_ID: environment.id,
+          KESTREL_CONTROL_PLANE_URL: this.controlPlaneUrl,
+          KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN: gatewayServiceToken,
+        },
+      });
+      await this.repository.stageEnvironmentGatewayIdentity({
+        environmentId: environment.id,
+        appName: environment.flyAppName,
+        gatewayServiceTokenHash: hashEnvironmentServiceToken(
+          gatewayServiceToken
+        ),
       });
       if (gateway.state === "stopped") {
         await this.provider.startMachine({
@@ -479,6 +509,9 @@ export class EnvironmentProvisioner {
     await this.repository.completeEnvironmentGatewayUpdate({
       environmentId: environment.id,
       routerImage,
+      gatewayServiceTokenHash: hashEnvironmentServiceToken(
+        gatewayServiceToken
+      ),
     });
     await this.repository.updateOperationStage({
       operationId: operation.id,
@@ -487,11 +520,16 @@ export class EnvironmentProvisioner {
     for (const workspace of workspaces) {
       if (!workspace.flyMachineId) continue;
       await this.repository.setWorkspaceStarting(workspace.id);
+      const workspaceServiceToken = createEnvironmentServiceToken();
       try {
         const machine = await this.provider.updateMachineImage({
           appName: environment.flyAppName,
           machineId: workspace.flyMachineId,
           runtimeImage,
+          envPatch: workspaceRuntimeIdentityPatch({
+            appName: environment.flyAppName,
+            serviceToken: workspaceServiceToken,
+          }),
         });
         if (machine.state === "stopped") {
           await this.provider.startMachine({
@@ -516,6 +554,9 @@ export class EnvironmentProvisioner {
         await this.repository.completeWorkspaceRebuild({
           workspaceId: workspace.id,
           runtimeImage,
+          serviceTokenHash: hashEnvironmentServiceToken(
+            workspaceServiceToken
+          ),
         });
       } catch (error) {
         const failure = safeFailure(error);
@@ -593,6 +634,7 @@ export class EnvironmentProvisioner {
       operationId: operation.id,
       stage: "environment.machine.starting",
     });
+    const workspaceServiceToken = createEnvironmentServiceToken();
     const machine = await this.provider.ensureWorkspaceMachine({
       appName: environment.flyAppName,
       environmentId: environment.id,
@@ -603,7 +645,7 @@ export class EnvironmentProvisioner {
       runtimeImage: environment.runtimeImage ?? this.runtimeImage,
       ticketPublicKey: this.ticketPublicKey,
       controlPlaneUrl: this.controlPlaneUrl,
-      credentialBrokerToken: this.credentialBrokerToken,
+      serviceToken: workspaceServiceToken,
       source: {
         type: workspace.sourceType,
         ...(workspace.sourceResourceId
@@ -642,6 +684,7 @@ export class EnvironmentProvisioner {
       volumeId: volume.id,
       machineId: machine.id,
       runtimeImage: environment.runtimeImage ?? this.runtimeImage,
+      serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
     });
     await this.repository.completeOperation({
       operationId: operation.id,
@@ -874,10 +917,15 @@ export class EnvironmentProvisioner {
       operationId: operation.id,
       stage: "environment.machine.starting",
     });
+    const workspaceServiceToken = createEnvironmentServiceToken();
     const machine = await this.provider.updateMachineImage({
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
       runtimeImage: environment.runtimeImage,
+      envPatch: workspaceRuntimeIdentityPatch({
+        appName: environment.flyAppName,
+        serviceToken: workspaceServiceToken,
+      }),
     });
     if (machine.state !== "started") {
       await this.provider.waitForMachine({
@@ -900,6 +948,7 @@ export class EnvironmentProvisioner {
     await this.repository.completeWorkspaceRebuild({
       workspaceId: workspace.id,
       runtimeImage: environment.runtimeImage,
+      serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
     });
     await this.repository.completeOperation({
       operationId: operation.id,
@@ -1007,6 +1056,16 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         })
         .where(eq(schema.environments.id, environmentId));
     },
+    async stageEnvironmentGatewayIdentity(input) {
+      await knowledgeDb
+        .update(schema.environments)
+        .set({
+          flyAppName: input.appName,
+          gatewayServiceTokenHash: input.gatewayServiceTokenHash,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.environments.id, input.environmentId));
+    },
     async setEnvironmentDeleting(environmentId) {
       await knowledgeDb.transaction(async (transaction) => {
         await transaction.execute(
@@ -1075,6 +1134,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           routerUrl: input.routerUrl,
           routerImage: input.routerImage,
           runtimeImage: input.runtimeImage,
+          gatewayServiceTokenHash: input.gatewayServiceTokenHash,
           lastHealthAt: new Date(),
           failureCode: null,
           failureMessage: null,
@@ -1110,6 +1170,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .set({
           status: "ready",
           routerImage: input.routerImage,
+          gatewayServiceTokenHash: input.gatewayServiceTokenHash,
           lastHealthAt: new Date(),
           failureCode: null,
           failureMessage: null,
@@ -1188,6 +1249,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           flyVolumeId: input.volumeId,
           flyMachineId: input.machineId,
           runtimeImage: input.runtimeImage,
+          serviceTokenHash: input.serviceTokenHash,
           lastActivityAt: new Date(),
           lastHealthAt: new Date(),
           failureCode: null,
@@ -1283,6 +1345,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .set({
           status: "ready",
           runtimeImage: input.runtimeImage,
+          serviceTokenHash: input.serviceTokenHash,
           lastActivityAt: now,
           lastHealthAt: now,
           updatedAt: now,
@@ -1343,6 +1406,17 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
 
 function operationError(code: string, message: string) {
   return Object.assign(new Error(message), { code });
+}
+
+function workspaceRuntimeIdentityPatch(input: {
+  appName: string;
+  serviceToken: string;
+}) {
+  return {
+    KESTREL_ENVIRONMENT_GATEWAY_URL: `https://${input.appName}.fly.dev`,
+    KESTREL_WORKSPACE_SERVICE_TOKEN: input.serviceToken,
+    KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: undefined,
+  };
 }
 
 function readImmutableImage(value: unknown, label: string) {
