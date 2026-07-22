@@ -3,7 +3,7 @@ import "server-only";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { ProviderV3 } from "@ai-sdk/provider";
-import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getDefaultAIModel } from "./config";
 import {
@@ -931,22 +931,57 @@ export async function saveGatewayModel(input: {
     throw new Error("RunPod model validation is required before approval.");
   }
 
-  if (input.isDefault) {
-    await knowledgeDb
-      .update(schema.aiGatewayModels)
-      .set({ isDefault: false, updatedAt: new Date() })
-      .where(
-        and(
-          eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
-          eq(schema.aiGatewayModels.modality, input.modality)
-        )
+  return knowledgeDb.transaction(async (transaction) => {
+    if (input.isDefault) {
+      const lockKey = `kestrel:ai-model-default:${input.organizationId}:${input.modality}`;
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
       );
-  }
+      await transaction
+        .update(schema.aiGatewayModels)
+        .set({ isDefault: false, updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.aiGatewayModels.organizationId, input.organizationId),
+            eq(schema.aiGatewayModels.modality, input.modality)
+          )
+        );
+    }
 
-  if (input.id) {
-    const [updated] = await knowledgeDb
-      .update(schema.aiGatewayModels)
-      .set({
+    if (input.id) {
+      const [updated] = await transaction
+        .update(schema.aiGatewayModels)
+        .set({
+          rawModelId: input.rawModelId,
+          alias: input.alias ?? null,
+          modality: input.modality,
+          approved: input.approved ?? true,
+          isDefault: input.isDefault ?? false,
+          description: input.description ?? null,
+          metadata,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.aiGatewayModels.id, input.id),
+            eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
+            eq(schema.aiGatewayModels.organizationId, input.organizationId)
+          )
+        )
+        .returning();
+
+      if (!updated) {
+        throw new Error("Gateway model not found");
+      }
+      return updated;
+    }
+
+    const [created] = await transaction
+      .insert(schema.aiGatewayModels)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        gatewayId: input.gatewayId,
         rawModelId: input.rawModelId,
         alias: input.alias ?? null,
         modality: input.modality,
@@ -954,42 +989,13 @@ export async function saveGatewayModel(input: {
         isDefault: input.isDefault ?? false,
         description: input.description ?? null,
         metadata,
+        createdAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(
-        and(
-          eq(schema.aiGatewayModels.id, input.id),
-          eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
-          eq(schema.aiGatewayModels.organizationId, input.organizationId)
-        )
-      )
       .returning();
 
-    if (!updated) {
-      throw new Error("Gateway model not found");
-    }
-    return updated;
-  }
-
-  const [created] = await knowledgeDb
-    .insert(schema.aiGatewayModels)
-    .values({
-      id: crypto.randomUUID(),
-      organizationId: input.organizationId,
-      gatewayId: input.gatewayId,
-      rawModelId: input.rawModelId,
-      alias: input.alias ?? null,
-      modality: input.modality,
-      approved: input.approved ?? true,
-      isDefault: input.isDefault ?? false,
-      description: input.description ?? null,
-      metadata,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .returning();
-
-  return created;
+    return created;
+  });
 }
 
 export async function validateRunPodGatewayModel(input: {

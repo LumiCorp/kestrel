@@ -1,13 +1,14 @@
 import type { ReactNode } from "react";
 import { SettingsNavigation } from "@/components/settings/settings-navigation";
 import { requireAuthenticatedShell } from "@/lib/knowledge/auth";
+import { isPersonalOrganizationSlug } from "@/lib/personal-workspace-shared";
 
 export default async function SettingsLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  const { canManageActiveOrganization, isAdmin } =
+  const { activeOrganization, canManageActiveOrganization, isAdmin } =
     await requireAuthenticatedShell();
 
   return (
@@ -24,6 +25,9 @@ export default async function SettingsLayout({
         <SettingsNavigation
           canManageOrganization={canManageActiveOrganization}
           isAppAdmin={isAdmin}
+          showOrganizationSetup={
+            !isPersonalOrganizationSlug(activeOrganization?.slug)
+          }
         />
         <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
           <div className="mx-auto w-full max-w-7xl">{children}</div>

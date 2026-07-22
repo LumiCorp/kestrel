@@ -4,6 +4,7 @@ import { resolveThreadEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileErrorResponse } from "@/lib/mobile/http";
+import { mobileOrganizationSetupRequiredTurnResponse } from "@/lib/organizations/turn-readiness";
 import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
@@ -46,6 +47,9 @@ export async function POST(
     if (!thread || thread.mode !== "chat") {
       return mobileErrorResponse(new Error("Thread not found"), 404);
     }
+    const setupRequired =
+      await mobileOrganizationSetupRequiredTurnResponse(organizationId);
+    if (setupRequired) return setupRequired;
     const projectContext = await resolveProjectRuntimeContext({
       projectId: thread.projectId,
       organizationId,

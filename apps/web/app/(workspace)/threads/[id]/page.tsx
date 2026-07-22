@@ -11,6 +11,7 @@ import {
   resolveThreadEnvironment,
 } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
+import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
 import { getProjectDetail, listProjectsForUser } from "@/lib/projects/store";
 import { getThreadWithMessagesForUser } from "@/lib/threads/store";
 import {
@@ -50,7 +51,7 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
     organizationId,
     environment?.id
   );
-  const [projectDetail, projectRows, durableState, interactions] =
+  const [projectDetail, projectRows, durableState, interactions, readiness] =
     await Promise.all([
       chat?.projectId
         ? getProjectDetail({
@@ -77,6 +78,7 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
             includeArchived: true,
           })
         : Promise.resolve([]),
+      getOrganizationChatReadiness(organizationId),
     ]);
   const uiMessages = chat ? convertToUIMessages(chat.messages) : [];
 
@@ -134,6 +136,11 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
         initialShareToken={chat?.shareToken ?? null}
         initialVisibilityType={chat?.isPublic ? "public" : "private"}
         isReadonly={Boolean(chat?.archivedAt)}
+        newTurnDisabledReason={
+          readiness.applicable && !readiness.ready
+            ? "Finish organization setup before starting a new agent turn."
+            : undefined
+        }
         project={
           projectDetail
             ? {

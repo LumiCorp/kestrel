@@ -5,6 +5,7 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileErrorResponse } from "@/lib/mobile/http";
 import { getMobileV2ThreadSnapshot } from "@/lib/mobile/v2/snapshot";
+import { mobileOrganizationSetupRequiredTurnResponse } from "@/lib/organizations/turn-readiness";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
@@ -31,6 +32,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!idempotencyKey) return mobileErrorResponse(new Error("Idempotency key required"), 400);
     const parent = await getThreadForUser(parentThreadId, session.user.id, organizationId);
     if (!parent || parent.mode !== "chat") return mobileErrorResponse(new Error("Thread not found"), 404);
+    const setupRequired =
+      await mobileOrganizationSetupRequiredTurnResponse(organizationId);
+    if (setupRequired) return setupRequired;
     const [projectContext, environment] = await Promise.all([
       resolveProjectRuntimeContext({ projectId: parent.projectId, organizationId, userId: session.user.id }),
       resolveThreadEnvironment({ organizationId, threadId: parent.id }),

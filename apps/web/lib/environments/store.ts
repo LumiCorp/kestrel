@@ -16,6 +16,7 @@ import {
   environmentProvisionIdempotencyKey,
   toEnvironmentSlug,
   type WorkspaceSource,
+  selectDefaultEnvironmentRecoveryAction,
   workspaceProvisionIdempotencyKey,
 } from "./contracts";
 import {
@@ -174,6 +175,98 @@ export async function ensureOrganizationDefaultEnvironment(input: {
       .returning();
     if (!operation) throw new Error("Default Environment operation failed.");
     return { environment, operation, created: true };
+  });
+}
+
+export async function recoverDefaultEnvironmentProvisioning(input: {
+  organizationId: string;
+  userId: string;
+}) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`
+    );
+    const environment = await transaction.query.environments.findFirst({
+      where: (table, { and, eq, isNull, notInArray }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.isDefault, true),
+          isNull(table.archivedAt),
+          notInArray(table.status, ["deleting", "deleted"])
+        ),
+    });
+    if (!environment) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_NOT_FOUND",
+        "The default Environment is unavailable. Open Environments to repair it."
+      );
+    }
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environment.id)}, 0))`
+    );
+    const operation = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, environment.id),
+          eq(table.type, "environment.provision")
+        ),
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+    });
+    if (!operation) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_UNAVAILABLE",
+        `Default Environment provisioning history is missing. Open /settings/organization/environments/${environment.id}/activity.`
+      );
+    }
+    const recoveryAction = selectDefaultEnvironmentRecoveryAction({
+      environmentStatus: environment.status,
+      operationStatus: operation.status,
+    });
+    if (recoveryAction === "ready") {
+      return { environment, operation, action: "ready" as const };
+    }
+    if (recoveryAction === "existing") {
+      return { environment, operation, action: "existing" as const };
+    }
+    if (recoveryAction === "unsupported") {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_UNAVAILABLE",
+        `Default Environment state '${environment.status}' cannot be retried automatically. Open /settings/organization/environments/${environment.id}/activity.`
+      );
+    }
+    const now = new Date();
+    const [requeued] = await transaction
+      .update(schema.environmentOperations)
+      .set({
+        status: "queued",
+        stage: "environment.activation.requested",
+        requestedByUserId: input.userId,
+        providerRequestId: null,
+        result: null,
+        errorCode: null,
+        errorMessage: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.environmentOperations.id, operation.id),
+          inArray(schema.environmentOperations.status, ["failed", "cancelled"])
+        )
+      )
+      .returning();
+    if (!requeued) {
+      const current = await transaction.query.environmentOperations.findFirst({
+        where: (table, { eq }) => eq(table.id, operation.id),
+      });
+      if (current?.status === "queued" || current?.status === "running") {
+        return { environment, operation: current, action: "existing" as const };
+      }
+      throw new Error("Default Environment provisioning retry was not queued.");
+    }
+    return { environment, operation: requeued, action: "requeued" as const };
   });
 }
 

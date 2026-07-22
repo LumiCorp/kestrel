@@ -914,5 +914,87 @@ contractTest(
         automaticTarget.environment.id
       );
     }
+
+    const recoveryOrganizationId = `org-recovery-${suffix}`;
+    const recoveryUserId = `user-recovery-${suffix}`;
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "user" (
+          "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+        ) VALUES (
+          ${recoveryUserId}, 'Recovery User',
+          ${`${recoveryUserId}@example.test`}, true, ${now}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+        VALUES (
+          ${recoveryOrganizationId}, 'Recovery Org',
+          ${`recovery-org-${suffix}`}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "member" (
+          "id", "organizationId", "userId", "role", "createdAt"
+        ) VALUES (
+          ${`member-recovery-${suffix}`}, ${recoveryOrganizationId},
+          ${recoveryUserId}, 'owner', ${now}
+        )
+      `;
+    });
+    const recoverable = await environmentStore.ensureOrganizationDefaultEnvironment({
+      organizationId: recoveryOrganizationId,
+      userId: recoveryUserId,
+    });
+    assert.ok(recoverable.operation);
+    await sql.begin(async (transaction) => {
+      await transaction`
+        UPDATE "environments"
+        SET "status" = 'failed', "failure_code" = 'FLY_NOT_CONFIGURED',
+            "failure_message" = 'Workspace provider was not configured.'
+        WHERE "id" = ${recoverable.environment.id}
+      `;
+      await transaction`
+        UPDATE "environment_operations"
+        SET "status" = 'failed', "stage" = 'environment.activation.failed',
+            "error_code" = 'FLY_NOT_CONFIGURED',
+            "error_message" = 'Workspace provider was not configured.',
+            "completed_at" = ${now}
+        WHERE "id" = ${recoverable.operation.id}
+      `;
+    });
+    const concurrentRecovery = await Promise.all([
+      environmentStore.recoverDefaultEnvironmentProvisioning({
+        organizationId: recoveryOrganizationId,
+        userId: recoveryUserId,
+      }),
+      environmentStore.recoverDefaultEnvironmentProvisioning({
+        organizationId: recoveryOrganizationId,
+        userId: recoveryUserId,
+      }),
+    ]);
+    assert.deepEqual(
+      concurrentRecovery.map((result) => result.action).sort(),
+      ["existing", "requeued"]
+    );
+    assert.equal(concurrentRecovery[0]?.environment.id, recoverable.environment.id);
+    assert.equal(concurrentRecovery[1]?.operation.id, recoverable.operation.id);
+    const [recoveredOperation] = await sql<
+      Array<{
+        status: string;
+        errorCode: string | null;
+        completedAt: Date | null;
+      }>
+    >`
+      SELECT "status", "error_code" AS "errorCode",
+             "completed_at" AS "completedAt"
+      FROM "environment_operations"
+      WHERE "id" = ${recoverable.operation.id}
+    `;
+    assert.deepEqual(recoveredOperation, {
+      status: "queued",
+      errorCode: null,
+      completedAt: null,
+    });
   }
 );
