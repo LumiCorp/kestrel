@@ -53,7 +53,6 @@ import {
 import {
   resolveDeliberatorPromptVariant,
 } from "../prompt/deliberatorPrompt.js";
-import { readActiveSkillPackContext } from "../prompt/skillPack.js";
 import { readActiveProjectContext } from "../prompt/projectContext.js";
 import {
   buildWorkspaceModelContext,
@@ -335,8 +334,8 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const projectSnapshot = readProjectSnapshotContext(ctx.session.state);
 
     const activeWorkspaceModelContext = buildWorkspaceModelContext(activeWorkspace);
+    const activeWorkspaceSkills = ctx.event.payload.workspaceSkills;
     const activeProjectContext = readActiveProjectContext(ctx.event.payload.projectContext);
-    const activeSkillPackContext = readActiveSkillPackContext(ctx.event.payload.skillPack);
     const modeScopedDeliberatorTools = filterDeliberatorToolsForMode({
       tools: deliberatorTools,
       capabilityManifest,
@@ -381,8 +380,8 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       },
       retryContext: asRecord(reactState.retryContext),
       activeWorkspace: activeWorkspaceModelContext,
+      activeWorkspaceSkills,
       activeProjectContext,
-      activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
     });
     contextRequest = await compactContextRequestIfNeeded({
@@ -399,8 +398,8 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       projectSnapshot,
       promptVariant: resolvedPromptVariant,
       activeWorkspace: activeWorkspaceModelContext,
+      activeWorkspaceSkills,
       activeProjectContext,
-      activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
     });
     goal = readActiveTaskGoalFromContextRequest({
@@ -523,8 +522,8 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         },
         retryContext,
         activeWorkspace: activeWorkspaceModelContext,
+        activeWorkspaceSkills,
         activeProjectContext,
-        activeSkillPack: activeSkillPackContext,
         stepIndex: ctx.stepIndex,
       });
       const assistantProgressRepairToolName = readAssistantProgressRepairToolName(attempt.error);
@@ -1045,8 +1044,8 @@ async function compactContextRequestIfNeeded(input: {
   projectSnapshot?: unknown;
   promptVariant?: string | undefined;
   activeWorkspace?: unknown;
+  activeWorkspaceSkills?: unknown;
   activeProjectContext?: unknown;
-  activeSkillPack?: unknown;
   stepIndex: number;
 }): Promise<ReturnType<typeof buildContextRequest>> {
   if (shouldCompactKestrelAgentContext({ transcript: input.contextRequest.transcript }) === false) {
@@ -1105,8 +1104,8 @@ async function compactContextRequestIfNeeded(input: {
       ...readSystemInstructions(input.eventPayload),
     },
     activeWorkspace: input.activeWorkspace,
+    activeWorkspaceSkills: input.activeWorkspaceSkills,
     activeProjectContext: input.activeProjectContext,
-    activeSkillPack: input.activeSkillPack,
     stepIndex: input.stepIndex,
   });
 }

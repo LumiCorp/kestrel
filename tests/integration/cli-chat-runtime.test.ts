@@ -669,7 +669,7 @@ contractTest("runtime.process", "KestrelChatRuntime auto-resumes agent loop time
   await runtime.close();
 });
 
-contractTest("runtime.process", "KestrelChatRuntime forwards manual compaction into operator affordance context", async () => {
+contractTest("runtime.process", "KestrelChatRuntime records workspace skill revisions and manual compaction in the turn", async () => {
   const captured: RuntimeEvent[] = [];
 
   const fakeFactory: RuntimeFactory = {
@@ -741,16 +741,27 @@ contractTest("runtime.process", "KestrelChatRuntime forwards manual compaction i
       appRoot: ".",
       commands: {},
     },
-    skillPack: {
-      id: "research",
-      label: "Research",
-      instructions: ["Prefer current evidence."],
-      allowedTools: ["internet.search"],
-    },
+    workspaceSkills: [{
+      installationId: "research-skill",
+      name: "research",
+      description: "Prefer current evidence.",
+      commitSha: "a".repeat(40),
+      contentDigest: `sha256:${"b".repeat(64)}`,
+      skillFile: `.kestrel/skills/research-skill/revisions/${"a".repeat(40)}/SKILL.md`,
+    }],
   });
 
   assert.equal(captured.length, 1);
   assert.equal(captured[0]?.type, "user.message");
+  assert.deepEqual(captured[0]?.payload.workspaceSkills, [{
+    installationId: "research-skill",
+    name: "research",
+    description: "Prefer current evidence.",
+    commitSha: "a".repeat(40),
+    contentDigest: `sha256:${"b".repeat(64)}`,
+    skillFile: `.kestrel/skills/research-skill/revisions/${"a".repeat(40)}/SKILL.md`,
+  }]);
+  assert.deepEqual((captured[0]?.payload.metadata as Record<string, unknown>)?.workspaceSkills, captured[0]?.payload.workspaceSkills);
   assert.equal(result.operatorAffordance?.context?.manualCompactionApplied, true);
   await runtime.close();
 });

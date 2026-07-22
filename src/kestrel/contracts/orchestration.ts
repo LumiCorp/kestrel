@@ -156,7 +156,6 @@ export interface DelegationRecord {
   profileId?: string | undefined;
   provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
   model?: string | undefined;
-  skillPackId?: string | undefined;
   launchedBy?: "operator" | "agent" | undefined;
   waitEventType?: string | undefined;
   result?: SubAgentResultEnvelope | undefined;

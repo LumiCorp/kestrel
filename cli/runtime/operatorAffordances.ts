@@ -13,11 +13,7 @@ import {
   deriveOperatorRecommendedAction,
   type OperatorAffordancePayload,
 } from "../../src/orchestration/OperatorAffordanceProjection.js";
-import type {
-  SkillPackDefinition,
-  TuiProfile,
-  TuiSessionMeta,
-} from "../contracts.js";
+import type { TuiProfile, TuiSessionMeta } from "../contracts.js";
 
 export { buildRuntimeOperatorAffordance };
 
@@ -26,7 +22,6 @@ export function decorateOperatorAffordance(input: {
   runtimeAuthoritative?: boolean | undefined;
   profile: TuiProfile;
   session: TuiSessionMeta;
-  skillPack?: SkillPackDefinition | undefined;
   env?: NodeJS.ProcessEnv | undefined;
 }): OperatorAffordancePayload {
   const base = input.base;
@@ -89,15 +84,6 @@ export function decorateOperatorAffordance(input: {
       id: input.profile.modelProvider ?? "openrouter",
       model: resolvedModel,
     },
-    ...(input.skillPack !== undefined
-      ? {
-          activeSkillPack: {
-            id: input.skillPack.id,
-            label: input.skillPack.label,
-            allowedTools: [...input.skillPack.allowedTools],
-          },
-        }
-      : {}),
     ...(base?.assembly !== undefined ? { assembly: base.assembly } : {}),
     ...(input.session.delegation !== undefined
       ? {
@@ -129,9 +115,6 @@ export function formatOperatorAffordance(payload: OperatorAffordancePayload): st
 
   if (payload.provider !== undefined) {
     lines.push(`Provider: ${payload.provider.id}/${payload.provider.model}`);
-  }
-  if (payload.activeSkillPack !== undefined) {
-    lines.push(`Skill pack: ${payload.activeSkillPack.id} (${payload.activeSkillPack.label})`);
   }
   if (payload.assembly !== undefined) {
     lines.push(

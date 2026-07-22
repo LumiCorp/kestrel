@@ -249,9 +249,6 @@ function validateSession(value: unknown): TuiSessionMeta {
   const hasSummary = typeof entry.hasSummary === "boolean"
     ? entry.hasSummary
     : undefined;
-  const activeSkillPackId = typeof entry.activeSkillPackId === "string"
-    ? entry.activeSkillPackId
-    : undefined;
   const pendingManualCompaction =
     typeof entry.pendingManualCompaction === "boolean" ? entry.pendingManualCompaction : undefined;
   const autoCompactionEnabled =
@@ -305,7 +302,6 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(launchSummary !== undefined ? { launchSummary } : {}),
     ...(hasArtifacts !== undefined ? { hasArtifacts } : {}),
     ...(hasSummary !== undefined ? { hasSummary } : {}),
-    ...(activeSkillPackId !== undefined ? { activeSkillPackId } : {}),
     ...(pendingManualCompaction !== undefined ? { pendingManualCompaction } : {}),
     ...(autoCompactionEnabled !== undefined ? { autoCompactionEnabled } : {}),
     ...(suppressAutoCompactionOnce !== undefined ? { suppressAutoCompactionOnce } : {}),

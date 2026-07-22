@@ -85,13 +85,6 @@ export interface OperatorAffordancePayload {
         model: string;
       }
     | undefined;
-  activeSkillPack?:
-    | {
-        id: string;
-        label: string;
-        allowedTools: string[];
-      }
-    | undefined;
   assembly?: OperatorAssemblySummary | undefined;
   focusedThreadId?: string | undefined;
   inbox?: OperatorInboxSummary | undefined;

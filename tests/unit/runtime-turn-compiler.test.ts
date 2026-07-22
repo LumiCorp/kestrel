@@ -57,12 +57,14 @@ contractTest("runtime.hermetic", "compileRuntimeTurn builds canonical v2 payload
       workspaceRoot: "/tmp/runtime-turn",
       repoRoot: "/tmp/runtime-turn",
     },
-    skillPack: {
-      id: "builder",
-      label: "Builder",
-      instructions: "Build.",
-      allowedTools: ["fs.read_text"],
-    },
+    workspaceSkills: [{
+      installationId: "skill-builder",
+      name: "builder",
+      description: "Build carefully.",
+      commitSha: "a".repeat(40),
+      contentDigest: `sha256:${"b".repeat(64)}`,
+      skillFile: `.kestrel/skills/skill-builder/revisions/${"a".repeat(40)}/SKILL.md`,
+    }],
     manualCompaction: true,
   };
 
@@ -92,7 +94,7 @@ contractTest("runtime.hermetic", "compileRuntimeTurn builds canonical v2 payload
   assert.deepEqual(compiled.metadata.history, input.history);
   assert.deepEqual(compiled.metadata.projectContext, input.projectContext);
   assert.deepEqual(compiled.metadata.workspace, input.workspace);
-  assert.equal(compiled.metadata.skillPackId, "builder");
+  assert.deepEqual(compiled.metadata.workspaceSkills, input.workspaceSkills);
   assert.deepEqual(compiled.payload, {
     message: "ship it",
     enableRouteClassifier: true,
@@ -111,12 +113,7 @@ contractTest("runtime.hermetic", "compileRuntimeTurn builds canonical v2 payload
     projectContext: input.projectContext,
     manualCompaction: true,
     workspace: input.workspace,
-    skillPack: {
-      id: "builder",
-      label: "Builder",
-      instructions: "Build.",
-      allowedTools: ["fs.read_text"],
-    },
+    workspaceSkills: input.workspaceSkills,
   });
   assert.equal(compiled.executionPolicy?.toolClassPolicy?.read_only, true);
   assert.equal(

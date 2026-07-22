@@ -12,7 +12,6 @@ import type {
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { normalizeSubAgentResultEnvelope } from "../../src/orchestration/subAgentResult.js";
-import { getSkillPackById } from "./skillPacks.js";
 
 export interface DelegationTaskUpdate {
   task: DelegationTaskSnapshot;
@@ -27,7 +26,6 @@ export interface RuntimeDelegationServiceOptions {
   runChildTurn: (input: {
     sessionId: string;
     message: string;
-    skillPackId?: string | undefined;
     metadata?: Record<string, unknown> | undefined;
   }) => Promise<void>;
   onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined;
@@ -81,7 +79,6 @@ export class RuntimeDelegationService implements DelegationServicePort {
       profileId: input.profileId ?? this.profile.id,
       provider: input.provider ?? this.profile.modelProvider ?? "openrouter",
       model: input.model ?? this.profile.model ?? "(env default)",
-      ...(input.skillPackId !== undefined ? { skillPackId: input.skillPackId } : {}),
       ...(input.launchedBy !== undefined ? { launchedBy: input.launchedBy } : {}),
       createdAt: now,
       updatedAt: now,
@@ -147,7 +144,6 @@ export class RuntimeDelegationService implements DelegationServicePort {
       await this.runChildTurn({
         sessionId: entry.task.childSessionId,
         message: input.prompt,
-        ...(input.skillPackId !== undefined ? { skillPackId: input.skillPackId } : {}),
         metadata: buildChildTurnMetadata(entry.task),
       });
       const session = await this.store.getSession(entry.task.childSessionId);
@@ -345,9 +341,6 @@ export class RuntimeDelegationService implements DelegationServicePort {
     }
     if (input.model !== undefined && this.profile.model !== undefined && input.model !== this.profile.model) {
       throw new Error(`Delegation from the agent currently supports only model '${this.profile.model}'.`);
-    }
-    if (input.skillPackId !== undefined && getSkillPackById(input.skillPackId) === undefined) {
-      throw new Error(`Unknown skill pack '${input.skillPackId}'.`);
     }
   }
 

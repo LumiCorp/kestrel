@@ -11,7 +11,6 @@ contractTest("runtime.hermetic", "RuntimeDelegationService rehydrates lineage in
   const childTurns: Array<{
     sessionId: string;
     message: string;
-    skillPackId?: string | undefined;
     metadata?: Record<string, unknown> | undefined;
   }> = [];
   const service = new RuntimeDelegationService({

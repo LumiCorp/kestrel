@@ -753,7 +753,6 @@ export class OperatorControlPlane {
     profileId?: string | undefined;
     provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
     model?: string | undefined;
-    skillPackId?: string | undefined;
     policy?: import("./contracts.js").ChildThreadPolicy | undefined;
     issuedBy?: string | undefined;
   }) {
@@ -767,7 +766,6 @@ export class OperatorControlPlane {
       ...(input.profileId !== undefined ? { profileId: input.profileId } : {}),
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
       ...(input.model !== undefined ? { model: input.model } : {}),
-      ...(input.skillPackId !== undefined ? { skillPackId: input.skillPackId } : {}),
       launchedBy: "operator",
       policy: buildSpawnChildThreadPolicy(input),
     });

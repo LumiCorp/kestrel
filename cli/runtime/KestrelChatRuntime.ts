@@ -60,8 +60,9 @@ import {
   type OperatorSupervisedChildSummary,
   type OperatorInboxSummary,
   type OperatorSteeringSummary,
+  WorkspaceSkillInstaller,
 } from "../../src/index.js";
-import type { OperatorCompactionState, OperatorAffordancePayload, WorkspaceRuntimeContext, SkillPackDefinition, TuiProfile } from "../contracts.js";
+import type { OperatorCompactionState, OperatorAffordancePayload, WorkspaceRuntimeContext, TuiProfile } from "../contracts.js";
 import { createGatewayManagedModelGateway } from "./gateway-credential-broker.js";
 import type { ModelGateway, ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import type { SessionStore } from "../../src/kestrel/contracts/store.js";
@@ -70,7 +71,6 @@ import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestratio
 import { createToolProviderConfigurationResolverFromEnvironment, type SharedToolContext } from "../../tools/index.js";
 import { registerAgent } from "./AgentFactory.js";
 import type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
-import { getSkillPackById } from "./skillPacks.js";
 import { buildExecutionPolicyFromPack } from "./approvalPolicyPacks.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { MacOsDesktopHostOpenService } from "../../src/desktopShell/hostOpen.js";
@@ -113,7 +113,7 @@ import { WorkspaceGitService } from "../../src/git/WorkspaceGitService.js";
 import type { WorkspaceGitAction, WorkspaceGitSnapshot } from "../../src/git/contracts.js";
 export type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
 
-export type RunTurnInput = Omit<RuntimeTurnInput, "workspace" | "skillPack" | "autoCompaction"> & {
+export type RunTurnInput = Omit<RuntimeTurnInput, "workspace" | "autoCompaction"> & {
   autoCompaction?:
     | {
         enabled?: boolean | undefined;
@@ -122,7 +122,6 @@ export type RunTurnInput = Omit<RuntimeTurnInput, "workspace" | "skillPack" | "a
       }
     | undefined;
   workspace?: WorkspaceRuntimeContext | undefined;
-  skillPack?: SkillPackDefinition | undefined;
 };
 
 export type RunTurnResult = RuntimeTurnResult & {
@@ -354,9 +353,11 @@ export class KestrelChatRuntime {
   async runTurn(input: RunTurnInput, options: { signal?: AbortSignal | undefined } = {}): Promise<RunTurnResult> {
     await this.reasoningPolicyReady;
     this.finalizedPayload = undefined;
+    const workspaceSkills = input.workspaceSkills ?? await readInstalledWorkspaceSkills(input.workspace);
     const normalizedInput: RunTurnInput = {
       ...input,
       message: requireRunTurnMessage(input.message),
+      ...(workspaceSkills.length > 0 ? { workspaceSkills } : {}),
     };
     const effectiveInput = await applyActiveTaskRuntimeMetadata(normalizedInput, this.taskGraphStore);
     const policyBoundWorkspace = applyRequiredManagedWorkspacePolicy(effectiveInput.workspace);
@@ -1446,7 +1447,6 @@ export class KestrelChatRuntime {
     profileId?: string | undefined;
     provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
     model?: string | undefined;
-    skillPackId?: string | undefined;
     maxTurns?: number | undefined;
     maxRuntimeMs?: number | undefined;
     allowApprovalInheritance?: boolean | undefined;
@@ -1546,7 +1546,6 @@ export class KestrelChatRuntime {
         ...(input.profileId !== undefined ? { profileId: input.profileId } : {}),
         ...(input.provider !== undefined ? { provider: input.provider } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
-        ...(input.skillPackId !== undefined ? { skillPackId: input.skillPackId } : {}),
         ...(input.maxTurns !== undefined || input.maxRuntimeMs !== undefined || input.allowApprovalInheritance !== undefined
           ? {
               budget: {
@@ -1839,6 +1838,20 @@ export class KestrelChatRuntime {
   }
 }
 
+async function readInstalledWorkspaceSkills(
+  workspace: WorkspaceRuntimeContext | undefined,
+): Promise<import("../../src/skills/contracts.js").WorkspaceSkillCatalogEntry[]> {
+  const workspaceRoot = workspace?.workspaceRoot?.trim();
+  if (!workspaceRoot) return [];
+  try {
+    return await new WorkspaceSkillInstaller().readWorkspaceCatalog(workspaceRoot);
+  } catch {
+    // Installation/sync owns readiness errors. A corrupt local catalog must not
+    // prevent unrelated workspace runs from starting.
+    return [];
+  }
+}
+
 function createDefaultRuntime(
   profile: TuiProfile,
   onFinalize: (payload: unknown) => unknown,
@@ -2078,7 +2091,6 @@ function createRuntimeWithStore(
             includeGrantedMcpTools: options?.includeGrantedMcpTools === true,
           })
         : toolRegistry.resolveAvailableAllowlist(allowlist),
-    resolveSkillPackById: (skillPackId) => getSkillPackById(skillPackId),
     handleCapabilityLoss: (input) => {
       if (threadRuntime === undefined) {
         return Promise.resolve(null);

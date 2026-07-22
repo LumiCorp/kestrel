@@ -248,7 +248,6 @@ export interface OperatorControlCommandPayload {
     | "lmstudio"
     | undefined;
   model?: string | undefined;
-  skillPackId?: string | undefined;
   maxTurns?: number | undefined;
   maxRuntimeMs?: number | undefined;
   allowApprovalInheritance?: boolean | undefined;
