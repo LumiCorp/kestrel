@@ -72,28 +72,7 @@ async function runFullValidation() {
 
   buildInvocations += 1;
   await phase("sharedBuild", [
-    task("shared artifacts", PNPM, [
-      "-r",
-      "--workspace-concurrency=4",
-      "--filter",
-      "@lumi/kestrel-environment-auth",
-      "--filter",
-      "@kestrel/mcp-security",
-      "--filter",
-      "@kestrel-agents/protocol",
-      "--filter",
-      "@kestrel-agents/sdk",
-      "--filter",
-      "@kestrel-agents/ai-sdk",
-      "--filter",
-      "@kestrel-agents/next",
-      "--filter",
-      "@kestrel-agents/observability",
-      "--filter",
-      "@kestrel-agents/workspace-skills",
-      "run",
-      "build:self",
-    ]),
+    task("shared artifacts", PNPM, ["run", "build:shared"]),
     task("root artifact", PNPM, ["run", "build:self"]),
     task("workspace type analysis", PNPM, [
       "-r",
