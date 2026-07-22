@@ -89,13 +89,23 @@ export interface TaskActionBase {
 
 export type TaskAction =
   | ({
-      type: "task.create" | "task.propose";
+      type: "task.create";
       title: string;
       instructions: string;
       acceptanceCriteria?: string | undefined;
       priority?: TaskPriority | undefined;
       projectPath?: string | undefined;
       projectLabel?: string | undefined;
+    } & TaskActionBase)
+  | ({
+      type: "task.propose";
+      title: string;
+      instructions: string;
+      acceptanceCriteria?: string | undefined;
+      priority?: TaskPriority | undefined;
+      projectPath?: string | undefined;
+      projectLabel?: string | undefined;
+      order?: number | undefined;
     } & TaskActionBase)
   | ({
       type: "task.approve" | "task.retry";
@@ -165,7 +175,6 @@ export function parseTaskAction(value: unknown): TaskAction {
 
   switch (record.type) {
     case "task.create":
-    case "task.propose":
       return {
         ...base,
         type: record.type,
@@ -177,6 +186,23 @@ export function parseTaskAction(value: unknown): TaskAction {
         ...(isTaskPriority(record.priority) ? { priority: record.priority } : {}),
         ...(typeof record.projectPath === "string" ? { projectPath: record.projectPath } : {}),
         ...(typeof record.projectLabel === "string" ? { projectLabel: record.projectLabel } : {}),
+      };
+    case "task.propose":
+      return {
+        ...base,
+        type: record.type,
+        ...(record.taskId !== undefined
+          ? { taskId: requireTaskActionString(record.taskId, "taskId") }
+          : {}),
+        title: requireTaskActionString(record.title, "title"),
+        instructions: requireTaskActionString(record.instructions, "instructions"),
+        ...(typeof record.acceptanceCriteria === "string"
+          ? { acceptanceCriteria: record.acceptanceCriteria }
+          : {}),
+        ...(isTaskPriority(record.priority) ? { priority: record.priority } : {}),
+        ...(typeof record.projectPath === "string" ? { projectPath: record.projectPath } : {}),
+        ...(typeof record.projectLabel === "string" ? { projectLabel: record.projectLabel } : {}),
+        ...(record.order !== undefined ? { order: requirePositiveTaskOrder(record.order) } : {}),
       };
     case "task.update":
       return {
@@ -256,6 +282,13 @@ export function parseTaskAction(value: unknown): TaskAction {
 function requireTaskActionString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`task action ${field} must be a non-empty string`);
+  }
+  return value;
+}
+
+function requirePositiveTaskOrder(value: unknown): number {
+  if (typeof value !== "number" || Number.isInteger(value) === false || value < 1) {
+    throw new Error("task action order must be a positive integer");
   }
   return value;
 }

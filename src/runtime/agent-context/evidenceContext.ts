@@ -25,21 +25,24 @@ export function buildProjectTaskQueueContext(projectSnapshot: unknown): string |
     "Mission Control task queue:",
     `- sessionId: ${asString(snapshot.sessionId) ?? "(current project thread)"}`,
     "- Use task.propose for agent-created follow-up work. Proposed tasks require human approval before execution.",
+    "- To revise an existing agent-created proposed task, call task.propose with its taskId. Include order to move it to a positive one-based queue position.",
     "- User-created queued tasks are approved work. Claim only queued tasks, attach evidence, and submit completed output for review.",
     "- Before proposing tasks, compare against existing ids/titles/instructions below and avoid duplicates.",
   ];
   for (const status of PROJECT_TASK_STATUSES) {
-    const statusTasks = Object.values(tasks)
+    const matchingTasks = Object.values(tasks)
       .map(asRecord)
       .filter((task): task is Record<string, unknown> => task !== undefined && asString(task.status) === status)
-      .sort(compareProjectQueueTasks)
-      .slice(0, MAX_PROJECT_QUEUE_TASKS_PER_STATUS);
+      .sort(compareProjectQueueTasks);
+    const statusTasks = status === "proposed"
+      ? matchingTasks
+      : matchingTasks.slice(0, MAX_PROJECT_QUEUE_TASKS_PER_STATUS);
     lines.push(`${status}: ${statusTasks.length === 0 ? "(empty)" : ""}`);
     for (const task of statusTasks) {
       const evidence = asRecord(asArray(task.evidence).at(-1));
       const assignedAgent = asString(task.assignedAgentId);
       lines.push(
-        `- ${asString(task.id) ?? "unknown"} ${clampEvidencePreview(asString(task.title) ?? "Untitled", 160)} :: ${clampEvidencePreview(asString(task.instructions) ?? "", 280)}${assignedAgent !== undefined ? ` [agent ${assignedAgent}]` : ""}${evidence !== undefined ? ` [latest ${asString(evidence.source) ?? "evidence"}: ${clampEvidencePreview(asString(evidence.summary) ?? "", 180)}]` : ""}`,
+        `- ${asString(task.id) ?? "unknown"} [order ${readInteger(task.order) ?? "?"}] ${clampEvidencePreview(asString(task.title) ?? "Untitled", 160)} :: ${clampEvidencePreview(asString(task.instructions) ?? "", 280)}${assignedAgent !== undefined ? ` [agent ${assignedAgent}]` : ""}${evidence !== undefined ? ` [latest ${asString(evidence.source) ?? "evidence"}: ${clampEvidencePreview(asString(evidence.summary) ?? "", 180)}]` : ""}`,
       );
     }
   }
