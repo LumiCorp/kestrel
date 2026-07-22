@@ -687,10 +687,14 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         if (!(error instanceof EnvironmentProviderError)) {
           throw error;
         }
-        if (error.status === 409 && Date.now() < deadline) {
+        if ((error.status === 408 || error.status === 409)) {
           const machine = await this.getMachine(input);
           if (machine?.state === input.state) return;
-          if (machine?.state === "replacing") {
+          if (
+            error.status === 409 &&
+            machine?.state === "replacing" &&
+            Date.now() < deadline
+          ) {
             await this.sleepImpl(MACHINE_START_RETRY_INTERVAL_MS);
             continue;
           }
