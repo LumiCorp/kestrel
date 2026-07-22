@@ -49,6 +49,7 @@ import {
   buildKestrelAgentValidationFeedbackMessage,
   planKestrelAgentCompaction,
   shouldCompactKestrelAgentContext,
+  KESTREL_COMPACTION_SUMMARY_SCHEMA,
   type KestrelAgentCannotSatisfyReasonCode,
   type KestrelAgentFinalizeStatus,
 } from "../../../../src/runtime/KestrelAgentContextBuilder.js";

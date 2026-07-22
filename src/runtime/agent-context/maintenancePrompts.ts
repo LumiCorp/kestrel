@@ -84,7 +84,6 @@ export const KESTREL_COMPACTION_SUMMARY_SCHEMA = {
   },
   required: ["version", "activeTaskItemId", "decisions", "constraints", "evidence", "fileState", "blockers", "nextActions", "coveredItemIds"],
 } as const;
-
 export function buildKestrelCompactionSummarySchema(
   activeTaskItemId: string,
   replacedItemIds: string[],
