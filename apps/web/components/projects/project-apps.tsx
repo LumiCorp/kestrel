@@ -281,10 +281,17 @@ export function ProjectApps({
               (connection) =>
                 connection.isDefault && connection.scope === "shared"
             );
+          const isWorkflow = configuration.dependencies.length > 0;
           const status = isGoogle
             ? isLoading
               ? "Checking…"
               : googleLabel
+            : isWorkflow
+              ? configuration.dependencyReady
+                ? configuration.enabled
+                  ? "Enabled"
+                  : "Ready to enable"
+                : "Missing Apps"
             : configuration.enabled && !needsConnection
               ? "Enabled"
               : configuration.enabled && projectDefault
@@ -301,7 +308,7 @@ export function ProjectApps({
             statusTone:
               status === "Enabled" || status === "Connected" || status.startsWith("Using ")
                 ? "ready"
-                : status === "Setup required" || status === "Reconnect"
+                : status === "Setup required" || status === "Reconnect" || status === "Missing Apps"
                   ? "warning"
                   : "neutral",
           };

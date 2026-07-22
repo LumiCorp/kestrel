@@ -53,6 +53,7 @@ contractTest("services.hermetic", "expired OAuth credentials refresh inside the 
       resource: "https://mcp.example.com/mcp",
       clientId: "kestrel-one",
       tokenEndpointAuthMethod: "none",
+      acceptedProviderTokenTypes: ["bearer", "user"],
     },
   });
   const server: Extract<AuthorizedMcpServer, { sourceType: "remote" }> = {
@@ -93,9 +94,9 @@ contractTest("services.hermetic", "expired OAuth credentials refresh inside the 
               return new Response(
                 JSON.stringify({
                   access_token: "new-access-token",
-                  token_type: "Bearer",
+                  token_type: "user",
                   expires_in: 3600,
-                  scope: "mcp:tools mcp:resources",
+                  scope: "mcp:tools,mcp:resources",
                 }),
                 {
                   status: 200,

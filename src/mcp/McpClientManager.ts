@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import type {
@@ -15,7 +16,12 @@ export interface McpClientManagerOptions {
   hostedGateway?: HostedMcpRuntimeConnection | undefined;
   env?: NodeJS.ProcessEnv | undefined;
   fetchImpl?: typeof fetch | undefined;
+  oauthProviderFactory?: McpOAuthProviderFactory | undefined;
 }
+
+export type McpOAuthProviderFactory = (
+  server: Extract<McpServerConfig, { transport: "http" | "sse" }>,
+) => OAuthClientProvider | undefined;
 
 type HostedGatewayServerConfig = {
   id: "kestrel-one-hosted";
@@ -55,6 +61,7 @@ export class McpClientManager {
   private readonly servers: ConfiguredMcpServer[];
   private readonly env: NodeJS.ProcessEnv;
   private readonly fetchImpl: typeof fetch | undefined;
+  private readonly oauthProviderFactory: McpOAuthProviderFactory | undefined;
 
   private toolHandles = new Map<string, ToolHandle>();
   private serverHandles = new Map<string, ServerHandle>();
@@ -74,7 +81,7 @@ export class McpClientManager {
               id: "kestrel-one-hosted" as const,
               transport: "http" as const,
               url: normalizeHostedGatewayUrl(
-                options.hostedGateway.context.gatewayUrl
+                options.hostedGateway.context.gatewayUrl,
               ),
               enabled: true as const,
               hostedGateway: options.hostedGateway,
@@ -84,6 +91,7 @@ export class McpClientManager {
     ];
     this.env = options.env ?? process.env;
     this.fetchImpl = options.fetchImpl;
+    this.oauthProviderFactory = options.oauthProviderFactory;
   }
 
   async refresh(): Promise<McpStatusSnapshot> {
@@ -205,7 +213,7 @@ export class McpClientManager {
         `MCP tool '${namespacedToolName}' is not available`,
         {
           namespacedToolName,
-        }
+        },
       );
     }
 
@@ -214,22 +222,35 @@ export class McpClientManager {
     if (handle.protocolKind === "resource") {
       output = await readFunction(handle.client, "readResource").call(
         handle.client,
-        { uri: handle.protocolTarget }
+        { uri: handle.protocolTarget },
       );
     } else if (handle.protocolKind === "resource_template") {
       const uri = readString(args, "uri");
-      if (!uri) throw createRuntimeFailure("MCP_RESOURCE_URI_REQUIRED", "MCP resource template access requires a URI.");
-      output = await readFunction(handle.client, "readResource").call(handle.client, { uri });
+      if (!uri)
+        throw createRuntimeFailure(
+          "MCP_RESOURCE_URI_REQUIRED",
+          "MCP resource template access requires a URI.",
+        );
+      output = await readFunction(handle.client, "readResource").call(
+        handle.client,
+        { uri },
+      );
     } else if (handle.protocolKind === "prompt") {
-      output = await readFunction(handle.client, "getPrompt").call(handle.client, {
-        name: handle.protocolTarget,
-        arguments: args,
-      });
+      output = await readFunction(handle.client, "getPrompt").call(
+        handle.client,
+        {
+          name: handle.protocolTarget,
+          arguments: args,
+        },
+      );
     } else {
-      output = await readFunction(handle.client, "callTool").call(handle.client, {
-        name: handle.toolName,
-        arguments: args,
-      });
+      output = await readFunction(handle.client, "callTool").call(
+        handle.client,
+        {
+          name: handle.toolName,
+          arguments: args,
+        },
+      );
     }
     return output as T;
   }
@@ -245,7 +266,7 @@ export class McpClientManager {
 
   async assertHealthy(): Promise<void> {
     const unhealthy = this.snapshot.servers.filter(
-      (server) => server.enabled && server.healthy === false
+      (server) => server.enabled && server.healthy === false,
     );
     if (unhealthy.length === 0) {
       return;
@@ -254,7 +275,7 @@ export class McpClientManager {
     const message = unhealthy
       .map(
         (server) =>
-          `${server.serverId}${server.error !== undefined ? `(${server.error})` : ""}`
+          `${server.serverId}${server.error !== undefined ? `(${server.error})` : ""}`,
       )
       .join(", ");
     throw createRuntimeFailure(
@@ -265,7 +286,7 @@ export class McpClientManager {
           serverId: server.serverId,
           error: server.error,
         })),
-      }
+      },
     );
   }
 
@@ -275,7 +296,7 @@ export class McpClientManager {
       const close = maybeReadFunction(handle.client, "close");
       if (close !== undefined) {
         closeCalls.push(
-          Promise.resolve(close.call(handle.client)).then(() => {})
+          Promise.resolve(close.call(handle.client)).then(() => {}),
         );
       }
     }
@@ -287,7 +308,7 @@ export class McpClientManager {
 
   private async connectAndDiscover(
     sdk: SdkBindings,
-    server: ConfiguredMcpServer
+    server: ConfiguredMcpServer,
   ): Promise<{
     client: unknown;
     tools: McpDiscoveredTool[];
@@ -297,11 +318,12 @@ export class McpClientManager {
       server,
       env: this.env,
       fetchImpl: this.fetchImpl,
+      oauthProviderFactory: this.oauthProviderFactory,
     });
 
     const client = new sdk.ClientCtor(
       { name: MCP_CLIENT_NAME, version: MCP_CLIENT_VERSION },
-      { capabilities: {} }
+      { capabilities: {} },
     );
     const connect = readFunction(client, "connect");
     await connect.call(client, transport);
@@ -310,21 +332,31 @@ export class McpClientManager {
     const listed = await listTools.call(client);
     const tools = normalizeListedTools(server, listed);
     const capabilities = asRecord(
-      maybeReadFunction(client, "getServerCapabilities")?.call(client)
+      maybeReadFunction(client, "getServerCapabilities")?.call(client),
     );
     if (asRecord(capabilities?.resources)) {
       const listResources = maybeReadFunction(client, "listResources");
       const listTemplates = maybeReadFunction(client, "listResourceTemplates");
       if (listResources) {
-        tools.push(...normalizeListedResources(server, await listResources.call(client)));
+        tools.push(
+          ...normalizeListedResources(server, await listResources.call(client)),
+        );
       }
       if (listTemplates) {
-        tools.push(...normalizeListedResourceTemplates(server, await listTemplates.call(client)));
+        tools.push(
+          ...normalizeListedResourceTemplates(
+            server,
+            await listTemplates.call(client),
+          ),
+        );
       }
     }
     if (asRecord(capabilities?.prompts)) {
       const listPrompts = maybeReadFunction(client, "listPrompts");
-      if (listPrompts) tools.push(...normalizeListedPrompts(server, await listPrompts.call(client)));
+      if (listPrompts)
+        tools.push(
+          ...normalizeListedPrompts(server, await listPrompts.call(client)),
+        );
     }
     assertUniqueProjectedToolNames(tools);
 
@@ -337,18 +369,18 @@ export class McpClientManager {
 
 async function loadSdkBindings(): Promise<SdkBindings> {
   const clientModule = (await dynamicImport(
-    "@modelcontextprotocol/sdk/client/index.js"
+    "@modelcontextprotocol/sdk/client/index.js",
   )) as Record<string, unknown>;
   const clientCtor = readCtor(clientModule, "Client");
   if (clientCtor === undefined) {
     throw createRuntimeFailure(
       "MCP_SDK_CLIENT_MISSING",
-      "MCP SDK Client export is missing"
+      "MCP SDK Client export is missing",
     );
   }
 
   const stdioModule = await tryImport(
-    "@modelcontextprotocol/sdk/client/stdio.js"
+    "@modelcontextprotocol/sdk/client/stdio.js",
   );
   const httpModule =
     (await tryImport("@modelcontextprotocol/sdk/client/streamableHttp.js")) ??
@@ -374,7 +406,7 @@ async function loadSdkBindings(): Promise<SdkBindings> {
 }
 
 async function tryImport(
-  path: string
+  path: string,
 ): Promise<Record<string, unknown> | undefined> {
   try {
     return (await dynamicImport(path)) as Record<string, unknown>;
@@ -388,6 +420,7 @@ async function createTransport(input: {
   server: ConfiguredMcpServer;
   env: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch | undefined;
+  oauthProviderFactory?: McpOAuthProviderFactory | undefined;
 }): Promise<unknown> {
   const server = input.server;
 
@@ -400,7 +433,7 @@ async function createTransport(input: {
         {
           serverId: server.id,
           transport: server.transport,
-        }
+        },
       );
     }
 
@@ -421,6 +454,21 @@ async function createTransport(input: {
         "x-kestrel-mcp-grant-id": server.hostedGateway.context.grantId,
       }
     : resolveRemoteHeaders(server, input.env);
+  const authProvider =
+    !isHostedGatewayServer(server) && server.oauthCredentialPrefix !== undefined
+      ? input.oauthProviderFactory?.(server)
+      : undefined;
+  if (
+    !isHostedGatewayServer(server) &&
+    server.oauthCredentialPrefix !== undefined &&
+    authProvider === undefined
+  ) {
+    throw createRuntimeFailure(
+      "MCP_OAUTH_PROVIDER_UNAVAILABLE",
+      `Secure App authorization is unavailable for server '${server.id}'`,
+      { serverId: server.id },
+    );
+  }
   if (server.transport === "http") {
     const ctor = input.sdk.HttpTransportCtor;
     if (ctor === undefined) {
@@ -430,11 +478,12 @@ async function createTransport(input: {
         {
           serverId: server.id,
           transport: server.transport,
-        }
+        },
       );
     }
 
     return new ctor(server.url, {
+      ...(authProvider !== undefined ? { authProvider } : {}),
       requestInit: {
         headers,
       },
@@ -450,7 +499,7 @@ async function createTransport(input: {
       {
         serverId: server.id,
         transport: server.transport,
-      }
+      },
     );
   }
 
@@ -464,9 +513,21 @@ async function createTransport(input: {
 
 function resolveRemoteHeaders(
   server: Extract<McpServerConfig, { transport: "http" | "sse" }>,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
 ): Record<string, string> {
   const headers: Record<string, string> = {};
+
+  if (
+    server.oauthCredentialPrefix !== undefined &&
+    (server.authTokenEnv !== undefined ||
+      Object.keys(server.headerEnvs ?? {}).length > 0)
+  ) {
+    throw createRuntimeFailure(
+      "MCP_AUTH_CONFIGURATION_INVALID",
+      `Server '${server.id}' cannot combine App authorization with static credentials`,
+      { serverId: server.id },
+    );
+  }
 
   if (server.authTokenEnv !== undefined) {
     const token = env[server.authTokenEnv];
@@ -477,7 +538,7 @@ function resolveRemoteHeaders(
         {
           serverId: server.id,
           envVar: server.authTokenEnv,
-        }
+        },
       );
     }
     headers.Authorization = `Bearer ${token}`;
@@ -494,7 +555,7 @@ function resolveRemoteHeaders(
           serverId: server.id,
           headerName,
           envVar,
-        }
+        },
       );
     }
     headers[headerName] = value;
@@ -505,7 +566,7 @@ function resolveRemoteHeaders(
 
 function normalizeListedTools(
   server: ConfiguredMcpServer,
-  listed: unknown
+  listed: unknown,
 ): McpDiscoveredTool[] {
   const tools = asArray(asRecord(listed)?.tools);
   const normalized: McpDiscoveredTool[] = [];
@@ -543,28 +604,50 @@ function normalizeListedTools(
   return normalized;
 }
 
-function normalizeListedResources(server: ConfiguredMcpServer, listed: unknown): McpDiscoveredTool[] {
-  return normalizeProtocolItems(server, asArray(asRecord(listed)?.resources), "resource");
+function normalizeListedResources(
+  server: ConfiguredMcpServer,
+  listed: unknown,
+): McpDiscoveredTool[] {
+  return normalizeProtocolItems(
+    server,
+    asArray(asRecord(listed)?.resources),
+    "resource",
+  );
 }
 
-function normalizeListedResourceTemplates(server: ConfiguredMcpServer, listed: unknown): McpDiscoveredTool[] {
-  return normalizeProtocolItems(server, asArray(asRecord(listed)?.resourceTemplates), "resource_template");
+function normalizeListedResourceTemplates(
+  server: ConfiguredMcpServer,
+  listed: unknown,
+): McpDiscoveredTool[] {
+  return normalizeProtocolItems(
+    server,
+    asArray(asRecord(listed)?.resourceTemplates),
+    "resource_template",
+  );
 }
 
-function normalizeListedPrompts(server: ConfiguredMcpServer, listed: unknown): McpDiscoveredTool[] {
-  return normalizeProtocolItems(server, asArray(asRecord(listed)?.prompts), "prompt");
+function normalizeListedPrompts(
+  server: ConfiguredMcpServer,
+  listed: unknown,
+): McpDiscoveredTool[] {
+  return normalizeProtocolItems(
+    server,
+    asArray(asRecord(listed)?.prompts),
+    "prompt",
+  );
 }
 
 function normalizeProtocolItems(
   server: ConfiguredMcpServer,
   items: unknown[],
-  kind: "resource" | "resource_template" | "prompt"
+  kind: "resource" | "resource_template" | "prompt",
 ): McpDiscoveredTool[] {
   return items.flatMap((item) => {
     const record = asRecord(item);
-    const target = kind === "resource_template"
-      ? readString(record, "uriTemplate")
-      : readString(record, kind === "prompt" ? "name" : "uri");
+    const target =
+      kind === "resource_template"
+        ? readString(record, "uriTemplate")
+        : readString(record, kind === "prompt" ? "name" : "uri");
     if (!target) return [];
     const rawName = buildProtocolItemName(server.id, kind, target);
     const namespacedToolName = isHostedGatewayServer(server)
@@ -577,30 +660,53 @@ function normalizeProtocolItems(
       const name = readString(argument, "name");
       return name ? [[name, argument] as const] : [];
     });
-    const properties = Object.fromEntries(argumentsList.map(([name, argument]) => [name, {
-      type: "string",
-      ...(readString(argument, "description") ? { description: readString(argument, "description") } : {}),
-    }]));
-    const required = argumentsList.filter(([, argument]) => argument?.required === true).map(([name]) => name);
-    return [{
-      serverId: server.id,
-      toolName: rawName,
-      namespacedToolName,
-      description: readString(record, "description") ?? `${kind} ${target}`,
-      inputSchema: kind === "resource_template"
-        ? { type: "object", properties: { uri: { type: "string" } }, required: ["uri"] }
-        : kind === "prompt"
-          ? { type: "object", properties, ...(required.length ? { required } : {}) }
-          : { type: "object", properties: {}, additionalProperties: false },
-      protocolKind: kind,
-      protocolTarget: target,
-      presentation: {
-        displayName: readString(record, "name") ?? target,
-        aliases: [target], keywords: ["mcp", kind], provider: "kestrel-one-hosted-mcp",
-        toolFamily: `hosted_mcp_${kind}`, capabilityClasses: [`mcp.${kind}`],
-        approvalMode: approvalMode === "auto" ? "auto" : "ask",
+    const properties = Object.fromEntries(
+      argumentsList.map(([name, argument]) => [
+        name,
+        {
+          type: "string",
+          ...(readString(argument, "description")
+            ? { description: readString(argument, "description") }
+            : {}),
+        },
+      ]),
+    );
+    const required = argumentsList
+      .filter(([, argument]) => argument?.required === true)
+      .map(([name]) => name);
+    return [
+      {
+        serverId: server.id,
+        toolName: rawName,
+        namespacedToolName,
+        description: readString(record, "description") ?? `${kind} ${target}`,
+        inputSchema:
+          kind === "resource_template"
+            ? {
+                type: "object",
+                properties: { uri: { type: "string" } },
+                required: ["uri"],
+              }
+            : kind === "prompt"
+              ? {
+                  type: "object",
+                  properties,
+                  ...(required.length ? { required } : {}),
+                }
+              : { type: "object", properties: {}, additionalProperties: false },
+        protocolKind: kind,
+        protocolTarget: target,
+        presentation: {
+          displayName: readString(record, "name") ?? target,
+          aliases: [target],
+          keywords: ["mcp", kind],
+          provider: "kestrel-one-hosted-mcp",
+          toolFamily: `hosted_mcp_${kind}`,
+          capabilityClasses: [`mcp.${kind}`],
+          approvalMode: approvalMode === "auto" ? "auto" : "ask",
+        },
       },
-    }];
+    ];
   });
 }
 
@@ -609,10 +715,11 @@ function buildProtocolItemName(
   kind: "resource" | "resource_template" | "prompt",
   target: string,
 ): string {
-  const readable = target
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]/gu, "_")
-    .slice(0, 40) || "item";
+  const readable =
+    target
+      .trim()
+      .replace(/[^a-zA-Z0-9._-]/gu, "_")
+      .slice(0, 40) || "item";
   const digest = createHash("sha256")
     .update(`${serverId}\0${kind}\0${target}`)
     .digest("hex")
@@ -637,7 +744,7 @@ function assertUniqueProjectedToolNames(
 function resolveToolPresentationMetadata(
   server: McpServerConfig,
   toolName: string,
-  namespacedToolName: string
+  namespacedToolName: string,
 ): McpToolPresentationMetadata | undefined {
   const configured =
     server.toolMetadata?.[toolName] ??
@@ -662,14 +769,16 @@ function resolveToolPresentationMetadata(
 
 function hostedToolPresentation(
   tool: Record<string, unknown>,
-  toolName: string
+  toolName: string,
 ): McpToolPresentationMetadata {
   const metadata = asRecord(tool._meta);
   const approvalMode = readString(metadata, "kestrel/approvalMode");
-  const allowedInteractionModes = asArray(metadata?.["kestrel/allowedInteractionModes"])
-    .filter((value): value is "chat" | "plan" | "build" =>
-      value === "chat" || value === "plan" || value === "build"
-    );
+  const allowedInteractionModes = asArray(
+    metadata?.["kestrel/allowedInteractionModes"],
+  ).filter(
+    (value): value is "chat" | "plan" | "build" =>
+      value === "chat" || value === "plan" || value === "build",
+  );
   return {
     displayName:
       readString(tool, "title") ?? readString(tool, "description") ?? toolName,
@@ -687,21 +796,19 @@ function hostedToolPresentation(
 
 function readCtor(
   module: Record<string, unknown>,
-  key: string
+  key: string,
 ): (new (...args: unknown[]) => unknown) | undefined {
   const value = module[key];
   if (typeof value !== "function") {
     return;
   }
 
-  return value as new (
-    ...args: unknown[]
-  ) => unknown;
+  return value as new (...args: unknown[]) => unknown;
 }
 
 function readFunction(
   value: unknown,
-  key: string
+  key: string,
 ): (...args: unknown[]) => unknown {
   const fn = maybeReadFunction(value, key);
   if (fn === undefined) {
@@ -710,7 +817,7 @@ function readFunction(
       `Expected function '${key}' on MCP client object`,
       {
         key,
-      }
+      },
     );
   }
   return fn;
@@ -718,7 +825,7 @@ function readFunction(
 
 function maybeReadFunction(
   value: unknown,
-  key: string
+  key: string,
 ): ((...args: unknown[]) => unknown) | undefined {
   if (typeof value !== "object" || value === null) {
     return;
@@ -734,7 +841,7 @@ function isEnabled(server: ConfiguredMcpServer): boolean {
 }
 
 function isHostedGatewayServer(
-  server: ConfiguredMcpServer
+  server: ConfiguredMcpServer,
 ): server is HostedGatewayServerConfig {
   return "hostedGateway" in server;
 }
@@ -760,7 +867,7 @@ function asArray(value: unknown): unknown[] {
 
 function readString(
   value: Record<string, unknown> | undefined,
-  key: string
+  key: string,
 ): string | undefined {
   if (value === undefined) {
     return;
@@ -771,7 +878,7 @@ function readString(
 
 export function buildNamespacedToolName(
   serverId: string,
-  toolName: string
+  toolName: string,
 ): string {
   return `mcp.${sanitizeSegment(serverId)}.${sanitizeSegment(toolName)}`;
 }
@@ -787,5 +894,5 @@ function sanitizeSegment(value: string): string {
 
 const dynamicImport = new Function(
   "modulePath",
-  "return import(modulePath)"
+  "return import(modulePath)",
 ) as (modulePath: string) => Promise<unknown>;

@@ -7,6 +7,12 @@ import {
 import { validateTavilyConnection } from "./tavily-connection";
 import { validateVisualCrossingConnection } from "./weather-connection";
 import { validateNgrokConnection } from "./ngrok-connection";
+import {
+  assertVercelProxyTarget,
+  createVercelApiUrl,
+  VERCEL_RUNTIME_CAPABILITIES,
+} from "./vercel-contract";
+import { validateVercelConnection } from "./vercel-connection";
 
 export type AppProviderAuthMethod =
   | "none"
@@ -32,7 +38,7 @@ export type AppProviderRuntimeRequest = {
 export class AppProviderRuntimeContractError extends Error {
   constructor(
     readonly code: string,
-    readonly status = 400
+    readonly status = 400,
   ) {
     super(code);
     this.name = "AppProviderRuntimeContractError";
@@ -43,37 +49,39 @@ export type AppProviderAdapter = {
   appKey: string;
   authMethods: readonly AppProviderAuthMethod[];
   validateEnvironmentConnection?: (
-    input: CreateEnvironmentAppConnectionInput
+    input: CreateEnvironmentAppConnectionInput,
   ) => Promise<AppConnectionHealth>;
   createEnvironmentCredential?: (
-    input: CreateEnvironmentAppConnectionInput
+    input: CreateEnvironmentAppConnectionInput,
   ) => AppCredentialPayload;
-  runtime?: {
-    mode: "request_proxy";
-    capabilityKeys: readonly string[];
-    assertTarget: (input: {
-      capability: string;
-      method: string;
-      path: string[];
-    }) => void;
-    createRequest: (input: {
-      capability: string;
-      method: string;
-      path: string[];
-      body?: ArrayBuffer | undefined;
-      credential: AppCredentialPayload | null;
-    }) => AppProviderRuntimeRequest;
-    degradedStatusCodes: readonly number[];
-    reconnectFailureCode: string;
-  } | {
-    mode: "lifecycle";
-    capabilityKeys: readonly string[];
-    assertTarget: (input: {
-      capability: string;
-      method: string;
-      path: string[];
-    }) => void;
-  };
+  runtime?:
+    | {
+        mode: "request_proxy";
+        capabilityKeys: readonly string[];
+        assertTarget: (input: {
+          capability: string;
+          method: string;
+          path: string[];
+        }) => void;
+        createRequest: (input: {
+          capability: string;
+          method: string;
+          path: string[];
+          body?: ArrayBuffer | undefined;
+          credential: AppCredentialPayload | null;
+        }) => AppProviderRuntimeRequest;
+        degradedStatusCodes: readonly number[];
+        reconnectFailureCode: string;
+      }
+    | {
+        mode: "lifecycle";
+        capabilityKeys: readonly string[];
+        assertTarget: (input: {
+          capability: string;
+          method: string;
+          path: string[];
+        }) => void;
+      };
 };
 
 const DEFAULT_TAVILY_BASE_URL = "https://api.tavily.com";
@@ -103,7 +111,8 @@ const tavilyAdapter: AppProviderAdapter = {
     capabilityKeys: TAVILY_RUNTIME_CAPABILITIES,
     assertTarget(input) {
       assertTavilyProxyTarget({
-        capability: input.capability as (typeof TAVILY_RUNTIME_CAPABILITIES)[number],
+        capability:
+          input.capability as (typeof TAVILY_RUNTIME_CAPABILITIES)[number],
         method: input.method,
         path: input.path,
       });
@@ -113,13 +122,10 @@ const tavilyAdapter: AppProviderAdapter = {
         throw new Error("Tavily requires an API-key credential.");
       }
       const baseUrl = ensureTrailingSlash(
-        input.credential.baseUrl ?? DEFAULT_TAVILY_BASE_URL
+        input.credential.baseUrl ?? DEFAULT_TAVILY_BASE_URL,
       );
       return {
-        url: new URL(
-          input.path.map(encodeURIComponent).join("/"),
-          baseUrl
-        ),
+        url: new URL(input.path.map(encodeURIComponent).join("/"), baseUrl),
         init: {
           method: input.method,
           headers: {
@@ -176,14 +182,14 @@ const weatherAdapter: AppProviderAdapter = {
       }
       throw new AppProviderRuntimeContractError(
         "WEATHER_PROXY_TARGET_DENIED",
-        404
+        404,
       );
     },
     createRequest(input) {
       if (input.credential?.kind !== "api_key") {
         throw new AppProviderRuntimeContractError(
           "WEATHER_FALLBACK_CONNECTION_REQUIRED",
-          409
+          409,
         );
       }
       const request = parseWeatherRuntimeBody(input.body);
@@ -191,15 +197,15 @@ const weatherAdapter: AppProviderAdapter = {
         input.capability === "getWeather" ? "current" : "current,days,hours";
       if (request.include !== expectedInclude) {
         throw new AppProviderRuntimeContractError(
-          "WEATHER_PROXY_PAYLOAD_DENIED"
+          "WEATHER_PROXY_PAYLOAD_DENIED",
         );
       }
       const baseUrl = ensureTrailingSlash(
-        input.credential.baseUrl ?? DEFAULT_VISUAL_CROSSING_BASE_URL
+        input.credential.baseUrl ?? DEFAULT_VISUAL_CROSSING_BASE_URL,
       );
       const url = new URL(
         `${encodeURIComponent(request.latitude)},${encodeURIComponent(request.longitude)}`,
-        baseUrl
+        baseUrl,
       );
       url.searchParams.set("key", input.credential.apiKey);
       url.searchParams.set("unitGroup", "metric");
@@ -254,15 +260,74 @@ const ngrokAdapter: AppProviderAdapter = {
       if (!allowed) {
         throw new AppProviderRuntimeContractError(
           "NGROK_PREVIEW_TARGET_DENIED",
-          404
+          404,
         );
       }
     },
   },
 };
 
+const vercelAdapter: AppProviderAdapter = {
+  appKey: "vercel",
+  authMethods: ["api_key"],
+  validateEnvironmentConnection: validateVercelConnection,
+  createEnvironmentCredential(input) {
+    if (input.kind === "ngrok_agent") {
+      throw new Error("Vercel requires an API-key credential.");
+    }
+    return {
+      kind: "api_key",
+      apiKey: input.apiKey,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+    };
+  },
+  runtime: {
+    mode: "request_proxy",
+    capabilityKeys: VERCEL_RUNTIME_CAPABILITIES,
+    assertTarget(input) {
+      assertVercelProxyTarget({
+        capability:
+          input.capability as (typeof VERCEL_RUNTIME_CAPABILITIES)[number],
+        method: input.method,
+        path: input.path,
+      });
+    },
+    createRequest(input) {
+      if (input.credential?.kind !== "api_key") {
+        throw new AppProviderRuntimeContractError(
+          "VERCEL_CONNECTION_REQUIRED",
+          409,
+        );
+      }
+      return {
+        url: createVercelApiUrl({
+          capability:
+            input.capability as (typeof VERCEL_RUNTIME_CAPABILITIES)[number],
+          body: input.body,
+          ...(input.credential.projectId
+            ? { teamId: input.credential.projectId }
+            : {}),
+        }),
+        init: {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${input.credential.apiKey}`,
+            "User-Agent": "Kestrel-One",
+          },
+          cache: "no-store",
+        },
+        timeoutMs: 30_000,
+      };
+    },
+    degradedStatusCodes: [401, 403],
+    reconnectFailureCode: "VERCEL_RECONNECT_REQUIRED",
+  },
+};
+
 const PROVIDER_ADAPTERS = new Map(
-  [weatherAdapter, tavilyAdapter, ngrokAdapter].map((adapter) => [adapter.appKey, adapter])
+  [weatherAdapter, tavilyAdapter, ngrokAdapter, vercelAdapter].map(
+    (adapter) => [adapter.appKey, adapter],
+  ),
 );
 
 export function getAppProviderAdapter(appKey: string) {
@@ -300,7 +365,7 @@ function parseWeatherRuntimeBody(body: ArrayBuffer | undefined) {
         key !== "latitude" &&
         key !== "longitude" &&
         key !== "include" &&
-        key !== "timezone"
+        key !== "timezone",
     ) ||
     typeof value.latitude !== "number" ||
     !Number.isFinite(value.latitude) ||
@@ -310,8 +375,7 @@ function parseWeatherRuntimeBody(body: ArrayBuffer | undefined) {
     !Number.isFinite(value.longitude) ||
     value.longitude < -180 ||
     value.longitude > 180 ||
-    (value.include !== "current" &&
-      value.include !== "current,days,hours") ||
+    (value.include !== "current" && value.include !== "current,days,hours") ||
     typeof value.timezone !== "string" ||
     !value.timezone.trim() ||
     value.timezone.length > 128

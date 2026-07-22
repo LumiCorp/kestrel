@@ -1164,9 +1164,6 @@ function readToolProvider(toolName: string): string {
   if (toolName.startsWith("free.exchange.")) {
     return "open-er-api";
   }
-  if (toolName.startsWith("free.hn.")) {
-    return "hacker-news";
-  }
   if (toolName.startsWith("kestrel_one.")) {
     return "kestrel-one";
   }

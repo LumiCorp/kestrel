@@ -114,8 +114,16 @@ Public macOS release package:
 KESTREL_DESKTOP_RELEASE=1 \
 KESTREL_DESKTOP_SIGN_IDENTITY="Developer ID Application: ..." \
 KESTREL_DESKTOP_NOTARY_PROFILE="kestrel-notary" \
+KESTREL_SLACK_MCP_CLIENT_ID="your-pkce-enabled-slack-client-id" \
+KESTREL_MICROSOFT_365_CLIENT_ID="your-entra-public-client-id" \
+KESTREL_GOOGLE_WORKSPACE_CLIENT_ID="your-google-desktop-client-id" \
 pnpm run desktop:package
 ```
+
+The Slack, Microsoft 365, and Google Workspace client IDs are public application identities, not
+credentials. Release packaging embeds them in `app-connections.json`; access
+tokens, refresh tokens, and PKCE verifiers remain in Local Core's secure
+credential store and are never packaged or returned to the renderer.
 
 `desktop:package-smoke` is an operator-supervised GUI check, not a CI task. It refuses to launch without explicit approval, rejects concurrent smoke runs, closes the launched process in a final cleanup path, and removes isolated state after both success and failure unless retention is explicitly requested for debugging. Local Core daemon children are forced into Electron's Node mode, and Desktop exits immediately if a daemon launch ever reaches application mode. Every run must begin and end with a process-list check.
 

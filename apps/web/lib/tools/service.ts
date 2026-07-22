@@ -1,5 +1,4 @@
 import { and, eq, sql } from "drizzle-orm";
-import { getDiscordIntegrationStatus } from "@/lib/bots/discord";
 import { getBotUserName } from "@/lib/bots/github-config";
 import { getUnifiedBotRuntime } from "@/lib/bots/runtime";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -43,7 +42,7 @@ function toSurfaceAccess(value: unknown): ToolSurfaceAccess {
 
 function getOptionalString(
   record: Record<string, unknown>,
-  key: string
+  key: string,
 ): string | null {
   const value = record[key];
   return typeof value === "string" ? value : null;
@@ -58,7 +57,7 @@ function mergePolicy(
     rateLimitMode: ToolRateLimitMode;
     loggingMode: ToolLoggingMode;
     settings: unknown;
-  } | null
+  } | null,
 ): ToolCapabilityPolicy {
   return {
     enabled: row?.enabled ?? definition.defaultPolicy.enabled,
@@ -80,7 +79,7 @@ function createToolServiceError(code: string, message: string) {
 }
 
 function createSystemConnection(
-  overrides: Partial<ResolvedToolProviderConnection> = {}
+  overrides: Partial<ResolvedToolProviderConnection> = {},
 ): ResolvedToolProviderConnection {
   return {
     authSource: "system",
@@ -95,24 +94,6 @@ function createSystemConnection(
 
 function sqlExcluded(columnName: string) {
   return sql.raw(`excluded."${columnName}"`);
-}
-
-async function listSourceRowsByType(
-  organizationId: string,
-  type: "github" | "youtube"
-) {
-  return knowledgeDb
-    .select({
-      id: schema.sources.id,
-      label: schema.sources.label,
-    })
-    .from(schema.sources)
-    .where(
-      and(
-        eq(schema.sources.organizationId, organizationId),
-        eq(schema.sources.type, type)
-      )
-    );
 }
 
 const builtInSystemAdapter: ToolProviderAdapter = {
@@ -137,13 +118,13 @@ const knowledgeSearchAdapter: ToolProviderAdapter = {
       .where(eq(schema.knowledgeDocuments.organizationId, organizationId));
 
     const readyCount = documentRows.filter(
-      (row) => row.status === "ready" || row.status === "partial"
+      (row) => row.status === "ready" || row.status === "partial",
     ).length;
     const processingCount = documentRows.filter(
-      (row) => row.status === "uploaded" || row.status === "processing"
+      (row) => row.status === "uploaded" || row.status === "processing",
     ).length;
     const failedCount = documentRows.filter(
-      (row) => row.status === "failed"
+      (row) => row.status === "failed",
     ).length;
 
     if (readyCount > 0) {
@@ -222,7 +203,7 @@ const githubAdapter: ToolProviderAdapter = {
   async getConnectionStatus({ organizationId, origin }) {
     const hasPat = Boolean(process.env.GITHUB_TOKEN);
     const hasApp = Boolean(
-      process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY
+      process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY,
     );
     const hasWebhookSecret = Boolean(process.env.GITHUB_WEBHOOK_SECRET);
     const [sourceRows, activeSnapshot] = await Promise.all([
@@ -232,8 +213,8 @@ const githubAdapter: ToolProviderAdapter = {
         .where(
           and(
             eq(schema.sources.organizationId, organizationId),
-            eq(schema.sources.type, "github")
-          )
+            eq(schema.sources.type, "github"),
+          ),
         ),
       getActiveKnowledgeSnapshot(organizationId),
     ]);
@@ -286,16 +267,16 @@ const googleWorkspaceAdapter: ToolProviderAdapter = {
         and(
           eq(table.organizationId, organizationId),
           eq(table.providerKey, "google_workspace"),
-          inArray(table.status, ["connected", "degraded"])
+          inArray(table.status, ["connected", "degraded"]),
         ),
       columns: { status: true },
     });
     const connectedCount = connections.filter(
-      (connection) => connection.status === "connected"
+      (connection) => connection.status === "connected",
     ).length;
     const degradedCount = connections.length - connectedCount;
     const configured = Boolean(
-      process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+      process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET,
     );
     return {
       authSource: "oauth",
@@ -358,139 +339,18 @@ const environmentManagedAdapter: ToolProviderAdapter = {
   },
 };
 
-const discordAdapter: ToolProviderAdapter = {
-  async getConnectionStatus({ organizationId, origin }) {
-    const status = await getDiscordIntegrationStatus(
-      organizationId,
-      origin ?? ""
-    );
-    const hasBinding = Boolean(status.binding?.guildId);
-    const enabledBinding = Boolean(status.binding?.enabled);
-    const resolvedStatus = status.credentialsConfigured
-      ? hasBinding && enabledBinding
-        ? "env_backed"
-        : "degraded"
-      : "not_configured";
-
-    return {
-      authSource: "env",
-      status: resolvedStatus,
-      isReady:
-        status.credentialsConfigured &&
-        status.adapterAvailable &&
-        hasBinding &&
-        enabledBinding,
-      label: status.credentialsConfigured
-        ? hasBinding && enabledBinding
-          ? "Env-backed"
-          : "Binding required"
-        : "Missing credentials",
-      lastError:
-        status.credentialsConfigured && !hasBinding
-          ? "No Discord guild binding is configured."
-          : null,
-      metadata: status,
-    };
-  },
-};
-
-const githubSourceAdapter: ToolProviderAdapter = {
-  async getConnectionStatus({ organizationId }) {
-    const [sourceRows, activeSnapshot] = await Promise.all([
-      listSourceRowsByType(organizationId, "github"),
-      getActiveKnowledgeSnapshot(organizationId),
-    ]);
-
-    if (sourceRows.length > 0 && activeSnapshot) {
-      return createSystemConnection({
-        label: "Snapshot ready",
-        metadata: {
-          manageUrl: "/knowledge",
-          sourceCount: sourceRows.length,
-          activeSnapshotId: activeSnapshot.id,
-        },
-      });
-    }
-
-    return createSystemConnection({
-      status: sourceRows.length > 0 ? "degraded" : "not_configured",
-      isReady: false,
-      label: sourceRows.length > 0 ? "Run source sync" : "Add GitHub source",
-      lastError:
-        sourceRows.length > 0
-          ? "GitHub sources are configured, but no active snapshot is available."
-          : null,
-      metadata: {
-        manageUrl: "/knowledge",
-        sourceCount: sourceRows.length,
-        activeSnapshotId: activeSnapshot?.id ?? null,
-      },
-    });
-  },
-};
-
-const youtubeSourceAdapter: ToolProviderAdapter = {
-  async getConnectionStatus({ organizationId }) {
-    const [sourceRows, activeSnapshot] = await Promise.all([
-      listSourceRowsByType(organizationId, "youtube"),
-      getActiveKnowledgeSnapshot(organizationId),
-    ]);
-    const apiKeyConfigured = Boolean(process.env.YOUTUBE_API_KEY);
-
-    if (apiKeyConfigured && sourceRows.length > 0 && activeSnapshot) {
-      return createSystemConnection({
-        label: "Snapshot ready",
-        metadata: {
-          manageUrl: "/knowledge",
-          apiKeyConfigured,
-          sourceCount: sourceRows.length,
-          activeSnapshotId: activeSnapshot.id,
-        },
-      });
-    }
-
-    return createSystemConnection({
-      status:
-        sourceRows.length > 0 && apiKeyConfigured
-          ? "degraded"
-          : "not_configured",
-      isReady: false,
-      label: apiKeyConfigured
-        ? sourceRows.length > 0
-          ? "Run source sync"
-          : "Add YouTube source"
-        : "Missing API key",
-      lastError: apiKeyConfigured
-        ? sourceRows.length > 0
-          ? "YouTube sources are configured, but no active snapshot is available."
-          : null
-        : "YOUTUBE_API_KEY is not configured.",
-      metadata: {
-        manageUrl: "/knowledge",
-        apiKeyConfigured,
-        sourceCount: sourceRows.length,
-        activeSnapshotId: activeSnapshot?.id ?? null,
-      },
-    });
-  },
-};
-
 const providerAdapters = new Map<ToolProviderKey, ToolProviderAdapter>([
   ["ngrok", environmentManagedAdapter],
   ["built_in.weather", builtInSystemAdapter],
   ["built_in.time", builtInSystemAdapter],
   ["built_in.geocoding", builtInSystemAdapter],
   ["built_in.exchange_rates", builtInSystemAdapter],
-  ["built_in.hacker_news", builtInSystemAdapter],
   ["built_in.knowledge_search", knowledgeSearchAdapter],
   ["built_in.sandbox", sandboxAdapter],
   ["built_in.artifacts", artifactsAdapter],
   ["github", githubAdapter],
   ["google_workspace", googleWorkspaceAdapter],
   ["tavily", tavilyAdapter],
-  ["discord", discordAdapter],
-  ["source.github", githubSourceAdapter],
-  ["source.youtube", youtubeSourceAdapter],
 ]);
 
 async function ensureToolCatalogRows() {
@@ -509,7 +369,7 @@ async function ensureToolCatalogRows() {
         metadata: provider.metadata ?? {},
         createdAt: now,
         updatedAt: now,
-      }))
+      })),
     )
     .onConflictDoUpdate({
       target: [schema.toolProviders.key],
@@ -540,7 +400,7 @@ async function ensureToolCatalogRows() {
       metadata: capability.metadata ?? {},
       createdAt: now,
       updatedAt: now,
-    }))
+    })),
   );
 
   if (capabilities.length === 0) {
@@ -586,7 +446,7 @@ async function ensureOrganizationToolRows(organizationId: string) {
         settings: {},
         createdAt: new Date(),
         updatedAt: new Date(),
-      }))
+      })),
     )
     .onConflictDoNothing({
       target: [
@@ -611,8 +471,8 @@ async function ensureOrganizationToolRows(organizationId: string) {
           settings: capability.defaultPolicy.settings,
           createdAt: new Date(),
           updatedAt: new Date(),
-        }))
-      )
+        })),
+      ),
     )
     .onConflictDoNothing({
       target: [
@@ -625,7 +485,7 @@ async function ensureOrganizationToolRows(organizationId: string) {
 
 async function syncToolConnections(
   organizationId: string,
-  origin?: string
+  origin?: string,
 ): Promise<Map<ToolProviderKey, ResolvedToolProviderConnection>> {
   const definitions = listToolProviders();
   const resolved = await mapWithConcurrencyLimit(
@@ -661,7 +521,7 @@ async function syncToolConnections(
           accountId: getOptionalString(connection.metadata, "accountId"),
           credentialRef: getOptionalString(
             connection.metadata,
-            "credentialRef"
+            "credentialRef",
           ),
           metadata: connection.metadata,
           createdAt: new Date(),
@@ -678,7 +538,7 @@ async function syncToolConnections(
             accountId: getOptionalString(connection.metadata, "accountId"),
             credentialRef: getOptionalString(
               connection.metadata,
-              "credentialRef"
+              "credentialRef",
             ),
             metadata: connection.metadata,
             updatedAt: new Date(),
@@ -686,7 +546,7 @@ async function syncToolConnections(
         });
 
       return [provider.key, connection] as const;
-    }
+    },
   );
 
   return new Map(resolved);
@@ -709,13 +569,13 @@ export async function listResolvedToolProviders(input: {
   ]);
 
   const providerRowMap = new Map(
-    providerRows.map((row) => [row.providerKey as ToolProviderKey, row])
+    providerRows.map((row) => [row.providerKey as ToolProviderKey, row]),
   );
   const capabilityRowMap = new Map(
     capabilityRows.map((row) => [
       `${row.providerKey}:${row.capabilityKey}`,
       row,
-    ])
+    ]),
   );
 
   return listToolProviders().map((definition): ResolvedToolProvider => {
@@ -744,7 +604,7 @@ export async function listResolvedToolProviders(input: {
             Boolean(capability.runtimeName || definition.type !== "built_in") &&
             connection.isReady,
         };
-      }
+      },
     );
 
     return {
@@ -803,7 +663,7 @@ export async function updateOrganizationToolProvider(input: {
   if (!provider) {
     throw createToolServiceError(
       "TOOL_PROVIDER_NOT_FOUND",
-      "Tool provider not found"
+      "Tool provider not found",
     );
   }
 
@@ -813,7 +673,7 @@ export async function updateOrganizationToolProvider(input: {
     where: (table, { and, eq }) =>
       and(
         eq(table.organizationId, input.organizationId),
-        eq(table.providerKey, input.providerKey)
+        eq(table.providerKey, input.providerKey),
       ),
   });
 
@@ -847,12 +707,12 @@ export async function updateOrganizationToolCapability(input: {
   patch: Partial<ToolCapabilityPolicy>;
 }) {
   const capability = getToolProviderDefinition(
-    input.providerKey
+    input.providerKey,
   )?.capabilities.find((entry) => entry.key === input.capabilityKey);
   if (!capability) {
     throw createToolServiceError(
       "TOOL_CAPABILITY_NOT_FOUND",
-      "Tool capability not found"
+      "Tool capability not found",
     );
   }
 
@@ -864,7 +724,7 @@ export async function updateOrganizationToolCapability(input: {
         and(
           eq(table.organizationId, input.organizationId),
           eq(table.providerKey, input.providerKey),
-          eq(table.capabilityKey, input.capabilityKey)
+          eq(table.capabilityKey, input.capabilityKey),
         ),
     });
 
@@ -920,7 +780,7 @@ export async function testToolProviderConnection(input: {
   if (!provider) {
     throw createToolServiceError(
       "TOOL_PROVIDER_NOT_FOUND",
-      "Tool provider not found"
+      "Tool provider not found",
     );
   }
 
@@ -959,7 +819,7 @@ export async function listToolRuntimeConfigurations(input: {
                 capability.policy.enabled &&
                 capability.policy.approvalMode !== "deny" &&
                 capability.policy.surfaceAccess[input.surface] &&
-                provider.connection.isReady
+                provider.connection.isReady,
             )
             .map((capability) => [
               capability.runtimeName as string,
@@ -973,8 +833,8 @@ export async function listToolRuntimeConfigurations(input: {
                 settings: capability.policy.settings,
               } satisfies ToolRuntimeConfiguration,
             ])
-        : []
-    )
+        : [],
+    ),
   );
 }
 
@@ -990,13 +850,13 @@ export async function filterRuntimeTools(input: {
         organizationId: input.organizationId,
         surface: input.surface,
         origin: input.origin,
-      })
-    )
+      }),
+    ),
   );
 
   return Object.fromEntries(
     Object.entries(input.tools).filter(([name]) =>
-      enabledRuntimeNames.has(name)
-    )
+      enabledRuntimeNames.has(name),
+    ),
   );
 }

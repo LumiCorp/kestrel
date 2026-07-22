@@ -86,7 +86,28 @@ export {
 export { timeCurrentTool } from "./free/timeCurrent.js";
 export { geocodeLookupTool } from "./free/geocodeLookup.js";
 export { exchangeRateTool } from "./free/exchangeRate.js";
-export { hnTopTool } from "./free/hnTop.js";
+export {
+  kestrelOneMicrosoft365ListChatsTool,
+  kestrelOneMicrosoft365ListEventsTool,
+  kestrelOneMicrosoft365ListMailTool,
+  kestrelOneMicrosoft365SearchSitesTool,
+  kestrelOneMicrosoft365SendChatMessageTool,
+  kestrelOneMicrosoft365SendMailTool,
+} from "./kestrelOne/microsoft-365.js";
+export {
+  microsoft365ListChatsTool,
+  microsoft365ListEventsTool,
+  microsoft365ListMailTool,
+  microsoft365SearchSitesTool,
+  microsoft365SendChatMessageTool,
+  microsoft365SendMailTool,
+} from "./microsoft365/desktop.js";
+export { googleWorkspaceCreateEventTool, googleWorkspaceDeleteEventTool, googleWorkspaceListEventsTool, googleWorkspaceUpdateEventTool } from "./googleWorkspace/desktop.js";
+export {
+  kestrelOneVercelDeploymentEventsTool,
+  kestrelOneVercelListDeploymentsTool,
+  kestrelOneVercelListProjectsTool,
+} from "./kestrelOne/vercel.js";
 export {
   FILESYSTEM_TOOL_NAMES,
   type FileSystemListEntry,

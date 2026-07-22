@@ -75,6 +75,7 @@ export function ProjectSharedAppSheet({
   const isPersonalOnly = configuration?.app.connectionModel === "personal";
   const isHybrid = configuration?.app.connectionModel === "hybrid";
   const supportsConnection = configuration?.app.connectionModel !== "none";
+  const isWorkflow = Boolean(configuration?.dependencies.length);
   const isWeather = appKey === "built_in.weather";
   const needsConnection =
     configuration?.app.connectionRequirement === "required";
@@ -223,7 +224,11 @@ export function ProjectSharedAppSheet({
                     <Switch
                       aria-label={`Enable ${appName} for this Project`}
                       checked={configuration.enabled}
-                      disabled={!canEdit || busy === "app"}
+                      disabled={
+                        !canEdit ||
+                        busy === "app" ||
+                        !(configuration.enabled || configuration.dependencyReady)
+                      }
                       onCheckedChange={(enabled) => void updateApp(enabled)}
                     />
                   </div>
@@ -233,7 +238,9 @@ export function ProjectSharedAppSheet({
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <h3 className="font-semibold text-base">
-                        {supportsConnection
+                        {isWorkflow
+                          ? "Required Apps"
+                          : supportsConnection
                           ? isWeather
                             ? "Optional Weather fallback"
                             : isPersonalOnly
@@ -247,7 +254,9 @@ export function ProjectSharedAppSheet({
                           : "Connection"}
                       </h3>
                       <p className="mt-1 text-muted-foreground text-sm">
-                        {supportsConnection
+                        {isWorkflow
+                          ? "This workflow coordinates capabilities from Apps that are already enabled for this Project. It never adds permissions of its own."
+                          : supportsConnection
                           ? isWeather
                             ? "Weather always uses Open-Meteo first. Attach the Environment's Visual Crossing connection to enable the verified fallback for this Project."
                             : isPersonalOnly
@@ -261,7 +270,11 @@ export function ProjectSharedAppSheet({
                           : "No connection is required. Kestrel provides this App directly."}
                       </p>
                     </div>
-                    {supportsConnection ? (
+                    {isWorkflow ? (
+                      <Badge variant="outline">
+                        {configuration.dependencyReady ? "Ready" : "Missing Apps"}
+                      </Badge>
+                    ) : supportsConnection ? (
                       <Badge variant="outline">
                         {configuration.attachedConnections.length} attached
                       </Badge>
@@ -270,7 +283,33 @@ export function ProjectSharedAppSheet({
                     )}
                   </div>
                   <div className="mt-5 divide-y overflow-hidden rounded-xl border">
-                    {supportsConnection ? (
+                    {isWorkflow ? (
+                      configuration.dependencies.map((dependency) => (
+                        <div className="px-4 py-4" key={dependency.role}>
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={cn(
+                                "flex size-8 shrink-0 items-center justify-center rounded-full border",
+                                dependency.satisfied &&
+                                  "border-emerald-600 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                              )}
+                            >
+                              {dependency.satisfied ? <Check className="size-4" /> : null}
+                            </span>
+                            <div>
+                              <p className="font-medium text-sm">{dependency.role}</p>
+                              <p className="mt-1 text-muted-foreground text-xs">
+                                {dependency.alternatives
+                                  .map((alternative) =>
+                                    `${alternative.displayName}${alternative.ready ? " (ready)" : ""}`
+                                  )
+                                  .join(" or ")}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : supportsConnection ? (
                       configuration.availableConnections.length ? (
                         configuration.availableConnections.map((connection) => {
                           const connectionIsPersonal =

@@ -2,11 +2,31 @@ import assert from "node:assert/strict";
 import {
   assertNoMcpOauthRedirect,
   discoverMcpOauthConfiguration,
+  registerMcpOauthClient,
+  parseMcpOauthTokenResponse,
 } from "./oauth-flow";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const noHeaders: Record<string, string> = {};
+
+contractTest("web.hermetic", "MCP OAuth accepts only explicitly allowed provider token labels", () => {
+  assert.equal(
+    parseMcpOauthTokenResponse(
+      { access_token: "xoxp-token", token_type: "user", scope: "chat:write" },
+      ["bearer", "user"]
+    ).access_token,
+    "xoxp-token"
+  );
+  assert.throws(
+    () =>
+      parseMcpOauthTokenResponse(
+        { access_token: "opaque", token_type: "mac" },
+        ["bearer"]
+      ),
+    /unsupported token type/u
+  );
+});
 
 contractTest("web.hermetic", "MCP OAuth follows protected-resource and authorization-server metadata", async () => {
   const requested: string[] = [];
@@ -46,12 +66,14 @@ contractTest("web.hermetic", "MCP OAuth follows protected-resource and authoriza
           issuer: "https://auth.example.com/tenant",
           authorization_endpoint: "https://auth.example.com/authorize",
           token_endpoint: "https://auth.example.com/token",
+          registration_endpoint: "https://auth.example.com/register",
           code_challenge_methods_supported: ["S256"],
         },
       };
     },
   });
   assert.deepEqual(discovered.scopes, ["tools:read", "prompts:read"]);
+  assert.deepEqual(discovered.supportedScopes, ["fallback:scope"]);
   assert.equal(
     discovered.authorizationEndpoint.toString(),
     "https://auth.example.com/authorize"
@@ -60,7 +82,60 @@ contractTest("web.hermetic", "MCP OAuth follows protected-resource and authoriza
     discovered.tokenEndpoint.toString(),
     "https://auth.example.com/token"
   );
+  assert.equal(
+    discovered.registrationEndpoint?.toString(),
+    "https://auth.example.com/register"
+  );
   assert.equal(requested.length, 3);
+});
+
+contractTest("web.hermetic", "MCP OAuth registers a bounded public client for one callback", async () => {
+  let registrationBody: unknown;
+  const registered = await registerMcpOauthClient({
+    registrationEndpoint: new URL("https://auth.example.com/register"),
+    redirectUri: "https://kestrel.example/api/apps/notion/oauth/callback",
+    clientName: "Notion for Kestrel",
+    scopes: ["tools:read", "tools:write"],
+    request: async (url, init) => {
+      assert.equal(url.toString(), "https://auth.example.com/register");
+      assert.equal(init?.method, "POST");
+      registrationBody = JSON.parse(String(init?.body));
+      return {
+        status: 201,
+        headers: noHeaders,
+        body: {
+          client_id: "dynamic-client-id",
+          token_endpoint_auth_method: "none",
+        },
+      };
+    },
+  });
+  assert.deepEqual(registrationBody, {
+    client_name: "Notion for Kestrel",
+    redirect_uris: [
+      "https://kestrel.example/api/apps/notion/oauth/callback",
+    ],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+    scope: "tools:read tools:write",
+  });
+  assert.deepEqual(registered, {
+    clientId: "dynamic-client-id",
+    clientSecret: undefined,
+    tokenEndpointAuthMethod: "none",
+  });
+});
+
+contractTest("web.hermetic", "MCP OAuth refuses implicit client registration support", async () => {
+  await assert.rejects(
+    registerMcpOauthClient({
+      registrationEndpoint: null,
+      redirectUri: "https://kestrel.example/callback",
+      clientName: "Kestrel",
+    }),
+    /does not support client registration/u
+  );
 });
 
 contractTest("web.hermetic", "MCP OAuth falls back through well-known and OIDC discovery and requires PKCE", async () => {

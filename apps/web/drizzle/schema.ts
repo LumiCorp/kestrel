@@ -2004,6 +2004,7 @@ export const appDefinitions = pgTable(
         "engineering",
         "knowledge_sources",
         "communication",
+        "workflow",
         "custom",
       ],
     }).notNull(),
@@ -2066,6 +2067,10 @@ export const appCapabilities = pgTable(
       .notNull()
       .references(() => appDefinitions.key, { onDelete: "cascade" }),
     key: text("key").notNull(),
+    connectionId: text("connection_id").references(() => appConnections.id, {
+      onDelete: "cascade",
+    }),
+    active: boolean("active").notNull().default(true),
     runtimeName: text("runtime_name"),
     displayName: text("display_name").notNull(),
     description: text("description").notNull(),
@@ -2103,6 +2108,7 @@ export const appCapabilities = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.appKey, table.key] }),
+    index("app_capabilities_connection_idx").on(table.connectionId),
     index("app_capabilities_runtime_name_idx").on(table.runtimeName),
     index("app_capabilities_group_idx").on(table.appKey, table.groupKey),
   ]

@@ -59,6 +59,5 @@ Prompt policy keeps one model loop while biasing model decisions toward converge
 - `free.time.current`
 - `free.geocode.lookup`
 - `free.exchange.rate`
-- `free.hn.top`
 - `effect_result_lookup`
 - `FinalizeAnswer`

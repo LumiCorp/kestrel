@@ -1,4 +1,4 @@
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { listCoreAppDefinitions } from "./catalog";
@@ -32,6 +32,13 @@ const APP_AUTH_METHODS = new Set<AppAuthMethod>([
   "deployment_managed",
 ]);
 
+const RETIRED_CORE_APP_KEYS = [
+  "built_in.hacker_news",
+  "discord",
+  "source.github",
+  "source.youtube",
+] as const;
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -43,8 +50,28 @@ function authMethods(value: unknown): AppAuthMethod[] {
   if (!Array.isArray(methods)) return [];
   return methods.filter(
     (method): method is AppAuthMethod =>
-      typeof method === "string" && APP_AUTH_METHODS.has(method as AppAuthMethod)
+      typeof method === "string" &&
+      APP_AUTH_METHODS.has(method as AppAuthMethod),
   );
+}
+
+function connectionCapabilityPacks(value: unknown) {
+  const packs = record(value).connectionCapabilityPacks;
+  if (!Array.isArray(packs)) return [];
+  return packs.flatMap((value) => {
+    const pack = record(value);
+    return typeof pack.key === "string" &&
+      typeof pack.name === "string" &&
+      typeof pack.description === "string"
+      ? [
+          {
+            key: pack.key,
+            name: pack.name,
+            description: pack.description,
+          },
+        ]
+      : [];
+  });
 }
 
 export class AppServiceError extends Error {
@@ -67,6 +94,11 @@ export class AppServiceError extends Error {
 
 export async function ensureCoreAppCatalog() {
   const now = new Date();
+  await knowledgeDb
+    .update(schema.appDefinitions)
+    .set({ published: false, updatedAt: now })
+    .where(inArray(schema.appDefinitions.key, RETIRED_CORE_APP_KEYS));
+
   for (const app of listCoreAppDefinitions()) {
     await knowledgeDb
       .insert(schema.appDefinitions)
@@ -130,6 +162,8 @@ export async function ensureCoreAppCatalog() {
         .onConflictDoUpdate({
           target: [schema.appCapabilities.appKey, schema.appCapabilities.key],
           set: {
+            connectionId: null,
+            active: true,
             runtimeName: capability.runtimeName,
             displayName: capability.displayName,
             description: capability.description,
@@ -158,30 +192,40 @@ export async function ensureEnvironmentAppPolicies(input: {
   if (!environment) {
     throw new AppServiceError(
       "ENVIRONMENT_NOT_FOUND",
-      "Environment not found."
+      "Environment not found.",
     );
   }
-  const [definitions, installations, capabilities] = await Promise.all([
-    knowledgeDb.query.appDefinitions.findMany({
-      where: (table, { eq: equals }) => equals(table.published, true),
-    }),
-    knowledgeDb.query.appInstallations.findMany({
-      where: (table, { eq: equals }) =>
-        equals(table.organizationId, input.organizationId),
-    }),
-    knowledgeDb.query.appCapabilities.findMany(),
-  ]);
+  const [definitions, installations, capabilities, connections] =
+    await Promise.all([
+      knowledgeDb.query.appDefinitions.findMany({
+        where: (table, { eq: equals }) => equals(table.published, true),
+      }),
+      knowledgeDb.query.appInstallations.findMany({
+        where: (table, { eq: equals }) =>
+          equals(table.organizationId, input.organizationId),
+      }),
+      knowledgeDb.query.appCapabilities.findMany(),
+      knowledgeDb.query.appConnections.findMany({
+        where: (table, { and: all, eq: equals }) =>
+          all(
+            equals(table.organizationId, input.organizationId),
+            equals(table.environmentId, input.environmentId),
+          ),
+        columns: { id: true },
+      }),
+    ]);
   const installationByApp = new Map(
-    installations.map((installation) => [installation.appKey, installation])
+    installations.map((installation) => [installation.appKey, installation]),
   );
   const availableAppKeys = new Set(
     definitions.flatMap((definition) =>
       definition.installMode === "inherited" ||
       installationByApp.get(definition.key)?.status === "installed"
         ? [definition.key]
-        : []
-    )
+        : [],
+    ),
   );
+  const connectionIds = new Set(connections.map((connection) => connection.id));
   const now = new Date();
   await knowledgeDb.transaction(async (transaction) => {
     for (const definition of definitions) {
@@ -201,6 +245,9 @@ export async function ensureEnvironmentAppPolicies(input: {
     }
     for (const capability of capabilities) {
       if (!availableAppKeys.has(capability.appKey)) continue;
+      if (!capabilityAvailableForConnections(capability, connectionIds)) {
+        continue;
+      }
       await transaction
         .insert(schema.environmentAppCapabilityGrants)
         .values({
@@ -262,7 +309,7 @@ function resolveReadiness(input: {
 
 function connectionSummary(
   row: typeof schema.appConnections.$inferSelect,
-  userId: string
+  userId: string,
 ): AppConnectionSummary {
   return {
     id: row.id,
@@ -273,6 +320,17 @@ function connectionSummary(
     isMine: row.userId === userId,
     lastHealthAt: row.lastHealthAt?.toISOString() ?? null,
   };
+}
+
+function capabilityAvailableForConnections(
+  capability: { connectionId: string | null; active: boolean },
+  connectionIds: ReadonlySet<string>,
+) {
+  return (
+    capability.active &&
+    (capability.connectionId === null ||
+      connectionIds.has(capability.connectionId))
+  );
 }
 
 export async function listAppsForOrganization(input: {
@@ -296,16 +354,20 @@ export async function listAppsForOrganization(input: {
         where: (table, { and: all, eq: equals, isNull, or }) =>
           all(
             equals(table.organizationId, input.organizationId),
-            or(equals(table.userId, input.userId), isNull(table.userId))
+            or(equals(table.userId, input.userId), isNull(table.userId)),
           ),
       }),
     ]);
 
   const installationByApp = new Map(
-    installations.map((installation) => [installation.appKey, installation])
+    installations.map((installation) => [installation.appKey, installation]),
+  );
+  const connectionIds = new Set(
+    connectionRows.map((connection) => connection.id),
   );
   const capabilitiesByApp = new Map<string, typeof capabilities>();
   for (const capability of capabilities) {
+    if (!capabilityAvailableForConnections(capability, connectionIds)) continue;
     const rows = capabilitiesByApp.get(capability.appKey) ?? [];
     rows.push(capability);
     capabilitiesByApp.set(capability.appKey, rows);
@@ -389,30 +451,37 @@ export async function getAppForOrganization(input: {
         all(
           equals(table.organizationId, input.organizationId),
           equals(table.appKey, input.appKey),
-          or(equals(table.userId, input.userId), isNull(table.userId))
+          or(equals(table.userId, input.userId), isNull(table.userId)),
         ),
       orderBy: (table, { asc }) => [asc(table.name)],
     }),
   ]);
   if (!definition) return null;
+  const connectionIds = new Set(
+    connectionRows.map((connection) => connection.id),
+  );
   return {
     ...item,
-    capabilities: capabilityRows.map((capability) => ({
-      key: capability.key,
-      runtimeName: capability.runtimeName,
-      displayName: capability.displayName,
-      description: capability.description,
-      groupKey: capability.groupKey,
-      accessMode: capability.accessMode,
-      audience: capability.audience,
-      defaultEnabled: capability.defaultEnabled,
-      defaultApprovalMode: capability.defaultApprovalMode,
-      defaultLoggingMode: capability.defaultLoggingMode,
-      defaultRateLimitMode: capability.defaultRateLimitMode,
-      metadata: record(capability.metadata),
-    })),
+    capabilities: capabilityRows
+      .filter((capability) =>
+        capabilityAvailableForConnections(capability, connectionIds),
+      )
+      .map((capability) => ({
+        key: capability.key,
+        runtimeName: capability.runtimeName,
+        displayName: capability.displayName,
+        description: capability.description,
+        groupKey: capability.groupKey,
+        accessMode: capability.accessMode,
+        audience: capability.audience,
+        defaultEnabled: capability.defaultEnabled,
+        defaultApprovalMode: capability.defaultApprovalMode,
+        defaultLoggingMode: capability.defaultLoggingMode,
+        defaultRateLimitMode: capability.defaultRateLimitMode,
+        metadata: record(capability.metadata),
+      })),
     connections: connectionRows.map((connection) =>
-      connectionSummary(connection, input.userId)
+      connectionSummary(connection, input.userId),
     ),
     metadata: record(definition.metadata),
   };
@@ -434,7 +503,7 @@ export async function setAppInstallation(input: {
   if (definition.installMode === "inherited") {
     throw new AppServiceError(
       "APP_NOT_INSTALLABLE",
-      "Built-in Apps are inherited and cannot be removed."
+      "Built-in Apps are inherited and cannot be removed.",
     );
   }
   const now = new Date();
@@ -470,12 +539,15 @@ export async function setAppInstallation(input: {
         where: (table, { and: all, eq: equals, isNull }) =>
           all(
             equals(table.organizationId, input.organizationId),
-            isNull(table.archivedAt)
+            isNull(table.archivedAt),
           ),
         columns: { id: true },
       }),
       transaction.query.appCapabilities.findMany({
-        where: (table, { eq: equals }) => equals(table.appKey, input.appKey),
+        where: and(
+          eq(schema.appCapabilities.appKey, input.appKey),
+          isNull(schema.appCapabilities.connectionId),
+        ),
       }),
     ]);
     for (const environment of environments) {
@@ -512,11 +584,11 @@ export async function listAppConnectionsForEnvironment(input: {
       eq(schema.appConnections.organizationId, input.organizationId),
       or(
         eq(schema.appConnections.environmentId, input.environmentId),
-        eq(schema.appConnections.ownerType, "organization")
+        eq(schema.appConnections.ownerType, "organization"),
       ),
       input.appKeys?.length
         ? inArray(schema.appConnections.appKey, input.appKeys)
-        : undefined
+        : undefined,
     ),
   });
 }
@@ -539,14 +611,14 @@ async function requireEnvironmentApp(input: {
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.organizationId, input.organizationId),
-          equals(table.appKey, input.appKey)
+          equals(table.appKey, input.appKey),
         ),
     }),
   ]);
   if (!environment) {
     throw new AppServiceError(
       "ENVIRONMENT_NOT_FOUND",
-      "Environment not found."
+      "Environment not found.",
     );
   }
   if (!definition) {
@@ -558,7 +630,7 @@ async function requireEnvironmentApp(input: {
   if (!installed) {
     throw new AppServiceError(
       "APP_NOT_INSTALLED",
-      "Install this App before configuring the Environment."
+      "Install this App before configuring the Environment.",
     );
   }
   return { environment, definition, installation };
@@ -582,7 +654,7 @@ export async function getEnvironmentAppConfiguration(input: {
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.environmentId, input.environmentId),
-          equals(table.appKey, input.appKey)
+          equals(table.appKey, input.appKey),
         ),
     }),
     knowledgeDb.query.appConnections.findMany({
@@ -591,19 +663,49 @@ export async function getEnvironmentAppConfiguration(input: {
           equals(table.organizationId, input.organizationId),
           either(
             equals(table.environmentId, input.environmentId),
-            equals(table.ownerType, "organization")
+            equals(table.ownerType, "organization"),
           ),
-          equals(table.appKey, input.appKey)
+          equals(table.appKey, input.appKey),
         ),
       orderBy: (table, { asc }) => [asc(table.name)],
     }),
   ]);
   const grants = new Map(
-    grantRows.map((grant) => [grant.capabilityKey, grant])
+    grantRows.map((grant) => [grant.capabilityKey, grant]),
   );
   const connections = connectionRows.map((connection) =>
-    connectionSummary(connection, "")
+    connectionSummary(connection, ""),
   );
+  const connectionIds = new Set(
+    connectionRows.map((connection) => connection.id),
+  );
+  const visibleCapabilities = capabilityRows.filter((capability) =>
+    capabilityAvailableForConnections(capability, connectionIds),
+  );
+  const connectionNameById = new Map(
+    connectionRows.map((connection) => [connection.id, connection.name]),
+  );
+  const pendingSnapshots = connectionRows.length
+    ? await knowledgeDb.query.mcpCapabilitySnapshots.findMany({
+        where: (table, { and: all, eq: equals, inArray: includedIn }) =>
+          all(
+            includedIn(
+              table.serverId,
+              connectionRows.map((connection) => connection.id),
+            ),
+            equals(table.status, "pending_review"),
+          ),
+      })
+    : [];
+  const pendingCapabilities = pendingSnapshots.length
+    ? await knowledgeDb.query.mcpCapabilities.findMany({
+        where: (table, { inArray: includedIn }) =>
+          includedIn(
+            table.snapshotId,
+            pendingSnapshots.map((snapshot) => snapshot.id),
+          ),
+      })
+    : [];
   const installationStatus: AppInstallationStatus =
     definition.installMode === "inherited" ? "installed" : "installed";
   return {
@@ -627,9 +729,36 @@ export async function getEnvironmentAppConfiguration(input: {
         connectionRequirement: definition.connectionRequirement,
         connections,
       }),
+      connectionCapabilityPacks: connectionCapabilityPacks(definition.metadata),
     },
     connections,
-    capabilities: capabilityRows.map((capability) => {
+    capabilityReviews: pendingSnapshots
+      .sort(
+        (left, right) =>
+          right.discoveredAt.getTime() - left.discoveredAt.getTime(),
+      )
+      .map((snapshot) => ({
+        connectionId: snapshot.serverId,
+        connectionName:
+          connectionNameById.get(snapshot.serverId) ?? definition.displayName,
+        snapshotId: snapshot.id,
+        capabilities: pendingCapabilities
+          .filter((capability) => capability.snapshotId === snapshot.id)
+          .sort((left, right) =>
+            (left.displayName ?? left.capabilityKey).localeCompare(
+              right.displayName ?? right.capabilityKey,
+            ),
+          )
+          .map((capability) => ({
+            key: `${capability.kind}:${capability.capabilityKey}`,
+            displayName: capability.displayName ?? capability.capabilityKey,
+            description:
+              capability.description ??
+              `Capability provided by ${definition.displayName}.`,
+            group: capability.kind,
+          })),
+      })),
+    capabilities: visibleCapabilities.map((capability) => {
       const grant = grants.get(capability.key);
       return {
         key: capability.key,
@@ -670,29 +799,29 @@ export async function listEnvironmentAppConfigurations(input: {
     }),
   ]);
   const installationByApp = new Map(
-    installations.map((installation) => [installation.appKey, installation])
+    installations.map((installation) => [installation.appKey, installation]),
   );
   const availableDefinitions = definitions.filter(
     (definition) =>
       definition.installMode === "inherited" ||
-      installationByApp.get(definition.key)?.status === "installed"
+      installationByApp.get(definition.key)?.status === "installed",
   );
   return Promise.all(
     availableDefinitions.map((definition) =>
-      getEnvironmentAppConfiguration({ ...input, appKey: definition.key })
-    )
+      getEnvironmentAppConfiguration({ ...input, appKey: definition.key }),
+    ),
   );
 }
 
 async function validateEnvironmentConnection(
   appKey: string,
-  input: CreateEnvironmentAppConnectionInput
+  input: CreateEnvironmentAppConnectionInput,
 ) {
   const adapter = getAppProviderAdapter(appKey);
   if (!adapter?.validateEnvironmentConnection) {
     throw new AppServiceError(
       "APP_CONNECTION_NOT_SUPPORTED",
-      "This App does not support managed Environment connections yet."
+      "This App does not support managed Environment connections yet.",
     );
   }
   return adapter.validateEnvironmentConnection(input);
@@ -700,13 +829,13 @@ async function validateEnvironmentConnection(
 
 function createEnvironmentCredential(
   appKey: string,
-  input: CreateEnvironmentAppConnectionInput
+  input: CreateEnvironmentAppConnectionInput,
 ) {
   const adapter = getAppProviderAdapter(appKey);
   if (!adapter?.createEnvironmentCredential) {
     throw new AppServiceError(
       "APP_CONNECTION_NOT_SUPPORTED",
-      "This App does not support managed Environment credentials yet."
+      "This App does not support managed Environment credentials yet.",
     );
   }
   return adapter.createEnvironmentCredential(input);
@@ -723,21 +852,20 @@ export async function saveEnvironmentAppConnection(input: {
   if (
     (definition.connectionModel !== "environment" &&
       definition.connectionModel !== "hybrid") ||
-    definition.delivery !== "api_key" &&
-    definition.delivery !== "lifecycle"
+    (definition.delivery !== "api_key" && definition.delivery !== "lifecycle")
   ) {
     throw new AppServiceError(
       "APP_CONNECTION_NOT_SUPPORTED",
-      "This App does not accept shared Environment connections."
+      "This App does not accept shared Environment connections.",
     );
   }
   const health = await validateEnvironmentConnection(
     input.appKey,
-    input.connection
+    input.connection,
   );
   const credentialPayload = createEnvironmentCredential(
     input.appKey,
-    input.connection
+    input.connection,
   );
   const ngrokWildcardDomain =
     input.connection.kind === "ngrok_agent"
@@ -749,18 +877,19 @@ export async function saveEnvironmentAppConnection(input: {
         all(
           equals(table.appKey, "ngrok"),
           equals(table.ownerType, "environment"),
-          includes(table.status, ["connected", "degraded"])
+          includes(table.status, ["connected", "degraded"]),
         ),
     });
     const conflict = ngrokConnections.find(
       (connection) =>
         connection.environmentId !== input.environmentId &&
-        record(connection.deliveryConfig).wildcardDomain === ngrokWildcardDomain
+        record(connection.deliveryConfig).wildcardDomain ===
+          ngrokWildcardDomain,
     );
     if (conflict) {
       throw new AppServiceError(
         "APP_CONNECTION_CONFLICT",
-        "This ngrok wildcard domain is already assigned to another Environment."
+        "This ngrok wildcard domain is already assigned to another Environment.",
       );
     }
   }
@@ -775,7 +904,7 @@ export async function saveEnvironmentAppConnection(input: {
           equals(table.ownerType, "environment"),
           ...(ngrokWildcardDomain
             ? []
-            : [equals(table.name, input.connection.name)])
+            : [equals(table.name, input.connection.name)]),
         ),
     });
     if (existing?.credentialId) {
@@ -855,7 +984,10 @@ export async function saveEnvironmentAppConnection(input: {
       throw new Error("App connection could not be saved.");
     }
     const capabilities = await transaction.query.appCapabilities.findMany({
-      where: (table, { eq: equals }) => equals(table.appKey, input.appKey),
+      where: and(
+        eq(schema.appCapabilities.appKey, input.appKey),
+        isNull(schema.appCapabilities.connectionId),
+      ),
     });
     for (const capability of capabilities) {
       await transaction
@@ -895,16 +1027,53 @@ export async function disconnectEnvironmentAppConnection(input: {
           equals(table.organizationId, input.organizationId),
           equals(table.environmentId, input.environmentId),
           equals(table.appKey, input.appKey),
-          equals(table.ownerType, "environment")
+          equals(table.ownerType, "environment"),
         ),
     });
     if (!connection) {
       throw new AppServiceError(
         "APP_CONNECTION_NOT_FOUND",
-        "App connection not found."
+        "App connection not found.",
       );
     }
     const now = new Date();
+    let mcpCredentialId: string | null = null;
+    if (definition.delivery === "mcp") {
+      const mcpServer = await transaction.query.mcpServers.findFirst({
+        where: (table, { and: all, eq: equals }) =>
+          all(
+            equals(table.id, connection.id),
+            equals(table.organizationId, input.organizationId),
+            equals(table.environmentId, input.environmentId),
+          ),
+        columns: { credentialId: true },
+      });
+      mcpCredentialId = mcpServer?.credentialId ?? null;
+      if (mcpCredentialId) {
+        const sharedCredentialServer =
+          await transaction.query.mcpServers.findFirst({
+            where: and(
+              eq(schema.mcpServers.organizationId, input.organizationId),
+              eq(schema.mcpServers.environmentId, input.environmentId),
+              eq(schema.mcpServers.credentialId, mcpCredentialId),
+              ne(schema.mcpServers.id, connection.id),
+            ),
+            columns: { id: true },
+          });
+        if (!sharedCredentialServer) {
+          await transaction
+            .update(schema.mcpCredentials)
+            .set({ status: "revoked", revokedAt: now, updatedAt: now })
+            .where(
+              and(
+                eq(schema.mcpCredentials.id, mcpCredentialId),
+                eq(schema.mcpCredentials.organizationId, input.organizationId),
+                eq(schema.mcpCredentials.environmentId, input.environmentId),
+              ),
+            );
+        }
+      }
+    }
     if (connection.credentialId) {
       await transaction
         .update(schema.appCredentials)
@@ -935,8 +1104,8 @@ export async function disconnectEnvironmentAppConnection(input: {
               "provisioning",
               "active",
               "closing",
-            ])
-          )
+            ]),
+          ),
         );
     }
     if (definition.delivery === "mcp") {
@@ -947,16 +1116,15 @@ export async function disconnectEnvironmentAppConnection(input: {
           and(
             eq(schema.mcpServers.id, connection.id),
             eq(schema.mcpServers.organizationId, input.organizationId),
-            eq(schema.mcpServers.environmentId, input.environmentId)
-          )
+            eq(schema.mcpServers.environmentId, input.environmentId),
+          ),
         );
     }
     return connectionSummary(disconnected, "");
   });
   if (input.appKey === "ngrok") {
-    const { refreshEnvironmentGateway } = await import(
-      "@/lib/environments/gateway-refresh"
-    );
+    const { refreshEnvironmentGateway } =
+      await import("@/lib/environments/gateway-refresh");
     await refreshEnvironmentGateway(input);
     const now = new Date();
     await knowledgeDb
@@ -965,8 +1133,8 @@ export async function disconnectEnvironmentAppConnection(input: {
       .where(
         and(
           eq(schema.workspacePreviewLeases.connectionId, input.connectionId),
-          eq(schema.workspacePreviewLeases.status, "closing")
-        )
+          eq(schema.workspacePreviewLeases.status, "closing"),
+        ),
       );
   }
   return result;
@@ -984,17 +1152,34 @@ export async function saveEnvironmentAppCapabilityGrant(input: {
     where: (table, { and: all, eq: equals }) =>
       all(
         equals(table.appKey, input.appKey),
-        equals(table.key, input.capabilityKey)
+        equals(table.key, input.capabilityKey),
       ),
   });
-  if (!capability) {
+  if (!capability || !capability.active) {
     throw new AppServiceError("APP_NOT_FOUND", "App capability not found.");
+  }
+  if (capability.connectionId) {
+    const connection = await knowledgeDb.query.appConnections.findFirst({
+      where: (table, { and: all, eq: equals }) =>
+        all(
+          equals(table.id, capability.connectionId!),
+          equals(table.organizationId, input.organizationId),
+          equals(table.environmentId, input.environmentId),
+          equals(table.appKey, input.appKey),
+        ),
+      columns: { id: true },
+    });
+    if (!connection) {
+      throw new AppServiceError("APP_NOT_FOUND", "App capability not found.");
+    }
   }
   const grant =
     input.appKey === "email" && input.capabilityKey === "send"
       ? {
           ...input.grant,
-          approvalMode: input.grant.enabled ? ("ask" as const) : ("deny" as const),
+          approvalMode: input.grant.enabled
+            ? ("ask" as const)
+            : ("deny" as const),
           loggingMode: "metadata_only" as const,
           rateLimitMode: "strict" as const,
         }
@@ -1039,7 +1224,7 @@ export async function resolveEnvironmentAppCredential(input: {
     .from(schema.appConnections)
     .innerJoin(
       schema.appCredentials,
-      eq(schema.appCredentials.id, schema.appConnections.credentialId)
+      eq(schema.appCredentials.id, schema.appConnections.credentialId),
     )
     .where(
       and(
@@ -1048,15 +1233,15 @@ export async function resolveEnvironmentAppCredential(input: {
         eq(schema.appConnections.environmentId, input.environmentId),
         eq(schema.appConnections.appKey, input.appKey),
         inArray(schema.appConnections.status, ["connected", "degraded"]),
-        eq(schema.appCredentials.status, "active")
-      )
+        eq(schema.appCredentials.status, "active"),
+      ),
     )
     .limit(1);
   const resolved = row[0];
   if (!resolved) {
     throw new AppServiceError(
       "APP_CONNECTION_NOT_FOUND",
-      "Active App connection not found."
+      "Active App connection not found.",
     );
   }
   const payload = decryptAppCredential({

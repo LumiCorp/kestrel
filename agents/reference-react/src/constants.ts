@@ -38,7 +38,6 @@ export const DEFAULT_AGENT_TOOL_NAMES = [
   "free.time.current",
   "free.geocode.lookup",
   "free.exchange.rate",
-  "free.hn.top",
   "internet.search",
   "internet.news",
   "internet.images",

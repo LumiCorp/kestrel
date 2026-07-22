@@ -1,5 +1,8 @@
 import { hasConfiguredDesktopProviderCredential } from "../../../src/desktopShell/onboarding.js";
-import { listDesktopAppDefinitions } from "../../../src/desktopShell/configuration.js";
+import {
+  desktopAppIdForServer,
+  listDesktopAppDefinitions,
+} from "../../../src/desktopShell/configuration.js";
 import type {
   DesktopRendererSettings,
   DesktopSettings,
@@ -39,9 +42,16 @@ export function toDesktopRendererSettings(
       })),
     })),
     defaultModelConfigurationId: settings.defaultModelConfigurationId,
-    defaultEnabledAppIds: [...settings.defaultEnabledAppIds],
+    defaultEnabledAppIds: [
+      ...new Set([
+        ...settings.defaultEnabledAppIds,
+        ...settings.mcpServers
+          .filter((server) => server.enabled)
+          .map((server) => desktopAppIdForServer(server)),
+      ]),
+    ],
     appearanceTheme: settings.appearanceTheme,
-    apps: listDesktopAppDefinitions(),
+    apps: listDesktopAppDefinitions(settings.mcpServers),
     providerReadiness: providers.map((provider) => ({
       provider,
       requiresCredential: provider !== "ollama" && provider !== "lmstudio",

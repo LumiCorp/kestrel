@@ -7,6 +7,10 @@ import type {
   RunTurnAttachment,
 } from "../../src/contracts";
 import { extractWaitPrompt } from "../../../../src/runtime/waitForPrompt";
+import {
+  DESKTOP_DEFAULT_ENABLED_APP_IDS,
+  normalizeDesktopAppId,
+} from "../../../../src/desktopShell/configuration";
 
 const THREADS_STORAGE_KEY = "kchat:web:threads:v2";
 const ACTIVE_THREAD_STORAGE_KEY = "kchat:web:active-thread:v1";
@@ -157,7 +161,11 @@ export function createRendererThread(input: {
     promptHistory: [],
     modelConfigurationId: input.modelConfigurationId ?? "desktop-default",
     modelConfigurationRevision: input.modelConfigurationRevision ?? 1,
-    enabledAppIds: [...(input.enabledAppIds ?? ["weather"])],
+    enabledAppIds: [
+      ...new Set(
+        (input.enabledAppIds ?? DESKTOP_DEFAULT_ENABLED_APP_IDS).map(normalizeDesktopAppId),
+      ),
+    ],
     rawSummary: {},
     rawState: {},
   };
@@ -634,10 +642,12 @@ function collectThreads(store: {
               ? rawState.modelConfigurationRevision
               : defaults.modelConfigurationRevision ?? 1,
           enabledAppIds: Array.isArray(rawState.enabledAppIds)
-            ? rawState.enabledAppIds.filter(
-                (appId): appId is string => typeof appId === "string",
-              )
-            : [...(defaults.enabledAppIds ?? ["weather"])],
+            ? [...new Set(rawState.enabledAppIds.flatMap((appId) =>
+                typeof appId === "string" ? [normalizeDesktopAppId(appId)] : []
+              ))]
+            : [...new Set(
+                (defaults.enabledAppIds ?? DESKTOP_DEFAULT_ENABLED_APP_IDS).map(normalizeDesktopAppId),
+              )],
           rawSummary,
           rawState,
         },

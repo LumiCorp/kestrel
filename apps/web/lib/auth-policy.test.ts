@@ -32,4 +32,18 @@ contractTest("web.hermetic", "GitHub is link-only and cannot be used to sign in"
     }),
     false
   );
+  assert.equal(
+    isDisallowedToolProviderSignIn({
+      path: "/sign-in/oauth2",
+      body: { providerId: "microsoft-entra-id" },
+    }),
+    true
+  );
+  assert.equal(
+    isDisallowedToolProviderSignIn({
+      path: "/oauth2/link",
+      body: { providerId: "microsoft-entra-id" },
+    }),
+    false
+  );
 });

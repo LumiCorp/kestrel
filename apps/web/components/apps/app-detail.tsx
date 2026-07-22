@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, KeyRound, ShieldCheck } from "lucide-react";
+import { Check, KeyRound, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -10,13 +10,9 @@ import {
   AppSettingsSection,
 } from "@/components/apps/app-settings-layout";
 import { GithubConnectionCard } from "@/components/apps/github-connection-card";
+import { Microsoft365ConnectionCard } from "@/components/apps/microsoft-365-connection-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import type { AppDetail as AppDetailType } from "@/lib/apps/types";
 
 const CATEGORY_LABELS = {
@@ -26,6 +22,7 @@ const CATEGORY_LABELS = {
   engineering: "Engineering",
   knowledge_sources: "Knowledge & Sources",
   communication: "Communication",
+  workflow: "Workflows",
   custom: "Custom",
 } as const;
 
@@ -103,6 +100,10 @@ export function AppDetail({ app }: { app: AppDetailType }) {
 
       {app.key === "github" && app.installationStatus === "installed" ? (
         <GithubConnectionCard />
+      ) : null}
+      {app.key === "microsoft_365" &&
+      app.installationStatus === "installed" ? (
+        <Microsoft365ConnectionCard />
       ) : null}
 
       <AppSettingsSection icon={<KeyRound className="size-4" />} title="Connections">
@@ -192,34 +193,6 @@ export function AppDetail({ app }: { app: AppDetailType }) {
           </div>
         ))}
       </AppSettingsSection>
-
-      <Collapsible>
-        <CollapsibleTrigger className="flex w-full items-center justify-between border-y py-3 text-left">
-          <div>
-            <h2 className="font-medium text-sm">Advanced</h2>
-            <p className="mt-1 text-muted-foreground text-xs">
-              Runtime names, logging, and limits
-            </p>
-          </div>
-          <ChevronDown className="size-4 text-muted-foreground" />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="divide-y border-b">
-          {app.capabilities.map((capability) => (
-            <div
-              className="grid gap-1 py-3 text-sm md:grid-cols-[minmax(0,1fr)_12rem]"
-              key={capability.key}
-            >
-              <code className="truncate text-xs">
-                {capability.runtimeName ?? capability.key}
-              </code>
-              <span className="text-muted-foreground md:text-right">
-                {capability.defaultLoggingMode.replaceAll("_", " ")} ·{" "}
-                {capability.defaultRateLimitMode}
-              </span>
-            </div>
-          ))}
-        </CollapsibleContent>
-      </Collapsible>
 
       <div className="flex gap-3 border-y py-4">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">

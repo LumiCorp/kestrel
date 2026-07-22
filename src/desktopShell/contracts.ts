@@ -3,6 +3,7 @@ import type {
   RunnerAssistantTextHistoryDataV2,
   RunnerWaitingPromptHistoryDataV2,
 } from "@kestrel-agents/protocol";
+import { KESTREL_STANDARD_APP_MANIFESTS } from "@kestrel-agents/protocol";
 import type { TaskAction } from "../missionControl/contracts.js";
 import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 import type {
@@ -25,12 +26,24 @@ import type {
   ManagedTaskWorktreeSetupSpec,
 } from "../workspace/ManagedTaskWorktreeService.js";
 import { parseManagedTaskWorktreeSetupSpec } from "../workspace/ManagedTaskWorktreeService.js";
-import type { UserTerminalReadResult, UserTerminalRecord } from "../terminal/UserTerminalService.js";
-import type { WorkspaceChangeMutation, WorkspaceChangeMutationResult, WorkspaceChangeScope, WorkspaceChangeSnapshot, WorkspaceDiffOptions } from "../changes/contracts.js";
+import type {
+  UserTerminalReadResult,
+  UserTerminalRecord,
+} from "../terminal/UserTerminalService.js";
+import type {
+  WorkspaceChangeMutation,
+  WorkspaceChangeMutationResult,
+  WorkspaceChangeScope,
+  WorkspaceChangeSnapshot,
+  WorkspaceDiffOptions,
+} from "../changes/contracts.js";
 import type { WorkspaceFeedbackSnapshot } from "../review/contracts.js";
 import type { WorkspaceReviewSnapshot } from "../review/contracts.js";
 import type { WorkspaceValidationSnapshot } from "../validation/contracts.js";
-import type { WorkspaceGitAction, WorkspaceGitSnapshot } from "../git/contracts.js";
+import type {
+  WorkspaceGitAction,
+  WorkspaceGitSnapshot,
+} from "../git/contracts.js";
 import {
   parseDesktopExecutionSelection,
   parseDesktopModelConfigurations,
@@ -39,9 +52,14 @@ import {
   type DesktopModelConfiguration,
 } from "./configuration.js";
 import type { ResolvedProviderModelCatalog } from "../profile/modelCatalogDiscovery.js";
+import { getDesktopStandardAppConnection } from "./standardAppConnections.js";
 
 export type DesktopRuntimeHealthState = "healthy" | "degraded" | "blocked";
-export type DesktopDatabaseState = "starting" | "healthy" | "degraded" | "blocked";
+export type DesktopDatabaseState =
+  | "starting"
+  | "healthy"
+  | "degraded"
+  | "blocked";
 
 export type { SupportBundle as DesktopSupportBundle } from "../diagnostics/supportBundle.js";
 export type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
@@ -153,12 +171,17 @@ export const DESKTOP_LEGACY_UI_STORAGE_KEYS = [
   "kestrel.missionControl.taskQueue",
 ] as const;
 
-export type DesktopLegacyUiStorageKey = typeof DESKTOP_LEGACY_UI_STORAGE_KEYS[number];
-export type DesktopLegacyUiStateEntries = Partial<Record<DesktopLegacyUiStorageKey, string>>;
+export type DesktopLegacyUiStorageKey =
+  (typeof DESKTOP_LEGACY_UI_STORAGE_KEYS)[number];
+export type DesktopLegacyUiStateEntries = Partial<
+  Record<DesktopLegacyUiStorageKey, string>
+>;
 
 export interface DesktopUiStateV1 {
   version: typeof DESKTOP_UI_STATE_VERSION;
-  source: typeof DESKTOP_UI_STATE_SOURCE | typeof DESKTOP_UI_STATE_RENDERER_SOURCE;
+  source:
+    | typeof DESKTOP_UI_STATE_SOURCE
+    | typeof DESKTOP_UI_STATE_RENDERER_SOURCE;
   sourceAppVersion: string;
   capturedAt: string;
   entries: DesktopLegacyUiStateEntries;
@@ -175,20 +198,21 @@ interface DesktopRunHistoryLineBase {
   attachments?: RunTurnAttachment[] | undefined;
 }
 
-export type DesktopRunHistoryLine = DesktopRunHistoryLineBase & (
-  | {
-      role: "user";
-      data?: undefined;
-    }
-  | {
-      role: "assistant";
-      data?: RunnerAssistantTextHistoryDataV2 | undefined;
-    }
-  | {
-      role: "system";
-      data: RunnerWaitingPromptHistoryDataV2;
-    }
-);
+export type DesktopRunHistoryLine = DesktopRunHistoryLineBase &
+  (
+    | {
+        role: "user";
+        data?: undefined;
+      }
+    | {
+        role: "assistant";
+        data?: RunnerAssistantTextHistoryDataV2 | undefined;
+      }
+    | {
+        role: "system";
+        data: RunnerWaitingPromptHistoryDataV2;
+      }
+  );
 
 export interface DesktopRunTurnRequest {
   sessionId: string;
@@ -223,7 +247,16 @@ export interface DesktopAttachmentMetadata {
 
 export interface DesktopOperatorInboxItem {
   itemId: string;
-  kind: "approval_request" | "user_input_request" | "context_checkpoint" | "child_thread_blocker" | "stalled_thread_attention" | "assembly_change_proposal" | "compatibility_downgrade_attention" | "fan_in_checkpoint" | "child_outcome_review";
+  kind:
+    | "approval_request"
+    | "user_input_request"
+    | "context_checkpoint"
+    | "child_thread_blocker"
+    | "stalled_thread_attention"
+    | "assembly_change_proposal"
+    | "compatibility_downgrade_attention"
+    | "fan_in_checkpoint"
+    | "child_outcome_review";
   threadId: string;
   sessionId: string;
   title: string;
@@ -249,7 +282,23 @@ export interface DesktopFollowUpQueueEntry {
 }
 
 export interface DesktopOperatorControlRequest {
-  action: "approve" | "reject" | "reply" | "steer" | "retry" | "continue_waiting" | "focus_thread" | "resolve_context_checkpoint" | "approve_assembly_change" | "reject_assembly_change" | "supersede_child_thread" | "resolve_fan_in_checkpoint" | "enqueue_follow_up" | "edit_follow_up" | "cancel_follow_up" | "resume_follow_up_queue";
+  action:
+    | "approve"
+    | "reject"
+    | "reply"
+    | "steer"
+    | "retry"
+    | "continue_waiting"
+    | "focus_thread"
+    | "resolve_context_checkpoint"
+    | "approve_assembly_change"
+    | "reject_assembly_change"
+    | "supersede_child_thread"
+    | "resolve_fan_in_checkpoint"
+    | "enqueue_follow_up"
+    | "edit_follow_up"
+    | "cancel_follow_up"
+    | "resume_follow_up_queue";
   threadId: string;
   completionMode?: "terminal" | "accepted" | undefined;
   followUpId?: string | undefined;
@@ -257,22 +306,51 @@ export interface DesktopOperatorControlRequest {
   proposalId?: string | undefined;
   checkpointId?: string | undefined;
   delegationId?: string | undefined;
-  actionValue?: "continue" | "compact" | "summarize_forward" | "handoff" | "split_into_child_thread" | "operator_checkpoint" | "accept" | "defer" | undefined;
+  actionValue?:
+    | "continue"
+    | "compact"
+    | "summarize_forward"
+    | "handoff"
+    | "split_into_child_thread"
+    | "operator_checkpoint"
+    | "accept"
+    | "defer"
+    | undefined;
   message?: string | undefined;
   attachmentIds?: string[] | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
 }
 
-export function parseDesktopOperatorControlRequest(value: unknown): DesktopOperatorControlRequest {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Desktop operator control request must be an object.");
+export function parseDesktopOperatorControlRequest(
+  value: unknown,
+): DesktopOperatorControlRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error("Desktop operator control request must be an object.");
   const input = value as Record<string, unknown>;
   const actions = new Set<DesktopOperatorControlRequest["action"]>([
-    "approve", "reject", "reply", "steer", "retry", "continue_waiting", "focus_thread", "resolve_context_checkpoint",
-    "approve_assembly_change", "reject_assembly_change", "supersede_child_thread", "resolve_fan_in_checkpoint",
-    "enqueue_follow_up", "edit_follow_up", "cancel_follow_up", "resume_follow_up_queue",
+    "approve",
+    "reject",
+    "reply",
+    "steer",
+    "retry",
+    "continue_waiting",
+    "focus_thread",
+    "resolve_context_checkpoint",
+    "approve_assembly_change",
+    "reject_assembly_change",
+    "supersede_child_thread",
+    "resolve_fan_in_checkpoint",
+    "enqueue_follow_up",
+    "edit_follow_up",
+    "cancel_follow_up",
+    "resume_follow_up_queue",
   ]);
-  if (typeof input.action !== "string" || actions.has(input.action as DesktopOperatorControlRequest["action"]) === false) {
+  if (
+    typeof input.action !== "string" ||
+    actions.has(input.action as DesktopOperatorControlRequest["action"]) ===
+      false
+  ) {
     throw new Error("Desktop operator control action is invalid.");
   }
   const action = input.action as DesktopOperatorControlRequest["action"];
@@ -281,27 +359,62 @@ export function parseDesktopOperatorControlRequest(value: unknown): DesktopOpera
     threadId: parseRequiredDesktopString(input.threadId, "threadId"),
   };
   if (input.completionMode !== undefined) {
-    if (input.completionMode !== "terminal" && input.completionMode !== "accepted") throw new Error("Desktop operator control completionMode is invalid.");
+    if (
+      input.completionMode !== "terminal" &&
+      input.completionMode !== "accepted"
+    )
+      throw new Error("Desktop operator control completionMode is invalid.");
     result.completionMode = input.completionMode;
   }
-  for (const field of ["followUpId", "requestId", "proposalId", "checkpointId", "delegationId", "message"] as const) {
-    if (input[field] !== undefined) result[field] = parseRequiredDesktopString(input[field], field);
+  for (const field of [
+    "followUpId",
+    "requestId",
+    "proposalId",
+    "checkpointId",
+    "delegationId",
+    "message",
+  ] as const) {
+    if (input[field] !== undefined)
+      result[field] = parseRequiredDesktopString(input[field], field);
   }
   const actionValue = input.actionValue;
   if (actionValue !== undefined) {
-    if (actionValue !== "continue" && actionValue !== "compact" && actionValue !== "summarize_forward" && actionValue !== "handoff" && actionValue !== "split_into_child_thread" && actionValue !== "operator_checkpoint" && actionValue !== "accept" && actionValue !== "defer") {
+    if (
+      actionValue !== "continue" &&
+      actionValue !== "compact" &&
+      actionValue !== "summarize_forward" &&
+      actionValue !== "handoff" &&
+      actionValue !== "split_into_child_thread" &&
+      actionValue !== "operator_checkpoint" &&
+      actionValue !== "accept" &&
+      actionValue !== "defer"
+    ) {
       throw new Error("Desktop operator control actionValue is invalid.");
     }
     result.actionValue = actionValue;
   }
-  const attachmentIds = parseDesktopStringArray(input.attachmentIds, "attachmentIds", 8);
+  const attachmentIds = parseDesktopStringArray(
+    input.attachmentIds,
+    "attachmentIds",
+    8,
+  );
   if (attachmentIds !== undefined) result.attachmentIds = attachmentIds;
   if (input.interactionMode !== undefined) {
-    if (input.interactionMode !== "chat" && input.interactionMode !== "plan" && input.interactionMode !== "build") throw new Error("Desktop operator control interactionMode is invalid.");
+    if (
+      input.interactionMode !== "chat" &&
+      input.interactionMode !== "plan" &&
+      input.interactionMode !== "build"
+    )
+      throw new Error("Desktop operator control interactionMode is invalid.");
     result.interactionMode = input.interactionMode;
   }
   if (input.actSubmode !== undefined) {
-    if (input.actSubmode !== "strict" && input.actSubmode !== "safe" && input.actSubmode !== "full_auto") throw new Error("Desktop operator control actSubmode is invalid.");
+    if (
+      input.actSubmode !== "strict" &&
+      input.actSubmode !== "safe" &&
+      input.actSubmode !== "full_auto"
+    )
+      throw new Error("Desktop operator control actSubmode is invalid.");
     result.actSubmode = input.actSubmode;
   }
   return result;
@@ -319,14 +432,19 @@ export type DesktopWorkspaceChangeScope = WorkspaceChangeScope;
 export type DesktopWorkspaceDiffOptions = WorkspaceDiffOptions;
 export type DesktopWorkspaceChangeMutation = WorkspaceChangeMutation;
 export type DesktopWorkspaceChangeSnapshot = WorkspaceChangeSnapshot;
-export type DesktopWorkspaceChangeMutationResult = WorkspaceChangeMutationResult;
+export type DesktopWorkspaceChangeMutationResult =
+  WorkspaceChangeMutationResult;
 export type DesktopWorkspaceFeedbackSnapshot = WorkspaceFeedbackSnapshot;
 export type DesktopWorkspaceReviewSnapshot = WorkspaceReviewSnapshot;
 export type DesktopWorkspaceValidationSnapshot = WorkspaceValidationSnapshot;
-export type DesktopWorkspaceCheckpointCleanupResult = WorkspaceCheckpointCleanupResult;
+export type DesktopWorkspaceCheckpointCleanupResult =
+  WorkspaceCheckpointCleanupResult;
 export type DesktopWorkspaceGitAction = WorkspaceGitAction;
 export type DesktopWorkspaceGitSnapshot = WorkspaceGitSnapshot;
-export interface DesktopWorkspaceFeedbackSubmitResult { snapshot: WorkspaceFeedbackSnapshot; submissionRunId?: string | undefined }
+export interface DesktopWorkspaceFeedbackSubmitResult {
+  snapshot: WorkspaceFeedbackSnapshot;
+  submissionRunId?: string | undefined;
+}
 
 export type DesktopProjectAction = TaskAction | ProductProjectBoardAction;
 
@@ -405,7 +523,14 @@ export interface DesktopRuntimeThreadInspection {
   parentThread?: DesktopRuntimeThreadSummary | undefined;
   childThreads: DesktopRuntimeThreadSummary[];
   dialogs?: DesktopDialogView[] | undefined;
-  operatorPhase?: "assemble" | "decide" | "act" | "observe" | "wait" | "finalize" | undefined;
+  operatorPhase?:
+    | "assemble"
+    | "decide"
+    | "act"
+    | "observe"
+    | "wait"
+    | "finalize"
+    | undefined;
   blocker?: DesktopRuntimeThreadBlocker | undefined;
   nextAction?: DesktopRuntimeThreadNextAction | undefined;
   runtimePlan?: DesktopRuntimeThreadPlan | undefined;
@@ -416,12 +541,14 @@ export interface DesktopRuntimeThreadInspection {
     items: DesktopFollowUpQueueEntry[];
   };
   inboxItems: DesktopOperatorInboxItem[];
-  latestSteering?: {
-    message: string;
-    issuedBy?: string | undefined;
-    at: string;
-    runId?: string | undefined;
-  } | undefined;
+  latestSteering?:
+    | {
+        message: string;
+        issuedBy?: string | undefined;
+        at: string;
+        runId?: string | undefined;
+      }
+    | undefined;
 }
 
 export interface DesktopDialogView {
@@ -517,7 +644,11 @@ export interface DesktopManagedWorktreeRestoreResult {
   restore: WorkspaceRestoreRecord;
 }
 
-export type DesktopRuntimeRunStatus = "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
+export type DesktopRuntimeRunStatus =
+  | "RUNNING"
+  | "WAITING"
+  | "COMPLETED"
+  | "FAILED";
 
 export interface DesktopRuntimeRunTimelineEntry {
   seq: number;
@@ -538,10 +669,12 @@ export interface DesktopRuntimeRunInspection {
     status: DesktopRuntimeRunStatus;
     startedAt: string;
     completedAt?: string | undefined;
-    error?: {
-      code: string;
-      message: string;
-    } | undefined;
+    error?:
+      | {
+          code: string;
+          message: string;
+        }
+      | undefined;
   };
   threadId?: string | undefined;
   summary: {
@@ -560,23 +693,35 @@ export interface DesktopRuntimeRunInspection {
     finalStep?: string | undefined;
     terminalReasonCode?: string | undefined;
     actionable: boolean;
-    dominantFailure?: {
-      classification: string;
-      message: string;
-    } | undefined;
-    wait?: {
-      kind: "approval" | "user_input" | "delegation" | "scheduler_wait" | "compaction_checkpoint" | "unknown";
-      actionable: boolean;
-      eventType?: string | undefined;
-      threadId?: string | undefined;
-      delegationId?: string | undefined;
-      requestId?: string | undefined;
-      enteredAt?: string | undefined;
-    } | undefined;
-    latestReasoning?: {
-      message: string;
-      at: string;
-    } | undefined;
+    dominantFailure?:
+      | {
+          classification: string;
+          message: string;
+        }
+      | undefined;
+    wait?:
+      | {
+          kind:
+            | "approval"
+            | "user_input"
+            | "delegation"
+            | "scheduler_wait"
+            | "compaction_checkpoint"
+            | "unknown";
+          actionable: boolean;
+          eventType?: string | undefined;
+          threadId?: string | undefined;
+          delegationId?: string | undefined;
+          requestId?: string | undefined;
+          enteredAt?: string | undefined;
+        }
+      | undefined;
+    latestReasoning?:
+      | {
+          message: string;
+          at: string;
+        }
+      | undefined;
   };
   modelProvenance: {
     retention: "hash_only";
@@ -608,7 +753,9 @@ export interface DesktopRuntimeRunIndexEntry {
     finalStep?: string | undefined;
     terminalReasonCode?: string | undefined;
     actionable: boolean;
-    dominantFailure?: DesktopRuntimeRunInspection["diagnosis"]["dominantFailure"] | undefined;
+    dominantFailure?:
+      | DesktopRuntimeRunInspection["diagnosis"]["dominantFailure"]
+      | undefined;
     wait?: DesktopRuntimeRunInspection["diagnosis"]["wait"] | undefined;
   };
 }
@@ -637,55 +784,85 @@ export interface DesktopRuntimeRunIndex {
 
 export type DesktopRunnerEvent = RunnerEvent;
 
-export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnRequest {
+export function parseDesktopRunTurnRequest(
+  value: unknown,
+): DesktopRunTurnRequest {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Desktop run request must be an object.");
   }
   const input = value as Record<string, unknown>;
   const sessionId = parseRequiredDesktopString(input.sessionId, "sessionId");
-  const threadId = input.threadId === undefined ? undefined : parseRequiredDesktopString(input.threadId, "threadId");
+  const threadId =
+    input.threadId === undefined
+      ? undefined
+      : parseRequiredDesktopString(input.threadId, "threadId");
   const message = parseRequiredDesktopText(input.message, "message");
   const eventType = parseRequiredDesktopString(input.eventType, "eventType");
-  const projectPath = input.projectPath === undefined
-    ? undefined
-    : parseRequiredDesktopString(input.projectPath, "projectPath");
+  const projectPath =
+    input.projectPath === undefined
+      ? undefined
+      : parseRequiredDesktopString(input.projectPath, "projectPath");
   const workspaceMode = input.workspaceMode;
-  if (workspaceMode !== undefined && workspaceMode !== "local" && workspaceMode !== "managed") {
+  if (
+    workspaceMode !== undefined &&
+    workspaceMode !== "local" &&
+    workspaceMode !== "managed"
+  ) {
     throw new Error("Desktop run request workspaceMode is invalid.");
   }
-  const workspaceBaseRef = input.workspaceBaseRef === undefined
-    ? undefined
-    : parseRequiredDesktopString(input.workspaceBaseRef, "workspaceBaseRef");
-  const workspaceSetup = parseManagedTaskWorktreeSetupSpec(input.workspaceSetup);
-  const attachments = parseDesktopRunTurnAttachments(input.attachments, "attachments");
-  if (attachments?.some((attachment) => attachment.threadId !== undefined && attachment.threadId !== sessionId)) {
-    throw new Error("Desktop run request attachments must belong to the active session.");
+  const workspaceBaseRef =
+    input.workspaceBaseRef === undefined
+      ? undefined
+      : parseRequiredDesktopString(input.workspaceBaseRef, "workspaceBaseRef");
+  const workspaceSetup = parseManagedTaskWorktreeSetupSpec(
+    input.workspaceSetup,
+  );
+  const attachments = parseDesktopRunTurnAttachments(
+    input.attachments,
+    "attachments",
+  );
+  if (
+    attachments?.some(
+      (attachment) =>
+        attachment.threadId !== undefined && attachment.threadId !== sessionId,
+    )
+  ) {
+    throw new Error(
+      "Desktop run request attachments must belong to the active session.",
+    );
   }
   const interactionMode = input.interactionMode;
   if (
-    interactionMode !== undefined
-    && interactionMode !== "chat"
-    && interactionMode !== "plan"
-    && interactionMode !== "build"
+    interactionMode !== undefined &&
+    interactionMode !== "chat" &&
+    interactionMode !== "plan" &&
+    interactionMode !== "build"
   ) {
     throw new Error("Desktop run request interactionMode is invalid.");
   }
   const actSubmode = input.actSubmode;
   if (
-    actSubmode !== undefined
-    && actSubmode !== "strict"
-    && actSubmode !== "safe"
-    && actSubmode !== "full_auto"
+    actSubmode !== undefined &&
+    actSubmode !== "strict" &&
+    actSubmode !== "safe" &&
+    actSubmode !== "full_auto"
   ) {
     throw new Error("Desktop run request actSubmode is invalid.");
   }
   if (input.history !== undefined && Array.isArray(input.history) === false) {
     throw new Error("Desktop run request history must be an array.");
   }
-  const history = input.history === undefined
-    ? undefined
-    : input.history.map((line, index) => parseDesktopRunHistoryLine(line, index));
-  const attachmentIds = parseDesktopStringArray(input.attachmentIds, "attachmentIds", 8);
+  const history =
+    input.history === undefined
+      ? undefined
+      : input.history.map((line, index) =>
+          parseDesktopRunHistoryLine(line, index),
+        );
+  const attachmentIds = parseDesktopStringArray(
+    input.attachmentIds,
+    "attachmentIds",
+    8,
+  );
   return {
     sessionId,
     ...(threadId !== undefined ? { threadId } : {}),
@@ -702,19 +879,35 @@ export function parseDesktopRunTurnRequest(value: unknown): DesktopRunTurnReques
     ...(input.resumeFromWait === true ? { resumeFromWait: true } : {}),
     ...(input.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
     ...(attachmentIds !== undefined ? { attachmentIds } : {}),
-    executionSelection: parseDesktopExecutionSelection(input.executionSelection),
+    executionSelection: parseDesktopExecutionSelection(
+      input.executionSelection,
+    ),
   };
 }
 
-function parseDesktopStringArray(value: unknown, field: string, max: number): string[] | undefined {
+function parseDesktopStringArray(
+  value: unknown,
+  field: string,
+  max: number,
+): string[] | undefined {
   if (value === undefined) return;
-  if (Array.isArray(value) === false || value.length > max) throw new Error(`Desktop request field '${field}' must be an array with at most ${max} entries.`);
-  const parsed = value.map((entry, index) => parseRequiredDesktopString(entry, `${field}[${index}]`));
-  if (new Set(parsed).size !== parsed.length) throw new Error(`Desktop request field '${field}' cannot contain duplicates.`);
+  if (Array.isArray(value) === false || value.length > max)
+    throw new Error(
+      `Desktop request field '${field}' must be an array with at most ${max} entries.`,
+    );
+  const parsed = value.map((entry, index) =>
+    parseRequiredDesktopString(entry, `${field}[${index}]`),
+  );
+  if (new Set(parsed).size !== parsed.length)
+    throw new Error(
+      `Desktop request field '${field}' cannot contain duplicates.`,
+    );
   return parsed;
 }
 
-export function parseDesktopRunCancelRequest(value: unknown): DesktopRunCancelRequest {
+export function parseDesktopRunCancelRequest(
+  value: unknown,
+): DesktopRunCancelRequest {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Desktop cancel request must be an object.");
   }
@@ -726,39 +919,58 @@ export function parseDesktopRunCancelRequest(value: unknown): DesktopRunCancelRe
   };
 }
 
-function parseDesktopRunHistoryLine(value: unknown, index: number): DesktopRunHistoryLine {
+function parseDesktopRunHistoryLine(
+  value: unknown,
+  index: number,
+): DesktopRunHistoryLine {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Desktop run history[${index}] must be an object.`);
   }
   const input = value as Record<string, unknown>;
-  if (input.role !== "user" && input.role !== "assistant" && input.role !== "system") {
+  if (
+    input.role !== "user" &&
+    input.role !== "assistant" &&
+    input.role !== "system"
+  ) {
     throw new Error(`Desktop run history[${index}].role is invalid.`);
   }
-  const timestamp = parseRequiredDesktopString(input.timestamp, `history[${index}].timestamp`);
+  const timestamp = parseRequiredDesktopString(
+    input.timestamp,
+    `history[${index}].timestamp`,
+  );
   const parsedTimestamp = new Date(timestamp);
   if (
-    Number.isFinite(parsedTimestamp.getTime()) === false
-    || parsedTimestamp.toISOString() !== timestamp
+    Number.isFinite(parsedTimestamp.getTime()) === false ||
+    parsedTimestamp.toISOString() !== timestamp
   ) {
-    throw new Error(`Desktop run history[${index}].timestamp must be an ISO timestamp.`);
+    throw new Error(
+      `Desktop run history[${index}].timestamp must be an ISO timestamp.`,
+    );
   }
   const parsed = {
     text: parseRequiredDesktopText(input.text, `history[${index}].text`),
     timestamp,
-    ...parseOptionalDesktopRunTurnAttachments(input.attachments, `history[${index}].attachments`),
+    ...parseOptionalDesktopRunTurnAttachments(
+      input.attachments,
+      `history[${index}].attachments`,
+    ),
   };
   if (input.role === "system") {
-    const data = typeof input.data === "object" && input.data !== null && Array.isArray(input.data) === false
-      ? input.data as Record<string, unknown>
-      : undefined;
+    const data =
+      typeof input.data === "object" &&
+      input.data !== null &&
+      Array.isArray(input.data) === false
+        ? (input.data as Record<string, unknown>)
+        : undefined;
     if (data?.kind !== "runtime.waiting_prompt") {
       throw new Error(
         `Desktop run history[${index}] system entries must be tagged as runtime.waiting_prompt.`,
       );
     }
-    const runId = typeof data.runId === "string" && data.runId.trim().length > 0
-      ? data.runId.trim()
-      : undefined;
+    const runId =
+      typeof data.runId === "string" && data.runId.trim().length > 0
+        ? data.runId.trim()
+        : undefined;
     return {
       ...parsed,
       role: "system",
@@ -790,20 +1002,38 @@ function parseDesktopRunTurnAttachments(
     return;
   }
   if (Array.isArray(value) === false || value.length > 8) {
-    throw new Error(`Desktop request field '${field}' must contain at most 8 attachments.`);
+    throw new Error(
+      `Desktop request field '${field}' must contain at most 8 attachments.`,
+    );
   }
   let totalBytes = 0;
   return value.map((entry, index) => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      throw new Error(`Desktop request field '${field}[${index}]' must be an object.`);
+      throw new Error(
+        `Desktop request field '${field}[${index}]' must be an object.`,
+      );
     }
     const attachment = entry as Record<string, unknown>;
-    const attachmentId = parseRequiredDesktopString(attachment.attachmentId, `${field}[${index}].attachmentId`);
-    const filename = parseRequiredDesktopString(attachment.filename, `${field}[${index}].filename`);
-    const mimeType = parseRequiredDesktopString(attachment.mimeType, `${field}[${index}].mimeType`);
-    const sha256 = parseRequiredDesktopString(attachment.sha256, `${field}[${index}].sha256`);
+    const attachmentId = parseRequiredDesktopString(
+      attachment.attachmentId,
+      `${field}[${index}].attachmentId`,
+    );
+    const filename = parseRequiredDesktopString(
+      attachment.filename,
+      `${field}[${index}].filename`,
+    );
+    const mimeType = parseRequiredDesktopString(
+      attachment.mimeType,
+      `${field}[${index}].mimeType`,
+    );
+    const sha256 = parseRequiredDesktopString(
+      attachment.sha256,
+      `${field}[${index}].sha256`,
+    );
     if (/^[a-f0-9]{64}$/u.test(sha256) === false) {
-      throw new Error(`Desktop request field '${field}[${index}].sha256' must be a SHA-256 digest.`);
+      throw new Error(
+        `Desktop request field '${field}[${index}].sha256' must be a SHA-256 digest.`,
+      );
     }
     if (
       typeof attachment.sizeBytes !== "number" ||
@@ -811,33 +1041,56 @@ function parseDesktopRunTurnAttachments(
       attachment.sizeBytes < 0 ||
       attachment.sizeBytes > 5 * 1024 * 1024
     ) {
-      throw new Error(`Desktop request field '${field}[${index}].sizeBytes' is invalid.`);
+      throw new Error(
+        `Desktop request field '${field}[${index}].sizeBytes' is invalid.`,
+      );
     }
     totalBytes += attachment.sizeBytes;
     if (totalBytes > 10 * 1024 * 1024) {
-      throw new Error(`Desktop request field '${field}' exceeds the 10 MB attachment limit.`);
+      throw new Error(
+        `Desktop request field '${field}' exceeds the 10 MB attachment limit.`,
+      );
     }
     if (attachment.kind !== "text" && attachment.kind !== "image") {
-      throw new Error(`Desktop request field '${field}[${index}].kind' is invalid.`);
+      throw new Error(
+        `Desktop request field '${field}[${index}].kind' is invalid.`,
+      );
     }
     if (attachment.kind === "text" && typeof attachment.text !== "string") {
-      throw new Error(`Desktop text attachment '${field}[${index}]' requires text.`);
+      throw new Error(
+        `Desktop text attachment '${field}[${index}]' requires text.`,
+      );
     }
     if (attachment.kind === "image" && typeof attachment.data !== "string") {
-      throw new Error(`Desktop image attachment '${field}[${index}]' requires data.`);
+      throw new Error(
+        `Desktop image attachment '${field}[${index}]' requires data.`,
+      );
     }
     if (
-      (typeof attachment.text === "string" && new TextEncoder().encode(attachment.text).byteLength > 5 * 1024 * 1024) ||
-      (typeof attachment.data === "string" && attachment.data.length > 7 * 1024 * 1024)
+      (typeof attachment.text === "string" &&
+        new TextEncoder().encode(attachment.text).byteLength >
+          5 * 1024 * 1024) ||
+      (typeof attachment.data === "string" &&
+        attachment.data.length > 7 * 1024 * 1024)
     ) {
-      throw new Error(`Desktop attachment '${field}[${index}]' payload is too large.`);
+      throw new Error(
+        `Desktop attachment '${field}[${index}]' payload is too large.`,
+      );
     }
-    const threadId = attachment.threadId === undefined
-      ? undefined
-      : parseRequiredDesktopString(attachment.threadId, `${field}[${index}].threadId`);
-    const createdAt = attachment.createdAt === undefined
-      ? undefined
-      : parseRequiredDesktopString(attachment.createdAt, `${field}[${index}].createdAt`);
+    const threadId =
+      attachment.threadId === undefined
+        ? undefined
+        : parseRequiredDesktopString(
+            attachment.threadId,
+            `${field}[${index}].threadId`,
+          );
+    const createdAt =
+      attachment.createdAt === undefined
+        ? undefined
+        : parseRequiredDesktopString(
+            attachment.createdAt,
+            `${field}[${index}].createdAt`,
+          );
     return {
       attachmentId,
       filename,
@@ -855,14 +1108,18 @@ function parseDesktopRunTurnAttachments(
 
 function parseRequiredDesktopString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Desktop request field '${field}' must be a non-empty string.`);
+    throw new Error(
+      `Desktop request field '${field}' must be a non-empty string.`,
+    );
   }
   return value.trim();
 }
 
 function parseRequiredDesktopText(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Desktop request field '${field}' must be a non-empty string.`);
+    throw new Error(
+      `Desktop request field '${field}' must be a non-empty string.`,
+    );
   }
   return value;
 }
@@ -877,15 +1134,21 @@ function parseOptionalDesktopString(
   return { [field]: parseRequiredDesktopString(value, field) };
 }
 
-export function parseDesktopLegacyUiStateEntries(value: unknown): DesktopLegacyUiStateEntries {
+export function parseDesktopLegacyUiStateEntries(
+  value: unknown,
+): DesktopLegacyUiStateEntries {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Desktop legacy UI state entries must be an object.");
   }
   const input = value as Record<string, unknown>;
   const knownKeys = new Set<string>(DESKTOP_LEGACY_UI_STORAGE_KEYS);
-  const unknownKey = Object.keys(input).find((key) => knownKeys.has(key) === false);
+  const unknownKey = Object.keys(input).find(
+    (key) => knownKeys.has(key) === false,
+  );
   if (unknownKey !== undefined) {
-    throw new Error(`Desktop legacy UI state includes unsupported key '${unknownKey}'.`);
+    throw new Error(
+      `Desktop legacy UI state includes unsupported key '${unknownKey}'.`,
+    );
   }
 
   const entries: DesktopLegacyUiStateEntries = {};
@@ -895,11 +1158,16 @@ export function parseDesktopLegacyUiStateEntries(value: unknown): DesktopLegacyU
       continue;
     }
     if (typeof candidate !== "string") {
-      throw new Error(`Desktop legacy UI state entry '${key}' must be a string.`);
+      throw new Error(
+        `Desktop legacy UI state entry '${key}' must be a string.`,
+      );
     }
     entries[key] = candidate;
   }
-  if (new TextEncoder().encode(JSON.stringify(entries)).byteLength > DESKTOP_UI_STATE_MAX_BYTES) {
+  if (
+    new TextEncoder().encode(JSON.stringify(entries)).byteLength >
+    DESKTOP_UI_STATE_MAX_BYTES
+  ) {
     throw new Error("Desktop legacy UI state exceeds the supported size.");
   }
   return entries;
@@ -911,24 +1179,32 @@ export function parseDesktopUiStateV1(value: unknown): DesktopUiStateV1 {
   }
   const input = value as Record<string, unknown>;
   if (input.version !== DESKTOP_UI_STATE_VERSION) {
-    throw new Error(`Desktop UI state version must be '${DESKTOP_UI_STATE_VERSION}'.`);
+    throw new Error(
+      `Desktop UI state version must be '${DESKTOP_UI_STATE_VERSION}'.`,
+    );
   }
   if (
-    input.source !== DESKTOP_UI_STATE_SOURCE
-    && input.source !== DESKTOP_UI_STATE_RENDERER_SOURCE
+    input.source !== DESKTOP_UI_STATE_SOURCE &&
+    input.source !== DESKTOP_UI_STATE_RENDERER_SOURCE
   ) {
     throw new Error("Desktop UI state source is invalid.");
   }
-  if (typeof input.sourceAppVersion !== "string" || input.sourceAppVersion.trim().length === 0) {
-    throw new Error("Desktop UI state sourceAppVersion must be a non-empty string.");
-  }
-  const capturedAt = typeof input.capturedAt === "string"
-    ? new Date(input.capturedAt)
-    : undefined;
   if (
-    capturedAt === undefined
-    || Number.isFinite(capturedAt.getTime()) === false
-    || capturedAt.toISOString() !== input.capturedAt
+    typeof input.sourceAppVersion !== "string" ||
+    input.sourceAppVersion.trim().length === 0
+  ) {
+    throw new Error(
+      "Desktop UI state sourceAppVersion must be a non-empty string.",
+    );
+  }
+  const capturedAt =
+    typeof input.capturedAt === "string"
+      ? new Date(input.capturedAt)
+      : undefined;
+  if (
+    capturedAt === undefined ||
+    Number.isFinite(capturedAt.getTime()) === false ||
+    capturedAt.toISOString() !== input.capturedAt
   ) {
     throw new Error("Desktop UI state capturedAt must be an ISO timestamp.");
   }
@@ -1120,7 +1396,12 @@ export interface DesktopPreviewDiagnostic {
   at: string;
 }
 
-export type DesktopModelProvider = "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
+export type DesktopModelProvider =
+  | "openrouter"
+  | "openai"
+  | "anthropic"
+  | "ollama"
+  | "lmstudio";
 export type DesktopAppearanceTheme = "system" | "light" | "dark";
 export type DesktopDatabaseMode = "default" | "external";
 export type DesktopShellPresetId = "desktop_dev_local";
@@ -1242,36 +1523,58 @@ export function parseDesktopCapabilityConfigurationInput(
     throw new Error("Desktop capability configuration must be an object.");
   }
   const input = value as Record<string, unknown>;
-  const allowed = new Set(["capabilityId", "enabled", "settings", "credential"]);
-  const unsupported = Object.keys(input).find((key) => allowed.has(key) === false);
+  const allowed = new Set([
+    "capabilityId",
+    "enabled",
+    "settings",
+    "credential",
+  ]);
+  const unsupported = Object.keys(input).find(
+    (key) => allowed.has(key) === false,
+  );
   if (unsupported !== undefined) {
-    throw new Error(`Desktop capability configuration includes unsupported field '${unsupported}'.`);
+    throw new Error(
+      `Desktop capability configuration includes unsupported field '${unsupported}'.`,
+    );
   }
   const capabilityId = parseDesktopCapabilityId(input.capabilityId);
   if (input.enabled !== undefined && typeof input.enabled !== "boolean") {
-    throw new Error("Desktop capability configuration enabled must be a boolean.");
+    throw new Error(
+      "Desktop capability configuration enabled must be a boolean.",
+    );
   }
   if (
-    input.credential !== undefined
-    && input.credential !== null
-    && (typeof input.credential !== "string" || input.credential.trim().length === 0)
+    input.credential !== undefined &&
+    input.credential !== null &&
+    (typeof input.credential !== "string" ||
+      input.credential.trim().length === 0)
   ) {
-    throw new Error("Desktop capability credential must be a non-empty string or null.");
+    throw new Error(
+      "Desktop capability credential must be a non-empty string or null.",
+    );
   }
   let settings: Record<string, DesktopCapabilitySettingValue> | undefined;
   if (input.settings !== undefined) {
-    if (typeof input.settings !== "object" || input.settings === null || Array.isArray(input.settings)) {
+    if (
+      typeof input.settings !== "object" ||
+      input.settings === null ||
+      Array.isArray(input.settings)
+    ) {
       throw new Error("Desktop capability settings must be an object.");
     }
     settings = {};
-    for (const [key, setting] of Object.entries(input.settings as Record<string, unknown>)) {
+    for (const [key, setting] of Object.entries(
+      input.settings as Record<string, unknown>,
+    )) {
       if (key.trim().length === 0 || key.length > 80) {
-        throw new Error("Desktop capability setting keys must be non-empty and bounded.");
+        throw new Error(
+          "Desktop capability setting keys must be non-empty and bounded.",
+        );
       }
       if (
-        setting !== null
-        && typeof setting !== "boolean"
-        && (typeof setting !== "string" || setting.length > 4096)
+        setting !== null &&
+        typeof setting !== "boolean" &&
+        (typeof setting !== "string" || setting.length > 4096)
       ) {
         throw new Error(`Desktop capability setting '${key}' is invalid.`);
       }
@@ -1290,12 +1593,26 @@ export function parseDesktopCapabilityConfigurationInput(
 
 function parseDesktopCapabilityId(value: unknown): DesktopCapabilityId {
   const ids: DesktopCapabilityId[] = [
-    "model.openrouter", "model.openai", "model.anthropic", "model.ollama", "model.lmstudio",
-    "tools.internet.tavily", "tools.weather", "tools.network.free",
-    "local.filesystem", "local.developer_shell", "local.sandbox_code",
-    "connections.mcp", "data.workspace", "data.database", "permission.microphone",
+    "model.openrouter",
+    "model.openai",
+    "model.anthropic",
+    "model.ollama",
+    "model.lmstudio",
+    "tools.internet.tavily",
+    "tools.weather",
+    "tools.network.free",
+    "local.filesystem",
+    "local.developer_shell",
+    "local.sandbox_code",
+    "connections.mcp",
+    "data.workspace",
+    "data.database",
+    "permission.microphone",
   ];
-  if (typeof value !== "string" || ids.includes(value as DesktopCapabilityId) === false) {
+  if (
+    typeof value !== "string" ||
+    ids.includes(value as DesktopCapabilityId) === false
+  ) {
     throw new Error("Desktop capability ID is not supported.");
   }
   return value as DesktopCapabilityId;
@@ -1384,7 +1701,10 @@ export interface DesktopRendererSettingsUpdate {
   appearanceTheme?: DesktopAppearanceTheme | undefined;
 }
 
-export type DesktopCredentialedModelProvider = "openrouter" | "openai" | "anthropic";
+export type DesktopCredentialedModelProvider =
+  | "openrouter"
+  | "openai"
+  | "anthropic";
 
 export function parseDesktopRendererSettingsUpdate(
   value: unknown,
@@ -1400,9 +1720,13 @@ export function parseDesktopRendererSettingsUpdate(
     "defaultEnabledAppIds",
     "appearanceTheme",
   ]);
-  const unsupportedKey = Object.keys(input).find((key) => supportedKeys.has(key) === false);
+  const unsupportedKey = Object.keys(input).find(
+    (key) => supportedKeys.has(key) === false,
+  );
   if (unsupportedKey !== undefined) {
-    throw new Error(`Desktop settings update includes unsupported field '${unsupportedKey}'.`);
+    throw new Error(
+      `Desktop settings update includes unsupported field '${unsupportedKey}'.`,
+    );
   }
 
   const update: DesktopRendererSettingsUpdate = {};
@@ -1411,18 +1735,29 @@ export function parseDesktopRendererSettingsUpdate(
       throw new Error("Desktop settings update projects must be an array.");
     }
     update.projects = input.projects.map((project, index) => {
-      if (typeof project !== "object" || project === null || Array.isArray(project)) {
-        throw new Error(`Desktop settings update projects[${index}] must be an object.`);
+      if (
+        typeof project !== "object" ||
+        project === null ||
+        Array.isArray(project)
+      ) {
+        throw new Error(
+          `Desktop settings update projects[${index}] must be an object.`,
+        );
       }
       const entry = project as Record<string, unknown>;
       return {
         path: parseRequiredDesktopString(entry.path, `projects[${index}].path`),
-        label: parseRequiredDesktopString(entry.label, `projects[${index}].label`),
+        label: parseRequiredDesktopString(
+          entry.label,
+          `projects[${index}].label`,
+        ),
       };
     });
   }
   if (input.modelConfigurations !== undefined) {
-    update.modelConfigurations = parseDesktopModelConfigurations(input.modelConfigurations);
+    update.modelConfigurations = parseDesktopModelConfigurations(
+      input.modelConfigurations,
+    );
   }
   if (input.defaultModelConfigurationId !== undefined) {
     update.defaultModelConfigurationId = parseRequiredDesktopString(
@@ -1432,18 +1767,24 @@ export function parseDesktopRendererSettingsUpdate(
   }
   if (input.defaultEnabledAppIds !== undefined) {
     if (
-      Array.isArray(input.defaultEnabledAppIds) === false
-      || input.defaultEnabledAppIds.some((entry) => typeof entry !== "string" || entry.trim().length === 0)
+      Array.isArray(input.defaultEnabledAppIds) === false ||
+      input.defaultEnabledAppIds.some(
+        (entry) => typeof entry !== "string" || entry.trim().length === 0,
+      )
     ) {
-      throw new Error("Desktop settings update defaultEnabledAppIds must be an array of strings.");
+      throw new Error(
+        "Desktop settings update defaultEnabledAppIds must be an array of strings.",
+      );
     }
-    update.defaultEnabledAppIds = [...new Set(input.defaultEnabledAppIds.map((entry) => entry.trim()))].sort();
+    update.defaultEnabledAppIds = [
+      ...new Set(input.defaultEnabledAppIds.map((entry) => entry.trim())),
+    ].sort();
   }
   if (input.appearanceTheme !== undefined) {
     if (
-      input.appearanceTheme !== "system"
-      && input.appearanceTheme !== "light"
-      && input.appearanceTheme !== "dark"
+      input.appearanceTheme !== "system" &&
+      input.appearanceTheme !== "light" &&
+      input.appearanceTheme !== "dark"
     ) {
       throw new Error("Desktop settings update appearanceTheme is invalid.");
     }
@@ -1552,7 +1893,10 @@ export interface DesktopProjectFilesChangedEvent {
 }
 
 export type DesktopMcpTransport = "stdio" | "http" | "sse";
-export type DesktopMcpDiscoverySourceKind = "desktop-managed" | "config-file" | "docker-toolkit";
+export type DesktopMcpDiscoverySourceKind =
+  | "desktop-managed"
+  | "config-file"
+  | "docker-toolkit";
 
 export interface DesktopMcpToolSummary {
   name: string;
@@ -1581,6 +1925,7 @@ export interface DesktopMcpCredentialMutationInput {
 
 export interface DesktopMcpServerConfig {
   id: string;
+  appId?: string | undefined;
   name: string;
   transport: DesktopMcpTransport;
   command?: string | undefined;
@@ -1595,6 +1940,8 @@ export interface DesktopMcpServerConfig {
   toolCount?: number | undefined;
   tools?: DesktopMcpToolSummary[] | undefined;
   credentials?: DesktopMcpCredentialBinding[] | undefined;
+  oauthCredentialPrefix?: `mcp.${string}` | undefined;
+  capabilityPacks?: string[] | undefined;
   setupWarning?: string | undefined;
   verifiedAt?: string | undefined;
 }
@@ -1612,93 +1959,347 @@ export interface DesktopMcpDiscoveryResult {
   discoveredAt: string;
 }
 
+export interface DesktopAppConnectionSession {
+  sessionId: string;
+  state: "awaiting_user" | "complete" | "failed" | "expired";
+  error?: string | undefined;
+  expiresAt: string;
+}
+
+export interface DesktopStandardAppConnectionInput {
+  appId: string;
+  capabilityPacks?: string[] | undefined;
+}
+
 export interface DesktopMcpServerMutationInput {
   id: string;
+  appId?: string | undefined;
   name: string;
   transport: DesktopMcpTransport;
   command?: string | undefined;
   args?: string[] | undefined;
   url?: string | undefined;
   credentials?: DesktopMcpCredentialMutationInput[] | undefined;
-  toolPolicies?: Record<string, {
-    approvalMode: "auto" | "ask";
-    allowedInteractionModes: ("chat" | "plan" | "build")[];
-  }> | undefined;
+  oauthCredentialPrefix?: `mcp.${string}` | undefined;
+  capabilityPacks?: string[] | undefined;
+  toolPolicies?:
+    | Record<
+        string,
+        {
+          approvalMode: "auto" | "ask";
+          allowedInteractionModes: ("chat" | "plan" | "build")[];
+        }
+      >
+    | undefined;
   enabled: boolean;
 }
 
-export function parseDesktopMcpServerMutationInput(value: unknown): DesktopMcpServerMutationInput {
+export function parseDesktopMcpServerMutationInput(
+  value: unknown,
+): DesktopMcpServerMutationInput {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Desktop MCP server configuration must be an object.");
   }
   const input = value as Record<string, unknown>;
-  const supported = new Set(["id", "name", "transport", "command", "args", "url", "credentials", "toolPolicies", "enabled"]);
-  const unsupported = Object.keys(input).find((key) => supported.has(key) === false);
-  if (unsupported !== undefined) throw new Error(`Desktop MCP server includes unsupported field '${unsupported}'.`);
+  const supported = new Set([
+    "id",
+    "appId",
+    "name",
+    "transport",
+    "command",
+    "args",
+    "url",
+    "credentials",
+    "oauthCredentialPrefix",
+    "capabilityPacks",
+    "toolPolicies",
+    "enabled",
+  ]);
+  const unsupported = Object.keys(input).find(
+    (key) => supported.has(key) === false,
+  );
+  if (unsupported !== undefined)
+    throw new Error(
+      `Desktop MCP server includes unsupported field '${unsupported}'.`,
+    );
   const id = parseRequiredDesktopString(input.id, "id");
-  if (/^[a-zA-Z0-9._-]+$/u.test(id) === false) throw new Error("Desktop MCP server id must match [a-zA-Z0-9._-]+.");
+  if (/^[a-zA-Z0-9._-]+$/u.test(id) === false)
+    throw new Error("Desktop MCP server id must match [a-zA-Z0-9._-]+.");
+  const appId =
+    input.appId === undefined
+      ? undefined
+      : parseRequiredDesktopString(input.appId, "appId");
+  if (
+    appId !== undefined &&
+    KESTREL_STANDARD_APP_MANIFESTS.some((app) => app.id === appId) === false
+  ) {
+    throw new Error("Desktop App identity is not a published standard App.");
+  }
   const name = parseRequiredDesktopString(input.name, "name");
-  if (input.transport !== "stdio" && input.transport !== "http" && input.transport !== "sse") {
+  if (
+    input.transport !== "stdio" &&
+    input.transport !== "http" &&
+    input.transport !== "sse"
+  ) {
     throw new Error("Desktop MCP server transport is unsupported.");
   }
-  if (typeof input.enabled !== "boolean") throw new Error("Desktop MCP server enabled must be a boolean.");
+  if (typeof input.enabled !== "boolean")
+    throw new Error("Desktop MCP server enabled must be a boolean.");
   const credentials = parseDesktopMcpCredentialInputs(input.credentials, id);
+  const oauthCredentialPrefix =
+    input.oauthCredentialPrefix === undefined
+      ? undefined
+      : parseDesktopOAuthCredentialPrefix(input.oauthCredentialPrefix);
+  const capabilityPacks = parseDesktopCapabilityPackKeys(input.capabilityPacks);
   const toolPolicies = parseDesktopMcpToolPolicies(input.toolPolicies);
   if (input.transport === "stdio") {
     const command = parseRequiredDesktopString(input.command, "command");
-    if (input.args !== undefined && (Array.isArray(input.args) === false || input.args.some((arg) => typeof arg !== "string"))) {
+    if (
+      input.args !== undefined &&
+      (Array.isArray(input.args) === false ||
+        input.args.some((arg) => typeof arg !== "string"))
+    ) {
       throw new Error("Desktop MCP server args must be an array of strings.");
     }
-    if (credentials.some((binding) => binding.kind !== "environment")) throw new Error("Desktop MCP stdio servers only support environment credential bindings.");
-    return { id, name, transport: "stdio", command, ...(input.args !== undefined ? { args: input.args as string[] } : {}), ...(credentials.length > 0 ? { credentials } : {}), ...(toolPolicies !== undefined ? { toolPolicies } : {}), enabled: input.enabled };
+    if (credentials.some((binding) => binding.kind !== "environment"))
+      throw new Error(
+        "Desktop MCP stdio servers only support environment credential bindings.",
+      );
+    if (oauthCredentialPrefix !== undefined || capabilityPacks.length > 0)
+      throw new Error(
+        "Desktop local Apps do not support remote App connection settings.",
+      );
+    return {
+      id,
+      ...(appId !== undefined ? { appId } : {}),
+      name,
+      transport: "stdio",
+      command,
+      ...(input.args !== undefined ? { args: input.args as string[] } : {}),
+      ...(credentials.length > 0 ? { credentials } : {}),
+      ...(toolPolicies !== undefined ? { toolPolicies } : {}),
+      enabled: input.enabled,
+    };
   }
   const url = parseRequiredDesktopString(input.url, "url");
   const parsedUrl = new URL(url);
-  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") throw new Error("Desktop MCP server URL must use HTTP or HTTPS.");
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:")
+    throw new Error("Desktop MCP server URL must use HTTP or HTTPS.");
   if (parsedUrl.username.length > 0 || parsedUrl.password.length > 0) {
-    throw new Error("Desktop MCP credentials cannot be embedded in the server URL.");
+    throw new Error(
+      "Desktop MCP credentials cannot be embedded in the server URL.",
+    );
   }
-  if (credentials.some((binding) => binding.kind === "environment")) throw new Error("Remote MCP servers support bearer and header credentials, not process environment bindings.");
-  if (credentials.filter((binding) => binding.kind === "bearer").length > 1) throw new Error("Desktop MCP server can have at most one bearer credential.");
-  return { id, name, transport: input.transport, url: parsedUrl.toString(), ...(credentials.length > 0 ? { credentials } : {}), ...(toolPolicies !== undefined ? { toolPolicies } : {}), enabled: input.enabled };
+  if (appId !== undefined) {
+    const standardConnection = getDesktopStandardAppConnection(appId);
+    if (
+      standardConnection === undefined ||
+      input.transport !== "http" ||
+      parsedUrl.toString() !== new URL(standardConnection.url).toString() ||
+      (standardConnection.kind === "token" &&
+        (credentials.length !== 1 ||
+          credentials[0]?.kind !== "bearer" ||
+          oauthCredentialPrefix !== undefined)) ||
+      (standardConnection.kind === "authorization" &&
+        (credentials.length !== 0 ||
+          oauthCredentialPrefix !== standardConnection.credentialPrefix ||
+          (standardConnection.capabilityPackScopes !== undefined &&
+            (capabilityPacks.length === 0 ||
+              capabilityPacks.some(
+                (pack) =>
+                  standardConnection.capabilityPackScopes?.[pack] === undefined,
+              ))) ||
+          (standardConnection.capabilityPackScopes === undefined &&
+            capabilityPacks.length > 0)))
+    ) {
+      throw new Error(
+        "Desktop standard App connection does not match its published contract.",
+      );
+    }
+  }
+  if (
+    appId === undefined &&
+    (oauthCredentialPrefix !== undefined || capabilityPacks.length > 0)
+  )
+    throw new Error(
+      "Desktop App connection settings are only available for published standard Apps.",
+    );
+  if (credentials.some((binding) => binding.kind === "environment"))
+    throw new Error(
+      "Remote MCP servers support bearer and header credentials, not process environment bindings.",
+    );
+  if (credentials.filter((binding) => binding.kind === "bearer").length > 1)
+    throw new Error(
+      "Desktop MCP server can have at most one bearer credential.",
+    );
+  return {
+    id,
+    ...(appId !== undefined ? { appId } : {}),
+    name,
+    transport: input.transport,
+    url: parsedUrl.toString(),
+    ...(credentials.length > 0 ? { credentials } : {}),
+    ...(oauthCredentialPrefix !== undefined ? { oauthCredentialPrefix } : {}),
+    ...(capabilityPacks.length > 0 ? { capabilityPacks } : {}),
+    ...(toolPolicies !== undefined ? { toolPolicies } : {}),
+    enabled: input.enabled,
+  };
 }
 
-function parseDesktopMcpCredentialInputs(value: unknown, serverId: string): DesktopMcpCredentialMutationInput[] {
+function parseDesktopOAuthCredentialPrefix(value: unknown): `mcp.${string}` {
+  if (
+    typeof value !== "string" ||
+    /^mcp\.[a-zA-Z0-9._-]+$/u.test(value) === false ||
+    value.includes(".oauth.")
+  ) {
+    throw new Error("Desktop App authorization identity is invalid.");
+  }
+  return value as `mcp.${string}`;
+}
+
+function parseDesktopCapabilityPackKeys(value: unknown): string[] {
   if (value === undefined) return [];
-  if (Array.isArray(value) === false) throw new Error("Desktop MCP credentials must be an array.");
+  if (
+    Array.isArray(value) === false ||
+    value.some(
+      (entry) =>
+        typeof entry !== "string" || /^[a-zA-Z0-9._-]+$/u.test(entry) === false,
+    )
+  ) {
+    throw new Error("Desktop App capability packs are invalid.");
+  }
+  const unique = [...new Set(value as string[])];
+  if (unique.length !== value.length) {
+    throw new Error("Desktop App capability packs must be unique.");
+  }
+  return unique;
+}
+
+function parseDesktopMcpCredentialInputs(
+  value: unknown,
+  serverId: string,
+): DesktopMcpCredentialMutationInput[] {
+  if (value === undefined) return [];
+  if (Array.isArray(value) === false)
+    throw new Error("Desktop MCP credentials must be an array.");
   const seen = new Set<string>();
   return value.map((raw) => {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error("Desktop MCP credential binding must be an object.");
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+      throw new Error("Desktop MCP credential binding must be an object.");
     const binding = raw as Record<string, unknown>;
-    const unsupported = Object.keys(binding).find((key) => new Set(["kind", "name", "credentialId", "envKey", "secret"]).has(key) === false);
-    if (unsupported !== undefined) throw new Error(`Desktop MCP credential includes unsupported field '${unsupported}'.`);
-    if (binding.kind !== "bearer" && binding.kind !== "header" && binding.kind !== "environment") throw new Error("Desktop MCP credential kind is invalid.");
-    const name = binding.kind === "bearer" ? undefined : parseRequiredDesktopString(binding.name, "credential name");
-    if (binding.kind === "header" && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(name!) === false) throw new Error("Desktop MCP header credential name is invalid.");
-    if (binding.kind === "environment" && /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name!) === false) throw new Error("Desktop MCP environment credential name is invalid.");
+    const unsupported = Object.keys(binding).find(
+      (key) =>
+        new Set(["kind", "name", "credentialId", "envKey", "secret"]).has(
+          key,
+        ) === false,
+    );
+    if (unsupported !== undefined)
+      throw new Error(
+        `Desktop MCP credential includes unsupported field '${unsupported}'.`,
+      );
+    if (
+      binding.kind !== "bearer" &&
+      binding.kind !== "header" &&
+      binding.kind !== "environment"
+    )
+      throw new Error("Desktop MCP credential kind is invalid.");
+    const name =
+      binding.kind === "bearer"
+        ? undefined
+        : parseRequiredDesktopString(binding.name, "credential name");
+    if (
+      binding.kind === "header" &&
+      /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(name!) === false
+    )
+      throw new Error("Desktop MCP header credential name is invalid.");
+    if (
+      binding.kind === "environment" &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name!) === false
+    )
+      throw new Error("Desktop MCP environment credential name is invalid.");
     const identity = `${binding.kind}:${name ?? ""}`.toLowerCase();
-    if (seen.has(identity)) throw new Error("Desktop MCP credential bindings must be unique.");
+    if (seen.has(identity))
+      throw new Error("Desktop MCP credential bindings must be unique.");
     seen.add(identity);
-    const credentialId = binding.credentialId === undefined ? undefined : String(binding.credentialId);
-    if (credentialId !== undefined && (credentialId.startsWith(`mcp.${serverId}.`) === false || /^mcp\.[a-zA-Z0-9._-]+$/u.test(credentialId) === false)) throw new Error("Desktop MCP credential id is invalid for this server.");
-    const envKey = binding.envKey === undefined ? undefined : String(binding.envKey);
-    if (envKey !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/u.test(envKey) === false) throw new Error("Desktop MCP credential environment key is invalid.");
-    const secret = binding.secret === undefined ? undefined : String(binding.secret);
-    if (secret !== undefined && (secret.length === 0 || secret.trim() !== secret || /[\u0000-\u001f\u007f]/u.test(secret))) throw new Error("Desktop MCP credential value is invalid.");
-    return { kind: binding.kind, ...(name !== undefined ? { name } : {}), ...(credentialId !== undefined ? { credentialId: credentialId as `mcp.${string}` } : {}), ...(envKey !== undefined ? { envKey } : {}), ...(secret !== undefined ? { secret } : {}) };
+    const credentialId =
+      binding.credentialId === undefined
+        ? undefined
+        : String(binding.credentialId);
+    if (
+      credentialId !== undefined &&
+      (credentialId.startsWith(`mcp.${serverId}.`) === false ||
+        /^mcp\.[a-zA-Z0-9._-]+$/u.test(credentialId) === false)
+    )
+      throw new Error("Desktop MCP credential id is invalid for this server.");
+    const envKey =
+      binding.envKey === undefined ? undefined : String(binding.envKey);
+    if (
+      envKey !== undefined &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/u.test(envKey) === false
+    )
+      throw new Error("Desktop MCP credential environment key is invalid.");
+    const secret =
+      binding.secret === undefined ? undefined : String(binding.secret);
+    if (
+      secret !== undefined &&
+      (secret.length === 0 ||
+        secret.trim() !== secret ||
+        /[\u0000-\u001f\u007f]/u.test(secret))
+    )
+      throw new Error("Desktop MCP credential value is invalid.");
+    return {
+      kind: binding.kind,
+      ...(name !== undefined ? { name } : {}),
+      ...(credentialId !== undefined
+        ? { credentialId: credentialId as `mcp.${string}` }
+        : {}),
+      ...(envKey !== undefined ? { envKey } : {}),
+      ...(secret !== undefined ? { secret } : {}),
+    };
   });
 }
 
-function parseDesktopMcpToolPolicies(value: unknown): DesktopMcpServerMutationInput["toolPolicies"] {
-  if (value === undefined) return ;
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Desktop MCP tool policies must be an object.");
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([toolName, raw]) => {
-    if (toolName.trim().length === 0 || typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error("Desktop MCP tool policy is invalid.");
-    const policy = raw as Record<string, unknown>;
-    if (policy.approvalMode !== "auto" && policy.approvalMode !== "ask") throw new Error(`Desktop MCP tool '${toolName}' approval mode is invalid.`);
-    if (Array.isArray(policy.allowedInteractionModes) === false || policy.allowedInteractionModes.length === 0 || policy.allowedInteractionModes.some((mode) => mode !== "chat" && mode !== "plan" && mode !== "build")) throw new Error(`Desktop MCP tool '${toolName}' interaction modes are invalid.`);
-    return [toolName, { approvalMode: policy.approvalMode, allowedInteractionModes: [...new Set(policy.allowedInteractionModes)] as ("chat" | "plan" | "build")[] }] as const;
-  }));
+function parseDesktopMcpToolPolicies(
+  value: unknown,
+): DesktopMcpServerMutationInput["toolPolicies"] {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error("Desktop MCP tool policies must be an object.");
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([toolName, raw]) => {
+      if (
+        toolName.trim().length === 0 ||
+        typeof raw !== "object" ||
+        raw === null ||
+        Array.isArray(raw)
+      )
+        throw new Error("Desktop MCP tool policy is invalid.");
+      const policy = raw as Record<string, unknown>;
+      if (policy.approvalMode !== "auto" && policy.approvalMode !== "ask")
+        throw new Error(
+          `Desktop MCP tool '${toolName}' approval mode is invalid.`,
+        );
+      if (
+        Array.isArray(policy.allowedInteractionModes) === false ||
+        policy.allowedInteractionModes.length === 0 ||
+        policy.allowedInteractionModes.some(
+          (mode) => mode !== "chat" && mode !== "plan" && mode !== "build",
+        )
+      )
+        throw new Error(
+          `Desktop MCP tool '${toolName}' interaction modes are invalid.`,
+        );
+      return [
+        toolName,
+        {
+          approvalMode: policy.approvalMode,
+          allowedInteractionModes: [
+            ...new Set(policy.allowedInteractionModes),
+          ] as ("chat" | "plan" | "build")[],
+        },
+      ] as const;
+    }),
+  );
 }
 
 export type DesktopMicrophoneAccessState =

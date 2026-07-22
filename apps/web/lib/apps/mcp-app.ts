@@ -1,14 +1,11 @@
 import type { McpCapabilityKind } from "@/lib/mcp/contracts";
 
-export function mcpAppCapabilityKey(
-  kind: McpCapabilityKind,
-  capabilityKey: string
-) {
-  return `${kind}:${capabilityKey}`;
+export function mcpAppCapabilityKey(capabilityId: string) {
+  return `mcp:${capabilityId}`;
 }
 
-export function mcpAppRuntimeName(capabilityId: string) {
-  return `mcp.capability.${capabilityId}`;
+export function mcpAppRuntimeName(appKey: string, capabilityKey: string) {
+  return `mcp.app.${encodeURIComponent(appKey)}.${encodeURIComponent(capabilityKey)}`;
 }
 
 export function mcpAppAccessMode(

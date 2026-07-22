@@ -155,6 +155,11 @@ export const mcpCredentialPayloadSchema = z
       tokenEndpointAuthMethod: z
         .enum(["none", "client_secret_basic", "client_secret_post"])
         .default("none"),
+      acceptedProviderTokenTypes: z
+        .array(z.string().trim().min(1).max(40))
+        .min(1)
+        .max(5)
+        .optional(),
     }),
     z.object({
       kind: z.literal("secret_headers"),

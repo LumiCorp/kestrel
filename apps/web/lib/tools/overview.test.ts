@@ -113,30 +113,11 @@ contractTest("web.hermetic", "tool overview builds provider and capability scan 
         available: 0,
       },
     }),
-    makeProvider({
-      key: "source.github",
-      displayName: "GitHub Sources",
-      type: "source_connector",
-      capabilities: [],
-      counts: {
-        total: 0,
-        enabled: 0,
-        available: 0,
-      },
-      connection: {
-        authSource: "system",
-        status: "not_configured",
-        isReady: false,
-        label: "Add GitHub source",
-        lastError: null,
-        metadata: {},
-      },
-    }),
   ]);
 
-  assert.equal(overview.summary.providers.total, 3);
+  assert.equal(overview.summary.providers.total, 2);
   assert.equal(overview.summary.providers.available, 1);
-  assert.equal(overview.summary.providers.setupRequired, 2);
+  assert.equal(overview.summary.providers.setupRequired, 1);
   assert.equal(overview.summary.capabilities.total, 2);
   assert.equal(overview.summary.capabilities.available, 1);
   assert.equal(overview.summary.capabilities.setupRequired, 1);
@@ -144,12 +125,12 @@ contractTest("web.hermetic", "tool overview builds provider and capability scan 
   assert.equal(overview.capabilityRows[1]?.status, "setup_required");
 });
 
-contractTest("web.hermetic", "connection-only providers can still show as available", () => {
+contractTest("web.hermetic", "capability-free custom providers can still show as available", () => {
   const overview = buildToolsOverview([
     makeProvider({
-      key: "discord",
-      displayName: "Discord",
-      type: "inbound_adapter",
+      key: "custom.status",
+      displayName: "Status App",
+      type: "custom_imported",
       capabilities: [],
       counts: {
         total: 0,

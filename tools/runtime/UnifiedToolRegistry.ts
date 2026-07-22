@@ -20,7 +20,10 @@ import {
   parseHostedMcpContext,
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
-import { McpClientManager } from "../../src/mcp/McpClientManager.js";
+import {
+  McpClientManager,
+  type McpOAuthProviderFactory,
+} from "../../src/mcp/McpClientManager.js";
 import {
   createRuntimeFailure,
   RunCancelledError,
@@ -65,6 +68,7 @@ export interface UnifiedToolRegistryOptions {
   mcpManager?: McpToolProvider | undefined;
   env?: NodeJS.ProcessEnv | undefined;
   fetchImpl?: typeof fetch | undefined;
+  mcpOAuthProviderFactory?: McpOAuthProviderFactory | undefined;
 }
 
 export interface McpToolProvider {
@@ -102,7 +106,11 @@ const MCP_DEFAULT_CAPABILITY: ToolCapabilityMetadata = {
   approvalCapabilities: ["mcp.invoke"],
 };
 
-const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set(["dialog.open", "dialog.send", "dialog.close"]);
+const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set([
+  "dialog.open",
+  "dialog.send",
+  "dialog.close",
+]);
 const INTERNAL_ONLY_RUNTIME_TOOL_NAMES = new Set([
   "agent.spawn",
   "delegate.spawn_child",
@@ -121,8 +129,19 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   private readonly builtInContext: SharedToolContext;
   private readonly mcpManager: McpToolProvider;
   private readonly hostedMcpScopes = new Map<string, HostedMcpScope>();
+  // AUTHORIZATION INVARIANT: the hosted Environment stores the ticket under
+  // its requested execution run ID, but ExecutionEngine may create a different
+  // internal run ID for tool calls. Do not assume those IDs are equal or
+  // replace the session index with a single run-ID lookup.
   private readonly executionTicketsByRun = new Map<string, string>();
-  private readonly workspaceSkillReadProgress = new Map<string, WorkspaceSkillReadProgress>();
+  private readonly workspaceSkillReadProgress = new Map<
+    string,
+    WorkspaceSkillReadProgress
+  >();
+  private readonly executionTicketsBySession = new Map<
+    string,
+    Map<string, string>
+  >();
 
   private defaultAllowlist: Set<string>;
   private mcpStatus: McpStatusSnapshot = {
@@ -141,13 +160,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     this.builtInToolSpecs = new Map(
       defaultToolCatalog
         .toModelTools(builtInNames)
-        .map((tool) => [tool.name, tool] as const)
+        .map((tool) => [tool.name, tool] as const),
     );
 
     this.builtInCapabilities = new Map(
       defaultToolCatalog
         .toCapabilityManifest(builtInNames)
-        .map((capability) => [capability.name, capability] as const)
+        .map((capability) => [capability.name, capability] as const),
     );
 
     if (options.mcpManager !== undefined) {
@@ -157,6 +176,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         servers: options.mcpServers ?? [],
         env: options.env,
         fetchImpl: options.fetchImpl,
+        oauthProviderFactory: options.mcpOAuthProviderFactory,
       });
     }
   }
@@ -172,23 +192,31 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   async refreshForRuntimeTurn(
-    input: HostedMcpRuntimeTurnInput
+    input: HostedMcpRuntimeTurnInput,
   ): Promise<ToolRuntimeStatus> {
     if (this.initialized === false) {
       await this.refresh();
     }
     if (input.mcpAuthorization !== undefined && input.runId !== undefined) {
-      this.executionTicketsByRun.set(
-        input.runId,
-        parseExecutionTicketAuthorization(input.mcpAuthorization)
+      const executionTicket = parseExecutionTicketAuthorization(
+        input.mcpAuthorization,
       );
+      this.executionTicketsByRun.set(input.runId, executionTicket);
+      if (input.sessionId !== undefined) {
+        // Preserve every requested-run ticket so the internal engine run can
+        // use a session fallback only when that fallback is unambiguous.
+        const tickets =
+          this.executionTicketsBySession.get(input.sessionId) ?? new Map();
+        tickets.set(input.runId, executionTicket);
+        this.executionTicketsBySession.set(input.sessionId, tickets);
+      }
     }
     if (input.mcpContext === undefined) {
       if (input.mcpAuthorization !== undefined && input.runId === undefined) {
         throw createRuntimeFailure(
           "RUNTIME_AUTHORIZATION_CONTEXT_INVALID",
           "runId is required when execution authorization is provided without mcpContext",
-          { recoverable: false }
+          { recoverable: false },
         );
       }
       return toToolRuntimeStatus(this.getMcpStatus(), this.builtInContext);
@@ -234,17 +262,31 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     );
   }
 
-  clearRuntimeTurnAuthorization(runId: string): void {
+  clearRuntimeTurnAuthorization(runId: string, sessionId?: string): void {
+    // Clear both indexes together. Leaving the session entry behind could
+    // authorize a later internal engine run with a completed turn's ticket.
     this.executionTicketsByRun.delete(runId);
     for (const key of this.workspaceSkillReadProgress.keys()) {
-      if (key.startsWith(`${runId}\0`)) this.workspaceSkillReadProgress.delete(key);
+      if (key.startsWith(`${runId}\0`))
+        this.workspaceSkillReadProgress.delete(key);
+    }
+    const sessionIds =
+      sessionId === undefined
+        ? [...this.executionTicketsBySession.keys()]
+        : [sessionId];
+    for (const id of sessionIds) {
+      const tickets = this.executionTicketsBySession.get(id);
+      tickets?.delete(runId);
+      if (tickets?.size === 0) {
+        this.executionTicketsBySession.delete(id);
+      }
     }
   }
 
   resolveAvailableAllowlistForRuntimeTurn(
     names: string[],
     input: HostedMcpRuntimeTurnInput,
-    options: { includeGrantedMcpTools: boolean }
+    options: { includeGrantedMcpTools: boolean },
   ): string[] {
     const snapshot = this.resolveMcpSnapshotFromTurnInput(input);
     const available = new Set(this.listAvailableToolNames(snapshot));
@@ -252,7 +294,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       ? [...names, ...snapshot.tools.map((tool) => tool.namespacedToolName)]
       : names;
     return [...new Set(requested)].filter(
-      (name) => available.has(name) || this.isRuntimeBuiltInToolName(name)
+      (name) => available.has(name) || this.isRuntimeBuiltInToolName(name),
     );
   }
 
@@ -320,7 +362,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       }
 
       const mcpTool = mcpStatus.tools.find(
-        (tool) => tool.namespacedToolName === name
+        (tool) => tool.namespacedToolName === name,
       );
       if (mcpTool === undefined || mcpTool.presentation === undefined) {
         continue;
@@ -336,7 +378,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   getCapabilityManifest(
-    options: ToolRegistryListOptions = {}
+    options: ToolRegistryListOptions = {},
   ): CapabilityManifestItem[] {
     const manifest: CapabilityManifestItem[] = [];
     const scopedContext = this.resolveScopedContext(options.runContext);
@@ -373,7 +415,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       }
 
       const mcpTool = mcpStatus.tools.find(
-        (tool) => tool.namespacedToolName === name
+        (tool) => tool.namespacedToolName === name,
       );
       if (mcpTool === undefined || mcpTool.presentation === undefined) {
         continue;
@@ -386,7 +428,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         costClass: MCP_DEFAULT_CAPABILITY.costClass,
         executionClass: MCP_DEFAULT_CAPABILITY.executionClass,
         ...(mcpTool.presentation.allowedInteractionModes !== undefined
-          ? { allowedInteractionModes: [...mcpTool.presentation.allowedInteractionModes] }
+          ? {
+              allowedInteractionModes: [
+                ...mcpTool.presentation.allowedInteractionModes,
+              ],
+            }
           : {}),
         capabilityClasses: [...mcpTool.presentation.capabilityClasses],
         approvalCapabilities:
@@ -420,14 +466,14 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   resolveAvailableAllowlist(names: string[]): string[] {
     const available = new Set(this.listAvailableToolNames(this.mcpStatus));
     return [...new Set(names)].filter(
-      (name) => available.has(name) || this.isRuntimeBuiltInToolName(name)
+      (name) => available.has(name) || this.isRuntimeBuiltInToolName(name),
     );
   }
 
   async validateInput(
     name: string,
     input: unknown,
-    options: ToolGatewayCallOptions = {}
+    options: ToolGatewayCallOptions = {},
   ): Promise<unknown> {
     const scopedContext = this.resolveScopedContext(options.runContext);
     if (scopedContext.allowlist.has(name) === false) {
@@ -439,7 +485,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           toolName: name,
           classification: "configuration",
           recoverable: false,
-        }
+        },
       );
     }
     if (INTERNAL_ONLY_RUNTIME_TOOL_NAMES.has(name)) {
@@ -451,7 +497,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           toolName: name,
           classification: "policy",
           recoverable: false,
-        }
+        },
       );
     }
     if (
@@ -466,7 +512,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           toolName: name,
           classification: "policy",
           recoverable: true,
-        }
+        },
       );
     }
 
@@ -477,7 +523,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         ? normalizeToolActionInput(
             name,
             recordInput,
-            activeContext.fileSystem?.workspaceRoot
+            activeContext.fileSystem?.workspaceRoot,
           )
         : input;
     const schema = this.resolveInputSchema(name, options.runContext);
@@ -494,7 +540,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         throw createBuiltInSchemaValidationError(
           name,
           schemaSanitizedInput,
-          validator.errors ?? []
+          validator.errors ?? [],
         );
       }
       throw new RuntimeFailure(
@@ -508,7 +554,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             keyword: error.keyword,
             message: error.message,
           })),
-        }
+        },
       );
     }
 
@@ -518,7 +564,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   async call(
     name: string,
     input: unknown,
-    options: ToolGatewayCallOptions = {}
+    options: ToolGatewayCallOptions = {},
   ) {
     this.throwIfAborted(options.signal);
     const scopedContext = this.resolveScopedContext(options.runContext);
@@ -535,7 +581,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             toolName: name,
             classification: "policy",
             recoverable: true,
-          }
+          },
         );
       }
 
@@ -547,7 +593,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           : {
               ...activeContext,
               toolConsole: options.console,
-            }
+            },
       );
       const builtIn = handlers[name];
 
@@ -560,7 +606,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             toolName: name,
             classification: "configuration",
             recoverable: false,
-          }
+          },
         );
       }
 
@@ -580,7 +626,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const startedAt = new Date().toISOString();
       try {
         const output = await this.resolveMcpManager(
-          options.runContext
+          options.runContext,
         ).callTool(name, validatedInput);
         this.throwIfAborted(options.signal);
         return buildAgentToolSuccessResult({
@@ -617,7 +663,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         toolName: name,
         classification: "configuration",
         recoverable: false,
-      }
+      },
     );
   }
 
@@ -625,7 +671,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     await Promise.all([
       this.mcpManager.close(),
       ...[...this.hostedMcpScopes.values()].map((scope) =>
-        scope.manager.close()
+        scope.manager.close(),
       ),
     ]);
     this.hostedMcpScopes.clear();
@@ -634,7 +680,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
 
   private resolveInputSchema(
     name: string,
-    runContext: ToolRunContext | undefined
+    runContext: ToolRunContext | undefined,
   ): Record<string, unknown> {
     const builtIn = this.builtInToolSpecs.get(name);
     if (builtIn !== undefined) {
@@ -654,13 +700,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         toolName: name,
         classification: "configuration",
         recoverable: false,
-      }
+      },
     );
   }
 
   private getValidator(
     name: string,
-    schema: Record<string, unknown>
+    schema: Record<string, unknown>,
   ): ValidateFunction {
     const schemaKey = `${name}:${stringifySchema(schema)}`;
     const cached = this.validatorCache.get(schemaKey);
@@ -679,7 +725,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         {
           toolName: name,
           reason: toSchemaError(error).message,
-        }
+        },
       );
     }
   }
@@ -722,16 +768,16 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
 
   private resolveExposedMcpTool(
     name: string,
-    runContext: ToolRunContext | undefined
+    runContext: ToolRunContext | undefined,
   ) {
     const tool = this.resolveMcpSnapshot(runContext).tools.find(
-      (candidate) => candidate.namespacedToolName === name
+      (candidate) => candidate.namespacedToolName === name,
     );
     return tool?.presentation !== undefined ? tool : undefined;
   }
 
   private resolveMcpManager(
-    runContext: ToolRunContext | undefined
+    runContext: ToolRunContext | undefined,
   ): McpToolProvider {
     const grantId = readHostedMcpGrantId(runContext?.payload);
     if (!grantId) {
@@ -742,7 +788,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       throw createRuntimeFailure(
         "MCP_HOSTED_SCOPE_UNAVAILABLE",
         "The hosted MCP grant is not connected for this run.",
-        { grantId, recoverable: false }
+        { grantId, recoverable: false },
       );
     }
     scope.lastUsedAt = Date.now();
@@ -750,7 +796,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   private resolveMcpSnapshot(
-    runContext: ToolRunContext | undefined
+    runContext: ToolRunContext | undefined,
   ): McpStatusSnapshot {
     const grantId = readHostedMcpGrantId(runContext?.payload);
     if (!grantId) {
@@ -763,7 +809,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   private resolveMcpSnapshotFromTurnInput(
-    input: HostedMcpRuntimeTurnInput
+    input: HostedMcpRuntimeTurnInput,
   ): McpStatusSnapshot {
     if (input.mcpContext === undefined) {
       return this.mcpStatus;
@@ -792,7 +838,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
 
   private assertHostedToolNamesSafe(snapshot: McpStatusSnapshot): void {
     const staticNames = new Set(
-      this.mcpStatus.tools.map((tool) => tool.namespacedToolName)
+      this.mcpStatus.tools.map((tool) => tool.namespacedToolName),
     );
     for (const tool of snapshot.tools) {
       if (
@@ -802,7 +848,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         throw createRuntimeFailure(
           "MCP_TOOL_NAME_COLLISION",
           `Hosted MCP tool '${tool.namespacedToolName}' conflicts with an existing runtime tool.`,
-          { toolName: tool.namespacedToolName, recoverable: false }
+          { toolName: tool.namespacedToolName, recoverable: false },
         );
       }
     }
@@ -826,20 +872,34 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         runContext.runId,
         runContext.sessionId,
         runContext.payload,
-        runContext.sessionState
+        runContext.sessionState,
       ),
       hasTrustedManagedWorktreeBinding(
         runContext.runId,
         runContext.sessionState,
         runContext.payload,
-        runContext.sessionId
+        runContext.sessionId,
       ),
+      // Lookup order is security-sensitive: exact run first; then the session
+      // bridge required because the Environment run ID and engine run ID can
+      // differ; finally the hosted MCP grant. Never make the session bridge
+      // choose among multiple active tickets.
       this.executionTicketsByRun.get(runContext.runId) ??
+        this.resolveUnambiguousSessionExecutionTicket(runContext.sessionId) ??
         this.hostedMcpScopes.get(readHostedMcpGrantId(runContext.payload) ?? "")
-          ?.executionTicket
+          ?.executionTicket,
     );
   }
 
+  private resolveUnambiguousSessionExecutionTicket(
+    sessionId: string,
+  ): string | undefined {
+    const tickets = this.executionTicketsBySession.get(sessionId);
+    // Overlapping turns in one session must fail closed. Selecting either
+    // ticket would break the run isolation this index exists to preserve.
+    if (tickets?.size !== 1) return;
+    return tickets.values().next().value;
+  }
 }
 
 async function annotateWorkspaceSkillRead(input: {
@@ -851,7 +911,11 @@ async function annotateWorkspaceSkillRead(input: {
 }): Promise<AgentToolResult> {
   const wrapped = isAgentToolResult(input.output)
     ? input.output
-    : buildAgentToolSuccessResult({ toolName: input.toolName, input: input.input, output: input.output });
+    : buildAgentToolSuccessResult({
+        toolName: input.toolName,
+        input: input.input,
+        output: input.output,
+      });
   if (input.toolName !== "fs.read_text") return wrapped;
   const request = asRecord(input.input);
   const result = asRecord(wrapped.auditRecord.output);
@@ -862,29 +926,51 @@ async function annotateWorkspaceSkillRead(input: {
   const catalog = asRecord(input.runContext?.payload)?.workspaceSkills;
   if (!Array.isArray(catalog)) return wrapped;
   const match = catalog.find((candidate) => {
-    const skillFile = normalizeSkillEvidencePath(asRecord(candidate)?.skillFile);
-    return skillFile !== undefined && (skillFile === requestedPath || skillFile === resultPath);
+    const skillFile = normalizeSkillEvidencePath(
+      asRecord(candidate)?.skillFile,
+    );
+    return (
+      skillFile !== undefined &&
+      (skillFile === requestedPath || skillFile === resultPath)
+    );
   });
   const skill = asRecord(match);
-  const installationId = typeof skill?.installationId === "string" ? skill.installationId : undefined;
+  const installationId =
+    typeof skill?.installationId === "string"
+      ? skill.installationId
+      : undefined;
   const name = typeof skill?.name === "string" ? skill.name : undefined;
-  const commitSha = typeof skill?.commitSha === "string" ? skill.commitSha : undefined;
-  const contentDigest = typeof skill?.contentDigest === "string" ? skill.contentDigest : undefined;
-  const skillFile = typeof skill?.skillFile === "string" ? skill.skillFile : undefined;
-  if (!installationId || !name || !commitSha || !contentDigest || !skillFile) return wrapped;
+  const commitSha =
+    typeof skill?.commitSha === "string" ? skill.commitSha : undefined;
+  const contentDigest =
+    typeof skill?.contentDigest === "string" ? skill.contentDigest : undefined;
+  const skillFile =
+    typeof skill?.skillFile === "string" ? skill.skillFile : undefined;
+  if (!installationId || !name || !commitSha || !contentDigest || !skillFile)
+    return wrapped;
   const runId = input.runContext?.runId;
   const sessionId = input.runContext?.sessionId;
-  const revision = typeof result.revision === "string" ? result.revision : undefined;
-  const startByte = typeof range?.startByte === "number" ? range.startByte : undefined;
-  const endByte = typeof range?.endByte === "number" ? range.endByte : undefined;
-  if (!runId || !sessionId || !revision || startByte === undefined || endByte === undefined) return wrapped;
+  const revision =
+    typeof result.revision === "string" ? result.revision : undefined;
+  const startByte =
+    typeof range?.startByte === "number" ? range.startByte : undefined;
+  const endByte =
+    typeof range?.endByte === "number" ? range.endByte : undefined;
+  if (
+    !runId ||
+    !sessionId ||
+    !revision ||
+    startByte === undefined ||
+    endByte === undefined
+  )
+    return wrapped;
   const progressKey = `${runId}\0${sessionId}\0${installationId}\0${skillFile}`;
   const previous = input.progress.get(progressKey);
-  const isContiguous = startByte === 0 || (
-    previous !== undefined &&
-    previous.revision === revision &&
-    previous.nextOffsetBytes === startByte
-  );
+  const isContiguous =
+    startByte === 0 ||
+    (previous !== undefined &&
+      previous.revision === revision &&
+      previous.nextOffsetBytes === startByte);
   if (!isContiguous) {
     input.progress.delete(progressKey);
     return wrapped;
@@ -895,10 +981,18 @@ async function annotateWorkspaceSkillRead(input: {
   }
   input.progress.delete(progressKey);
   const workspace = asRecord(asRecord(input.runContext?.payload)?.workspace);
-  const workspaceRoot = typeof workspace?.workspaceRoot === "string" ? workspace.workspaceRoot : undefined;
+  const workspaceRoot =
+    typeof workspace?.workspaceRoot === "string"
+      ? workspace.workspaceRoot
+      : undefined;
   if (!workspaceRoot) return wrapped;
-  const validated = await validateWorkspaceSkillPackage(path.dirname(path.join(workspaceRoot, ...skillFile.split("/"))));
-  if (validated.contentDigest !== contentDigest || validated.manifest.name !== name) {
+  const validated = await validateWorkspaceSkillPackage(
+    path.dirname(path.join(workspaceRoot, ...skillFile.split("/"))),
+  );
+  if (
+    validated.contentDigest !== contentDigest ||
+    validated.manifest.name !== name
+  ) {
     throw createRuntimeFailure(
       "WORKSPACE_SKILL_INTEGRITY_FAILED",
       `Installed workspace skill '${name}' changed after the run snapshot was recorded.`,
@@ -935,7 +1029,7 @@ function normalizeSkillEvidencePath(value: unknown): string | undefined {
 function createBuiltInSchemaValidationError(
   toolName: string,
   input: unknown,
-  errors: ErrorObject[]
+  errors: ErrorObject[],
 ): RuntimeFailure {
   const firstError = errors[0];
   const field =
@@ -963,7 +1057,7 @@ function createBuiltInSchemaValidationError(
         keyword: error.keyword,
         message: error.message,
       })),
-    }
+    },
   );
 }
 
@@ -1016,7 +1110,7 @@ function readAjvErrorExpectation(error: ErrorObject): string {
 
 function readAjvErrorInvalidValues(
   input: unknown,
-  error: ErrorObject
+  error: ErrorObject,
 ): unknown[] {
   if (error.keyword === "required") {
     return [];
@@ -1083,7 +1177,7 @@ function resolveScopedRunContext(
   baseContext: SharedToolContext,
   runtime: RuntimeToolRunContext,
   trustedManagedWorktree: boolean,
-  ephemeralExecutionTicket?: string | undefined
+  ephemeralExecutionTicket?: string | undefined,
 ): {
   allowlist: ReadonlySet<string>;
   builtInContext: SharedToolContext;
@@ -1092,7 +1186,7 @@ function resolveScopedRunContext(
   const runtimeAssembly = asRecord(orchestration?.runtimeAssembly);
   const toolAllowlist = Array.isArray(runtimeAssembly?.toolAllowlist)
     ? runtimeAssembly.toolAllowlist.filter(
-        (value): value is string => typeof value === "string"
+        (value): value is string => typeof value === "string",
       )
     : undefined;
   const workspace = asRecord(asRecord(payload)?.workspace);
@@ -1127,13 +1221,13 @@ function resolveScopedRunContext(
     readDevShellSourceWriteApprovalGrants(payload);
   const sourceWriteAuthority = resolveDevShellSourceWriteAuthority(
     workspace,
-    trustedManagedWorktree
+    trustedManagedWorktree,
   );
   const sourceWriteGuardAllowedWriteRoots =
     resolveDevShellSourceWriteAllowedWriteRoots(
       workspaceRoot,
       sourceWriteAuthority,
-      trustedManagedWorktree
+      trustedManagedWorktree,
     );
   const scopedBaseContext: SharedToolContext = {
     ...baseContext,
@@ -1195,7 +1289,7 @@ function resolveScopedRunContext(
 }
 
 function readInteractionMode(
-  payload: unknown
+  payload: unknown,
 ): "chat" | "plan" | "build" | undefined {
   const direct = asRecord(payload)?.interactionMode;
   if (direct === "chat" || direct === "plan" || direct === "build") {
@@ -1221,7 +1315,7 @@ function readInteractionMode(
 
 function resolveDevShellSourceWriteAuthority(
   workspace: Record<string, unknown> | undefined,
-  trustedManagedWorktree: boolean
+  trustedManagedWorktree: boolean,
 ): "source_write" | undefined {
   if (trustedManagedWorktree) {
     return "source_write";
@@ -1235,7 +1329,7 @@ function resolveDevShellSourceWriteAuthority(
 function resolveDevShellSourceWriteAllowedWriteRoots(
   workspaceRoot: string | undefined,
   sourceWriteAuthority: "source_write" | undefined,
-  trustedManagedWorktree: boolean
+  trustedManagedWorktree: boolean,
 ): string[] | undefined {
   if (
     sourceWriteAuthority !== "source_write" ||
@@ -1251,7 +1345,7 @@ function resolveRuntimeToolRunContext(
   runId: string,
   sessionId: string,
   payload: unknown,
-  sessionState: unknown
+  sessionState: unknown,
 ): RuntimeToolRunContext {
   const payloadRecord = asRecord(payload);
   const orchestration = asRecord(payloadRecord?.orchestration);
@@ -1298,15 +1392,15 @@ function hasTrustedManagedWorktreeBinding(
   runId: string,
   state: unknown,
   payload: unknown,
-  sessionId: string
+  sessionId: string,
 ): boolean {
   const stateRecord = asRecord(state);
   const binding =
     asRecord(
-      asRecord(asRecord(stateRecord?.agent)?.exec)?.managedWorktreeBinding
+      asRecord(asRecord(stateRecord?.agent)?.exec)?.managedWorktreeBinding,
     ) ??
     asRecord(
-      asRecord(asRecord(stateRecord?.react)?.exec)?.managedWorktreeBinding
+      asRecord(asRecord(stateRecord?.react)?.exec)?.managedWorktreeBinding,
     );
   if (binding?.status !== "bound") {
     return false;
@@ -1344,7 +1438,7 @@ function readDevShellSourceWriteApprovalGrants(payload: unknown) {
     const writablePaths = Array.isArray(record?.writablePaths)
       ? record.writablePaths.filter(
           (value): value is string =>
-            typeof value === "string" && value.trim().length > 0
+            typeof value === "string" && value.trim().length > 0,
         )
       : [];
     if (
@@ -1391,7 +1485,7 @@ function readHostedMcpGrantId(payload: unknown): string | undefined {
 
 function combineMcpSnapshots(
   base: McpStatusSnapshot,
-  hosted: McpStatusSnapshot
+  hosted: McpStatusSnapshot,
 ): McpStatusSnapshot {
   return {
     healthy: base.healthy && hosted.healthy,
@@ -1442,7 +1536,7 @@ function toSchemaError(error: unknown): Error {
 
 function isRuntimeBuiltInTool(
   name: string,
-  capabilities: Map<string, CapabilityManifestItem>
+  capabilities: Map<string, CapabilityManifestItem>,
 ): boolean {
   const capability = capabilities.get(name);
   return capability?.freshnessClass === "runtime";
@@ -1450,7 +1544,7 @@ function isRuntimeBuiltInTool(
 
 function isBuiltInToolDisabledByContext(
   name: string,
-  context: SharedToolContext
+  context: SharedToolContext,
 ): boolean {
   if (name === "code.execute") {
     return context.codeMode?.enabled !== true;

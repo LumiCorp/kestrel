@@ -9,11 +9,11 @@ import { contractTest } from "../helpers/contract-test.js";
 
 
 contractTest("runtime.hermetic", "tool catalog resolves model tool definitions by allowlist", () => {
-  const tools = defaultToolCatalog.toModelTools(["free.time.current", "free.hn.top"]);
+  const tools = defaultToolCatalog.toModelTools(["free.time.current", "free.exchange.rate"]);
 
   assert.equal(tools.length, 2);
   assert.equal(tools[0]?.name, "free.time.current");
-  assert.equal(tools[1]?.name, "free.hn.top");
+  assert.equal(tools[1]?.name, "free.exchange.rate");
 });
 
 contractTest("runtime.hermetic", "tool catalog wraps raw handlers in AgentToolResult envelopes", async () => {

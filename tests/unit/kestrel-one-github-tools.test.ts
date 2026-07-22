@@ -25,7 +25,7 @@ contractTest("runtime.hermetic", "GitHub mutation tools require external confirm
   );
 });
 
-contractTest("runtime.hermetic", "GitHub action tools send the signed execution ticket and exact approval ID only for mutations", async () => {
+contractTest("runtime.hermetic", "GitHub action tools send the signed execution ticket and exact approval ID whenever policy asks", async () => {
   const requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
   const fetchImpl: typeof fetch = async (_input, init) => {
     requests.push({
@@ -39,6 +39,9 @@ contractTest("runtime.hermetic", "GitHub action tools send the signed execution 
     kestrelOne: {
       appUrl: "https://kestrel.example",
       executionTicket: "signed-environment-ticket",
+      appApprovalModes: {
+        "kestrel_one.github_repository_read": "ask" as const,
+      },
     },
     runtime: {
       runId: "runtime-run",
@@ -63,7 +66,7 @@ contractTest("runtime.hermetic", "GitHub action tools send the signed execution 
   );
   assert.equal(
     requests[0]?.headers.get("x-kestrel-approval-id"),
-    null
+    "runtime-run:4:abc123"
   );
   assert.equal(requests[1]?.body.operation, "issue.create");
   assert.equal(

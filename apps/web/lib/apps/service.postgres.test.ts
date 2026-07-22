@@ -4,11 +4,11 @@ import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth"
 import postgres from "postgres";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-
 const databaseUrl = process.env.KESTREL_APPS_DB_TEST_URL?.trim();
 
 contractTest(
-  "web.postgres", "Environment Apps persist encrypted named connections and capability ceilings",
+  "web.postgres",
+  "Environment Apps persist encrypted named connections and capability ceilings",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
@@ -21,6 +21,10 @@ contractTest(
     process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = privateKey
       .export({ format: "pem", type: "pkcs8" })
       .toString();
+    process.env.KESTREL_MCP_CREDENTIAL_ACTIVE_KEY_ID = "test-key";
+    process.env.KESTREL_MCP_CREDENTIAL_KEYS = JSON.stringify({
+      "test-key": randomBytes(32).toString("base64"),
+    });
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
       new Response("{}", { status: 200 })) as unknown as typeof fetch;
@@ -39,7 +43,10 @@ contractTest(
       googleContract,
       googleOauth,
       googlePolicy,
+      microsoftContract,
+      microsoftOauth,
       githubOauth,
+      officialRemoteConnection,
       mcpControl,
       mcpGrant,
     ] = await Promise.all([
@@ -56,7 +63,10 @@ contractTest(
       import("@/lib/integrations/google-calendar-contract"),
       import("@/lib/integrations/google-calendar-oauth"),
       import("@/lib/integrations/google-calendar-policy"),
+      import("@/lib/integrations/microsoft-365-contract"),
+      import("@/lib/integrations/microsoft-365-oauth"),
       import("@/lib/integrations/github-oauth"),
+      import("./official-remote-connection"),
       import("@/lib/mcp/control-plane"),
       import("@/lib/mcp/grant-service"),
     ]);
@@ -65,6 +75,9 @@ contractTest(
     const organizationId = `apps-org-${suffix}`;
     const userId = `apps-user-${suffix}`;
     const memberId = `apps-member-${suffix}`;
+    const isolatedOrganizationId = `apps-isolated-org-${suffix}`;
+    const isolatedUserId = `apps-isolated-user-${suffix}`;
+    const isolatedMemberId = `apps-isolated-member-${suffix}`;
     const projectId = `apps-project-${suffix}`;
     const threadId = `apps-thread-${suffix}`;
     const workspaceId = `apps-workspace-${suffix}`;
@@ -73,12 +86,18 @@ contractTest(
     const googleProviderAccountId = `apps-google-provider-${suffix}`;
     const githubAuthAccountId = `apps-github-auth-${suffix}`;
     const githubProviderAccountId = `apps-github-provider-${suffix}`;
+    const microsoftAuthAccountId = `apps-microsoft-auth-${suffix}`;
+    const microsoftProviderAccountId = `apps-microsoft-provider-${suffix}`;
     const mcpSnapshotId = crypto.randomUUID();
     const mcpCapabilityId = crypto.randomUUID();
+    const linearSnapshotId = crypto.randomUUID();
+    const linearCapabilityId = crypto.randomUUID();
     const now = new Date();
 
     context.after(async () => {
       globalThis.fetch = originalFetch;
+      await sql`DELETE FROM "organization" WHERE "id" = ${isolatedOrganizationId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${isolatedUserId}`;
       await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
       await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
       await resetDbRuntimeForTests();
@@ -99,11 +118,36 @@ contractTest(
       )
     `;
     await sql`
+      INSERT INTO "user" (
+        "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+      ) VALUES (
+        ${isolatedUserId}, 'Isolated Apps User',
+        ${`${isolatedUserId}@example.test`}, true, ${now}, ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+      VALUES (
+        ${isolatedOrganizationId}, 'Isolated Apps Org',
+        ${`apps-isolated-org-${suffix}`}, ${now}
+      )
+    `;
+    await sql`
       INSERT INTO "account" (
         "id", "accountId", "providerId", "userId", "scope", "createdAt", "updatedAt"
       ) VALUES (
         ${googleAuthAccountId}, ${googleProviderAccountId}, 'google', ${userId},
         ${googleContract.GOOGLE_CALENDAR_SCOPES.join(" ")}, ${now}, ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "account" (
+        "id", "accountId", "providerId", "userId", "scope", "createdAt", "updatedAt"
+      ) VALUES (
+        ${microsoftAuthAccountId}, ${microsoftProviderAccountId},
+        'microsoft-entra-id', ${userId},
+        ${microsoftContract.scopesForMicrosoft365Packs(["outlook"]).join(" ")},
+        ${now}, ${now}
       )
     `;
     await sql`
@@ -119,6 +163,14 @@ contractTest(
         "id", "organizationId", "userId", "role", "createdAt"
       ) VALUES (${memberId}, ${organizationId}, ${userId}, 'owner', ${now})
     `;
+    await sql`
+      INSERT INTO "member" (
+        "id", "organizationId", "userId", "role", "createdAt"
+      ) VALUES (
+        ${isolatedMemberId}, ${isolatedOrganizationId}, ${isolatedUserId},
+        'owner', ${now}
+      )
+    `;
 
     const createdEnvironment =
       await environmentStore.createOrganizationEnvironment({
@@ -131,6 +183,17 @@ contractTest(
         },
       });
     const environmentId = createdEnvironment.environment.id;
+    const isolatedEnvironment =
+      await environmentStore.createOrganizationEnvironment({
+        organizationId: isolatedOrganizationId,
+        userId: isolatedUserId,
+        environment: {
+          name: "Isolated Apps Environment",
+          region: "iad",
+          isDefault: true,
+        },
+      });
+    const isolatedEnvironmentId = isolatedEnvironment.environment.id;
     await sql.begin(async (transaction) => {
       await transaction`
         INSERT INTO "projects" (
@@ -188,16 +251,16 @@ contractTest(
       environmentId,
     });
     const environmentWeather = environmentApps.find(
-      (configuration) => configuration.app.key === "built_in.weather"
+      (configuration) => configuration.app.key === "built_in.weather",
     );
     assert.equal(environmentWeather?.app.connectionModel, "environment");
     assert.equal(environmentWeather?.app.connectionRequirement, "optional");
     assert.equal(environmentWeather?.connections.length, 0);
     assert.equal(
       environmentWeather?.capabilities.find(
-        (capability) => capability.key === "getWeather"
+        (capability) => capability.key === "getWeather",
       )?.enabled,
-      true
+      true,
     );
 
     const initialProjectApps =
@@ -207,7 +270,7 @@ contractTest(
         userId,
       });
     const projectWeather = initialProjectApps.find(
-      (configuration) => configuration.app.key === "built_in.weather"
+      (configuration) => configuration.app.key === "built_in.weather",
     );
     assert.equal(projectWeather?.enabled, true);
     assert.equal(projectWeather?.availableConnections.length, 0);
@@ -230,7 +293,7 @@ contractTest(
       [
         { key: "getWeather", approvalMode: "auto" },
         { key: "forecast", approvalMode: "auto" },
-      ]
+      ],
     );
     await projectAppService.saveProjectAppCapabilityPolicy({
       organizationId,
@@ -250,7 +313,7 @@ contractTest(
       });
     assert.deepEqual(
       weatherWithoutCurrent?.capabilities.map((capability) => capability.key),
-      ["forecast"]
+      ["forecast"],
     );
     await projectAppService.saveProjectAppCapabilityPolicy({
       organizationId,
@@ -271,7 +334,7 @@ contractTest(
         })
       )?.capabilities.find((capability) => capability.key === "getWeather")
         ?.approvalMode,
-      "ask"
+      "ask",
     );
     await projectAppService.setProjectAppEnabled({
       organizationId,
@@ -287,7 +350,7 @@ contractTest(
         appKey: "built_in.weather",
         userId,
       }),
-      null
+      null,
     );
     await projectAppService.setProjectAppEnabled({
       organizationId,
@@ -345,7 +408,7 @@ contractTest(
     assert.equal(configuration.capabilities.length, 10);
     assert.equal(
       JSON.stringify(configuration).includes("tvly-research-secret"),
-      false
+      false,
     );
 
     const credential = await appService.resolveEnvironmentAppCredential({
@@ -392,20 +455,20 @@ contractTest(
         userId,
       });
     const projectTavily = projectConfiguration.find(
-      (configuration) => configuration.app.key === "tavily"
+      (configuration) => configuration.app.key === "tavily",
     );
     assert.equal(projectTavily?.availableConnections.length, 2);
     assert.equal(
       projectTavily?.attachedConnections.find(
-        (connection) => connection.id === research.id
+        (connection) => connection.id === research.id,
       )?.isDefault,
-      true
+      true,
     );
     assert.equal(
       projectTavily?.attachedConnections.find(
-        (connection) => connection.id === primary.id
+        (connection) => connection.id === primary.id,
       )?.isDefault,
-      false
+      false,
     );
 
     const effectiveResearch =
@@ -418,9 +481,9 @@ contractTest(
     assert.equal(effectiveResearch?.connectionId, research.id);
     assert.equal(
       effectiveResearch?.capabilities.some(
-        (capability) => capability.runtimeName === "internet.usage"
+        (capability) => capability.runtimeName === "internet.usage",
       ),
-      false
+      false,
     );
     await assert.rejects(
       projectAppService.saveProjectAppCapabilityPolicy({
@@ -432,7 +495,7 @@ contractTest(
         enabled: true,
         approvalMode: "auto",
       }),
-      /cannot broaden/u
+      /cannot broaden/u,
     );
     await projectAppService.attachProjectAppConnection({
       organizationId,
@@ -465,7 +528,7 @@ contractTest(
         appKey: "tavily",
         userId,
       }),
-      null
+      null,
     );
     await projectAppService.setProjectAppEnabled({
       organizationId,
@@ -494,9 +557,9 @@ contractTest(
     });
     assert.equal(
       afterGrant.capabilities.find(
-        (capability) => capability.key === "research"
+        (capability) => capability.key === "research",
       )?.approvalMode,
-      "ask"
+      "ask",
     );
 
     const issuedAt = Math.floor(Date.now() / 1000);
@@ -536,7 +599,7 @@ contractTest(
       (error: unknown) =>
         error instanceof tavilyRuntime.TavilyRuntimeError &&
         error.code === "TAVILY_APPROVAL_REQUIRED" &&
-        error.status === 409
+        error.status === 409,
     );
     const authorizedResearch = await tavilyRuntime.authorizeTavilyRuntime({
       ticket,
@@ -619,21 +682,22 @@ contractTest(
           method: "POST",
           path: ["previews"],
           body: { port },
-        })
-      )
+        }),
+      ),
     );
     assert.equal(
-      concurrentPublishes.filter((result) => result.status === "fulfilled").length,
-      5
+      concurrentPublishes.filter((result) => result.status === "fulfilled")
+        .length,
+      5,
     );
     assert.equal(
       concurrentPublishes.filter(
         (result) =>
           result.status === "rejected" &&
           result.reason instanceof appRuntime.AppRuntimeError &&
-          result.reason.code === "WORKSPACE_PREVIEW_LIMIT_REACHED"
+          result.reason.code === "WORKSPACE_PREVIEW_LIMIT_REACHED",
       ).length,
-      1
+      1,
     );
     const activePreviews = await sql<
       Array<{ id: string; port: number; status: string; expiresAt: Date }>
@@ -646,7 +710,7 @@ contractTest(
     assert.equal(activePreviews.length, 5);
     assert.deepEqual(
       activePreviews.map((preview) => preview.status),
-      ["active", "active", "active", "active", "active"]
+      ["active", "active", "active", "active", "active"],
     );
 
     await sql`
@@ -664,8 +728,10 @@ contractTest(
     };
     assert.equal(listedBody.previews.length, 4);
     assert.equal(
-      listedBody.previews.some((preview) => preview.id === activePreviews[4]!.id),
-      false
+      listedBody.previews.some(
+        (preview) => preview.id === activePreviews[4]!.id,
+      ),
+      false,
     );
     const [expiredPreview] = await sql<Array<{ status: string }>>`
       SELECT "status" FROM "workspace_preview_leases"
@@ -685,7 +751,7 @@ contractTest(
     assert.equal(renewedBody.preview.id, activePreviews[0]!.id);
     assert.ok(
       new Date(renewedBody.preview.expiresAt).getTime() >
-        activePreviews[0]!.expiresAt.getTime()
+        activePreviews[0]!.expiresAt.getTime(),
     );
 
     let failNextGatewayRefresh = true;
@@ -705,7 +771,7 @@ contractTest(
       }),
       (error: unknown) =>
         error instanceof appRuntime.AppRuntimeError &&
-        error.code === "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE"
+        error.code === "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE",
     );
     const [closingPreview] = await sql<Array<{ status: string }>>`
       SELECT "status" FROM "workspace_preview_leases"
@@ -738,9 +804,12 @@ contractTest(
       }),
     ]);
     const samePortBodies = await Promise.all(
-      samePortPublishes.map((response) => response.json() as Promise<{
-        preview: { id: string };
-      }>)
+      samePortPublishes.map(
+        (response) =>
+          response.json() as Promise<{
+            preview: { id: string };
+          }>,
+      ),
     );
     assert.equal(samePortBodies[0]!.preview.id, samePortBodies[1]!.preview.id);
     const samePortRows = await sql<Array<{ count: string }>>`
@@ -760,7 +829,7 @@ contractTest(
         appKey: "ngrok",
         connectionId: ngrokConnection.id,
       }),
-      /Environment gateway refresh failed \(503\)/u
+      /Environment gateway refresh failed \(503\)/u,
     );
     const previewsAwaitingDisconnect = await sql<Array<{ count: string }>>`
       SELECT count(*)::text AS "count"
@@ -771,7 +840,7 @@ contractTest(
     assert.equal(previewsAwaitingDisconnect[0]?.count, "4");
     assert.equal(
       await environmentReconcile.reconcileClosingWorkspacePreviews(),
-      4
+      4,
     );
     const remainingNgrokPreviews = await sql<Array<{ count: string }>>`
       SELECT count(*)::text AS "count"
@@ -839,7 +908,7 @@ contractTest(
     for (const capabilityKey of googleContract.GOOGLE_CALENDAR_CAPABILITIES) {
       const approvalMode =
         googleContract.GOOGLE_CALENDAR_WRITE_CAPABILITIES.some(
-          (candidate) => candidate === capabilityKey
+          (candidate) => candidate === capabilityKey,
         )
           ? "ask"
           : "auto";
@@ -876,7 +945,7 @@ contractTest(
         accessToken: "google-access-token-not-persisted",
         scopes: [...googleContract.GOOGLE_CALENDAR_SCOPES],
         shareAvailability: true,
-      }
+      },
     );
     const googleAccess =
       await projectAppService.resolveEffectiveProjectAppAccess({
@@ -934,8 +1003,277 @@ contractTest(
         appKey: googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY,
         userId,
       }),
-      null
+      null,
     );
+
+    await appService.setAppInstallation({
+      organizationId,
+      appKey: microsoftContract.MICROSOFT_365_PROVIDER_KEY,
+      actorUserId: userId,
+      installed: true,
+    });
+    for (const capabilityKey of microsoftContract.MICROSOFT_365_CAPABILITIES) {
+      await appService.saveEnvironmentAppCapabilityGrant({
+        organizationId,
+        environmentId,
+        appKey: microsoftContract.MICROSOFT_365_PROVIDER_KEY,
+        capabilityKey,
+        grant: {
+          enabled: true,
+          approvalMode: microsoftContract.requiresMicrosoft365Approval(
+            capabilityKey,
+          )
+            ? "ask"
+            : "auto",
+          loggingMode: "metadata_only",
+          rateLimitMode: "strict",
+        },
+      });
+    }
+    globalThis.fetch = (async (request) => {
+      if (String(request).includes("graph.microsoft.com/oidc/userinfo")) {
+        return Response.json({
+          sub: microsoftProviderAccountId,
+          name: "Microsoft User",
+          email: `${userId}@example.test`,
+        });
+      }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const microsoftConnection = await microsoftOauth.syncMicrosoft365Connection(
+      {
+        organizationId,
+        userId,
+        authAccountId: microsoftAuthAccountId,
+        providerAccountId: microsoftProviderAccountId,
+        accessToken: "microsoft-access-token-not-persisted",
+        scopes: microsoftContract.scopesForMicrosoft365Packs(["outlook"]),
+        packs: ["outlook"],
+      },
+    );
+    await projectAppService.attachProjectAppConnection({
+      organizationId,
+      projectId,
+      appKey: microsoftContract.MICROSOFT_365_PROVIDER_KEY,
+      connectionId: microsoftConnection.id,
+      actorUserId: userId,
+      scope: "personal",
+      isDefault: true,
+    });
+    const microsoftAccess =
+      await projectAppService.resolveEffectiveProjectAppAccess({
+        organizationId,
+        projectId,
+        appKey: microsoftContract.MICROSOFT_365_PROVIDER_KEY,
+        userId,
+      });
+    assert.equal(microsoftAccess?.connectionId, microsoftConnection.id);
+    assert.deepEqual(
+      microsoftAccess?.capabilities.map((capability) => capability.key).sort(),
+      ["outlook.calendar.read", "outlook.mail.read", "outlook.mail.send"],
+    );
+
+    await appService.setAppInstallation({
+      organizationId,
+      appKey: "linear",
+      actorUserId: userId,
+      installed: true,
+    });
+    const linearConnectionSummary =
+      await officialRemoteConnection.connectOfficialRemoteTokenApp({
+        organizationId,
+        environmentId,
+        actorUserId: userId,
+        appKey: "linear",
+        connection: {
+          name: "Primary",
+          apiKey: "lin_api_first",
+        },
+      });
+    assert.ok(linearConnectionSummary);
+    const rotatedLinearConnection =
+      await officialRemoteConnection.connectOfficialRemoteTokenApp({
+        organizationId,
+        environmentId,
+        actorUserId: userId,
+        appKey: "linear",
+        connection: {
+          name: "Primary",
+          apiKey: "lin_api_rotated",
+        },
+      });
+    assert.equal(rotatedLinearConnection?.id, linearConnectionSummary.id);
+    const [linearCredentialCounts] = await sql<
+      Array<{ active: number; revoked: number }>
+    >`
+      SELECT
+        count(*) FILTER (WHERE "status" = 'active')::int AS "active",
+        count(*) FILTER (WHERE "status" = 'revoked')::int AS "revoked"
+      FROM "mcp_credentials"
+      WHERE "environment_id" = ${environmentId}
+    `;
+    assert.deepEqual(linearCredentialCounts, { active: 1, revoked: 1 });
+    const linearDetail = await mcpControl.getEnvironmentMcpServer({
+      organizationId,
+      environmentId,
+      serverId: linearConnectionSummary.id,
+    });
+    assert.ok(linearDetail);
+    const linearServer = linearDetail.server;
+    assert.notEqual(linearServer.providerKey, "linear");
+    const [linearConnection] = await sql<Array<{ appKey: string }>>`
+      SELECT "app_key" AS "appKey"
+      FROM "app_connections"
+      WHERE "id" = ${linearServer.id}
+    `;
+    assert.equal(linearConnection?.appKey, "linear");
+    await sql`
+      INSERT INTO "tool_capabilities" (
+        "provider_key", "key", "runtime_name", "display_name", "description",
+        "access_mode", "default_enabled", "default_approval_mode",
+        "default_surface_access", "default_rate_limit_mode", "default_logging_mode",
+        "default_settings", "metadata", "created_at", "updated_at"
+      ) VALUES (
+        ${linearServer.providerKey}, 'tool.issue.create', 'mcp.linear.issue.create',
+        'Create issue', 'Create an issue in Linear.', 'write', false, 'deny',
+        ${sql.json({ chat: true, admin: false })}, 'default', 'full',
+        ${sql.json({})}, ${sql.json({})}, ${now}, ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "mcp_capability_snapshots" (
+        "id", "server_id", "protocol_version", "capability_digest", "server_info",
+        "status", "discovered_at", "created_at"
+      ) VALUES (
+        ${linearSnapshotId}, ${linearServer.id}, '2025-11-25',
+        ${`sha256:${"2".repeat(64)}`}, ${sql.json({ name: "Linear" })},
+        'pending_review', ${now}, ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "mcp_capabilities" (
+        "id", "snapshot_id", "provider_key", "tool_capability_key", "kind",
+        "capability_key", "display_name", "description", "definition",
+        "environment_enabled", "approval_mode", "created_at", "updated_at"
+      ) VALUES (
+        ${linearCapabilityId}, ${linearSnapshotId}, ${linearServer.providerKey},
+        'tool.issue.create', 'tool', 'issue.create', 'Create issue',
+        'Create an issue in Linear.',
+        ${sql.json({ name: "issue.create", inputSchema: { type: "object" } })},
+        false, 'deny', ${now}, ${now}
+      )
+    `;
+    const linearBeforeReview = await appService.getEnvironmentAppConfiguration({
+      organizationId,
+      environmentId,
+      appKey: "linear",
+    });
+    assert.deepEqual(
+      linearBeforeReview.capabilityReviews.map((review) => ({
+        connectionId: review.connectionId,
+        snapshotId: review.snapshotId,
+        capabilityKeys: review.capabilities.map((capability) => capability.key),
+      })),
+      [
+        {
+          connectionId: linearServer.id,
+          snapshotId: linearSnapshotId,
+          capabilityKeys: ["tool:issue.create"],
+        },
+      ],
+    );
+    await mcpControl.reviewEnvironmentMcpSnapshot({
+      organizationId,
+      environmentId,
+      serverId: linearServer.id,
+      snapshotId: linearSnapshotId,
+      actorUserId: userId,
+      decision: "approve",
+    });
+    const linearAfterReview = await appService.getEnvironmentAppConfiguration({
+      organizationId,
+      environmentId,
+      appKey: "linear",
+    });
+    assert.equal(linearAfterReview.capabilityReviews.length, 0);
+    assert.deepEqual(
+      linearAfterReview.capabilities.map((capability) => ({
+        key: capability.key,
+        runtimeName: capability.runtimeName,
+        enabled: capability.enabled,
+      })),
+      [
+        {
+          key: `mcp:${linearCapabilityId}`,
+          runtimeName: `mcp.app.linear.mcp%3A${linearCapabilityId}`,
+          enabled: false,
+        },
+      ],
+    );
+    await appService.setAppInstallation({
+      organizationId: isolatedOrganizationId,
+      appKey: "linear",
+      actorUserId: isolatedUserId,
+      installed: true,
+    });
+    const isolatedLinearConfiguration =
+      await appService.getEnvironmentAppConfiguration({
+        organizationId: isolatedOrganizationId,
+        environmentId: isolatedEnvironmentId,
+        appKey: "linear",
+      });
+    assert.deepEqual(isolatedLinearConfiguration.capabilities, []);
+    const isolatedCatalog = await appService.listAppsForOrganization({
+      organizationId: isolatedOrganizationId,
+      userId: isolatedUserId,
+      canManageOrganization: true,
+    });
+    assert.equal(
+      isolatedCatalog.apps.find((app) => app.key === "linear")
+        ?.capabilityCount,
+      0
+    );
+    await mcpControl.disableEnvironmentMcpServer({
+      organizationId,
+      environmentId,
+      serverId: linearServer.id,
+      actorUserId: userId,
+    });
+
+    await appService.setAppInstallation({
+      organizationId,
+      appKey: "atlassian",
+      actorUserId: userId,
+      installed: true,
+    });
+    const atlassianConnection =
+      await officialRemoteConnection.connectOfficialRemoteTokenApp({
+        organizationId,
+        environmentId,
+        actorUserId: userId,
+        appKey: "atlassian",
+        connection: {
+          name: "Delivery",
+          apiKey: "atlassian_service_key_not_persisted",
+        },
+      });
+    assert.ok(atlassianConnection);
+    const atlassianDetail = await mcpControl.getEnvironmentMcpServer({
+      organizationId,
+      environmentId,
+      serverId: atlassianConnection.id,
+    });
+    assert.ok(atlassianDetail);
+    assert.equal(
+      atlassianDetail.server.remoteUrl,
+      "https://mcp.atlassian.com/v1/mcp",
+    );
+    const [atlassianConnectionRow] = await sql<Array<{ appKey: string }>>`
+      SELECT "app_key" AS "appKey"
+      FROM "app_connections"
+      WHERE "id" = ${atlassianConnection.id}
+    `;
+    assert.equal(atlassianConnectionRow?.appKey, "atlassian");
 
     const customServer = await mcpControl.installEnvironmentMcpServer({
       organizationId,
@@ -1022,7 +1360,7 @@ contractTest(
       organizationId,
       projectId,
       appKey: customServer.providerKey,
-      capabilityKey: "tool:find_component",
+      capabilityKey: `mcp:${mcpCapabilityId}`,
       actorUserId: userId,
       enabled: true,
       approvalMode: "ask",
@@ -1068,7 +1406,7 @@ contractTest(
         appKey: customServer.providerKey,
         userId,
       }),
-      null
+      null,
     );
 
     await appService.setAppInstallation({
@@ -1084,7 +1422,7 @@ contractTest(
         appKey: "tavily",
         userId,
       }),
-      null
+      null,
     );
     const retainedConnections = await sql<Array<{ count: string }>>`
       SELECT count(*)::text AS "count"
@@ -1108,7 +1446,7 @@ contractTest(
           userId,
         })
       )?.connectionId,
-      primary.id
+      primary.id,
     );
 
     await appService.disconnectEnvironmentAppConnection({
@@ -1124,7 +1462,7 @@ contractTest(
         appKey: "tavily",
         connectionId: research.id,
       }),
-      /Active App connection not found/u
+      /Active App connection not found/u,
     );
 
     await appService.setAppInstallation({
@@ -1198,6 +1536,34 @@ contractTest(
     `;
     assert.equal(githubDisconnected[0]?.status, "disconnected");
 
+    await appService.disconnectEnvironmentAppConnection({
+      organizationId,
+      environmentId,
+      appKey: "atlassian",
+      connectionId: atlassianConnection.id,
+    });
+    const [disconnectedAtlassian] = await sql<
+      Array<{
+        connectionStatus: string;
+        serverStatus: string;
+        credentialStatus: string;
+      }>
+    >`
+      SELECT connection."status" AS "connectionStatus",
+             server."status" AS "serverStatus",
+             credential."status" AS "credentialStatus"
+      FROM "app_connections" connection
+      JOIN "mcp_servers" server ON server."id" = connection."id"
+      JOIN "mcp_credentials" credential
+        ON credential."id" = server."credential_id"
+      WHERE connection."id" = ${atlassianConnection.id}
+    `;
+    assert.deepEqual(disconnectedAtlassian, {
+      connectionStatus: "disconnected",
+      serverStatus: "disabled",
+      credentialStatus: "revoked",
+    });
+
     const encryptedRows = await sql<
       Array<{ encrypted_payload: string; status: string }>
     >`
@@ -1207,11 +1573,13 @@ contractTest(
       ORDER BY "created_at"
     `;
     assert.ok(
-      encryptedRows.every((row) => row.encrypted_payload.startsWith("kapp:v1:"))
+      encryptedRows.every((row) =>
+        row.encrypted_payload.startsWith("kapp:v1:"),
+      ),
     );
     assert.ok(
-      encryptedRows.every((row) => !row.encrypted_payload.includes("tvly-"))
+      encryptedRows.every((row) => !row.encrypted_payload.includes("tvly-")),
     );
     assert.ok(encryptedRows.some((row) => row.status === "revoked"));
-  }
+  },
 );

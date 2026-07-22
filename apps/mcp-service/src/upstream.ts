@@ -310,7 +310,16 @@ async function refreshOAuthCredentialIfNeeded(input: {
     const body = (await response.json()) as Record<string, unknown>;
     const accessToken = readNonEmptyString(body.access_token);
     const tokenType = readNonEmptyString(body.token_type);
-    if (!accessToken || tokenType?.toLowerCase() !== "bearer") {
+    const acceptedProviderTokenTypes = new Set(
+      (input.payload.acceptedProviderTokenTypes ?? ["bearer"]).map((value) =>
+        value.toLowerCase()
+      )
+    );
+    if (
+      !accessToken ||
+      !tokenType ||
+      !acceptedProviderTokenTypes.has(tokenType.toLowerCase())
+    ) {
       throw new Error("invalid refresh response");
     }
     const expiresIn =
@@ -324,7 +333,7 @@ async function refreshOAuthCredentialIfNeeded(input: {
       refreshToken:
         readNonEmptyString(body.refresh_token) ?? input.payload.refreshToken,
       scopes:
-        readNonEmptyString(body.scope)?.split(/\s+/u).filter(Boolean) ??
+        readNonEmptyString(body.scope)?.split(/[,\s]+/u).filter(Boolean) ??
         input.payload.scopes,
       ...(expiresIn
         ? { expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString() }

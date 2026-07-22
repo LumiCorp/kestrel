@@ -10,7 +10,6 @@ const SHARED_RUNTIME_PROVIDER_KEYS = new Set([
   "built_in.time",
   "built_in.geocoding",
   "built_in.exchange_rates",
-  "built_in.hacker_news",
   "tavily",
 ]);
 

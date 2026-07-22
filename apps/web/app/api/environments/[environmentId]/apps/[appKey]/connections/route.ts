@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { createEnvironmentAppConnectionSchema } from "@/lib/apps/contracts";
+import { connectOfficialRemoteTokenApp } from "@/lib/apps/official-remote-connection";
 import { saveEnvironmentAppConnection } from "@/lib/apps/service";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
@@ -23,13 +24,16 @@ export async function POST(
     const input = createEnvironmentAppConnectionSchema.parse(
       await request.json()
     );
-    const connection = await saveEnvironmentAppConnection({
+    const connectionInput = {
       organizationId,
       environmentId: params.environmentId,
       appKey,
       actorUserId: session.user.id,
       connection: input,
-    });
+    };
+    const connection =
+      (await connectOfficialRemoteTokenApp(connectionInput)) ??
+      (await saveEnvironmentAppConnection(connectionInput));
     await logAdminEvent({
       organizationId,
       actorUserId: session.user.id,
