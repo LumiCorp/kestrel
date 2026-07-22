@@ -1,6 +1,8 @@
 import {
   assertHostedEnvironmentConfiguration,
   assertHostedEnvironmentRuntimeConfiguration,
+  hostedEnvironmentPreflightRequiresQuietCutover,
+  type HostedEnvironmentPreflightPhase,
 } from "../lib/environments/config";
 import {
   inspectHostedEnvironmentCutoverReadiness,
@@ -10,13 +12,22 @@ import {
 async function main() {
   const unknownArguments = process.argv
     .slice(2)
-    .filter((argument) => !["--", "--prepare", "--json"].includes(argument));
+    .filter(
+      (argument) =>
+        !["--", "--prepare", "--deploy", "--json"].includes(argument)
+    );
   if (unknownArguments.length > 0) {
     throw new Error(
       `Unknown hosted Environment preflight argument(s): ${unknownArguments.join(", ")}.`
     );
   }
-  const phase = process.argv.includes("--prepare") ? "prepare" : "cutover";
+  const selectedPhases = ["prepare", "deploy"].filter((phase) =>
+    process.argv.includes(`--${phase}`)
+  ) as HostedEnvironmentPreflightPhase[];
+  if (selectedPhases.length > 1) {
+    throw new Error("Select only one hosted Environment preflight phase.");
+  }
+  const phase = selectedPhases[0] ?? "cutover";
   assertHostedEnvironmentRuntimeConfiguration(process.env);
 
   for (const name of [
@@ -47,7 +58,7 @@ async function main() {
   )?.trim();
   if (!databaseUrl) {
     throw new Error(
-      "POSTGRES_URL or DATABASE_URL is required for the hosted Environment cutover inspection."
+      "POSTGRES_URL or DATABASE_URL is required for the hosted Environment preflight."
     );
   }
 
@@ -79,6 +90,19 @@ async function main() {
     );
   }
   assertHostedEnvironmentConfiguration(process.env);
+
+  if (!hostedEnvironmentPreflightRequiresQuietCutover(phase)) {
+    if (process.argv.includes("--json")) {
+      process.stdout.write(
+        `${JSON.stringify({ phase, ready: true, schema }, null, 2)}\n`
+      );
+    } else {
+      process.stdout.write(
+        "Hosted Environment deployment preflight passed. Runtime execution activity does not block steady-state deployment.\n"
+      );
+    }
+    return;
+  }
 
   const readiness = await inspectHostedEnvironmentCutoverReadiness({
     databaseUrl,
