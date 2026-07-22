@@ -949,9 +949,9 @@ export async function persistDurableAssistantOutcome(input: {
       ),
       orderBy: (table, { asc }) => [asc(table.createdAt)],
     });
-    const messages = input.messages.map((message) => ({
+    const messages = input.messages.flatMap(splitDialogPresentationMessages).map((message) => ({
       ...message,
-      parts: appendInteractionPresentationParts(
+      parts: message.dialog === undefined ? appendInteractionPresentationParts(
         message.parts,
         mcpInteractions.map((interaction) => ({
           requestId: interaction.requestId,
@@ -962,8 +962,24 @@ export async function persistDurableAssistantOutcome(input: {
           source: "mcp" as const,
           status: interaction.status,
         }))
-      ),
+      ) : message.parts,
     }));
+    const turnMessages = messages.filter((message) => message.dialog === undefined);
+    const dialogs = [...new Map(messages.flatMap((message) => message.dialog === undefined ? [] : [[message.dialog.dialogId, message.dialog] as const])).values()];
+    if (dialogs.length > 0) {
+      await tx.insert(schema.threadDialogs).values(dialogs.map((dialog) => ({
+        id: dialog.dialogId,
+        threadId: turn.threadId,
+        runtimeChildThreadId: dialog.childSessionId,
+        name: dialog.name,
+        status: dialog.status,
+        createdAt: dialog.createdAt,
+        updatedAt: now,
+      }))).onConflictDoUpdate({
+        target: schema.threadDialogs.id,
+        set: { name: sql`excluded.name`, status: sql`excluded.status`, updatedAt: now },
+      });
+    }
     if (messages.length > 0) {
       await tx
         .insert(schema.threadMessages)
@@ -971,7 +987,7 @@ export async function persistDurableAssistantOutcome(input: {
           messages.map((message) => ({
             id: message.id,
             threadId: turn.threadId,
-            turnId: turn.id,
+            turnId: message.dialog === undefined ? turn.id : null,
             role: "assistant" as const,
             authorUserId: null,
             projectContextRevisionId: message.projectContextRevisionId,
@@ -979,7 +995,13 @@ export async function persistDurableAssistantOutcome(input: {
             searchText: extractSearchText(message.parts),
             model: message.model,
             source: message.source,
-            createdAt: now,
+            ...(message.dialog !== undefined ? {
+              dialogId: message.dialog.dialogId,
+              dialogMessageId: message.dialog.messageId,
+              dialogName: message.dialog.name,
+              dialogSender: message.dialog.sender,
+            } : {}),
+            createdAt: message.dialog?.createdAt ?? now,
           }))
         )
         .onConflictDoUpdate({
@@ -993,7 +1015,7 @@ export async function persistDurableAssistantOutcome(input: {
         });
       await tx
         .update(schema.threadTurns)
-        .set({ outputMessageId: messages.at(-1)?.id ?? null, updatedAt: now })
+        .set({ outputMessageId: turnMessages.at(-1)?.id ?? null, updatedAt: now })
         .where(eq(schema.threadTurns.id, turn.id));
     }
     await tx
@@ -1002,7 +1024,7 @@ export async function persistDurableAssistantOutcome(input: {
       .where(eq(schema.threads.id, turn.threadId));
 
     if (!input.interaction) {
-      const assistantMessageId = messages.at(-1)?.id;
+      const assistantMessageId = turnMessages.at(-1)?.id;
       if (assistantMessageId && mcpInteractions.length > 0) {
         await tx
           .update(schema.threadInteractions)
@@ -1022,7 +1044,7 @@ export async function persistDurableAssistantOutcome(input: {
         "Only a running turn can publish a pending interaction."
       );
     }
-    const assistantMessageId = messages.at(-1)?.id;
+    const assistantMessageId = turnMessages.at(-1)?.id;
     if (!assistantMessageId) {
       throw new DurableTurnError(
         "TURN_CONFLICT",
@@ -1168,6 +1190,51 @@ export async function persistDurableAssistantOutcome(input: {
     }
     return { turn: waiting ?? turn, interaction: interaction ?? null };
   });
+}
+
+function splitDialogPresentationMessages<T extends { id: string; parts: unknown }>(message: T): Array<T & {
+  dialog?: {
+    dialogId: string;
+    messageId: string;
+    name: string;
+    childSessionId: string;
+    sender: "kestrel" | "collaborator" | "system";
+    createdAt: Date;
+    status: "open" | "closed";
+  };
+}> {
+  if (!Array.isArray(message.parts)) return [message];
+  const dialogParts = message.parts.filter((part) => isDialogPresentationPart(part));
+  if (dialogParts.length === 0) return [message];
+  const ordinaryParts = message.parts.filter((part) => !isDialogPresentationPart(part));
+  const result: Array<T & { dialog?: { dialogId: string; messageId: string; name: string; childSessionId: string; sender: "kestrel" | "collaborator" | "system"; createdAt: Date; status: "open" | "closed" } }> = [];
+  if (ordinaryParts.length > 0) result.push({ ...message, parts: ordinaryParts });
+  for (const part of dialogParts) {
+    const data = (part as { data: { dialogId: string; messageId: string; name: string; childSessionId: string; sender: "kestrel" | "collaborator" | "system"; createdAt: string; dialogStatus: "open" | "closed"; status?: "failed" | "cancelled" } }).data;
+    result.push({
+      ...message,
+      id: data.messageId,
+      parts: [part],
+      dialog: {
+        dialogId: data.dialogId,
+        messageId: data.messageId,
+        name: data.name,
+        childSessionId: data.childSessionId,
+        sender: data.sender,
+        createdAt: new Date(data.createdAt),
+        status: data.dialogStatus,
+      },
+    });
+  }
+  return result;
+}
+
+function isDialogPresentationPart(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const part = value as Record<string, unknown>;
+  if (part.type !== "data-kestrel-dialog-message" || typeof part.data !== "object" || part.data === null || Array.isArray(part.data)) return false;
+  const data = part.data as Record<string, unknown>;
+  return typeof data.dialogId === "string" && typeof data.messageId === "string" && typeof data.name === "string" && typeof data.childSessionId === "string" && (data.sender === "kestrel" || data.sender === "collaborator" || data.sender === "system") && typeof data.createdAt === "string" && (data.dialogStatus === "open" || data.dialogStatus === "closed");
 }
 
 export async function resolveDurableRuntimeInteraction(input: {

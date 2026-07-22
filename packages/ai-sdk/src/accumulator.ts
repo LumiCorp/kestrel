@@ -15,6 +15,7 @@ import type {
   KestrelProviderReasoningPresentation,
   KestrelTerminalStatus,
   KestrelToolPresentation,
+  KestrelDialogMessagePresentation,
   KestrelUIMessage,
 } from "./contracts.js";
 
@@ -160,6 +161,12 @@ export function createKestrelPresentationAccumulator(input: {
         }
         if (event.type === "run.started") {
           return [];
+        }
+        if (event.type === "task.updated") {
+          const value = event.payload.dialogMessage;
+          if (value === undefined) return [];
+          const dialog = decodeDialogMessage(value);
+          return appendPart({ type: "data-kestrel-dialog-message", id: dialog.messageId, data: dialog });
         }
         if (event.type === "run.progress") {
           const update = requireRecord(event.payload.update, `${event.type}.payload.update`);
@@ -318,6 +325,30 @@ export function createKestrelPresentationAccumulator(input: {
       return snapshot();
     },
     snapshot,
+  };
+}
+
+function decodeDialogMessage(value: unknown): KestrelDialogMessagePresentation {
+  const record = requireRecord(value, "task.updated.payload.dialogMessage");
+  const sender = record.sender;
+  if (sender !== "kestrel" && sender !== "collaborator" && sender !== "system") {
+    throw new KestrelPresentationContractError("task.updated.payload.dialogMessage.sender is invalid.");
+  }
+  const status = record.status === "failed" || record.status === "cancelled" ? record.status : undefined;
+  if (record.dialogStatus !== "open" && record.dialogStatus !== "closed") {
+    throw new KestrelPresentationContractError("task.updated.payload.dialogMessage.dialogStatus is invalid.");
+  }
+  return {
+    version: "v1",
+    messageId: requireNonEmptyString(record.messageId, "task.updated.payload.dialogMessage.messageId"),
+    dialogId: requireNonEmptyString(record.dialogId, "task.updated.payload.dialogMessage.dialogId"),
+    name: requireNonEmptyString(record.name, "task.updated.payload.dialogMessage.name"),
+    childSessionId: requireNonEmptyString(record.childSessionId, "task.updated.payload.dialogMessage.childSessionId"),
+    sender,
+    text: requireNonEmptyString(record.text, "task.updated.payload.dialogMessage.text"),
+    createdAt: requireNonEmptyString(record.createdAt, "task.updated.payload.dialogMessage.createdAt"),
+    dialogStatus: record.dialogStatus,
+    ...(status !== undefined ? { status } : {}),
   };
 }
 

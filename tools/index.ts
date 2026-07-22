@@ -1,5 +1,7 @@
 export type {
   DelegationServicePort,
+  DialogServicePort,
+  DialogSnapshot,
   DelegationTaskResult,
   DelegationTaskSnapshot,
   DelegationTaskSpawnRequest,
@@ -133,6 +135,9 @@ export { devProcessStopTool } from "./devshell/processStop.js";
 export { effectResultLookupTool } from "./runtime/effectResultLookup.js";
 export { finalizeAnswerTool } from "./runtime/finalizeAnswer.js";
 export { agentSpawnTool } from "./runtime/agentSpawn.js";
+export { dialogOpenTool } from "./runtime/dialogOpen.js";
+export { dialogSendTool } from "./runtime/dialogSend.js";
+export { dialogCloseTool } from "./runtime/dialogClose.js";
 export { delegateSpawnChildTool } from "./runtime/delegateSpawnChild.js";
 export { delegateListChildrenTool } from "./runtime/delegateListChildren.js";
 export { delegateGetChildResultTool } from "./runtime/delegateGetChildResult.js";

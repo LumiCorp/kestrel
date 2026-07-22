@@ -282,6 +282,22 @@ export function DesktopApp() {
           [rendererThread.id]: projectDesktopRunStream(current[rendererThread.id] ?? [], event),
         }));
       }
+      if (event.type === "task.updated" && rendererThread !== undefined && event.payload.dialogMessage !== undefined) {
+        const message = event.payload.dialogMessage;
+        setState((current) => current === undefined ? current : appendRendererTranscript(current, rendererThread.id, {
+          role: message.sender === "system" ? "system" : "assistant",
+          text: message.text,
+          timestamp: message.createdAt,
+          dialog: {
+            messageId: message.messageId,
+            dialogId: message.dialogId,
+            name: message.name,
+            childSessionId: message.childSessionId,
+            sender: message.sender,
+            ...(message.status !== undefined ? { status: message.status } : {}),
+          },
+        }));
+      }
       if (
         event.type === "task.updated"
         || event.type === "run.completed"
@@ -388,6 +404,22 @@ export function DesktopApp() {
     try {
       const view = await window.kestrelDesktop.getOperatorThread(localCoreThreadId(thread.sessionId));
       setThreadViews((current) => ({ ...current, [thread.id]: view }));
+      const dialogMessages = (view.dialogs ?? []).flatMap((dialog) => dialog.messages).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      if (dialogMessages.length > 0) {
+        setState((current) => dialogMessages.reduce((next, message) => next === undefined ? next : appendRendererTranscript(next, thread.id, {
+          role: message.sender === "system" ? "system" : "assistant",
+          text: message.text,
+          timestamp: message.createdAt,
+          dialog: {
+            messageId: message.messageId,
+            dialogId: message.dialogId,
+            name: message.name,
+            childSessionId: message.childSessionId,
+            sender: message.sender,
+            ...(message.status !== undefined ? { status: message.status } : {}),
+          },
+        }), current));
+      }
       setActiveRuns((current) => {
         const next = { ...current };
         if (view.activeRun?.status === "RUNNING") {
@@ -1232,7 +1264,7 @@ export function DesktopApp() {
             ) : conversationTimeline.map((entry) => entry.type === "transcript" ? (
               <article className={`message message-${entry.line.role}`} key={entry.id}>
                 <div className="message-meta">
-                  <strong>{entry.line.role === "user" ? "You" : entry.line.role === "assistant" ? "Kestrel" : "System"}</strong>
+                  <strong>{entry.line.dialog?.sender === "collaborator" ? entry.line.dialog.name : entry.line.dialog?.sender === "kestrel" ? "Kestrel" : entry.line.role === "user" ? "You" : entry.line.role === "assistant" ? "Kestrel" : "System"}</strong>
                   <time>{formatMessageTime(entry.line.timestamp)}</time>
                 </div>
                 <MessageContent messageRole={entry.line.role} text={entry.line.text} />

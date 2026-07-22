@@ -410,6 +410,68 @@ contractTest("runtime.hermetic", "Delegation failure persistence retains normali
   assert.equal(failedEvent?.metadata?.errorMessage, "Child execution failed.");
 });
 
+contractTest("runtime.hermetic", "persistent dialogs support multi-turn exchange, name ownership, and explicit close", async () => {
+  const store = new InMemorySessionStore();
+  const updates: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord[] = [];
+  let childCount = 0;
+  const supervisor = new DelegationSupervisor({
+    profile: {
+      id: "reference",
+      label: "Reference",
+      agent: "reference-react",
+      sessionPrefix: "session",
+      modelProvider: "openrouter",
+      model: "model-a",
+      delegation: { allowAgentSpawn: true, maxConcurrentChildSessions: 2 },
+    },
+    runtimeStore: store,
+    orchestrationStore: store,
+    submitChildTurn: async (input) => ({
+      assistantText: `reply:${input.message}`,
+      thread: (await store.getThread(input.threadId))!,
+      output: buildOutput({ runId: `run-${input.message}`, status: "COMPLETED" }),
+    }),
+    startChildThread: async (input) => {
+      childCount += 1;
+      const thread: ThreadRecord = {
+        threadId: `dialog-child-${childCount}`,
+        sessionId: `dialog-child-${childCount}`,
+        title: input.title,
+        parentThreadId: input.parentThreadId,
+        status: "IDLE",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await store.ensureSession(thread.sessionId);
+      await store.upsertThread(thread);
+      return thread;
+    },
+    onDialogReply: ({ message }) => { updates.push(message); },
+  });
+
+  const opened = await supervisor.open({ parentSessionId: "root", name: "Peregrine", message: "first" });
+  await tick();
+  assert.equal(updates[0]?.text, "reply:first");
+  await assert.rejects(
+    () => supervisor.open({ parentSessionId: "root", name: "peregrine", message: "duplicate" }),
+    { code: "DIALOG_NAME_IN_USE" },
+  );
+
+  const sent = await supervisor.send({ parentSessionId: "root", dialogId: opened.dialogId, message: "second" });
+  assert.equal(sent.active, true);
+  await tick();
+  assert.equal(updates[1]?.text, "reply:second");
+
+  const closed = await supervisor.close({ parentSessionId: "root", dialogId: opened.dialogId });
+  assert.equal(closed.status, "closed");
+  await assert.rejects(
+    () => supervisor.send({ parentSessionId: "root", dialogId: opened.dialogId, message: "late" }),
+    { code: "DIALOG_CLOSED" },
+  );
+  const reused = await supervisor.open({ parentSessionId: "root", name: "Peregrine", message: "new" });
+  assert.notEqual(reused.dialogId, opened.dialogId);
+});
+
 function buildOutput(input: {
   runId: string;
   status: NormalizedOutput["status"];

@@ -150,6 +150,37 @@ export interface DelegationServicePort {
   getTaskResult(taskId: string): Promise<DelegationTaskResult | null>;
 }
 
+export interface DialogSnapshot {
+  dialogId: string;
+  name: string;
+  parentSessionId: string;
+  childSessionId: string;
+  status: "open" | "closed";
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DialogServicePort {
+  open(input: {
+    parentSessionId: string;
+    parentRunId?: string | undefined;
+    name: string;
+    message: string;
+  }): Promise<DialogSnapshot>;
+  send(input: {
+    parentSessionId: string;
+    parentRunId?: string | undefined;
+    dialogId: string;
+    message: string;
+  }): Promise<DialogSnapshot>;
+  close(input: {
+    parentSessionId: string;
+    parentRunId?: string | undefined;
+    dialogId: string;
+  }): Promise<DialogSnapshot>;
+}
+
 export interface SharedToolContext {
   store?: SessionStore | undefined;
   onFinalize?: ((payload: unknown) => unknown | Promise<unknown>) | undefined;
@@ -166,6 +197,7 @@ export interface SharedToolContext {
   desktopHostOpenService?: DesktopHostOpenServicePort | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;
   delegationService?: DelegationServicePort | undefined;
+  dialogService?: DialogServicePort | undefined;
   runtime?: RuntimeToolRunContext | undefined;
   workspace?:
     | {

@@ -756,6 +756,7 @@ export interface TaskUpdatedEventPayload {
   kind: "spawned" | "waiting" | "completed" | "failed";
   assistantText: string | null;
   finalizedPayload?: unknown | undefined;
+  dialogMessage?: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord | undefined;
 }
 
 export interface TaskGraphEventPayload {

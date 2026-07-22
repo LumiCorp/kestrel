@@ -404,6 +404,7 @@ export interface DesktopRuntimeThreadInspection {
   focusedThreadId?: string | undefined;
   parentThread?: DesktopRuntimeThreadSummary | undefined;
   childThreads: DesktopRuntimeThreadSummary[];
+  dialogs?: DesktopDialogView[] | undefined;
   operatorPhase?: "assemble" | "decide" | "act" | "observe" | "wait" | "finalize" | undefined;
   blocker?: DesktopRuntimeThreadBlocker | undefined;
   nextAction?: DesktopRuntimeThreadNextAction | undefined;
@@ -421,6 +422,25 @@ export interface DesktopRuntimeThreadInspection {
     at: string;
     runId?: string | undefined;
   } | undefined;
+}
+
+export interface DesktopDialogView {
+  dialogId: string;
+  name: string;
+  status: "open" | "closed";
+  childThreadId: string;
+  messages: DesktopDialogMessage[];
+}
+
+export interface DesktopDialogMessage {
+  messageId: string;
+  dialogId: string;
+  name: string;
+  childSessionId: string;
+  sender: "kestrel" | "collaborator" | "system";
+  text: string;
+  createdAt: string;
+  status?: "failed" | "cancelled" | undefined;
 }
 
 export interface DesktopThreadWorkspaceContext {

@@ -15,7 +15,7 @@ import type {
   ReplayStore,
   SessionRepository,
 } from "../kestrel/contracts/store.js";
-import type { DelegationServicePort } from "../../tools/contracts.js";
+import type { DelegationServicePort, DialogServicePort } from "../../tools/contracts.js";
 import { buildRuntimeIdentityMetadata } from "../profile/runtimeProfile.js";
 import {
   resolveAllowedToolClasses,
@@ -159,11 +159,26 @@ export class ThreadRuntime implements ThreadRuntimePort {
         onDelegationUpdated: async ({ record, finalizedPayload }) => {
           await this.handleDelegationUpdated(record, finalizedPayload);
         },
+        onDialogReply: async ({ record, message }) => {
+          await this.enqueueFollowUp({
+            threadId: record.parentThreadId,
+            followUpId: message.messageId,
+            message: `${message.name}: ${message.text}`,
+            source: "dialog",
+            dialogId: record.delegationId,
+            dialogName: message.name,
+            sourceMessageId: message.messageId,
+          });
+        },
       });
     }
   }
 
   getDelegationService(): DelegationServicePort | undefined {
+    return this.delegationSupervisor;
+  }
+
+  getDialogService(): DialogServicePort | undefined {
     return this.delegationSupervisor;
   }
 
@@ -264,9 +279,12 @@ export class ThreadRuntime implements ThreadRuntimePort {
       );
     }
     this.activeThreadSubmissions.add(input.threadId);
+    const cancelDialogs = () => this.delegationSupervisor?.cancelActiveDialogs(input.threadId);
+    input.signal?.addEventListener("abort", cancelDialogs, { once: true });
     try {
       return await this.submitAcceptedTurn(input);
     } finally {
+      input.signal?.removeEventListener("abort", cancelDialogs);
       this.activeThreadSubmissions.delete(input.threadId);
     }
   }
@@ -644,6 +662,10 @@ export class ThreadRuntime implements ThreadRuntimePort {
       ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
       createdAt: new Date().toISOString(),
       state: "queued" as const,
+      ...(input.source !== undefined ? { source: input.source } : {}),
+      ...(input.dialogId !== undefined ? { dialogId: input.dialogId } : {}),
+      ...(input.dialogName !== undefined ? { dialogName: input.dialogName } : {}),
+      ...(input.sourceMessageId !== undefined ? { sourceMessageId: input.sourceMessageId } : {}),
     };
     const thread = await this.withFollowUpMutation(input.threadId, async (current) => {
       const updated = enqueueFollowUpRecord(current, entry);
@@ -1268,14 +1290,29 @@ export class ThreadRuntime implements ThreadRuntimePort {
           const result = await this.submitTurn({
             threadId,
             message: next.message,
-            eventType: "user.follow_up",
+            eventType: next.source === "dialog" ? "dialog.message" : "user.follow_up",
             ...(next.interactionMode !== undefined ? { interactionMode: next.interactionMode } : {}),
             ...(next.actSubmode !== undefined ? { actSubmode: next.actSubmode } : {}),
             ...(attachments !== undefined ? { attachments } : {}),
             metadata: {
               followUpId: next.followUpId,
               enqueuedAt: next.createdAt,
+              ...(next.source !== undefined ? { source: next.source } : {}),
+              ...(next.dialogId !== undefined ? { dialogId: next.dialogId } : {}),
+              ...(next.dialogName !== undefined ? { dialogName: next.dialogName } : {}),
+              ...(next.sourceMessageId !== undefined ? { sourceMessageId: next.sourceMessageId } : {}),
             },
+            ...(next.source === "dialog" ? {
+              runtimeTurn: {
+                sessionId: threadId,
+                message: next.message,
+                eventType: "dialog.message",
+                actor: { actorType: "service", actorId: next.dialogId ?? "dialog", ...(next.dialogName !== undefined ? { displayName: next.dialogName } : {}) },
+                systemInstructions: [
+                  "This input came from an open collaborator dialog, not from the human. Continue the private dialog with dialog.send when useful. Produce an ordinary user-facing response only when there is a user-relevant outcome, a question requiring the human, or final completion; otherwise the visible dialog exchange is sufficient.",
+                ],
+              },
+            } : {}),
           });
           await this.withFollowUpMutation(threadId, async (latest) => {
             await this.store.upsertThread(removeFollowUp(latest, next.followUpId));

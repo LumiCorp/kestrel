@@ -1987,6 +1987,7 @@ function createRuntimeWithStore(
       projectStore,
     }),
     delegationService: undefined,
+    dialogService: undefined,
   };
 
   const toolRegistry = new UnifiedToolRegistry({
@@ -2115,6 +2116,7 @@ function createRuntimeWithStore(
     },
   });
   toolContext.delegationService = threadRuntime.getDelegationService();
+  toolContext.dialogService = threadRuntime.getDialogService();
 
   return {
     kestrel,

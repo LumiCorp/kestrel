@@ -102,8 +102,9 @@ const MCP_DEFAULT_CAPABILITY: ToolCapabilityMetadata = {
   approvalCapabilities: ["mcp.invoke"],
 };
 
-const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set(["agent.spawn"]);
+const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set(["dialog.open", "dialog.send", "dialog.close"]);
 const INTERNAL_ONLY_RUNTIME_TOOL_NAMES = new Set([
+  "agent.spawn",
   "delegate.spawn_child",
   "delegate.list_children",
   "delegate.get_child_result",
@@ -444,7 +445,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     if (INTERNAL_ONLY_RUNTIME_TOOL_NAMES.has(name)) {
       throw createRuntimeFailure(
         "TOOL_INTERNAL_ONLY",
-        `Tool '${name}' is an internal-only runtime tool. Use 'agent.spawn' for model-facing delegation.`,
+        `Tool '${name}' is an internal-only runtime tool. Use the dialog tools for model-facing collaboration.`,
         {
           subsystem: "tooling",
           toolName: name,

@@ -234,6 +234,35 @@ contractTest("desktop.hermetic", "Vite renderer persists and resumes the pending
   assert.equal(hydrated.threads[0]?.pendingWaitEventType, "user.approval");
 });
 
+contractTest("desktop.hermetic", "dialog messages persist inline and deduplicate by runtime message id", () => {
+  let state = readDesktopRendererState(null);
+  const threadId = state.activeThreadId;
+  const line = {
+    role: "assistant" as const,
+    text: "The queue owns this transition.",
+    timestamp: "2026-07-21T12:00:00.000Z",
+    dialog: {
+      messageId: "dialog-message-1",
+      dialogId: "dialog-1",
+      name: "Peregrine",
+      childSessionId: "dialog-child-1",
+      sender: "collaborator" as const,
+    },
+  };
+  state = appendRendererTranscript(state, threadId, line);
+  state = appendRendererTranscript(state, threadId, line);
+  assert.equal(state.threads[0]?.transcript.length, 1);
+
+  const restored = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-main",
+    sourceAppVersion: "test",
+    capturedAt: "2026-07-21T12:01:00.000Z",
+    entries: serializeDesktopRendererState(state),
+  });
+  assert.deepEqual(restored.threads[0]?.transcript[0]?.dialog, line.dialog);
+});
+
 contractTest("desktop.hermetic", "Vite renderer persists a project binding on project conversations", () => {
   const initial = readDesktopRendererState(null);
   const scoped = addRendererThread(initial, {

@@ -1338,6 +1338,17 @@ export interface TaskUpdatedEventPayload {
   kind: "spawned" | "waiting" | "completed" | "failed";
   assistantText: string | null;
   finalizedPayload?: unknown | undefined;
+  dialogMessage?: {
+    messageId: string;
+    dialogId: string;
+    name: string;
+    childSessionId: string;
+    sender: "kestrel" | "collaborator" | "system";
+    text: string;
+    createdAt: string;
+    dialogStatus: "open" | "closed";
+    status?: "failed" | "cancelled" | undefined;
+  } | undefined;
 }
 
 export interface TaskGraphEventPayload {

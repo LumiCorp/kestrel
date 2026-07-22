@@ -1216,7 +1216,7 @@ contractTest("runtime.process", "runner service streams run events and preserves
     assert.equal(runResponse.statusCode, 200);
     assert.match(sseBody, /"type":"run\.started"/);
     assert.match(sseBody, /"type":"run\.completed"/);
-    assert.doesNotMatch(sseBody, /"type":"task\.updated"/);
+    assert.match(sseBody, /"type":"task\.updated"/);
     assert.match(sseBody, /"sessionId":"session-1"/);
 
     const controlResponse = await service.dispatch({
