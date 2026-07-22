@@ -3214,6 +3214,26 @@ function buildThinkerRequiredCorrection(
       },
     };
   }
+  if (requiredAction === "write_session_plan_before_task_publication") {
+    return {
+      planDocumentBeforeTaskPublication: {
+        action: requiredAction,
+        rejectedAction: "task.propose",
+        rejectedReason: asString(details?.reason),
+        interactionMode: asString(details?.interactionMode),
+        requiredTool: "planning.write_document",
+        requiredModelTool: "planning_write_document",
+        requiredOrder: [
+          "call planning.write_document to create or update the current session PLAN.md",
+          "wait for the planning.write_document tool result",
+          "only then call task.propose",
+        ],
+        forbiddenActionUntilPlanExists: "task.propose",
+        planDocumentRequired: true,
+        activePlanPresent: false,
+      },
+    };
+  }
   if (
     requiredAction === "call_finalize_with_user_facing_message" ||
     requiredAction === "call_handoff_to_build_with_compact_continuation" ||

@@ -175,6 +175,34 @@ contractTest("runtime.hermetic", "Build exposes sandboxed workspace mutations wh
   );
 });
 
+contractTest("runtime.hermetic", "Plan allows only external mutations that explicitly opt into Plan", () => {
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "plan",
+      toolClass: "external_side_effect",
+    }),
+    false,
+  );
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "plan",
+      toolClass: "external_side_effect",
+      allowedInteractionModes: ["chat", "plan", "build"],
+    }),
+    true,
+  );
+  assert.equal(
+    isToolEligibleForInteractionMode({
+      interactionMode: "plan",
+      toolClass: "external_side_effect",
+      allowedInteractionModes: ["chat", "plan", "build"],
+      executionPolicy: { capabilityPolicy: { "project.task_queue.write": false } },
+      requiredCapabilities: ["project.task_queue.write"],
+    }),
+    false,
+  );
+});
+
 contractTest("runtime.hermetic", "Chat allows read-only tools and only explicitly Chat-enabled app mutations", () => {
   assert.equal(
     isToolEligibleForInteractionMode({

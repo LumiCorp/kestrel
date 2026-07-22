@@ -222,7 +222,7 @@ contractTest("runtime.hermetic", "plan-mode deliberator prompt requires session 
   );
   assert.match(
     plan,
-    /Reserve finalize status goal_satisfied for true conversational or current task status answers, not execution-ready build requests\./u,
+    /Reserve finalize status goal_satisfied for true conversational, current task status, or explicitly requested task-publication outcomes, not execution-ready build requests\./u,
   );
   assert.match(
     plan,
@@ -230,8 +230,11 @@ contractTest("runtime.hermetic", "plan-mode deliberator prompt requires session 
   );
   assert.match(
     plan,
-    /Do not finalize with status goal_satisfied once a software build request is clear enough for the next implementation pass\./u,
+    /Do not finalize with status goal_satisfied once a software build request is clear enough for the next implementation pass, except after completing an explicitly requested task-publication outcome\./u,
   );
+  assert.match(plan, /Publish Mission Control tasks only when the user explicitly asks/u);
+  assert.match(plan, /Before publishing tasks, write or refresh the current session PLAN\.md/u);
+  assert.match(plan, /After task publication, finalize in Plan mode/u);
   assert.match(
     plan,
     /Do not reopen framework, stack, database, or scaffold discovery after those choices are already settled\./u,
