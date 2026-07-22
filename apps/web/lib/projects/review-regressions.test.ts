@@ -20,6 +20,7 @@ function readAppSource(relativePath: string) {
 
 contractTest("web.hermetic", "Project tabs stay owned by the URL across same-page navigation", () => {
   assert.equal(resolveProjectTab({ tab: "apps", hasGoogle: false }), "apps");
+  assert.equal(resolveProjectTab({ tab: "skills", hasGoogle: false }), "skills");
   assert.equal(
     resolveProjectTab({ tab: "context", hasGoogle: false }),
     "context"
@@ -31,6 +32,35 @@ contractTest("web.hermetic", "Project tabs stay owned by the URL across same-pag
     projectTabHref("project-1", "activity"),
     "/projects/project-1?tab=activity"
   );
+  assert.equal(
+    projectTabHref("project-1", "skills"),
+    "/projects/project-1?tab=skills"
+  );
+});
+
+contractTest("web.hermetic", "Project skills have a first-class tab separate from Apps and Workspace setup", () => {
+  const projectHome = readAppSource(
+    "components/projects/project-home-client.tsx"
+  );
+  const workspaceRail = readAppSource("components/workspace-rail.tsx");
+  const projectSkills = readAppSource(
+    "components/projects/project-skills.tsx"
+  );
+  const workspaceSetup = readAppSource(
+    "app/(workspace)/projects/[id]/workspace/workspace-client.tsx"
+  );
+
+  assert.match(projectHome, /TabsTrigger value="apps">Apps</u);
+  assert.match(projectHome, /TabsTrigger value="skills">Skills</u);
+  assert.match(
+    projectHome,
+    /TabsContent value="skills">[\s\S]*<ProjectSkills/u
+  );
+  assert.match(workspaceRail, /label: "Apps", tab: "apps"/u);
+  assert.match(workspaceRail, /label: "Skills", tab: "skills"/u);
+  assert.match(projectSkills, /placeholder="https:\/\/github\.com\/org\/skills\.git"/u);
+  assert.match(projectSkills, /Advanced source options/u);
+  assert.doesNotMatch(workspaceSetup, /Agent skills/u);
 });
 
 contractTest("web.hermetic", "Project uploads compensate new documents when context attachment fails", () => {

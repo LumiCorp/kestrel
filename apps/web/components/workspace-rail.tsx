@@ -5,6 +5,7 @@ import {
   Archive,
   ArrowDownUp,
   BookOpenText,
+  BookMarked,
   ChevronDown,
   Circle,
   FolderOpen,
@@ -69,6 +70,7 @@ const projectSections = [
   { label: "Overview", tab: null, icon: House },
   { label: "Context", tab: "context", icon: BookOpenText },
   { label: "Apps", tab: "apps", icon: Waypoints },
+  { label: "Skills", tab: "skills", icon: BookMarked },
   { label: "Members", tab: "members", icon: Users },
   { label: "Activity", tab: "activity", icon: Activity },
 ] as const;

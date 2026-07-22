@@ -16,8 +16,9 @@ directory must contain a `SKILL.md` with YAML frontmatter fields `name` and
 `description`.
 
 Desktop exposes skill management in a project's **Agent skills** panel. Kestrel
-One exposes the same controls in a running Project Workspace. Installations and
-updates made during an active run remain pending until the workspace is idle.
+One exposes the same controls under the Project's **Skills** tab when its
+Workspace is running. Installations and updates made during an active run remain
+pending until the workspace is idle.
 Kestrel also checks configured branches at Desktop activation and hosted
 workspace startup.
 
