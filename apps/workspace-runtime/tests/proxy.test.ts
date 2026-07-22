@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { buildWorkspaceProxyHeaders } from "../src/proxy.js";
+import {
+	buildWorkspaceProxyHeaders,
+	isRunnerProxyPath,
+} from "../src/proxy.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
@@ -33,4 +36,12 @@ contractTest("services.hermetic", "runner proxy replaces the Environment ticket 
 		"content-type": "application/json",
 		host: "127.0.0.1:43105",
 	});
+});
+
+contractTest("services.hermetic", "runner proxy includes filtered event subscriptions", () => {
+	assert.equal(isRunnerProxyPath("/commands"), true);
+	assert.equal(isRunnerProxyPath("/commands/stream"), true);
+	assert.equal(isRunnerProxyPath("/events/stream"), true);
+	assert.equal(isRunnerProxyPath("/events/stream/other"), false);
+	assert.equal(isRunnerProxyPath("/v1/tree"), false);
 });
