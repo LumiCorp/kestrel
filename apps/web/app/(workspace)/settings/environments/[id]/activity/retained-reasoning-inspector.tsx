@@ -18,7 +18,7 @@ export function RetainedReasoningInspector({ runId }: { runId: string }) {
 
   async function read() {
     setStatus("Loading…");
-    const response = await fetch(`/api/admin/runs/${runId}/reasoning`, { cache: "no-store" });
+    const response = await fetch(`/api/organization/runs/${runId}/reasoning`, { cache: "no-store" });
     const payload = await response.json() as { entries?: Entry[]; error?: string };
     if (!response.ok) {
       setStatus(payload.error ?? "Retained reasoning is unavailable.");
@@ -29,7 +29,7 @@ export function RetainedReasoningInspector({ runId }: { runId: string }) {
   }
 
   async function remove() {
-    const response = await fetch(`/api/admin/runs/${runId}/reasoning`, { method: "DELETE" });
+    const response = await fetch(`/api/organization/runs/${runId}/reasoning`, { method: "DELETE" });
     if (!response.ok) {
       setStatus("Could not delete retained reasoning.");
       return;

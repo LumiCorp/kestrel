@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
@@ -51,15 +51,21 @@ const emptyConfig: EmailConfig = {
   persisted: false,
 };
 
-export function EmailIntegrationAdminClient() {
+export function EmailIntegrationAdminClient({
+  scope = "platform",
+}: {
+  scope?: "platform" | "organization";
+}) {
   const [config, setConfig] = useState(emptyConfig);
   const [events, setEvents] = useState<EmailEvent[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Loading email configuration...");
+  const apiBase =
+    scope === "organization" ? "/api/organization/email" : "/api/platform/email";
 
-  async function load() {
-    const response = await fetch("/api/admin/email", {
+  const load = useCallback(async () => {
+    const response = await fetch(apiBase, {
       cache: "no-store",
     });
     const body = await response.json().catch(() => ({}));
@@ -70,19 +76,20 @@ export function EmailIntegrationAdminClient() {
     setConfig({ ...emptyConfig, ...body.config });
     setEvents(body.events || []);
     setMessage("");
-  }
+  }, [apiBase]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   async function save(nextEnabled = config.enabled) {
     setBusy(true);
-    const response = await fetch("/api/admin/email", {
+    const response = await fetch(apiBase, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        credentialSource: config.credentialSource,
+        credentialSource:
+          scope === "organization" ? "stored" : config.credentialSource,
         apiKey: apiKey || undefined,
         fromName: config.fromName,
         fromEmail: config.fromEmail,
@@ -108,7 +115,7 @@ export function EmailIntegrationAdminClient() {
 
   async function testDelivery() {
     setBusy(true);
-    const response = await fetch("/api/admin/email/test", {
+    const response = await fetch(`${apiBase}/test`, {
       method: "POST",
     });
     const body = await response.json().catch(() => ({}));
@@ -126,9 +133,17 @@ export function EmailIntegrationAdminClient() {
   return (
     <div className="space-y-6">
       <AdminPageHeader
-        description="Configure platform-wide transactional email delivery. Domain verification remains managed in Resend."
-        eyebrow="Admin · Email delivery"
-        title="Email"
+        description={
+          scope === "organization"
+            ? "Configure the sender used by this organization's Apps and agents. Domain verification remains managed in Resend."
+            : "Configure platform-wide authentication and system email delivery. Domain verification remains managed in Resend."
+        }
+        eyebrow={
+          scope === "organization"
+            ? "Organization · App email"
+            : "Platform · System email"
+        }
+        title={scope === "organization" ? "Organization email" : "System email"}
       />
       {message ? (
         <AdminStatusBanner
@@ -149,26 +164,28 @@ export function EmailIntegrationAdminClient() {
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-5">
-          <div className="grid gap-2">
-            <Label htmlFor="email-source">Credential source</Label>
-            <Select
-              onValueChange={(
-                credentialSource: EmailConfig["credentialSource"]
-              ) => setConfig((current) => ({ ...current, credentialSource }))}
-              value={config.credentialSource}
-            >
-              <SelectTrigger id="email-source">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="environment">
-                  Environment (RESEND_API_KEY)
-                </SelectItem>
-                <SelectItem value="stored">Encrypted in Kestrel One</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {config.credentialSource === "stored" ? (
+          {scope === "platform" ? (
+            <div className="grid gap-2">
+              <Label htmlFor="email-source">Credential source</Label>
+              <Select
+                onValueChange={(
+                  credentialSource: EmailConfig["credentialSource"]
+                ) => setConfig((current) => ({ ...current, credentialSource }))}
+                value={config.credentialSource}
+              >
+                <SelectTrigger id="email-source">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="environment">
+                    Environment (RESEND_API_KEY)
+                  </SelectItem>
+                  <SelectItem value="stored">Encrypted in Kestrel One</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+          {scope === "organization" || config.credentialSource === "stored" ? (
             <div className="grid gap-2">
               <Label htmlFor="email-api-key">Resend API key</Label>
               <Input
@@ -246,7 +263,11 @@ export function EmailIntegrationAdminClient() {
       </Card>
       <Card className="max-w-3xl">
         <CardHeader>
-          <CardTitle>Platform email activity</CardTitle>
+          <CardTitle>
+            {scope === "organization"
+              ? "Organization email activity"
+              : "Platform email activity"}
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {events.length ? (
@@ -266,7 +287,7 @@ export function EmailIntegrationAdminClient() {
             ))
           ) : (
             <p className="text-muted-foreground text-sm">
-              No platform email events yet.
+              No {scope} email events yet.
             </p>
           )}
         </CardContent>

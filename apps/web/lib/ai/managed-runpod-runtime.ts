@@ -6,7 +6,7 @@ import { buildRunPodServerlessBaseUrl } from "./gateway-utils";
 import { createGateway, validateRunPodGatewayModelByRawId } from "./gateways";
 import {
   createRunPodControlPlaneClient,
-  getRunPodProviderConnection,
+  listEnabledRunPodProviderConnections,
   resolveRunPodProviderApiKey,
 } from "./managed-runpod-connection";
 import {
@@ -111,13 +111,16 @@ async function updateProvisioningDeployment(
 }
 
 async function ensureTemplate(input: {
+  organizationId: string;
   runId: string;
   name: string;
   imageRef: string;
   templateSpec: unknown;
   providerTemplateId: string | null;
 }) {
-  const { client } = await createRunPodControlPlaneClient();
+  const { client } = await createRunPodControlPlaneClient({
+    organizationId: input.organizationId,
+  });
   const templateId = await ensureManagedRunPodResource({
     knownResourceId: input.providerTemplateId,
     findExisting: async () =>
@@ -137,13 +140,16 @@ async function ensureTemplate(input: {
 }
 
 async function ensureEndpoint(input: {
+  organizationId: string;
   runId: string;
   name: string;
   templateId: string;
   endpointSpec: unknown;
   providerEndpointId: string | null;
 }) {
-  const { client } = await createRunPodControlPlaneClient();
+  const { client } = await createRunPodControlPlaneClient({
+    organizationId: input.organizationId,
+  });
   const endpointId = await ensureManagedRunPodResource({
     knownResourceId: input.providerEndpointId,
     findExisting: async () =>
@@ -166,10 +172,13 @@ async function ensureEndpoint(input: {
 }
 
 async function cleanupProviderResources(input: {
+  organizationId: string;
   endpointId?: string | null;
   templateId?: string | null;
 }) {
-  const { client } = await createRunPodControlPlaneClient();
+  const { client } = await createRunPodControlPlaneClient({
+    organizationId: input.organizationId,
+  });
   await deleteManagedRunPodResources({
     ...input,
     deleteEndpoint: (endpointId) => client.deleteEndpoint(endpointId),
@@ -181,6 +190,9 @@ async function processQualification(
   run: typeof schema.aiDeploymentRuns.$inferSelect,
   profile: typeof schema.aiDeploymentProfiles.$inferSelect
 ) {
+  if (!profile.organizationId) {
+    throw new Error("Managed RunPod profile organization is required.");
+  }
   const name = getManagedRunPodResourceName({
     kind: "qualification",
     id: run.id,
@@ -189,6 +201,7 @@ async function processQualification(
   let endpointId = run.providerEndpointId;
   try {
     const template = await ensureTemplate({
+      organizationId: profile.organizationId,
       runId: run.id,
       name,
       imageRef: profile.imageRef,
@@ -197,6 +210,7 @@ async function processQualification(
     });
     templateId = template.templateId;
     const endpoint = await ensureEndpoint({
+      organizationId: profile.organizationId,
       runId: run.id,
       name,
       templateId,
@@ -210,7 +224,9 @@ async function processQualification(
       providerEndpointId: endpointId,
     });
     endpointId = endpoint.endpointId;
-    const { connection, client } = await createRunPodControlPlaneClient();
+    const { connection, client } = await createRunPodControlPlaneClient({
+      organizationId: profile.organizationId,
+    });
     await client.getEndpoint(endpointId);
     const apiKey = resolveRunPodProviderApiKey(connection);
     const validation = await validateRunPodToolRoundTrip({
@@ -220,7 +236,11 @@ async function processQualification(
       timeoutMs: runPodEndpointSpecSchema.parse(profile.endpointSpec)
         .executionTimeoutMs,
     });
-    await cleanupProviderResources({ endpointId, templateId });
+    await cleanupProviderResources({
+      organizationId: profile.organizationId,
+      endpointId,
+      templateId,
+    });
     await knowledgeDb.transaction(async (tx) => {
       await tx
         .update(schema.aiDeploymentProfiles)
@@ -249,7 +269,11 @@ async function processQualification(
   } catch (error) {
     const failure = safeFailure(error);
     if (!failure.retryable) {
-      await cleanupProviderResources({ endpointId, templateId }).catch(
+      await cleanupProviderResources({
+        organizationId: profile.organizationId,
+        endpointId,
+        templateId,
+      }).catch(
         () => {}
       );
       await knowledgeDb
@@ -319,8 +343,15 @@ async function settleCancelledProvision(input: {
   const templateId =
     latestDeployment?.providerTemplateId ?? latestRun?.providerTemplateId;
   if (endpointId || templateId) {
+    if (!latestDeployment?.organizationId) {
+      throw new Error("Managed RunPod deployment organization is required.");
+    }
     try {
-      await cleanupProviderResources({ endpointId, templateId });
+      await cleanupProviderResources({
+        organizationId: latestDeployment.organizationId,
+        endpointId,
+        templateId,
+      });
     } catch (error) {
       cleanupFailure = safeFailure(error);
     }
@@ -378,6 +409,7 @@ async function processProvision(
     status: "provisioning_template",
   });
   const template = await ensureTemplate({
+    organizationId: deployment.organizationId,
     runId: run.id,
     name,
     imageRef: snapshot.imageRef,
@@ -389,13 +421,16 @@ async function processProvision(
     providerTemplateId: template.templateId,
   });
   const endpoint = await ensureEndpoint({
+    organizationId: deployment.organizationId,
     runId: run.id,
     name,
     templateId: template.templateId,
     endpointSpec: snapshot.endpointSpec,
     providerEndpointId: deployment.providerEndpointId ?? run.providerEndpointId,
   });
-  const { connection, client } = await createRunPodControlPlaneClient();
+  const { connection, client } = await createRunPodControlPlaneClient({
+    organizationId: deployment.organizationId,
+  });
   await client.getEndpoint(endpoint.endpointId);
   const apiKey = resolveRunPodProviderApiKey(connection);
   await updateProvisioningDeployment(deployment.id, {
@@ -413,6 +448,7 @@ async function processProvision(
     gatewayId,
   });
   const validation = await validateRunPodGatewayModelByRawId({
+    organizationId: deployment.organizationId,
     gatewayId,
     rawModelId: snapshot.expectedModelId,
     isDefault: true,
@@ -474,6 +510,7 @@ async function processDelete(
   deployment: typeof schema.aiDeployments.$inferSelect
 ) {
   await cleanupProviderResources({
+    organizationId: deployment.organizationId,
     endpointId: deployment.providerEndpointId ?? run.providerEndpointId,
     templateId: deployment.providerTemplateId ?? run.providerTemplateId,
   });
@@ -574,10 +611,13 @@ export async function processManagedRunPodRun(runId: string) {
         const latestRun = await knowledgeDb.query.aiDeploymentRuns.findFirst({
           where: eq(schema.aiDeploymentRuns.id, runId),
         });
-        await cleanupProviderResources({
-          endpointId: latestRun?.providerEndpointId,
-          templateId: latestRun?.providerTemplateId,
-        }).catch(() => {});
+        if (row.profile.organizationId) {
+          await cleanupProviderResources({
+            organizationId: row.profile.organizationId,
+            endpointId: latestRun?.providerEndpointId,
+            templateId: latestRun?.providerTemplateId,
+          }).catch(() => {});
+        }
         await knowledgeDb
           .update(schema.aiDeploymentProfiles)
           .set({ status: "draft", updatedAt: new Date() })
@@ -607,107 +647,115 @@ export async function processManagedRunPodRun(runId: string) {
 }
 
 export async function reconcileManagedRunPodFleet() {
-  const connection = await getRunPodProviderConnection();
-  if (!connection?.enabled) return;
-  const { client } = await createRunPodControlPlaneClient();
-  const providerEndpoints = new Set(
-    (await client.listEndpoints()).map((row) => row.id)
-  );
-  const deployments = await knowledgeDb.query.aiDeployments.findMany({
-    where: and(
-      ne(schema.aiDeployments.status, "deleted"),
-      isNotNull(schema.aiDeployments.providerEndpointId)
-    ),
-  });
-  for (const deployment of deployments) {
-    if (
-      deployment.providerEndpointId &&
-      !providerEndpoints.has(deployment.providerEndpointId)
-    ) {
-      await knowledgeDb.transaction(async (tx) => {
-        if (deployment.gatewayId) {
+  const connections = await listEnabledRunPodProviderConnections();
+  for (const connection of connections) {
+    if (!connection.organizationId) continue;
+    const { client } = await createRunPodControlPlaneClient({
+      organizationId: connection.organizationId,
+    });
+    const providerEndpoints = new Set(
+      (await client.listEndpoints()).map((row) => row.id)
+    );
+    const deployments = await knowledgeDb.query.aiDeployments.findMany({
+      where: and(
+        eq(schema.aiDeployments.organizationId, connection.organizationId),
+        ne(schema.aiDeployments.status, "deleted"),
+        isNotNull(schema.aiDeployments.providerEndpointId)
+      ),
+    });
+    for (const deployment of deployments) {
+      if (
+        deployment.providerEndpointId &&
+        !providerEndpoints.has(deployment.providerEndpointId)
+      ) {
+        await knowledgeDb.transaction(async (tx) => {
+          if (deployment.gatewayId) {
+            await tx
+              .update(schema.aiGateways)
+              .set({ enabled: false, updatedAt: new Date() })
+              .where(eq(schema.aiGateways.id, deployment.gatewayId));
+          }
           await tx
-            .update(schema.aiGateways)
-            .set({ enabled: false, updatedAt: new Date() })
-            .where(eq(schema.aiGateways.id, deployment.gatewayId));
-        }
-        await tx
+            .update(schema.aiDeployments)
+            .set(
+              isManagedRunPodDeletionStatus(deployment.status)
+                ? { lastReconciledAt: new Date(), updatedAt: new Date() }
+                : {
+                    status: "failed",
+                    failureCode: "RUNPOD_ENDPOINT_DRIFT",
+                    failureMessage:
+                      "The managed RunPod endpoint no longer exists.",
+                    lastReconciledAt: new Date(),
+                    updatedAt: new Date(),
+                  }
+            )
+            .where(eq(schema.aiDeployments.id, deployment.id));
+        });
+      } else {
+        await knowledgeDb
           .update(schema.aiDeployments)
-          .set(
-            isManagedRunPodDeletionStatus(deployment.status)
-              ? { lastReconciledAt: new Date(), updatedAt: new Date() }
-              : {
-                  status: "failed",
-                  failureCode: "RUNPOD_ENDPOINT_DRIFT",
-                  failureMessage:
-                    "The managed RunPod endpoint no longer exists.",
-                  lastReconciledAt: new Date(),
-                  updatedAt: new Date(),
-                }
-          )
+          .set({ lastReconciledAt: new Date(), updatedAt: new Date() })
           .where(eq(schema.aiDeployments.id, deployment.id));
-      });
-    } else {
-      await knowledgeDb
-        .update(schema.aiDeployments)
-        .set({ lastReconciledAt: new Date(), updatedAt: new Date() })
-        .where(eq(schema.aiDeployments.id, deployment.id));
+      }
     }
   }
 }
 
 export async function ingestManagedRunPodUsage(now = new Date()) {
-  const connection = await getRunPodProviderConnection();
-  if (!connection?.enabled) return 0;
-  const { client } = await createRunPodControlPlaneClient();
-  const records = await client.listBilling({
-    startTime: new Date(now.getTime() - 25 * 60 * 60 * 1000),
-    endTime: now,
-  });
-  const endpoints = Array.from(
-    new Set(records.map((record) => record.endpointId))
-  );
-  if (endpoints.length === 0) {
-    return 0;
-  }
-  const deployments = await knowledgeDb.query.aiDeployments.findMany({
-    where: inArray(schema.aiDeployments.providerEndpointId, endpoints),
-  });
-  const byEndpoint = new Map(
-    deployments.map((deployment) => [deployment.providerEndpointId, deployment])
-  );
   let stored = 0;
-  for (const record of records) {
-    const deployment = byEndpoint.get(record.endpointId);
-    if (!deployment) {
-      continue;
-    }
-    await knowledgeDb
-      .insert(schema.aiDeploymentUsage)
-      .values({
-        id: crypto.randomUUID(),
-        deploymentId: deployment.id,
-        providerEndpointId: record.endpointId,
-        bucketStartedAt: new Date(record.time),
-        amountUsd: record.amount,
-        timeBilledMs: record.timeBilledMs,
-        diskSpaceBilledGb: record.diskSpaceBilledGb,
-        gpuTypeId: record.gpuTypeId ?? null,
-      })
-      .onConflictDoUpdate({
-        target: [
-          schema.aiDeploymentUsage.deploymentId,
-          schema.aiDeploymentUsage.bucketStartedAt,
-          schema.aiDeploymentUsage.gpuTypeId,
-        ],
-        set: {
+  const connections = await listEnabledRunPodProviderConnections();
+  for (const connection of connections) {
+    if (!connection.organizationId) continue;
+    const { client } = await createRunPodControlPlaneClient({
+      organizationId: connection.organizationId,
+    });
+    const records = await client.listBilling({
+      startTime: new Date(now.getTime() - 25 * 60 * 60 * 1000),
+      endTime: now,
+    });
+    const endpoints = Array.from(
+      new Set(records.map((record) => record.endpointId))
+    );
+    if (endpoints.length === 0) continue;
+    const deployments = await knowledgeDb.query.aiDeployments.findMany({
+      where: and(
+        eq(schema.aiDeployments.organizationId, connection.organizationId),
+        inArray(schema.aiDeployments.providerEndpointId, endpoints)
+      ),
+    });
+    const byEndpoint = new Map(
+      deployments.map((deployment) => [deployment.providerEndpointId, deployment])
+    );
+    for (const record of records) {
+      const deployment = byEndpoint.get(record.endpointId);
+      if (!deployment) continue;
+      await knowledgeDb
+        .insert(schema.aiDeploymentUsage)
+        .values({
+          id: crypto.randomUUID(),
+          deploymentId: deployment.id,
+          providerEndpointId: record.endpointId,
+          bucketStartedAt: new Date(record.time),
           amountUsd: record.amount,
           timeBilledMs: record.timeBilledMs,
           diskSpaceBilledGb: record.diskSpaceBilledGb,
-          updatedAt: new Date(),
-        },
-      });
-    stored += 1;
+          gpuTypeId: record.gpuTypeId ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [
+            schema.aiDeploymentUsage.deploymentId,
+            schema.aiDeploymentUsage.bucketStartedAt,
+            schema.aiDeploymentUsage.gpuTypeId,
+          ],
+          set: {
+            amountUsd: record.amount,
+            timeBilledMs: record.timeBilledMs,
+            diskSpaceBilledGb: record.diskSpaceBilledGb,
+            updatedAt: new Date(),
+          },
+        });
+      stored += 1;
+    }
   }
   return stored;
 }

@@ -17,7 +17,7 @@ export default async function AdminBillingPage() {
       <AdminPageHeader
         actions={
           <Button asChild size="sm" variant="outline">
-            <Link href="/dashboard/organizations">Open Org Billing</Link>
+            <Link href="/settings/organization/billing">Open Org Billing</Link>
           </Button>
         }
         description="Inspect Stripe readiness, webhook wiring, and org subscription sync for the active organization."

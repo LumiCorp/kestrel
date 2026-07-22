@@ -23,7 +23,7 @@ export default async function DashboardPage() {
             </p>
             <Link
               className="font-medium text-primary hover:underline"
-              href="/dashboard/user"
+              href="/settings/profile"
             >
               Go to User Settings →
             </Link>
@@ -39,7 +39,7 @@ export default async function DashboardPage() {
             </p>
             <Link
               className="font-medium text-primary hover:underline"
-              href="/dashboard/organizations"
+              href="/settings/organization/members"
             >
               Go to Organizations →
             </Link>

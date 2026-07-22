@@ -95,7 +95,7 @@ export function EnvironmentInferenceClient({
     Record<string, string>
   >({});
   const [busy, setBusy] = useState(false);
-  const endpoint = `/api/admin/environments/${state.environment.id}/inference`;
+  const endpoint = `/api/organization/environments/${state.environment.id}/inference`;
 
   const refresh = useCallback(async () => {
     const response = await fetch(endpoint, { cache: "no-store" });

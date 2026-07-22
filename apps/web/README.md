@@ -258,8 +258,8 @@ Removed from the supported core product surface:
 - `/api/stats`
 - `/api/stats/me`
 - `/api/stats/usage`
-- `/api/agent-config`
-- `/api/agent-config/public`
+- `/api/organization/agent-config`
+- `/api/organization/agent-config/public`
 - `/api/runtime/apps`
 - `/api/admin/*`
 
@@ -269,7 +269,7 @@ Removed from the supported core product surface:
 app/
   (auth)/              authentication pages
   (workspace)/         authenticated Threads, Projects, search, and model deployments
-  dashboard/           account, orgs, org billing, personal API keys
+  (workspace)/settings role-aware personal, organization, and platform settings
   knowledge/           Kestrel One knowledge dashboard
   admin/               operational admin pages
   shared/              public shared threads

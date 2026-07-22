@@ -181,7 +181,7 @@ export function OrganizationBillingCard(props: {
                     customerType="organization"
                     isTrial={subscription?.status === "trialing"}
                     referenceId={organization?.id}
-                    returnUrl="/dashboard/billing"
+                    returnUrl="/settings/organization/billing"
                   />
                 </div>
               )

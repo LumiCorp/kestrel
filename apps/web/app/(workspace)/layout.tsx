@@ -7,9 +7,7 @@ import { DataStreamProvider } from "@/components/chatbot/data-stream-provider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { WorkspaceRail } from "@/components/workspace-rail";
 import {
-  canManageOrganization,
   getActiveOrganizationSnapshot,
-  isAdminUser,
 } from "@/lib/knowledge/auth";
 import { auth } from "../(auth)/auth";
 
@@ -35,12 +33,6 @@ async function SidebarWrapper({ children }: { children: React.ReactNode }) {
     redirect("/sign-in");
   }
   const activeOrganization = await getActiveOrganizationSnapshot(session);
-  const canManageActiveOrganization = activeOrganization
-    ? await canManageOrganization({
-        organizationId: activeOrganization.id,
-        userId: session.user.id,
-      })
-    : false;
   const cookieStore = await cookies();
   const isCollapsed = cookieStore.get("sidebar_state")?.value !== "true";
 
@@ -51,10 +43,6 @@ async function SidebarWrapper({ children }: { children: React.ReactNode }) {
     >
       <AppSidebar
         activeOrganization={activeOrganization}
-        canManageOrganization={canManageActiveOrganization}
-        isAdmin={isAdminUser(
-          session?.user as { id?: string | null; role?: string | null } | null
-        )}
         session={session}
       />
       <SidebarInset className="min-h-0 overflow-hidden">

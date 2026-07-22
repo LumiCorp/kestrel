@@ -6,7 +6,10 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { activeOrganization, isAdmin, session } =
+  const {
+    activeOrganization,
+    session,
+  } =
     await requireAuthenticatedShell({
       requireAdmin: true,
       requireActiveOrganization: true,
@@ -15,7 +18,6 @@ export default async function AdminLayout({
   return (
     <AuthenticatedAppShell
       activeOrganization={activeOrganization}
-      isAdmin={isAdmin}
       sectionLabel="Admin"
       session={session}
     >

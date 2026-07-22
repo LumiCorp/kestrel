@@ -20,7 +20,7 @@ export function RuntimeImageForm({
   async function save() {
     setBusy(true);
     try {
-      const response = await fetch(`/api/admin/environments/${environmentId}`, {
+      const response = await fetch(`/api/organization/environments/${environmentId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ runtimeImage: runtimeImage.trim() }),

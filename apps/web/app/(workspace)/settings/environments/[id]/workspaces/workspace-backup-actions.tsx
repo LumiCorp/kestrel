@@ -31,7 +31,7 @@ export function WorkspaceBackupActions({
 
   const refreshBackups = useCallback(async () => {
     const response = await fetch(
-      `/api/admin/environments/${environmentId}/workspaces/${workspaceId}/backups`
+      `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/backups`
     );
     if (!response.ok) {
       throw new Error(
@@ -57,7 +57,7 @@ export function WorkspaceBackupActions({
     setBusy("backup");
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/workspaces/${workspaceId}/backups`,
+        `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/backups`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -93,7 +93,7 @@ export function WorkspaceBackupActions({
     setBusy("restore");
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/workspaces/${workspaceId}/backups/${latestBackup.id}/restore`,
+        `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/backups/${latestBackup.id}/restore`,
         { method: "POST" }
       );
       if (!response.ok) {

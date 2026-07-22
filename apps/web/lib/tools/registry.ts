@@ -477,6 +477,52 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
+    key: "email",
+    displayName: "Email",
+    description:
+      "Send organization email through the verified Resend sender configured by an Organization Admin.",
+    type: "api_key",
+    authType: "api_key",
+    app: {
+      category: "communication",
+      connectionModel: "organization",
+      connectionRequirement: "required",
+      authMethods: ["api_key"],
+      delivery: "native",
+      installMode: "explicit",
+      icon: "mail",
+    },
+    metadata: {
+      icon: "mail",
+      category: "communication",
+      provider: "resend",
+      credentialOwner: "organization",
+    },
+    capabilities: [
+      createCapability({
+        key: "send",
+        runtimeName: "email.send",
+        displayName: "Send email",
+        description:
+          "Send an external email from the organization's verified sender. Every message requires human approval; attachments are not supported.",
+        accessMode: "write",
+        defaultPolicy: {
+          enabled: false,
+          approvalMode: "ask",
+          rateLimitMode: "strict",
+          loggingMode: "metadata_only",
+        },
+        metadata: {
+          audience: "project",
+          group: "delivery",
+          approvalRequired: true,
+          attachmentsSupported: false,
+          maxRecipients: 20,
+        },
+      }),
+    ],
+  },
+  {
     key: "tavily",
     displayName: "Tavily",
     description:

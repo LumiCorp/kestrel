@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
 import {
   type ComposerTransportStatus,
@@ -59,7 +59,7 @@ function activeState(cancelRequestedAt: string | null = null) {
   } satisfies ThreadConversationState;
 }
 
-test("idle empty and populated composers resolve disabled and enabled send", () => {
+contractTest("web.hermetic", "idle empty and populated composers resolve disabled and enabled send", () => {
   assert.deepEqual(presentation().action, { disabled: true, kind: "send" });
   assert.deepEqual(presentation({ hasText: true }).action, {
     disabled: false,
@@ -71,14 +71,14 @@ test("idle empty and populated composers resolve disabled and enabled send", () 
   });
 });
 
-test("uploads disable an otherwise available send action", () => {
+contractTest("web.hermetic", "uploads disable an otherwise available send action", () => {
   assert.deepEqual(
     presentation({ hasText: true, uploadCount: 1 }).action,
     { disabled: true, kind: "send" }
   );
 });
 
-test("active empty composer stops and active draft queues", () => {
+contractTest("web.hermetic", "active empty composer stops and active draft queues", () => {
   const conversationState = activeState();
   assert.deepEqual(presentation({ conversationState }).action, {
     disabled: false,
@@ -94,7 +94,7 @@ test("active empty composer stops and active draft queues", () => {
   );
 });
 
-test("queue capability and uploads disable queue submission", () => {
+contractTest("web.hermetic", "queue capability and uploads disable queue submission", () => {
   const conversationState = activeState();
   assert.equal(
     presentation({ conversationState, hasText: true, canQueue: false }).action
@@ -108,7 +108,7 @@ test("queue capability and uploads disable queue submission", () => {
   );
 });
 
-test("a recorded cancellation locks the stop action", () => {
+contractTest("web.hermetic", "a recorded cancellation locks the stop action", () => {
   assert.deepEqual(
     presentation({
       conversationState: activeState("2026-07-21T12:01:00.000Z"),
@@ -118,7 +118,7 @@ test("a recorded cancellation locks the stop action", () => {
   );
 });
 
-test("runtime user input resolves an exact response action", () => {
+contractTest("web.hermetic", "runtime user input resolves an exact response action", () => {
   const interaction: ThreadConversationState["interactions"][number] = {
     id: "interaction-1",
     requestId: "request-1",
@@ -149,7 +149,7 @@ test("runtime user input resolves an exact response action", () => {
   );
 });
 
-test("approval blocks the composer with an attention state", () => {
+contractTest("web.hermetic", "approval blocks the composer with an attention state", () => {
   const interaction: ThreadConversationState["interactions"][number] = {
     id: "interaction-2",
     requestId: "request-2",
@@ -175,7 +175,7 @@ test("approval blocks the composer with an attention state", () => {
   assert.equal(result.tone, "attention");
 });
 
-test("transport errors expose reset and ready recovery restores send", () => {
+contractTest("web.hermetic", "transport errors expose reset and ready recovery restores send", () => {
   assert.deepEqual(presentation({ transportStatus: "error" }).action, {
     disabled: false,
     kind: "reset",

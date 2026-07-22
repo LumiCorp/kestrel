@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, gt, inArray, lte } from "drizzle-orm";
+import { and, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   assertAppOperationApprovalBinding,
@@ -25,6 +25,7 @@ export async function recordAppOperationApprovalRequest(input: {
   expiresAt: Date;
 }) {
   const now = new Date();
+  await expireStaleAppOperationApprovals(now);
   if (
     !Number.isFinite(input.expiresAt.getTime()) ||
     input.expiresAt.getTime() <= now.getTime()
@@ -159,10 +160,14 @@ export async function decideAppOperationApproval(input: {
   approved: boolean;
 }) {
   const now = new Date();
+  await expireStaleAppOperationApprovals(now);
   const [decision] = await knowledgeDb
     .update(schema.appOperationApprovals)
     .set({
       status: input.approved ? "approved" : "denied",
+      payload: input.approved
+        ? sql`${schema.appOperationApprovals.payload}`
+        : sql`case when ${schema.appOperationApprovals.appKey} = 'email' then '{"redacted":true}'::jsonb else ${schema.appOperationApprovals.payload} end`,
       decidedByUserId: input.userId,
       decidedAt: now,
       updatedAt: now,
@@ -221,6 +226,10 @@ export async function consumeAppOperationApproval(input: {
     .update(schema.appOperationApprovals)
     .set({
       status: "consumed",
+      payload:
+        input.binding.appKey === "email"
+          ? { redacted: true, operation: "email.send" }
+          : input.binding.payload,
       consumedExecutionId: input.consumedExecutionId,
       consumedAt: now,
       updatedAt: now,
@@ -268,7 +277,11 @@ async function expireAppOperationApproval(input: {
 }) {
   await knowledgeDb
     .update(schema.appOperationApprovals)
-    .set({ status: "expired", updatedAt: input.now })
+    .set({
+      status: "expired",
+      payload: sql`case when ${schema.appOperationApprovals.appKey} = 'email' then '{"redacted":true}'::jsonb else ${schema.appOperationApprovals.payload} end`,
+      updatedAt: input.now,
+    })
     .where(
       and(
         eq(schema.appOperationApprovals.organizationId, input.organizationId),
@@ -278,6 +291,22 @@ async function expireAppOperationApproval(input: {
         ),
         inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
         lte(schema.appOperationApprovals.expiresAt, input.now)
+      )
+    );
+}
+
+export async function expireStaleAppOperationApprovals(now = new Date()) {
+  await knowledgeDb
+    .update(schema.appOperationApprovals)
+    .set({
+      status: "expired",
+      payload: sql`case when ${schema.appOperationApprovals.appKey} = 'email' then '{"redacted":true}'::jsonb else ${schema.appOperationApprovals.payload} end`,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
+        lte(schema.appOperationApprovals.expiresAt, now)
       )
     );
 }

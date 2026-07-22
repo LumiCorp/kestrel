@@ -16,7 +16,7 @@ import {
   createEnvironmentMachineRoute,
   resolveEnvironmentExecutionRoute,
 } from "./execution-route";
-import { FlyMachinesClient } from "./providers/fly-machines";
+import { createFlyProviderClient } from "./fly-connection";
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
 
@@ -99,11 +99,12 @@ export async function createWorkspaceBackup(input: {
         encryptionKeyId: backupKeyId(),
       },
     });
+    const provider = await createFlyProviderClient(input.organizationId);
     const snapshot = await createAuxiliaryVolumeSnapshot({
       appName: environment.flyAppName,
       volumeId: workspace.flyVolumeId,
       createSnapshot: (snapshotInput) =>
-        createFlyClient().createVolumeSnapshot(snapshotInput),
+        provider.createVolumeSnapshot(snapshotInput),
     });
     const completedAt = new Date();
     await knowledgeDb.transaction(async (transaction) => {
@@ -409,7 +410,7 @@ export async function restoreWorkspaceBackup(input: {
     createdAt: startedAt,
     updatedAt: startedAt,
   });
-  const provider = createFlyClient();
+  const provider = await createFlyProviderClient(input.organizationId);
   let replacementVolumeId: string | null = null;
   let replacementMachineId: string | null = null;
   let rebound = false;
@@ -690,11 +691,4 @@ function backupKeyId() {
   if (!value)
     throw new Error("KESTREL_WORKSPACE_BACKUP_KEY_ID is not configured.");
   return value;
-}
-
-function createFlyClient() {
-  return new FlyMachinesClient({
-    token: process.env.FLY_API_TOKEN ?? "",
-    organizationSlug: process.env.KESTREL_FLY_ORGANIZATION_SLUG ?? "",
-  });
 }

@@ -78,7 +78,7 @@ async function run() {
 
   const userId = existingUser.id;
 
-  await ensurePersonalOrganization({
+  const personalOrganization = await ensurePersonalOrganization({
     id: userId,
     name,
     email,
@@ -135,6 +135,7 @@ async function run() {
   console.log(
     `✅ Dev admin ready: ${email} with personal workspace + organization ${orgName} (${orgSlug})`
   );
+  console.log(`Personal organization ID: ${personalOrganization.id}`);
 
   await client.end();
   process.exit(0);

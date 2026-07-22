@@ -34,7 +34,7 @@ export function ApiKeysAdminClient() {
 
   async function load() {
     setStatus("Loading API keys...");
-    const response = await fetch("/api/admin/api-keys", { cache: "no-store" });
+    const response = await fetch("/api/organization/api-keys", { cache: "no-store" });
     const json = await readJson<AdminApiKey[] | { error?: string }>(response);
     if (!(response.ok && Array.isArray(json))) {
       setStatus(
@@ -54,7 +54,7 @@ export function ApiKeysAdminClient() {
 
   async function createKey() {
     setBusy(true);
-    const response = await fetch("/api/admin/api-keys", {
+    const response = await fetch("/api/organization/api-keys", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -77,7 +77,7 @@ export function ApiKeysAdminClient() {
 
   async function revokeKey(id: string) {
     setBusy(true);
-    const response = await fetch(`/api/admin/api-keys/${id}`, {
+    const response = await fetch(`/api/organization/api-keys/${id}`, {
       method: "DELETE",
     });
     const json = await readJson<{ error?: string }>(response);

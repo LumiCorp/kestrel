@@ -229,6 +229,12 @@ export async function requireAuthenticatedShell(input?: {
   }
 
   const activeOrganization = await getActiveOrganizationSnapshot(session);
+  const canManageActiveOrganization = activeOrganization
+    ? await canManageOrganization({
+        organizationId: activeOrganization.id,
+        userId: session.user.id,
+      })
+    : false;
 
   if (input?.requireActiveOrganization && !activeOrganization) {
     redirect("/dashboard");
@@ -237,6 +243,7 @@ export async function requireAuthenticatedShell(input?: {
   return {
     session,
     activeOrganization,
+    canManageActiveOrganization,
     isAdmin,
   };
 }

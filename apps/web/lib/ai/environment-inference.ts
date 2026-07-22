@@ -59,7 +59,7 @@ export async function getEnvironmentPrivateInference(input: {
           input.organizationId
         ),
       }),
-      listManagedRunPodProfiles(),
+      listManagedRunPodProfiles({ organizationId: input.organizationId }),
       listManagedRunPodDeployments(input.organizationId, input.environmentId),
       knowledgeDb.query.aiGateways.findMany({
         where: and(
@@ -86,7 +86,7 @@ export async function getEnvironmentPrivateInference(input: {
     await Promise.all(
       gateways.map(async (gateway) =>
         (
-          await listModelsForGateway(gateway.id)
+          await listModelsForGateway(input.organizationId, gateway.id)
         ).map((model) => ({
           ...model,
           gatewayEnabled: gateway.enabled,
@@ -151,7 +151,7 @@ export async function connectEnvironmentRunPodEndpoint(input: {
       });
       return getEnvironmentPrivateInference(input);
     }
-    const synced = await syncGatewayModels(gateway.id);
+    const synced = await syncGatewayModels(input.organizationId, gateway.id);
     const languageModels = synced.models.filter(
       (model) => model.modality === "language"
     );
@@ -167,7 +167,7 @@ export async function connectEnvironmentRunPodEndpoint(input: {
     return getEnvironmentPrivateInference(input);
   } catch (error) {
     const suppliedModelId = Boolean(input.servedModelId?.trim());
-    await updateGateway(gateway.id, {
+    await updateGateway(input.organizationId, gateway.id, {
       enabled: false,
       metadata: {
         managedBy: "environment",
@@ -209,11 +209,12 @@ export async function validateAndEnableEnvironmentRunPodModelByRawId(input: {
   let validation: Awaited<ReturnType<typeof validateRunPodGatewayModelByRawId>>;
   try {
     validation = await validateRunPodGatewayModelByRawId({
+      organizationId: input.organizationId,
       gatewayId: gateway.id,
       rawModelId: input.rawModelId,
     });
   } catch (error) {
-    await updateGateway(gateway.id, {
+    await updateGateway(input.organizationId, gateway.id, {
       enabled: false,
       metadata: {
         ...(gateway.metadata as Record<string, unknown> | null),
@@ -226,7 +227,7 @@ export async function validateAndEnableEnvironmentRunPodModelByRawId(input: {
     });
     throw error;
   }
-  await updateGateway(gateway.id, {
+  await updateGateway(input.organizationId, gateway.id, {
     enabled: true,
     metadata: {
       ...(gateway.metadata as Record<string, unknown> | null),
@@ -264,10 +265,12 @@ export async function validateAndEnableEnvironmentRunPodModel(input: {
     throw new Error("Connected RunPod endpoint not found.");
   }
   const validation = await validateRunPodGatewayModel({
+    organizationId: input.organizationId,
     gatewayId: gateway.id,
     modelId: input.modelId,
   });
   const model = await saveGatewayModel({
+    organizationId: input.organizationId,
     id: validation.model.id,
     gatewayId: gateway.id,
     rawModelId: validation.model.rawModelId,
@@ -278,7 +281,7 @@ export async function validateAndEnableEnvironmentRunPodModel(input: {
     description: validation.model.description,
     metadata: validation.model.metadata as Record<string, unknown> | null,
   });
-  await updateGateway(gateway.id, {
+  await updateGateway(input.organizationId, gateway.id, {
     enabled: true,
     metadata: {
       ...(gateway.metadata as Record<string, unknown> | null),
@@ -312,8 +315,8 @@ export async function resyncEnvironmentRunPodEndpoint(input: {
   if (!gateway) {
     throw new Error("Connected RunPod endpoint not found.");
   }
-  await syncGatewayModels(gateway.id);
-  await updateGateway(gateway.id, {
+  await syncGatewayModels(input.organizationId, gateway.id);
+  await updateGateway(input.organizationId, gateway.id, {
     enabled: false,
     metadata: {
       ...(gateway.metadata &&

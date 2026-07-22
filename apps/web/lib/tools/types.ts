@@ -20,7 +20,12 @@ export type ToolProviderAppContract = {
     | "search_research"
     | "knowledge_sources"
     | "custom";
-  connectionModel: "none" | "personal" | "environment" | "hybrid";
+  connectionModel:
+    | "none"
+    | "organization"
+    | "personal"
+    | "environment"
+    | "hybrid";
   connectionRequirement: "none" | "optional" | "required";
   authMethods: Array<
     | "none"

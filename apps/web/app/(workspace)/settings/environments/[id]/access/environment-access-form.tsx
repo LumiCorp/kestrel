@@ -27,7 +27,7 @@ export function EnvironmentAccessForm({
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(`/api/admin/environments/${environmentId}/capabilities`, {
+    void fetch(`/api/organization/environments/${environmentId}/capabilities`, {
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -65,7 +65,7 @@ export function EnvironmentAccessForm({
     setBusyKey(input.capabilityKey);
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/capabilities`,
+        `/api/organization/environments/${environmentId}/capabilities`,
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
