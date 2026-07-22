@@ -106,4 +106,3 @@ export function usePalette() {
   }
   return context;
 }
-

@@ -724,4 +724,3 @@ export function applyPalettePreferencesToElement(
 export function serializePalettePreferences(preferences: PalettePreferences) {
   return JSON.stringify(preferences);
 }
-

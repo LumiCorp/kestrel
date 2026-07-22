@@ -119,8 +119,7 @@ function approvalSheetSvg(trace, wordmark) {
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1600 1900">
-  <defs>
-    ${wordmark.definitions}
+  <defs>${wordmark.definitions}
     <symbol id="mark" viewBox="0 0 ${MARK_VIEWBOX} ${MARK_VIEWBOX}">${markDrawing("currentColor", trace)}</symbol>
     <symbol id="lockup" viewBox="0 0 ${LOCKUP_WIDTH} ${LOCKUP_HEIGHT}">${lockupDrawing("currentColor", trace, wordmark)}</symbol>
   </defs>
