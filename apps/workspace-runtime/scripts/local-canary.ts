@@ -104,6 +104,16 @@ try {
 		tenantId: identity.organizationId,
 	});
 	assert.equal(profile.id, "kestrel-one");
+	assert.equal(profile.delegation?.allowAgentSpawn, true);
+	assert.deepEqual(
+		(profile.toolAllowlist ?? []).filter(
+			(toolName) =>
+				toolName.startsWith("dialog.") ||
+				toolName.startsWith("delegate.") ||
+				toolName === "agent.spawn",
+		),
+		["dialog.open", "dialog.send", "dialog.close"],
+	);
 } finally {
 	await runnerClient.close();
 }
