@@ -6,6 +6,7 @@ import type { EnvironmentGatewayConfig, EnvironmentGatewayPreviewRoute } from "@
 import { type Session, SessionBuilder } from "@ngrok/ngrok";
 
 const MAX_CONNECTIONS_PER_PREVIEW = 100;
+const MAX_FAILURE_MESSAGE_LENGTH = 500;
 
 export class PreviewGateway {
   private routes = new Map<string, EnvironmentGatewayPreviewRoute>();
@@ -23,7 +24,12 @@ export class PreviewGateway {
       environmentId: string;
       workspaceAddress?: ((route: EnvironmentGatewayPreviewRoute) => { host: string; port: number }) | undefined;
       openEndpoint?: ((input: { authtoken: string; wildcardDomain: string; targetUrl: string; environmentId: string }) => Promise<{ close(): Promise<void> }>) | undefined;
-      reportStatus?: ((input: { connectionId: string; status: "connected" | "degraded"; failureCode?: string | undefined }) => Promise<void>) | undefined;
+      reportStatus?: ((input: {
+        connectionId: string;
+        status: "connected" | "degraded";
+        failureCode?: string | undefined;
+        failureMessage?: string | undefined;
+      }) => Promise<void>) | undefined;
     }
   ) {}
 
@@ -119,6 +125,7 @@ export class PreviewGateway {
         connectionId: config.ngrok.connectionId,
         status: "degraded",
         failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
+        failureMessage: safeNgrokFailureMessage(error, config.ngrok.authtoken),
       }).catch(() => {});
       throw error;
     }
@@ -164,6 +171,15 @@ export class PreviewGateway {
     if (count <= 1) this.connections.delete(previewId);
     else this.connections.set(previewId, count - 1);
   }
+}
+
+function safeNgrokFailureMessage(error: unknown, authtoken: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  const redacted = authtoken.length > 0
+    ? message.split(authtoken).join("[REDACTED]")
+    : message;
+  return (redacted.trim() || "Ngrok endpoint reconciliation failed.")
+    .slice(0, MAX_FAILURE_MESSAGE_LENGTH);
 }
 
 function endpointIdentity(config: NonNullable<EnvironmentGatewayConfig["ngrok"]>) {

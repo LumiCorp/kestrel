@@ -55,7 +55,8 @@ function readFinalizePresentation(input: unknown) {
       const id = readNonEmptyString(artifact?.id);
       const title = readNonEmptyString(artifact?.title);
       const kind = readNonEmptyString(artifact?.kind);
-      if (!(id && title && kind)) return [];
+      if (artifact === undefined || !(id && title && kind)) return [];
+      const metadata = readArtifactMetadata(artifact);
       return [{
         id,
         title,
@@ -66,12 +67,40 @@ function readFinalizePresentation(input: unknown) {
         ...(readNonEmptyString(artifact?.mediaType)
           ? { mediaType: readNonEmptyString(artifact?.mediaType) }
           : {}),
-        ...(asRecord(artifact?.metadata)
-          ? { metadata: asRecord(artifact?.metadata) }
-          : {}),
+        ...(metadata !== undefined ? { metadata } : {}),
       }];
     }),
   };
+}
+
+function readArtifactMetadata(
+  artifact: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const metadata = { ...(asRecord(artifact.metadata) ?? {}) };
+  for (const field of ["status", "stdout", "stderr", "text", "chunk", "chunkPreview"] as const) {
+    if (typeof artifact[field] === "string") {
+      metadata[field] = artifact[field];
+    }
+  }
+  for (const field of ["exitCode", "durationMs"] as const) {
+    const value = artifact[field];
+    if (value === null || (typeof value === "number" && Number.isFinite(value))) {
+      metadata[field] = value;
+    }
+  }
+  if (typeof artifact.truncated === "boolean") {
+    metadata.truncated = artifact.truncated;
+  }
+  for (const field of ["toolContext", "source"] as const) {
+    const value = asRecord(artifact[field]);
+    if (value !== undefined) {
+      metadata[field] = value;
+    }
+  }
+  if (Array.isArray(artifact.sources)) {
+    metadata.sources = artifact.sources;
+  }
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

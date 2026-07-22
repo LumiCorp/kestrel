@@ -169,9 +169,8 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
       additionalProperties: false,
       properties: {
         mode: { type: "string", enum: ["chat", "plan", "build"] },
-        message: { type: "string", minLength: 1 },
       },
-      required: ["mode", "message"],
+      required: ["mode"],
     },
   },
   {

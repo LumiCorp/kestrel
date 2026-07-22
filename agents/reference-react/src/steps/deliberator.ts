@@ -749,6 +749,7 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
     terminal: undefined,
     assistantText: null,
     finalOutput: undefined,
+    finalized: undefined,
     activeTurnIntent: undefined,
     phase: undefined,
   } as ReferenceReactAgentState;

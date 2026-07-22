@@ -18,7 +18,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-contractTest("runtime.hermetic", "workspace skill source accepts only public credential-free HTTPS Git URLs", async () => {
+contractTest("runtime.process", "workspace skill source accepts only public credential-free HTTPS Git URLs", async () => {
   assert.deepEqual(
     normalizeWorkspaceSkillSource({
       gitUrl: " https://git.example/acme/skills.git ",
@@ -98,7 +98,7 @@ contractTest("runtime.hermetic", "workspace skill source accepts only public cre
   );
 });
 
-contractTest("runtime.hermetic", "workspace skill manifest uses standard YAML frontmatter", () => {
+contractTest("runtime.process", "workspace skill manifest uses standard YAML frontmatter", () => {
   assert.deepEqual(parseSkillManifest("---\nname: code-review\ndescription: |\n  Review changes carefully.\n---\n\n# Review\n"), {
     name: "code-review",
     description: "Review changes carefully.",
@@ -107,7 +107,7 @@ contractTest("runtime.hermetic", "workspace skill manifest uses standard YAML fr
   assert.throws(() => parseSkillManifest("---\nname: Bad Name\ndescription: nope\n---\n"), /lowercase hyphenated/u);
 });
 
-contractTest("runtime.hermetic", "workspace skill package rejects symbolic links", async () => {
+contractTest("runtime.process", "workspace skill package rejects symbolic links", async () => {
   const root = await fixtureRoot("skill-links-");
   await writeFile(path.join(root, "SKILL.md"), skillFile("linked"));
   await writeFile(path.join(root, "target.txt"), "target");
@@ -115,7 +115,7 @@ contractTest("runtime.hermetic", "workspace skill package rejects symbolic links
   await assert.rejects(validateWorkspaceSkillPackage(root), /symbolic links/u);
 });
 
-contractTest("runtime.hermetic", "workspace skill sync publishes immutable revisions and retains last good content", async () => {
+contractTest("runtime.process", "workspace skill sync publishes immutable revisions and retains last good content", async () => {
   const workspaceRoot = await fixtureRoot("skill-workspace-");
   let commit = "a".repeat(40);
   let fail = false;
@@ -161,7 +161,7 @@ contractTest("runtime.hermetic", "workspace skill sync publishes immutable revis
   assert.equal((await installer.readWorkspaceCatalog(workspaceRoot))[0]?.name, "workspace-review");
 });
 
-contractTest("runtime.hermetic", "workspace skill sync repairs a tampered immutable revision before reuse", async () => {
+contractTest("runtime.process", "workspace skill sync repairs a tampered immutable revision before reuse", async () => {
   const workspaceRoot = await fixtureRoot("skill-integrity-");
   let checkoutCount = 0;
   const commit = "c".repeat(40);
@@ -187,7 +187,7 @@ contractTest("runtime.hermetic", "workspace skill sync repairs a tampered immuta
   assert.equal(await readFile(path.join(workspaceRoot, repaired.revision!.skillFile), "utf8"), skillFile("integrity-skill"));
 });
 
-contractTest("runtime.hermetic", "workspace skill manager persists authoritative installation readiness", async () => {
+contractTest("runtime.process", "workspace skill manager persists authoritative installation readiness", async () => {
   const workspaceRoot = await fixtureRoot("skill-manager-");
   const installer = new WorkspaceSkillInstaller({
     now: () => new Date("2026-07-21T12:00:00.000Z"),
@@ -217,7 +217,7 @@ contractTest("runtime.hermetic", "workspace skill manager persists authoritative
   assert.deepEqual(await manager.list(), []);
 });
 
-contractTest("runtime.hermetic", "workspace skill changes remain pending until the workspace is idle", async () => {
+contractTest("runtime.process", "workspace skill changes remain pending until the workspace is idle", async () => {
   const workspaceRoot = await fixtureRoot("skill-idle-");
   let idle = false;
   let gitCalls = 0;
@@ -275,9 +275,7 @@ contractTest("runtime.hermetic", "workspace skill reconciliation uses canonical 
   assert.equal(updated?.status, "ready");
   assert.deepEqual(await manager.reconcile([]), []);
   assert.deepEqual(await manager.list(), []);
-});
-
-contractTest("runtime.hermetic", "managed worktree skill snapshots stay outside source-control evidence", async () => {
+contractTest("runtime.process", "managed worktree skill snapshots stay outside source-control evidence", async () => {
   const sourceWorkspaceRoot = await fixtureRoot("skill-source-");
   const targetWorkspaceRoot = await fixtureRoot("skill-target-");
   const commit = "d".repeat(40);

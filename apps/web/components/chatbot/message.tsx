@@ -59,6 +59,80 @@ function renderStructuredData(value: unknown) {
   );
 }
 
+function asStructuredRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function ConsoleArtifactDisclosure({
+  title,
+  metadata: rawMetadata,
+}: {
+  title: string;
+  metadata: unknown;
+}) {
+  const metadata = asStructuredRecord(rawMetadata) ?? {};
+  const status =
+    typeof metadata.status === "string" && metadata.status.trim().length > 0
+      ? metadata.status.trim()
+      : undefined;
+  const exitCode =
+    typeof metadata.exitCode === "number" && Number.isFinite(metadata.exitCode)
+      ? metadata.exitCode
+      : metadata.exitCode === null
+        ? null
+        : undefined;
+  const stdout = typeof metadata.stdout === "string" ? metadata.stdout : undefined;
+  const stderr = typeof metadata.stderr === "string" ? metadata.stderr : undefined;
+  const fallbackOutput = ["text", "chunk", "chunkPreview"]
+    .map((field) => metadata[field])
+    .find((value): value is string => typeof value === "string" && value.length > 0);
+  const hasExplicitOutput = stdout !== undefined || stderr !== undefined;
+  const summary = [
+    title,
+    status,
+    exitCode !== undefined ? `exit ${exitCode ?? "unknown"}` : undefined,
+  ].filter((value): value is string => value !== undefined);
+
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none font-medium marker:hidden">
+        {summary.join(" · ")}
+      </summary>
+      <div className="mt-2 space-y-2">
+        {hasExplicitOutput ? (
+          <>
+            {stdout !== undefined ? (
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-3 font-mono text-xs">
+                {stdout || "(stdout was empty)"}
+              </pre>
+            ) : null}
+            {stderr !== undefined ? (
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-destructive/5 p-3 font-mono text-xs">
+                {stderr || "(stderr was empty)"}
+              </pre>
+            ) : null}
+          </>
+        ) : fallbackOutput !== undefined ? (
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-3 font-mono text-xs">
+            {fallbackOutput}
+          </pre>
+        ) : (
+          renderStructuredData(metadata.toolContext) ?? (
+            <p className="text-muted-foreground text-xs">
+              No console output was retained.
+            </p>
+          )
+        )}
+        {metadata.truncated === true ? (
+          <p className="text-muted-foreground text-xs">Output was truncated.</p>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 const isKestrelPresentationPart = (part: ChatMessage["parts"][number]) =>
   part.type.startsWith("data-kestrel-");
 
@@ -512,18 +586,28 @@ const PurePreviewMessage = ({
                   className="rounded-lg border bg-muted/20 px-3 py-2 text-sm"
                   key={key}
                 >
-                  <span className="font-medium">Artifact</span>{" "}
                   {part.data.url ? (
-                    <a
-                      className="underline underline-offset-2"
-                      href={part.data.url}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {part.data.title}
-                    </a>
+                    <>
+                      <span className="font-medium">Artifact</span>{" "}
+                      <a
+                        className="underline underline-offset-2"
+                        href={part.data.url}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {part.data.title}
+                      </a>
+                    </>
+                  ) : part.data.kind === "console" ? (
+                    <ConsoleArtifactDisclosure
+                      metadata={part.data.metadata}
+                      title={part.data.title}
+                    />
                   ) : (
-                    <span>{part.data.title}</span>
+                    <>
+                      <span className="font-medium">Artifact</span>{" "}
+                      <span>{part.data.title}</span>
+                    </>
                   )}
                 </aside>
               );

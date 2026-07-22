@@ -28,6 +28,7 @@ export async function reportEnvironmentGatewayNgrokStatus(input: {
   connectionId: string;
   status: "connected" | "degraded";
   failureCode?: string | undefined;
+  failureMessage?: string | undefined;
 }) {
   const environment = await knowledgeDb.query.environments.findFirst({
     where: (table, { eq: equals }) => equals(table.id, input.environmentId),
@@ -56,12 +57,40 @@ export async function reportEnvironmentGatewayNgrokStatus(input: {
       connectionId: connection.id,
     });
   } else {
-    await markAppConnectionDegraded({
-      organizationId: environment.organizationId,
-      environmentId: environment.id,
-      appKey: "ngrok",
-      connectionId: connection.id,
-      failureCode: input.failureCode ?? "NGROK_AGENT_ENDPOINT_FAILED",
+    const now = new Date();
+    await knowledgeDb.transaction(async (transaction) => {
+      await transaction
+        .update(schema.appConnections)
+        .set({
+          status: "degraded",
+          failureCode: input.failureCode ?? "NGROK_AGENT_ENDPOINT_FAILED",
+          failureMessage: input.failureMessage?.slice(0, 500) ?? null,
+          lastHealthAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.appConnections.id, connection.id),
+            eq(schema.appConnections.organizationId, environment.organizationId),
+            eq(schema.appConnections.environmentId, environment.id),
+            eq(schema.appConnections.appKey, "ngrok"),
+            inArray(schema.appConnections.status, ["connected", "degraded"]),
+          ),
+        );
+      await transaction
+        .update(schema.workspacePreviewLeases)
+        .set({
+          status: "failed",
+          failureCode: "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE",
+          closedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.workspacePreviewLeases.connectionId, connection.id),
+            eq(schema.workspacePreviewLeases.status, "provisioning"),
+          ),
+        );
     });
   }
 }

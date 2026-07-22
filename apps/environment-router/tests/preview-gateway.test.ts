@@ -123,14 +123,23 @@ contractTest("services.process", "preview gateway binds one wildcard endpoint an
 
 contractTest("services.process", "preview gateway retries reconciliation after an endpoint failure", async () => {
   let attempts = 0;
+  const statuses: Array<{
+    connectionId: string;
+    status: "connected" | "degraded";
+    failureCode?: string | undefined;
+    failureMessage?: string | undefined;
+  }> = [];
   const gateway = new PreviewGateway({
     port: 8080,
     expectedAppName: "kestrel-env-1",
     environmentId: "environment-1",
     openEndpoint: async () => {
       attempts += 1;
-      if (attempts === 1) throw new Error("temporary ngrok failure");
+      if (attempts === 1) throw new Error("temporary ngrok failure for ngrok-secret");
       return { close: async () => {} };
+    },
+    reportStatus: async (status) => {
+      statuses.push(status);
     },
   });
   const config: EnvironmentGatewayConfig = {
@@ -149,10 +158,45 @@ contractTest("services.process", "preview gateway retries reconciliation after a
 
   await assert.rejects(gateway.reconcile(config), /temporary ngrok failure/u);
   assert.equal(gateway.isReady(config), false);
+  assert.deepEqual(statuses, [{
+    status: "degraded",
+    connectionId: "connection-1",
+    failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
+    failureMessage: "temporary ngrok failure for [REDACTED]",
+  }]);
   await gateway.reconcile({ ...config, revision: "two" });
   assert.equal(attempts, 2);
   assert.equal(gateway.isReady(config), true);
+  assert.equal(statuses[1]?.status, "connected");
+  assert.equal(JSON.stringify(statuses).includes("ngrok-secret"), false);
   await gateway.close();
+});
+
+contractTest("services.process", "gateway status client transports a bounded failure message", async () => {
+  let reported: Record<string, unknown> | undefined;
+  const client = new EnvironmentGatewayConfigClient({
+    controlPlaneUrl: "http://127.0.0.1:9999",
+    environmentId: "environment-1",
+    serviceToken: "gateway-secret",
+    fetchImpl: async (_request, init) => {
+      reported = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(null, { status: 204 });
+    },
+  });
+
+  await client.reportNgrokStatus({
+    connectionId: "connection-1",
+    status: "degraded",
+    failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
+    failureMessage: "authentication failed",
+  });
+
+  assert.deepEqual(reported, {
+    connectionId: "connection-1",
+    status: "degraded",
+    failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
+    failureMessage: "authentication failed",
+  });
 });
 
 contractTest("services.process", "gateway configuration remains available when preview reconciliation fails", async () => {

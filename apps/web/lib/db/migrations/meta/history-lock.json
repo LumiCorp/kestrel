@@ -48,5 +48,6 @@
   "0044_project_skill_catalog": "1784764800000:f42df33e985fe1fd11cd3666c3b2d09fa9cbfb7723fedef92ec0ae77949d4dec",
   "0045_organization_cost_ledger": "1784768400000:dfa6e1d3689b51179f11348aa071b687a6e1ea066a3c2199ef3b017fcc16b4d3",
   "0046_organization_app_connection_owner_type": "1784816906000:5a50be669eadac1d45be7625eb80848e6338c13b0250e38437b498d1b815ecd5",
-  "0049_reconcile_fly_provider_constraint": "1784836800000:0331e49a560d9e063059a471eff25f5657d126c2efb9e04337b2bc40978cc5df"
+  "0049_reconcile_fly_provider_constraint": "1784836800000:0331e49a560d9e063059a471eff25f5657d126c2efb9e04337b2bc40978cc5df",
+  "0050_thread_sticky_interaction_mode": "1784840400000:f5f3ea5e41c091b13a1f7f790521fac1319c294d77153f747d2a17aff4f2efaf"
 }

@@ -55,6 +55,7 @@ contractTest(
         HOME: "/workspace",
         KESTREL_HOME: "/workspace",
         KESTREL_RUNNER_STORE_DIR: "/workspace/.kestrel/runner/store",
+        KESTREL_CORE_HOME: "/workspace/.kestrel/runtime",
         KESTREL_WORKSPACE_SERVICE_TOKEN: "workspace-secret",
         KESTREL_WORKSPACE_RUNTIME_URL: "http://127.0.0.1:43104",
         KESTREL_RUNNER_SERVICE_HOST: "127.0.0.1",

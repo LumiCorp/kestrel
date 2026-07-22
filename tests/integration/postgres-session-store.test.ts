@@ -439,6 +439,55 @@ contractTest("runtime.process", "startRun reconciles a stale terminal lease befo
   sql.assertExhausted();
 });
 
+contractTest("runtime.process", "process-owned orphan recovery fails and releases an active run transactionally", async () => {
+  const sql = new ScriptedSqlExecutor([
+    { match: /^BEGIN/ },
+    {
+      match: /^SELECT session_id, active_run_id, current_state_json\s+FROM sessions\s+WHERE session_id = \$1\s+FOR UPDATE/,
+      rows: [{
+        session_id: "session-orphaned",
+        active_run_id: "run-orphaned",
+        current_state_json: { agent: { phase: "thinking" } },
+      }],
+      rowCount: 1,
+    },
+    {
+      match: /^SELECT run_id, session_id, status, completed_at, error_json\s+FROM runs\s+WHERE run_id = \$1\s+FOR UPDATE/,
+      rows: [{
+        run_id: "run-orphaned",
+        session_id: "session-orphaned",
+        status: "RUNNING",
+        completed_at: null,
+        error_json: null,
+      }],
+      rowCount: 1,
+    },
+    { match: /^UPDATE runs\s+SET status = 'FAILED',/i, rowCount: 1 },
+    { match: /^UPDATE sessions\s+SET active_run_id = NULL,/i, rowCount: 1 },
+    { match: /^COMMIT/ },
+  ]);
+  const store = new PostgresSessionStore(sql);
+
+  const result = await store.recoverOrphanedActiveRun("session-orphaned");
+
+  assert.deepEqual(result, { runId: "run-orphaned" });
+  const runUpdate = sql.queries.find((query) => query.text.startsWith("UPDATE runs"));
+  assert.equal(runUpdate?.values?.[0], "run-orphaned");
+  assert.deepEqual(JSON.parse(runUpdate?.values?.[1] as string), {
+    code: "RUNNER_ORPHANED_ACTIVE_RUN",
+    message: "The process-owned runner no longer has a live execution for this persisted run.",
+    details: {
+      sessionId: "session-orphaned",
+      runId: "run-orphaned",
+    },
+  });
+  assert.equal(
+    sql.queries.some((query) => query.text.includes("SET active_run_id = NULL")),
+    true,
+  );
+  sql.assertExhausted();
+});
+
 contractTest("runtime.process", "startRun releases a missing active run row before creating a new run", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^BEGIN/ },

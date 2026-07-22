@@ -174,13 +174,46 @@ async function activateLease(
   ticket: EnvironmentExecutionTicket,
   authorization: string
 ) {
-  await refreshGateway(ticket, authorization);
+  try {
+    await refreshGateway(ticket, authorization);
+  } catch (error) {
+    const now = new Date();
+    await knowledgeDb
+      .update(schema.workspacePreviewLeases)
+      .set({
+        status: "failed",
+        failureCode: "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE",
+        closedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.workspacePreviewLeases.id, lease.id),
+          eq(schema.workspacePreviewLeases.status, "provisioning"),
+        ),
+      );
+    throw error;
+  }
   const [active] = await knowledgeDb
     .update(schema.workspacePreviewLeases)
     .set({ status: "active", failureCode: null, updatedAt: new Date() })
-    .where(eq(schema.workspacePreviewLeases.id, lease.id))
+    .where(
+      and(
+        eq(schema.workspacePreviewLeases.id, lease.id),
+        eq(schema.workspacePreviewLeases.status, "provisioning"),
+      ),
+    )
     .returning();
-  return describe(active ?? lease);
+  if (!active) {
+    const concurrent = await knowledgeDb.query.workspacePreviewLeases.findFirst({
+      where: eq(schema.workspacePreviewLeases.id, lease.id),
+    });
+    if (concurrent?.status === "active") {
+      return describe(concurrent);
+    }
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE", 503);
+  }
+  return describe(active);
 }
 
 async function listPreviews(ticket: EnvironmentExecutionTicket) {
