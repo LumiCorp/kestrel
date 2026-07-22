@@ -39,6 +39,14 @@ export interface RendererTranscriptLine {
   timestamp: string;
   data?: unknown;
   attachments?: RunTurnAttachment[] | undefined;
+  dialog?: {
+    messageId: string;
+    dialogId: string;
+    name: string;
+    childSessionId: string;
+    sender: "kestrel" | "collaborator" | "system";
+    status?: "failed" | "cancelled" | undefined;
+  } | undefined;
 }
 
 export interface RendererThread {
@@ -161,6 +169,9 @@ export function appendRendererTranscript(
   line: RendererTranscriptLine,
 ): DesktopRendererState {
   return updateRendererThread(state, threadId, (thread) => {
+    if (line.dialog !== undefined && thread.transcript.some((item) => item.dialog?.messageId === line.dialog?.messageId)) {
+      return thread;
+    }
     const firstUserText =
       line.role === "user" &&
       thread.transcript.every((item) => item.role !== "user")
@@ -685,6 +696,7 @@ function compactTranscriptLine(
     ...(line.attachments !== undefined
       ? { attachments: line.attachments }
       : {}),
+    ...(line.dialog !== undefined ? { dialog: line.dialog } : {}),
   };
   if (
     serializedByteLength(compacted) <=
@@ -735,9 +747,23 @@ function parseTranscriptLine(value: unknown): RendererTranscriptLine[] {
           ? normalizeTimestamp(line.timestamp)
           : new Date().toISOString(),
       ...(line.data !== undefined ? { data: line.data } : {}),
+      ...(parseDialogTranscriptData(line.dialog) !== undefined ? { dialog: parseDialogTranscriptData(line.dialog) } : {}),
       ...parseRendererAttachments(line.attachments),
     },
   ];
+}
+
+function parseDialogTranscriptData(value: unknown): RendererTranscriptLine["dialog"] {
+  const dialog = asRecord(value);
+  if (typeof dialog?.messageId !== "string" || typeof dialog.dialogId !== "string" || typeof dialog.name !== "string" || typeof dialog.childSessionId !== "string" || (dialog.sender !== "kestrel" && dialog.sender !== "collaborator" && dialog.sender !== "system")) return undefined;
+  return {
+    messageId: dialog.messageId,
+    dialogId: dialog.dialogId,
+    name: dialog.name,
+    childSessionId: dialog.childSessionId,
+    sender: dialog.sender,
+    ...(dialog.status === "failed" || dialog.status === "cancelled" ? { status: dialog.status } : {}),
+  };
 }
 
 function parseRendererAttachments(value: unknown): {

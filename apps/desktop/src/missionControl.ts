@@ -189,12 +189,16 @@ export function parseDesktopRuntimeThreadInspection(
   const inboxItems = view.inboxItems === undefined
     ? []
     : requireArray(view.inboxItems, "operator thread view.inboxItems").map(parseInboxItem);
+  const dialogs = view.dialogs === undefined
+    ? []
+    : requireArray(view.dialogs, "operator thread view.dialogs").map((value, index) => parseDialogView(value, index));
   return {
     thread: parseRuntimeThreadSummary(view.thread, "operator thread view.thread"),
     ...(workspace !== undefined ? { workspace } : {}),
     ...(focusedThreadId !== undefined ? { focusedThreadId } : {}),
     ...(parentThread !== undefined ? { parentThread } : {}),
     childThreads,
+    dialogs,
     ...(operatorPhase !== undefined ? { operatorPhase } : {}),
     ...(blocker !== undefined ? { blocker } : {}),
     ...(nextAction !== undefined ? { nextAction } : {}),
@@ -203,6 +207,32 @@ export function parseDesktopRuntimeThreadInspection(
     ...(activeRun !== undefined ? { activeRun } : {}),
     followUpQueue,
     inboxItems,
+  };
+}
+
+function parseDialogView(value: unknown, index: number): NonNullable<DesktopRuntimeThreadInspection["dialogs"]>[number] {
+  const dialog = requireRecord(value, `operator thread view.dialogs[${index}]`);
+  if (dialog.status !== "open" && dialog.status !== "closed") throw new Error("operator dialog status is invalid.");
+  return {
+    dialogId: requireString(dialog.dialogId, `operator thread view.dialogs[${index}].dialogId`),
+    name: requireString(dialog.name, `operator thread view.dialogs[${index}].name`),
+    status: dialog.status,
+    childThreadId: requireString(dialog.childThreadId, `operator thread view.dialogs[${index}].childThreadId`),
+    messages: requireArray(dialog.messages, `operator thread view.dialogs[${index}].messages`).map((value, messageIndex) => {
+      const message = requireRecord(value, `operator thread view.dialogs[${index}].messages[${messageIndex}]`);
+      if (message.sender !== "kestrel" && message.sender !== "collaborator" && message.sender !== "system") throw new Error("operator dialog sender is invalid.");
+      if (message.status !== undefined && message.status !== "failed" && message.status !== "cancelled") throw new Error("operator dialog message status is invalid.");
+      return {
+        messageId: requireString(message.messageId, "dialog message.messageId"),
+        dialogId: requireString(message.dialogId, "dialog message.dialogId"),
+        name: requireString(message.name, "dialog message.name"),
+        childSessionId: requireString(message.childSessionId, "dialog message.childSessionId"),
+        sender: message.sender,
+        text: requireString(message.text, "dialog message.text"),
+        createdAt: requireString(message.createdAt, "dialog message.createdAt"),
+        ...(message.status !== undefined ? { status: message.status } : {}),
+      };
+    }),
   };
 }
 
