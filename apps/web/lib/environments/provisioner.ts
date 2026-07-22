@@ -588,13 +588,21 @@ export class EnvironmentProvisioner {
           serviceToken: workspaceServiceToken,
         }),
       });
+      if (input.forceStart && machine.state !== "stopped") {
+        await this.provider.waitForMachine({
+          appName: input.appName,
+          machineId: input.machineId,
+          state: "stopped",
+          timeoutSeconds: 90,
+        });
+      }
       if (input.forceStart || machine.state === "stopped") {
         await this.provider.startMachine({
           appName: input.appName,
           machineId: input.machineId,
         });
       }
-      if (machine.state !== "started") {
+      if (input.forceStart || machine.state !== "started") {
         await this.provider.waitForMachine({
           appName: input.appName,
           machineId: input.machineId,
