@@ -54,7 +54,7 @@ export function AgentAdminClient() {
   useEffect(() => {
     void (async () => {
       const [configResponse, modelsResponse] = await Promise.all([
-        fetch("/api/agent-config", { cache: "no-store" }),
+        fetch("/api/organization/agent-config", { cache: "no-store" }),
         fetch("/api/models/approved?modality=language", { cache: "no-store" }),
       ]);
       const json = await configResponse.json().catch(() => ({}));
@@ -82,7 +82,7 @@ export function AgentAdminClient() {
 
   async function save() {
     setBusy(true);
-    const response = await fetch("/api/agent-config", {
+    const response = await fetch("/api/organization/agent-config", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -105,7 +105,7 @@ export function AgentAdminClient() {
 
   async function reset() {
     setBusy(true);
-    const response = await fetch("/api/agent-config/reset", {
+    const response = await fetch("/api/organization/agent-config/reset", {
       method: "POST",
     });
     const json = await response.json().catch(() => ({}));

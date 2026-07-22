@@ -288,6 +288,13 @@
       "when": 1784584800000,
       "tag": "0038_durable_turn_interaction_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1784588400000,
+      "tag": "0039_organization_settings_prepare",
+      "breakpoints": true
     }
   ]
 }

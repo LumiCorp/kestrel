@@ -21,5 +21,5 @@ Kestrel One combines chat, knowledge management, and admin tooling in one Next.j
 
 - `/chat` for the primary chat workspace
 - `/knowledge` for source management and sync workflows
-- `/dashboard/organizations` for organization membership and org billing
+- `/settings/organization/members` and `/settings/organization/billing` for organization membership and billing
 - `/admin` for operational controls, policy, stats, configuration, and Stripe diagnostics

@@ -13,7 +13,12 @@ import { Label } from "@/components/ui/label";
 type Connection = {
   status: string;
   hasApiKey: boolean;
-  apiKeyEnvVar: string | null;
+} | null;
+
+type FlyConnection = {
+  status: string;
+  hasApiToken: boolean;
+  organizationSlug: string;
 } | null;
 
 type Profile = {
@@ -50,32 +55,41 @@ const initialProfileForm = {
 
 export function ManagedRunPodAdminClient() {
   const [connection, setConnection] = useState<Connection>(null);
+  const [flyConnection, setFlyConnection] = useState<FlyConnection>(null);
+  const [flyApiToken, setFlyApiToken] = useState("");
+  const [flyOrganizationSlug, setFlyOrganizationSlug] = useState("");
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [fleet, setFleet] = useState<FleetRow[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [form, setForm] = useState(initialProfileForm);
   const [busy, setBusy] = useState<string | null>(null);
-  const [organizationId, setOrganizationId] = useState("");
   const [quota, setQuota] = useState("1");
 
   const refresh = useCallback(async () => {
-    const [connectionResponse, profilesResponse, fleetResponse] =
+    const [connectionResponse, flyResponse, profilesResponse, fleetResponse, policyResponse] =
       await Promise.all([
-        fetch("/api/admin/runpod/connection", { cache: "no-store" }),
-        fetch("/api/admin/deployment-profiles", { cache: "no-store" }),
-        fetch("/api/admin/model-deployments", { cache: "no-store" }),
+        fetch("/api/organization/infrastructure/connections/runpod", { cache: "no-store" }),
+        fetch("/api/organization/infrastructure/connections/fly", { cache: "no-store" }),
+        fetch("/api/organization/infrastructure/deployment-profiles", { cache: "no-store" }),
+        fetch("/api/organization/infrastructure/deployments", { cache: "no-store" }),
+        fetch("/api/organization/infrastructure/runpod-policy", { cache: "no-store" }),
       ]);
-    if (!(connectionResponse.ok && profilesResponse.ok && fleetResponse.ok)) {
+    if (!(connectionResponse.ok && flyResponse.ok && profilesResponse.ok && fleetResponse.ok && policyResponse.ok)) {
       throw new Error("Managed RunPod administration is unavailable.");
     }
-    const [connectionJson, profilesJson, fleetJson] = await Promise.all([
+    const [connectionJson, flyJson, profilesJson, fleetJson, policyJson] = await Promise.all([
       connectionResponse.json(),
+      flyResponse.json(),
       profilesResponse.json(),
       fleetResponse.json(),
+      policyResponse.json(),
     ]);
     setConnection(connectionJson.connection ?? null);
     setProfiles(profilesJson.profiles ?? []);
     setFleet(fleetJson.fleet ?? []);
+    setFlyConnection(flyJson.connection ?? null);
+    setFlyOrganizationSlug(flyJson.connection?.organizationSlug ?? "");
+    setQuota(String(policyJson.policy?.maxActiveDeployments ?? 1));
   }, []);
 
   useEffect(() => {
@@ -118,7 +132,7 @@ export function ManagedRunPodAdminClient() {
       <div className="grid gap-6 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Platform connection</CardTitle>
+            <CardTitle>RunPod connection</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-2">
@@ -130,16 +144,14 @@ export function ManagedRunPodAdminClient() {
                 {connection?.status ?? "not configured"}
               </Badge>
               <span className="text-muted-foreground text-sm">
-                {connection?.hasApiKey
-                  ? "encrypted key"
-                  : (connection?.apiKeyEnvVar ?? "no credential")}
+                {connection?.hasApiKey ? "encrypted key" : "no credential"}
               </span>
             </div>
             <Label htmlFor="runpod-key">RunPod API key</Label>
             <Input
               id="runpod-key"
               onChange={(event) => setApiKey(event.target.value)}
-              placeholder="Leave empty to use RUNPOD_API_KEY"
+              placeholder="Leave empty to keep the stored key"
               type="password"
               value={apiKey}
             />
@@ -148,10 +160,9 @@ export function ManagedRunPodAdminClient() {
                 disabled={Boolean(busy)}
                 onClick={() =>
                   run("connection", () =>
-                    post("/api/admin/runpod/connection", {
+                    post("/api/organization/infrastructure/connections/runpod", {
                       action: "configure",
                       apiKey: apiKey || null,
-                      useEnvironment: !apiKey,
                       enabled: true,
                     })
                   )
@@ -163,7 +174,7 @@ export function ManagedRunPodAdminClient() {
                 disabled={Boolean(busy)}
                 onClick={() =>
                   run("test", () =>
-                    post("/api/admin/runpod/connection", { action: "test" })
+                    post("/api/organization/infrastructure/connections/runpod", { action: "test" })
                   )
                 }
                 variant="outline"
@@ -176,15 +187,69 @@ export function ManagedRunPodAdminClient() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Organization policy</CardTitle>
+            <CardTitle>Fly.io connection</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Label htmlFor="organization-id">Organization ID</Label>
+            <div className="flex items-center gap-2">
+              <Badge variant={flyConnection?.status === "ready" ? "default" : "secondary"}>
+                {flyConnection?.status ?? "not configured"}
+              </Badge>
+              <span className="text-muted-foreground text-sm">
+                {flyConnection?.hasApiToken ? "encrypted token" : "no credential"}
+              </span>
+            </div>
+            <Label htmlFor="fly-organization-slug">Fly organization slug</Label>
             <Input
-              id="organization-id"
-              onChange={(event) => setOrganizationId(event.target.value)}
-              value={organizationId}
+              id="fly-organization-slug"
+              onChange={(event) => setFlyOrganizationSlug(event.target.value)}
+              value={flyOrganizationSlug}
             />
+            <Label htmlFor="fly-api-token">Fly API token</Label>
+            <Input
+              id="fly-api-token"
+              onChange={(event) => setFlyApiToken(event.target.value)}
+              placeholder="Leave empty to keep the stored token"
+              type="password"
+              value={flyApiToken}
+            />
+            <div className="flex gap-2">
+              <Button
+                disabled={Boolean(busy) || !flyOrganizationSlug.trim()}
+                onClick={() =>
+                  run("fly", () =>
+                    post("/api/organization/infrastructure/connections/fly", {
+                      action: "configure",
+                      organizationSlug: flyOrganizationSlug,
+                      apiToken: flyApiToken || null,
+                      enabled: true,
+                    })
+                  )
+                }
+              >
+                Save connection
+              </Button>
+              <Button
+                disabled={Boolean(busy)}
+                onClick={() =>
+                  run("fly-test", () =>
+                    post("/api/organization/infrastructure/connections/fly", {
+                      action: "test",
+                    })
+                  )
+                }
+                variant="outline"
+              >
+                <ShieldCheck className="size-4" /> Test
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Deployment policy</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
             <Label htmlFor="deployment-quota">Maximum active deployments</Label>
             <Input
               id="deployment-quota"
@@ -194,11 +259,11 @@ export function ManagedRunPodAdminClient() {
               value={quota}
             />
             <Button
-              disabled={Boolean(busy) || !organizationId.trim()}
+              disabled={Boolean(busy)}
               onClick={() =>
                 run("policy", async () => {
                   const response = await fetch(
-                    `/api/admin/organizations/${organizationId}/runpod-policy`,
+                    "/api/organization/infrastructure/runpod-policy",
                     {
                       method: "PUT",
                       headers: { "content-type": "application/json" },
@@ -245,7 +310,7 @@ export function ManagedRunPodAdminClient() {
               onClick={() =>
                 run("profile", async () => {
                   const response = await fetch(
-                    "/api/admin/deployment-profiles",
+                    "/api/organization/infrastructure/deployment-profiles",
                     {
                       method: "POST",
                       headers: { "content-type": "application/json" },
@@ -316,7 +381,7 @@ export function ManagedRunPodAdminClient() {
                     disabled={Boolean(busy)}
                     onClick={() =>
                       run(profile.id, () =>
-                        post(`/api/admin/deployment-profiles/${profile.id}`, {
+                        post(`/api/organization/infrastructure/deployment-profiles/${profile.id}`, {
                           action: "qualify",
                         })
                       )
@@ -331,7 +396,7 @@ export function ManagedRunPodAdminClient() {
                     disabled={Boolean(busy)}
                     onClick={() =>
                       run(profile.id, () =>
-                        post(`/api/admin/deployment-profiles/${profile.id}`, {
+                        post(`/api/organization/infrastructure/deployment-profiles/${profile.id}`, {
                           action: "activate",
                         })
                       )
@@ -346,7 +411,7 @@ export function ManagedRunPodAdminClient() {
                     disabled={Boolean(busy)}
                     onClick={() =>
                       run(profile.id, () =>
-                        post(`/api/admin/deployment-profiles/${profile.id}`, {
+                        post(`/api/organization/infrastructure/deployment-profiles/${profile.id}`, {
                           action: "deprecate",
                         })
                       )
@@ -371,7 +436,7 @@ export function ManagedRunPodAdminClient() {
               <Button
                 onClick={() =>
                   run("reconcile", () =>
-                    post("/api/admin/model-deployments", {
+                    post("/api/organization/infrastructure/deployments", {
                       action: "reconcile",
                     })
                   )
@@ -384,7 +449,7 @@ export function ManagedRunPodAdminClient() {
               <Button
                 onClick={() =>
                   run("usage", () =>
-                    post("/api/admin/model-deployments", {
+                    post("/api/organization/infrastructure/deployments", {
                       action: "ingest-usage",
                     })
                   )

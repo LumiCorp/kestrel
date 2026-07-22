@@ -15,6 +15,7 @@ import {
 } from "@kestrel-agents/sdk/runner";
 import type { InferUIMessageChunk, UIMessage } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
+import { recordEmailAppApprovalRequest } from "@/lib/apps/email-app-approvals";
 import {
   createProfileBoundExternalReplyAgent,
   generateKestrelOneExternalReplyFromAgent,
@@ -343,6 +344,16 @@ function createModelAwareKestrelOneAgent(input: {
               actorId: input.actorUserId,
               agentId: getKestrelOneProfileId(),
             },
+            requestedExecutionId: route.runId,
+            event: terminal,
+          });
+          await recordEmailAppApprovalRequest({
+            organizationId: input.organizationId,
+            environmentId: route.environmentId,
+            workspaceId: route.workspaceId,
+            threadId: input.threadId,
+            actorUserId: input.actorUserId,
+            agentId: getKestrelOneProfileId(),
             requestedExecutionId: route.runId,
             event: terminal,
           });

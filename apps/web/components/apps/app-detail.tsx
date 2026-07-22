@@ -145,7 +145,9 @@ export function AppDetail({ app }: { app: AppDetailType }) {
             {app.connectionModel === "environment" ||
             app.connectionModel === "hybrid" ? (
               <Button asChild size="sm" variant="outline">
-                <Link href="/settings/environments">Open Environments</Link>
+                <Link href="/settings/organization/environments">
+                  Open Environments
+                </Link>
               </Button>
             ) : null}
           </div>

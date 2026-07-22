@@ -34,7 +34,7 @@ export async function GET() {
       canLaunch = false;
     }
     const [profiles, deployments] = await Promise.all([
-      listManagedRunPodProfiles(),
+      listManagedRunPodProfiles({ organizationId: actor.organizationId }),
       listManagedRunPodDeployments(actor.organizationId),
     ]);
     return NextResponse.json({

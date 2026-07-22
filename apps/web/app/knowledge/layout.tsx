@@ -6,7 +6,10 @@ export default async function KnowledgeLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { activeOrganization, isAdmin, session } =
+  const {
+    activeOrganization,
+    session,
+  } =
     await requireAuthenticatedShell({
       requireActiveOrganization: true,
     });
@@ -14,7 +17,6 @@ export default async function KnowledgeLayout({
   return (
     <AuthenticatedAppShell
       activeOrganization={activeOrganization}
-      isAdmin={isAdmin}
       sectionLabel="Knowledge"
       session={session}
     >

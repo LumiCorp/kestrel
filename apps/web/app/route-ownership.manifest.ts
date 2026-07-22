@@ -270,71 +270,64 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "redirect-sign-in"
   ),
   page(
-    "app/(workspace)/settings/environments/page.tsx",
-    "/settings/environments",
+    "app/(workspace)/settings/organization/environments/page.tsx",
+    "/settings/organization/environments",
     "environments",
     "authenticated",
     "redirect-sign-in"
   ),
   page(
-    "app/(workspace)/settings/environments/[id]/page.tsx",
-    "/settings/environments/:id",
+    "app/(workspace)/settings/organization/environments/[id]/page.tsx",
+    "/settings/organization/environments/:id",
     "environments",
     "admin",
     "admin-denied"
   ),
   page(
-    "app/(workspace)/settings/environments/[id]/runtime/page.tsx",
-    "/settings/environments/:id/runtime",
+    "app/(workspace)/settings/organization/environments/[id]/runtime/page.tsx",
+    "/settings/organization/environments/:id/runtime",
     "environments",
     "admin",
     "admin-denied"
   ),
   page(
-    "app/(workspace)/settings/environments/[id]/access/page.tsx",
-    "/settings/environments/:id/access",
+    "app/(workspace)/settings/organization/environments/[id]/access/page.tsx",
+    "/settings/organization/environments/:id/access",
     "environments",
     "admin",
     "admin-denied"
   ),
   page(
-    "app/(workspace)/settings/environments/[id]/workspaces/page.tsx",
-    "/settings/environments/:id/workspaces",
+    "app/(workspace)/settings/organization/environments/[id]/workspaces/page.tsx",
+    "/settings/organization/environments/:id/workspaces",
     "environments",
     "admin",
     "admin-denied"
   ),
   page(
-    "app/(workspace)/settings/environments/[id]/inference/page.tsx",
-    "/settings/environments/:id/inference",
+    "app/(workspace)/settings/organization/environments/[id]/inference/page.tsx",
+    "/settings/organization/environments/:id/inference",
     "environments",
     "admin",
     "admin-denied"
   ),
   page(
-    "app/(workspace)/settings/environments/[id]/apps/page.tsx",
-    "/settings/environments/:id/apps",
+    "app/(workspace)/settings/organization/environments/[id]/apps/page.tsx",
+    "/settings/organization/environments/:id/apps",
     "apps",
     "admin",
     "admin-denied"
   ),
   page(
-    "app/(workspace)/settings/environments/[id]/apps/[appKey]/page.tsx",
-    "/settings/environments/:id/apps/:appKey",
+    "app/(workspace)/settings/organization/environments/[id]/apps/[appKey]/page.tsx",
+    "/settings/organization/environments/:id/apps/:appKey",
     "apps",
     "admin",
     "admin-denied"
   ),
   page(
-    "app/(workspace)/settings/environments/[id]/tools/page.tsx",
-    "/settings/environments/:id/tools",
-    "environments",
-    "admin",
-    "admin-denied"
-  ),
-  page(
-    "app/(workspace)/settings/environments/[id]/activity/page.tsx",
-    "/settings/environments/:id/activity",
+    "app/(workspace)/settings/organization/environments/[id]/activity/page.tsx",
+    "/settings/organization/environments/:id/activity",
     "environments",
     "admin",
     "admin-denied"
@@ -346,34 +339,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "authenticated",
     "redirect-sign-in",
     { primaryNavigation: true }
-  ),
-  page(
-    "app/dashboard/api-keys/page.tsx",
-    "/dashboard/api-keys",
-    "dashboard",
-    "authenticated",
-    "redirect-sign-in"
-  ),
-  page(
-    "app/dashboard/billing/page.tsx",
-    "/dashboard/billing",
-    "dashboard",
-    "authenticated",
-    "redirect-sign-in"
-  ),
-  page(
-    "app/dashboard/organizations/page.tsx",
-    "/dashboard/organizations",
-    "dashboard",
-    "authenticated",
-    "redirect-sign-in"
-  ),
-  page(
-    "app/dashboard/user/page.tsx",
-    "/dashboard/user",
-    "dashboard",
-    "authenticated",
-    "redirect-sign-in"
   ),
   page(
     "app/knowledge/page.tsx",
@@ -402,20 +367,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     }
   ),
   page(
-    "app/admin/agent/page.tsx",
-    "/admin/agent",
-    ADMIN_PAGE.owner,
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/api-keys/page.tsx",
-    "/admin/api-keys",
-    ADMIN_PAGE.owner,
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
     "app/admin/billing/page.tsx",
     "/admin/billing",
     ADMIN_PAGE.owner,
@@ -432,55 +383,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page(
     "app/admin/docs/[slug]/page.tsx",
     "/admin/docs/:slug",
-    ADMIN_PAGE.owner,
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/environments/page.tsx",
-    "/admin/environments",
-    ADMIN_PAGE.owner,
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/gateways/page.tsx",
-    "/admin/gateways",
-    ADMIN_PAGE.owner,
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/deployments/page.tsx",
-    "/admin/deployments",
-    ADMIN_PAGE.owner,
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/email/page.tsx",
-    "/admin/email",
-    "email-delivery",
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/logs/page.tsx",
-    "/admin/logs",
-    ADMIN_PAGE.owner,
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/stats/page.tsx",
-    "/admin/stats",
-    ADMIN_PAGE.owner,
-    ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
-  ),
-  page(
-    "app/admin/users/page.tsx",
-    "/admin/users",
     ADMIN_PAGE.owner,
     ADMIN_PAGE.access,
     ADMIN_PAGE.unauthorized
@@ -622,281 +524,274 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
-    "app/api/admin/api-keys/route.ts",
-    "/api/admin/api-keys",
+    "app/api/organization/api-keys/route.ts",
+    "/api/organization/api-keys",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/api-keys/[id]/route.ts",
-    "/api/admin/api-keys/:id",
+    "app/api/organization/api-keys/[id]/route.ts",
+    "/api/organization/api-keys/:id",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/route.ts",
-    "/api/admin/environments",
+    "app/api/organization/environments/route.ts",
+    "/api/organization/environments",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/route.ts",
-    "/api/admin/environments/:id",
+    "app/api/organization/environments/[id]/route.ts",
+    "/api/organization/environments/:id",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/operations/route.ts",
-    "/api/admin/environments/:id/operations",
+    "app/api/organization/environments/[id]/operations/route.ts",
+    "/api/organization/environments/:id/operations",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/inference/route.ts",
-    "/api/admin/environments/:id/inference",
+    "app/api/organization/environments/[id]/inference/route.ts",
+    "/api/organization/environments/:id/inference",
     "environments",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/inference/deployments/[deploymentId]/route.ts",
-    "/api/admin/environments/:id/inference/deployments/:deploymentId",
+    "app/api/organization/environments/[id]/inference/deployments/[deploymentId]/route.ts",
+    "/api/organization/environments/:id/inference/deployments/:deploymentId",
     "environments",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts",
-    "/api/admin/environments/:id/inference/gateways/:gatewayId",
+    "app/api/organization/environments/[id]/inference/gateways/[gatewayId]/route.ts",
+    "/api/organization/environments/:id/inference/gateways/:gatewayId",
     "environments",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/inference/default/route.ts",
-    "/api/admin/environments/:id/inference/default",
+    "app/api/organization/environments/[id]/inference/default/route.ts",
+    "/api/organization/environments/:id/inference/default",
     "environments",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/capabilities/subjects/route.ts",
-    "/api/admin/environments/:id/capabilities/subjects",
+    "app/api/organization/environments/[id]/capabilities/subjects/route.ts",
+    "/api/organization/environments/:id/capabilities/subjects",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/capabilities/route.ts",
-    "/api/admin/environments/:id/capabilities",
+    "app/api/organization/environments/[id]/capabilities/route.ts",
+    "/api/organization/environments/:id/capabilities",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/workspaces/route.ts",
-    "/api/admin/environments/:id/workspaces",
+    "app/api/organization/environments/[id]/workspaces/route.ts",
+    "/api/organization/environments/:id/workspaces",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/workspaces/[workspaceId]/backups/route.ts",
-    "/api/admin/environments/:id/workspaces/:workspaceId/backups",
+    "app/api/organization/environments/[id]/workspaces/[workspaceId]/backups/route.ts",
+    "/api/organization/environments/:id/workspaces/:workspaceId/backups",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/workspaces/[workspaceId]/backups/[backupId]/restore/route.ts",
-    "/api/admin/environments/:id/workspaces/:workspaceId/backups/:backupId/restore",
+    "app/api/organization/environments/[id]/workspaces/[workspaceId]/backups/[backupId]/restore/route.ts",
+    "/api/organization/environments/:id/workspaces/:workspaceId/backups/:backupId/restore",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/capabilities/[capabilityId]/route.ts",
-    "/api/admin/environments/:id/mcp/capabilities/:capabilityId",
+    "app/api/organization/environments/[id]/mcp/capabilities/[capabilityId]/route.ts",
+    "/api/organization/environments/:id/mcp/capabilities/:capabilityId",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/credentials/route.ts",
-    "/api/admin/environments/:id/mcp/credentials",
+    "app/api/organization/environments/[id]/mcp/credentials/route.ts",
+    "/api/organization/environments/:id/mcp/credentials",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/credentials/[credentialId]/route.ts",
-    "/api/admin/environments/:id/mcp/credentials/:credentialId",
+    "app/api/organization/environments/[id]/mcp/credentials/[credentialId]/route.ts",
+    "/api/organization/environments/:id/mcp/credentials/:credentialId",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/health/route.ts",
-    "/api/admin/environments/:id/mcp/health",
+    "app/api/organization/environments/[id]/mcp/health/route.ts",
+    "/api/organization/environments/:id/mcp/health",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/oauth/start/route.ts",
-    "/api/admin/environments/:id/mcp/oauth/start",
+    "app/api/organization/environments/[id]/mcp/oauth/start/route.ts",
+    "/api/organization/environments/:id/mcp/oauth/start",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/oauth/callback/route.ts",
-    "/api/admin/environments/:id/mcp/oauth/callback",
+    "app/api/organization/environments/[id]/mcp/oauth/callback/route.ts",
+    "/api/organization/environments/:id/mcp/oauth/callback",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/servers/route.ts",
-    "/api/admin/environments/:id/mcp/servers",
+    "app/api/organization/environments/[id]/mcp/servers/route.ts",
+    "/api/organization/environments/:id/mcp/servers",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/servers/[serverId]/route.ts",
-    "/api/admin/environments/:id/mcp/servers/:serverId",
+    "app/api/organization/environments/[id]/mcp/servers/[serverId]/route.ts",
+    "/api/organization/environments/:id/mcp/servers/:serverId",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/servers/[serverId]/discover/route.ts",
-    "/api/admin/environments/:id/mcp/servers/:serverId/discover",
+    "app/api/organization/environments/[id]/mcp/servers/[serverId]/discover/route.ts",
+    "/api/organization/environments/:id/mcp/servers/:serverId/discover",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/environments/[id]/mcp/servers/[serverId]/snapshots/[snapshotId]/route.ts",
-    "/api/admin/environments/:id/mcp/servers/:serverId/snapshots/:snapshotId",
+    "app/api/organization/environments/[id]/mcp/servers/[serverId]/snapshots/[snapshotId]/route.ts",
+    "/api/organization/environments/:id/mcp/servers/:serverId/snapshots/:snapshotId",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/gateways/route.ts",
-    "/api/admin/gateways",
+    "app/api/organization/ai/gateways/route.ts",
+    "/api/organization/ai/gateways",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/runpod/connection/route.ts",
-    "/api/admin/runpod/connection",
+    "app/api/organization/infrastructure/connections/runpod/route.ts",
+    "/api/organization/infrastructure/connections/runpod",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/runs/[runId]/reasoning/route.ts",
-    "/api/admin/runs/:runId/reasoning",
+    "app/api/organization/runs/[runId]/reasoning/route.ts",
+    "/api/organization/runs/:runId/reasoning",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/deployment-profiles/route.ts",
-    "/api/admin/deployment-profiles",
+    "app/api/organization/infrastructure/deployment-profiles/route.ts",
+    "/api/organization/infrastructure/deployment-profiles",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/deployment-profiles/[id]/route.ts",
-    "/api/admin/deployment-profiles/:id",
+    "app/api/organization/infrastructure/deployment-profiles/[id]/route.ts",
+    "/api/organization/infrastructure/deployment-profiles/:id",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/model-deployments/route.ts",
-    "/api/admin/model-deployments",
+    "app/api/organization/infrastructure/deployments/route.ts",
+    "/api/organization/infrastructure/deployments",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/organizations/[id]/runpod-policy/route.ts",
-    "/api/admin/organizations/:id/runpod-policy",
+    "app/api/organization/ai/gateways/[id]/route.ts",
+    "/api/organization/ai/gateways/:id",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/gateways/[id]/route.ts",
-    "/api/admin/gateways/:id",
+    "app/api/organization/ai/gateways/[id]/models/route.ts",
+    "/api/organization/ai/gateways/:id/models",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/gateways/[id]/models/route.ts",
-    "/api/admin/gateways/:id/models",
+    "app/api/organization/ai/gateways/[id]/models/[modelId]/validate/route.ts",
+    "/api/organization/ai/gateways/:id/models/:modelId/validate",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/gateways/[id]/models/[modelId]/validate/route.ts",
-    "/api/admin/gateways/:id/models/:modelId/validate",
+    "app/api/organization/ai/gateways/[id]/sync/route.ts",
+    "/api/organization/ai/gateways/:id/sync",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/gateways/[id]/sync/route.ts",
-    "/api/admin/gateways/:id/sync",
-    ADMIN_API.owner,
-    ADMIN_API.access,
-    ADMIN_API.unauthorized
-  ),
-  api(
-    "app/api/admin/email/route.ts",
-    "/api/admin/email",
+    "app/api/platform/email/route.ts",
+    "/api/platform/email",
     "email-delivery",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/email/test/route.ts",
-    "/api/admin/email/test",
+    "app/api/platform/email/test/route.ts",
+    "/api/platform/email/test",
     "email-delivery",
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/logs/route.ts",
-    "/api/admin/logs",
+    "app/api/organization/audit/route.ts",
+    "/api/organization/audit",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/logs/count/route.ts",
-    "/api/admin/logs/count",
+    "app/api/organization/audit/count/route.ts",
+    "/api/organization/audit/count",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/admin/logs/stats/route.ts",
-    "/api/admin/logs/stats",
+    "app/api/organization/audit/stats/route.ts",
+    "/api/organization/audit/stats",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized
@@ -916,15 +811,15 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_API.unauthorized
   ),
   api(
-    "app/api/agent-config/route.ts",
-    "/api/agent-config",
+    "app/api/organization/agent-config/route.ts",
+    "/api/organization/agent-config",
     "agent-config",
     "admin",
     "admin-denied"
   ),
   api(
-    "app/api/agent-config/reset/route.ts",
-    "/api/agent-config/reset",
+    "app/api/organization/agent-config/reset/route.ts",
+    "/api/organization/agent-config/reset",
     "agent-config",
     "admin",
     "admin-denied"
@@ -1031,8 +926,8 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   ),
 
   api(
-    "app/api/agent-config/public/route.ts",
-    "/api/agent-config/public",
+    "app/api/organization/agent-config/public/route.ts",
+    "/api/organization/agent-config/public",
     "agent-config",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
@@ -1653,6 +1548,28 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),
+  page("app/(workspace)/settings/page.tsx", "/settings", "dashboard", "authenticated", "redirect-sign-in"),
+  page("app/(workspace)/settings/profile/page.tsx", "/settings/profile", "dashboard", "authenticated", "redirect-sign-in"),
+  page("app/(workspace)/settings/api-keys/page.tsx", "/settings/api-keys", "dashboard", "authenticated", "redirect-sign-in"),
+  page("app/(workspace)/settings/organization/page.tsx", "/settings/organization", "admin", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/members/page.tsx", "/settings/organization/members", "admin", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/billing/page.tsx", "/settings/organization/billing", "admin", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/agent-defaults/page.tsx", "/settings/organization/agent-defaults", "agent-config", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/ai-providers/page.tsx", "/settings/organization/ai-providers", "models", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/infrastructure/page.tsx", "/settings/organization/infrastructure", "environments", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/email/page.tsx", "/settings/organization/email", "email-delivery", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/api-keys/page.tsx", "/settings/organization/api-keys", "admin", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/usage/page.tsx", "/settings/organization/usage", "stats", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/audit/page.tsx", "/settings/organization/audit", "admin", "admin", "admin-denied"),
+  page("app/(workspace)/settings/platform/page.tsx", "/settings/platform", "admin", "admin", "admin-denied"),
+  page("app/(workspace)/settings/platform/users/page.tsx", "/settings/platform/users", "admin", "admin", "admin-denied"),
+  page("app/(workspace)/settings/platform/email/page.tsx", "/settings/platform/email", "email-delivery", "admin", "admin-denied"),
+  api("app/api/organization/email/route.ts", "/api/organization/email", "email-delivery", "admin", "admin-denied"),
+  api("app/api/organization/email/test/route.ts", "/api/organization/email/test", "email-delivery", "admin", "admin-denied"),
+  api("app/api/organization/infrastructure/connections/fly/route.ts", "/api/organization/infrastructure/connections/fly", "environments", "admin", "admin-denied"),
+  api("app/api/organization/infrastructure/runpod-policy/route.ts", "/api/organization/infrastructure/runpod-policy", "environments", "admin", "admin-denied"),
+  api("app/api/organization/infrastructure/settings/route.ts", "/api/organization/infrastructure/settings", "environments", "admin", "admin-denied"),
+  api("app/api/runtime/email/action/route.ts", "/api/runtime/email/action", "email-delivery", "service-boundary", "service-bearer"),
 ] satisfies readonly KestrelOneRouteOwnershipEntry[];
 
 export const PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES =

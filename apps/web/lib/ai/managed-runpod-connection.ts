@@ -1,6 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   decryptGatewayCredential,
@@ -11,12 +11,24 @@ import {
   RunPodControlPlaneClient,
 } from "./runpod-control-plane";
 
-const RUNPOD_CONNECTION_ID = "platform-runpod";
-const RUNPOD_ENV_VAR = "RUNPOD_API_KEY";
+const connectionIdFor = (organizationId: string) =>
+  `organization-runpod:${organizationId}`;
 
-export async function getRunPodProviderConnection() {
+export async function getRunPodProviderConnection(organizationId: string) {
   return knowledgeDb.query.aiProviderConnections.findFirst({
-    where: eq(schema.aiProviderConnections.provider, "runpod"),
+    where: and(
+      eq(schema.aiProviderConnections.organizationId, organizationId),
+      eq(schema.aiProviderConnections.provider, "runpod")
+    ),
+  });
+}
+
+export async function listEnabledRunPodProviderConnections() {
+  return knowledgeDb.query.aiProviderConnections.findMany({
+    where: and(
+      eq(schema.aiProviderConnections.provider, "runpod"),
+      eq(schema.aiProviderConnections.enabled, true)
+    ),
   });
 }
 
@@ -30,7 +42,6 @@ export function sanitizeRunPodProviderConnection(
         displayName: connection.displayName,
         enabled: connection.enabled,
         status: connection.status,
-        apiKeyEnvVar: connection.apiKeyEnvVar,
         hasApiKey: Boolean(connection.apiKey?.trim()),
         lastTestedAt: connection.lastTestedAt,
         metadata: connection.metadata,
@@ -39,50 +50,48 @@ export function sanitizeRunPodProviderConnection(
 }
 
 export async function configureRunPodProviderConnection(input: {
+  organizationId: string;
   apiKey?: string | null;
-  useEnvironment?: boolean;
   enabled?: boolean;
 }) {
   const apiKey = input.apiKey?.trim() || null;
-  const existing = await getRunPodProviderConnection();
+  const existing = await getRunPodProviderConnection(input.organizationId);
   const encryptedApiKey = apiKey
     ? encryptGatewayCredential({
-        gatewayId: RUNPOD_CONNECTION_ID,
+        gatewayId: connectionIdFor(input.organizationId),
         plaintext: apiKey,
       })
-    : input.useEnvironment
-      ? null
-      : (existing?.apiKey ?? null);
-  const [connection] = await knowledgeDb
-    .insert(schema.aiProviderConnections)
-    .values({
-      id: RUNPOD_CONNECTION_ID,
-      provider: "runpod",
-      scope: "platform",
-      displayName: "RunPod Platform",
-      apiKey: encryptedApiKey,
-      apiKeyEnvVar: input.useEnvironment ? RUNPOD_ENV_VAR : null,
-      enabled: input.enabled ?? existing?.enabled ?? true,
-      status: "not_configured",
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: [
-        schema.aiProviderConnections.provider,
-        schema.aiProviderConnections.scope,
-      ],
-      set: {
-        apiKey: encryptedApiKey,
-        apiKeyEnvVar: input.useEnvironment ? RUNPOD_ENV_VAR : null,
-        enabled: input.enabled ?? existing?.enabled ?? true,
-        status: "not_configured",
-        updatedAt: new Date(),
-      },
-    })
-    .returning();
-  if (connection && (apiKey || input.useEnvironment)) {
+    : (existing?.apiKey ?? null);
+  if (!encryptedApiKey) {
+    throw new Error("RunPod provider connection credential is required.");
+  }
+  const values = {
+    organizationId: input.organizationId,
+    provider: "runpod" as const,
+    scope: "organization" as const,
+    displayName: "RunPod",
+    apiKey: encryptedApiKey,
+    apiKeyEnvVar: null,
+    enabled: input.enabled ?? existing?.enabled ?? true,
+    status: "not_configured" as const,
+    updatedAt: new Date(),
+  };
+  const [connection] = existing
+    ? await knowledgeDb
+        .update(schema.aiProviderConnections)
+        .set(values)
+        .where(eq(schema.aiProviderConnections.id, existing.id))
+        .returning()
+    : await knowledgeDb
+        .insert(schema.aiProviderConnections)
+        .values({ id: connectionIdFor(input.organizationId), ...values })
+        .returning();
+  if (connection && apiKey) {
     const managedGateways = await knowledgeDb.query.aiGateways.findMany({
-      where: eq(schema.aiGateways.providerConnectionId, connection.id),
+      where: and(
+        eq(schema.aiGateways.organizationId, input.organizationId),
+        eq(schema.aiGateways.providerConnectionId, connection.id)
+      ),
       columns: { id: true },
     });
     for (const gateway of managedGateways) {
@@ -95,7 +104,7 @@ export async function configureRunPodProviderConnection(input: {
                 plaintext: apiKey,
               })
             : null,
-          apiKeyEnvVar: input.useEnvironment ? RUNPOD_ENV_VAR : null,
+          apiKeyEnvVar: null,
           updatedAt: new Date(),
         })
         .where(eq(schema.aiGateways.id, gateway.id));
@@ -116,18 +125,14 @@ export function resolveRunPodProviderApiKey(
       encrypted: connection.apiKey.trim(),
     });
   }
-  const envVar = connection.apiKeyEnvVar?.trim();
-  const apiKey = envVar ? process.env[envVar]?.trim() : null;
-  if (!apiKey) {
-    throw new Error("RunPod provider connection credential is missing.");
-  }
-  return apiKey;
+  throw new Error("RunPod provider connection credential is missing.");
 }
 
-export async function createRunPodControlPlaneClient(input?: {
+export async function createRunPodControlPlaneClient(input: {
+  organizationId: string;
   fetchImpl?: RunPodControlFetch;
 }) {
-  const connection = await getRunPodProviderConnection();
+  const connection = await getRunPodProviderConnection(input.organizationId);
   if (!connection) {
     throw new Error("RunPod provider connection is not configured.");
   }
@@ -135,12 +140,13 @@ export async function createRunPodControlPlaneClient(input?: {
     connection,
     client: new RunPodControlPlaneClient({
       apiKey: resolveRunPodProviderApiKey(connection),
-      ...(input?.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+      ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
     }),
   };
 }
 
-export async function testRunPodProviderConnection(input?: {
+export async function testRunPodProviderConnection(input: {
+  organizationId: string;
   fetchImpl?: RunPodControlFetch;
 }) {
   const { connection, client } = await createRunPodControlPlaneClient(input);

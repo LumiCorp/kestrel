@@ -3,11 +3,15 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { createWorkspaceBackup } from "./backups";
+import {
+  createFlyProviderClientFromConnection,
+  listEnabledFlyProviderConnections,
+} from "./fly-connection";
 import { PROVISIONER_OPERATION_TYPES } from "./operation-routing";
 import { processEnvironmentOperation } from "./process-runtime";
 import type { EnvironmentProviderInventory } from "./providers/contracts";
 import {
-  FlyMachinesClient,
+  type FlyMachinesClient,
   workspaceVolumeName,
 } from "./providers/fly-machines";
 import {
@@ -18,10 +22,6 @@ import { selectDueDailyBackupCandidate } from "./reconcile-selection";
 
 export async function reconcileHostedEnvironments() {
   const now = new Date();
-  const provider = new FlyMachinesClient({
-    token: process.env.FLY_API_TOKEN ?? "",
-    organizationSlug: process.env.KESTREL_FLY_ORGANIZATION_SLUG ?? "",
-  });
   const recoverableOperations =
     await knowledgeDb.query.environmentOperations.findMany({
       where: (table, { and, inArray }) =>
@@ -37,8 +37,44 @@ export async function reconcileHostedEnvironments() {
       await processEnvironmentOperation(operation.id);
     } catch {}
   }
+  let environmentGatewayCount = 0;
+  let workspaceCount = 0;
+  let adoptedVolumeCount = 0;
+  let degradedWorkspaceCount = 0;
+  const connections = await listEnabledFlyProviderConnections();
+  for (const connection of connections) {
+    if (!connection.organizationId) continue;
+    const provider = createFlyProviderClientFromConnection(connection);
+    const result = await reconcileOrganizationEnvironments({
+      provider,
+      organizationId: connection.organizationId,
+      now,
+    });
+    environmentGatewayCount += result.environmentGatewayCount;
+    workspaceCount += result.workspaceCount;
+    adoptedVolumeCount += result.adoptedVolumeCount;
+    degradedWorkspaceCount += result.degradedWorkspaceCount;
+  }
+  await expireWorkspaceBackups(now);
+  await createDueDailyBackup(now);
+  return {
+    operationCount: recoverableOperations.length,
+    environmentGatewayCount,
+    workspaceCount,
+    adoptedVolumeCount,
+    degradedWorkspaceCount,
+  };
+}
+
+async function reconcileOrganizationEnvironments(input: {
+  provider: FlyMachinesClient;
+  organizationId: string;
+  now: Date;
+}) {
+  const { provider, organizationId, now } = input;
   const environmentGatewayCount = await reconcileEnvironmentGateways(
     provider,
+    organizationId,
     now
   );
   const workspaces = await knowledgeDb
@@ -53,6 +89,7 @@ export async function reconcileHostedEnvironments() {
     )
     .where(
       and(
+        eq(schema.environmentWorkspaces.organizationId, organizationId),
         isNull(schema.environmentWorkspaces.deletedAt),
         inArray(schema.environmentWorkspaces.status, [
           "ready",
@@ -143,12 +180,9 @@ export async function reconcileHostedEnvironments() {
       );
     }
   }
-  await cleanupReplacedWorkspaceResources(provider);
-  await cleanupOrphanedEnvironmentResources(provider);
-  await expireWorkspaceBackups(now);
-  await createDueDailyBackup(now);
+  await cleanupReplacedWorkspaceResources(provider, organizationId);
+  await cleanupOrphanedEnvironmentResources(provider, organizationId);
   return {
-    operationCount: recoverableOperations.length,
     environmentGatewayCount,
     workspaceCount: workspaces.length,
     adoptedVolumeCount,
@@ -229,11 +263,13 @@ async function adoptWorkspaceVolumeBinding(input: {
 
 async function reconcileEnvironmentGateways(
   provider: FlyMachinesClient,
+  organizationId: string,
   now: Date
 ) {
   const activeUpdates = await knowledgeDb.query.environmentOperations.findMany({
     where: (table, { and, eq, inArray }) =>
       and(
+        eq(table.organizationId, organizationId),
         eq(table.type, "environment.update"),
         inArray(table.status, ["queued", "running"])
       ),
@@ -245,6 +281,7 @@ async function reconcileEnvironmentGateways(
   const environments = await knowledgeDb.query.environments.findMany({
     where: (table, { and, inArray, isNotNull, isNull }) =>
       and(
+        eq(table.organizationId, organizationId),
         inArray(table.status, ["ready", "degraded"]),
         isNotNull(table.flyAppName),
         isNotNull(table.routerImage),
@@ -310,11 +347,16 @@ async function reconcileEnvironmentGateways(
 }
 
 async function cleanupOrphanedEnvironmentResources(
-  provider: FlyMachinesClient
+  provider: FlyMachinesClient,
+  organizationId: string
 ) {
   const environments = await knowledgeDb.query.environments.findMany({
     where: (table, { and, isNotNull, isNull }) =>
-      and(isNotNull(table.flyAppName), isNull(table.archivedAt)),
+      and(
+        eq(table.organizationId, organizationId),
+        isNotNull(table.flyAppName),
+        isNull(table.archivedAt)
+      ),
   });
   for (const environment of environments) {
     if (!environment.flyAppName) continue;
@@ -396,10 +438,14 @@ async function cleanupOrphanedEnvironmentResources(
   }
 }
 
-async function cleanupReplacedWorkspaceResources(provider: FlyMachinesClient) {
+async function cleanupReplacedWorkspaceResources(
+  provider: FlyMachinesClient,
+  organizationId: string
+) {
   const operations = await knowledgeDb.query.environmentOperations.findMany({
     where: (table, { and, eq }) =>
       and(
+        eq(table.organizationId, organizationId),
         eq(table.type, "workspace.restore"),
         eq(table.status, "completed"),
         eq(table.stage, "workspace.restore.rebound_cleanup_pending")

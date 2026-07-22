@@ -14,17 +14,17 @@ const read = (relativePath: string) =>
 
 contractTest("web.hermetic", "Environment inference routes use organization-admin authority", () => {
   for (const route of [
-    "app/api/admin/environments/[id]/inference/route.ts",
-    "app/api/admin/environments/[id]/inference/deployments/[deploymentId]/route.ts",
-    "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts",
-    "app/api/admin/environments/[id]/inference/default/route.ts",
+    "app/api/organization/environments/[id]/inference/route.ts",
+    "app/api/organization/environments/[id]/inference/deployments/[deploymentId]/route.ts",
+    "app/api/organization/environments/[id]/inference/gateways/[gatewayId]/route.ts",
+    "app/api/organization/environments/[id]/inference/default/route.ts",
   ]) {
     assert.match(read(route), /requireOrganizationAdmin/u);
   }
 });
 
 contractTest("web.hermetic", "connected inference remains independent from the managed feature gate", () => {
-  const route = read("app/api/admin/environments/[id]/inference/route.ts");
+  const route = read("app/api/organization/environments/[id]/inference/route.ts");
   const connectedBranch = route.indexOf('body.kind === "connected"');
   const managedGate = route.indexOf("assertManagedRunPodEnabled()");
   assert.ok(connectedBranch >= 0);
@@ -56,16 +56,22 @@ contractTest("web.hermetic", "managed jobs are produced by Vercel and consumed b
 
 contractTest("web.hermetic", "managed maintenance idles until its provider connection is enabled", () => {
   const runtime = read("lib/ai/managed-runpod-runtime.ts");
-  assert.match(runtime, /await getRunPodProviderConnection\(\)/u);
   assert.equal(
-    runtime.match(/if \(!connection\?\.enabled\) return/g)?.length,
+    runtime.match(/await listEnabledRunPodProviderConnections\(\)/gu)?.length,
+    2
+  );
+  assert.equal(
+    runtime.match(/if \(!connection\.organizationId\) continue;/gu)?.length,
     2
   );
 });
 
 contractTest("web.hermetic", "Qwen bootstrap preserves the administrator-selected credential source", () => {
   const bootstrap = read("scripts/bootstrap-qwen3-runpod-profile.ts");
-  assert.match(bootstrap, /await testRunPodProviderConnection\(\)/u);
+  assert.match(
+    bootstrap,
+    /await testRunPodProviderConnection\(\{ organizationId \}\)/u
+  );
   assert.doesNotMatch(bootstrap, /configureRunPodProviderConnection/u);
   assert.doesNotMatch(bootstrap, /useEnvironment/u);
 });
@@ -103,10 +109,10 @@ contractTest("web.hermetic", "qualification warms one temporary worker without c
 
 contractTest("web.hermetic", "connected inference supports explicit model validation when discovery fails", () => {
   const route = read(
-    "app/api/admin/environments/[id]/inference/gateways/[gatewayId]/route.ts"
+    "app/api/organization/environments/[id]/inference/gateways/[gatewayId]/route.ts"
   );
   const connectRoute = read(
-    "app/api/admin/environments/[id]/inference/route.ts"
+    "app/api/organization/environments/[id]/inference/route.ts"
   );
   const client = read(
     "app/(workspace)/settings/environments/[id]/inference/page-client.tsx"

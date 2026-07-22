@@ -362,7 +362,7 @@ export function EnvironmentAppSettings({
           }
         />}
         appKey={configuration.app.key}
-        backHref={`/settings/environments/${environmentId}/apps`}
+        backHref={`/settings/organization/environments/${environmentId}/apps`}
         backLabel="Environment Apps"
         description={configuration.app.description}
         icon={configuration.app.icon}

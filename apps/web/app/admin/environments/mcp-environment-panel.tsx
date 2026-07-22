@@ -137,7 +137,7 @@ export function McpEnvironmentPanel({
         throw new Error("Secret headers must be a JSON object.");
       }
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/mcp/credentials`,
+        `/api/organization/environments/${environmentId}/mcp/credentials`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -169,7 +169,7 @@ export function McpEnvironmentPanel({
     setBusyAction("operations:refresh");
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/mcp/health`
+        `/api/organization/environments/${environmentId}/mcp/health`
       );
       const payload = await readJson<OperationalSnapshot & { error?: string }>(
         response
@@ -189,7 +189,7 @@ export function McpEnvironmentPanel({
     setBusyAction("credential:oauth");
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/mcp/oauth/start`,
+        `/api/organization/environments/${environmentId}/mcp/oauth/start`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -219,7 +219,7 @@ export function McpEnvironmentPanel({
     setBusyAction(`credential:${id}`);
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/mcp/credentials/${id}`,
+        `/api/organization/environments/${environmentId}/mcp/credentials/${id}`,
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
@@ -297,7 +297,7 @@ export function McpEnvironmentPanel({
               egressAllowlist: splitLines(egressOrigins),
             };
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/mcp/servers`,
+        `/api/organization/environments/${environmentId}/mcp/servers`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -331,7 +331,7 @@ export function McpEnvironmentPanel({
     setBusyAction(`server:${serverId}:load`);
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/mcp/servers/${serverId}`
+        `/api/organization/environments/${environmentId}/mcp/servers/${serverId}`
       );
       const payload = await readJson<ServerDetail & { error?: string }>(
         response
@@ -351,7 +351,7 @@ export function McpEnvironmentPanel({
     setBusyAction(`server:${serverId}:discover`);
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/mcp/servers/${serverId}/discover`,
+        `/api/organization/environments/${environmentId}/mcp/servers/${serverId}/discover`,
         { method: "POST" }
       );
       const payload = await readJson<{ error?: string }>(response);
@@ -383,7 +383,7 @@ export function McpEnvironmentPanel({
     setBusyAction(`snapshot:${snapshotId}`);
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/mcp/servers/${serverId}/snapshots/${snapshotId}`,
+        `/api/organization/environments/${environmentId}/mcp/servers/${serverId}/snapshots/${snapshotId}`,
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
@@ -413,7 +413,7 @@ export function McpEnvironmentPanel({
     setBusyAction(`capability:${capability.id}`);
     try {
       const response = await fetch(
-        `/api/admin/environments/${environmentId}/mcp/capabilities/${capability.id}`,
+        `/api/organization/environments/${environmentId}/mcp/capabilities/${capability.id}`,
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
@@ -848,11 +848,11 @@ export function McpEnvironmentPanel({
 async function loadEnvironmentMcp(environmentId: string, signal: AbortSignal) {
   const [credentialsResponse, serversResponse, operationsResponse] =
     await Promise.all([
-      fetch(`/api/admin/environments/${environmentId}/mcp/credentials`, {
+      fetch(`/api/organization/environments/${environmentId}/mcp/credentials`, {
         signal,
       }),
-      fetch(`/api/admin/environments/${environmentId}/mcp/servers`, { signal }),
-      fetch(`/api/admin/environments/${environmentId}/mcp/health`, { signal }),
+      fetch(`/api/organization/environments/${environmentId}/mcp/servers`, { signal }),
+      fetch(`/api/organization/environments/${environmentId}/mcp/health`, { signal }),
     ]);
   const credentialsPayload = await readJson<{
     credentials?: CredentialMetadata[];

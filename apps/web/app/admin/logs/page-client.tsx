@@ -55,7 +55,7 @@ export function LogsAdminClient({
 
   async function loadStats() {
     setStatus("Loading log stats...");
-    const response = await fetch("/api/admin/logs/stats", {
+    const response = await fetch("/api/organization/audit/stats", {
       cache: "no-store",
     });
     const json = await readJson<LogStats | { error?: string }>(response);
@@ -99,7 +99,7 @@ export function LogsAdminClient({
     if (level) {
       query.set("level", level);
     }
-    const response = await fetch(`/api/admin/logs/count?${query.toString()}`);
+    const response = await fetch(`/api/organization/audit/count?${query.toString()}`);
     const json = await readJson<{ count?: number; error?: string }>(response);
     setBusy(false);
     if (!response.ok) {
@@ -115,7 +115,7 @@ export function LogsAdminClient({
       return;
     }
     setBusy(true);
-    const response = await fetch("/api/admin/logs", {
+    const response = await fetch("/api/organization/audit", {
       method: "DELETE",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

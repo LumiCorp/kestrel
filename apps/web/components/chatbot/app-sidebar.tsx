@@ -79,13 +79,13 @@ export function AppSidebar({
             </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton asChild>
-                <Link href="/dashboard/user">Account</Link>
+                <Link href="/settings/profile">Account</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
             {isAdmin ? (
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
-                  <Link href="/admin/agent">Admin</Link>
+                  <Link href="/admin">Operations</Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ) : null}

@@ -17,8 +17,19 @@ process.once("SIGTERM", () => shutdown(143));
 
 try {
   await rm(workerReadyFile, { force: true });
-  run(pnpm, ["create-dev-admin"], webRoot);
-  run(process.execPath, ["--conditions=react-server", "--import", "tsx", "scripts/seed-product-contract-gateway.ts"], webRoot);
+  const adminOutput = runCaptured(pnpm, ["create-dev-admin"], webRoot);
+  const personalOrganizationId = adminOutput.match(
+    /^Personal organization ID: (.+)$/mu,
+  )?.[1]?.trim();
+  if (!personalOrganizationId) {
+    throw new Error("create-dev-admin did not report its personal organization ID");
+  }
+  run(
+    process.execPath,
+    ["--conditions=react-server", "--import", "tsx", "scripts/seed-product-contract-gateway.ts"],
+    webRoot,
+    { KESTREL_SEED_ORGANIZATION_ID: personalOrganizationId },
+  );
 
   const runner = start(pnpm, ["--dir", repositoryRoot, "run", "runner:service"], webRoot, {
     DATABASE_URL: required("KESTREL_PRODUCT_RUNNER_DATABASE_URL"),
@@ -47,10 +58,27 @@ function start(command, args, cwd, extraEnvironment = {}) {
   return child;
 }
 
-function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, env: process.env, stdio: "inherit" });
+function run(command, args, cwd, extraEnvironment = {}) {
+  const result = spawnSync(command, args, {
+    cwd,
+    env: { ...process.env, ...extraEnvironment },
+    stdio: "inherit",
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with exit ${result.status ?? 1}`);
+}
+
+function runCaptured(command, args, cwd) {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    env: process.env,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with exit ${result.status ?? 1}`);
+  return result.stdout ?? "";
 }
 
 async function waitForUrl(url, child, label) {
