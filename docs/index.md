@@ -29,6 +29,7 @@ task instead of reading the repository as one long manual.
 - [Kestrel Desktop](../apps/docs/content/apps/desktop.mdx)
 - [Kestrel One](../apps/docs/content/apps/web.mdx)
 - [CLI and TUI](../apps/docs/content/cli/index.mdx)
+- [Workspace skills](workspace-skills.md)
 - [0.6 Beta release status](../apps/docs/content/start/release-status.mdx)
 
 ### Build an Integration

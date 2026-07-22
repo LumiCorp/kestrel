@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel-agents/sdk build && pnpm run build:self",
+    "build": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel-agents/sdk build && pnpm --filter @kestrel-agents/workspace-skills build && pnpm run build:self",
     "build:self": "tsc -p tsconfig.json",
     "canary:local": "tsx scripts/local-canary.ts",
     "start": "node dist/server.js",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@kestrel-agents/sdk": "workspace:*",
+    "@kestrel-agents/workspace-skills": "workspace:*",
     "@lumi/kestrel-environment-auth": "workspace:*"
   },
   "devDependencies": {

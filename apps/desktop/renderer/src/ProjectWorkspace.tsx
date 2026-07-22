@@ -31,6 +31,7 @@ import type {
   DesktopWorkspaceCheckpointInspectResult,
   DesktopWorkspacePromotionPreviewResult,
   DesktopWorkspaceValidationSnapshot,
+  WorkspaceSkillInstallation,
 } from "../../src/contracts";
 
 export function ProjectWorkspace(props: {
@@ -69,6 +70,12 @@ export function ProjectWorkspace(props: {
   const [managedInspection, setManagedInspection] = useState<DesktopManagedWorktreeInspectionResult>();
   const [managedCleanup, setManagedCleanup] = useState<DesktopManagedWorktreeCleanupResult>();
   const [pendingLifecycleAction, setPendingLifecycleAction] = useState<string>();
+  const [skills, setSkills] = useState<WorkspaceSkillInstallation[]>([]);
+  const [skillGitUrl, setSkillGitUrl] = useState("");
+  const [skillBranch, setSkillBranch] = useState("main");
+  const [skillPath, setSkillPath] = useState("");
+  const [editingSkillId, setEditingSkillId] = useState<string>();
+  const [pendingSkillAction, setPendingSkillAction] = useState<string>();
   const workspaceRoot = props.workspace?.workspaceRoot ?? props.project?.path;
   const workspaceThreadId = props.workspace === undefined ? undefined : props.threadId;
 
@@ -90,6 +97,8 @@ export function ProjectWorkspace(props: {
     setComparisonSourceId(undefined);
     setManagedInspection(undefined);
     setManagedCleanup(undefined);
+    setSkills([]);
+    setEditingSkillId(undefined);
     if (props.project === undefined || workspaceRoot === undefined) {
       return;
     }
@@ -113,11 +122,13 @@ export function ProjectWorkspace(props: {
       window.kestrelDesktop.watchProjectFiles(workspaceRoot, workspaceThreadId),
       lifecyclePromise,
       managedInspectionPromise,
-    ]).then(([nextListing, nextLauncher, nextRuns, _watchResult, nextLifecycle, nextManagedInspection]) => {
+      window.kestrelDesktop.syncWorkspaceSkills(props.project.path),
+    ]).then(([nextListing, nextLauncher, nextRuns, _watchResult, nextLifecycle, nextManagedInspection, nextSkills]) => {
       if (disposed) {
         return;
       }
       setListing(nextListing);
+      setSkills(nextSkills);
       setLauncher(nextLauncher);
       setRuns(nextRuns);
       setLifecycle(nextLifecycle);
@@ -460,6 +471,60 @@ export function ProjectWorkspace(props: {
     }
   }
 
+  async function installSkill(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (props.project === undefined || skillGitUrl.trim().length === 0 || skillBranch.trim().length === 0) return;
+    setPendingSkillAction(editingSkillId === undefined ? "install" : `update:${editingSkillId}`);
+    try {
+      const source = {
+        gitUrl: skillGitUrl.trim(),
+        branch: skillBranch.trim(),
+        ...(skillPath.trim().length > 0 ? { path: skillPath.trim() } : {}),
+      };
+      if (editingSkillId === undefined) {
+        await window.kestrelDesktop.installWorkspaceSkill(props.project.path, source);
+      } else {
+        await window.kestrelDesktop.updateWorkspaceSkill(props.project.path, editingSkillId, source);
+      }
+      setSkills(await window.kestrelDesktop.listWorkspaceSkills(props.project.path));
+      setSkillGitUrl("");
+      setSkillPath("");
+      setSkillBranch("main");
+      setEditingSkillId(undefined);
+      props.onError(undefined);
+    } catch (cause) {
+      props.onError(errorMessage(cause));
+    } finally {
+      setPendingSkillAction(undefined);
+    }
+  }
+
+  async function syncSkills(): Promise<void> {
+    if (props.project === undefined) return;
+    setPendingSkillAction("sync");
+    try {
+      setSkills(await window.kestrelDesktop.syncWorkspaceSkills(props.project.path));
+      props.onError(undefined);
+    } catch (cause) {
+      props.onError(errorMessage(cause));
+    } finally {
+      setPendingSkillAction(undefined);
+    }
+  }
+
+  async function removeSkill(installationId: string): Promise<void> {
+    if (props.project === undefined) return;
+    setPendingSkillAction(installationId);
+    try {
+      setSkills(await window.kestrelDesktop.removeWorkspaceSkill(props.project.path, installationId));
+      props.onError(undefined);
+    } catch (cause) {
+      props.onError(errorMessage(cause));
+    } finally {
+      setPendingSkillAction(undefined);
+    }
+  }
+
   if (props.project === undefined) {
     return (
       <main className="surface-pane empty-surface" id="app-main">
@@ -647,6 +712,92 @@ export function ProjectWorkspace(props: {
         </section>
 
         <div className="project-side-stack">
+          <section className="workspace-panel" aria-label="Workspace skills">
+            <div className="panel-toolbar">
+              <span>Agent skills</span>
+              <button
+                className="icon-button"
+                type="button"
+                title="Sync workspace skills"
+                aria-label="Sync workspace skills"
+                disabled={pendingSkillAction !== undefined}
+                onClick={() => void syncSkills()}
+              >
+                <RefreshCw size={14} />
+              </button>
+            </div>
+            <form className="project-search" onSubmit={(event) => void installSkill(event)}>
+              <input
+                aria-label="Skill Git URL"
+                placeholder="https://github.com/org/skills.git"
+                value={skillGitUrl}
+                onChange={(event) => setSkillGitUrl(event.target.value)}
+              />
+              <input
+                aria-label="Skill branch"
+                placeholder="main"
+                value={skillBranch}
+                onChange={(event) => setSkillBranch(event.target.value)}
+              />
+              <input
+                aria-label="Skill subdirectory"
+                placeholder="Optional path"
+                value={skillPath}
+                onChange={(event) => setSkillPath(event.target.value)}
+              />
+              <button type="submit" disabled={pendingSkillAction !== undefined || skillGitUrl.trim().length === 0}>
+                {editingSkillId === undefined ? "Install" : "Update"}
+              </button>
+              {editingSkillId !== undefined ? (
+                <button type="button" onClick={() => {
+                  setEditingSkillId(undefined);
+                  setSkillGitUrl("");
+                  setSkillBranch("main");
+                  setSkillPath("");
+                }}>Cancel</button>
+              ) : null}
+            </form>
+            <p className="panel-caption">Public HTTPS Git only. Skills provide guidance and never grant tool permissions or run install hooks.</p>
+            <div className="command-list">
+              {skills.map((skill) => (
+                <div className="command-row" key={skill.installationId}>
+                  <div>
+                    <strong>{skill.revision?.name ?? "Pending skill"}</strong>
+                    <span>{skill.revision?.description ?? skill.source.gitUrl}</span>
+                    <small>
+                      {skill.status}
+                      {skill.revision?.commitSha ? ` · ${skill.revision.commitSha.slice(0, 12)}` : ""}
+                    </small>
+                    {skill.lastSyncError ? <small className="inline-warning">{skill.lastSyncError}</small> : null}
+                    <details>
+                      <summary>Inspect</summary>
+                      <small>Source: {skill.source.gitUrl} · {skill.source.branch}{skill.source.path ? ` · ${skill.source.path}` : ""}</small>
+                      {skill.revision ? <small>Commit: {skill.revision.commitSha}</small> : null}
+                      {skill.revision ? <small>Digest: {skill.revision.contentDigest}</small> : null}
+                      {skill.revision ? <small>Instructions: {skill.revision.skillFile}</small> : null}
+                    </details>
+                  </div>
+                  <div>
+                    <button type="button" disabled={pendingSkillAction !== undefined} onClick={() => {
+                      setEditingSkillId(skill.installationId);
+                      setSkillGitUrl(skill.source.gitUrl);
+                      setSkillBranch(skill.source.branch);
+                      setSkillPath(skill.source.path ?? "");
+                    }}>Edit</button>
+                    <button
+                      type="button"
+                      disabled={pendingSkillAction !== undefined}
+                      onClick={() => void removeSkill(skill.installationId)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {skills.length === 0 ? <p className="panel-empty">No workspace skills installed</p> : null}
+            </div>
+          </section>
+
           <section className="workspace-panel" aria-label="Project scripts">
             <div className="panel-toolbar">
               <span>Scripts</span>
