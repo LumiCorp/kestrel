@@ -2,11 +2,9 @@ import { createHash } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
+import { completeDurableThreadTurn } from "@/lib/turns/store";
 import { createWorkspaceBackup } from "./backups";
-import {
-  createFlyProviderClientFromConnection,
-  listEnabledFlyProviderConnections,
-} from "./fly-connection";
+import { createFlyProviderClient } from "./fly-connection";
 import { PROVISIONER_OPERATION_TYPES } from "./operation-routing";
 import { processEnvironmentOperation } from "./process-runtime";
 import type { EnvironmentProviderInventory } from "./providers/contracts";
@@ -24,32 +22,44 @@ import { refreshEnvironmentGateway } from "./gateway-refresh";
 
 export async function reconcileHostedEnvironments() {
   const now = new Date();
+  const repairedExecutionCount = await reconcileTerminalTurnExecutions();
   const recoverableOperations =
     await knowledgeDb.query.environmentOperations.findMany({
       where: (table, { and, inArray }) =>
         and(
           inArray(table.status, ["queued", "running"]),
-          inArray(table.type, PROVISIONER_OPERATION_TYPES)
+          inArray(table.type, PROVISIONER_OPERATION_TYPES),
         ),
       columns: { id: true },
       limit: 100,
     });
+  let operationFailureCount = 0;
   for (const operation of recoverableOperations) {
     try {
       await processEnvironmentOperation(operation.id);
-    } catch {}
+    } catch (error) {
+      operationFailureCount += 1;
+      console.error("Hosted Environment operation reconciliation failed.", {
+        operationId: operation.id,
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
   }
   let environmentGatewayCount = 0;
   let workspaceCount = 0;
   let adoptedVolumeCount = 0;
   let degradedWorkspaceCount = 0;
-  const connections = await listEnabledFlyProviderConnections();
-  for (const connection of connections) {
-    if (!connection.organizationId) continue;
-    const provider = createFlyProviderClientFromConnection(connection);
+  const organizations = await knowledgeDb
+    .selectDistinct({ organizationId: schema.environments.organizationId })
+    .from(schema.environments)
+    .where(isNull(schema.environments.archivedAt));
+  const provider =
+    organizations.length > 0 ? await createFlyProviderClient() : null;
+  for (const organization of organizations) {
+    if (!provider) break;
     const result = await reconcileOrganizationEnvironments({
       provider,
-      organizationId: connection.organizationId,
+      organizationId: organization.organizationId,
       now,
     });
     environmentGatewayCount += result.environmentGatewayCount;
@@ -62,12 +72,48 @@ export async function reconcileHostedEnvironments() {
   await createDueDailyBackup(now);
   return {
     operationCount: recoverableOperations.length,
+    operationFailureCount,
+    repairedExecutionCount,
     environmentGatewayCount,
     workspaceCount,
     adoptedVolumeCount,
     degradedWorkspaceCount,
     finalizedPreviewCount,
   };
+}
+
+export async function reconcileTerminalTurnExecutions() {
+  const turns = await knowledgeDb
+    .select({
+      id: schema.threadTurns.id,
+      status: schema.threadTurns.status,
+    })
+    .from(schema.threadTurns)
+    .innerJoin(
+      schema.environmentRunExecutions,
+      eq(
+        schema.environmentRunExecutions.id,
+        schema.threadTurns.environmentExecutionId,
+      ),
+    )
+    .where(
+      and(
+        inArray(schema.threadTurns.status, [
+          "completed",
+          "failed",
+          "cancelled",
+        ]),
+        inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
+      ),
+    )
+    .limit(100);
+  for (const turn of turns) {
+    await completeDurableThreadTurn({
+      turnId: turn.id,
+      status: turn.status as "completed" | "failed" | "cancelled",
+    });
+  }
+  return turns.length;
 }
 
 async function reconcileOrganizationEnvironments(input: {
@@ -79,7 +125,7 @@ async function reconcileOrganizationEnvironments(input: {
   const environmentGatewayCount = await reconcileEnvironmentGateways(
     provider,
     organizationId,
-    now
+    now,
   );
   const workspaces = await knowledgeDb
     .select({
@@ -89,7 +135,7 @@ async function reconcileOrganizationEnvironments(input: {
     .from(schema.environmentWorkspaces)
     .innerJoin(
       schema.environments,
-      eq(schema.environments.id, schema.environmentWorkspaces.environmentId)
+      eq(schema.environments.id, schema.environmentWorkspaces.environmentId),
     )
     .where(
       and(
@@ -101,8 +147,8 @@ async function reconcileOrganizationEnvironments(input: {
           "stopping",
           "stopped",
           "degraded",
-        ])
-      )
+        ]),
+      ),
     );
   const inventoryByAppName = new Map<
     string,
@@ -123,7 +169,7 @@ async function reconcileOrganizationEnvironments(input: {
           workspace.id,
           now,
           "ENVIRONMENT_WORKSPACE_MACHINE_MISSING",
-          "Workspace Machine is missing during reconciliation."
+          "Workspace Machine is missing during reconciliation.",
         );
         continue;
       }
@@ -148,7 +194,7 @@ async function reconcileOrganizationEnvironments(input: {
           workspace.id,
           now,
           "ENVIRONMENT_WORKSPACE_VOLUME_RECONCILE_FAILED",
-          assessment.reason
+          assessment.reason,
         );
         continue;
       }
@@ -180,7 +226,7 @@ async function reconcileOrganizationEnvironments(input: {
         workspace.id,
         now,
         "ENVIRONMENT_WORKSPACE_RECONCILE_FAILED",
-        "Workspace reconciliation failed."
+        "Workspace reconciliation failed.",
       );
     }
   }
@@ -213,10 +259,10 @@ export async function reconcileClosingWorkspacePreviews(now = new Date()) {
           and(
             eq(
               schema.workspacePreviewLeases.environmentId,
-              environment.environmentId
+              environment.environmentId,
             ),
-            eq(schema.workspacePreviewLeases.status, "closing")
-          )
+            eq(schema.workspacePreviewLeases.status, "closing"),
+          ),
         )
         .returning({ id: schema.workspacePreviewLeases.id });
       finalized += closed.length;
@@ -229,7 +275,7 @@ async function markWorkspaceDegraded(
   workspaceId: string,
   now: Date,
   failureCode: string,
-  failureMessage: string
+  failureMessage: string,
 ) {
   await knowledgeDb
     .update(schema.environmentWorkspaces)
@@ -264,8 +310,8 @@ async function adoptWorkspaceVolumeBinding(input: {
           eq(schema.environmentWorkspaces.id, input.workspace.id),
           eq(schema.environmentWorkspaces.flyMachineId, input.machineId),
           oldVolumeCondition,
-          isNull(schema.environmentWorkspaces.deletedAt)
-        )
+          isNull(schema.environmentWorkspaces.deletedAt),
+        ),
       )
       .returning({ id: schema.environmentWorkspaces.id });
     if (!updated[0]) return false;
@@ -299,19 +345,19 @@ async function adoptWorkspaceVolumeBinding(input: {
 async function reconcileEnvironmentGateways(
   provider: FlyMachinesClient,
   organizationId: string,
-  now: Date
+  now: Date,
 ) {
   const activeUpdates = await knowledgeDb.query.environmentOperations.findMany({
     where: (table, { and, eq, inArray }) =>
       and(
         eq(table.organizationId, organizationId),
         eq(table.type, "environment.update"),
-        inArray(table.status, ["queued", "running"])
+        inArray(table.status, ["queued", "running"]),
       ),
     columns: { environmentId: true },
   });
   const updatingEnvironmentIds = new Set(
-    activeUpdates.map((operation) => operation.environmentId)
+    activeUpdates.map((operation) => operation.environmentId),
   );
   const environments = await knowledgeDb.query.environments.findMany({
     where: (table, { and, inArray, isNotNull, isNull }) =>
@@ -320,7 +366,7 @@ async function reconcileEnvironmentGateways(
         inArray(table.status, ["ready", "degraded"]),
         isNotNull(table.flyAppName),
         isNotNull(table.routerImage),
-        isNull(table.archivedAt)
+        isNull(table.archivedAt),
       ),
   });
   const ticketPublicKey =
@@ -338,11 +384,9 @@ async function reconcileEnvironmentGateways(
         controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
       });
       const gatewayServiceTokenHash = hashEnvironmentServiceToken(
-        gateway.serviceToken
+        gateway.serviceToken,
       );
-      if (
-        environment.gatewayServiceTokenHash !== gatewayServiceTokenHash
-      ) {
+      if (environment.gatewayServiceTokenHash !== gatewayServiceTokenHash) {
         await knowledgeDb
           .update(schema.environments)
           .set({ gatewayServiceTokenHash, updatedAt: new Date() })
@@ -395,14 +439,14 @@ async function reconcileEnvironmentGateways(
 
 async function cleanupOrphanedEnvironmentResources(
   provider: FlyMachinesClient,
-  organizationId: string
+  organizationId: string,
 ) {
   const environments = await knowledgeDb.query.environments.findMany({
     where: (table, { and, isNotNull, isNull }) =>
       and(
         eq(table.organizationId, organizationId),
         isNotNull(table.flyAppName),
-        isNull(table.archivedAt)
+        isNull(table.archivedAt),
       ),
   });
   for (const environment of environments) {
@@ -412,7 +456,7 @@ async function cleanupOrphanedEnvironmentResources(
         where: (table, { and, eq, inArray }) =>
           and(
             eq(table.environmentId, environment.id),
-            inArray(table.status, ["queued", "running"])
+            inArray(table.status, ["queued", "running"]),
           ),
         columns: { id: true },
       });
@@ -427,13 +471,13 @@ async function cleanupOrphanedEnvironmentResources(
         ? [environment.flyGatewayMachineId]
         : []),
       ...workspaces.flatMap((workspace) =>
-        workspace.flyMachineId ? [workspace.flyMachineId] : []
+        workspace.flyMachineId ? [workspace.flyMachineId] : [],
       ),
     ]);
     const activeVolumeIds = new Set(
       workspaces.flatMap((workspace) =>
-        workspace.flyVolumeId ? [workspace.flyVolumeId] : []
-      )
+        workspace.flyVolumeId ? [workspace.flyVolumeId] : [],
+      ),
     );
     const inventory = await provider.listEnvironmentResources({
       appName: environment.flyAppName,
@@ -487,7 +531,7 @@ async function cleanupOrphanedEnvironmentResources(
 
 async function cleanupReplacedWorkspaceResources(
   provider: FlyMachinesClient,
-  organizationId: string
+  organizationId: string,
 ) {
   const operations = await knowledgeDb.query.environmentOperations.findMany({
     where: (table, { and, eq }) =>
@@ -495,7 +539,7 @@ async function cleanupReplacedWorkspaceResources(
         eq(table.organizationId, organizationId),
         eq(table.type, "workspace.restore"),
         eq(table.status, "completed"),
-        eq(table.stage, "workspace.restore.rebound_cleanup_pending")
+        eq(table.stage, "workspace.restore.rebound_cleanup_pending"),
       ),
     limit: 100,
   });
@@ -559,11 +603,11 @@ async function createDueDailyBackup(now: Date) {
         and(
           inArray(
             table.workspaceId,
-            candidates.map((candidate) => candidate.id)
+            candidates.map((candidate) => candidate.id),
           ),
           eq(table.reason, "daily"),
           inArray(table.status, ["creating", "available"]),
-          gt(table.createdAt, cutoff)
+          gt(table.createdAt, cutoff),
         ),
       columns: { workspaceId: true },
     }),
@@ -572,16 +616,16 @@ async function createDueDailyBackup(now: Date) {
         and(
           inArray(
             table.workspaceId,
-            candidates.map((candidate) => candidate.id)
+            candidates.map((candidate) => candidate.id),
           ),
-          inArray(table.status, ["queued", "creating"])
+          inArray(table.status, ["queued", "creating"]),
         ),
       columns: { workspaceId: true },
     }),
   ]);
   const candidate = selectDueDailyBackupCandidate(
     candidates,
-    [...recent, ...active].map((backup) => backup.workspaceId)
+    [...recent, ...active].map((backup) => backup.workspaceId),
   );
   if (!candidate) return;
   await createWorkspaceBackup({

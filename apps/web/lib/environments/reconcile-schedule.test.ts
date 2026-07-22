@@ -38,8 +38,13 @@ contractTest("web.hermetic", "scheduled Environment reconciliation uses the shar
       events.push("reconcile");
       return {
         operationCount: 1,
+        operationFailureCount: 0,
+        repairedExecutionCount: 4,
         environmentGatewayCount: 2,
         workspaceCount: 3,
+        adoptedVolumeCount: 0,
+        degradedWorkspaceCount: 0,
+        finalizedPreviewCount: 0,
       };
     },
     createLock: async () => ({
@@ -60,8 +65,13 @@ contractTest("web.hermetic", "scheduled Environment reconciliation uses the shar
   assert.equal(result.acquired, true);
   assert.deepEqual(result.result, {
     operationCount: 1,
+    operationFailureCount: 0,
+    repairedExecutionCount: 4,
     environmentGatewayCount: 2,
     workspaceCount: 3,
+    adoptedVolumeCount: 0,
+    degradedWorkspaceCount: 0,
+    finalizedPreviewCount: 0,
   });
 });
 
@@ -72,8 +82,13 @@ contractTest("web.hermetic", "scheduled Environment reconciliation skips overlap
       reconciled = true;
       return {
         operationCount: 0,
+        operationFailureCount: 0,
+        repairedExecutionCount: 0,
         environmentGatewayCount: 0,
         workspaceCount: 0,
+        adoptedVolumeCount: 0,
+        degradedWorkspaceCount: 0,
+        finalizedPreviewCount: 0,
       };
     },
     createLock: async () => ({

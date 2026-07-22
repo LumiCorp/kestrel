@@ -12,6 +12,7 @@ export type ThreadTurnTerminalStatus = Extract<
   ThreadTurnStatus,
   "completed" | "failed" | "cancelled"
 >;
+export const DURABLE_TURN_STOP_GRACE_MS = 15_000;
 export type ThreadTurnSource = "web" | "mobile" | "api";
 export type ThreadQueueState = "running" | "paused";
 export type ThreadQueuePauseReason =

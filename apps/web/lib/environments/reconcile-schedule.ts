@@ -7,8 +7,13 @@ export const ENVIRONMENT_RECONCILE_CRON = "* * * * *";
 
 type EnvironmentReconciliationResult = {
   operationCount: number;
+  operationFailureCount: number;
+  repairedExecutionCount: number;
   environmentGatewayCount: number;
   workspaceCount: number;
+  adoptedVolumeCount: number;
+  degradedWorkspaceCount: number;
+  finalizedPreviewCount: number;
 };
 
 type EnvironmentReconcile = () => Promise<EnvironmentReconciliationResult>;

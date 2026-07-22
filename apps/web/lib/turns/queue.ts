@@ -6,6 +6,9 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
 
 export const DURABLE_THREAD_TURN_QUEUE = "thread.turn.execute";
+export const DURABLE_TURN_EXPIRE_SECONDS = 12 * 60 * 60;
+export const DURABLE_TURN_HEARTBEAT_SECONDS = 60;
+export const DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS = 30;
 
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL;
 let bossPromise: Promise<PgBoss> | null = null;
@@ -38,7 +41,14 @@ async function createTurnBoss() {
   }
   const boss = new PgBoss({ connectionString: databaseUrl, migrate: true });
   await boss.start();
-  await boss.createQueue(DURABLE_THREAD_TURN_QUEUE);
+  await boss.createQueue(DURABLE_THREAD_TURN_QUEUE, {
+    expireInSeconds: DURABLE_TURN_EXPIRE_SECONDS,
+    heartbeatSeconds: DURABLE_TURN_HEARTBEAT_SECONDS,
+  });
+  await boss.updateQueue(DURABLE_THREAD_TURN_QUEUE, {
+    expireInSeconds: DURABLE_TURN_EXPIRE_SECONDS,
+    heartbeatSeconds: DURABLE_TURN_HEARTBEAT_SECONDS,
+  });
   return boss;
 }
 
@@ -55,7 +65,9 @@ async function sendTurn(boss: PgBoss, turnId: string) {
       retryLimit: 3,
       retryDelay: 5,
       retryBackoff: true,
-    }
+      expireInSeconds: DURABLE_TURN_EXPIRE_SECONDS,
+      heartbeatSeconds: DURABLE_TURN_HEARTBEAT_SECONDS,
+    },
   );
   if (!jobId) {
     throw new Error("The durable turn queue rejected the job.");
@@ -102,7 +114,7 @@ export async function finalizeExhaustedDurableTurnJob(input: {
 async function hasNonterminalJob(boss: PgBoss, turnId: string) {
   const jobs = await boss.findJobs<{ turnId?: unknown }>(
     DURABLE_THREAD_TURN_QUEUE,
-    { data: { turnId } }
+    { data: { turnId } },
   );
   return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
 }
@@ -117,7 +129,7 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
     .from(schema.threadTurnQueueState)
     .innerJoin(
       schema.threadTurns,
-      eq(schema.threadTurns.id, schema.threadTurnQueueState.activeTurnId)
+      eq(schema.threadTurns.id, schema.threadTurnQueueState.activeTurnId),
     )
     .where(
       and(
@@ -126,8 +138,8 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
           "queued",
           "running",
           "waiting_for_input",
-        ])
-      )
+        ]),
+      ),
     );
   for (const turn of turns) {
     if (!(turn.turnId && !(await hasNonterminalJob(boss, turn.turnId)))) {
@@ -177,7 +189,11 @@ export async function startDurableThreadTurnWorker() {
     workerRegistered = true;
     await boss.work(
       DURABLE_THREAD_TURN_QUEUE,
-      { batchSize: 1, includeMetadata: true },
+      {
+        batchSize: 1,
+        includeMetadata: true,
+        heartbeatRefreshSeconds: DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS,
+      },
       async (jobs: Array<JobWithMetadata<{ turnId?: unknown }>>) => {
         for (const job of jobs) {
           const turnId = job.data?.turnId;
@@ -185,10 +201,12 @@ export async function startDurableThreadTurnWorker() {
             continue;
           }
           try {
-            const { processDurableThreadTurn } = await import(
-              "@/lib/turns/process-runtime"
-            );
-            const result = await processDurableThreadTurn(turnId);
+            const { processDurableThreadTurn } =
+              await import("@/lib/turns/process-runtime");
+            const result = await processDurableThreadTurn(turnId, {
+              retryCount: job.retryCount,
+              workerSignal: job.signal,
+            });
             if (result.nextTurnId) {
               await dispatchTurnOrFail(boss, result.nextTurnId);
             }
@@ -202,7 +220,7 @@ export async function startDurableThreadTurnWorker() {
             throw error;
           }
         }
-      }
+      },
     );
     await reconcileDurableThreadTurnQueueWithBoss(boss);
     await drainMobilePushOutbox().catch(reportPushFailure);

@@ -103,7 +103,7 @@ export async function createWorkspaceBackup(input: {
         encryptionKeyId: backupKeyId(),
       },
     });
-    const provider = await createFlyProviderClient(input.organizationId);
+    const provider = await createFlyProviderClient();
     const snapshot = await createAuxiliaryVolumeSnapshot({
       appName: environment.flyAppName,
       volumeId: workspace.flyVolumeId,
@@ -414,7 +414,7 @@ export async function restoreWorkspaceBackup(input: {
     createdAt: startedAt,
     updatedAt: startedAt,
   });
-  const provider = await createFlyProviderClient(input.organizationId);
+  const provider = await createFlyProviderClient();
   let replacementVolumeId: string | null = null;
   let replacementMachineId: string | null = null;
   let rebound = false;

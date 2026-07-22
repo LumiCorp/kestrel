@@ -58,7 +58,7 @@ contractTest(
     assert.match(manifest, /\/settings\/organization\/inference", "models"/u);
     assert.doesNotMatch(manifest, /\/settings\/organization\/infrastructure"/u);
     assert.doesNotMatch(inference, /connections\/fly/u);
-    assert.match(environments, /FlyWorkspaceProviderClient/u);
+    assert.doesNotMatch(environments, /FlyWorkspaceProviderClient/u);
     assert.equal(
       fs.existsSync(
         path.join(

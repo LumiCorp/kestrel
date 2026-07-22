@@ -20,7 +20,7 @@ let redisClient: RedisClientType | null = null;
 let redisConnectPromise: Promise<RedisClientType> | null = null;
 
 async function getContextGrantRedis() {
-  if (redisClient?.isOpen) {
+  if (redisClient?.isReady) {
     return redisClient;
   }
   if (!redisConnectPromise) {
@@ -29,6 +29,11 @@ async function getContextGrantRedis() {
       throw new Error("Project context grants require REDIS_URL.");
     }
     const client = createClient({ url });
+    const discardClient = () => {
+      if (redisClient === client) redisClient = null;
+    };
+    client.on("error", discardClient);
+    client.on("end", discardClient);
     redisConnectPromise = client.connect().then(() => {
       redisClient = client as RedisClientType;
       return redisClient;

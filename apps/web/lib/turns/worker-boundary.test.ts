@@ -41,7 +41,6 @@ contractTest("web.hermetic", "the durable turn image builds workspace runtime de
   );
   assert.equal((packageJson as { type?: string }).type, "module");
 });
-
 contractTest("web.hermetic", "an exhausted queue job fails its durable turn visibly", async () => {
   const queueSource = await readFile(
     new URL("./queue.ts", import.meta.url),
@@ -63,6 +62,57 @@ contractTest("web.hermetic", "the running worker reconciles missing jobs and int
   assert.match(queueSource, /NONTERMINAL_JOB_STATES/u);
   assert.match(queueSource, /await dispatchTurnOrFail\(/u);
   assert.match(queueSource, /failureCode: "TURN_WORKER_INTERRUPTED"/u);
+});
+
+contractTest("web.hermetic", "durable turns use a long lease with worker heartbeats", async () => {
+  const queueSource = await readFile(
+    new URL("./queue.ts", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(queueSource, /DURABLE_TURN_EXPIRE_SECONDS = 12 \* 60 \* 60/u);
+  assert.match(queueSource, /DURABLE_TURN_HEARTBEAT_SECONDS = 60/u);
+  assert.match(queueSource, /DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS = 30/u);
+  assert.match(queueSource, /heartbeatRefreshSeconds:/u);
+  assert.match(queueSource, /workerSignal: job\.signal/u);
+  assert.match(queueSource, /retryCount: job\.retryCount/u);
+});
+
+contractTest("web.hermetic", "runtime execution binding is part of execution creation", async () => {
+  const routeSource = await readFile(
+    new URL("../environments/execution-route.ts", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(routeSource, /durableTurnId\?: string/u);
+  assert.match(routeSource, /knowledgeDb\.transaction/u);
+  assert.match(routeSource, /environmentExecutionId: input\.id/u);
+  assert.match(routeSource, /Durable turn could not be bound/u);
+});
+
+contractTest("web.hermetic", "user Stop has a bounded safe-boundary deadline", async () => {
+  const [runtimeSource, storeSource] = await Promise.all([
+    readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("./store.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(runtimeSource, /DURABLE_TURN_STOP_GRACE_MS/u);
+  assert.match(runtimeSource, /scheduleCancellationDeadline/u);
+  assert.match(runtimeSource, /isSafeInterruptBoundary/u);
+  assert.match(runtimeSource, /status: stopped \? "cancelled" : "failed"/u);
+  assert.match(storeSource, /interruptMode: "safe_boundary_deadline"/u);
+  assert.match(storeSource, /interruptDeadlineAt:/u);
+});
+
+contractTest("web.hermetic", "project context Redis failures stay inside the worker boundary", async () => {
+  const source = await readFile(
+    new URL("../projects/context-grants.ts", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(source, /redisClient\?\.isReady/u);
+  assert.match(source, /client\.on\("error", discardClient\)/u);
+  assert.match(source, /client\.on\("end", discardClient\)/u);
 });
 
 contractTest("web.hermetic", "terminal pg-boss jobs cannot block durable turn recovery", async () => {

@@ -6,7 +6,10 @@ import type {
 } from "@kestrel-agents/ai-sdk";
 import type { UIMessage } from "ai";
 import { eq } from "drizzle-orm";
-import { createKestrelOneAgentResponse } from "@/lib/agent/kestrel-runtime";
+import {
+  cancelInterruptedKestrelOneExecution,
+  createKestrelOneAgentResponse,
+} from "@/lib/agent/kestrel-runtime";
 import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
 import type { Session } from "@/lib/auth-types";
 import { generateTitleForOrganization } from "@/lib/chat/title";
@@ -18,9 +21,9 @@ import {
 import { formatProjectSystemContext } from "@/lib/projects/runtime-context";
 import { updateThreadTitleForUser } from "@/lib/threads/store";
 import { assertVisibleCompletedOutcome } from "@/lib/turns/outcome-invariant";
+import { DURABLE_TURN_STOP_GRACE_MS } from "@/lib/turns/contracts";
 import {
   appendDurableTurnEvent,
-  bindDurableTurnExecution,
   claimDurableThreadTurn,
   completeDurableThreadTurn,
   isDurableTurnCancellationRequested,
@@ -117,7 +120,7 @@ async function loadBoundProjectContext(turn: {
     .from(schema.projectContextRevisions)
     .innerJoin(
       schema.projects,
-      eq(schema.projects.id, schema.projectContextRevisions.projectId)
+      eq(schema.projects.id, schema.projectContextRevisions.projectId),
     )
     .where(eq(schema.projectContextRevisions.id, turn.projectContextRevisionId))
     .limit(1);
@@ -145,7 +148,48 @@ async function loadBoundProjectContext(turn: {
   };
 }
 
-export async function processDurableThreadTurn(turnId: string) {
+export async function processDurableThreadTurn(
+  turnId: string,
+  options: { retryCount?: number; workerSignal?: AbortSignal } = {},
+) {
+  if ((options.retryCount ?? 0) > 0) {
+    const interrupted = await knowledgeDb.query.threadTurns.findFirst({
+      where: eq(schema.threadTurns.id, turnId),
+      columns: {
+        status: true,
+        organizationId: true,
+        environmentExecutionId: true,
+        cancelRequestedAt: true,
+      },
+    });
+    if (interrupted?.status === "running") {
+      if (interrupted.environmentExecutionId) {
+        await cancelInterruptedKestrelOneExecution({
+          organizationId: interrupted.organizationId,
+          executionId: interrupted.environmentExecutionId,
+        }).catch((error) => {
+          console.error(
+            "Interrupted Environment execution cancellation failed.",
+            {
+              turnId,
+              executionId: interrupted.environmentExecutionId,
+              message: error instanceof Error ? error.message : "Unknown error",
+            },
+          );
+        });
+      }
+      const stopped = Boolean(interrupted.cancelRequestedAt);
+      const completion = await completeDurableThreadTurn({
+        turnId,
+        status: stopped ? "cancelled" : "failed",
+        failureCode: stopped ? "TURN_STOPPED" : "TURN_WORKER_INTERRUPTED",
+        failureMessage: stopped
+          ? null
+          : "The Kestrel agent was interrupted before this turn finished. Please try again.",
+      });
+      return { processed: true, nextTurnId: completion.nextTurnId };
+    }
+  }
   const turn = await claimDurableThreadTurn(turnId);
   if (!turn) {
     return { processed: false, nextTurnId: null };
@@ -155,15 +199,43 @@ export async function processDurableThreadTurn(turnId: string) {
     null;
   let eventWrites = Promise.resolve();
   let persistedAssistantMessageCount = 0;
+  let environmentExecutionId = turn.environmentExecutionId;
+  let runtimeStartedRecorded = false;
+  let runtimeStartedEventId: string | null = null;
+  let effectiveInteractionMode: string | null = null;
   const cancellation = new AbortController();
   let cancellationRequested = false;
+  let workerInterrupted = false;
+  let cancellationDeadline: ReturnType<typeof setTimeout> | null = null;
+  const scheduleCancellationDeadline = () => {
+    if (cancellationDeadline || cancellation.signal.aborted) return;
+    cancellationDeadline = setTimeout(() => {
+      cancellation.abort(
+        new Error(
+          "The user interrupted this turn after the safe-boundary deadline.",
+        ),
+      );
+    }, DURABLE_TURN_STOP_GRACE_MS);
+  };
   const cancellationPoll = setInterval(() => {
-    void isDurableTurnCancellationRequested(turn.id).then((requested) => {
-      if (requested) {
-        cancellationRequested = true;
-      }
-    });
+    void isDurableTurnCancellationRequested(turn.id)
+      .then((requested) => {
+        if (requested) {
+          cancellationRequested = true;
+          scheduleCancellationDeadline();
+        }
+      })
+      .catch(() => {});
   }, 1000);
+  const interruptForWorkerLoss = () => {
+    workerInterrupted = true;
+    cancellation.abort(new Error("The durable turn worker lease ended."));
+  };
+  if (options.workerSignal?.aborted) interruptForWorkerLoss();
+  else
+    options.workerSignal?.addEventListener("abort", interruptForWorkerLoss, {
+      once: true,
+    });
   const terminal: {
     status: KestrelTerminalStatus;
     error: string | null;
@@ -221,26 +293,35 @@ export async function processDurableThreadTurn(turnId: string) {
             }).catch(() => null)
           : null,
       signal: cancellation.signal,
-      onExecutionRouted: (executionId) =>
-        bindDurableTurnExecution({ turnId: turn.id, executionId }).then(
-          () => {}
-        ),
+      onExecutionRouted: (executionId) => {
+        environmentExecutionId = executionId;
+      },
       onRuntimeEvent(event) {
         eventWrites = eventWrites.then(async () => {
           try {
             if (event.type === "run.started") {
+              runtimeStartedEventId = event.id;
+              effectiveInteractionMode = event.payload.interactionMode ?? null;
+            }
+            if (
+              !runtimeStartedRecorded &&
+              environmentExecutionId &&
+              event.runId
+            ) {
               await appendDurableTurnEvent({
                 turnId: turn.id,
                 type: "runtime.started",
                 data: {
-                  eventId: event.id,
+                  eventId: runtimeStartedEventId ?? event.id,
+                  executionId: environmentExecutionId,
+                  runtimeRunId: event.runId,
                   requestedInteractionMode: turn.requestedInteractionMode,
-                  effectiveInteractionMode:
-                    event.payload.interactionMode ?? null,
+                  effectiveInteractionMode,
                 },
               });
-              return;
+              runtimeStartedRecorded = true;
             }
+            if (event.type === "run.started") return;
             await recordMobileTurnRuntimeActivity({
               turnId: turn.id,
               eventId: event.id,
@@ -256,7 +337,7 @@ export async function processDurableThreadTurn(turnId: string) {
         });
         if (cancellationRequested && isSafeInterruptBoundary(event.type)) {
           cancellation.abort(
-            new Error("The user interrupted this turn at a safe boundary.")
+            new Error("The user interrupted this turn at a safe boundary."),
           );
         }
       },
@@ -266,7 +347,7 @@ export async function processDurableThreadTurn(turnId: string) {
             turnId: turn.id,
             type: "ui.message",
             data: chunk,
-          }).then(() => {})
+          }).then(() => {}),
         );
       },
       onFinishPersist: async (finishedMessages, meta) => {
@@ -279,7 +360,7 @@ export async function processDurableThreadTurn(turnId: string) {
         const assistantMessages = messagesForPersistence.filter(
           (message): message is UIMessage =>
             message.role === "assistant" &&
-            isPersistableAssistantMessage(message)
+            isPersistableAssistantMessage(message),
         );
         persistedAssistantMessageCount = assistantMessages.length;
         await persistDurableAssistantOutcome({
@@ -307,16 +388,20 @@ export async function processDurableThreadTurn(turnId: string) {
     await eventWrites;
     assertVisibleCompletedOutcome(
       terminal.status,
-      persistedAssistantMessageCount
+      persistedAssistantMessageCount,
     );
     if (terminal.status === "waiting" && terminal.interaction) {
       return { processed: true, nextTurnId: null };
     }
+    const completionStatus = workerInterrupted
+      ? "failed"
+      : terminalTurnStatus(terminal.status);
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
-      status: terminalTurnStatus(terminal.status),
-      failureCode:
-        terminalTurnStatus(terminal.status) === "failed"
+      status: completionStatus,
+      failureCode: workerInterrupted
+        ? "TURN_WORKER_INTERRUPTED"
+        : completionStatus === "failed"
           ? terminal.status === "contract_failure"
             ? "PRESENTATION_CONTRACT_FAILURE"
             : "RUNTIME_FAILED"
@@ -334,7 +419,7 @@ export async function processDurableThreadTurn(turnId: string) {
     }).filter(
       (candidate): candidate is UIMessage =>
         candidate.role === "assistant" &&
-        isPersistableAssistantMessage(candidate)
+        isPersistableAssistantMessage(candidate),
     );
     await persistDurableAssistantOutcome({
       turnId: turn.id,
@@ -347,15 +432,24 @@ export async function processDurableThreadTurn(turnId: string) {
         source: turn.source,
       })),
     });
+    const stopped =
+      cancellationRequested ||
+      (await isDurableTurnCancellationRequested(turn.id).catch(() => false));
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
-      status: "failed",
-      failureCode: "TURN_WORKER_FAILED",
-      failureMessage: message,
+      status: stopped ? "cancelled" : "failed",
+      failureCode: stopped
+        ? "TURN_STOPPED"
+        : workerInterrupted
+          ? "TURN_WORKER_INTERRUPTED"
+          : "TURN_WORKER_FAILED",
+      failureMessage: stopped ? null : message,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
   } finally {
     clearInterval(cancellationPoll);
+    if (cancellationDeadline) clearTimeout(cancellationDeadline);
+    options.workerSignal?.removeEventListener("abort", interruptForWorkerLoss);
     if (projectContext) {
       await revokeProjectContextGrant(projectContext.grantId).catch(() => {});
     }
