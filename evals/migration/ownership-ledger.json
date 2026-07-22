@@ -63,15 +63,13 @@
       "behaviorId": "live.signal.brief",
       "disposition": "ruhroh",
       "ruhrohScenarioId": "live.signal.brief",
-      "parityRecord": "evals/migration/parity/live.signal.brief.json",
-      "parityStatus": "passed"
+      "parityStatus": "pending_execution"
     },
     {
       "behaviorId": "live.signal.partial-failure",
       "disposition": "ruhroh",
       "ruhrohScenarioId": "live.signal.partial-failure",
-      "parityRecord": "evals/migration/parity/live.signal.partial-failure.json",
-      "parityStatus": "passed"
+      "parityStatus": "pending_execution"
     },
     {
       "behaviorId": "live.weather.degraded",

@@ -122,7 +122,7 @@ Schema:
           "days": 7
         }
       },
-      "toolAllowlist": ["free.hn.top", "free.time.current", "code.execute"],
+      "toolAllowlist": ["free.exchange.rate", "free.time.current", "code.execute"],
       "codeMode": {
         "enabled": true,
         "languages": ["javascript", "python", "bash"],

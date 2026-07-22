@@ -620,6 +620,112 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry routes a direct Environmen
   registry.clearRuntimeTurnAuthorization("run-environment-app");
 });
 
+// Regression guard: production has two real IDs here. Keeping them different
+// is intentional; making them equal recreates the test gap that hid the bug.
+contractTest("runtime.hermetic", "UnifiedToolRegistry preserves execution authorization when the engine assigns a different run id", async () => {
+  let authorization = "";
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["internet.usage"],
+    context: {
+      kestrelOne: {
+        appUrl: "https://kestrel.example",
+        appApprovalModes: { "internet.usage": "auto" },
+      },
+      fetchImpl: (async (_url, init) => {
+        authorization = String(
+          (init?.headers as Record<string, string> | undefined)?.Authorization
+        );
+        return new Response(JSON.stringify({ key: { usage: 1 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
+    },
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  await registry.refreshForRuntimeTurn({
+    runId: "environment-execution-id",
+    sessionId: "session-environment-app",
+    mcpAuthorization: { executionTicket: "signed-run-ticket" },
+  });
+
+  await registry.call(
+    "internet.usage",
+    {},
+    {
+      runContext: createToolRunContext({
+        runId: "engine-run-id",
+        sessionId: "session-environment-app",
+      }),
+    }
+  );
+
+  assert.equal(authorization, "Bearer signed-run-ticket");
+  registry.clearRuntimeTurnAuthorization(
+    "environment-execution-id",
+    "session-environment-app"
+  );
+});
+
+// Regression guard: the session bridge is valid only for one active ticket.
+// Never weaken this to pick the first or most recent authorization.
+contractTest("runtime.hermetic", "UnifiedToolRegistry fails closed when a session has overlapping execution authorizations", async () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["internet.usage"],
+    context: {
+      kestrelOne: {
+        appUrl: "https://kestrel.example",
+        appApprovalModes: { "internet.usage": "auto" },
+      },
+      internetEnv: Object.create(null) as NodeJS.ProcessEnv,
+    },
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  await registry.refreshForRuntimeTurn({
+    runId: "environment-execution-a",
+    sessionId: "shared-session",
+    mcpAuthorization: { executionTicket: "signed-ticket-a" },
+  });
+  await registry.refreshForRuntimeTurn({
+    runId: "environment-execution-b",
+    sessionId: "shared-session",
+    mcpAuthorization: { executionTicket: "signed-ticket-b" },
+  });
+
+  await assert.rejects(
+    registry.call(
+      "internet.usage",
+      {},
+      {
+        runContext: createToolRunContext({
+          runId: "unmatched-engine-run",
+          sessionId: "shared-session",
+        }),
+      }
+    ),
+    /Missing Tavily API key/u
+  );
+
+  registry.clearRuntimeTurnAuthorization(
+    "environment-execution-a",
+    "shared-session"
+  );
+  registry.clearRuntimeTurnAuthorization(
+    "environment-execution-b",
+    "shared-session"
+  );
+});
+
 contractTest("runtime.hermetic", "UnifiedToolRegistry strips unadvertised internet.news domain filters before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({

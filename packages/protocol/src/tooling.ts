@@ -5,7 +5,6 @@ export const RUNNER_BUILT_IN_TOOL_NAMES = [
   "free.time.current",
   "free.geocode.lookup",
   "free.exchange.rate",
-  "free.hn.top",
 ] as const;
 
 export type RunnerBuiltInToolName =

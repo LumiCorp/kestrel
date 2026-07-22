@@ -1,24 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type {
-  CodeModeProfileConfig,
-} from "../../src/code/contracts.js";
-import {
-  DEFAULT_CODE_MODE_DISABLED_CONFIG,
-} from "../../src/code/contracts.js";
-import type {
-  DevShellProfileConfig,
-} from "../../src/devshell/contracts.js";
-import {
-  DEFAULT_DEV_SHELL_DISABLED_CONFIG,
-} from "../../src/devshell/contracts.js";
-import type {
-  GuardrailConfig,
-} from "../../src/kestrel/contracts/execution.js";
-import type {
-  McpServerConfig,
-} from "../../src/mcp/contracts.js";
+import type { CodeModeProfileConfig } from "../../src/code/contracts.js";
+import { DEFAULT_CODE_MODE_DISABLED_CONFIG } from "../../src/code/contracts.js";
+import type { DevShellProfileConfig } from "../../src/devshell/contracts.js";
+import { DEFAULT_DEV_SHELL_DISABLED_CONFIG } from "../../src/devshell/contracts.js";
+import type { GuardrailConfig } from "../../src/kestrel/contracts/execution.js";
+import type { McpServerConfig } from "../../src/mcp/contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
@@ -29,14 +17,21 @@ import {
   resolveProfileWithModelPolicy,
 } from "../../src/profile/modelPolicy.js";
 import { resolveRuntimeProfileSelection } from "../../src/profile/runtimeProfile.js";
-import type { ProfilesFile, ToolQueueProfileConfig, TuiProfile } from "../contracts.js";
+import type {
+  ProfilesFile,
+  ToolQueueProfileConfig,
+  TuiProfile,
+} from "../contracts.js";
 import {
   isThemeTokenName,
   normalizeThemeColor,
   type ThemeOverrides,
 } from "../ink/theme/tokens.js";
 import { resolveKestrelHomePath } from "../../src/runtime/kestrelHome.js";
-import { extractResponseField, resolveLocalCoreStoreClient } from "../localCoreStoreClient.js";
+import {
+  extractResponseField,
+  resolveLocalCoreStoreClient,
+} from "../localCoreStoreClient.js";
 
 const PROFILE_FILE_NAME = "profiles.json";
 const DEFAULT_PROFILE_GUARDRAILS: Partial<GuardrailConfig> = {
@@ -82,6 +77,15 @@ const KESTREL_ONE_TOOL_NAMES = [
   "kestrel_one.google_calendar_delete_event",
   "kestrel_one.google_calendar_list_availability_subjects",
   "kestrel_one.google_calendar_check_availability",
+  "kestrel_one.microsoft_365_list_mail",
+  "kestrel_one.microsoft_365_send_mail",
+  "kestrel_one.microsoft_365_list_events",
+  "kestrel_one.microsoft_365_list_chats",
+  "kestrel_one.microsoft_365_send_chat_message",
+  "kestrel_one.microsoft_365_search_sites",
+  "kestrel_one.vercel_list_projects",
+  "kestrel_one.vercel_list_deployments",
+  "kestrel_one.vercel_deployment_events",
 ] as const;
 
 function createDefaultCliProfile(input: {
@@ -168,20 +172,32 @@ export class ProfileStore {
     const core = resolveLocalCoreStoreClient(this.baseDir);
     if (core !== undefined) {
       const response = await core.client.getJson("/v1/profiles");
-      const notices = typeof response === "object" && response !== null && Array.isArray(response) === false
-        ? (response as { notices?: unknown }).notices
-        : undefined;
+      const notices =
+        typeof response === "object" &&
+        response !== null &&
+        Array.isArray(response) === false
+          ? (response as { notices?: unknown }).notices
+          : undefined;
       if (Array.isArray(notices)) {
-        this.lastLoadNotices.push(...notices.filter((notice): notice is string => typeof notice === "string"));
+        this.lastLoadNotices.push(
+          ...notices.filter(
+            (notice): notice is string => typeof notice === "string",
+          ),
+        );
       }
-      return extractResponseField<TuiProfile[]>(response, "profiles", "profiles");
+      return extractResponseField<TuiProfile[]>(
+        response,
+        "profiles",
+        "profiles",
+      );
     }
 
     await mkdir(this.baseDir, { recursive: true });
 
     const raw = await this.readFile();
     if (raw === undefined) {
-      const profiles = this.resolveProfilesWithSharedModelPolicy(DEFAULT_PROFILES);
+      const profiles =
+        this.resolveProfilesWithSharedModelPolicy(DEFAULT_PROFILES);
       await this.save(profiles);
       return profiles;
     }
@@ -191,7 +207,8 @@ export class ProfileStore {
       parsed = parseProfilesFile(raw);
     } catch (error) {
       if (error instanceof ProfileSchemaVersionError) {
-        const profiles = this.resolveProfilesWithSharedModelPolicy(DEFAULT_PROFILES);
+        const profiles =
+          this.resolveProfilesWithSharedModelPolicy(DEFAULT_PROFILES);
         await this.save(profiles);
         return profiles;
       }
@@ -200,21 +217,27 @@ export class ProfileStore {
     this.lastLoadNotices.push(...parsed.notices);
 
     if (parsed.profiles.length === 0) {
-      const profiles = this.resolveProfilesWithSharedModelPolicy(DEFAULT_PROFILES);
+      const profiles =
+        this.resolveProfilesWithSharedModelPolicy(DEFAULT_PROFILES);
       await this.save(profiles);
       return profiles;
     }
 
     const hydrated = parsed.profiles.map((profile) => {
       const normalized = applyProfileDefaults(profile);
-      if (profile.agent === "reference-react" && profile.modeSystemV2Enabled !== true) {
+      if (
+        profile.agent === "reference-react" &&
+        profile.modeSystemV2Enabled !== true
+      ) {
         this.lastLoadNotices.push(
           `Migrated profile '${profile.id}' to mode-system v2 for the reference harness.`,
         );
       }
       return normalized;
     });
-    const profiles = this.resolveProfilesWithSharedModelPolicy(ensureKestrelOneProfile(hydrated));
+    const profiles = this.resolveProfilesWithSharedModelPolicy(
+      ensureKestrelOneProfile(hydrated),
+    );
     if (parsed.migrated || profilesChanged(parsed.profiles, profiles)) {
       await this.save(profiles);
     }
@@ -241,11 +264,17 @@ export class ProfileStore {
 
     const payload: ProfilesFile = {
       version: 4,
-      profiles: profiles.map((profile) => sanitizeProfileForPersistence(profile)),
+      profiles: profiles.map((profile) =>
+        sanitizeProfileForPersistence(profile),
+      ),
     };
 
     await mkdir(this.baseDir, { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    await writeFile(
+      this.filePath,
+      `${JSON.stringify(payload, null, 2)}\n`,
+      "utf8",
+    );
   }
 
   getDefault(profiles: TuiProfile[]): TuiProfile {
@@ -278,16 +307,20 @@ export class ProfileStore {
       return await readFile(this.filePath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return ;
+        return;
       }
 
       throw error;
     }
   }
 
-  private resolveProfilesWithSharedModelPolicy(profiles: TuiProfile[]): TuiProfile[] {
+  private resolveProfilesWithSharedModelPolicy(
+    profiles: TuiProfile[],
+  ): TuiProfile[] {
     const modelPolicy = this.modelPolicyStore.read();
-    return profiles.map((profile) => resolveProfileWithModelPolicy(profile, modelPolicy));
+    return profiles.map((profile) =>
+      resolveProfileWithModelPolicy(profile, modelPolicy),
+    );
   }
 }
 
@@ -303,14 +336,20 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
     );
   }
 
-  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+  if (
+    typeof decoded !== "object" ||
+    decoded === null ||
+    Array.isArray(decoded)
+  ) {
     throw new Error("profiles.json must be an object");
   }
 
   const root = decoded as Record<string, unknown>;
   const version = root.version;
   if (version !== 2 && version !== 3 && version !== 4) {
-    throw new ProfileSchemaVersionError("profiles.json version must be 2, 3, or 4");
+    throw new ProfileSchemaVersionError(
+      "profiles.json version must be 2, 3, or 4",
+    );
   }
 
   const profiles = root.profiles;
@@ -318,7 +357,9 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
     throw new Error("profiles.json profiles must be an array");
   }
 
-  const validated: TuiProfile[] = profiles.map((profile) => validateProfile(profile, version, notices));
+  const validated: TuiProfile[] = profiles.map((profile) =>
+    validateProfile(profile, version, notices),
+  );
   if (version === 2) {
     return {
       profiles: validated.map((profile) => ({
@@ -341,13 +382,19 @@ function ensureKestrelOneProfile(profiles: TuiProfile[]): TuiProfile[] {
   if (profiles.some((profile) => profile.id === KESTREL_ONE_PROFILE_ID)) {
     return profiles;
   }
-  const profile = DEFAULT_PROFILES.find((item) => item.id === KESTREL_ONE_PROFILE_ID);
+  const profile = DEFAULT_PROFILES.find(
+    (item) => item.id === KESTREL_ONE_PROFILE_ID,
+  );
   return profile === undefined ? profiles : [...profiles, { ...profile }];
 }
 
 class ProfileSchemaVersionError extends Error {}
 
-function validateProfile(value: unknown, version: 2 | 3 | 4, notices: string[]): TuiProfile {
+function validateProfile(
+  value: unknown,
+  version: 2 | 3 | 4,
+  notices: string[],
+): TuiProfile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("profile entries must be objects");
   }
@@ -362,7 +409,9 @@ function validateProfile(value: unknown, version: 2 | 3 | 4, notices: string[]):
 
   const sessionPrefix = readRequiredString(item, "sessionPrefix");
   const shellKind =
-    item.shellKind === "cli" || item.shellKind === "web" || item.shellKind === "desktop"
+    item.shellKind === "cli" ||
+    item.shellKind === "web" ||
+    item.shellKind === "desktop"
       ? item.shellKind
       : undefined;
   const presetId =
@@ -380,33 +429,54 @@ function validateProfile(value: unknown, version: 2 | 3 | 4, notices: string[]):
         entry === "dev_shell" ||
         entry === "sandbox_code",
     )
-      ? item.capabilityPacks as Array<"balanced" | "filesystem" | "dev_shell" | "sandbox_code">
+      ? (item.capabilityPacks as Array<
+          "balanced" | "filesystem" | "dev_shell" | "sandbox_code"
+        >)
       : undefined;
   const modelProvider = parseModelProvider(item.modelProvider, id);
-  const model = typeof item.model === "string" && item.model.trim().length > 0 ? item.model : undefined;
+  const model =
+    typeof item.model === "string" && item.model.trim().length > 0
+      ? item.model
+      : undefined;
   const modelCredential = parseModelCredential(item.modelCredential, id);
   const storeDriver = parseStoreDriver(item.storeDriver, id);
-  const approvalPolicyPackId = parseApprovalPolicyPackId(item.approvalPolicyPackId, id);
-  const defaultInteractionMode = parseDefaultInteractionMode(item.defaultInteractionMode, id);
+  const approvalPolicyPackId = parseApprovalPolicyPackId(
+    item.approvalPolicyPackId,
+    id,
+  );
+  const defaultInteractionMode = parseDefaultInteractionMode(
+    item.defaultInteractionMode,
+    id,
+  );
   const defaultActSubmode = parseDefaultActSubmode(item.defaultActSubmode, id);
   const modeSystemV2Enabled =
-    typeof item.modeSystemV2Enabled === "boolean" ? item.modeSystemV2Enabled : undefined;
-  const defaultFlag = typeof item.default === "boolean" ? item.default : undefined;
+    typeof item.modeSystemV2Enabled === "boolean"
+      ? item.modeSystemV2Enabled
+      : undefined;
+  const defaultFlag =
+    typeof item.default === "boolean" ? item.default : undefined;
   const toolAllowlist =
-    Array.isArray(item.toolAllowlist) && item.toolAllowlist.every((v) => typeof v === "string")
+    Array.isArray(item.toolAllowlist) &&
+    item.toolAllowlist.every((v) => typeof v === "string")
       ? (item.toolAllowlist as string[])
       : undefined;
 
   const guardrails = parseGuardrails(item.guardrails);
-  const mcpServers = version >= 3 ? parseMcpServers(item.mcpServers, id) : undefined;
-  const toolQueue = version >= 3 ? parseToolQueue(item.toolQueue, id) : undefined;
+  const mcpServers =
+    version >= 3 ? parseMcpServers(item.mcpServers, id) : undefined;
+  const toolQueue =
+    version >= 3 ? parseToolQueue(item.toolQueue, id) : undefined;
   const codeMode = version >= 3 ? parseCodeMode(item.codeMode, id) : undefined;
   const devShell = version >= 3 ? parseDevShell(item.devShell, id) : undefined;
-  const agentStageConfig = version >= 3 ? parseAgentStageConfig(item.agentStageConfig, id) : undefined;
-  const modelTimeoutMs = version >= 3 ? parseModelTimeoutMs(item.modelTimeoutMs, id) : undefined;
+  const agentStageConfig =
+    version >= 3 ? parseAgentStageConfig(item.agentStageConfig, id) : undefined;
+  const modelTimeoutMs =
+    version >= 3 ? parseModelTimeoutMs(item.modelTimeoutMs, id) : undefined;
   const theme = version >= 3 ? parseTheme(item.theme, id, notices) : undefined;
-  const delegation = version >= 3 ? parseDelegation(item.delegation) : undefined;
-  const reasoning = version >= 4 ? parseReasoningPolicy(item.reasoning, id) : undefined;
+  const delegation =
+    version >= 3 ? parseDelegation(item.delegation) : undefined;
+  const reasoning =
+    version >= 4 ? parseReasoningPolicy(item.reasoning, id) : undefined;
 
   return {
     id,
@@ -448,7 +518,9 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
     profile.shellKind !== undefined ||
     profile.presetId !== undefined ||
     profile.capabilityPacks !== undefined;
-  const legacyExtraTools = Array.isArray(profile.toolAllowlist) ? [...profile.toolAllowlist] : undefined;
+  const legacyExtraTools = Array.isArray(profile.toolAllowlist)
+    ? [...profile.toolAllowlist]
+    : undefined;
   const resolvedProfile = resolveRuntimeProfileSelection({
     shellKind: profile.shellKind ?? "cli",
     presetId: profile.presetId,
@@ -493,8 +565,11 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
     storeDriver: profile.storeDriver ?? "auto",
     approvalPolicyPackId: profile.approvalPolicyPackId ?? "dev",
     modeSystemV2Enabled:
-      profile.agent === "reference-react" ? true : (profile.modeSystemV2Enabled ?? false),
-    defaultInteractionMode: profile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
+      profile.agent === "reference-react"
+        ? true
+        : (profile.modeSystemV2Enabled ?? false),
+    defaultInteractionMode:
+      profile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
     defaultActSubmode: profile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
     guardrails,
     toolAllowlist,
@@ -514,7 +589,8 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
 }
 
 function profilesChanged(before: TuiProfile[], after: TuiProfile[]): boolean {
-  const normalize = (profiles: TuiProfile[]) => profiles.map((profile) => sanitizeProfileForPersistence(profile));
+  const normalize = (profiles: TuiProfile[]) =>
+    profiles.map((profile) => sanitizeProfileForPersistence(profile));
   return JSON.stringify(normalize(before)) !== JSON.stringify(normalize(after));
 }
 
@@ -532,9 +608,12 @@ function sanitizeProfileForPersistence(profile: TuiProfile): TuiProfile {
   return persisted;
 }
 
-function parseModelProvider(value: unknown, profileId: string): TuiProfile["modelProvider"] {
+function parseModelProvider(
+  value: unknown,
+  profileId: string,
+): TuiProfile["modelProvider"] {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (
     value === "openrouter" ||
@@ -545,7 +624,9 @@ function parseModelProvider(value: unknown, profileId: string): TuiProfile["mode
   ) {
     return value;
   }
-  throw new Error(`Profile '${profileId}' has unsupported modelProvider '${String(value)}'`);
+  throw new Error(
+    `Profile '${profileId}' has unsupported modelProvider '${String(value)}'`,
+  );
 }
 
 function parseModelCredential(
@@ -553,7 +634,7 @@ function parseModelCredential(
   profileId: string,
 ): TuiProfile["modelCredential"] {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Profile '${profileId}' modelCredential must be an object`);
@@ -589,9 +670,12 @@ function parseModelCredential(
   };
 }
 
-function parseStoreDriver(value: unknown, profileId: string): TuiProfile["storeDriver"] {
+function parseStoreDriver(
+  value: unknown,
+  profileId: string,
+): TuiProfile["storeDriver"] {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (value === "auto" || value === "postgres" || value === "sqlite") {
     return value;
@@ -606,7 +690,7 @@ function parseApprovalPolicyPackId(
   profileId: string,
 ): TuiProfile["approvalPolicyPackId"] {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (value === "dev" || value === "ci_bot" || value === "production") {
     return value;
@@ -618,11 +702,13 @@ function parseApprovalPolicyPackId(
 
 function parseDelegation(value: unknown): TuiProfile["delegation"] {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return ;
+    return;
   }
   const record = value as Record<string, unknown>;
   const allowAgentSpawn =
-    typeof record.allowAgentSpawn === "boolean" ? record.allowAgentSpawn : undefined;
+    typeof record.allowAgentSpawn === "boolean"
+      ? record.allowAgentSpawn
+      : undefined;
   const maxConcurrentChildSessions =
     typeof record.maxConcurrentChildSessions === "number" &&
     Number.isFinite(record.maxConcurrentChildSessions)
@@ -642,18 +728,29 @@ function parseDelegation(value: unknown): TuiProfile["delegation"] {
   };
 }
 
-function parseReasoningPolicy(value: unknown, profileId: string): TuiProfile["reasoning"] {
-  if (value === undefined) return ;
+function parseReasoningPolicy(
+  value: unknown,
+  profileId: string,
+): TuiProfile["reasoning"] {
+  if (value === undefined) return;
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Profile '${profileId}' field 'reasoning' must be an object`);
+    throw new Error(
+      `Profile '${profileId}' field 'reasoning' must be an object`,
+    );
   }
   const record = value as Record<string, unknown>;
-  const request = typeof record.request === "object" && record.request !== null && !Array.isArray(record.request)
-    ? record.request as Record<string, unknown>
-    : undefined;
-  const retention = typeof record.retention === "object" && record.retention !== null && !Array.isArray(record.retention)
-    ? record.retention as Record<string, unknown>
-    : undefined;
+  const request =
+    typeof record.request === "object" &&
+    record.request !== null &&
+    !Array.isArray(record.request)
+      ? (record.request as Record<string, unknown>)
+      : undefined;
+  const retention =
+    typeof record.retention === "object" &&
+    record.retention !== null &&
+    !Array.isArray(record.retention)
+      ? (record.retention as Record<string, unknown>)
+      : undefined;
   const mode = request?.mode;
   const effort = request?.effort;
   const retentionMode = retention?.mode;
@@ -661,14 +758,30 @@ function parseReasoningPolicy(value: unknown, profileId: string): TuiProfile["re
   if (mode !== "off" && mode !== "summary" && mode !== "provider_visible") {
     throw new Error(`Profile '${profileId}' reasoning.request.mode is invalid`);
   }
-  if (effort !== undefined && effort !== "low" && effort !== "medium" && effort !== "high") {
-    throw new Error(`Profile '${profileId}' reasoning.request.effort is invalid`);
+  if (
+    effort !== undefined &&
+    effort !== "low" &&
+    effort !== "medium" &&
+    effort !== "high"
+  ) {
+    throw new Error(
+      `Profile '${profileId}' reasoning.request.effort is invalid`,
+    );
   }
   if (retentionMode !== "live_only" && retentionMode !== "provider_visible") {
-    throw new Error(`Profile '${profileId}' reasoning.retention.mode is invalid`);
+    throw new Error(
+      `Profile '${profileId}' reasoning.retention.mode is invalid`,
+    );
   }
-  if (typeof days !== "number" || Number.isInteger(days) === false || days < 1 || days > 30) {
-    throw new Error(`Profile '${profileId}' reasoning.retention.days must be an integer from 1 to 30`);
+  if (
+    typeof days !== "number" ||
+    Number.isInteger(days) === false ||
+    days < 1 ||
+    days > 30
+  ) {
+    throw new Error(
+      `Profile '${profileId}' reasoning.retention.days must be an integer from 1 to 30`,
+    );
   }
   return {
     request: { mode, ...(effort !== undefined ? { effort } : {}) },
@@ -676,24 +789,39 @@ function parseReasoningPolicy(value: unknown, profileId: string): TuiProfile["re
   };
 }
 
-function parseAgentStageConfig(value: unknown, profileId: string): TuiProfile["agentStageConfig"] {
+function parseAgentStageConfig(
+  value: unknown,
+  profileId: string,
+): TuiProfile["agentStageConfig"] {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Profile '${profileId}' field 'agentStageConfig' must be an object`);
+    throw new Error(
+      `Profile '${profileId}' field 'agentStageConfig' must be an object`,
+    );
   }
   const record = value as Record<string, unknown>;
   if (record.modelByStage === undefined) {
-    return ;
+    return;
   }
-  if (typeof record.modelByStage !== "object" || record.modelByStage === null || Array.isArray(record.modelByStage)) {
-    throw new Error(`Profile '${profileId}' field 'agentStageConfig.modelByStage' must be an object`);
+  if (
+    typeof record.modelByStage !== "object" ||
+    record.modelByStage === null ||
+    Array.isArray(record.modelByStage)
+  ) {
+    throw new Error(
+      `Profile '${profileId}' field 'agentStageConfig.modelByStage' must be an object`,
+    );
   }
   const parsed: Record<string, string> = {};
-  for (const [stageId, modelValue] of Object.entries(record.modelByStage as Record<string, unknown>)) {
+  for (const [stageId, modelValue] of Object.entries(
+    record.modelByStage as Record<string, unknown>,
+  )) {
     if (typeof modelValue !== "string") {
-      throw new Error(`Profile '${profileId}' field 'agentStageConfig.modelByStage.${stageId}' must be a string`);
+      throw new Error(
+        `Profile '${profileId}' field 'agentStageConfig.modelByStage.${stageId}' must be a string`,
+      );
     }
     const trimmedStageId = stageId.trim();
     const trimmedModelValue = modelValue.trim();
@@ -707,28 +835,41 @@ function parseAgentStageConfig(value: unknown, profileId: string): TuiProfile["a
   };
 }
 
-function parseModelTimeoutMs(value: unknown, profileId: string): number | undefined {
+function parseModelTimeoutMs(
+  value: unknown,
+  profileId: string,
+): number | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
-  if (typeof value !== "number" || Number.isInteger(value) === false || value <= 0) {
-    throw new Error(`Profile '${profileId}' field 'modelTimeoutMs' must be a positive integer`);
+  if (
+    typeof value !== "number" ||
+    Number.isInteger(value) === false ||
+    value <= 0
+  ) {
+    throw new Error(
+      `Profile '${profileId}' field 'modelTimeoutMs' must be a positive integer`,
+    );
   }
   return value;
 }
 
 function parseGuardrails(value: unknown): Partial<GuardrailConfig> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return ;
+    return;
   }
 
   const input = value as Record<string, unknown>;
   const maxStepsPerRun =
     typeof input.maxStepsPerRun === "number" ? input.maxStepsPerRun : undefined;
   const maxToolCallsPerRun =
-    typeof input.maxToolCallsPerRun === "number" ? input.maxToolCallsPerRun : undefined;
+    typeof input.maxToolCallsPerRun === "number"
+      ? input.maxToolCallsPerRun
+      : undefined;
   const maxModelCallsPerRun =
-    typeof input.maxModelCallsPerRun === "number" ? input.maxModelCallsPerRun : undefined;
+    typeof input.maxModelCallsPerRun === "number"
+      ? input.maxModelCallsPerRun
+      : undefined;
   const maxStepVisits =
     typeof input.maxStepVisits === "number" ? input.maxStepVisits : undefined;
   const maxConcurrentToolJobsPerRun =
@@ -740,11 +881,17 @@ function parseGuardrails(value: unknown): Partial<GuardrailConfig> | undefined {
       ? input.maxConcurrentToolJobsGlobal
       : undefined;
   const maxQueuedToolJobsPerRun =
-    typeof input.maxQueuedToolJobsPerRun === "number" ? input.maxQueuedToolJobsPerRun : undefined;
+    typeof input.maxQueuedToolJobsPerRun === "number"
+      ? input.maxQueuedToolJobsPerRun
+      : undefined;
   const toolBatchCheckpointSize =
-    typeof input.toolBatchCheckpointSize === "number" ? input.toolBatchCheckpointSize : undefined;
+    typeof input.toolBatchCheckpointSize === "number"
+      ? input.toolBatchCheckpointSize
+      : undefined;
   const toolCallRetryCount =
-    typeof input.toolCallRetryCount === "number" ? input.toolCallRetryCount : undefined;
+    typeof input.toolCallRetryCount === "number"
+      ? input.toolCallRetryCount
+      : undefined;
 
   if (
     maxStepsPerRun === undefined &&
@@ -757,7 +904,7 @@ function parseGuardrails(value: unknown): Partial<GuardrailConfig> | undefined {
     toolBatchCheckpointSize === undefined &&
     toolCallRetryCount === undefined
   ) {
-    return ;
+    return;
   }
 
   return {
@@ -765,10 +912,18 @@ function parseGuardrails(value: unknown): Partial<GuardrailConfig> | undefined {
     ...(maxToolCallsPerRun !== undefined ? { maxToolCallsPerRun } : {}),
     ...(maxModelCallsPerRun !== undefined ? { maxModelCallsPerRun } : {}),
     ...(maxStepVisits !== undefined ? { maxStepVisits } : {}),
-    ...(maxConcurrentToolJobsPerRun !== undefined ? { maxConcurrentToolJobsPerRun } : {}),
-    ...(maxConcurrentToolJobsGlobal !== undefined ? { maxConcurrentToolJobsGlobal } : {}),
-    ...(maxQueuedToolJobsPerRun !== undefined ? { maxQueuedToolJobsPerRun } : {}),
-    ...(toolBatchCheckpointSize !== undefined ? { toolBatchCheckpointSize } : {}),
+    ...(maxConcurrentToolJobsPerRun !== undefined
+      ? { maxConcurrentToolJobsPerRun }
+      : {}),
+    ...(maxConcurrentToolJobsGlobal !== undefined
+      ? { maxConcurrentToolJobsGlobal }
+      : {}),
+    ...(maxQueuedToolJobsPerRun !== undefined
+      ? { maxQueuedToolJobsPerRun }
+      : {}),
+    ...(toolBatchCheckpointSize !== undefined
+      ? { toolBatchCheckpointSize }
+      : {}),
     ...(toolCallRetryCount !== undefined ? { toolCallRetryCount } : {}),
   };
 }
@@ -778,23 +933,32 @@ function parseToolQueue(
   profileId: string,
 ): ToolQueueProfileConfig | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Profile '${profileId}' field 'toolQueue' must be an object`);
+    throw new Error(
+      `Profile '${profileId}' field 'toolQueue' must be an object`,
+    );
   }
 
   const input = value as Record<string, unknown>;
   const perRunConcurrency =
-    typeof input.perRunConcurrency === "number" ? input.perRunConcurrency : undefined;
+    typeof input.perRunConcurrency === "number"
+      ? input.perRunConcurrency
+      : undefined;
   const globalConcurrency =
-    typeof input.globalConcurrency === "number" ? input.globalConcurrency : undefined;
+    typeof input.globalConcurrency === "number"
+      ? input.globalConcurrency
+      : undefined;
   const maxQueuedJobsPerRun =
-    typeof input.maxQueuedJobsPerRun === "number" ? input.maxQueuedJobsPerRun : undefined;
+    typeof input.maxQueuedJobsPerRun === "number"
+      ? input.maxQueuedJobsPerRun
+      : undefined;
   const checkpointSize =
     typeof input.checkpointSize === "number" ? input.checkpointSize : undefined;
-  const retryCount = typeof input.retryCount === "number" ? input.retryCount : undefined;
+  const retryCount =
+    typeof input.retryCount === "number" ? input.retryCount : undefined;
 
   if (
     perRunConcurrency === undefined &&
@@ -803,7 +967,7 @@ function parseToolQueue(
     checkpointSize === undefined &&
     retryCount === undefined
   ) {
-    return ;
+    return;
   }
 
   return {
@@ -820,15 +984,18 @@ function parseCodeMode(
   profileId: string,
 ): CodeModeProfileConfig | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Profile '${profileId}' field 'codeMode' must be an object`);
+    throw new Error(
+      `Profile '${profileId}' field 'codeMode' must be an object`,
+    );
   }
 
   const input = value as Record<string, unknown>;
-  const enabled = typeof input.enabled === "boolean" ? input.enabled : undefined;
+  const enabled =
+    typeof input.enabled === "boolean" ? input.enabled : undefined;
   const languages =
     Array.isArray(input.languages) &&
     input.languages.every(
@@ -840,7 +1007,9 @@ function parseCodeMode(
   const retention = parseCodeModeRetention(input.retention, profileId);
   const approvalMode = input.approvalMode;
   if (approvalMode !== undefined && approvalMode !== "auto") {
-    throw new Error(`Profile '${profileId}' field 'codeMode.approvalMode' must be 'auto'`);
+    throw new Error(
+      `Profile '${profileId}' field 'codeMode.approvalMode' must be 'auto'`,
+    );
   }
 
   if (
@@ -850,7 +1019,7 @@ function parseCodeMode(
     retention === undefined &&
     approvalMode === undefined
   ) {
-    return ;
+    return;
   }
 
   return {
@@ -873,25 +1042,41 @@ function parseDevShell(
   profileId: string,
 ): DevShellProfileConfig | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Profile '${profileId}' field 'devShell' must be an object`);
+    throw new Error(
+      `Profile '${profileId}' field 'devShell' must be an object`,
+    );
   }
 
   const input = value as Record<string, unknown>;
-  const enabled = typeof input.enabled === "boolean" ? input.enabled : undefined;
+  const enabled =
+    typeof input.enabled === "boolean" ? input.enabled : undefined;
   const idleTimeoutMs =
-    typeof input.idleTimeoutMs === "number" ? Math.trunc(input.idleTimeoutMs) : undefined;
+    typeof input.idleTimeoutMs === "number"
+      ? Math.trunc(input.idleTimeoutMs)
+      : undefined;
   const maxReadBytes =
-    typeof input.maxReadBytes === "number" ? Math.trunc(input.maxReadBytes) : undefined;
+    typeof input.maxReadBytes === "number"
+      ? Math.trunc(input.maxReadBytes)
+      : undefined;
   const allowedEnvNames =
-    Array.isArray(input.allowedEnvNames) && input.allowedEnvNames.every((item) => typeof item === "string")
-      ? input.allowedEnvNames.map((item) => item.trim()).filter((item) => item.length > 0)
+    Array.isArray(input.allowedEnvNames) &&
+    input.allowedEnvNames.every((item) => typeof item === "string")
+      ? input.allowedEnvNames
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0)
       : undefined;
   const envMode = input.envMode;
-  if (envMode !== undefined && envMode !== "inherit" && envMode !== "allowlist") {
-    throw new Error(`Profile '${profileId}' field 'devShell.envMode' must be 'inherit' or 'allowlist'`);
+  if (
+    envMode !== undefined &&
+    envMode !== "inherit" &&
+    envMode !== "allowlist"
+  ) {
+    throw new Error(
+      `Profile '${profileId}' field 'devShell.envMode' must be 'inherit' or 'allowlist'`,
+    );
   }
 
   if (
@@ -901,7 +1086,7 @@ function parseDevShell(
     allowedEnvNames === undefined &&
     envMode === undefined
   ) {
-    return ;
+    return;
   }
 
   return {
@@ -918,23 +1103,34 @@ function parseCodeModeSandbox(
   profileId: string,
 ): Partial<CodeModeProfileConfig["sandbox"]> | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Profile '${profileId}' field 'codeMode.sandbox' must be an object`);
+    throw new Error(
+      `Profile '${profileId}' field 'codeMode.sandbox' must be an object`,
+    );
   }
 
   const input = value as Record<string, unknown>;
   const executor = input.executor;
   if (executor !== undefined && executor !== "docker") {
-    throw new Error(`Profile '${profileId}' field 'codeMode.sandbox.executor' must be 'docker'`);
+    throw new Error(
+      `Profile '${profileId}' field 'codeMode.sandbox.executor' must be 'docker'`,
+    );
   }
 
-  const timeoutMs = typeof input.timeoutMs === "number" ? input.timeoutMs : undefined;
-  const memoryMb = typeof input.memoryMb === "number" ? input.memoryMb : undefined;
-  const cpuShares = typeof input.cpuShares === "number" ? input.cpuShares : undefined;
+  const timeoutMs =
+    typeof input.timeoutMs === "number" ? input.timeoutMs : undefined;
+  const memoryMb =
+    typeof input.memoryMb === "number" ? input.memoryMb : undefined;
+  const cpuShares =
+    typeof input.cpuShares === "number" ? input.cpuShares : undefined;
   const networkDefault = input.networkDefault;
-  if (networkDefault !== undefined && networkDefault !== "off" && networkDefault !== "on") {
+  if (
+    networkDefault !== undefined &&
+    networkDefault !== "off" &&
+    networkDefault !== "on"
+  ) {
     throw new Error(
       `Profile '${profileId}' field 'codeMode.sandbox.networkDefault' must be 'off' or 'on'`,
     );
@@ -948,7 +1144,9 @@ function parseCodeModeSandbox(
   const maxArtifacts =
     typeof input.maxArtifacts === "number" ? input.maxArtifacts : undefined;
   const maxArtifactBytes =
-    typeof input.maxArtifactBytes === "number" ? input.maxArtifactBytes : undefined;
+    typeof input.maxArtifactBytes === "number"
+      ? input.maxArtifactBytes
+      : undefined;
 
   if (
     executor === undefined &&
@@ -961,7 +1159,7 @@ function parseCodeModeSandbox(
     maxArtifacts === undefined &&
     maxArtifactBytes === undefined
   ) {
-    return ;
+    return;
   }
 
   return {
@@ -983,27 +1181,35 @@ function parseTheme(
   notices: string[],
 ): ThemeOverrides | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    notices.push(`Ignored invalid theme config for profile '${profileId}': theme must be an object.`);
-    return ;
+    notices.push(
+      `Ignored invalid theme config for profile '${profileId}': theme must be an object.`,
+    );
+    return;
   }
 
   const input = value as Record<string, unknown>;
   const parsed: ThemeOverrides = {};
   for (const [key, raw] of Object.entries(input)) {
     if (isThemeTokenName(key) === false) {
-      notices.push(`Ignored unknown theme token '${key}' for profile '${profileId}'.`);
+      notices.push(
+        `Ignored unknown theme token '${key}' for profile '${profileId}'.`,
+      );
       continue;
     }
     if (typeof raw !== "string") {
-      notices.push(`Ignored invalid theme token '${key}' for profile '${profileId}': expected #RRGGBB.`);
+      notices.push(
+        `Ignored invalid theme token '${key}' for profile '${profileId}': expected #RRGGBB.`,
+      );
       continue;
     }
     const normalized = normalizeThemeColor(raw);
     if (normalized === undefined) {
-      notices.push(`Ignored invalid theme color '${raw}' for token '${key}' in profile '${profileId}'.`);
+      notices.push(
+        `Ignored invalid theme color '${raw}' for token '${key}' in profile '${profileId}'.`,
+      );
       continue;
     }
     parsed[key] = normalized;
@@ -1017,20 +1223,26 @@ function parseCodeModeRetention(
   profileId: string,
 ): Partial<CodeModeProfileConfig["retention"]> | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Profile '${profileId}' field 'codeMode.retention' must be an object`);
+    throw new Error(
+      `Profile '${profileId}' field 'codeMode.retention' must be an object`,
+    );
   }
 
   const input = value as Record<string, unknown>;
   const persistSummary =
-    typeof input.persistSummary === "boolean" ? input.persistSummary : undefined;
+    typeof input.persistSummary === "boolean"
+      ? input.persistSummary
+      : undefined;
   const persistArtifacts =
-    typeof input.persistArtifacts === "boolean" ? input.persistArtifacts : undefined;
+    typeof input.persistArtifacts === "boolean"
+      ? input.persistArtifacts
+      : undefined;
 
   if (persistSummary === undefined && persistArtifacts === undefined) {
-    return ;
+    return;
   }
 
   return {
@@ -1039,16 +1251,23 @@ function parseCodeModeRetention(
   };
 }
 
-function parseMcpServers(value: unknown, profileId: string): McpServerConfig[] | undefined {
+function parseMcpServers(
+  value: unknown,
+  profileId: string,
+): McpServerConfig[] | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
 
   if (Array.isArray(value) === false) {
-    throw new Error(`Profile '${profileId}' field 'mcpServers' must be an array`);
+    throw new Error(
+      `Profile '${profileId}' field 'mcpServers' must be an array`,
+    );
   }
 
-  return value.map((entry, index) => validateMcpServer(entry, profileId, index));
+  return value.map((entry, index) =>
+    validateMcpServer(entry, profileId, index),
+  );
 }
 
 function validateMcpServer(
@@ -1057,7 +1276,9 @@ function validateMcpServer(
   index: number,
 ): McpServerConfig {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Profile '${profileId}' mcpServers[${index}] must be an object`);
+    throw new Error(
+      `Profile '${profileId}' mcpServers[${index}] must be an object`,
+    );
   }
 
   const input = value as Record<string, unknown>;
@@ -1068,13 +1289,19 @@ function validateMcpServer(
     );
   }
   const transport = readRequiredString(input, "transport");
-  const enabled = typeof input.enabled === "boolean" ? input.enabled : undefined;
-  const toolMetadata = parseMcpToolMetadataMap(input.toolMetadata, profileId, index);
+  const enabled =
+    typeof input.enabled === "boolean" ? input.enabled : undefined;
+  const toolMetadata = parseMcpToolMetadataMap(
+    input.toolMetadata,
+    profileId,
+    index,
+  );
 
   if (transport === "stdio") {
     const command = readRequiredString(input, "command");
     const args =
-      Array.isArray(input.args) && input.args.every((item) => typeof item === "string")
+      Array.isArray(input.args) &&
+      input.args.every((item) => typeof item === "string")
         ? (input.args as string[])
         : undefined;
 
@@ -1092,6 +1319,26 @@ function validateMcpServer(
     const url = readRequiredString(input, "url");
     const authTokenEnv = readOptionalString(input, "authTokenEnv");
     const headerEnvs = parseHeaderEnvMap(input.headerEnvs, profileId, index);
+    const oauthCredentialPrefix = readOptionalString(
+      input,
+      "oauthCredentialPrefix",
+    );
+    if (
+      oauthCredentialPrefix !== undefined &&
+      /^mcp\.[a-zA-Z0-9._-]{1,128}$/u.test(oauthCredentialPrefix) === false
+    ) {
+      throw new Error(
+        `Profile '${profileId}' mcpServers[${index}] OAuth credential prefix is invalid`,
+      );
+    }
+    if (
+      oauthCredentialPrefix !== undefined &&
+      (authTokenEnv !== undefined || headerEnvs !== undefined)
+    ) {
+      throw new Error(
+        `Profile '${profileId}' mcpServers[${index}] cannot combine OAuth and static credentials`,
+      );
+    }
 
     return {
       id,
@@ -1099,6 +1346,9 @@ function validateMcpServer(
       url,
       ...(authTokenEnv !== undefined ? { authTokenEnv } : {}),
       ...(headerEnvs !== undefined ? { headerEnvs } : {}),
+      ...(oauthCredentialPrefix !== undefined
+        ? { oauthCredentialPrefix: oauthCredentialPrefix as `mcp.${string}` }
+        : {}),
       ...(toolMetadata !== undefined ? { toolMetadata } : {}),
       ...(enabled !== undefined ? { enabled } : {}),
     };
@@ -1115,19 +1365,28 @@ function parseMcpToolMetadataMap(
   index: number,
 ): McpServerConfig["toolMetadata"] {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Profile '${profileId}' mcpServers[${index}] field 'toolMetadata' must be an object`);
+    throw new Error(
+      `Profile '${profileId}' mcpServers[${index}] field 'toolMetadata' must be an object`,
+    );
   }
 
   const input = value as Record<string, unknown>;
   const output: NonNullable<McpServerConfig["toolMetadata"]> = {};
   for (const [toolName, metadata] of Object.entries(input)) {
     if (toolName.trim().length === 0) {
-      throw new Error(`Profile '${profileId}' mcpServers[${index}] toolMetadata contains empty tool key`);
+      throw new Error(
+        `Profile '${profileId}' mcpServers[${index}] toolMetadata contains empty tool key`,
+      );
     }
-    output[toolName] = parseMcpToolMetadata(metadata, profileId, index, toolName);
+    output[toolName] = parseMcpToolMetadata(
+      metadata,
+      profileId,
+      index,
+      toolName,
+    );
   }
 
   return Object.keys(output).length > 0 ? output : undefined;
@@ -1147,31 +1406,48 @@ function parseMcpToolMetadata(
 
   const input = value as Record<string, unknown>;
   const approvalMode = input.approvalMode;
-  if (approvalMode !== undefined && approvalMode !== "auto" && approvalMode !== "ask") {
+  if (
+    approvalMode !== undefined &&
+    approvalMode !== "auto" &&
+    approvalMode !== "ask"
+  ) {
     throw new Error(
       `Profile '${profileId}' mcpServers[${index}] toolMetadata['${toolName}'].approvalMode must be 'auto' or 'ask'`,
     );
   }
-  const allowedInteractionModes = input.allowedInteractionModes === undefined
-    ? undefined
-    : parseMcpToolMetadataStringArray(
-        input.allowedInteractionModes,
-        profileId,
-        index,
-        toolName,
-        "allowedInteractionModes",
-      ).map((mode, modeIndex) => {
-        if (!isInteractionMode(mode)) {
-          throw new Error(
-            `Profile '${profileId}' mcpServers[${index}] toolMetadata['${toolName}'].allowedInteractionModes[${modeIndex}] must be 'chat', 'plan', or 'build'`,
-          );
-        }
-        return mode;
-      });
+  const allowedInteractionModes =
+    input.allowedInteractionModes === undefined
+      ? undefined
+      : parseMcpToolMetadataStringArray(
+          input.allowedInteractionModes,
+          profileId,
+          index,
+          toolName,
+          "allowedInteractionModes",
+        ).map((mode, modeIndex) => {
+          if (!isInteractionMode(mode)) {
+            throw new Error(
+              `Profile '${profileId}' mcpServers[${index}] toolMetadata['${toolName}'].allowedInteractionModes[${modeIndex}] must be 'chat', 'plan', or 'build'`,
+            );
+          }
+          return mode;
+        });
   return {
     displayName: readRequiredString(input, "displayName"),
-    aliases: parseMcpToolMetadataStringArray(input.aliases, profileId, index, toolName, "aliases"),
-    keywords: parseMcpToolMetadataStringArray(input.keywords, profileId, index, toolName, "keywords"),
+    aliases: parseMcpToolMetadataStringArray(
+      input.aliases,
+      profileId,
+      index,
+      toolName,
+      "aliases",
+    ),
+    keywords: parseMcpToolMetadataStringArray(
+      input.keywords,
+      profileId,
+      index,
+      toolName,
+      "keywords",
+    ),
     provider: readRequiredString(input, "provider"),
     toolFamily: readRequiredString(input, "toolFamily"),
     capabilityClasses: parseMcpToolMetadataStringArray(
@@ -1217,7 +1493,7 @@ function parseHeaderEnvMap(
   index: number,
 ): Record<string, string> | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -1250,7 +1526,7 @@ function parseDefaultInteractionMode(
   profileId: string,
 ): "chat" | "plan" | "build" | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
 
   if (value === "chat" || value === "plan" || value === "build") {
@@ -1271,7 +1547,7 @@ function parseDefaultActSubmode(
   profileId: string,
 ): "strict" | "safe" | "full_auto" | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
 
   if (value === "strict" || value === "safe" || value === "full_auto") {
@@ -1283,7 +1559,10 @@ function parseDefaultActSubmode(
   );
 }
 
-function readRequiredString(value: Record<string, unknown>, key: string): string {
+function readRequiredString(
+  value: Record<string, unknown>,
+  key: string,
+): string {
   const maybe = value[key];
   if (typeof maybe !== "string" || maybe.trim().length === 0) {
     throw new Error(`Profile field '${key}' must be a non-empty string`);
@@ -1298,11 +1577,13 @@ function readOptionalString(
 ): string | undefined {
   const maybe = value[key];
   if (maybe === undefined) {
-    return ;
+    return;
   }
 
   if (typeof maybe !== "string" || maybe.trim().length === 0) {
-    throw new Error(`Profile field '${key}' must be a non-empty string when present`);
+    throw new Error(
+      `Profile field '${key}' must be a non-empty string when present`,
+    );
   }
 
   return maybe;

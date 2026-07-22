@@ -31,6 +31,8 @@ import type {
 import type { ManagedTaskWorktreeService } from "../src/workspace/ManagedTaskWorktreeService.js";
 import type { TavilyInternetProvider } from "./internet/contracts.js";
 import type { ToolProviderConfigurationResolver } from "./providers/runtimeConfiguration.js";
+import type { Microsoft365ServicePort } from "../src/apps/microsoft365.js";
+import type { GoogleWorkspaceServicePort } from "../src/apps/googleWorkspace.js";
 
 export type ToolFreshnessClass = "live" | "volatile" | "static" | "runtime";
 export type ToolLatencyClass = "low" | "medium" | "high";
@@ -187,6 +189,8 @@ export interface SharedToolContext {
   fetchImpl?: typeof fetch | undefined;
   internetProvider?: TavilyInternetProvider | undefined;
   providerConfigurations?: ToolProviderConfigurationResolver | undefined;
+  microsoft365Service?: Microsoft365ServicePort | undefined;
+  googleWorkspaceService?: GoogleWorkspaceServicePort | undefined;
   /** @deprecated Transitional compatibility for callers not yet using providerConfigurations. */
   internetEnv?: NodeJS.ProcessEnv | undefined;
   strictFinalizeProvenance?: boolean | undefined;

@@ -42,7 +42,7 @@ async function main(): Promise<void> {
     type: "INGRESS",
     sessionId: "react-reference-session",
     payload: {
-      goal: "Find the top Hacker News item title and current UTC time, then finalize.",
+      goal: "Find the current EUR to USD exchange rate and UTC time, then finalize.",
     },
     stepAgent: entryStepAgent,
   });

@@ -18,7 +18,6 @@ import { resolveToolPresentationMetadata } from "./toolMetadata.js";
 import { runAgentTool } from "./toolResult.js";
 import { exchangeRateTool } from "./free/exchangeRate.js";
 import { geocodeLookupTool } from "./free/geocodeLookup.js";
-import { hnTopTool } from "./free/hnTop.js";
 import { timeCurrentTool } from "./free/timeCurrent.js";
 import { weatherCurrentTool } from "./free/weatherCurrent.js";
 import { weatherForecastTool } from "./free/weatherForecast.js";
@@ -88,6 +87,28 @@ import {
   kestrelOneGoogleCalendarUpdateEventTool,
 } from "./kestrelOne/google-calendar.js";
 import { kestrelOneEmailSendTool } from "./kestrelOne/email.js";
+import {
+  kestrelOneMicrosoft365ListChatsTool,
+  kestrelOneMicrosoft365ListEventsTool,
+  kestrelOneMicrosoft365ListMailTool,
+  kestrelOneMicrosoft365SearchSitesTool,
+  kestrelOneMicrosoft365SendChatMessageTool,
+  kestrelOneMicrosoft365SendMailTool,
+} from "./kestrelOne/microsoft-365.js";
+import {
+  kestrelOneVercelDeploymentEventsTool,
+  kestrelOneVercelListDeploymentsTool,
+  kestrelOneVercelListProjectsTool,
+} from "./kestrelOne/vercel.js";
+import {
+  microsoft365ListChatsTool,
+  microsoft365ListEventsTool,
+  microsoft365ListMailTool,
+  microsoft365SearchSitesTool,
+  microsoft365SendChatMessageTool,
+  microsoft365SendMailTool,
+} from "./microsoft365/desktop.js";
+import { googleWorkspaceCreateEventTool, googleWorkspaceDeleteEventTool, googleWorkspaceListEventsTool, googleWorkspaceUpdateEventTool } from "./googleWorkspace/desktop.js";
 
 const DEFAULT_MODULES: SharedToolModule[] = [
   weatherCurrentTool,
@@ -95,7 +116,6 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   timeCurrentTool,
   geocodeLookupTool,
   exchangeRateTool,
-  hnTopTool,
   internetSearchTool,
   internetSearchAdvancedTool,
   internetNewsTool,
@@ -158,6 +178,25 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   kestrelOneGoogleCalendarListAvailabilitySubjectsTool,
   kestrelOneGoogleCalendarCheckAvailabilityTool,
   kestrelOneEmailSendTool,
+  kestrelOneMicrosoft365ListMailTool,
+  kestrelOneMicrosoft365SendMailTool,
+  kestrelOneMicrosoft365ListEventsTool,
+  kestrelOneMicrosoft365ListChatsTool,
+  kestrelOneMicrosoft365SendChatMessageTool,
+  kestrelOneMicrosoft365SearchSitesTool,
+  microsoft365ListMailTool,
+  microsoft365SendMailTool,
+  microsoft365ListEventsTool,
+  microsoft365ListChatsTool,
+  microsoft365SendChatMessageTool,
+  microsoft365SearchSitesTool,
+  googleWorkspaceListEventsTool,
+  googleWorkspaceCreateEventTool,
+  googleWorkspaceUpdateEventTool,
+  googleWorkspaceDeleteEventTool,
+  kestrelOneVercelListProjectsTool,
+  kestrelOneVercelListDeploymentsTool,
+  kestrelOneVercelDeploymentEventsTool,
 ];
 
 export const BALANCED_STARTER_TOOL_NAMES = [

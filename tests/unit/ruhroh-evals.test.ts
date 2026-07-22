@@ -14,19 +14,20 @@ import { contractTest } from "../helpers/contract-test.js";
 
 const ROOT = process.cwd();
 
-contractTest("runtime.hermetic", "evaluation ownership ledger covers Ruhroh scenarios and evidenced runtime replacements", async () => {
+contractTest("runtime.hermetic", "evaluation ownership ledger covers Ruhroh scenarios, pending executions, and evidenced runtime replacements", async () => {
   const validation = await validateEvaluationOwnershipLedger(ROOT);
 
   assert.deepEqual(validation.errors, []);
   assert.equal(validation.behaviorCount, 16);
   assert.equal(validation.ruhrohScenarioCount, 8);
   assert.equal(validation.runtimeTestCount, 8);
-  assert.equal(validation.parityRecordCount, 8);
+  assert.equal(validation.parityRecordCount, 6);
 
   const ledger = JSON.parse(
     await readFile(path.join(ROOT, "evals", "migration", "ownership-ledger.json"), "utf8"),
   ) as {
     behaviors: Array<{
+      behaviorId: string;
       disposition: "ruhroh" | "runtime_test";
       parityStatus: string;
       parityRecord?: string;
@@ -35,16 +36,22 @@ contractTest("runtime.hermetic", "evaluation ownership ledger covers Ruhroh scen
   };
   const runtimeTests = ledger.behaviors.filter((entry) => entry.disposition === "runtime_test");
   const ruhrohScenarios = ledger.behaviors.filter((entry) => entry.disposition === "ruhroh");
+  const executedRuhrohScenarios = ruhrohScenarios.filter((entry) => entry.parityStatus === "passed");
+  const pendingRuhrohScenarios = ruhrohScenarios.filter((entry) => entry.parityStatus === "pending_execution");
   assert.equal(runtimeTests.every((entry) => entry.parityStatus === "passed"), true);
   assert.equal(runtimeTests.every((entry) => (entry.replacementTests?.length ?? 0) > 0), true);
-  assert.equal(ruhrohScenarios.every((entry) => entry.parityStatus === "passed"), true);
-  assert.equal(ruhrohScenarios.every((entry) => entry.parityRecord?.startsWith("evals/migration/parity/") === true), true);
+  assert.equal(executedRuhrohScenarios.every((entry) => entry.parityRecord?.startsWith("evals/migration/parity/") === true), true);
+  assert.deepEqual(
+    pendingRuhrohScenarios.map((entry) => entry.behaviorId).sort(),
+    ["live.signal.brief", "live.signal.partial-failure"],
+  );
+  assert.equal(pendingRuhrohScenarios.every((entry) => entry.parityRecord === undefined), true);
 });
 
-contractTest("runtime.hermetic", "Ruhroh parity records prove all semantic dimensions through the maintained native-session adapter", async () => {
+contractTest("runtime.hermetic", "executed Ruhroh parity records prove all semantic dimensions through the maintained native-session adapter", async () => {
   const recordPaths = (await walk(path.join(ROOT, "evals", "migration", "parity")))
     .filter((filePath) => filePath.endsWith(".json"));
-  assert.equal(recordPaths.length, 8);
+  assert.equal(recordPaths.length, 6);
   const packageArtifactHashes = new Set<string>();
 
   for (const recordPath of recordPaths) {

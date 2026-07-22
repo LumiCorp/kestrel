@@ -10,6 +10,7 @@ export {
   type RunnerProtocolContractErrorCode,
 } from "./errors.js";
 export * from "./execution.js";
+export * from "./apps.js";
 export * from "./tooling.js";
 export { parseRunnerProjectAction } from "./projectActions.js";
 

@@ -102,8 +102,8 @@ contractTest("runtime.hermetic", "OpenRouter mapper ignores JSON toolIntents whe
             content: JSON.stringify({
               toolIntents: [
                 {
-                  name: "free.hn.top",
-                  input: { limit: 3 },
+                  name: "free.time.current",
+                  input: { timezone: "UTC" },
                 },
               ],
             }),
