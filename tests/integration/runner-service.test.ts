@@ -1602,7 +1602,7 @@ contractTest("runtime.process", "runner service streams filtered subscription ev
       },
       body: JSON.stringify({
         filter: {
-          sessionId: "session-subscribe",
+          threadId: "session-subscribe",
           eventTypes: ["task.updated"],
         },
         metadata: {
@@ -1658,6 +1658,7 @@ contractTest("runtime.process", "runner service streams filtered subscription ev
     const body = new TextDecoder().decode(firstChunk?.value);
     assert.match(body, /"type":"task\.updated"/);
     assert.match(body, /"sessionId":"session-subscribe"/);
+    assert.match(body, /"threadId":"session-subscribe"/);
 
     await reader?.cancel();
     await commandResponse.text();

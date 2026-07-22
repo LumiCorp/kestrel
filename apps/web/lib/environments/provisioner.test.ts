@@ -347,11 +347,42 @@ contractTest("web.hermetic", "Workspace provisioning persists provider resources
     "provider:volume",
     "operation:stage:environment.machine.starting",
     "provider:machine",
+    "operation:stage:environment.machine.starting",
     "provider:wait",
     "operation:stage:environment.health.checking",
     "provider:health",
     "workspace:ready",
     "operation:completed",
+  ]);
+});
+
+contractTest("web.hermetic", "Workspace provisioning removes provisional resources after readiness failure", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.provision",
+    "workspace-id"
+  );
+  provider.waitForMachineHealth = async () => {
+    calls.push("provider:health");
+    throw new EnvironmentProviderError(
+      "FLY_MACHINE_UNHEALTHY",
+      "Workspace runtime contract did not become ready."
+    );
+  };
+  provider.deleteMachine = async ({ machineId }) => {
+    calls.push(`provider:delete-machine:${machineId}`);
+  };
+  provider.deleteVolume = async ({ volumeId }) => {
+    calls.push(`provider:delete-volume:${volumeId}`);
+  };
+
+  await createProvisioner(repository, provider).process("operation-id");
+
+  assert.deepEqual(calls.slice(-5), [
+    "provider:health",
+    "provider:delete-machine:machine-id",
+    "provider:delete-volume:volume-id",
+    "workspace:failed:FLY_MACHINE_UNHEALTHY",
+    "operation:failed:FLY_MACHINE_UNHEALTHY",
   ]);
 });
 

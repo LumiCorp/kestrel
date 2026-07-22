@@ -1358,7 +1358,7 @@ contractTest("runtime.process", "/child opens delegation review by default", asy
   assert.equal(state.activeView, "delegation");
 });
 
-contractTest("runtime.process", "guided child mission sends operator control through the active runner profile", async () => {
+contractTest("runtime.process", "manual child mission spawning remains unavailable", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{
@@ -1384,13 +1384,12 @@ contractTest("runtime.process", "guided child mission sends operator control thr
     command: "child",
     args: ["spawn"],
   });
-  await (appState.handleLine as (line: string) => Promise<void>)("Investigate the blocker");
-  await (appState.handleLine as (line: string) => Promise<void>)("Find the exact runtime failure");
-  await (appState.handleLine as (line: string) => Promise<void>)("Return a minimal fix");
-
-  const control = sent.find((entry) => entry.type === "operator.control");
-  assert.equal(control?.payload.action, "spawn_child_thread");
-  assert.equal((control?.metadata?.profile as { id?: string } | undefined)?.id, "reference");
+  assert.equal(sent.length, 0);
+  const state = (appState.uiStore as UiStore).getState();
+  assert.match(
+    state.transcript.at(-1)?.text ?? "",
+    /Collaborator dialogs are opened by Kestrel in the conversation/,
+  );
 });
 
 contractTest("runtime.process", "/checkpoint opens recovery center by default and loads workspace checkpoints", async () => {

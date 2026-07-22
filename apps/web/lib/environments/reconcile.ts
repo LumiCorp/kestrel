@@ -3,9 +3,12 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
-import { createWorkspaceBackup } from "./backups";
+import { queueWorkspaceBackup } from "./backups";
 import { createFlyProviderClient } from "./fly-connection";
-import { PROVISIONER_OPERATION_TYPES } from "./operation-routing";
+import {
+  PROVISIONER_OPERATION_TYPES,
+  RESOURCE_MUTATING_OPERATION_TYPES,
+} from "./operation-routing";
 import { processEnvironmentOperation } from "./process-runtime";
 import type { EnvironmentProviderInventory } from "./providers/contracts";
 import {
@@ -457,6 +460,7 @@ async function cleanupOrphanedEnvironmentResources(
           and(
             eq(table.environmentId, environment.id),
             inArray(table.status, ["queued", "running"]),
+            inArray(table.type, RESOURCE_MUTATING_OPERATION_TYPES),
           ),
         columns: { id: true },
       });
@@ -628,7 +632,7 @@ async function createDueDailyBackup(now: Date) {
     [...recent, ...active].map((backup) => backup.workspaceId),
   );
   if (!candidate) return;
-  await createWorkspaceBackup({
+  await queueWorkspaceBackup({
     organizationId: candidate.organizationId,
     environmentId: candidate.environmentId,
     workspaceId: candidate.id,

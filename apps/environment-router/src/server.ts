@@ -15,6 +15,7 @@ import { handleModelRelay } from "./model-relay.js";
 import { PreviewGateway } from "./preview-gateway.js";
 import { handleWorkspaceIdle } from "./workspace-idle.js";
 
+const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = 2;
 const port = readPort(process.env.PORT);
 const publicKey = process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "";
 const expectedAppName = required(
@@ -67,6 +68,7 @@ const server = createServer(async (request, response) => {
       JSON.stringify({
         ok: true,
         service: "environment-router",
+        runtimeContractRevision: ENVIRONMENT_GATEWAY_CONTRACT_REVISION,
         configurationReady: gatewayConfig.snapshot !== null,
       })
     );

@@ -1461,6 +1461,24 @@ contractTest("packages.hermetic", "KestrelClient subscribe uses filtered SSE sub
   await client.close();
 });
 
+contractTest("packages.hermetic", "KestrelClient subscribe preserves non-SSE HTTP failures", async () => {
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async () => new Response(
+      JSON.stringify({ error: { code: "ENVIRONMENT_THREAD_MISMATCH" } }),
+      { status: 403, headers: { "content-type": "application/json" } },
+    ),
+  });
+
+  const stream = client.subscribe({ threadId: "thread-sdk-1" }, context);
+  await assert.rejects(
+    stream.result,
+    (error: unknown) =>
+      error instanceof KestrelHttpError && error.status === 403,
+  );
+  await client.close();
+});
+
 contractTest("packages.hermetic", "KestrelClient subscribe surfaces runner errors through async iteration", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",

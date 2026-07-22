@@ -2,10 +2,12 @@
 
 This runbook upgrades the public Environment gateway and its private Workspace
 Machines without interrupting model access for Workspaces that still run the
-previous image. The gateway and Workspace runtime are built from the same image,
-but each Environment is upgraded through Kestrel One's `environment.update`
-operation. Do not deploy the `kestrel-one-runner` Fly App as a substitute for
-that operation.
+previous image. Each Environment is upgraded through Kestrel One's
+`environment.update` operation. The Workspace Runtime and Environment Router
+are distinct images.
+The `kestrel-one-runner` Fly App is only their existing private registry/build
+target; do not deploy its legacy Dockerfile or use one cross-role digest as a
+substitute for those images.
 
 ## Preconditions
 
@@ -29,17 +31,28 @@ Build and smoke-test the exact committed revision from the repository root:
 ```bash
 RELEASE_SHA="$(git rev-parse HEAD)"
 test -z "$(git status --porcelain)"
-IMAGE="kestrel-one-runner:${RELEASE_SHA}"
+WORKSPACE_IMAGE="kestrel-workspace-runtime:${RELEASE_SHA}"
+ROUTER_IMAGE="kestrel-environment-router:${RELEASE_SHA}"
 
 docker build \
-  --file deploy/fly/kestrel-one-runner/Dockerfile \
+  --file apps/workspace-runtime/Dockerfile \
   --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}" \
-  --tag "${IMAGE}" \
+  --tag "${WORKSPACE_IMAGE}" \
+  --progress plain \
+  .
+
+docker build \
+  --file apps/environment-router/Dockerfile \
+  --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}" \
+  --tag "${ROUTER_IMAGE}" \
   --progress plain \
   .
 
 EXPECTED_GIT_SHA="${RELEASE_SHA}" \
-  deploy/fly/kestrel-one-runner/smoke.sh "${IMAGE}"
+  apps/workspace-runtime/scripts/image-smoke.sh "${WORKSPACE_IMAGE}"
+
+EXPECTED_GIT_SHA="${RELEASE_SHA}" \
+  apps/environment-router/scripts/image-smoke.sh "${ROUTER_IMAGE}"
 ```
 
 Publish the image through the approved Fly image pipeline. If `fly deploy` is
@@ -51,14 +64,22 @@ fly deploy . \
   --app kestrel-one-runner \
   --build-only \
   --push \
-  --dockerfile deploy/fly/kestrel-one-runner/Dockerfile \
-  --ignorefile deploy/fly/kestrel-one-runner/Dockerfile.dockerignore \
+  --dockerfile apps/workspace-runtime/Dockerfile \
+  --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}"
+
+fly deploy . \
+  --app kestrel-one-runner \
+  --build-only \
+  --push \
+  --dockerfile apps/environment-router/Dockerfile \
   --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}"
 ```
 
-Record the registry digest reported by the publisher. Both
-`KESTREL_ENVIRONMENT_ROUTER_IMAGE` and `KESTREL_WORKSPACE_RUNTIME_IMAGE` must use
-the immutable `registry.fly.io/...@sha256:...` reference, never a mutable tag.
+Record both registry digests reported by the publisher.
+`KESTREL_WORKSPACE_RUNTIME_IMAGE` must reference the Workspace Runtime digest,
+and `KESTREL_ENVIRONMENT_ROUTER_IMAGE` must reference the Environment Router
+digest. Both must use immutable `registry.fly.io/...@sha256:...` references,
+never a mutable tag or the same cross-role image.
 
 ## Deploy the compatibility control plane first
 

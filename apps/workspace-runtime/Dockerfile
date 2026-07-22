@@ -20,12 +20,17 @@ COPY src src
 COPY tools tools
 COPY tests/helpers/contract-test.ts tests/helpers/contract-test.ts
 COPY db db
-RUN pnpm --filter @kestrel-agents/sdk build \
+RUN pnpm --filter @lumi/kestrel-environment-auth build \
+    && pnpm --filter @kestrel-agents/workspace-skills build \
+    && pnpm --filter @kestrel-agents/sdk build \
     && pnpm run clean \
     && pnpm exec tsc -p tsconfig.json \
     && pnpm --filter @kestrel/workspace-runtime build
 
 FROM node:22-bookworm-slim
+ARG KESTREL_GIT_SHA=unknown
+LABEL org.opencontainers.image.source="https://github.com/LumiCorp/kestrel"
+LABEL org.opencontainers.image.revision=$KESTREL_GIT_SHA
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates openssh-client python3 util-linux && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules ./node_modules

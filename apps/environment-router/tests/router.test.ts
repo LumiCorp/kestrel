@@ -116,6 +116,30 @@ contractTest("services.hermetic", "router binds event subscriptions to the ticke
       now: 1100,
       body: {
         metadata: { tenantId: "org-1" },
+        filter: { threadId: "thread-1" },
+      },
+    }).status,
+    200
+  );
+  assert.equal(
+    authorizeEnvironmentSubscription({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      now: 1100,
+      body: {
+        metadata: { tenantId: "org-1" },
+        filter: { sessionId: "thread-1", threadId: "thread-1" },
+      },
+    }).status,
+    200
+  );
+  assert.equal(
+    authorizeEnvironmentSubscription({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      now: 1100,
+      body: {
+        metadata: { tenantId: "org-1" },
         filter: { sessionId: "thread-1" },
       },
     }).status,
@@ -129,6 +153,42 @@ contractTest("services.hermetic", "router binds event subscriptions to the ticke
       body: {
         metadata: { tenantId: "org-1" },
         filter: { sessionId: "thread-2" },
+      },
+    }).status,
+    403
+  );
+  assert.equal(
+    authorizeEnvironmentSubscription({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      now: 1100,
+      body: {
+        metadata: { tenantId: "org-1" },
+        filter: { sessionId: "", threadId: "thread-1" },
+      },
+    }).status,
+    403
+  );
+  assert.equal(
+    authorizeEnvironmentSubscription({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      now: 1100,
+      body: {
+        metadata: { tenantId: "org-1" },
+        filter: { sessionId: "thread-1", threadId: "thread-2" },
+      },
+    }).status,
+    403
+  );
+  assert.equal(
+    authorizeEnvironmentSubscription({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      now: 1100,
+      body: {
+        metadata: { tenantId: "org-1" },
+        filter: { eventTypes: ["task.updated"] },
       },
     }).status,
     403
