@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { createPlan, parseExperimentSpec } from "../../scripts/harness-efficiency.js";
+import {
+  createPlan,
+  findNewEfficiencyResultCandidates,
+  parseExperimentSpec,
+} from "../../scripts/harness-efficiency.js";
 import { contractTest } from "../helpers/contract-test.js";
 
 contractTest("runtime.hermetic", "efficiency plan validates strict profiles and balances pair order", () => {
@@ -45,6 +49,27 @@ contractTest("runtime.hermetic", "efficiency spec rejects unknown fields", () =>
     outputDirectory: "results",
     promotionPolicy: {},
   }), /unknown field 'promotionPolicy'/u);
+});
+
+contractTest("runtime.hermetic", "efficiency result discovery includes the external variant output root", () => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-efficiency-results-"));
+  try {
+    const sourceRoot = path.join(temporary, "source");
+    const outputRoot = path.join(temporary, "results", "baseline");
+    const resultPath = path.join(outputRoot, "attempt", "harness-efficiency-result.json");
+    const unrelatedPath = path.join(sourceRoot, "unrelated.json");
+    mkdirSync(path.dirname(resultPath), { recursive: true });
+    mkdirSync(sourceRoot, { recursive: true });
+    writeFileSync(resultPath, JSON.stringify({ schema: "kestrel.harness-efficiency-result/v2" }), "utf8");
+    writeFileSync(unrelatedPath, JSON.stringify({ schema: "other" }), "utf8");
+
+    assert.deepEqual(
+      findNewEfficiencyResultCandidates([sourceRoot, outputRoot], 0),
+      [resultPath],
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 function profile(mode: "observe" | "enforce") {

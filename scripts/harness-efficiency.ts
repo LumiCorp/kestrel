@@ -164,7 +164,12 @@ function executePlan(plan: HarnessEfficiencyPlanV1, output: Pick<NodeJS.WriteStr
         },
         stdio: "inherit",
       });
-      const artifacts = copyNewResults(planned.cwd, startedAtMs, attemptDirectory, plan.variants[variantName].profile);
+      const artifacts = copyNewResults(
+        [planned.cwd, path.join(plan.outputDirectory, variantName)],
+        startedAtMs,
+        attemptDirectory,
+        plan.variants[variantName].profile,
+      );
       if (artifacts.length === 0) {
         if (!spawnPassed(result)) return result.status ?? 1;
         throw new Error(`Efficiency attempt '${variantName}:${pair.pairId}' completed without a v2 result artifact.`);
@@ -259,18 +264,19 @@ function loadResults(root: string): HarnessEfficiencyResultV2[] {
 }
 
 function copyNewResults(
-  sourceRoot: string,
+  searchRoots: string[],
   startedAtMs: number,
   attemptDirectory: string,
   profile: Record<string, unknown>,
 ): string[] {
   const copied: string[] = [];
   const copiedSources = new Set<string>();
-  for (const file of listFiles(sourceRoot, new Set([".git", "node_modules", ".pnpm-store"]))) {
-    if (!file.endsWith(".json") || statSync(file).mtimeMs < startedAtMs) continue;
+  for (const file of findNewEfficiencyResultCandidates(searchRoots, startedAtMs)) {
     try {
+      const sourceRoot = searchRoots
+        .map((root) => path.resolve(root))
+        .find((root) => file === root || file.startsWith(`${root}${path.sep}`)) ?? path.dirname(file);
       const parsed = JSON.parse(readFileSync(file, "utf8")) as { schema?: unknown; artifacts?: unknown };
-      if (parsed.schema !== "kestrel.harness-efficiency-result/v2") continue;
       const result = parseHarnessEfficiencyResultV2(parsed);
       const target = path.join(attemptDirectory, `result-${copied.length + 1}.json`);
       cpSync(file, target);
@@ -295,6 +301,23 @@ function copyNewResults(
     copied.push(profilePath);
   }
   return copied;
+}
+
+export function findNewEfficiencyResultCandidates(searchRoots: string[], startedAtMs: number): string[] {
+  const candidates = new Set<string>();
+  for (const root of [...new Set(searchRoots.map((value) => path.resolve(value)))]) {
+    if (!existsSync(root) || !statSync(root).isDirectory()) continue;
+    for (const file of listFiles(root, new Set([".git", "node_modules", ".pnpm-store"]))) {
+      if (!file.endsWith(".json") || statSync(file).mtimeMs < startedAtMs) continue;
+      try {
+        const parsed = JSON.parse(readFileSync(file, "utf8")) as { schema?: unknown };
+        if (parsed.schema === "kestrel.harness-efficiency-result/v2") candidates.add(path.resolve(file));
+      } catch {
+        // Other benchmark artifacts deliberately share these roots.
+      }
+    }
+  }
+  return [...candidates].sort();
 }
 
 function parseCommand(argv: string[]): { command: "plan" | "run" | "compare"; specPath: string } {
