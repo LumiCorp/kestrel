@@ -8,8 +8,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  SettingsPanel,
+  SettingsPanelContent,
+  SettingsPanelHeader,
+  SettingsPanelTitle,
+} from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import CopyButton from "@/components/ui/copy-button";
 import {
   Dialog,
@@ -74,9 +79,9 @@ export function OrganizationCard(props: {
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Organization</CardTitle>
+    <SettingsPanel>
+      <SettingsPanelHeader>
+        <SettingsPanelTitle>Organization</SettingsPanelTitle>
         <div className="flex justify-between">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -167,8 +172,8 @@ export function OrganizationCard(props: {
             </p>
           </div>
         </div>
-      </CardHeader>
-      <CardContent>
+      </SettingsPanelHeader>
+      <SettingsPanelContent>
         <div className="flex flex-col gap-8 md:flex-row">
           <div className="flex grow flex-col gap-2">
             <p className="border-b-2 border-b-foreground/10 font-medium">
@@ -346,8 +351,8 @@ export function OrganizationCard(props: {
             </div>
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </SettingsPanelContent>
+    </SettingsPanel>
   );
 }
 

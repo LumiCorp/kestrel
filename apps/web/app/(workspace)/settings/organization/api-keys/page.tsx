@@ -1,4 +1,4 @@
-import { ApiKeysAdminClient } from "@/app/admin/api-keys/page-client";
+import { ApiKeysAdminClient } from "@/components/settings/organization-api-keys-client";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 
 export default async function OrganizationApiKeysSettingsPage() {

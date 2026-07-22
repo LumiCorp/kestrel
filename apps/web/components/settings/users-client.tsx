@@ -4,12 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TimeText } from "@/components/ui/time-text";
-import { deleteAdminUserAction, updateAdminUserRoleAction } from "./actions";
+import {
+  deleteAdminUserAction,
+  updateAdminUserRoleAction,
+} from "@/app/admin/users/actions";
 
 type AdminUser = {
   id: string;
@@ -82,14 +85,14 @@ export function UsersAdminClient({
   }
 
   return (
-    <div className="space-y-6">
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         description="Inspect account activity, review chat usage, and manage admin role assignment."
         eyebrow="Admin"
         title="Users"
       />
 
-      <div className="flex flex-col gap-3 border bg-card p-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-3 border-y py-4 md:flex-row md:items-center md:justify-between">
         <Input
           className="max-w-sm"
           onChange={(event) => setQuery(event.target.value)}
@@ -171,6 +174,6 @@ export function UsersAdminClient({
           };
         })}
       />
-    </div>
+    </SettingsPage>
   );
 }

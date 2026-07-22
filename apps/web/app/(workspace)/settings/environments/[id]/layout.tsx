@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
-import { AppPage } from "@/components/app-page";
+import { SettingsPage } from "@/components/settings/settings-section";
 import { EnvironmentTabs } from "@/components/settings/environment-tabs";
 import { Badge } from "@/components/ui/badge";
 import { isEnvironmentPrivateInferenceEnabled } from "@/lib/ai/managed-runpod-config";
@@ -42,7 +42,7 @@ export default async function EnvironmentDetailLayout({
     : baseTabs;
 
   return (
-    <AppPage className="max-w-7xl">
+    <SettingsPage>
       <div className="space-y-3">
         <Link
           className="text-muted-foreground text-sm hover:text-foreground"
@@ -51,9 +51,9 @@ export default async function EnvironmentDetailLayout({
           ← Environments
         </Link>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="font-semibold text-3xl tracking-tight">
+          <h2 className="font-semibold text-3xl tracking-tight">
             {environment.name}
-          </h1>
+          </h2>
           {environment.isDefault ? <Badge>Default</Badge> : null}
           <Badge variant="outline">{environment.status}</Badge>
         </div>
@@ -63,6 +63,6 @@ export default async function EnvironmentDetailLayout({
       </div>
       <EnvironmentTabs base={base} tabs={tabs} />
       {children}
-    </AppPage>
+    </SettingsPage>
   );
 }

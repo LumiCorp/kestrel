@@ -1,12 +1,11 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AppPage } from "@/components/app-page";
+import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
 import { auth } from "@/lib/auth";
 import type { ActiveOrganization, Session } from "@/lib/auth-types";
 import { dbClient } from "@/lib/db-client";
 import { ensurePersonalOrganization } from "@/lib/personal-workspace";
-import { OrganizationCard } from "@/app/dashboard/organization-card";
+import { OrganizationCard } from "@/components/settings/members-client";
 
 function parseOrganizationMetadata(metadata: string | null) {
   if (!metadata) {
@@ -108,17 +107,17 @@ export default async function OrganizationsPage() {
   }
 
   return (
-    <AppPage>
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         description="Manage the active organization, membership, and invitations from the shared workspace shell."
         eyebrow="Workspace"
-        title="Organizations"
+        title="Members"
       />
 
       <OrganizationCard
         activeOrganization={activeOrganization}
         session={session as Session}
       />
-    </AppPage>
+    </SettingsPage>
   );
 }

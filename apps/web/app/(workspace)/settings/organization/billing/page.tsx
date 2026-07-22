@@ -1,8 +1,7 @@
 import { headers } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AppPage } from "@/components/app-page";
+import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
 import type { ActiveOrganization } from "@/lib/auth-types";
@@ -12,7 +11,7 @@ import {
 } from "@/lib/billing/subscriptions";
 import { dbClient } from "@/lib/db-client";
 import { ensurePersonalOrganization } from "@/lib/personal-workspace";
-import { OrganizationBillingCard } from "@/app/dashboard/organization-billing-card";
+import { OrganizationBillingCard } from "@/components/settings/billing-client";
 
 function parseOrganizationMetadata(metadata: string | null) {
   if (!metadata) {
@@ -101,8 +100,8 @@ export default async function BillingPage() {
   }
 
   return (
-    <AppPage>
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         actions={
           <Button asChild size="sm" variant="outline">
             <Link href="/settings/organization/members">Manage Organization</Link>
@@ -118,6 +117,6 @@ export default async function BillingPage() {
         initialSubscription={initialSubscription}
         sessionUserId={session.user.id}
       />
-    </AppPage>
+    </SettingsPage>
   );
 }

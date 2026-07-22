@@ -1,4 +1,4 @@
-import { EmailIntegrationAdminClient } from "@/app/admin/email/page-client";
+import { EmailIntegrationAdminClient } from "@/components/settings/email-client";
 import { requireAdmin } from "@/lib/knowledge/auth";
 
 export default async function PlatformEmailSettingsPage() {

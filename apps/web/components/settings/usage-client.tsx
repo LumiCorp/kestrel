@@ -1,11 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AdminStatCard } from "@/components/admin/admin-stat-card";
-import { AppPage } from "@/components/app-page";
+import {
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsMetric,
+  SettingsPanel,
+  SettingsPanelContent,
+  SettingsPanelHeader,
+  SettingsPanelTitle,
+} from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 type StatsResponse = {
@@ -59,14 +64,14 @@ export function StatsAdminClient() {
   }, []);
 
   return (
-    <AppPage className="grid gap-6">
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         description="Review org-scoped usage totals, token consumption, and source/model activity."
         eyebrow="Usage"
-        title="Stats"
+        title="Usage"
       />
 
-      <div className="grid gap-3 border border-border/70 bg-card p-4 md:grid-cols-2">
+      <div className="grid gap-3 border-border/70 border-y py-4 md:grid-cols-2">
         <Input
           onChange={(event) => setSourceFilter(event.target.value)}
           placeholder="Filter sources (comma-separated)"
@@ -96,32 +101,32 @@ export function StatsAdminClient() {
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-4">
-        <AdminStatCard
-          title="Total Messages"
+        <SettingsMetric
+          label="Total messages"
           value={stats?.totalMessages ?? 0}
         />
-        <AdminStatCard
-          title="Previous Window"
+        <SettingsMetric
+          label="Previous window"
           value={stats?.previousMessages ?? 0}
         />
-        <AdminStatCard
-          title="Input Tokens"
+        <SettingsMetric
+          label="Input tokens"
           value={stats?.totals.totalInputTokens ?? 0}
         />
-        <AdminStatCard
-          title="Output Tokens"
+        <SettingsMetric
+          label="Output tokens"
           value={stats?.totals.totalOutputTokens ?? 0}
         />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Usage Events</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      <SettingsPanel>
+        <SettingsPanelHeader>
+          <SettingsPanelTitle>Usage events</SettingsPanelTitle>
+        </SettingsPanelHeader>
+        <SettingsPanelContent className="divide-y">
           {(stats?.bySource ?? []).map((row, index) => (
             <div
-              className="rounded-lg border p-3"
+              className="py-3"
               key={`${row.source}-${index}`}
             >
               <div className="font-medium">{row.source}</div>
@@ -131,8 +136,8 @@ export function StatsAdminClient() {
               </div>
             </div>
           ))}
-        </CardContent>
-      </Card>
-    </AppPage>
+        </SettingsPanelContent>
+      </SettingsPanel>
+    </SettingsPage>
   );
 }

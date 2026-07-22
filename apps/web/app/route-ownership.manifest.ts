@@ -1584,7 +1584,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page("app/(workspace)/settings/organization/billing/page.tsx", "/settings/organization/billing", "admin", "admin", "admin-denied"),
   page("app/(workspace)/settings/organization/agent-defaults/page.tsx", "/settings/organization/agent-defaults", "agent-config", "admin", "admin-denied"),
   page("app/(workspace)/settings/organization/ai-providers/page.tsx", "/settings/organization/ai-providers", "models", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/infrastructure/page.tsx", "/settings/organization/infrastructure", "environments", "admin", "admin-denied"),
+  page("app/(workspace)/settings/organization/inference/page.tsx", "/settings/organization/inference", "models", "admin", "admin-denied"),
   page("app/(workspace)/settings/organization/email/page.tsx", "/settings/organization/email", "email-delivery", "admin", "admin-denied"),
   page("app/(workspace)/settings/organization/api-keys/page.tsx", "/settings/organization/api-keys", "admin", "admin", "admin-denied"),
   page("app/(workspace)/settings/organization/usage/page.tsx", "/settings/organization/usage", "stats", "admin", "admin-denied"),
