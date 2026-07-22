@@ -63,6 +63,32 @@ contractTest("web.hermetic", "Project skills have a first-class tab separate fro
   assert.doesNotMatch(workspaceSetup, /Agent skills/u);
 });
 
+contractTest("web.hermetic", "Organization changes refresh Project and Thread sidebar data", () => {
+  const teamSwitcher = readAppSource("components/team-switcher.tsx");
+  const workspaceRail = readAppSource("components/workspace-rail.tsx");
+
+  assert.match(
+    teamSwitcher,
+    /await organization\.setActive\([\s\S]*router\.refresh\(\)/u
+  );
+  assert.match(
+    workspaceRail,
+    /previousOrganizationId\.current === organizationId/u
+  );
+  assert.match(
+    workspaceRail,
+    /mutateProjects\(\{ projects: \[\] \}, \{ revalidate: true \}\)/u
+  );
+  assert.match(
+    workspaceRail,
+    /mutateThreads\(\{ threads: \[\] \}, \{ revalidate: true \}\)/u
+  );
+  assert.match(
+    workspaceRail,
+    /mutateThreadDetail\(undefined, \{ revalidate: true \}\)/u
+  );
+});
+
 contractTest("web.hermetic", "Project uploads compensate new documents when context attachment fails", () => {
   const source = readAppSource("app/api/projects/[id]/files/route.ts");
 

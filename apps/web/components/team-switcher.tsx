@@ -1,7 +1,9 @@
 "use client";
 
 import { Building2, ChevronsUpDown, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,11 +34,13 @@ export function TeamSwitcher({
   initialActiveOrganization?: OrganizationSnapshot | null;
 }) {
   const { isMobile } = useSidebar();
+  const router = useRouter();
   const organizations = useListOrganizations();
   const activeOrgData = useActiveOrganization();
   const [activeOrgId, setActiveOrgId] = useState<string | null>(
     initialActiveOrganization?.id ?? activeOrgData.data?.id ?? null
   );
+  const [pendingOrgId, setPendingOrgId] = useState<string | null>(null);
 
   const personalOrg =
     organizations.data?.find((org: any) => isPersonalOrganization(org)) ?? null;
@@ -65,13 +69,27 @@ export function TeamSwitcher({
   const activeIsPersonal = isPersonalOrganization(activeOrg);
 
   const handleSetActive = async (orgId: string) => {
-    if (orgId === activeOrgId) {
+    if (orgId === activeOrgId || pendingOrgId) {
       return;
     }
+    const previousOrgId = activeOrgId;
     setActiveOrgId(orgId);
-    await organization.setActive({
-      organizationId: orgId,
-    });
+    setPendingOrgId(orgId);
+
+    try {
+      const { data, error } = await organization.setActive({
+        organizationId: orgId,
+      });
+      if (error || !data) {
+        throw new Error(error?.message || "Organization switch failed");
+      }
+      router.refresh();
+    } catch {
+      setActiveOrgId(previousOrgId);
+      toast.error("Organization could not be changed");
+    } finally {
+      setPendingOrgId(null);
+    }
   };
 
   return (
@@ -115,7 +133,8 @@ export function TeamSwitcher({
             {personalOrg ? (
               <DropdownMenuItem
                 className={activeIsPersonal ? "bg-accent" : ""}
-                onClick={() => handleSetActive(personalOrg.id)}
+                disabled={pendingOrgId !== null}
+                onClick={() => void handleSetActive(personalOrg.id)}
               >
                 <div className="flex size-6 items-center justify-center rounded-md border">
                   <span className="font-semibold text-xs">P</span>
@@ -129,8 +148,9 @@ export function TeamSwitcher({
             {teamOrganizations.map((org: any, index: number) => (
               <DropdownMenuItem
                 className={org.id === activeOrgId ? "bg-accent" : ""}
+                disabled={pendingOrgId !== null}
                 key={org.id}
-                onClick={() => handleSetActive(org.id)}
+                onClick={() => void handleSetActive(org.id)}
               >
                 <div className="flex size-6 items-center justify-center rounded-md border">
                   <Building2 className="size-3.5 shrink-0" />
