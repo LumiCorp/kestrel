@@ -16,6 +16,7 @@ from .cli_task_runner import (
     TERMINAL_BENCH_ENTRY_STEP_AGENT,
     TERMINAL_BENCH_PROTECTED_PATH_FAILURE_KIND,
     bridge_process_traffic,
+    benchmark_harness_revision_payload,
     build_kestrel_job_command,
     build_job_input,
     build_profile,
@@ -85,6 +86,12 @@ class CliTaskRunnerTest(unittest.TestCase):
         self.assertNotIn("storeDriver", job_input)
         self.assertNotIn("storeDriver", job_input["profile"])
         assert_terminal_bench_job_input_contract(job_input)
+
+    def test_harness_revision_is_recorded_only_when_explicitly_supplied(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(benchmark_harness_revision_payload(), {})
+        with mock.patch.dict("os.environ", {"KESTREL_BENCHMARK_HARNESS_REVISION": "abc123"}, clear=True):
+            self.assertEqual(benchmark_harness_revision_payload(), {"harness_revision": "abc123"})
 
     def test_job_contract_rejects_explicit_persistence_selection(self) -> None:
         job_input = build_job_input("Solve it.", "sample-task")

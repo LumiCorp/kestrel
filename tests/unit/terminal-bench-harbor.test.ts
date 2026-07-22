@@ -159,6 +159,7 @@ contractTest("runtime.hermetic", "terminal bench harbor transports the selected 
       spawn: (() => { throw new Error("unexpected spawn"); }) as never,
       env: {
         OPENROUTER_API_KEY: "sk-test",
+        KESTREL_BENCHMARK_HARNESS_REVISION: "abc123",
         KESTREL_BENCHMARK_PROFILE_FILE: profileFile,
         KESTREL_BENCHMARK_PROFILE_ID: "candidate",
       },
@@ -169,6 +170,7 @@ contractTest("runtime.hermetic", "terminal bench harbor transports the selected 
 
     assert.equal(code, 0);
     assert.match(stdout.join(""), /KESTREL_BENCHMARK_PROFILE_JSON_BASE64=/u);
+    assert.match(stdout.join(""), /KESTREL_BENCHMARK_HARNESS_REVISION/u);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

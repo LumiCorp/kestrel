@@ -87,6 +87,7 @@ def main() -> int:
                 "failure_kind": "benchmark_setup_failed",
                 "notes": " ".join(provider_issues),
                 **benchmark_provider_artifact_payload(),
+                **benchmark_harness_revision_payload(),
             }
         )
         return 2
@@ -157,6 +158,7 @@ def main() -> int:
             "job_input_sha256": job_input_hash,
             **({"runtime_replay_bundle_path": str(replay_bundle)} if replay_bundle.exists() else {}),
             **benchmark_provider_artifact_payload(),
+            **benchmark_harness_revision_payload(),
             **payload,
         }
         if failure_details:
@@ -190,6 +192,7 @@ def main() -> int:
                 "bridge_log_path": str(bridge_log),
                 "job_input_sha256": job_input_hash,
                 **benchmark_provider_artifact_payload(),
+                **benchmark_harness_revision_payload(),
                 **payload,
                 **({"failure_details": failure_details} if failure_details else {}),
             }
@@ -201,6 +204,11 @@ def main() -> int:
 
 def result_adapter() -> str:
     return os.environ.get("KESTREL_TBENCH_RESULT_ADAPTER") or DEFAULT_RESULT_ADAPTER
+
+
+def benchmark_harness_revision_payload() -> dict[str, str]:
+    revision = os.environ.get("KESTREL_BENCHMARK_HARNESS_REVISION", "").strip()
+    return {"harness_revision": revision} if revision else {}
 
 
 def build_kestrel_job_command(job_input_path: Path, job_output_path: Path) -> list[str]:

@@ -209,6 +209,7 @@ function executePlan(plan: HarnessEfficiencyPlanV1, output: Pick<NodeJS.WriteStr
           ...buildHarnessEfficiencyVariantEnvironment(plan.variants[variantName].profile, process.env),
           KESTREL_BENCHMARK_PAIR_ID: pair.pairId,
           KESTREL_BENCHMARK_TRIAL: String(pair.trial),
+          KESTREL_BENCHMARK_HARNESS_REVISION: plan.variants[variantName].sourceRevision,
           KESTREL_BENCHMARK_PROFILE_FILE: planned.profileFile,
           KESTREL_BENCHMARK_PROFILE_ID: planned.profileId,
         },
