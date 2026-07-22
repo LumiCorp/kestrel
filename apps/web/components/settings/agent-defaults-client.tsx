@@ -2,10 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
+import {
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsPanel,
+  SettingsPanelContent,
+  SettingsPanelHeader,
+  SettingsPanelTitle,
+} from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -130,11 +136,11 @@ export function AgentAdminClient() {
   }
 
   return (
-    <div className="space-y-6">
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         description="Manage the default agent prompt, model preferences, and response rules used across the Kestrel One runtime."
         eyebrow="Configuration"
-        title="Agent"
+        title="Agent defaults"
       />
       {status ? (
         <AdminStatusBanner
@@ -143,11 +149,11 @@ export function AgentAdminClient() {
           variant={status.includes("failed") ? "error" : "info"}
         />
       ) : null}
-      <Card className="max-w-4xl">
-        <CardHeader>
-          <CardTitle>Agent Configuration</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4">
+      <SettingsPanel className="max-w-4xl">
+        <SettingsPanelHeader>
+          <SettingsPanelTitle>Agent configuration</SettingsPanelTitle>
+        </SettingsPanelHeader>
+        <SettingsPanelContent className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="agent-response-style">Response style</Label>
             <Select
@@ -305,8 +311,8 @@ export function AgentAdminClient() {
               {status}
             </div>
           ) : null}
-        </CardContent>
-      </Card>
-    </div>
+        </SettingsPanelContent>
+      </SettingsPanel>
+    </SettingsPage>
   );
 }

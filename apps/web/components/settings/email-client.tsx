@@ -2,11 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
+import {
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsPanel,
+  SettingsPanelContent,
+  SettingsPanelHeader,
+  SettingsPanelTitle,
+} from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -131,8 +137,8 @@ export function EmailIntegrationAdminClient({
   }
 
   return (
-    <div className="space-y-6">
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         description={
           scope === "organization"
             ? "Configure the sender used by this organization's Apps and agents. Domain verification remains managed in Resend."
@@ -152,18 +158,18 @@ export function EmailIntegrationAdminClient({
           variant="error"
         />
       ) : null}
-      <Card className="max-w-3xl">
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
+      <SettingsPanel className="max-w-3xl">
+        <SettingsPanelHeader>
+          <SettingsPanelTitle className="flex items-center justify-between">
             Resend
             <Badge
               variant={config.status === "ready" ? "default" : "secondary"}
             >
               {config.status.replace("_", " ")}
             </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-5">
+          </SettingsPanelTitle>
+        </SettingsPanelHeader>
+        <SettingsPanelContent className="grid gap-5">
           {scope === "platform" ? (
             <div className="grid gap-2">
               <Label htmlFor="email-source">Credential source</Label>
@@ -259,17 +265,17 @@ export function EmailIntegrationAdminClient({
               {new Date(config.lastTestedAt).toLocaleString()}
             </p>
           ) : null}
-        </CardContent>
-      </Card>
-      <Card className="max-w-3xl">
-        <CardHeader>
-          <CardTitle>
+        </SettingsPanelContent>
+      </SettingsPanel>
+      <SettingsPanel className="max-w-3xl">
+        <SettingsPanelHeader>
+          <SettingsPanelTitle>
             {scope === "organization"
               ? "Organization email activity"
               : "Platform email activity"}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
+          </SettingsPanelTitle>
+        </SettingsPanelHeader>
+        <SettingsPanelContent className="space-y-3">
           {events.length ? (
             events.map((event) => (
               <div
@@ -290,9 +296,9 @@ export function EmailIntegrationAdminClient({
               No {scope} email events yet.
             </p>
           )}
-        </CardContent>
-      </Card>
-    </div>
+        </SettingsPanelContent>
+      </SettingsPanel>
+    </SettingsPage>
   );
 }
 

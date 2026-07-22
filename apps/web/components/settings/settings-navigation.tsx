@@ -11,7 +11,7 @@ import {
   Mail,
   PlugZap,
   ScrollText,
-  ServerCog,
+  Server,
   ShieldCheck,
   User,
   Users,
@@ -60,19 +60,19 @@ const organizationItems: SettingsItem[] = [
     label: "AI providers",
   },
   {
-    href: "/settings/organization/infrastructure",
-    icon: ServerCog,
-    label: "Infrastructure",
+    href: "/settings/organization/environments",
+    icon: HardDrive,
+    label: "Environments",
+  },
+  {
+    href: "/settings/organization/inference",
+    icon: Server,
+    label: "Inference",
   },
   {
     href: "/settings/organization/email",
     icon: Mail,
     label: "Email",
-  },
-  {
-    href: "/settings/organization/environments",
-    icon: HardDrive,
-    label: "Environments",
   },
   {
     href: "/settings/organization/api-keys",

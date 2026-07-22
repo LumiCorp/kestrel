@@ -5,8 +5,18 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AppPage } from "@/components/app-page";
+import { FlyWorkspaceProviderClient } from "@/components/settings/fly-workspace-provider-client";
+import {
+  RuntimePolicySettingsClient,
+  type RuntimePolicySettings,
+} from "@/components/settings/runtime-policy-client";
+import {
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsRow,
+  SettingsRows,
+  SettingsSection,
+} from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,9 +72,11 @@ function formatUpdatedAt(value: Date | string) {
 export function EnvironmentsAdminClient({
   initialEnvironments,
   initialRollout,
+  initialRuntimePolicy,
 }: {
   initialEnvironments: Environment[];
   initialRollout: HostedEnvironmentsRollout;
+  initialRuntimePolicy: RuntimePolicySettings;
 }) {
   const [environments, setEnvironments] = useState(initialEnvironments);
   const [name, setName] = useState("");
@@ -162,12 +174,12 @@ export function EnvironmentsAdminClient({
   }
 
   return (
-    <AppPage>
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         actions={
           <Dialog onOpenChange={setCreateOpen} open={createOpen}>
             <DialogTrigger asChild>
-              <Button>
+              <Button size="sm">
                 <Plus className="size-4" /> New Environment
               </Button>
             </DialogTrigger>
@@ -225,40 +237,53 @@ export function EnvironmentsAdminClient({
         title="Environments"
       />
 
-      <div className="flex flex-col gap-3 border-y py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Badge variant={rollout.effectiveEnabled ? "default" : "outline"}>
-            {rollout.effectiveEnabled ? "Active" : "Inactive"}
-          </Badge>
-          <div>
-            <div className="font-medium text-sm">Environment execution</div>
-            <p className="text-muted-foreground text-xs">
-              Organization {rollout.organizationEnabled ? "enabled" : "disabled"}
-              {rollout.deploymentEnabled ? "" : " · deployment disabled"}
-            </p>
-          </div>
-        </div>
-        <Button
-          disabled={rolloutBusy}
-          onClick={() => void updateRollout(!rollout.organizationEnabled)}
-          size="sm"
-          variant="outline"
-        >
-          {rolloutBusy
-            ? "Updating…"
-            : rollout.organizationEnabled
-              ? "Disable"
-              : "Enable"}
-        </Button>
-      </div>
+      <FlyWorkspaceProviderClient />
+      <RuntimePolicySettingsClient initialSettings={initialRuntimePolicy} />
 
-      {environments.length === 0 ? (
-        <AdminEmptyState
-          description="Create the first Environment before an agent can receive a persistent Workspace."
-          title="No Environments yet"
-        />
-      ) : (
-        <div className="border-y">
+      <SettingsSection
+        description="Control whether this organization may provision and use durable workspace execution planes."
+        title="Environment execution"
+      >
+        <SettingsRows>
+          <SettingsRow label="Organization rollout">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <Badge variant={rollout.effectiveEnabled ? "default" : "outline"}>
+                  {rollout.effectiveEnabled ? "Active" : "Inactive"}
+                </Badge>
+                <p className="text-muted-foreground text-xs">
+                  Organization {rollout.organizationEnabled ? "enabled" : "disabled"}
+                  {rollout.deploymentEnabled ? "" : " · deployment disabled"}
+                </p>
+              </div>
+              <Button
+                disabled={rolloutBusy}
+                onClick={() => void updateRollout(!rollout.organizationEnabled)}
+                size="sm"
+                variant="outline"
+              >
+                {rolloutBusy
+                  ? "Updating…"
+                  : rollout.organizationEnabled
+                    ? "Disable"
+                    : "Enable"}
+              </Button>
+            </div>
+          </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+
+      <SettingsSection
+        description="Execution planes where agents run and persistent workspaces live."
+        title="Environments"
+      >
+        {environments.length === 0 ? (
+          <AdminEmptyState
+            description="Create the first Environment before an agent can receive a persistent Workspace."
+            title="No Environments yet"
+          />
+        ) : (
+          <div className="overflow-x-auto border-y">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -311,8 +336,9 @@ export function EnvironmentsAdminClient({
               })}
             </TableBody>
           </Table>
-        </div>
-      )}
-    </AppPage>
+          </div>
+        )}
+      </SettingsSection>
+    </SettingsPage>
   );
 }

@@ -6,8 +6,11 @@ import { toast } from "sonner";
 import { readJson } from "@/components/admin/admin-client-utils";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AdminStatCard } from "@/components/admin/admin-stat-card";
+import {
+  SettingsMetric,
+  SettingsPage,
+  SettingsPageHeader,
+} from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -177,8 +180,8 @@ export function LogsAdminClient({
   }
 
   return (
-    <div className="space-y-6">
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         actions={
           <Button
             onClick={() => void investigateInAdminChat()}
@@ -189,7 +192,7 @@ export function LogsAdminClient({
         }
         description="Track structured admin activity, inspect error-level events, and prune old audit rows safely."
         eyebrow="Audit"
-        title="Logs"
+        title="Audit"
       />
 
       {status ? (
@@ -197,12 +200,12 @@ export function LogsAdminClient({
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-3">
-        <AdminStatCard title="Total Logs" value={stats?.totalCount ?? 0} />
-        <AdminStatCard title="Warnings" value={levelSummary.get("warn") ?? 0} />
-        <AdminStatCard title="Errors" value={levelSummary.get("error") ?? 0} />
+        <SettingsMetric label="Total logs" value={stats?.totalCount ?? 0} />
+        <SettingsMetric label="Warnings" value={levelSummary.get("warn") ?? 0} />
+        <SettingsMetric label="Errors" value={levelSummary.get("error") ?? 0} />
       </div>
 
-      <div className="border bg-card p-4">
+      <div className="border-y py-4">
         <div className="grid gap-3 md:grid-cols-[1fr_180px_auto_auto]">
           <Input
             onChange={(event) => setBefore(event.target.value)}
@@ -278,6 +281,6 @@ export function LogsAdminClient({
           ),
         }))}
       />
-    </div>
+    </SettingsPage>
   );
 }
