@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type {
+  DesiredWorkspaceSkillInstallation,
   InstalledWorkspaceSkillRevision,
   WorkspaceSkillInstallation,
   WorkspaceSkillSource,
@@ -119,6 +120,66 @@ export class WorkspaceSkillManager {
     return this.exclusive(() => this.syncAllUnlocked());
   }
 
+  async reconcile(
+    desired: readonly DesiredWorkspaceSkillInstallation[],
+  ): Promise<WorkspaceSkillInstallation[]> {
+    return this.exclusive(() => this.reconcileUnlocked(desired));
+  }
+
+  private async reconcileUnlocked(
+    desired: readonly DesiredWorkspaceSkillInstallation[],
+  ): Promise<WorkspaceSkillInstallation[]> {
+    if (!(await this.isWorkspaceIdle())) {
+      throw new Error("Workspace skills can only reconcile while the workspace is idle.");
+    }
+    const installationIds = new Set<string>();
+    for (const installation of desired) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(installation.installationId)) {
+        throw new Error("Skill installation id is invalid.");
+      }
+      if (installationIds.has(installation.installationId)) {
+        throw new Error(`Workspace skill installation '${installation.installationId}' is duplicated.`);
+      }
+      installationIds.add(installation.installationId);
+    }
+    const now = this.now().toISOString();
+    const current = await this.store.load();
+    const currentById = new Map(
+      current.map((installation) => [installation.installationId, installation]),
+    );
+    const next = desired.map((installation): WorkspaceSkillInstallation => {
+      const existing = currentById.get(installation.installationId);
+      if (existing === undefined) {
+        return {
+          installationId: installation.installationId,
+          workspaceId: this.workspace.workspaceId,
+          source: installation.source,
+          status: "pending",
+          createdAt: now,
+          updatedAt: now,
+        };
+      }
+      if (sameSource(existing.source, installation.source)) return existing;
+      return {
+        ...existing,
+        source: installation.source,
+        status: "pending",
+        updatedAt: now,
+        lastSyncError: undefined,
+      };
+    });
+    await this.store.save(next);
+    for (const installation of current) {
+      if (!installationIds.has(installation.installationId)) {
+        await this.installer.remove({
+          workspaceRoot: this.workspace.workspaceRoot,
+          installationId: installation.installationId,
+        });
+      }
+    }
+    return this.syncAllUnlocked();
+  }
+
   private async syncAllUnlocked(): Promise<WorkspaceSkillInstallation[]> {
     if (!(await this.isWorkspaceIdle())) return this.store.load();
     const snapshot = await this.store.load();
@@ -222,6 +283,12 @@ function replaceInstallation(
   next: WorkspaceSkillInstallation,
 ): WorkspaceSkillInstallation[] {
   return installations.map((candidate) => candidate.installationId === next.installationId ? next : candidate);
+}
+
+function sameSource(left: WorkspaceSkillSource, right: WorkspaceSkillSource) {
+  return left.gitUrl === right.gitUrl &&
+    left.branch === right.branch &&
+    (left.path ?? "") === (right.path ?? "");
 }
 
 function requireInstallation(

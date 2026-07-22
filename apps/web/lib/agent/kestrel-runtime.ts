@@ -48,6 +48,7 @@ import {
 import { recordGitHubActionApprovalRequest } from "@/lib/integrations/github-action-approvals";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
+import { synchronizeProjectSkills } from "@/lib/projects/skills";
 
 const DEFAULT_PROFILE_ID = "kestrel-one";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -136,7 +137,7 @@ class KestrelOneRunnerClient extends KestrelClient {
   }
 }
 
-const INTERRUPTED_RUN_CANCEL_TIMEOUT_MS = 5_000;
+const INTERRUPTED_RUN_CANCEL_TIMEOUT_MS = 5000;
 
 export async function cancelInterruptedKestrelOneExecution(input: {
   organizationId: string;
@@ -352,6 +353,17 @@ function createModelAwareKestrelOneAgent(input: {
           });
           executionId = route.runId;
           await input.onExecutionRouted?.(executionId);
+          const projectSkills = route.projectId
+            ? await synchronizeProjectSkills({
+                organizationId: input.organizationId,
+                projectId: route.projectId,
+                actorUserId: input.actorUserId,
+                route: {
+                  baseUrl: route.baseUrl,
+                  authToken: route.authToken,
+                },
+              })
+            : null;
           if (runtimeModel) {
             await activateEnvironmentModelGrant({
               organizationId: input.organizationId,
@@ -396,6 +408,7 @@ function createModelAwareKestrelOneAgent(input: {
           const normalizedTurn = {
             ...turn,
             eventType,
+            ...(projectSkills ? { workspaceSkills: projectSkills.catalog } : {}),
             ...(resumeRequestId !== undefined
               ? {
                   resumeBlockedRun: true,
@@ -621,6 +634,17 @@ export async function generateKestrelOneExternalReply(input: {
   };
 
   try {
+    const projectSkills = route.projectId
+      ? await synchronizeProjectSkills({
+          organizationId: input.organizationId,
+          projectId: route.projectId,
+          actorUserId: input.actor.actorId,
+          route: {
+            baseUrl: route.baseUrl,
+            authToken: route.authToken,
+          },
+        })
+      : null;
     await updateEnvironmentExecutionStatus({
       organizationId: input.organizationId,
       executionId: route.runId,
@@ -693,6 +717,7 @@ export async function generateKestrelOneExternalReply(input: {
           }),
         },
       },
+      ...(projectSkills ? { workspaceSkills: projectSkills.catalog } : {}),
       ...(route.mcpContext && route.executionTicket
         ? {
             mcpContext: route.mcpContext,
