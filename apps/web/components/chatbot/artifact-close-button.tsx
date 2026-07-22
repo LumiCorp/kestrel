@@ -8,7 +8,7 @@ function PureArtifactCloseButton() {
 
   return (
     <Button
-      className="h-fit p-2 dark:hover:bg-zinc-700"
+      className="h-fit p-2 hover:bg-muted"
       data-testid="artifact-close-button"
       onClick={() => {
         if (artifact.status === "streaming") {

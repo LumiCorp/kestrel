@@ -2,6 +2,8 @@ import "./globals.css";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import { ThemeProvider } from "@/components/theme-provider";
+import { PaletteBootstrap } from "@/components/palette-bootstrap";
+import { PaletteProvider } from "@/components/palette-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { WrapperWithQuery } from "@/components/wrapper";
 import { createMetadata } from "@/lib/metadata";
@@ -24,11 +26,14 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <link href="/favicon/favicon.ico" rel="icon" sizes="any" />
+        <PaletteBootstrap />
       </head>
       <body className={`${GeistSans.variable} ${GeistMono.variable} font-sans`}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <WrapperWithQuery>{children}</WrapperWithQuery>
-          <Toaster closeButton richColors />
+          <PaletteProvider>
+            <WrapperWithQuery>{children}</WrapperWithQuery>
+            <Toaster closeButton richColors />
+          </PaletteProvider>
         </ThemeProvider>
       </body>
     </html>

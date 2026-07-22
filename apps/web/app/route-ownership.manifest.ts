@@ -1606,6 +1606,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   ),
   page("app/(workspace)/settings/page.tsx", "/settings", "dashboard", "authenticated", "redirect-sign-in"),
   page("app/(workspace)/settings/profile/page.tsx", "/settings/profile", "dashboard", "authenticated", "redirect-sign-in"),
+  page("app/(workspace)/settings/appearance/page.tsx", "/settings/appearance", "dashboard", "authenticated", "redirect-sign-in"),
   page("app/(workspace)/settings/api-keys/page.tsx", "/settings/api-keys", "dashboard", "authenticated", "redirect-sign-in"),
   page("app/(workspace)/settings/organization/page.tsx", "/settings/organization", "admin", "admin", "admin-denied"),
   page("app/(workspace)/settings/organization/members/page.tsx", "/settings/organization/members", "admin", "admin", "admin-denied"),

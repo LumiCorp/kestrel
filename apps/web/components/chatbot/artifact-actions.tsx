@@ -51,7 +51,7 @@ function PureArtifactActions({
         <Tooltip key={action.description}>
           <TooltipTrigger asChild>
             <Button
-              className={cn("h-fit dark:hover:bg-zinc-700", {
+              className={cn("h-fit hover:bg-muted", {
                 "p-2": !action.label,
                 "px-2 py-1.5": action.label,
               })}
