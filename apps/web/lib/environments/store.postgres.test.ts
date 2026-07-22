@@ -478,6 +478,31 @@ contractTest(
     });
     await sql`
       UPDATE "environment_operations"
+      SET "status" = 'running', "stage" = 'workspace.backup.exporting',
+          "error_code" = NULL, "completed_at" = NULL,
+          "input" = ${sql.json({ backupExecutionOwnership: "parent_operation" })}
+      WHERE "id" = ${interruptedBackupOperationId}
+    `;
+    await sql`
+      UPDATE "workspace_backups"
+      SET "status" = 'creating', "object_key" = NULL
+      WHERE "id" = ${interruptedBackupId}
+    `;
+    await failInterruptedWorkspaceBackup(interruptedBackupOperationId);
+    const [parentOwnedBackup] = await sql<
+      Array<{ operationStatus: string; backupStatus: string }>
+    >`
+      SELECT operation."status" AS "operationStatus", backup."status" AS "backupStatus"
+      FROM "environment_operations" operation
+      JOIN "workspace_backups" backup ON backup."operation_id" = operation."id"
+      WHERE operation."id" = ${interruptedBackupOperationId}
+    `;
+    assert.deepEqual(parentOwnedBackup, {
+      operationStatus: "running",
+      backupStatus: "creating",
+    });
+    await sql`
+      UPDATE "environment_operations"
       SET "status" = 'failed', "stage" = 'workspace.backup.failed',
           "error_code" = 'WORKSPACE_BACKUP_FAILED', "completed_at" = ${now}
       WHERE "id" = ${interruptedBackupOperationId}

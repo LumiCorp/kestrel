@@ -200,7 +200,10 @@ async function hasNonterminalEnvironmentJob(
 }
 
 export async function reconcileEnvironmentOperationQueue(boss: PgBoss) {
-  const { reconcileTerminalWorkspaceBackupRecords } = await import(
+  const {
+    isParentOwnedWorkspaceBackup,
+    reconcileTerminalWorkspaceBackupRecords,
+  } = await import(
     "@/lib/environments/backups"
   );
   await reconcileTerminalWorkspaceBackupRecords();
@@ -213,12 +216,13 @@ export async function reconcileEnvironmentOperationQueue(boss: PgBoss) {
         inArray(table.status, ["queued", "running"]),
         inArray(table.type, [...PROVISIONER_OPERATION_TYPES, "workspace.backup"]),
       ),
-    columns: { id: true, status: true, type: true },
+    columns: { id: true, status: true, type: true, input: true },
     limit: 100,
   });
   for (const operation of operations) {
     if (await hasNonterminalEnvironmentJob(boss, operation.id)) continue;
     if (operation.status === "running" && operation.type === "workspace.backup") {
+      if (isParentOwnedWorkspaceBackup(operation.input)) continue;
       const { failInterruptedWorkspaceBackup } = await import(
         "@/lib/environments/backups"
       );

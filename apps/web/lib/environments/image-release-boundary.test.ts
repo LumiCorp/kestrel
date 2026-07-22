@@ -4,9 +4,11 @@ import { readFile } from "node:fs/promises";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 contractTest("web.hermetic", "hosted Environment images have distinct revisioned release contracts", async () => {
-  const [workspaceDockerfile, routerDockerfile, rollout] = await Promise.all([
+  const [workspaceDockerfile, routerDockerfile, workspaceFlyConfig, routerFlyConfig, rollout] = await Promise.all([
     readFile(new URL("../../../workspace-runtime/Dockerfile", import.meta.url), "utf8"),
     readFile(new URL("../../../environment-router/Dockerfile", import.meta.url), "utf8"),
+    readFile(new URL("../../../workspace-runtime/fly.build.toml", import.meta.url), "utf8"),
+    readFile(new URL("../../../environment-router/fly.build.toml", import.meta.url), "utf8"),
     readFile(
       new URL("../../../../deploy/fly/kestrel-one-runner/ROLLOUT.md", import.meta.url),
       "utf8",
@@ -25,8 +27,11 @@ contractTest("web.hermetic", "hosted Environment images have distinct revisioned
     workspaceDockerfile,
     /pnpm --filter @kestrel-agents\/workspace-skills build/u,
   );
-  assert.match(rollout, /--file apps\/workspace-runtime\/Dockerfile/u);
-  assert.match(rollout, /--file apps\/environment-router\/Dockerfile/u);
+  for (const flyConfig of [workspaceFlyConfig, routerFlyConfig]) {
+    assert.match(flyConfig, /dockerfile = "Dockerfile"/u);
+  }
+  assert.match(rollout, /--config apps\/workspace-runtime\/fly\.build\.toml/u);
+  assert.match(rollout, /--config apps\/environment-router\/fly\.build\.toml/u);
   assert.match(rollout, /apps\/workspace-runtime\/scripts\/image-smoke\.sh/u);
   assert.match(rollout, /apps\/environment-router\/scripts\/image-smoke\.sh/u);
   assert.doesNotMatch(

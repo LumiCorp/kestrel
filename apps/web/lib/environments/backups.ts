@@ -23,6 +23,8 @@ import {
 } from "./service-tokens";
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
+const BACKUP_EXECUTION_OWNERSHIP_KEY = "backupExecutionOwnership";
+type BackupExecutionOwnership = "parent_operation" | "queue";
 
 export async function createWorkspaceBackup(input: {
   organizationId: string;
@@ -32,6 +34,7 @@ export async function createWorkspaceBackup(input: {
   reason: "checkpoint" | "daily" | "pre_destructive" | "pre_promotion";
   idempotencyKey?: string;
   signal?: AbortSignal | undefined;
+  executionOwnership?: BackupExecutionOwnership | undefined;
 }) {
   const [environment, workspace, binding] = await Promise.all([
     knowledgeDb.query.environments.findFirst({
@@ -75,6 +78,7 @@ export async function createWorkspaceBackup(input: {
     ...input,
     now,
     expiresAt,
+    executionOwnership: input.executionOwnership ?? "parent_operation",
   });
   if (prepared.available) return prepared.available;
   const { operationId, backupId } = prepared;
@@ -211,6 +215,7 @@ export async function queueWorkspaceBackup(input: {
     now,
     expiresAt,
     initialStatus: "queued",
+    executionOwnership: "queue",
   });
   if (prepared.available) {
     return { ...prepared.available, status: "available" as const };
@@ -258,6 +263,7 @@ export async function processQueuedWorkspaceBackup(input: {
     reason: backup.reason,
     idempotencyKey: operation.idempotencyKey,
     signal: input.signal,
+    executionOwnership: "queue",
   });
   return "processed" as const;
 }
@@ -265,6 +271,11 @@ export async function processQueuedWorkspaceBackup(input: {
 export async function failInterruptedWorkspaceBackup(operationId: string) {
   const failedAt = new Date();
   await knowledgeDb.transaction(async (transaction) => {
+    const operation = await transaction.query.environmentOperations.findFirst({
+      where: (table, { eq }) => eq(table.id, operationId),
+      columns: { input: true },
+    });
+    if (isParentOwnedWorkspaceBackup(operation?.input)) return;
     const [failedOperation] = await transaction
       .update(schema.environmentOperations)
       .set({
@@ -289,6 +300,10 @@ export async function failInterruptedWorkspaceBackup(operationId: string) {
       .set({ status: "failed", updatedAt: failedAt })
       .where(eq(schema.workspaceBackups.operationId, operationId));
   });
+}
+
+export function isParentOwnedWorkspaceBackup(value: unknown) {
+  return asRecord(value)?.[BACKUP_EXECUTION_OWNERSHIP_KEY] === "parent_operation";
 }
 
 export async function reconcileTerminalWorkspaceBackupRecords() {
@@ -354,6 +369,7 @@ async function prepareWorkspaceBackup(input: {
   now: Date;
   expiresAt: Date;
   initialStatus?: "queued" | "running" | undefined;
+  executionOwnership: BackupExecutionOwnership;
 }): Promise<PreparedWorkspaceBackup> {
   const requestedKey = input.idempotencyKey?.trim();
   if (requestedKey) {
@@ -406,6 +422,10 @@ async function prepareWorkspaceBackup(input: {
             errorMessage: null,
             completedAt: null,
             startedAt: input.initialStatus === "queued" ? null : input.now,
+            input: {
+              ...asRecord(existingOperation.input),
+              [BACKUP_EXECUTION_OWNERSHIP_KEY]: input.executionOwnership,
+            },
             updatedAt: input.now,
           })
           .where(eq(schema.environmentOperations.id, existingOperation.id));
@@ -447,6 +467,9 @@ async function prepareWorkspaceBackup(input: {
           ? "workspace.backup.queued"
           : "workspace.backup.exporting",
       idempotencyKey: requestedKey ?? `workspace.backup:${backupId}`,
+      input: {
+        [BACKUP_EXECUTION_OWNERSHIP_KEY]: input.executionOwnership,
+      },
       startedAt: initialStatus === "running" ? input.now : null,
       createdAt: input.now,
       updatedAt: input.now,

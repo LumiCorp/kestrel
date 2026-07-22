@@ -39,6 +39,7 @@ contractTest("web.hermetic", "knowledge queue status does not eagerly load worke
   assert.match(queueSource, /export async function startEnvironmentLifecycleWorker/u);
   assert.match(queueSource, /export async function reconcileEnvironmentOperationQueue/u);
   assert.match(queueSource, /await reconcileTerminalWorkspaceBackupRecords\(\)/u);
+  assert.match(queueSource, /isParentOwnedWorkspaceBackup\(operation\.input\)/u);
   assert.match(
     queueSource,
     /export async function enqueueEnvironmentOperation[\s\S]*getKnowledgeBossProducer\(\)/u,
