@@ -86,3 +86,33 @@ contractTest("runtime.hermetic", "Microsoft 365 activation fails closed when the
     /has not granted every selected capability/u,
   );
 });
+
+contractTest("runtime.hermetic", "Microsoft 365 OAuth exchanges a callback only once", async () => {
+  let releaseTokenExchange!: () => void;
+  const tokenExchangeReleased = new Promise<void>((resolve) => { releaseTokenExchange = resolve; });
+  let markTokenExchangeStarted!: () => void;
+  const tokenExchangeStarted = new Promise<void>((resolve) => { markTokenExchangeStarted = resolve; });
+  const manager = new LocalCoreMicrosoft365OAuthSessionManager({
+    credentialStore: new MemoryLocalCoreCredentialStore(),
+    fetchImpl: (async (input: string | URL | Request) => {
+      if (String(input).includes("oauth2/v2.0/token")) {
+        markTokenExchangeStarted();
+        await tokenExchangeReleased;
+        return Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 3600, scope: "User.Read Mail.Read Mail.Send Calendars.Read" });
+      }
+      return Response.json({ id: "user-1" });
+    }) as typeof fetch,
+  });
+  try {
+    const session = await manager.start({ clientId: "microsoft-client", packs: ["outlook"] });
+    const authorization = new URL(session.authorizationUrl!);
+    const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+    callback.searchParams.set("state", authorization.searchParams.get("state")!);
+    callback.searchParams.set("code", "one-use-code");
+    const firstResponse = fetch(callback);
+    await tokenExchangeStarted;
+    assert.equal((await fetch(callback)).status, 409);
+    releaseTokenExchange();
+    assert.equal((await firstResponse).status, 200);
+  } finally { await manager.close(); }
+});

@@ -64,6 +64,7 @@ export interface DesktopCustomAppDefinitionSource {
   name: string;
   enabled: boolean;
   tools?: Array<{ name: string; description?: string | undefined }> | undefined;
+  capabilityPacks?: string[] | undefined;
 }
 
 function isNativeStandardApp(app: DesktopCustomAppDefinitionSource): boolean {
@@ -176,9 +177,22 @@ export function resolveDesktopWorkflowSelections(
     selection.apps.map((app) => normalizeDesktopAppId(app.id)),
   );
   const executableAppIds = new Set<string>();
+  const capabilityPacksByAppId = new Map<string, Set<string>>();
   for (const app of customApps) {
     if (app.enabled && (app.tools?.length ?? 0) > 0) {
-      executableAppIds.add(desktopAppIdForServer(app));
+      const appId = desktopAppIdForServer(app);
+      executableAppIds.add(appId);
+      const manifest = isPublishedStandardAppId(appId)
+        ? getKestrelStandardAppManifest(appId)
+        : undefined;
+      capabilityPacksByAppId.set(
+        appId,
+        new Set(
+          app.capabilityPacks ??
+            manifest?.capabilityPacks.map((pack) => pack.key) ??
+            [],
+        ),
+      );
     }
   }
   const selectedExecutableAppIds = new Set(
@@ -190,9 +204,13 @@ export function resolveDesktopWorkflowSelections(
       manifest.category === "workflow" && selectedAppIds.has(manifest.id),
   ).map((manifest) => {
     const dependencies = (manifest.dependencies ?? []).map((dependency) => {
-      const readyAppIds = dependency.appIds.filter((appId) =>
-        selectedExecutableAppIds.has(appId),
-      );
+      const readyAppIds = dependency.appIds.filter((appId) => {
+        if (!selectedExecutableAppIds.has(appId)) return false;
+        const requiredPacks = dependency.requiredCapabilityPacks?.[appId];
+        if (!requiredPacks?.length) return true;
+        const configuredPacks = capabilityPacksByAppId.get(appId);
+        return requiredPacks.some((pack) => configuredPacks?.has(pack));
+      });
       return {
         role: dependency.role,
         minimum: dependency.minimum,

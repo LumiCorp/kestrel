@@ -221,7 +221,10 @@ async function invokeGitHubAction(
     context.kestrelOne?.executionTicket,
     "Environment execution ticket"
   );
-  const approvalId = input.requiresApproval
+  const approvalRequired =
+    input.requiresApproval ||
+    context.kestrelOne?.appApprovalModes?.[input.toolName] === "ask";
+  const approvalId = approvalRequired
     ? requireContextValue(
         context.runtime?.approvalId,
         "Runtime GitHub approval ID"

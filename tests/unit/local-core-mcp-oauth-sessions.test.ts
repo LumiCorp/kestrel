@@ -168,3 +168,75 @@ contractTest(
     await manager.close();
   },
 );
+
+contractTest(
+  "runtime.hermetic",
+  "Local Core claims an App OAuth callback before exchanging its code",
+  async () => {
+    let releaseExchange!: () => void;
+    const exchangeStarted = new Promise<void>((resolve) => {
+      releaseExchange = resolve;
+    });
+    let notifyExchangeStarted!: () => void;
+    const exchangeWasStarted = new Promise<void>((resolve) => {
+      notifyExchangeStarted = resolve;
+    });
+    const manager = new LocalCoreMcpOAuthSessionManager({
+      credentialStore: new MemoryLocalCoreCredentialStore(),
+      authorize: async (provider, options) => {
+        if (options.authorizationCode === undefined) {
+          const url = new URL("https://auth.example.test/authorize");
+          url.searchParams.set("state", String(await provider.state?.()));
+          url.searchParams.set("redirect_uri", String(provider.redirectUrl));
+          await provider.redirectToAuthorization(url);
+          return "REDIRECT";
+        }
+        notifyExchangeStarted();
+        await exchangeStarted;
+        return "AUTHORIZED";
+      },
+    });
+
+    const started = await manager.start({
+      credentialPrefix: "mcp.standard.notion",
+      serverUrl: "https://mcp.notion.com/mcp",
+      appName: "Notion",
+    });
+    const authorization = new URL(started.authorizationUrl!);
+    const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+    callback.searchParams.set("state", authorization.searchParams.get("state")!);
+    callback.searchParams.set("code", "one-use-code");
+
+    const firstResponse = fetch(callback);
+    await exchangeWasStarted;
+    const duplicateResponse = await fetch(callback);
+    assert.equal(duplicateResponse.status, 409);
+    releaseExchange();
+    assert.equal((await firstResponse).status, 200);
+    assert.equal(manager.status(started.sessionId)?.state, "complete");
+    await manager.close();
+  },
+);
+
+contractTest(
+  "runtime.hermetic",
+  "Local Core removes terminal App OAuth sessions after their status window",
+  async () => {
+    let now = 1_000;
+    const manager = new LocalCoreMcpOAuthSessionManager({
+      credentialStore: new MemoryLocalCoreCredentialStore(),
+      ttlMs: 100,
+      now: () => now,
+      authorize: async () => "AUTHORIZED",
+    });
+    const started = await manager.start({
+      credentialPrefix: "mcp.standard.notion",
+      serverUrl: "https://mcp.notion.com/mcp",
+      appName: "Notion",
+    });
+    assert.equal(manager.status(started.sessionId)?.state, "complete");
+    now = 1_100;
+    assert.equal(manager.status(started.sessionId), undefined);
+    await manager.close();
+  },
+);

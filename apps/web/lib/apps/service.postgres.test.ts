@@ -75,6 +75,9 @@ contractTest(
     const organizationId = `apps-org-${suffix}`;
     const userId = `apps-user-${suffix}`;
     const memberId = `apps-member-${suffix}`;
+    const isolatedOrganizationId = `apps-isolated-org-${suffix}`;
+    const isolatedUserId = `apps-isolated-user-${suffix}`;
+    const isolatedMemberId = `apps-isolated-member-${suffix}`;
     const projectId = `apps-project-${suffix}`;
     const threadId = `apps-thread-${suffix}`;
     const workspaceId = `apps-workspace-${suffix}`;
@@ -93,6 +96,8 @@ contractTest(
 
     context.after(async () => {
       globalThis.fetch = originalFetch;
+      await sql`DELETE FROM "organization" WHERE "id" = ${isolatedOrganizationId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${isolatedUserId}`;
       await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
       await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
       await resetDbRuntimeForTests();
@@ -110,6 +115,21 @@ contractTest(
       INSERT INTO "organization" ("id", "name", "slug", "createdAt")
       VALUES (
         ${organizationId}, 'Apps Org', ${`apps-org-${suffix}`}, ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "user" (
+        "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+      ) VALUES (
+        ${isolatedUserId}, 'Isolated Apps User',
+        ${`${isolatedUserId}@example.test`}, true, ${now}, ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+      VALUES (
+        ${isolatedOrganizationId}, 'Isolated Apps Org',
+        ${`apps-isolated-org-${suffix}`}, ${now}
       )
     `;
     await sql`
@@ -143,6 +163,14 @@ contractTest(
         "id", "organizationId", "userId", "role", "createdAt"
       ) VALUES (${memberId}, ${organizationId}, ${userId}, 'owner', ${now})
     `;
+    await sql`
+      INSERT INTO "member" (
+        "id", "organizationId", "userId", "role", "createdAt"
+      ) VALUES (
+        ${isolatedMemberId}, ${isolatedOrganizationId}, ${isolatedUserId},
+        'owner', ${now}
+      )
+    `;
 
     const createdEnvironment =
       await environmentStore.createOrganizationEnvironment({
@@ -155,6 +183,17 @@ contractTest(
         },
       });
     const environmentId = createdEnvironment.environment.id;
+    const isolatedEnvironment =
+      await environmentStore.createOrganizationEnvironment({
+        organizationId: isolatedOrganizationId,
+        userId: isolatedUserId,
+        environment: {
+          name: "Isolated Apps Environment",
+          region: "iad",
+          isDefault: true,
+        },
+      });
+    const isolatedEnvironmentId = isolatedEnvironment.environment.id;
     await sql.begin(async (transaction) => {
       await transaction`
         INSERT INTO "projects" (
@@ -1165,11 +1204,34 @@ contractTest(
       })),
       [
         {
-          key: "tool:issue.create",
-          runtimeName: "mcp.app.linear.tool%3Aissue.create",
+          key: `mcp:${linearCapabilityId}`,
+          runtimeName: `mcp.app.linear.mcp%3A${linearCapabilityId}`,
           enabled: false,
         },
       ],
+    );
+    await appService.setAppInstallation({
+      organizationId: isolatedOrganizationId,
+      appKey: "linear",
+      actorUserId: isolatedUserId,
+      installed: true,
+    });
+    const isolatedLinearConfiguration =
+      await appService.getEnvironmentAppConfiguration({
+        organizationId: isolatedOrganizationId,
+        environmentId: isolatedEnvironmentId,
+        appKey: "linear",
+      });
+    assert.deepEqual(isolatedLinearConfiguration.capabilities, []);
+    const isolatedCatalog = await appService.listAppsForOrganization({
+      organizationId: isolatedOrganizationId,
+      userId: isolatedUserId,
+      canManageOrganization: true,
+    });
+    assert.equal(
+      isolatedCatalog.apps.find((app) => app.key === "linear")
+        ?.capabilityCount,
+      0
     );
     await mcpControl.disableEnvironmentMcpServer({
       organizationId,
@@ -1298,7 +1360,7 @@ contractTest(
       organizationId,
       projectId,
       appKey: customServer.providerKey,
-      capabilityKey: "tool:find_component",
+      capabilityKey: `mcp:${mcpCapabilityId}`,
       actorUserId: userId,
       enabled: true,
       approvalMode: "ask",
@@ -1473,6 +1535,34 @@ contractTest(
       WHERE "id" = ${githubSync.connection.id}
     `;
     assert.equal(githubDisconnected[0]?.status, "disconnected");
+
+    await appService.disconnectEnvironmentAppConnection({
+      organizationId,
+      environmentId,
+      appKey: "atlassian",
+      connectionId: atlassianConnection.id,
+    });
+    const [disconnectedAtlassian] = await sql<
+      Array<{
+        connectionStatus: string;
+        serverStatus: string;
+        credentialStatus: string;
+      }>
+    >`
+      SELECT connection."status" AS "connectionStatus",
+             server."status" AS "serverStatus",
+             credential."status" AS "credentialStatus"
+      FROM "app_connections" connection
+      JOIN "mcp_servers" server ON server."id" = connection."id"
+      JOIN "mcp_credentials" credential
+        ON credential."id" = server."credential_id"
+      WHERE connection."id" = ${atlassianConnection.id}
+    `;
+    assert.deepEqual(disconnectedAtlassian, {
+      connectionStatus: "disconnected",
+      serverStatus: "disabled",
+      credentialStatus: "revoked",
+    });
 
     const encryptedRows = await sql<
       Array<{ encrypted_payload: string; status: string }>

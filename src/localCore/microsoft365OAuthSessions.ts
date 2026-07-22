@@ -36,6 +36,7 @@ interface ActiveSession {
   callbackPath: string;
   expiresAtMs: number;
   view: LocalCoreMcpOAuthSessionView;
+  callbackClaimed: boolean;
 }
 
 export class LocalCoreMicrosoft365OAuthSessionManager {
@@ -97,6 +98,7 @@ export class LocalCoreMicrosoft365OAuthSessionManager {
     active = {
       sessionId, clientId, packs, scopes, verifier, stateValue, callbackServer,
       callbackHost, callbackPath, expiresAtMs,
+      callbackClaimed: false,
       view: { sessionId, state: "awaiting_user", authorizationUrl: authorizationUrl.toString(), expiresAt: new Date(expiresAtMs).toISOString() },
     };
     this.#sessions.set(sessionId, active);
@@ -123,6 +125,8 @@ export class LocalCoreMicrosoft365OAuthSessionManager {
     if (method !== "GET" || host !== session.callbackHost || requestUrl === undefined) return { status: 400, message: "This App authorization callback is invalid." };
     const url = new URL(requestUrl, `http://${session.callbackHost}`);
     if (url.pathname !== session.callbackPath || url.searchParams.get("state") !== session.stateValue) return { status: 400, message: "This App authorization callback could not be verified." };
+    if (session.callbackClaimed) return { status: 409, message: "This App authorization callback has already been used." };
+    session.callbackClaimed = true;
     const code = url.searchParams.get("code");
     if (url.searchParams.has("error") || !code) {
       session.view = { ...session.view, state: "failed", error: url.searchParams.get("error") === "access_denied" ? "App authorization was cancelled." : "Microsoft did not authorize this connection." };
@@ -164,7 +168,7 @@ export class LocalCoreMicrosoft365OAuthSessionManager {
     }
   }
 
-  #expire() { for (const session of this.#sessions.values()) if (session.view.state === "awaiting_user" && this.#now() >= session.expiresAtMs) this.#expireSession(session); }
+  #expire() { for (const [sessionId, session] of this.#sessions) { if (this.#now() < session.expiresAtMs) continue; if (session.view.state === "awaiting_user") this.#expireSession(session); else this.#sessions.delete(sessionId); } }
   #expireSession(session: ActiveSession) { session.view = { sessionId: session.sessionId, state: "expired", expiresAt: session.view.expiresAt }; session.callbackServer.close(); }
 }
 

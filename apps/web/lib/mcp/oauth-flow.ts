@@ -4,7 +4,7 @@ import {
   assertPublicMcpResolvedAddresses,
   normalizeMcpResolutionHostname,
 } from "@kestrel/mcp-security";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Agent, fetch as undiciFetch } from "undici";
 import { z } from "zod";
 import { logAdminEvent } from "@/lib/admin/logs";
@@ -153,7 +153,7 @@ export async function completeEnvironmentMcpOauth(input: {
   expectedResource?: string;
   acceptedTokenTypes?: string[];
 }) {
-  const row = await knowledgeDb.query.mcpOauthAuthorizations.findFirst({
+  const pending = await knowledgeDb.query.mcpOauthAuthorizations.findFirst({
     where: (table, { and, eq }) =>
       and(
         eq(table.stateDigest, sha(input.state)),
@@ -163,15 +163,40 @@ export async function completeEnvironmentMcpOauth(input: {
         eq(table.status, "pending"),
       ),
   });
-  if (!row || row.expiresAt.getTime() <= Date.now())
+  if (!pending)
     throw new Error("MCP OAuth authorization is missing or expired.");
+  if (pending.expiresAt.getTime() <= Date.now()) {
+    await knowledgeDb
+      .update(schema.mcpOauthAuthorizations)
+      .set({ status: "expired", updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.mcpOauthAuthorizations.id, pending.id),
+          eq(schema.mcpOauthAuthorizations.status, "pending"),
+        ),
+      );
+    throw new Error("MCP OAuth authorization is missing or expired.");
+  }
   if (
     input.expectedResource &&
-    (!row.resource ||
-      new URL(row.resource).toString() !==
+    (!pending.resource ||
+      new URL(pending.resource).toString() !==
         new URL(input.expectedResource).toString())
   ) {
     throw new Error("MCP OAuth authorization belongs to another App.");
+  }
+  const [row] = await knowledgeDb
+    .update(schema.mcpOauthAuthorizations)
+    .set({ status: "failed", updatedAt: new Date() })
+    .where(
+      and(
+        eq(schema.mcpOauthAuthorizations.id, pending.id),
+        eq(schema.mcpOauthAuthorizations.status, "pending"),
+      ),
+    )
+    .returning();
+  if (!row) {
+    throw new Error("MCP OAuth authorization is missing or expired.");
   }
   const session = decryptMcpCredential({
     organizationId: row.organizationId,
@@ -321,11 +346,18 @@ async function persistCompletedOauth(input: {
         expiresAt: expiresAt ? new Date(expiresAt) : null,
       })
       .returning();
-    await tx
+    const [completed] = await tx
       .update(schema.mcpOauthAuthorizations)
       .set({ status: "completed", completedAt: now, updatedAt: now })
-      .where(eq(schema.mcpOauthAuthorizations.id, row.id));
-    if (!created) throw new Error("MCP OAuth credential creation failed.");
+      .where(
+        and(
+          eq(schema.mcpOauthAuthorizations.id, row.id),
+          eq(schema.mcpOauthAuthorizations.status, "failed"),
+        ),
+      )
+      .returning({ id: schema.mcpOauthAuthorizations.id });
+    if (!created || !completed)
+      throw new Error("MCP OAuth credential creation failed.");
     return created;
   });
   await logAdminEvent({

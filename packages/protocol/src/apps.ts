@@ -35,6 +35,7 @@ export type KestrelAppDependency = {
   role: string;
   appIds: KestrelAppId[];
   minimum: number;
+  requiredCapabilityPacks?: Partial<Record<KestrelAppId, string[]>>;
 };
 
 export type KestrelAppManifest = {
@@ -327,13 +328,27 @@ export const KESTREL_STANDARD_APP_MANIFESTS: readonly KestrelAppManifest[] = [
       },
     ],
     dependencies: [
-      { role: "Source control", appIds: [KESTREL_APP_IDS.GITHUB], minimum: 1 },
+      {
+        role: "Source control",
+        appIds: [KESTREL_APP_IDS.GITHUB],
+        minimum: 1,
+        requiredCapabilityPacks: {
+          [KESTREL_APP_IDS.GITHUB]: ["repositories"],
+        },
+      },
       {
         role: "Work tracking",
         appIds: [KESTREL_APP_IDS.LINEAR, KESTREL_APP_IDS.ATLASSIAN],
         minimum: 1,
       },
-      { role: "Deployment", appIds: [KESTREL_APP_IDS.VERCEL], minimum: 1 },
+      {
+        role: "Deployment",
+        appIds: [KESTREL_APP_IDS.VERCEL],
+        minimum: 1,
+        requiredCapabilityPacks: {
+          [KESTREL_APP_IDS.VERCEL]: ["deployments"],
+        },
+      },
     ],
     workflowInstructions:
       "Coordinate the selected work item through implementation, code review, and deployment. Keep identifiers and status consistent across the participating Apps, and ask before any action whose App capability requires approval.",
@@ -359,11 +374,18 @@ export const KESTREL_STANDARD_APP_MANIFESTS: readonly KestrelAppManifest[] = [
           KESTREL_APP_IDS.GOOGLE_WORKSPACE,
         ],
         minimum: 1,
+        requiredCapabilityPacks: {
+          [KESTREL_APP_IDS.MICROSOFT_365]: ["outlook"],
+          [KESTREL_APP_IDS.GOOGLE_WORKSPACE]: ["calendar"],
+        },
       },
       {
         role: "Shared knowledge",
         appIds: [KESTREL_APP_IDS.NOTION, KESTREL_APP_IDS.MICROSOFT_365],
         minimum: 1,
+        requiredCapabilityPacks: {
+          [KESTREL_APP_IDS.MICROSOFT_365]: ["sharepoint"],
+        },
       },
     ],
     workflowInstructions:
@@ -387,11 +409,18 @@ export const KESTREL_STANDARD_APP_MANIFESTS: readonly KestrelAppManifest[] = [
         role: "Team communication",
         appIds: [KESTREL_APP_IDS.SLACK, KESTREL_APP_IDS.MICROSOFT_365],
         minimum: 1,
+        requiredCapabilityPacks: {
+          [KESTREL_APP_IDS.MICROSOFT_365]: ["teams"],
+        },
       },
       {
         role: "Delivery system",
         appIds: [KESTREL_APP_IDS.GITHUB, KESTREL_APP_IDS.VERCEL],
         minimum: 1,
+        requiredCapabilityPacks: {
+          [KESTREL_APP_IDS.GITHUB]: ["repositories"],
+          [KESTREL_APP_IDS.VERCEL]: ["deployments", "operations"],
+        },
       },
     ],
     workflowInstructions:
@@ -416,6 +445,9 @@ export const KESTREL_STANDARD_APP_MANIFESTS: readonly KestrelAppManifest[] = [
         role: "Team communication",
         appIds: [KESTREL_APP_IDS.SLACK, KESTREL_APP_IDS.MICROSOFT_365],
         minimum: 1,
+        requiredCapabilityPacks: {
+          [KESTREL_APP_IDS.MICROSOFT_365]: ["teams"],
+        },
       },
       {
         role: "Work tracking",

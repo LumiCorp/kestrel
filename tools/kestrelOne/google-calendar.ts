@@ -281,6 +281,9 @@ async function invokeGoogleCalendar(
     context.kestrelOne?.executionTicket,
     "Environment execution ticket"
   );
+  const approvalConfirmed =
+    input.requiresApproval ||
+    context.kestrelOne?.appApprovalModes?.[input.toolName] === "ask";
   const response = await (context.fetchImpl ?? fetch)(
     new URL("/api/runtime/google-calendar/action", appUrl),
     {
@@ -288,7 +291,7 @@ async function invokeGoogleCalendar(
       headers: {
         authorization: `Bearer ${ticket}`,
         "content-type": "application/json",
-        ...(input.requiresApproval
+        ...(approvalConfirmed
           ? { "x-kestrel-runtime-approval": "confirmed" }
           : {}),
       },

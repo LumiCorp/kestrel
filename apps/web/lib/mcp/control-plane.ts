@@ -769,10 +769,7 @@ export async function setEnvironmentMcpCapabilityPolicy(input: {
           );
       }
     }
-    const appCapabilityKey = mcpAppCapabilityKey(
-      capability.kind,
-      capability.capabilityKey
-    );
+    const appCapabilityKey = mcpAppCapabilityKey(capability.id);
     await transaction
       .insert(schema.environmentAppCapabilityGrants)
       .values({
@@ -883,10 +880,7 @@ export async function reviewEnvironmentMcpSnapshot(input: {
         : [];
       const nextAppCapabilityKeys = new Set<string>();
       for (const capability of nextCapabilities) {
-        const appCapabilityKey = mcpAppCapabilityKey(
-          capability.kind,
-          capability.capabilityKey
-        );
+        const appCapabilityKey = mcpAppCapabilityKey(capability.id);
         nextAppCapabilityKeys.add(appCapabilityKey);
         const previous = previousCapabilities.find(
           (candidate) =>
@@ -953,6 +947,8 @@ export async function reviewEnvironmentMcpSnapshot(input: {
           .values({
             appKey,
             key: appCapabilityKey,
+            connectionId: input.serverId,
+            active: true,
             runtimeName: mcpAppRuntimeName(appKey, appCapabilityKey),
             displayName: capability.displayName ?? capability.capabilityKey,
             description:
@@ -968,6 +964,7 @@ export async function reviewEnvironmentMcpSnapshot(input: {
             defaultSettings: {},
             metadata: {
               mcpCapabilityId: capability.id,
+              mcpServerId: input.serverId,
               mcpKind: capability.kind,
               definitionDigest: digestCanonicalJson(capability.definition),
             },
@@ -977,6 +974,8 @@ export async function reviewEnvironmentMcpSnapshot(input: {
           .onConflictDoUpdate({
             target: [schema.appCapabilities.appKey, schema.appCapabilities.key],
             set: {
+              connectionId: input.serverId,
+              active: true,
               runtimeName: mcpAppRuntimeName(appKey, appCapabilityKey),
               displayName: capability.displayName ?? capability.capabilityKey,
               description:
@@ -986,12 +985,55 @@ export async function reviewEnvironmentMcpSnapshot(input: {
               accessMode: mcpAppAccessMode(capability.kind),
               metadata: {
                 mcpCapabilityId: capability.id,
+                mcpServerId: input.serverId,
                 mcpKind: capability.kind,
                 definitionDigest: digestCanonicalJson(capability.definition),
               },
               updatedAt: now,
             },
           });
+        if (previous) {
+          const previousAppCapabilityKey = mcpAppCapabilityKey(previous.id);
+          const projectPolicies =
+            await transaction.query.projectAppCapabilityPolicies.findMany({
+              where: (table, { and, eq }) =>
+                and(
+                  eq(table.appKey, appKey),
+                  eq(table.capabilityKey, previousAppCapabilityKey)
+                ),
+            });
+          for (const policy of projectPolicies) {
+            await transaction
+              .insert(schema.projectAppCapabilityPolicies)
+              .values({
+                projectId: policy.projectId,
+                appKey,
+                capabilityKey: appCapabilityKey,
+                enabled: policy.enabled,
+                approvalMode: policy.approvalMode,
+                loggingMode: policy.loggingMode,
+                rateLimitMode: policy.rateLimitMode,
+                settings: policy.settings,
+                createdAt: policy.createdAt,
+                updatedAt: now,
+              })
+              .onConflictDoUpdate({
+                target: [
+                  schema.projectAppCapabilityPolicies.projectId,
+                  schema.projectAppCapabilityPolicies.appKey,
+                  schema.projectAppCapabilityPolicies.capabilityKey,
+                ],
+                set: {
+                  enabled: policy.enabled,
+                  approvalMode: policy.approvalMode,
+                  loggingMode: policy.loggingMode,
+                  rateLimitMode: policy.rateLimitMode,
+                  settings: policy.settings,
+                  updatedAt: now,
+                },
+              });
+          }
+        }
         await transaction
           .insert(schema.environmentAppCapabilityGrants)
           .values({
@@ -1023,23 +1065,52 @@ export async function reviewEnvironmentMcpSnapshot(input: {
             },
           });
       }
-      if (appKey === providerKey) {
-        const existingAppCapabilities =
-          await transaction.query.appCapabilities.findMany({
-            where: (table, { eq: equals }) => equals(table.appKey, appKey),
-            columns: { key: true, appKey: true },
-          });
-        for (const stale of existingAppCapabilities) {
-          if (!nextAppCapabilityKeys.has(stale.key)) {
-            await transaction
-              .delete(schema.appCapabilities)
-              .where(
-                and(
-                  eq(schema.appCapabilities.appKey, stale.appKey),
-                  eq(schema.appCapabilities.key, stale.key)
+      const existingAppCapabilities =
+        await transaction.query.appCapabilities.findMany({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.appKey, appKey),
+              eq(table.connectionId, input.serverId)
+            ),
+          columns: { key: true, appKey: true },
+        });
+      for (const stale of existingAppCapabilities) {
+        if (!nextAppCapabilityKeys.has(stale.key)) {
+          await transaction
+            .update(schema.appCapabilities)
+            .set({ active: false, updatedAt: now })
+            .where(
+              and(
+                eq(schema.appCapabilities.appKey, stale.appKey),
+                eq(schema.appCapabilities.key, stale.key)
+              )
+            );
+          await transaction
+            .delete(schema.environmentAppCapabilityGrants)
+            .where(
+              and(
+                eq(
+                  schema.environmentAppCapabilityGrants.environmentId,
+                  input.environmentId
+                ),
+                eq(schema.environmentAppCapabilityGrants.appKey, stale.appKey),
+                eq(
+                  schema.environmentAppCapabilityGrants.capabilityKey,
+                  stale.key
                 )
-              );
-          }
+              )
+            );
+          await transaction
+            .delete(schema.projectAppCapabilityPolicies)
+            .where(
+              and(
+                eq(schema.projectAppCapabilityPolicies.appKey, stale.appKey),
+                eq(
+                  schema.projectAppCapabilityPolicies.capabilityKey,
+                  stale.key
+                )
+              )
+            );
         }
       }
       await transaction

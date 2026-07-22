@@ -13,6 +13,7 @@ interface ActiveSession {
   sessionId: string; clientId: string; scopes: string[]; verifier: string; stateValue: string;
   callbackServer: Server; callbackHost: string; callbackPath: string; expiresAtMs: number;
   view: LocalCoreMcpOAuthSessionView;
+  callbackClaimed: boolean;
 }
 
 export class LocalCoreGoogleWorkspaceOAuthSessionManager {
@@ -51,7 +52,7 @@ export class LocalCoreGoogleWorkspaceOAuthSessionManager {
     const expiresAtMs = this.#now() + 10 * 60 * 1000;
     const authorizationUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     authorizationUrl.search = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri, scope: scopes.join(" "), state: stateValue, code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256", access_type: "offline", prompt: "consent" }).toString();
-    active = { sessionId, clientId, scopes, verifier, stateValue, callbackServer, callbackHost, callbackPath, expiresAtMs, view: { sessionId, state: "awaiting_user", authorizationUrl: authorizationUrl.toString(), expiresAt: new Date(expiresAtMs).toISOString() } };
+    active = { sessionId, clientId, scopes, verifier, stateValue, callbackServer, callbackHost, callbackPath, expiresAtMs, callbackClaimed: false, view: { sessionId, state: "awaiting_user", authorizationUrl: authorizationUrl.toString(), expiresAt: new Date(expiresAtMs).toISOString() } };
     this.#sessions.set(sessionId, active);
     return { ...active.view };
   }
@@ -64,6 +65,8 @@ export class LocalCoreGoogleWorkspaceOAuthSessionManager {
     if (method !== "GET" || host !== session.callbackHost || !requestUrl) return { status: 400, message: "This App authorization callback is invalid." };
     const url = new URL(requestUrl, `http://${session.callbackHost}`);
     if (url.pathname !== session.callbackPath || url.searchParams.get("state") !== session.stateValue) return { status: 400, message: "This App authorization callback could not be verified." };
+    if (session.callbackClaimed) return { status: 409, message: "This App authorization callback has already been used." };
+    session.callbackClaimed = true;
     const code = url.searchParams.get("code");
     if (url.searchParams.has("error") || !code) { session.view = { ...session.view, state: "failed", error: url.searchParams.get("error") === "access_denied" ? "App authorization was cancelled." : "Google did not authorize this connection." }; session.callbackServer.close(); return { status: 400, message: session.view.error! }; }
     try {
@@ -83,7 +86,7 @@ export class LocalCoreGoogleWorkspaceOAuthSessionManager {
     } catch { session.view = { ...session.view, state: "failed", error: "Kestrel could not authorize this Google Workspace connection." }; session.callbackServer.close(); return { status: 500, message: session.view.error }; }
   }
 
-  #expire() { for (const session of this.#sessions.values()) if (session.view.state === "awaiting_user" && this.#now() >= session.expiresAtMs) this.#expireSession(session); }
+  #expire() { for (const [sessionId, session] of this.#sessions) { if (this.#now() < session.expiresAtMs) continue; if (session.view.state === "awaiting_user") this.#expireSession(session); else this.#sessions.delete(sessionId); } }
   #expireSession(session: ActiveSession) { session.view = { sessionId: session.sessionId, state: "expired", expiresAt: session.view.expiresAt }; session.callbackServer.close(); }
 }
 

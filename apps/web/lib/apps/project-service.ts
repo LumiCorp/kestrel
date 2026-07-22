@@ -100,7 +100,10 @@ const WORKFLOW_APP_IDS = new Set<string>([
   KESTREL_APP_IDS.CUSTOMER_ESCALATION,
 ]);
 
-function appConfigurationIsReady(configuration: ProjectAppConfiguration) {
+function appConfigurationIsReady(
+  configuration: ProjectAppConfiguration,
+  requiredCapabilityPacks?: readonly string[],
+) {
   if (!configuration.enabled) return false;
   if (
     configuration.app.connectionRequirement === "required" &&
@@ -112,7 +115,11 @@ function appConfigurationIsReady(configuration: ProjectAppConfiguration) {
     return false;
   }
   return configuration.capabilities.some(
-    (capability) => capability.enabled && Boolean(capability.runtimeName),
+    (capability) =>
+      capability.enabled &&
+      Boolean(capability.runtimeName) &&
+      (!requiredCapabilityPacks?.length ||
+        requiredCapabilityPacks.includes(capability.groupKey)),
   );
 }
 
@@ -133,7 +140,12 @@ function dependencyStatuses(input: {
       return {
         appKey,
         displayName: configuration?.app.displayName ?? manifest?.name ?? appKey,
-        ready: configuration ? appConfigurationIsReady(configuration) : false,
+        ready: configuration
+          ? appConfigurationIsReady(
+              configuration,
+              dependency.requiredCapabilityPacks?.[appKey],
+            )
+          : false,
       };
     });
     return {
@@ -355,6 +367,10 @@ export async function listProjectAppConfigurations(input: {
           },
         ];
       });
+      const selectedConnection = selectEffectiveConnection({
+        connectionModel: definition.connectionModel,
+        connections: attached,
+      });
       return {
         projectId: input.projectId,
         environmentId: binding.environmentId,
@@ -378,7 +394,13 @@ export async function listProjectAppConfigurations(input: {
         ),
         attachedConnections: attached,
         capabilities: capabilities
-          .filter((capability) => capability.appKey === definition.key)
+          .filter(
+            (capability) =>
+              capability.appKey === definition.key &&
+              capability.active &&
+              (capability.connectionId === null ||
+                capability.connectionId === selectedConnection?.id),
+          )
           .map((capability) => {
             const grant = grantByCapability.get(
               `${definition.key}:${capability.key}`,
@@ -789,6 +811,42 @@ export async function saveProjectAppCapabilityPolicy(input: {
       "This capability is not available in the Project Environment.",
     );
   }
+  const capability = await knowledgeDb.query.appCapabilities.findFirst({
+    where: (table, { and: all, eq: equals }) =>
+      all(
+        equals(table.appKey, input.appKey),
+        equals(table.key, input.capabilityKey),
+      ),
+    columns: { connectionId: true, active: true },
+  });
+  if (!capability?.active) {
+    throw new ProjectAppError(
+      "APP_CAPABILITY_NOT_AVAILABLE",
+      "This capability is not available in the Project Environment.",
+    );
+  }
+  if (capability.connectionId) {
+    const configurations = await listProjectAppConfigurations({
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      userId: input.actorUserId,
+    });
+    const configuration = configurations.find(
+      (candidate) => candidate.app.key === input.appKey,
+    );
+    const selectedConnection = configuration
+      ? selectEffectiveConnection({
+          connectionModel: configuration.app.connectionModel,
+          connections: configuration.attachedConnections,
+        })
+      : null;
+    if (selectedConnection?.id !== capability.connectionId) {
+      throw new ProjectAppError(
+        "APP_CAPABILITY_NOT_AVAILABLE",
+        "This capability does not belong to the selected Project connection.",
+      );
+    }
+  }
   const approvalMode = input.enabled
     ? input.appKey === "email" && input.capabilityKey === "send"
       ? "ask"
@@ -944,6 +1002,13 @@ export async function resolveEffectiveProjectAppAccess(input: {
         )
       : null;
   const effectiveCapabilities = capabilities.flatMap((capability) => {
+    if (
+      !capability.active ||
+      (capability.connectionId !== null &&
+        capability.connectionId !== selectedConnection?.id)
+    ) {
+      return [];
+    }
     const grant = grantByKey.get(capability.key);
     const policy = policyByKey.get(capability.key);
     if (

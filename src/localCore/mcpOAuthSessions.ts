@@ -110,6 +110,7 @@ interface ActiveOAuthSession {
   callbackPath: string;
   view: LocalCoreMcpOAuthSessionView;
   expiresAtMs: number;
+  callbackClaimed: boolean;
 }
 
 export class LocalCoreMcpOAuthSessionManager {
@@ -219,6 +220,7 @@ export class LocalCoreMcpOAuthSessionManager {
         expiresAt: new Date(expiresAtMs).toISOString(),
       },
       expiresAtMs,
+      callbackClaimed: false,
     };
     this.#sessions.set(sessionId, active);
     try {
@@ -311,6 +313,13 @@ export class LocalCoreMcpOAuthSessionManager {
         message: "This App authorization callback could not be verified.",
       };
     }
+    if (session.callbackClaimed) {
+      return {
+        status: 409,
+        message: "This App authorization callback has already been used.",
+      };
+    }
+    session.callbackClaimed = true;
     const providerError = url.searchParams.get("error");
     const authorizationCode = url.searchParams.get("code");
     if (
@@ -370,12 +379,12 @@ export class LocalCoreMcpOAuthSessionManager {
   }
 
   #expireSessions(): void {
-    for (const session of this.#sessions.values()) {
-      if (
-        this.#now() >= session.expiresAtMs &&
-        session.view.state === "awaiting_user"
-      ) {
+    for (const [sessionId, session] of this.#sessions) {
+      if (this.#now() < session.expiresAtMs) continue;
+      if (session.view.state === "awaiting_user") {
         this.#expireSession(session);
+      } else {
+        this.#sessions.delete(sessionId);
       }
     }
   }

@@ -161,6 +161,7 @@ contractTest(
         appId: "github",
         name: "GitHub",
         enabled: true,
+        capabilityPacks: ["repositories"],
         tools: [{ name: "pull_request_read" }],
       },
       {
@@ -168,6 +169,7 @@ contractTest(
         appId: "linear",
         name: "Linear",
         enabled: true,
+        capabilityPacks: ["issues"],
         tools: [{ name: "create_issue" }],
       },
       {
@@ -175,6 +177,7 @@ contractTest(
         appId: "vercel",
         name: "Vercel",
         enabled: true,
+        capabilityPacks: ["deployments"],
         tools: [{ name: "list_deployments" }],
       },
     ];
@@ -224,6 +227,22 @@ contractTest(
         .filter((dependency) => dependency.missing)
         .map((dependency) => dependency.role),
       ["Work tracking"],
+    );
+
+    const [wrongDeploymentPack] = resolveDesktopWorkflowSelections(
+      selection,
+      connections.map((connection) =>
+        connection.appId === "vercel"
+          ? { ...connection, capabilityPacks: ["projects"] }
+          : connection,
+      ),
+    );
+    assert.equal(wrongDeploymentPack?.ready, false);
+    assert.deepEqual(
+      wrongDeploymentPack?.dependencies
+        .filter((dependency) => dependency.missing)
+        .map((dependency) => dependency.role),
+      ["Deployment"],
     );
   },
 );

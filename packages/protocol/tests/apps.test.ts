@@ -4,6 +4,7 @@ import {
   getKestrelStandardAppManifest,
   KESTREL_APP_IDS,
   KESTREL_STANDARD_APP_MANIFESTS,
+  type KestrelAppId,
 } from "../src/apps.js";
 
 test("standard App manifests contain only product-facing concepts", () => {
@@ -78,6 +79,25 @@ test("workflow Apps declare their missing-dependency roles in App terms", () => 
         ),
     ),
   );
+  const manifestsById = new Map(
+    KESTREL_STANDARD_APP_MANIFESTS.map((app) => [app.id, app]),
+  );
+  for (const workflow of workflows) {
+    for (const dependency of workflow.dependencies ?? []) {
+      for (const [appId, requiredPacks] of Object.entries(
+        dependency.requiredCapabilityPacks ?? {},
+      )) {
+        assert.ok(dependency.appIds.includes(appId as KestrelAppId));
+        const publishedPacks = new Set(
+          manifestsById
+            .get(appId as KestrelAppId)
+            ?.capabilityPacks.map((pack) => pack.key),
+        );
+        assert.ok(requiredPacks?.length);
+        assert.ok(requiredPacks?.every((pack) => publishedPacks.has(pack)));
+      }
+    }
+  }
   assert.ok(
     workflows.every(
       (app) =>

@@ -48,3 +48,34 @@ contractTest("runtime.hermetic", "Google Workspace Calendar refresh and API call
   assert.equal(result.events.length, 1);
   assert.equal(requests.some((url) => url.includes("refresh-secret")), false);
 });
+
+contractTest("runtime.hermetic", "Google Workspace OAuth exchanges a callback only once", async () => {
+  let releaseTokenExchange!: () => void;
+  const tokenExchangeReleased = new Promise<void>((resolve) => { releaseTokenExchange = resolve; });
+  let markTokenExchangeStarted!: () => void;
+  const tokenExchangeStarted = new Promise<void>((resolve) => { markTokenExchangeStarted = resolve; });
+  const scopes = "openid email profile https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy";
+  const manager = new LocalCoreGoogleWorkspaceOAuthSessionManager({
+    credentialStore: new MemoryLocalCoreCredentialStore(),
+    fetchImpl: (async (input: string | URL | Request) => {
+      if (String(input).includes("oauth2.googleapis.com/token")) {
+        markTokenExchangeStarted();
+        await tokenExchangeReleased;
+        return Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 3600, scope: scopes });
+      }
+      return Response.json({ sub: "user-1" });
+    }) as typeof fetch,
+  });
+  try {
+    const session = await manager.start({ clientId: "google-client", packs: ["calendar"] });
+    const authorization = new URL(session.authorizationUrl!);
+    const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+    callback.searchParams.set("state", authorization.searchParams.get("state")!);
+    callback.searchParams.set("code", "one-use-code");
+    const firstResponse = fetch(callback);
+    await tokenExchangeStarted;
+    assert.equal((await fetch(callback)).status, 409);
+    releaseTokenExchange();
+    assert.equal((await firstResponse).status, 200);
+  } finally { await manager.close(); }
+});

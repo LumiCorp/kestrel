@@ -36,6 +36,7 @@ function appConfiguration(input: {
   name: string;
   enabled?: boolean;
   executable?: boolean;
+  groupKey?: string;
 }): ProjectAppConfiguration {
   return {
     projectId: "project-1",
@@ -58,7 +59,7 @@ function appConfiguration(input: {
         runtimeName: input.executable === false ? null : `${input.appKey}.tool`,
         displayName: "Coordinate",
         description: "Coordinate work.",
-        groupKey: "general",
+        groupKey: input.groupKey ?? "general",
         enabled: true,
         approvalMode: "auto",
         environmentEnabled: true,
@@ -133,9 +134,9 @@ contractTest("web.hermetic", "workflow readiness requires every dependency role 
       name: "Software delivery",
       executable: false,
     }),
-    appConfiguration({ appKey: KESTREL_APP_IDS.GITHUB, name: "GitHub" }),
+    appConfiguration({ appKey: KESTREL_APP_IDS.GITHUB, name: "GitHub", groupKey: "repositories" }),
     appConfiguration({ appKey: KESTREL_APP_IDS.ATLASSIAN, name: "Atlassian" }),
-    appConfiguration({ appKey: KESTREL_APP_IDS.VERCEL, name: "Vercel" }),
+    appConfiguration({ appKey: KESTREL_APP_IDS.VERCEL, name: "Vercel", groupKey: "deployments" }),
   ]);
   const workflow = configurations.find(
     (configuration) =>
@@ -176,4 +177,21 @@ contractTest("web.hermetic", "workflow context is absent when a required App rol
   );
   assert.equal(workflow?.dependencyReady, false);
   assert.equal(formatActiveProjectWorkflowContext(configurations), null);
+});
+
+contractTest("web.hermetic", "workflow readiness requires the capability pack that fulfills each App role", () => {
+  const configurations = addProjectAppDependencyStatuses([
+    appConfiguration({ appKey: KESTREL_APP_IDS.SOFTWARE_DELIVERY, name: "Software delivery", executable: false }),
+    appConfiguration({ appKey: KESTREL_APP_IDS.GITHUB, name: "GitHub", groupKey: "repositories" }),
+    appConfiguration({ appKey: KESTREL_APP_IDS.LINEAR, name: "Linear" }),
+    appConfiguration({ appKey: KESTREL_APP_IDS.VERCEL, name: "Vercel", groupKey: "projects" }),
+  ]);
+  const workflow = configurations.find(
+    (configuration) => configuration.app.key === KESTREL_APP_IDS.SOFTWARE_DELIVERY,
+  );
+  assert.equal(workflow?.dependencyReady, false);
+  assert.deepEqual(
+    workflow?.dependencies.filter((dependency) => !dependency.satisfied).map((dependency) => dependency.role),
+    ["Deployment"],
+  );
 });

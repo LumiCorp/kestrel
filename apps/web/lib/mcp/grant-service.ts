@@ -71,7 +71,7 @@ export async function issueHostedMcpRunContext(input: {
     if (!access || access.connectionId !== row.serverId) return [];
     const capability = access.capabilities.find(
       (candidate) =>
-        candidate.key === mcpAppCapabilityKey(row.kind, row.capabilityKey)
+        candidate.key === mcpAppCapabilityKey(row.id)
     );
     return capability && capability.approvalMode !== "deny"
       ? [

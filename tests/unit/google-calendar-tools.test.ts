@@ -76,3 +76,30 @@ contractTest("runtime.hermetic", "Calendar tool handler uses the execution ticke
   assert.equal(body.operation, "events.create");
   assert.equal("notifyAttendees" in body, false);
 });
+
+contractTest("runtime.hermetic", "Google Calendar reads forward a completed App approval when configured to ask", async () => {
+  let capturedHeaders = new Headers();
+  const handler = kestrelOneGoogleCalendarListEventsTool.createHandler({
+    kestrelOne: {
+      appUrl: "https://app.example.test",
+      executionTicket: "signed-ticket",
+      appApprovalModes: {
+        "kestrel_one.google_calendar_list_events": "ask",
+      },
+    },
+    fetchImpl: async (_url, init) => {
+      capturedHeaders = new Headers(init?.headers);
+      return Response.json({ operation: "events.list", result: {} });
+    },
+  });
+
+  await handler({
+    timeMin: "2026-07-14T00:00:00Z",
+    timeMax: "2026-07-15T00:00:00Z",
+  });
+
+  assert.equal(
+    capturedHeaders.get("x-kestrel-runtime-approval"),
+    "confirmed"
+  );
+});
