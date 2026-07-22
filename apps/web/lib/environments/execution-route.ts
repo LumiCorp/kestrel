@@ -30,6 +30,15 @@ export type EnvironmentActivationProgress = {
   status: "pending" | "ready" | "failed";
 };
 
+export class EnvironmentActivationError extends Error {
+  readonly code = "ENVIRONMENT_ACTIVATION_TIMEOUT";
+
+  constructor() {
+    super("Environment activation timed out.");
+    this.name = "EnvironmentActivationError";
+  }
+}
+
 const ROUTE_CAPABILITIES = [
   "profile.read",
   "run.stream",
@@ -363,7 +372,7 @@ async function waitForExecutionResources(input: {
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error("Environment activation timed out.");
+  throw new EnvironmentActivationError();
 }
 
 export async function updateEnvironmentExecutionStatus(input: {

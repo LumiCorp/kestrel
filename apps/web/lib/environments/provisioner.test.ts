@@ -334,6 +334,63 @@ contractTest("web.hermetic", "Environment updates preserve Workspaces, update in
   assert.ok(workspaceUpdate?.serviceTokenHash);
 });
 
+contractTest("web.hermetic", "Environment updates recover an incompatible stopped runtime from a pre-destructive snapshot", async () => {
+  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "workspace-id",
+      flyMachineId: "workspace-machine-id",
+      flyVolumeId: "workspace-volume-id",
+    },
+  ];
+  provider.createVolumeSnapshot = async (input) => {
+    calls.push(`provider:snapshot:${input.volumeId}`);
+    return { id: "pre-destructive-snapshot", state: "created" };
+  };
+  provider.updateMachineImage = async (input) => {
+    calls.push(`provider:image:${input.machineId}`);
+    return { id: input.machineId, state: "started", region: "iad" };
+  };
+  const backupInputs: Array<{
+    preDestructiveSnapshot?: { id: string; state: string } | undefined;
+  }> = [];
+  const provisioner = createProvisioner(
+    repository,
+    provider,
+    async (input) => {
+      backupInputs.push(input);
+      calls.push(`backup:${input.workspaceId}`);
+      if (backupInputs.length === 1) {
+        throw Object.assign(new Error("Environment activation timed out."), {
+          code: "ENVIRONMENT_ACTIVATION_TIMEOUT",
+        });
+      }
+    }
+  );
+
+  assert.equal(await provisioner.process("operation-id"), "processed");
+  assert.deepEqual(backupInputs[1]?.preDestructiveSnapshot, {
+    id: "pre-destructive-snapshot",
+    state: "created",
+  });
+  assert.deepEqual(calls.slice(0, 9), [
+    "operation:stage:environment.update.backing_up",
+    "backup:workspace-id",
+    "provider:snapshot:workspace-volume-id",
+    "workspace:starting",
+    "provider:image:workspace-machine-id",
+    "provider:health",
+    "workspace:rebuilt",
+    "backup:workspace-id",
+    "operation:stage:environment.update.gateway",
+  ]);
+});
+
 contractTest("web.hermetic", "Workspace provisioning persists provider resources only after readiness", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.provision",
