@@ -14,6 +14,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { ProjectApps } from "@/components/projects/project-apps";
+import { ProjectSkills } from "@/components/projects/project-skills";
 import {
   SettingsRow,
   SettingsRows,
@@ -331,6 +332,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
             <TabsTrigger value="context">Context</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
             <TabsTrigger value="apps">Apps</TabsTrigger>
+            <TabsTrigger value="skills">Skills</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
           <div className="flex gap-2">
@@ -605,6 +607,10 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
 
         <TabsContent value="apps">
           <ProjectApps canEdit={canEdit} projectId={initial.project.id} />
+        </TabsContent>
+
+        <TabsContent value="skills">
+          <ProjectSkills canEdit={canEdit} projectId={initial.project.id} />
         </TabsContent>
 
         <TabsContent value="activity">

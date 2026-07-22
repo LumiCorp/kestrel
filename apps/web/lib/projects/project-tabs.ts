@@ -3,6 +3,7 @@ export const PROJECT_TABS = [
   "context",
   "members",
   "apps",
+  "skills",
   "activity",
 ] as const;
 
