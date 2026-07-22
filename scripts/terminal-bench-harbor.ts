@@ -194,6 +194,13 @@ export async function runTerminalBenchHarbor(argv: string[], deps: RuntimeDeps):
   }
   const providerWarnings = benchmarkProviderWarnings(initialEnv);
   const env: NodeJS.ProcessEnv = benchmarkProviderEnv(initialEnv);
+  const selectedProfile = readSelectedBenchmarkProfile(env);
+  if (selectedProfile !== undefined) {
+    env.KESTREL_BENCHMARK_PROFILE_JSON_BASE64 = Buffer.from(
+      JSON.stringify({ profiles: [selectedProfile] }),
+      "utf8",
+    ).toString("base64");
+  }
   for (const warning of providerWarnings) {
     deps.stderr.write(`[bench:terminal:harbor] ${warning}\n`);
   }
@@ -796,6 +803,7 @@ function buildAgentEnvArgs(env: NodeJS.ProcessEnv): string[] {
     "KESTREL_BENCHMARK_CREDENTIAL_FINGERPRINT",
     "KESTREL_BENCHMARK_PROFILE_FILE",
     "KESTREL_BENCHMARK_PROFILE_ID",
+    "KESTREL_BENCHMARK_PROFILE_JSON_BASE64",
     "KCHAT_MODEL_TIMEOUT_MS",
     "KCHAT_MODEL_RETRY_COUNT",
     "KESTREL_TBENCH_CLI_COMMAND_TIMEOUT_SEC",

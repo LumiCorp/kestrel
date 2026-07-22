@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   createPlan,
   findNewEfficiencyResultCandidates,
+  isCollectedEfficiencyResultPath,
   parseExperimentSpec,
 } from "../../scripts/harness-efficiency.js";
 import { contractTest } from "../helpers/contract-test.js";
@@ -37,6 +38,12 @@ contractTest("runtime.hermetic", "efficiency plan validates strict profiles and 
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+contractTest("runtime.hermetic", "efficiency comparison reads only collector-owned result artifacts", () => {
+  assert.equal(isCollectedEfficiencyResultPath("/results/baseline/pair/result-1.json"), true);
+  assert.equal(isCollectedEfficiencyResultPath("/results/baseline/raw/harness-efficiency-result.json"), false);
+  assert.equal(isCollectedEfficiencyResultPath("/results/baseline/jobs/result.v2.json"), false);
 });
 
 contractTest("runtime.hermetic", "efficiency spec rejects unknown fields", () => {

@@ -149,6 +149,31 @@ contractTest("runtime.hermetic", "terminal bench harbor dry-run does not require
   assert.equal(stderr.join(""), "");
 });
 
+contractTest("runtime.hermetic", "terminal bench harbor transports the selected profile into the task container", async () => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-profile-"));
+  try {
+    const profileFile = path.join(temporary, "profiles.json");
+    writeFileSync(profileFile, JSON.stringify({ profiles: [{ id: "candidate", harnessEconomics: { version: 1 } }] }));
+    const stdout: string[] = [];
+    const code = await runTerminalBenchHarbor(["fix-git", "--dry-run"], {
+      spawn: (() => { throw new Error("unexpected spawn"); }) as never,
+      env: {
+        OPENROUTER_API_KEY: "sk-test",
+        KESTREL_BENCHMARK_PROFILE_FILE: profileFile,
+        KESTREL_BENCHMARK_PROFILE_ID: "candidate",
+      },
+      cwd: process.cwd(),
+      stdout: { write: (chunk: string) => { stdout.push(chunk); return true; } },
+      stderr: { write: () => true },
+    });
+
+    assert.equal(code, 0);
+    assert.match(stdout.join(""), /KESTREL_BENCHMARK_PROFILE_JSON_BASE64=/u);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 contractTest("runtime.hermetic", "terminal bench harbor warns when non-OpenRouter provider keys are present with OpenRouter", async () => {
   const stderr: string[] = [];
   const code = await runTerminalBenchHarbor(["cobol-modernization", "--dry-run"], {

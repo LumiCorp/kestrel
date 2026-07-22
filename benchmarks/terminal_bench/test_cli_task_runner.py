@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import sys
 import tempfile
 import unittest
@@ -39,6 +41,7 @@ from .cli_task_runner import (
 from .job_input import (
     TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS,
     assert_terminal_bench_job_input_contract,
+    build_terminal_bench_profile,
     terminal_bench_job_input_contract_hash,
 )
 from .provider_config import (
@@ -103,6 +106,22 @@ class CliTaskRunnerTest(unittest.TestCase):
                 "exec_command",
             ],
         )
+
+    def test_transported_profile_does_not_require_host_file_inside_container(self) -> None:
+        payload = {"profiles": [{"id": "candidate", "label": "Candidate"}]}
+        encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "KESTREL_BENCHMARK_PROFILE_FILE": "/host/path/not-mounted.json",
+                "KESTREL_BENCHMARK_PROFILE_ID": "candidate",
+                "KESTREL_BENCHMARK_PROFILE_JSON_BASE64": encoded,
+            },
+            clear=False,
+        ):
+            profile = build_terminal_bench_profile()
+
+        self.assertEqual(profile, {"id": "candidate", "label": "Candidate"})
 
     def test_job_input_emits_structured_terminal_bench_context(self) -> None:
         job_input = build_job_input("Solve it.", "sample-task")

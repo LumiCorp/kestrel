@@ -251,7 +251,7 @@ function loadResults(root: string): HarnessEfficiencyResultV2[] {
   if (!existsSync(root)) throw new Error(`Efficiency results directory does not exist: ${root}`);
   const results: HarnessEfficiencyResultV2[] = [];
   for (const file of listFiles(root)) {
-    if (!file.endsWith(".json")) continue;
+    if (!isCollectedEfficiencyResultPath(file)) continue;
     try {
       const parsed = JSON.parse(readFileSync(file, "utf8")) as { schema?: unknown };
       if (parsed.schema === "kestrel.harness-efficiency-result/v2") results.push(parseHarnessEfficiencyResultV2(parsed));
@@ -261,6 +261,10 @@ function loadResults(root: string): HarnessEfficiencyResultV2[] {
   }
   if (results.length === 0) throw new Error(`No v2 efficiency results found under ${root}.`);
   return results;
+}
+
+export function isCollectedEfficiencyResultPath(file: string): boolean {
+  return /^result-[1-9][0-9]*\.json$/u.test(path.basename(file));
 }
 
 function copyNewResults(
