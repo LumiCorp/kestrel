@@ -430,6 +430,29 @@ function phaseScopedEconomicsPolicy(mode: "observe" | "enforce") {
       modelContextMaxTokens: 20_000,
       allowedFamiliesByPhase: { "agent.loop": ["filesystem"] },
     },
+    cache: { mode: "provider_default" as const },
+  };
+}
+
+function phaseScopedEconomicsControl(mode: "observe" | "enforce") {
+  return {
+    version: 1 as const,
+    policy: phaseScopedEconomicsPolicy(mode),
+    modelProfiles: [{
+      version: 1 as const,
+      profileId: "test-provider:test-model:v1",
+      provider: "test-provider",
+      model: "test-model",
+      contextWindowTokens: 100_000,
+      maxOutputTokens: 8_000,
+      counting: {
+        counter: "tiktoken:o200k_base",
+        counterVersion: "1.0.21",
+        method: "model_tokenizer" as const,
+        confidence: "model_compatible" as const,
+      },
+      cache: { behavior: "none" as const },
+    }],
   };
 }
 
@@ -1883,7 +1906,7 @@ contractTest("runtime.hermetic", "agent loop observes phase-scoped tool exposure
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   ctx.event.payload.runtimeAssembly = {
-    economicsPolicy: phaseScopedEconomicsPolicy("observe"),
+    harnessEconomics: phaseScopedEconomicsControl("observe"),
   };
   await buildStep({
     tools: [READ_TEXT_TOOL, SEARCH_TEXT_TOOL],
@@ -1933,7 +1956,7 @@ contractTest("runtime.hermetic", "agent loop enforces phase-scoped tool exposure
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   ctx.event.payload.runtimeAssembly = {
-    economicsPolicy: phaseScopedEconomicsPolicy("enforce"),
+    harnessEconomics: phaseScopedEconomicsControl("enforce"),
   };
   await buildStep({
     tools: [READ_TEXT_TOOL, SEARCH_TEXT_TOOL],
@@ -2029,6 +2052,24 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
             blockers: [],
             nextActions: [],
             coveredItemIds: [],
+          },
+        } as ModelResponse<unknown>;
+      }
+      if (request.metadata?.phase === "agent.compaction.verify") {
+        return {
+          output: {
+            version: 1,
+            sufficient: true,
+            categories: {
+              activeTask: true,
+              decisions: true,
+              constraints: true,
+              evidence: true,
+              fileState: true,
+              blockers: true,
+              nextActions: true,
+            },
+            reason: "All required categories remain available.",
           },
         } as ModelResponse<unknown>;
       }

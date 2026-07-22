@@ -11,9 +11,9 @@ import {
 export type HarnessEfficiencyLane = "swe_verified" | "terminal_bench";
 export type HarnessEfficiencyAcceptance = "accepted" | "rejected" | "not_evaluated";
 
-export interface HarnessEfficiencyResultV1 {
-  version: 1;
-  schema: "kestrel.harness-efficiency-result/v1";
+export interface HarnessEfficiencyResultV2 {
+  version: 2;
+  schema: "kestrel.harness-efficiency-result/v2";
   resultId: string;
   payloadHash: string;
   pairId: string;
@@ -60,22 +60,24 @@ export interface HarnessEfficiencyResultV1 {
   }>;
 }
 
-export interface HarnessEfficiencyLedgerV1 {
-  version: 1;
-  schema: "kestrel.harness-efficiency-ledger/v1";
+export interface HarnessEfficiencyLedgerV2 {
+  version: 2;
+  schema: "kestrel.harness-efficiency-ledger/v2";
   payloadHash: string;
   sourceReplayHash: string;
-  runId: string;
-  sessionId: string;
+  rootRunId: string;
+  runIds: string[];
   recordedAt: string;
-  events: RunEvent[];
+  economicsControlHash: string;
+  economicsControl: unknown;
+  entries: Array<{ sequence: number; runId: string; event: RunEvent }>;
 }
 
-export type HarnessEfficiencyResultDraftV1 = Omit<HarnessEfficiencyResultV1, "version" | "schema" | "resultId" | "payloadHash">;
+export type HarnessEfficiencyResultDraftV2 = Omit<HarnessEfficiencyResultV2, "version" | "schema" | "resultId" | "payloadHash">;
 
-export interface HarnessEfficiencyPairedComparisonV1 {
-  version: 1;
-  schema: "kestrel.harness-efficiency-paired-comparison/v1";
+export interface HarnessEfficiencyPairedComparisonV2 {
+  version: 2;
+  schema: "kestrel.harness-efficiency-paired-comparison/v2";
   comparisonId: string;
   payloadHash: string;
   recordedAt: string;
@@ -83,16 +85,16 @@ export interface HarnessEfficiencyPairedComparisonV1 {
   baselineResultIds: string[];
   candidateResultIds: string[];
   metrics: {
-    baseline: HarnessEfficiencyAggregateV1;
-    candidate: HarnessEfficiencyAggregateV1;
+    baseline: HarnessEfficiencyAggregateV2;
+    candidate: HarnessEfficiencyAggregateV2;
   };
   newFailureClasses: string[];
   regressedPairIds: string[];
-  promotable: boolean;
+  passed: boolean;
   reasons: string[];
 }
 
-export interface HarnessEfficiencyAggregateV1 {
+export interface HarnessEfficiencyAggregateV2 {
   attempts: number;
   accepted: number;
   acceptanceRate: number;
@@ -104,13 +106,13 @@ export interface HarnessEfficiencyAggregateV1 {
   latencyP95Ms: number | null;
 }
 
-export function createHarnessEfficiencyResultV1(
-  draft: HarnessEfficiencyResultDraftV1,
+export function createHarnessEfficiencyResultV2(
+  draft: HarnessEfficiencyResultDraftV2,
   resultId: string = randomUUID(),
-): HarnessEfficiencyResultV1 {
+): HarnessEfficiencyResultV2 {
   const unhashed = {
-    version: 1 as const,
-    schema: "kestrel.harness-efficiency-result/v1" as const,
+    version: 2 as const,
+    schema: "kestrel.harness-efficiency-result/v2" as const,
     resultId,
     ...draft,
   };
@@ -118,7 +120,7 @@ export function createHarnessEfficiencyResultV1(
   return { ...unhashed, payloadHash: hashCanonical(unhashed) };
 }
 
-export function parseHarnessEfficiencyResultV1(value: unknown): HarnessEfficiencyResultV1 {
+export function parseHarnessEfficiencyResultV2(value: unknown): HarnessEfficiencyResultV2 {
   const result = requireRecord(value, "result");
   rejectUnknown(result, new Set(["version", "schema", "resultId", "payloadHash", "pairId", "lane", "dataset", "taskId", "attemptId", "trial", "recordedAt", "durationMs", "frozen", "runtime", "outcome", "economics", "artifacts"]), "result");
   const payloadHash = requireHash(result.payloadHash, "payloadHash");
@@ -126,32 +128,35 @@ export function parseHarnessEfficiencyResultV1(value: unknown): HarnessEfficienc
   delete unhashed.payloadHash;
   if (hashCanonical(unhashed) !== payloadHash) throw new Error("Harness efficiency result payload hash does not match.");
   validateResult(unhashed);
-  return { ...unhashed, payloadHash } as HarnessEfficiencyResultV1;
+  return { ...unhashed, payloadHash } as HarnessEfficiencyResultV2;
 }
 
-export function createHarnessEfficiencyLedgerV1(input: {
+export function createHarnessEfficiencyLedgerV2(input: {
   replayBundle: unknown;
   recordedAt: string;
   runId?: string | undefined;
   sessionId?: string | undefined;
-  outcome: HarnessEfficiencyResultV1["outcome"];
-}): HarnessEfficiencyLedgerV1 {
-  const replayEvents = readReplayEvents(input.replayBundle).filter((event) => event.type.startsWith("economics."));
-  const runId = input.runId ?? replayEvents[0]?.runId;
-  const sessionId = input.sessionId ?? replayEvents[0]?.sessionId;
-  if (runId === undefined || sessionId === undefined) {
+  outcome: HarnessEfficiencyResultV2["outcome"];
+}): HarnessEfficiencyLedgerV2 {
+  const allReplayEvents = readReplayEvents(input.replayBundle);
+  const rootRunId = input.runId ?? allReplayEvents.find((event) => event.type.startsWith("economics."))?.runId;
+  const sessionId = input.sessionId ?? allReplayEvents.find((event) => event.runId === rootRunId)?.sessionId;
+  if (rootRunId === undefined || sessionId === undefined) {
     throw new Error("Harness efficiency ledger requires runtime run and session identifiers.");
   }
-  if (replayEvents.some((event) => event.runId !== runId || event.sessionId !== sessionId)) {
-    throw new Error("Harness efficiency ledger replay events span multiple runs or sessions.");
-  }
+  const runIds = resolveRunGraphIds(allReplayEvents, rootRunId);
+  const replayEvents = allReplayEvents.filter((event) =>
+    runIds.includes(event.runId) &&
+    (event.type.startsWith("economics.") || event.type.startsWith("delegation.")) &&
+    event.type !== "economics.run_outcome.evaluated"
+  );
   const outcomeEvent = createEconomicsRunEvent({
-    runId,
+    runId: rootRunId,
     sessionId,
     timestamp: input.recordedAt,
     event: {
       kind: "run_outcome.evaluated",
-      runId,
+      runId: rootRunId,
       evaluatorId: input.outcome.evaluatorId,
       evaluatorVersion: input.outcome.evaluatorVersion,
       acceptance: input.outcome.acceptance,
@@ -159,41 +164,49 @@ export function createHarnessEfficiencyLedgerV1(input: {
       failureClass: input.outcome.failureClass,
     },
   });
+  const economicsControl = readResolvedControlSnapshot(replayEvents, rootRunId);
+  const entries = [...replayEvents, outcomeEvent].map((event, index) => ({
+    sequence: index + 1,
+    runId: event.runId,
+    event,
+  }));
   const unhashed = {
-    version: 1 as const,
-    schema: "kestrel.harness-efficiency-ledger/v1" as const,
+    version: 2 as const,
+    schema: "kestrel.harness-efficiency-ledger/v2" as const,
     sourceReplayHash: hashCanonical(input.replayBundle),
-    runId,
-    sessionId,
+    rootRunId,
+    runIds,
     recordedAt: input.recordedAt,
-    events: [...replayEvents, outcomeEvent],
+    economicsControlHash: hashCanonical(economicsControl),
+    economicsControl,
+    entries,
   };
   validateEfficiencyLedger(unhashed);
   return { ...unhashed, payloadHash: hashCanonical(unhashed) };
 }
 
-export function parseHarnessEfficiencyLedgerV1(value: unknown): HarnessEfficiencyLedgerV1 {
+export function parseHarnessEfficiencyLedgerV2(value: unknown): HarnessEfficiencyLedgerV2 {
   const ledger = requireRecord(value, "ledger");
-  rejectUnknown(ledger, new Set(["version", "schema", "payloadHash", "sourceReplayHash", "runId", "sessionId", "recordedAt", "events"]), "ledger");
+  rejectUnknown(ledger, new Set(["version", "schema", "payloadHash", "sourceReplayHash", "rootRunId", "runIds", "recordedAt", "economicsControlHash", "economicsControl", "entries"]), "ledger");
   const payloadHash = requireHash(ledger.payloadHash, "ledger.payloadHash");
   const unhashed = { ...ledger };
   delete unhashed.payloadHash;
   if (hashCanonical(unhashed) !== payloadHash) throw new Error("Harness efficiency ledger payload hash does not match.");
   validateEfficiencyLedger(unhashed);
-  return { ...unhashed, payloadHash } as HarnessEfficiencyLedgerV1;
+  return { ...unhashed, payloadHash } as HarnessEfficiencyLedgerV2;
 }
 
-export function compareHarnessEfficiencyPairsV1(input: {
-  baseline: HarnessEfficiencyResultV1[];
-  candidate: HarnessEfficiencyResultV1[];
-}): HarnessEfficiencyPairedComparisonV1 {
+export function compareHarnessEfficiencyPairsV2(input: {
+  baseline: HarnessEfficiencyResultV2[];
+  candidate: HarnessEfficiencyResultV2[];
+}): HarnessEfficiencyPairedComparisonV2 {
   const baselineByPair = uniqueByPair(input.baseline, "baseline");
   const candidateByPair = uniqueByPair(input.candidate, "candidate");
   const pairIds = [...new Set([...baselineByPair.keys(), ...candidateByPair.keys()])].sort();
   const reasons: string[] = [];
   const regressedPairIds: string[] = [];
-  const pairedBaseline: HarnessEfficiencyResultV1[] = [];
-  const pairedCandidate: HarnessEfficiencyResultV1[] = [];
+  const pairedBaseline: HarnessEfficiencyResultV2[] = [];
+  const pairedCandidate: HarnessEfficiencyResultV2[] = [];
   for (const pairId of pairIds) {
     const baseline = baselineByPair.get(pairId);
     const candidate = candidateByPair.get(pairId);
@@ -228,8 +241,8 @@ export function compareHarnessEfficiencyPairsV1(input: {
   const costImproved = baselineMetrics.costPerAcceptedSuccessUsd !== null && candidateMetrics.costPerAcceptedSuccessUsd !== null && candidateMetrics.costPerAcceptedSuccessUsd < baselineMetrics.costPerAcceptedSuccessUsd;
   if (tokenImproved === false && costImproved === false) reasons.push("Candidate does not improve tokens or priced cost per accepted success.");
   const unhashed = {
-    version: 1 as const,
-    schema: "kestrel.harness-efficiency-paired-comparison/v1" as const,
+    version: 2 as const,
+    schema: "kestrel.harness-efficiency-paired-comparison/v2" as const,
     comparisonId: randomUUID(),
     recordedAt: new Date().toISOString(),
     pairIds,
@@ -238,28 +251,28 @@ export function compareHarnessEfficiencyPairsV1(input: {
     metrics: { baseline: baselineMetrics, candidate: candidateMetrics },
     newFailureClasses,
     regressedPairIds,
-    promotable: reasons.length === 0 && pairIds.length > 0,
+    passed: reasons.length === 0 && pairIds.length > 0,
     reasons,
   };
   validateComparison(unhashed);
   return { ...unhashed, payloadHash: hashCanonical(unhashed) };
 }
 
-export function parseHarnessEfficiencyPairedComparisonV1(value: unknown): HarnessEfficiencyPairedComparisonV1 {
+export function parseHarnessEfficiencyPairedComparisonV2(value: unknown): HarnessEfficiencyPairedComparisonV2 {
   const comparison = requireRecord(value, "comparison");
   rejectUnknown(comparison, new Set([
     "version", "schema", "comparisonId", "payloadHash", "recordedAt", "pairIds", "baselineResultIds",
-    "candidateResultIds", "metrics", "newFailureClasses", "regressedPairIds", "promotable", "reasons",
+    "candidateResultIds", "metrics", "newFailureClasses", "regressedPairIds", "passed", "reasons",
   ]), "comparison");
   const payloadHash = requireHash(comparison.payloadHash, "comparison.payloadHash");
   const unhashed = { ...comparison };
   delete unhashed.payloadHash;
   if (hashCanonical(unhashed) !== payloadHash) throw new Error("Harness efficiency comparison payload hash does not match.");
   validateComparison(unhashed);
-  return { ...unhashed, payloadHash } as HarnessEfficiencyPairedComparisonV1;
+  return { ...unhashed, payloadHash } as HarnessEfficiencyPairedComparisonV2;
 }
 
-function aggregate(results: HarnessEfficiencyResultV1[]): HarnessEfficiencyAggregateV1 {
+function aggregate(results: HarnessEfficiencyResultV2[]): HarnessEfficiencyAggregateV2 {
   const accepted = results.filter((result) => result.outcome.acceptance === "accepted").length;
   const totalTokens = results.reduce((total, result) => total + result.economics.totals.inputTokens + result.economics.totals.outputTokens, 0);
   const pricedCostUsd = results.reduce((total, result) => total + result.economics.totals.pricedCostUsd, 0);
@@ -283,8 +296,8 @@ function percentile(values: number[], percentileValue: number): number | null {
   return values[Math.max(0, Math.ceil(percentileValue / 100 * values.length) - 1)] ?? null;
 }
 
-function uniqueByPair(results: HarnessEfficiencyResultV1[], label: string): Map<string, HarnessEfficiencyResultV1> {
-  const map = new Map<string, HarnessEfficiencyResultV1>();
+function uniqueByPair(results: HarnessEfficiencyResultV2[], label: string): Map<string, HarnessEfficiencyResultV2> {
+  const map = new Map<string, HarnessEfficiencyResultV2>();
   for (const result of results) {
     if (map.has(result.pairId)) throw new Error(`Duplicate ${label} pairId '${result.pairId}'.`);
     map.set(result.pairId, result);
@@ -292,7 +305,7 @@ function uniqueByPair(results: HarnessEfficiencyResultV1[], label: string): Map<
   return map;
 }
 
-function assertFrozenPair(baseline: HarnessEfficiencyResultV1, candidate: HarnessEfficiencyResultV1): void {
+function assertFrozenPair(baseline: HarnessEfficiencyResultV2, candidate: HarnessEfficiencyResultV2): void {
   for (const field of ["lane", "dataset", "taskId", "trial"] as const) {
     if (baseline[field] !== candidate[field]) throw new Error(`Pair '${baseline.pairId}' changed frozen field '${field}'.`);
   }
@@ -302,7 +315,7 @@ function assertFrozenPair(baseline: HarnessEfficiencyResultV1, candidate: Harnes
 }
 
 function validateResult(value: Record<string, unknown>): void {
-  if (value.version !== 1 || value.schema !== "kestrel.harness-efficiency-result/v1") throw new Error("Harness efficiency result version is invalid.");
+  if (value.version !== 2 || value.schema !== "kestrel.harness-efficiency-result/v2") throw new Error("Harness efficiency result version is invalid.");
   for (const field of ["resultId", "pairId", "dataset", "taskId", "attemptId", "recordedAt"] as const) requireString(value[field], field);
   if (value.lane !== "swe_verified" && value.lane !== "terminal_bench") throw new Error("Harness efficiency result lane is invalid.");
   requirePositiveInteger(value.trial, "trial");
@@ -352,7 +365,7 @@ function validateResult(value: Record<string, unknown>): void {
 }
 
 function validateComparison(value: Record<string, unknown>): void {
-  if (value.version !== 1 || value.schema !== "kestrel.harness-efficiency-paired-comparison/v1") {
+  if (value.version !== 2 || value.schema !== "kestrel.harness-efficiency-paired-comparison/v2") {
     throw new Error("Harness efficiency comparison version is invalid.");
   }
   requireString(value.comparisonId, "comparison.comparisonId");
@@ -373,10 +386,10 @@ function validateComparison(value: Record<string, unknown>): void {
   rejectUnknown(metrics, new Set(["baseline", "candidate"]), "comparison.metrics");
   requireAggregate(metrics.baseline, "comparison.metrics.baseline");
   requireAggregate(metrics.candidate, "comparison.metrics.candidate");
-  if (typeof value.promotable !== "boolean") throw new Error("Harness efficiency comparison promotable must be boolean.");
+  if (typeof value.passed !== "boolean") throw new Error("Harness efficiency comparison passed must be boolean.");
   const reasons = value.reasons as string[];
-  if (value.promotable !== (reasons.length === 0 && pairIds.length > 0)) {
-    throw new Error("Harness efficiency comparison promotion decision is inconsistent with its reasons.");
+  if (value.passed !== (reasons.length === 0 && pairIds.length > 0)) {
+    throw new Error("Harness efficiency comparison pass decision is inconsistent with its reasons.");
   }
 }
 
@@ -402,16 +415,16 @@ function requireAggregate(value: unknown, label: string): void {
 
 const ECONOMICS_TOTAL_FIELDS = new Set([
   "calls", "completedCalls", "failedCalls", "attempts", "retries", "inputTokens", "outputTokens",
-  "cachedInputTokens", "cacheWriteInputTokens", "reasoningTokens", "pricedCostUsd", "unpricedCalls",
-  "independentlyAcceptedCalls", "toolResults", "storedToolResultTokens", "modelVisibleToolResultTokens",
-  "reducedToolResultTokens",
+  "cachedInputTokens", "cacheWriteInputTokens", "cacheHitRatio", "cacheWriteAmplification", "reasoningTokens", "pricedCostUsd", "unpricedCalls",
+  "toolResults", "rawToolResultTokens", "persistedToolResultTokens", "verificationVisibleToolResultTokens", "modelVisibleToolResultTokens",
+  "rawToPersistedReductionTokens", "persistedToModelVisibleReductionTokens", "rawToModelVisibleReductionTokens",
 ]);
 
 function requireEconomicsTotals(value: unknown): EconomicsLedgerProjectionV1["totals"] {
   const totals = requireRecord(value, "economics.totals");
   rejectUnknown(totals, ECONOMICS_TOTAL_FIELDS, "economics.totals");
   for (const field of ECONOMICS_TOTAL_FIELDS) {
-    if (field === "pricedCostUsd") requireNonNegativeNumber(totals[field], `economics.totals.${field}`);
+    if (field === "pricedCostUsd" || field === "cacheHitRatio" || field === "cacheWriteAmplification") requireNonNegativeNumber(totals[field], `economics.totals.${field}`);
     else requireNonNegativeInteger(totals[field], `economics.totals.${field}`);
   }
   if ((totals.completedCalls as number) + (totals.failedCalls as number) > (totals.calls as number)) {
@@ -423,11 +436,8 @@ function requireEconomicsTotals(value: unknown): EconomicsLedgerProjectionV1["to
   if ((totals.unpricedCalls as number) > (totals.completedCalls as number)) {
     throw new Error("Harness efficiency economics unpricedCalls exceed completedCalls.");
   }
-  if ((totals.independentlyAcceptedCalls as number) > (totals.calls as number)) {
-    throw new Error("Harness efficiency economics independentlyAcceptedCalls exceed calls.");
-  }
-  if ((totals.reducedToolResultTokens as number) > (totals.storedToolResultTokens as number)) {
-    throw new Error("Harness efficiency economics reduced tool-result tokens exceed stored tokens.");
+  if ((totals.rawToModelVisibleReductionTokens as number) > (totals.rawToolResultTokens as number)) {
+    throw new Error("Harness efficiency economics raw-to-model reduction exceeds raw tokens.");
   }
   return totals as unknown as EconomicsLedgerProjectionV1["totals"];
 }
@@ -454,7 +464,7 @@ export function hashHarnessEfficiencyValue(value: unknown): string {
 export function readHarnessEfficiencyEconomicsFromReplayBundle(
   value: unknown,
   acceptance: HarnessEfficiencyAcceptance,
-): HarnessEfficiencyResultV1["economics"] {
+): HarnessEfficiencyResultV2["economics"] {
   const bundle = typeof value === "object" && value !== null && Array.isArray(value) === false
     ? value as Record<string, unknown>
     : undefined;
@@ -468,14 +478,15 @@ export function readHarnessEfficiencyEconomicsFromReplayBundle(
   if (projection.calls.some((call) => call.request === undefined)) missingFields.push("modelCallRequest");
   if (projection.calls.some((call) => call.completion === undefined && call.failure === undefined)) missingFields.push("modelCallTerminal");
   if (projection.invalidEvents.length > 0) missingFields.push("validEconomicsLedger");
+  missingFields.push(...projection.incompleteReasons.map((reason) => `ledger:${reason}`));
   return economicsFromProjection(projection, acceptance, missingFields);
 }
 
 export function readHarnessEfficiencyEconomicsFromLedger(
   value: unknown,
-): HarnessEfficiencyResultV1["economics"] {
-  const ledger = parseHarnessEfficiencyLedgerV1(value);
-  const projection = projectEconomicsLedger(ledger.events);
+): HarnessEfficiencyResultV2["economics"] {
+  const ledger = parseHarnessEfficiencyLedgerV2(value);
+  const projection = projectEconomicsLedger(ledger.entries.map((entry) => entry.event));
   const outcome = projection.runOutcomes[0]?.event;
   const missingFields: string[] = [];
   if (projection.totals.calls === 0) missingFields.push("modelCalls");
@@ -483,12 +494,25 @@ export function readHarnessEfficiencyEconomicsFromLedger(
   if (projection.calls.some((call) => call.completion === undefined && call.failure === undefined)) missingFields.push("modelCallTerminal");
   if (projection.invalidEvents.length > 0) missingFields.push("validEconomicsLedger");
   if (outcome === undefined) missingFields.push("independentRunOutcome");
+  const entryRunIds = new Set(ledger.entries.map((entry) => entry.runId));
+  for (const runId of ledger.runIds) {
+    if (entryRunIds.has(runId) === false) missingFields.push(`childRun:${runId}`);
+  }
+  for (const entry of ledger.entries) {
+    if (
+      (entry.event.type === "delegation.completed" || entry.event.type === "delegation.failed") &&
+      typeof optionalRecord(entry.event.metadata)?.childRunId !== "string"
+    ) {
+      missingFields.push(`delegationLineage:${String(optionalRecord(entry.event.metadata)?.delegationId ?? entry.sequence)}`);
+    }
+  }
+  missingFields.push(...projection.incompleteReasons.map((reason) => `ledger:${reason}`));
   return economicsFromProjection(projection, outcome?.acceptance ?? "not_evaluated", missingFields);
 }
 
 export function emptyHarnessEfficiencyEconomics(
   missingFields: string[],
-): HarnessEfficiencyResultV1["economics"] {
+): HarnessEfficiencyResultV2["economics"] {
   return {
     status: "incomplete",
     missingFields: [...new Set(missingFields)],
@@ -502,14 +526,19 @@ export function emptyHarnessEfficiencyEconomics(
       outputTokens: 0,
       cachedInputTokens: 0,
       cacheWriteInputTokens: 0,
+      cacheHitRatio: 0,
+      cacheWriteAmplification: 0,
       reasoningTokens: 0,
       pricedCostUsd: 0,
       unpricedCalls: 0,
-      independentlyAcceptedCalls: 0,
       toolResults: 0,
-      storedToolResultTokens: 0,
+      rawToolResultTokens: 0,
+      persistedToolResultTokens: 0,
+      verificationVisibleToolResultTokens: 0,
       modelVisibleToolResultTokens: 0,
-      reducedToolResultTokens: 0,
+      rawToPersistedReductionTokens: 0,
+      persistedToModelVisibleReductionTokens: 0,
+      rawToModelVisibleReductionTokens: 0,
     },
     invalidLedgerEvents: 0,
     tokensPerAcceptedSuccess: null,
@@ -522,36 +551,66 @@ function hashCanonical(value: unknown): string {
 }
 
 function validateEfficiencyLedger(value: Record<string, unknown>): void {
-  if (value.version !== 1 || value.schema !== "kestrel.harness-efficiency-ledger/v1") {
+  if (value.version !== 2 || value.schema !== "kestrel.harness-efficiency-ledger/v2") {
     throw new Error("Harness efficiency ledger version is invalid.");
   }
   requireHash(value.sourceReplayHash, "ledger.sourceReplayHash");
-  const runId = requireString(value.runId, "ledger.runId");
-  const sessionId = requireString(value.sessionId, "ledger.sessionId");
+  const rootRunId = requireString(value.rootRunId, "ledger.rootRunId");
+  const runIds = requireUniqueStringArray(value.runIds, "ledger.runIds");
+  if (runIds.includes(rootRunId) === false) throw new Error("Harness efficiency ledger runIds must contain rootRunId.");
   const recordedAt = requireIsoTimestamp(value.recordedAt, "ledger.recordedAt");
-  if (Array.isArray(value.events) === false || value.events.length === 0) {
-    throw new Error("Harness efficiency ledger events must be a non-empty array.");
+  const economicsControlHash = requireHash(value.economicsControlHash, "ledger.economicsControlHash");
+  if (hashCanonical(value.economicsControl) !== economicsControlHash) throw new Error("Harness efficiency ledger economics control hash does not match.");
+  if (Array.isArray(value.entries) === false || value.entries.length === 0) {
+    throw new Error("Harness efficiency ledger entries must be a non-empty array.");
   }
-  const events = value.events.map((event, index) => {
+  const events = value.entries.map((entryValue, index) => {
+    const entry = requireRecord(entryValue, `ledger.entries[${index}]`);
+    rejectUnknown(entry, new Set(["sequence", "runId", "event"]), `ledger.entries[${index}]`);
+    if (requirePositiveInteger(entry.sequence, `ledger.entries[${index}].sequence`) !== index + 1) throw new Error("Harness efficiency ledger sequence must be contiguous from one.");
+    const entryRunId = requireString(entry.runId, `ledger.entries[${index}].runId`);
+    if (runIds.includes(entryRunId) === false) throw new Error(`Harness efficiency ledger entries[${index}] references an unknown run.`);
+    const event = entry.event;
     if (isRunEvent(event) === false) throw new Error(`Harness efficiency ledger events[${index}] is invalid.`);
-    if (event.runId !== runId || event.sessionId !== sessionId) {
-      throw new Error(`Harness efficiency ledger events[${index}] does not match the ledger run and session.`);
-    }
-    if (parseEconomicsLedgerEvent(event) === undefined) {
-      throw new Error(`Harness efficiency ledger events[${index}] is not an economics event.`);
+    if (event.runId !== entryRunId) throw new Error(`Harness efficiency ledger entries[${index}] runId does not match its event.`);
+    if (event.type.startsWith("economics.") === false && event.type.startsWith("delegation.") === false) {
+      throw new Error(`Harness efficiency ledger entries[${index}] is not an economics or delegation event.`);
     }
     return event;
   });
   const projection = projectEconomicsLedger(events);
-  if (projection.invalidEvents.length > 0) {
-    throw new Error(`Harness efficiency ledger contains invalid events: ${projection.invalidEvents[0]?.reason ?? "unknown"}`);
-  }
   if (projection.runOutcomes.length !== 1) {
     throw new Error("Harness efficiency ledger must contain exactly one independent run outcome.");
   }
   if (projection.runOutcomes[0]?.recordedAt !== recordedAt) {
     throw new Error("Harness efficiency ledger recordedAt must match its independent run outcome.");
   }
+}
+
+function resolveRunGraphIds(events: RunEvent[], rootRunId: string): string[] {
+  const runIds = new Set([rootRunId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const event of events) {
+      if (runIds.has(event.runId) === false || event.type.startsWith("delegation.") === false) continue;
+      const childRunId = optionalRecord(event.metadata)?.childRunId;
+      if (typeof childRunId === "string" && childRunId.trim().length > 0 && runIds.has(childRunId) === false) {
+        runIds.add(childRunId);
+        changed = true;
+      }
+    }
+  }
+  return [...runIds];
+}
+
+function readResolvedControlSnapshot(events: RunEvent[], rootRunId: string): unknown {
+  for (const event of events) {
+    if (event.runId !== rootRunId || event.type !== "economics.model_call.requested") continue;
+    const economicsEvent = parseEconomicsLedgerEvent(event);
+    if (economicsEvent?.kind === "model_call.requested" && economicsEvent.economicsControl !== undefined) return economicsEvent.economicsControl;
+  }
+  return null;
 }
 
 function readReplayEvents(value: unknown): RunEvent[] {
@@ -564,7 +623,7 @@ function economicsFromProjection(
   projection: EconomicsLedgerProjectionV1,
   acceptance: HarnessEfficiencyAcceptance,
   missingFields: string[],
-): HarnessEfficiencyResultV1["economics"] {
+): HarnessEfficiencyResultV2["economics"] {
   const complete = missingFields.length === 0;
   const accepted = acceptance === "accepted";
   const totalTokens = projection.totals.inputTokens + projection.totals.outputTokens;

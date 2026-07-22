@@ -18,6 +18,12 @@ export class HarnessEconomicsController {
     if (candidateById.size !== input.sections.length) {
       throw new Error("Harness economics context contains duplicate section ids.");
     }
+    const missingRequired = input.policy.context.sections.find((section) =>
+      section.priority === "required" && candidateById.has(section.id) === false
+    );
+    if (missingRequired !== undefined) {
+      throw new Error(`Harness economics required context section '${missingRequired.id}' is missing from the provider-bound request.`);
+    }
 
     const availableContextTokens = Math.max(
       0,
@@ -28,7 +34,7 @@ export class HarnessEconomicsController {
         - input.providerOverhead.tokens,
     );
     const countMethods = uniqueCountMethods(input);
-    const estimated = countMethods.includes("estimated");
+    const estimated = countMethods.includes("conservative_estimate");
     const enforceable = estimated === false || input.policy.counting.allowEstimatedEnforcement;
     let remaining = availableContextTokens;
     const manifestsById = new Map<string, ContextSectionManifestV1>();

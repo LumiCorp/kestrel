@@ -1,5 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,13 @@ import {
   benchmarkProviderWarnings,
   loadBenchmarkDotEnv,
 } from "./benchmark-provider-config.js";
+import {
+  createHarnessEfficiencyLedgerV2,
+  createHarnessEfficiencyResultV2,
+  emptyHarnessEfficiencyEconomics,
+  hashHarnessEfficiencyValue,
+  readHarnessEfficiencyEconomicsFromLedger,
+} from "../src/economics/index.js";
 
 type HarborMode = "run";
 
@@ -221,6 +228,15 @@ export async function runTerminalBenchHarbor(argv: string[], deps: RuntimeDeps):
     stdio: "inherit",
     timeout: readHarborCommandTimeoutMs(env),
   });
+  const summary = readRecentHarborRunSummary(deps.cwd, startedAt, options.taskId);
+  writeHarborEfficiencyResult({
+    cwd: deps.cwd,
+    env,
+    dataset: options.dataset,
+    taskId: options.taskId,
+    startedAt,
+    summary,
+  });
   const harborFailure = readRecentHarborRunFailure(deps.cwd, startedAt, options.taskId !== undefined);
   const failures = readRecentHarborAdapterFailures(deps.cwd, startedAt);
   if (harborFailure !== undefined) {
@@ -245,6 +261,130 @@ export async function runTerminalBenchHarbor(argv: string[], deps: RuntimeDeps):
   }
   deps.stdout.write("[bench:terminal:harbor] complete. Kestrel artifacts are written with the Harbor run logs when available.\n");
   return 0;
+}
+
+function writeHarborEfficiencyResult(input: {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  dataset: string;
+  taskId?: string | undefined;
+  startedAt: number;
+  summary: HarborRunSummary;
+}): string | undefined {
+  if (input.summary.status === "SKIP_INFRA" || input.summary.jobPath === undefined) return ;
+  const taskId = input.taskId ?? input.summary.taskId;
+  if (taskId === undefined) return ;
+  const adapterPath = input.summary.adapterPath === undefined
+    ? undefined
+    : path.resolve(input.cwd, input.summary.adapterPath);
+  const adapter = adapterPath === undefined ? undefined : readJsonRecord(adapterPath);
+  const replayValue = readReferencedJson(input.cwd, adapter?.runtime_replay_bundle_path);
+  const replayPath = resolveReferencedPath(input.cwd, adapter?.runtime_replay_bundle_path);
+  const recordedAt = new Date().toISOString();
+  const acceptance = input.summary.status === "PASS" ? "accepted" as const : "rejected" as const;
+  const failureClass = acceptance === "accepted"
+    ? "none"
+    : typeof adapter?.failure_kind === "string"
+      ? adapter.failure_kind
+      : input.summary.reason ?? "harbor_rejected";
+  const outcome = {
+    evaluatorId: "harbor",
+    evaluatorVersion: input.dataset,
+    independentlyEvaluated: true,
+    acceptance,
+    failureClass,
+  };
+  let economics = emptyHarnessEfficiencyEconomics(["runtimeReplayBundle", "efficiencyLedger"]);
+  let ledgerPath: string | undefined;
+  const outputDirectory = path.resolve(input.cwd, input.summary.jobPath, "harness-efficiency");
+  mkdirSync(outputDirectory, { recursive: true });
+  if (replayValue !== undefined) {
+    try {
+      const ledger = createHarnessEfficiencyLedgerV2({
+        replayBundle: replayValue,
+        recordedAt,
+        ...(typeof adapter?.kestrel_run_id === "string" ? { runId: adapter.kestrel_run_id } : {}),
+        ...(typeof adapter?.kestrel_session_id === "string" ? { sessionId: adapter.kestrel_session_id } : {}),
+        outcome,
+      });
+      ledgerPath = path.join(outputDirectory, "ledger.v2.json");
+      writeFileSync(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
+      economics = readHarnessEfficiencyEconomicsFromLedger(ledger);
+    } catch {
+      economics = emptyHarnessEfficiencyEconomics(["efficiencyLedger"]);
+    }
+  }
+  const profile = readSelectedBenchmarkProfile(input.env);
+  const pairId = input.env.KESTREL_BENCHMARK_PAIR_ID?.trim() || `terminal_bench:${input.dataset}:${taskId}:trial:${readTrial(input.env)}`;
+  const result = createHarnessEfficiencyResultV2({
+    pairId,
+    lane: "terminal_bench",
+    dataset: input.dataset,
+    taskId,
+    attemptId: `${pairId}:${input.startedAt}`,
+    trial: readTrial(input.env),
+    recordedAt,
+    durationMs: typeof adapter?.duration_ms === "number" ? Math.max(0, Math.trunc(adapter.duration_ms)) : Math.max(0, Date.now() - input.startedAt),
+    frozen: {
+      protocolHash: hashHarnessEfficiencyValue({ evaluator: "harbor", dataset: input.dataset }),
+      taskInputHash: typeof adapter?.job_input_sha256 === "string"
+        ? adapter.job_input_sha256
+        : hashHarnessEfficiencyValue({ dataset: input.dataset, taskId }),
+      benchmarkConfigHash: hashHarnessEfficiencyValue({ dataset: input.dataset, profileId: input.env.KESTREL_BENCHMARK_PROFILE_ID }),
+      controlVariantHash: hashHarnessEfficiencyValue(profile?.harnessEconomics ?? null),
+      harnessRevision: typeof adapter?.harness_revision === "string" ? adapter.harness_revision : "unknown",
+      modelProvider: typeof adapter?.model_provider === "string" ? adapter.model_provider : "unknown",
+      model: typeof adapter?.model === "string" ? adapter.model : "unknown",
+    },
+    runtime: {
+      ...(typeof adapter?.kestrel_run_id === "string" ? { runId: adapter.kestrel_run_id } : {}),
+      ...(typeof adapter?.kestrel_session_id === "string" ? { sessionId: adapter.kestrel_session_id } : {}),
+      ...(typeof adapter?.kestrel_thread_id === "string" ? { threadId: adapter.kestrel_thread_id } : {}),
+    },
+    outcome,
+    economics,
+    artifacts: [
+      ...(input.summary.resultPath !== undefined ? [{ kind: "harbor_result", path: path.resolve(input.cwd, input.summary.resultPath) }] : []),
+      ...(adapterPath !== undefined ? [{ kind: "adapter_result", path: adapterPath }] : []),
+      ...(replayPath !== undefined ? [{ kind: "runtime_replay_bundle", path: replayPath }] : []),
+      ...(ledgerPath !== undefined ? [{ kind: "efficiency_ledger", path: ledgerPath }] : []),
+    ],
+  });
+  const resultPath = path.join(outputDirectory, "result.v2.json");
+  writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  return resultPath;
+}
+
+function readReferencedJson(cwd: string, value: unknown): unknown | undefined {
+  const filePath = resolveReferencedPath(cwd, value);
+  if (filePath === undefined) return ;
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return ;
+  }
+}
+
+function resolveReferencedPath(cwd: string, value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) return ;
+  const filePath = path.isAbsolute(value) ? value : path.resolve(cwd, value);
+  return existsSync(filePath) ? filePath : undefined;
+}
+
+function readSelectedBenchmarkProfile(env: NodeJS.ProcessEnv): Record<string, unknown> | undefined {
+  const profilePath = env.KESTREL_BENCHMARK_PROFILE_FILE?.trim();
+  const profileId = env.KESTREL_BENCHMARK_PROFILE_ID?.trim();
+  if (profilePath === undefined || profilePath.length === 0 || profileId === undefined || profileId.length === 0) return ;
+  const payload = readReferencedJson(process.cwd(), profilePath);
+  const record = isRecord(payload) ? payload : undefined;
+  const profiles = Array.isArray(record?.profiles) ? record.profiles : [payload];
+  const selected = profiles.find((value) => isRecord(value) && value.id === profileId);
+  return isRecord(selected) ? selected : undefined;
+}
+
+function readTrial(env: NodeJS.ProcessEnv): number {
+  const value = Number(env.KESTREL_BENCHMARK_TRIAL ?? "1");
+  return Number.isSafeInteger(value) && value > 0 ? value : 1;
 }
 
 export function resolveHarborBinary(input: {
@@ -654,6 +794,8 @@ function buildAgentEnvArgs(env: NodeJS.ProcessEnv): string[] {
     "KESTREL_BENCHMARK_MODEL",
     "KESTREL_BENCHMARK_CREDENTIAL_ENV",
     "KESTREL_BENCHMARK_CREDENTIAL_FINGERPRINT",
+    "KESTREL_BENCHMARK_PROFILE_FILE",
+    "KESTREL_BENCHMARK_PROFILE_ID",
     "KCHAT_MODEL_TIMEOUT_MS",
     "KCHAT_MODEL_RETRY_COUNT",
     "KESTREL_TBENCH_CLI_COMMAND_TIMEOUT_SEC",

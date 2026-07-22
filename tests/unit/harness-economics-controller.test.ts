@@ -15,8 +15,8 @@ const EXACT_ZERO: TokenCountV1 = {
   version: 1,
   tokens: 0,
   bytes: 0,
-  method: "exact",
-  confidence: "exact",
+  method: "model_tokenizer",
+  confidence: "model_compatible",
   counter: "test-counter",
   counterVersion: "1",
 };
@@ -57,11 +57,12 @@ contractTest("runtime.hermetic", "model economics profile preserves versioned au
     contextWindowTokens: 200_000,
     maxOutputTokens: 16_384,
     counting: {
-      counter: "test-tokenizer",
-      counterVersion: "2026-07-22",
-      method: "exact",
-      confidence: "exact",
+      counter: "tiktoken:o200k_base",
+      counterVersion: "1.0.21",
+      method: "model_tokenizer",
+      confidence: "model_compatible",
     },
+    cache: { behavior: "provider_automatic" },
     price: {
       version: 1,
       priceVersion: "openai-2026-07-22",
@@ -91,11 +92,11 @@ contractTest("runtime.hermetic", "token counting labels exact and conservative e
 
   assert.deepEqual(
     { method: estimated.method, confidence: estimated.confidence, tokens: estimated.tokens },
-    { method: "estimated", confidence: "conservative", tokens: 5 },
+    { method: "conservative_estimate", confidence: "conservative", tokens: 5 },
   );
   assert.deepEqual(
     { method: exact.method, confidence: exact.confidence, tokens: exact.tokens },
-    { method: "exact", confidence: "exact", tokens: 1 },
+    { method: "model_tokenizer", confidence: "model_compatible", tokens: 1 },
   );
 });
 
@@ -163,7 +164,7 @@ contractTest("runtime.hermetic", "estimated counts cannot enforce unless the pol
       counting: {
         counter: "estimate",
         counterVersion: "1",
-        method: "estimated",
+        method: "conservative_estimate",
         confidence: "conservative",
       },
     },
@@ -172,7 +173,7 @@ contractTest("runtime.hermetic", "estimated counts cannot enforce unless the pol
         ...section("task", 90),
         count: {
           ...exactCount(90),
-          method: "estimated",
+          method: "conservative_estimate",
           confidence: "conservative",
         },
       },
@@ -235,6 +236,7 @@ function policyFixture(): HarnessEconomicsPolicyV1 {
         "agent.loop": ["filesystem", "devshell"],
       },
     },
+    cache: { mode: "provider_default" },
   };
 }
 
@@ -249,9 +251,10 @@ function profileFixture(): ModelEconomicsProfileV1 {
     counting: {
       counter: "test-counter",
       counterVersion: "1",
-      method: "exact",
-      confidence: "exact",
+      method: "model_tokenizer",
+      confidence: "model_compatible",
     },
+    cache: { behavior: "none" },
   };
 }
 
@@ -269,8 +272,8 @@ function exactCount(tokens: number): TokenCountV1 {
     version: 1,
     tokens,
     bytes: tokens * 4,
-    method: "exact",
-    confidence: "exact",
+    method: "model_tokenizer",
+    confidence: "model_compatible",
     counter: "test-counter",
     counterVersion: "1",
   };

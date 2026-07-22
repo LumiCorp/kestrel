@@ -9,17 +9,19 @@ import {
   attributeModelCallPrice,
   buildModelRequestEconomicsManifest,
   buildToolResultEconomicsManifest,
+  countTextTokens,
   createEconomicsLedgerEventMetadata,
   economicsRunEventType,
   normalizeEconomicsUsage,
   parseToolExposureSelectionV1,
+  resolveModelTokenCounter,
 } from "../economics/index.js";
 import {
   parseContextSectionCandidatesV1,
-  parseHarnessEconomicsPolicyV1,
-  parseModelEconomicsProfileV1,
+  parseHarnessEconomicsControlV1,
+  resolveModelEconomicsProfileV1,
 } from "../economics/policy.js";
-import type { HarnessEconomicsPolicyV1, ModelEconomicsProfileV1 } from "../economics/contracts.js";
+import type { ContextSectionCandidateV1, EconomicsModelCallRequestedV1, HarnessEconomicsControlV1, HarnessEconomicsPolicyV1, ModelEconomicsProfileV1 } from "../economics/contracts.js";
 
 import type { Guardrails } from "./Guardrails.js";
 import { type ToolJobQueue, ToolQueueOverflowError } from "./ToolJobQueue.js";
@@ -175,6 +177,7 @@ interface RuntimeIOOptions {
 
 export class RuntimeIO {
   private readonly options: RuntimeIOOptions;
+  private previousStablePrefixHash: string | undefined;
 
   constructor(options: RuntimeIOOptions) {
     this.options = options;
@@ -227,8 +230,26 @@ export class RuntimeIO {
       },
     };
     const runtimeAssembly = asPlainRecord(this.options.runtimeMetadata?.runtimeAssembly);
-    const economicsModelProfile = readEconomicsModelProfile(runtimeAssembly);
-    const economicsPolicy = readHarnessEconomicsPolicy(runtimeAssembly);
+    const economicsControl = readHarnessEconomicsControl(runtimeAssembly);
+    const economicsModelProfile = requestedProvider !== undefined && requestedModel !== undefined && economicsControl !== undefined
+      ? resolveModelEconomicsProfileV1(economicsControl, requestedProvider, requestedModel)
+      : undefined;
+    const economicsPolicy = economicsControl?.policy;
+    providerRequest = applyCachePolicy(providerRequest, economicsPolicy, economicsModelProfile);
+    let economicsContextSections = requestMetadata.contextSections !== undefined
+      ? parseContextSectionCandidatesV1(requestMetadata.contextSections)
+      : undefined;
+    const contextApplication = applyEconomicsContextPolicy({
+      request: providerRequest,
+      contextSections: economicsContextSections,
+      contextPipeline: requestMetadata.contextPipeline,
+      policy: economicsPolicy,
+      modelProfile: economicsModelProfile,
+      phase: requestedPhase,
+      toolExposureSelection: requestMetadata.economicsToolExposureSelection,
+    });
+    providerRequest = contextApplication.request;
+    economicsContextSections = contextApplication.contextSections;
     const turnId = readNonEmptyString(
       this.options.runtimeMetadata?.turnId ?? this.options.runtimeMetadata?.activeTurnId,
     );
@@ -275,8 +296,8 @@ export class RuntimeIO {
     const toolManifestHash = Array.isArray(request.tools) ? hashUnknown(request.tools) : undefined;
     const requestEconomicsManifest = buildModelRequestEconomicsManifest({
       request: providerRequest,
-      ...(requestMetadata.contextSections !== undefined
-        ? { contextSections: parseContextSectionCandidatesV1(requestMetadata.contextSections) }
+      ...(economicsContextSections !== undefined
+        ? { contextSections: economicsContextSections }
         : {}),
       ...(economicsPolicy !== undefined ? { policy: economicsPolicy } : {}),
       ...(economicsModelProfile !== undefined ? { modelProfile: economicsModelProfile } : {}),
@@ -285,6 +306,8 @@ export class RuntimeIO {
         ? { toolExposureSelection: parseToolExposureSelectionV1(requestMetadata.economicsToolExposureSelection) }
         : {}),
     });
+    const stablePrefix = buildStablePrefixRecord(providerRequest, economicsPolicy, economicsModelProfile, this.previousStablePrefixHash);
+    this.previousStablePrefixHash = stablePrefix.stablePrefixHash;
     const modelRequestMetadata: Record<string, unknown> = {
       callId,
       stepAgent:
@@ -388,6 +411,11 @@ export class RuntimeIO {
       ...(readNonEmptyString(runtimeAssembly?.contextPolicyId) !== undefined
         ? { contextPolicyId: readNonEmptyString(runtimeAssembly?.contextPolicyId) }
         : {}),
+      ...(economicsModelProfile !== undefined ? { modelProfileId: economicsModelProfile.profileId } : {}),
+      ...(economicsControl !== undefined
+        ? { economicsControlHash: hashUnknown(economicsControl), economicsControl }
+        : {}),
+      cache: stablePrefix,
       requestManifest: requestEconomicsManifest,
     });
     await this.options.appendRunEvent(
@@ -443,6 +471,9 @@ export class RuntimeIO {
       const modelMetadata = this.options.extractModelMetadata(result);
       const actualProvider = readNonEmptyString(modelMetadata?.provider) ?? requestedProvider;
       const actualModel = readNonEmptyString(modelMetadata?.model) ?? requestedModel;
+      const actualEconomicsModelProfile = actualProvider !== undefined && actualModel !== undefined && economicsControl !== undefined
+        ? resolveModelEconomicsProfileV1(economicsControl, actualProvider, actualModel)
+        : economicsModelProfile;
       const completedAt = new Date().toISOString();
       const latencyMs = Date.now() - startedAt;
       await this.options.persistModelResponseDump({
@@ -473,9 +504,10 @@ export class RuntimeIO {
         ...(actualModel !== undefined ? { model: actualModel } : {}),
         latencyMs,
         usage: economicsUsage,
+        providerReportedInputDeltaTokens: economicsUsage.inputTokens - requestEconomicsManifest.requestCount.tokens,
         pricing: attributeModelCallPrice({
           usage: economicsUsage,
-          profile: economicsModelProfile,
+          profile: actualEconomicsModelProfile,
           provider: actualProvider,
           model: actualModel,
         }),
@@ -1365,18 +1397,136 @@ function readProviderReasoningRetention(value: unknown): ProviderReasoningRetent
   return { mode, days };
 }
 
-function readEconomicsModelProfile(
+function readHarnessEconomicsControl(
   runtimeAssembly: Record<string, unknown> | undefined,
-): ModelEconomicsProfileV1 | undefined {
-  const value = runtimeAssembly?.modelEconomicsProfile;
-  return value === undefined ? undefined : parseModelEconomicsProfileV1(value);
+): HarnessEconomicsControlV1 | undefined {
+  const value = runtimeAssembly?.harnessEconomics;
+  return value === undefined ? undefined : parseHarnessEconomicsControlV1(value);
 }
 
-function readHarnessEconomicsPolicy(
-  runtimeAssembly: Record<string, unknown> | undefined,
-): HarnessEconomicsPolicyV1 | undefined {
-  const value = runtimeAssembly?.economicsPolicy;
-  return value === undefined ? undefined : parseHarnessEconomicsPolicyV1(value);
+function applyCachePolicy(
+  request: ModelRequest,
+  policy: HarnessEconomicsPolicyV1 | undefined,
+  profile: ModelEconomicsProfileV1 | undefined,
+): ModelRequest {
+  if (policy?.cache.mode !== "stable_prefix") return request;
+  const messages = [...(request.messages ?? [])].sort((left, right) =>
+    left.role === "system" && right.role !== "system" ? -1 : left.role !== "system" && right.role === "system" ? 1 : 0
+  );
+  const tools = [...(request.tools ?? [])].sort((left, right) => left.name.localeCompare(right.name));
+  const anthropicCache = profile?.cache.behavior === "anthropic_ephemeral"
+    ? {
+        providerOptions: {
+          ...(request.providerOptions ?? {}),
+          anthropic: {
+            ...(asPlainRecord(request.providerOptions?.anthropic) ?? {}),
+            cacheControl: "ephemeral" as const,
+          },
+        },
+      }
+    : {};
+  return { ...request, messages, tools, ...anthropicCache };
+}
+
+function buildStablePrefixRecord(
+  request: ModelRequest,
+  policy: HarnessEconomicsPolicyV1 | undefined,
+  profile: ModelEconomicsProfileV1 | undefined,
+  previousHash: string | undefined,
+): EconomicsModelCallRequestedV1["cache"] {
+  const stableValue = {
+    system: (request.messages ?? []).filter((message) => message.role === "system"),
+    tools: request.tools ?? [],
+  };
+  const stablePrefixHash = hashUnknown(stableValue);
+  const counter = profile?.counting.method === "model_tokenizer"
+    ? resolveModelTokenCounter(profile.counting.counter, profile.counting.counterVersion)
+    : undefined;
+  const stablePrefixTokens = countTextTokens(JSON.stringify(stableValue), counter).tokens;
+  return {
+    mode: policy?.cache.mode ?? "provider_default",
+    stablePrefixHash,
+    stablePrefixTokens,
+    prefixChanged: previousHash !== undefined && previousHash !== stablePrefixHash,
+  };
+}
+
+function applyEconomicsContextPolicy(input: {
+  request: ModelRequest;
+  contextSections?: ContextSectionCandidateV1[] | undefined;
+  contextPipeline: unknown;
+  policy?: HarnessEconomicsPolicyV1 | undefined;
+  modelProfile?: ModelEconomicsProfileV1 | undefined;
+  phase: string;
+  toolExposureSelection: unknown;
+}): { request: ModelRequest; contextSections?: ContextSectionCandidateV1[] | undefined } {
+  if (input.policy?.mode !== "enforce" || input.modelProfile === undefined || input.contextSections === undefined) {
+    return { request: input.request, ...(input.contextSections !== undefined ? { contextSections: input.contextSections } : {}) };
+  }
+  const manifest = buildModelRequestEconomicsManifest({
+    request: input.request,
+    contextSections: input.contextSections,
+    policy: input.policy,
+    modelProfile: input.modelProfile,
+    phase: input.phase,
+    ...(input.toolExposureSelection !== undefined
+      ? { toolExposureSelection: parseToolExposureSelectionV1(input.toolExposureSelection) }
+      : {}),
+  });
+  const decision = manifest.decision;
+  if (decision === undefined) return { request: input.request, contextSections: input.contextSections };
+  const policyById = new Map(input.policy.context.sections.map((section) => [section.id, section]));
+  const optionalDrops = new Set(decision.manifest.sections
+    .filter((section) => section.effectiveAdmission === "dropped" && policyById.get(section.id)?.priority === "optional")
+    .map((section) => section.id));
+  const unsupported = decision.manifest.sections.filter((section) =>
+    section.effectiveAdmission === "blocked" ||
+    section.effectiveAdmission === "truncated" ||
+    (section.effectiveAdmission === "dropped" && optionalDrops.has(section.id) === false)
+  );
+  if (unsupported.length > 0 || optionalDrops.size === 0) {
+    return { request: input.request, contextSections: input.contextSections };
+  }
+  const pipeline = parseContextPipeline(input.contextPipeline);
+  if (pipeline === undefined || [...optionalDrops].some((id) => pipeline.some((section) => section.id === id) === false)) {
+    return { request: input.request, contextSections: input.contextSections };
+  }
+  const messages = [...(input.request.messages ?? [])];
+  const removedMessageIndices = new Set<number>();
+  const runtimeSections = pipeline.filter((section) => section.binding === "runtime" && optionalDrops.has(section.id) === false);
+  for (const section of pipeline) {
+    if (optionalDrops.has(section.id) === false) continue;
+    if (section.binding !== "runtime") removedMessageIndices.add(section.messageIndex);
+  }
+  const runtimeIndex = pipeline.find((section) => section.binding === "runtime")?.messageIndex;
+  if (runtimeIndex !== undefined) {
+    if (runtimeSections.length === 0) removedMessageIndices.add(runtimeIndex);
+    else messages[runtimeIndex] = { role: "user", content: `<runtime_context>\n${runtimeSections.map((section) => section.renderedContent).join("\n\n")}\n</runtime_context>` };
+  }
+  const effectiveMessages = messages.filter((_message, index) => removedMessageIndices.has(index) === false);
+  return {
+    request: { ...input.request, messages: effectiveMessages },
+    contextSections: input.contextSections.filter((section) => optionalDrops.has(section.id) === false),
+  };
+}
+
+function parseContextPipeline(value: unknown): Array<{
+  id: string;
+  binding: "system" | "runtime" | "transcript";
+  messageIndex: number;
+  renderedContent: string;
+}> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const parsed = value.map((entry) => {
+    const record = asPlainRecord(entry);
+    const id = readNonEmptyString(record?.id);
+    const binding = record?.binding;
+    const messageIndex = record?.messageIndex;
+    const renderedContent = typeof record?.renderedContent === "string" ? record.renderedContent : undefined;
+    if (id === undefined || (binding !== "system" && binding !== "runtime" && binding !== "transcript") || !Number.isSafeInteger(messageIndex) || (messageIndex as number) < 0 || renderedContent === undefined) return undefined;
+    return { id, binding, messageIndex: messageIndex as number, renderedContent };
+  });
+  return parsed.some((entry) => entry === undefined) ? undefined : parsed as Array<{ id: string; binding: "system" | "runtime" | "transcript"; messageIndex: number; renderedContent: string }>;
 }
 
 function assertEconomicsRequestAdmission(

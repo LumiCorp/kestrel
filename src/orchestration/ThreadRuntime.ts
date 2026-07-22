@@ -406,9 +406,6 @@ export class ThreadRuntime implements ThreadRuntimePort {
           toolAllowlist: assembly.bundle?.toolAllowlist ?? [],
           specialistIds: assembly.bundle?.specialistIds ?? [],
           contextPolicyId: assembly.bundle?.contextPolicyId,
-          ...(contextPolicy?.economicsPolicy !== undefined
-            ? { economicsPolicy: contextPolicy.economicsPolicy }
-            : {}),
           approvalPolicyId: assembly.bundle?.approvalPolicyId,
           modelProvider: readAssemblyString(assembly.bundle?.metadata, "modelProvider"),
           model: readAssemblyString(assembly.bundle?.metadata, "model"),
@@ -421,8 +418,8 @@ export class ThreadRuntime implements ThreadRuntimePort {
           ),
           downgradeReason: readAssemblyString(assembly.bundle?.metadata, "downgradeReason"),
           capabilityLossReason: readAssemblyString(assembly.bundle?.metadata, "capabilityLossReason"),
-          ...(assembly.bundle?.metadata?.modelEconomicsProfile !== undefined
-            ? { modelEconomicsProfile: assembly.bundle.metadata.modelEconomicsProfile }
+          ...(assembly.bundle?.metadata?.harnessEconomics !== undefined
+            ? { harnessEconomics: assembly.bundle.metadata.harnessEconomics }
             : {}),
         },
       },

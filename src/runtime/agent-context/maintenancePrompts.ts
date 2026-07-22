@@ -31,6 +31,7 @@ export interface KestrelAgentCompactionPolicyInput {
   modelProfile?: ModelEconomicsProfileV1 | undefined;
   contextTokens?: number | undefined;
   toolSchemaTokens?: number | undefined;
+  providerOverheadTokens?: number | undefined;
 }
 
 export interface KestrelAgentCompactedTranscriptInput {
@@ -55,6 +56,21 @@ export interface KestrelCompactionSummaryV1 {
   coveredItemIds: string[];
 }
 
+export interface KestrelCompactionSufficiencyVerdictV1 {
+  version: 1;
+  sufficient: boolean;
+  categories: {
+    activeTask: boolean;
+    decisions: boolean;
+    constraints: boolean;
+    evidence: boolean;
+    fileState: boolean;
+    blockers: boolean;
+    nextActions: boolean;
+  };
+  reason: string;
+}
+
 export interface KestrelTerminalBenchRepairPromptInput {
   failurePacketPath: string;
   failurePacket: string;
@@ -67,6 +83,8 @@ const MODEL_TRANSCRIPT_COMPACTION_THRESHOLD_CHARS = 120_000;
 const MODEL_TRANSCRIPT_RETAINED_TAIL_ITEMS = 24;
 const COMPACTION_FIELDS = new Set(["version", "activeTaskItemId", "decisions", "constraints", "evidence", "fileState", "blockers", "nextActions", "coveredItemIds"]);
 const COMPACTION_ANCHOR_FIELDS = new Set(["text", "sourceItemIds"]);
+const SUFFICIENCY_FIELDS = new Set(["version", "sufficient", "categories", "reason"]);
+const SUFFICIENCY_CATEGORY_FIELDS = new Set(["activeTask", "decisions", "constraints", "evidence", "fileState", "blockers", "nextActions"]);
 
 export const KESTREL_COMPACTION_SUMMARY_SCHEMA = {
   type: "object",
@@ -128,6 +146,23 @@ export function planKestrelAgentCompaction(transcriptInput: unknown): KestrelAge
   };
 }
 
+export const KESTREL_COMPACTION_SUFFICIENCY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    version: { type: "integer", enum: [1] },
+    sufficient: { type: "boolean" },
+    categories: {
+      type: "object",
+      additionalProperties: false,
+      properties: Object.fromEntries([...SUFFICIENCY_CATEGORY_FIELDS].map((field) => [field, { type: "boolean" }])),
+      required: [...SUFFICIENCY_CATEGORY_FIELDS],
+    },
+    reason: { type: "string" },
+  },
+  required: ["version", "sufficient", "categories", "reason"],
+} as const;
+
 export function buildKestrelAgentCompactionMessages(
   input: KestrelAgentCompactionBuildInput,
 ): ModelMessage[] {
@@ -171,6 +206,26 @@ export function buildKestrelAgentCompactionMessages(
   ];
 }
 
+export function buildKestrelCompactionSufficiencyMessages(input: {
+  sourceItems: ModelTranscriptItem[];
+  proposedSummary: KestrelCompactionSummaryV1;
+}): ModelMessage[] {
+  return [
+    {
+      role: "system",
+      content: [
+        "Judge whether the proposed compact summary is sufficient to replace the supplied source transcript.",
+        "Check active task, decisions, constraints, evidence and provenance, file/workspace state, unresolved blockers, and next actions independently.",
+        "Reject invented, weakened, or omitted facts. Return only the required JSON verdict.",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: JSON.stringify({ sourceItems: input.sourceItems, proposedSummary: input.proposedSummary }),
+    },
+  ];
+}
+
 export function shouldCompactKestrelAgentContext(
   input: KestrelAgentCompactionPolicyInput,
 ): boolean {
@@ -179,12 +234,19 @@ export function shouldCompactKestrelAgentContext(
     input.modelProfile !== undefined &&
     input.contextTokens !== undefined
   ) {
+    if (
+      input.modelProfile.counting.method === "conservative_estimate" &&
+      input.policy.counting.allowEstimatedEnforcement === false
+    ) {
+      return false;
+    }
     const availableContextTokens = Math.max(
       0,
       input.modelProfile.contextWindowTokens
         - input.policy.context.outputReserveTokens
         - input.policy.context.safetyReserveTokens
-        - Math.max(input.policy.tools.modelContextMaxTokens, input.toolSchemaTokens ?? 0),
+        - Math.max(0, input.toolSchemaTokens ?? 0)
+        - Math.max(0, input.providerOverheadTokens ?? 0),
     );
     return input.contextTokens >= availableContextTokens;
   }
@@ -208,8 +270,9 @@ export function buildKestrelAgentCompactedTranscript(
   validateCompactionSufficiency(transcript, plan, summary);
   return compactModelTranscript({
     transcript,
-    summary: JSON.stringify(summary),
+    summary: renderModelVisibleCompactionSummary(summary),
     retainedTailItems: MODEL_TRANSCRIPT_RETAINED_TAIL_ITEMS,
+    categoryCoverage: categoryCoverage(summary),
   });
 }
 
@@ -266,6 +329,24 @@ function normalizeToolPairAnchorProvenance(input: {
   };
 }
 
+export function parseKestrelCompactionSufficiencyVerdictV1(value: unknown): KestrelCompactionSufficiencyVerdictV1 {
+  const parsed = typeof value === "string" ? parseJson(value) : value;
+  const record = requireRecord(parsed, "compaction sufficiency verdict");
+  rejectUnknown(record, SUFFICIENCY_FIELDS, "compaction sufficiency verdict");
+  if (record.version !== 1 || typeof record.sufficient !== "boolean") throw compactionFailure("Compaction sufficiency verdict is invalid.");
+  const categoriesRecord = requireRecord(record.categories, "compaction sufficiency verdict categories");
+  rejectUnknown(categoriesRecord, SUFFICIENCY_CATEGORY_FIELDS, "compaction sufficiency verdict categories");
+  const categories = Object.fromEntries([...SUFFICIENCY_CATEGORY_FIELDS].map((field) => {
+    if (typeof categoriesRecord[field] !== "boolean") throw compactionFailure(`Compaction sufficiency category '${field}' must be boolean.`);
+    return [field, categoriesRecord[field]];
+  })) as KestrelCompactionSufficiencyVerdictV1["categories"];
+  const verdict = { version: 1 as const, sufficient: record.sufficient, categories, reason: requireString(record.reason, "reason") };
+  if (!verdict.sufficient || Object.values(verdict.categories).some((covered) => !covered)) {
+    throw compactionFailure(`Maintenance verifier rejected compaction: ${verdict.reason}`);
+  }
+  return verdict;
+}
+
 export function parseKestrelCompactionSummaryV1(value: unknown): KestrelCompactionSummaryV1 {
   const parsed = typeof value === "string" ? parseJson(value) : value;
   const record = requireRecord(parsed, "compaction summary");
@@ -311,6 +392,30 @@ function validateCompactionSufficiency(
 
 function allAnchors(summary: KestrelCompactionSummaryV1): KestrelCompactionAnchorV1[] {
   return [...summary.decisions, ...summary.constraints, ...summary.evidence, ...summary.fileState, ...summary.blockers, ...summary.nextActions];
+}
+
+function renderModelVisibleCompactionSummary(summary: KestrelCompactionSummaryV1): string {
+  return JSON.stringify({
+    version: 1,
+    decisions: summary.decisions.map((anchor) => anchor.text),
+    constraints: summary.constraints.map((anchor) => anchor.text),
+    evidence: summary.evidence.map((anchor) => anchor.text),
+    fileState: summary.fileState.map((anchor) => anchor.text),
+    blockers: summary.blockers.map((anchor) => anchor.text),
+    nextActions: summary.nextActions.map((anchor) => anchor.text),
+  });
+}
+
+function categoryCoverage(summary: KestrelCompactionSummaryV1): Record<string, number> {
+  return {
+    activeTask: 1,
+    decisions: summary.decisions.length,
+    constraints: summary.constraints.length,
+    evidence: summary.evidence.length,
+    fileState: summary.fileState.length,
+    blockers: summary.blockers.length,
+    nextActions: summary.nextActions.length,
+  };
 }
 
 function parseAnchors(value: unknown, field: string): KestrelCompactionAnchorV1[] {

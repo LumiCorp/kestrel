@@ -147,14 +147,18 @@ contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and v
     runtimeMetadata: {
       runtimeAssembly: {
         contextPolicyId: "context-policy:test",
-        modelEconomicsProfile: {
+        harnessEconomics: {
+          version: 1,
+          policy: economicsPolicy({ mode: "observe", exposure: "assembly_allowlist", maxToolTokens: 100_000 }),
+          modelProfiles: [{
           version: 1,
           profileId: "provider-a:model-a:v1",
           provider: "provider-a",
           model: "model-a",
           contextWindowTokens: 100_000,
           maxOutputTokens: 8_000,
-          counting: { counter: "counter-a", counterVersion: "1", method: "exact", confidence: "exact" },
+          counting: { counter: "tiktoken:o200k_base", counterVersion: "1.0.21", method: "model_tokenizer", confidence: "model_compatible" },
+          cache: { behavior: "none" },
           price: {
             version: 1,
             priceVersion: "price:test:v1",
@@ -164,6 +168,7 @@ contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and v
             sourceUrl: "https://provider.example/pricing",
             perMillionTokens: { input: 10, output: 20 },
           },
+          }],
         },
       },
     },
@@ -212,10 +217,10 @@ contractTest("runtime.hermetic", "RuntimeIO records stored and exact model-visib
   assert.equal(ledger.toolResults.length, 1);
   assert.equal(ledger.toolResults[0]?.event.toolName, "fs.read_text");
   assert.equal(typeof ledger.toolResults[0]?.event.resultManifest.truncated, "boolean");
-  assert.ok(ledger.totals.storedToolResultTokens > ledger.totals.modelVisibleToolResultTokens);
+  assert.ok(ledger.totals.rawToolResultTokens > ledger.totals.modelVisibleToolResultTokens);
   assert.equal(
-    ledger.totals.reducedToolResultTokens,
-    ledger.totals.storedToolResultTokens - ledger.totals.modelVisibleToolResultTokens,
+    ledger.totals.rawToModelVisibleReductionTokens,
+    ledger.totals.rawToolResultTokens - ledger.totals.modelVisibleToolResultTokens,
   );
   assert.ok(emitted.includes("economics.tool_result.recorded"));
 });
@@ -239,7 +244,7 @@ contractTest("runtime.hermetic", "RuntimeIO joins assembly tool selection to the
     signal: new AbortController().signal,
     emitted,
     runEvents,
-    runtimeMetadata: { runtimeAssembly: { economicsPolicy: policy } },
+    runtimeMetadata: { runtimeAssembly: { harnessEconomics: economicsControl(policy) } },
   });
 
   await io.model({
@@ -265,7 +270,7 @@ contractTest("runtime.hermetic", "RuntimeIO enforcement fails closed before prov
   const io = createRuntimeIO({
     signal: new AbortController().signal,
     emitted,
-    runtimeMetadata: { runtimeAssembly: { economicsPolicy: policy } },
+    runtimeMetadata: { runtimeAssembly: { harnessEconomics: economicsControl(policy) } },
     modelCall: async () => {
       providerCalled = true;
       return { ok: true };
@@ -303,7 +308,7 @@ contractTest("runtime.hermetic", "RuntimeIO does not enforce estimated tool-sche
   const io = createRuntimeIO({
     signal: new AbortController().signal,
     emitted,
-    runtimeMetadata: { runtimeAssembly: { economicsPolicy: policy } },
+    runtimeMetadata: { runtimeAssembly: { harnessEconomics: economicsControl(policy) } },
     modelCall: async () => {
       providerCalled = true;
       return { ok: true };
@@ -467,6 +472,29 @@ function economicsPolicy(input: {
       modelContextMaxTokens: input.maxToolTokens,
       allowedFamiliesByPhase: { "agent.loop": ["filesystem"] },
     },
+    cache: { mode: "provider_default" },
+  };
+}
+
+function economicsControl(policy: HarnessEconomicsPolicyV1) {
+  return {
+    version: 1 as const,
+    policy,
+    modelProfiles: [{
+      version: 1 as const,
+      profileId: "provider-a:model-a:v1",
+      provider: "provider-a",
+      model: "model-a",
+      contextWindowTokens: 100_000,
+      maxOutputTokens: 8_000,
+      counting: {
+        counter: "tiktoken:o200k_base",
+        counterVersion: "1.0.21",
+        method: "model_tokenizer" as const,
+        confidence: "model_compatible" as const,
+      },
+      cache: { behavior: "none" as const },
+    }],
   };
 }
 

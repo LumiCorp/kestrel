@@ -46,7 +46,7 @@ export function isAgentToolResult(value: unknown): value is AgentToolResult {
 }
 
 export function unwrapAgentToolOutput(value: unknown): unknown {
-  return isAgentToolResult(value) ? value.auditRecord.output : value;
+  return isAgentToolResult(value) ? value.projections?.verificationOutput ?? value.auditRecord.output : value;
 }
 
 export async function runAgentTool(input: {

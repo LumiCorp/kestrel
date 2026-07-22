@@ -111,5 +111,6 @@ function economicsPolicy(modelContextMaxTokens: number): HarnessEconomicsPolicyV
       modelContextMaxTokens,
       allowedFamiliesByPhase: {},
     },
+    cache: { mode: "provider_default" },
   };
 }

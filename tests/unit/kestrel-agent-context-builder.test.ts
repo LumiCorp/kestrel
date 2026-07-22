@@ -106,7 +106,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder records determin
       "workspaceFreshness",
       "correction",
       "activeWait",
-      "transcript",
+    "transcript:mt_1_0001_user",
     ],
   );
   assert.deepEqual(
@@ -634,6 +634,7 @@ contractTest("runtime.hermetic", "enforce-mode compaction uses resolved model to
     context: { outputReserveTokens: 10, safetyReserveTokens: 5, sections: [] },
     compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
     tools: { exposure: "assembly_allowlist", modelContextMaxTokens: 20, allowedFamiliesByPhase: {} },
+    cache: { mode: "provider_default" },
   };
   const modelProfile: ModelEconomicsProfileV1 = {
     version: 1,
@@ -642,12 +643,13 @@ contractTest("runtime.hermetic", "enforce-mode compaction uses resolved model to
     model: "model",
     contextWindowTokens: 100,
     maxOutputTokens: 10,
-    counting: { counter: "test", counterVersion: "1", method: "exact", confidence: "exact" },
+    counting: { counter: "test", counterVersion: "1", method: "model_tokenizer", confidence: "model_compatible" },
+    cache: { behavior: "none" },
   };
   const transcript = { version: 1 as const, windowId: 1, items: [] };
 
-  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 64, toolSchemaTokens: 5 }), false);
-  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 65, toolSchemaTokens: 5 }), true);
+  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 79, toolSchemaTokens: 5 }), false);
+  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 80, toolSchemaTokens: 5 }), true);
   assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 55, toolSchemaTokens: 30 }), true);
 });
 
@@ -661,6 +663,7 @@ contractTest("runtime.hermetic", "observe-mode token pressure never changes comp
     context: { outputReserveTokens: 10, safetyReserveTokens: 5, sections: [] },
     compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
     tools: { exposure: "assembly_allowlist", modelContextMaxTokens: 20, allowedFamiliesByPhase: {} },
+    cache: { mode: "provider_default" },
   } satisfies HarnessEconomicsPolicyV1;
   const modelProfile = {
     version: 1,
@@ -669,7 +672,8 @@ contractTest("runtime.hermetic", "observe-mode token pressure never changes comp
     model: "model",
     contextWindowTokens: 100,
     maxOutputTokens: 10,
-    counting: { counter: "test", counterVersion: "1", method: "exact", confidence: "exact" },
+    counting: { counter: "test", counterVersion: "1", method: "model_tokenizer", confidence: "model_compatible" },
+    cache: { behavior: "none" },
   } satisfies ModelEconomicsProfileV1;
 
   assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 1_000, toolSchemaTokens: 500 }), false);
@@ -823,8 +827,10 @@ contractTest("runtime.hermetic", "repeated compaction preserves the active task 
   assert.equal(readActiveTaskGoalFromTranscript(second), activeTask);
   assert.equal(second.compactions?.length, 2);
   const latestSummary = JSON.parse(second.items.find((item) => item.kind === "compaction_summary")?.content ?? "null") as Record<string, unknown>;
-  assert.deepEqual(latestSummary.coveredItemIds, secondReplacedIds);
-  assert.deepEqual((latestSummary.constraints as Array<Record<string, unknown>>)[0]?.sourceItemIds, secondReplacedIds);
+  assert.equal(latestSummary.coveredItemIds, undefined);
+  assert.deepEqual(latestSummary.constraints, ["Preserve both compaction windows."]);
+  assert.deepEqual(second.compactions?.at(-1)?.replacedItemIds, secondReplacedIds);
+  assert.equal(typeof second.compactions?.at(-1)?.sourceWindowHash, "string");
 });
 
 contractTest("runtime.hermetic", "Kestrel agent context builder owns the provider-facing tool surface", () => {

@@ -25,6 +25,36 @@ contractTest("runtime.hermetic", "Anthropic mapper preserves cache read and cach
   });
 });
 
+contractTest("runtime.hermetic", "Anthropic request builder places explicit ephemeral cache breakpoints on stable system and tool blocks", () => {
+  const mapped = buildAnthropicHttpRequest({
+    model: "claude-test",
+    input: "Act now",
+    messages: [
+      { role: "system", content: "Stable system instructions." },
+      { role: "user", content: "Act now" },
+    ],
+    tools: [
+      { name: "read", description: "Read.", inputSchema: { type: "object" } },
+      { name: "write", description: "Write.", inputSchema: { type: "object" } },
+    ],
+    providerOptions: { anthropic: { cacheControl: "ephemeral" } },
+  }, {
+    apiKey: "key",
+    model: "claude-test",
+    baseUrl: "https://api.anthropic.com",
+    version: "2023-06-01",
+  });
+
+  assert.deepEqual(mapped.body.system, [{
+    type: "text",
+    text: "Stable system instructions.",
+    cache_control: { type: "ephemeral" },
+  }]);
+  const tools = mapped.body.tools as Array<Record<string, unknown>>;
+  assert.equal(tools[0]?.cache_control, undefined);
+  assert.deepEqual(tools[1]?.cache_control, { type: "ephemeral" });
+});
+
 
 contractTest("runtime.hermetic", "Anthropic request builder serializes assistant tool-call history with provider aliases", () => {
   const request: ModelRequest = {

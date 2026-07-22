@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseHarnessEfficiencyLedgerV1, parseHarnessEfficiencyResultV1 } from "../../src/economics/index.js";
+import { parseHarnessEfficiencyLedgerV2, parseHarnessEfficiencyResultV2 } from "../../src/economics/index.js";
 
 import {
   assertSweVerifiedJobInputContract,
@@ -71,12 +71,12 @@ contractTest("runtime.hermetic", "SWE efficiency result joins runtime calls and 
       env: {},
     });
 
-    const result = parseHarnessEfficiencyResultV1(JSON.parse(readFileSync(outputPath, "utf8")));
+    const result = parseHarnessEfficiencyResultV2(JSON.parse(readFileSync(outputPath, "utf8")));
     const ledgerPath = path.join(tmp, "harness-efficiency-ledger.json");
-    const ledger = parseHarnessEfficiencyLedgerV1(JSON.parse(readFileSync(ledgerPath, "utf8")));
+    const ledger = parseHarnessEfficiencyLedgerV2(JSON.parse(readFileSync(ledgerPath, "utf8")));
     assert.equal(result.economics.status, "complete");
     assert.equal(result.economics.tokensPerAcceptedSuccess, 12);
-    assert.equal(ledger.events.at(-1)?.type, "economics.run_outcome.evaluated");
+    assert.equal(ledger.entries.at(-1)?.event.type, "economics.run_outcome.evaluated");
     assert.equal(result.artifacts.some((artifact) => artifact.kind === "efficiency_ledger"), true);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -907,7 +907,7 @@ contractTest("runtime.hermetic", "swe verified bench creates attempt-local artif
         unresolved_instances: 1,
       },
     );
-    const efficiency = parseHarnessEfficiencyResultV1(JSON.parse(
+    const efficiency = parseHarnessEfficiencyResultV2(JSON.parse(
       readFileSync(path.join(attemptRoot, "harness-efficiency-result.json"), "utf8"),
     ));
     assert.equal(efficiency.lane, "swe_verified");
@@ -1241,7 +1241,7 @@ contractTest("runtime.hermetic", "swe verified bench rejects empty patches befor
 
     assert.equal(code, 1);
     assert.match(stderr, /final submission is empty/u);
-    const efficiency = parseHarnessEfficiencyResultV1(JSON.parse(readFileSync(path.join(
+    const efficiency = parseHarnessEfficiencyResultV2(JSON.parse(readFileSync(path.join(
       tmp,
       "runs/swe-verified/kestrel-swe-astropy__astropy-12907/attempts/20260602T123456789Z/harness-efficiency-result.json",
     ), "utf8")));
@@ -1316,7 +1316,7 @@ contractTest("runtime.hermetic", "swe verified bench reports patch harvesting fa
     assert.equal(latest.terminal_status, "patch_harvest_failed");
     assert.equal(latest.workspace_patch_status, "failed");
     assert.equal(latest.evaluator_ran, false);
-    const efficiency = parseHarnessEfficiencyResultV1(JSON.parse(readFileSync(path.join(
+    const efficiency = parseHarnessEfficiencyResultV2(JSON.parse(readFileSync(path.join(
       tmp,
       "runs/swe-verified/kestrel-swe-astropy__astropy-12907/attempts/20260602T123456789Z/harness-efficiency-result.json",
     ), "utf8")));

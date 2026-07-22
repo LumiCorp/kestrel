@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { ModelMessage } from "../kestrel/contracts/model-io.js";
 import { buildAgentToolSuccessResult, isAgentToolResult } from "../../tools/toolResult.js";
 
@@ -40,6 +42,9 @@ export interface ModelTranscriptCompactionRecord {
   summaryItemId: string;
   replacedItemIds: string[];
   retainedItemIds: string[];
+  sourceWindowHash?: string | undefined;
+  summaryHash?: string | undefined;
+  categoryCoverage?: Record<string, number> | undefined;
 }
 
 export interface ModelTranscriptCompactionPlan {
@@ -53,8 +58,6 @@ export interface ModelTranscriptValidationResult {
   error?: { path: string; message: string } | undefined;
 }
 
-const MAX_TRANSCRIPT_ITEMS = 120;
-
 export function normalizeModelTranscript(value: unknown): ModelTranscript | undefined {
   const record = asRecord(value);
   if (record === undefined || record.version !== 1 || Array.isArray(record.items) === false) {
@@ -63,9 +66,9 @@ export function normalizeModelTranscript(value: unknown): ModelTranscript | unde
   const windowId = typeof record.windowId === "number" && Number.isFinite(record.windowId)
     ? Math.max(1, Math.trunc(record.windowId))
     : 1;
-  const items = limitTranscriptItems(dedupeTranscriptItemsById(asArray(record.items)
+  const items = dedupeTranscriptItemsById(asArray(record.items)
     .map(normalizeTranscriptItem)
-    .filter((item): item is ModelTranscriptItem => item !== undefined)));
+    .filter((item): item is ModelTranscriptItem => item !== undefined));
   const compactions = normalizeCompactions(record.compactions);
   return {
     version: 1,
@@ -116,7 +119,7 @@ export function appendModelTranscriptItems(
   );
   return {
     ...transcript,
-    items: limitTranscriptItems(dedupeTranscriptItemsById([...transcript.items, ...normalizedItems])),
+    items: dedupeTranscriptItemsById([...transcript.items, ...normalizedItems]),
   };
 }
 
@@ -236,6 +239,7 @@ export function compactModelTranscript(input: {
   transcript: unknown;
   summary: string;
   retainedTailItems?: number | undefined;
+  categoryCoverage?: Record<string, number> | undefined;
 }): ModelTranscript {
   const transcript = normalizeModelTranscript(input.transcript) ?? { version: 1, windowId: 1, items: [] };
   const plan = planModelTranscriptCompaction({
@@ -258,21 +262,26 @@ export function compactModelTranscript(input: {
     summaryItemId: summaryItem.id,
     replacedItemIds: replacedItems.map((item) => item.id),
     retainedItemIds: retainedItems.map((item) => item.id),
+    sourceWindowHash: hashTranscriptValue(replacedItems),
+    summaryHash: hashTranscriptValue(input.summary.trim()),
+    ...(input.categoryCoverage !== undefined ? { categoryCoverage: { ...input.categoryCoverage } } : {}),
   };
   return {
     version: 1,
     windowId: nextWindowId,
-    items: limitTranscriptItems(dedupeTranscriptItemsById([
+    items: dedupeTranscriptItemsById([
       summaryItem,
       ...retainedItems,
-    ]), {
-      pinnedItemIds: [summaryItem.id],
-    }),
+    ]),
     compactions: [
       ...(transcript.compactions ?? []),
       compactionRecord,
     ].slice(-20),
   };
+}
+
+function hashTranscriptValue(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 export function planModelTranscriptCompaction(input: {
@@ -302,40 +311,6 @@ function readActiveTaskItemFromTranscript(transcript: ModelTranscript): ModelTra
     const content = item.content?.trim();
     return content !== undefined && content.length > 0;
   });
-}
-
-function limitTranscriptItems(
-  items: ModelTranscriptItem[],
-  options: { pinnedItemIds?: string[] | undefined } = {},
-): ModelTranscriptItem[] {
-  if (items.length <= MAX_TRANSCRIPT_ITEMS) {
-    return items;
-  }
-  const protectedIds = new Set(options.pinnedItemIds ?? []);
-  const activeTaskItem = readActiveTaskItemFromTranscript({
-    version: 1,
-    windowId: 1,
-    items,
-  });
-  if (activeTaskItem !== undefined) {
-    protectedIds.add(activeTaskItem.id);
-  }
-  if (protectedIds.size === 0) {
-    return items.slice(-MAX_TRANSCRIPT_ITEMS);
-  }
-  const rawTail = items.slice(-MAX_TRANSCRIPT_ITEMS);
-  if ([...protectedIds].every((id) => rawTail.some((item) => item.id === id))) {
-    return rawTail;
-  }
-  const tailCapacity = Math.max(0, MAX_TRANSCRIPT_ITEMS - protectedIds.size);
-  const tailIds = new Set(items
-    .filter((item) => protectedIds.has(item.id) === false)
-    .slice(-tailCapacity)
-    .map((item) => item.id));
-  const retainedIds = new Set([...protectedIds, ...tailIds]);
-  const tail = items
-    .filter((item) => retainedIds.has(item.id));
-  return tail.slice(-MAX_TRANSCRIPT_ITEMS);
 }
 
 export function rebaseModelTranscriptAfterCompaction(input: {
@@ -703,25 +678,30 @@ function assignTranscriptItemIdentity(
 }
 
 function normalizeCompactions(value: unknown): ModelTranscriptCompactionRecord[] {
-  return asArray(value)
-    .map((entry) => {
-      const record = asRecord(entry);
-      const id = asString(record?.id);
-      const createdAt = asString(record?.createdAt);
-      const summaryItemId = asString(record?.summaryItemId);
-      if (record === undefined || id === undefined || createdAt === undefined || summaryItemId === undefined) {
-        return ;
-      }
-      return {
-        id,
-        createdAt,
-        summaryItemId,
-        replacedItemIds: asArray(record.replacedItemIds).map(asString).filter(isString),
-        retainedItemIds: asArray(record.retainedItemIds).map(asString).filter(isString),
-      };
-    })
-    .filter((entry): entry is ModelTranscriptCompactionRecord => entry !== undefined)
-    .slice(-20);
+  const normalized: ModelTranscriptCompactionRecord[] = [];
+  for (const entry of asArray(value)) {
+    const record = asRecord(entry);
+    const id = asString(record?.id);
+    const createdAt = asString(record?.createdAt);
+    const summaryItemId = asString(record?.summaryItemId);
+    if (record === undefined || id === undefined || createdAt === undefined || summaryItemId === undefined) {
+      continue;
+    }
+    const compaction: ModelTranscriptCompactionRecord = {
+      id,
+      createdAt,
+      summaryItemId,
+      replacedItemIds: asArray(record.replacedItemIds).map(asString).filter(isString),
+      retainedItemIds: asArray(record.retainedItemIds).map(asString).filter(isString),
+      ...(asString(record.sourceWindowHash) !== undefined ? { sourceWindowHash: asString(record.sourceWindowHash) } : {}),
+      ...(asString(record.summaryHash) !== undefined ? { summaryHash: asString(record.summaryHash) } : {}),
+      ...(asRecord(record.categoryCoverage) !== undefined
+        ? { categoryCoverage: Object.fromEntries(Object.entries(asRecord(record.categoryCoverage)!).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))) }
+        : {}),
+    };
+    normalized.push(compaction);
+  }
+  return normalized.slice(-20);
 }
 
 function isTranscriptKind(value: string | undefined): value is ModelTranscriptItemKind {

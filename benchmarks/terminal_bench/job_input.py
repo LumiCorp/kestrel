@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from typing import Mapping
 
@@ -46,6 +47,19 @@ TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS = [
 
 
 def build_terminal_bench_profile() -> dict:
+    profile_path = os.environ.get("KESTREL_BENCHMARK_PROFILE_FILE", "").strip()
+    profile_id = os.environ.get("KESTREL_BENCHMARK_PROFILE_ID", "").strip()
+    if profile_path:
+        if not profile_id:
+            raise AssertionError("KESTREL_BENCHMARK_PROFILE_ID is required with KESTREL_BENCHMARK_PROFILE_FILE.")
+        with open(profile_path, encoding="utf-8") as profile_file:
+            payload = json.load(profile_file)
+        profiles = payload.get("profiles") if isinstance(payload, dict) else None
+        candidates = profiles if isinstance(profiles, list) else [payload]
+        selected = next((profile for profile in candidates if isinstance(profile, dict) and profile.get("id") == profile_id), None)
+        if selected is None:
+            raise AssertionError(f"Benchmark profile '{profile_id}' was not found in {profile_path}.")
+        return dict(selected)
     assert_benchmark_provider_env()
     config = resolve_benchmark_provider_config()
     return {

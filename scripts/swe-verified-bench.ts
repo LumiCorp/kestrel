@@ -28,8 +28,8 @@ import type {
   SweWorkspacePatchReport,
 } from "./swe-verified-workspace-patch.js";
 import {
-  createHarnessEfficiencyLedgerV1,
-  createHarnessEfficiencyResultV1,
+  createHarnessEfficiencyLedgerV2,
+  createHarnessEfficiencyResultV2,
   emptyHarnessEfficiencyEconomics,
   hashHarnessEfficiencyValue,
   readHarnessEfficiencyEconomicsFromLedger,
@@ -352,6 +352,7 @@ export function buildSweVerifiedJobInput(input: {
   workspaceRoot: string;
   modelName: string;
   runtimeModelName?: string | undefined;
+  profile?: Record<string, unknown> | undefined;
 }): Record<string, unknown> {
   const problemStatement = sanitizeSweVerifiedIssueText(input.instance.problem_statement);
   const hintsText = input.instance.hints_text === undefined
@@ -360,7 +361,7 @@ export function buildSweVerifiedJobInput(input: {
   return {
     version: "job_input_v1",
     approvalPolicyPackId: "dev",
-    profile: {
+    profile: input.profile ?? {
       id: "swe-verified",
       label: "SWE Verified",
       agent: "reference-react",
@@ -635,12 +636,14 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
   }
   const benchmarkEnv = benchmarkProviderEnv(deps.env);
   const { modelName, runtimeModelName } = modelSelection;
+  const benchmarkProfile = loadBenchmarkProfileOverride(deps.env);
   const jobInput = buildSweVerifiedJobInput({
     instance,
     dataset: options.dataset,
     workspaceRoot: SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT,
     modelName,
     runtimeModelName,
+    ...(benchmarkProfile !== undefined ? { profile: benchmarkProfile } : {}),
   });
   try {
     assertSweVerifiedJobInputContract(jobInput);
@@ -2120,7 +2123,7 @@ export function writeSweVerifiedEfficiencyResult(input: {
     : readHarnessEfficiencyEconomicsFromReplayBundle(replayBundle, acceptance);
   if (replayBundle !== undefined) {
     try {
-      const ledger = createHarnessEfficiencyLedgerV1({
+      const ledger = createHarnessEfficiencyLedgerV2({
         replayBundle,
         recordedAt,
         runId: input.kestrelJobSummary?.runId,
@@ -2142,7 +2145,7 @@ export function writeSweVerifiedEfficiencyResult(input: {
   }
   const profile = asRecord(input.jobInput.profile);
   const trial = readPositiveTrial(input.env.KESTREL_BENCHMARK_TRIAL);
-  const result = createHarnessEfficiencyResultV1({
+  const result = createHarnessEfficiencyResultV2({
     pairId: input.env.KESTREL_BENCHMARK_PAIR_ID?.trim() || `swe_verified:${input.dataset}:${input.instance.instance_id}:trial:${trial}`,
     lane: "swe_verified",
     dataset: input.dataset,
@@ -2173,8 +2176,7 @@ export function writeSweVerifiedEfficiencyResult(input: {
       }),
       controlVariantHash: hashHarnessEfficiencyValue({
         sourceHash: input.sourceHash,
-        harnessEconomicsPolicy: profile?.harnessEconomicsPolicy,
-        modelEconomicsProfile: profile?.modelEconomicsProfile,
+        harnessEconomics: profile?.harnessEconomics,
       }),
       harnessRevision: input.sourceHash,
       modelProvider: "openrouter",
@@ -2399,6 +2401,20 @@ function formatCommand(binary: string, args: string[]): string {
 
 function shellQuote(value: string): string {
   return /^[a-zA-Z0-9_./:=@+-]+$/u.test(value) ? value : JSON.stringify(value);
+}
+
+function loadBenchmarkProfileOverride(env: NodeJS.ProcessEnv): Record<string, unknown> | undefined {
+  const profilePath = env.KESTREL_BENCHMARK_PROFILE_FILE?.trim();
+  const profileId = env.KESTREL_BENCHMARK_PROFILE_ID?.trim();
+  if (profilePath === undefined || profilePath.length === 0) return undefined;
+  if (profileId === undefined || profileId.length === 0) throw new Error("KESTREL_BENCHMARK_PROFILE_ID is required with KESTREL_BENCHMARK_PROFILE_FILE.");
+  const parsed = JSON.parse(readFileSync(profilePath, "utf8")) as unknown;
+  const record = asRecord(parsed);
+  const profiles = Array.isArray(record?.profiles) ? record.profiles : [parsed];
+  const profile = profiles.find((value) => asRecord(value)?.id === profileId);
+  const selected = asRecord(profile);
+  if (selected === undefined) throw new Error(`Benchmark profile '${profileId}' was not found in ${profilePath}.`);
+  return structuredClone(selected);
 }
 
 function helpText(): string {

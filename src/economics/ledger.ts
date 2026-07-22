@@ -33,11 +33,11 @@ const ECONOMICS_EVENT_TYPES = new Set<RunEventType>(Object.values(EVENT_TYPE_BY_
 const BASE_FIELDS = ["version", "eventId", "payloadHash", "callId", "kind"] as const;
 const RUN_BASE_FIELDS = ["version", "eventId", "payloadHash", "runId", "kind"] as const;
 const FIELDS_BY_KIND: Record<EconomicsLedgerEventV1["kind"], ReadonlySet<string>> = {
-  "model_call.requested": new Set([...BASE_FIELDS, "providerPayloadHash", "componentHash", "toolManifestHash", "provider", "model", "modelBudgetClass", "phase", "assemblyId", "contextPolicyId", "requestManifest"]),
+  "model_call.requested": new Set([...BASE_FIELDS, "providerPayloadHash", "componentHash", "toolManifestHash", "provider", "model", "modelBudgetClass", "phase", "assemblyId", "contextPolicyId", "modelProfileId", "economicsControlHash", "economicsControl", "cache", "requestManifest"]),
   "model_attempt.started": new Set([...BASE_FIELDS, "attempt", "maxAttempts", "provider", "model"]),
   "model_attempt.completed": new Set([...BASE_FIELDS, "attempt", "latencyMs"]),
   "model_attempt.failed": new Set([...BASE_FIELDS, "attempt", "latencyMs", "failureCode", "failureClass", "retryable", "willRetry", "visibleOutputStarted", "retryDelayMs"]),
-  "model_call.completed": new Set([...BASE_FIELDS, "provider", "model", "latencyMs", "usage", "pricing"]),
+  "model_call.completed": new Set([...BASE_FIELDS, "provider", "model", "latencyMs", "usage", "pricing", "providerReportedInputDeltaTokens"]),
   "model_call.failed": new Set([...BASE_FIELDS, "latencyMs", "failureCode", "failureClass"]),
   "tool_result.recorded": new Set([...BASE_FIELDS, "toolCallId", "toolName", "status", "latencyMs", "resultManifest"]),
   "outcome.evaluated": new Set([...BASE_FIELDS, "evaluatorId", "evaluatorVersion", "acceptance", "independentlyEvaluated", "failureClass"]),
@@ -46,9 +46,9 @@ const FIELDS_BY_KIND: Record<EconomicsLedgerEventV1["kind"], ReadonlySet<string>
 const USAGE_FIELDS = new Set(["version", "inputTokens", "outputTokens", "totalTokens", "cachedInputTokens", "cacheWriteInputTokens", "reasoningTokens"]);
 const PRICING_FIELDS = new Set(["version", "status", "currency", "priceVersion", "sourceUrl", "totalCostUsd", "components", "reason"]);
 const PRICE_COMPONENT_FIELDS = new Set(["category", "tokens", "ratePerMillionTokens", "costUsd"]);
-const TOOL_RESULT_MANIFEST_FIELDS = new Set(["version", "storedOutputHash", "storedOutput", "modelVisibleHash", "modelVisible", "reductionTokens", "truncated", "rawOutputRef"]);
+const TOOL_RESULT_MANIFEST_FIELDS = new Set(["version", "rawReceivedHash", "rawReceived", "durableRawArtifactRef", "persistedOutputHash", "persistedOutput", "verificationVisibleHash", "verificationVisible", "modelVisibleHash", "modelVisible", "reductions", "truncated"]);
 const TOKEN_COUNT_FIELDS = new Set(["version", "tokens", "bytes", "method", "confidence", "counter", "counterVersion"]);
-const REQUEST_MANIFEST_FIELDS = new Set(["version", "requestCount", "contextSections", "toolSurface", "toolExposure", "providerOverhead", "unattributedContextTokens", "decision"]);
+const REQUEST_MANIFEST_FIELDS = new Set(["version", "requestCount", "contextSections", "toolSurface", "toolExposure", "providerOverhead", "unattributedContextTokens", "reconciliation", "decision"]);
 const CONTEXT_CANDIDATE_FIELDS = new Set(["id", "origin", "revision", "contentHash", "count", "duplicateOf"]);
 const TOOL_SURFACE_FIELDS = new Set(["version", "surfaceHash", "count", "tools"]);
 const TOOL_SURFACE_ENTRY_FIELDS = new Set(["name", "schemaHash", "count"]);
@@ -186,6 +186,7 @@ export function projectEconomicsLedger(events: RunEvent[]): EconomicsLedgerProje
     .map((call) => ({ ...call, attempts: [...call.attempts].sort((left, right) => left.attempt - right.attempt) }))
     .sort((left, right) => (left.requestedAt ?? left.callId).localeCompare(right.requestedAt ?? right.callId));
   const projectedToolResults = [...toolResults.values()].sort((left, right) => left.recordedAt.localeCompare(right.recordedAt));
+  const incompleteReasons = validateLifecycle(projectedCalls, runOutcomes, invalidEvents);
   return {
     version: 1,
     calls: projectedCalls,
@@ -193,10 +194,15 @@ export function projectEconomicsLedger(events: RunEvent[]): EconomicsLedgerProje
     runOutcomes: runOutcomes.sort((left, right) => left.recordedAt.localeCompare(right.recordedAt)),
     totals: summarize(projectedCalls, projectedToolResults),
     invalidEvents,
+    complete: incompleteReasons.length === 0,
+    incompleteReasons,
   };
 }
 
 function applyEvent(call: EconomicsCallProjectionV1, event: EconomicsLedgerEventV1, timestamp: string): void {
+  if ((call.completion !== undefined || call.failure !== undefined) && event.kind !== "outcome.evaluated") {
+    throw new Error(`Call '${call.callId}' has an event after its terminal call event.`);
+  }
   switch (event.kind) {
     case "model_call.requested":
       if (call.request !== undefined) throw new Error(`Call '${call.callId}' has multiple request events.`);
@@ -270,9 +276,6 @@ function summarize(
     totals.reasoningTokens += usage?.reasoningTokens ?? 0;
     if (call.completion?.pricing.status === "priced") totals.pricedCostUsd += call.completion.pricing.totalCostUsd;
     else if (call.completion !== undefined) totals.unpricedCalls += 1;
-    if (call.outcomes.some((outcome) => outcome.independentlyEvaluated && outcome.acceptance === "accepted")) {
-      totals.independentlyAcceptedCalls += 1;
-    }
     return totals;
   }, {
     calls: 0,
@@ -284,20 +287,31 @@ function summarize(
     outputTokens: 0,
     cachedInputTokens: 0,
     cacheWriteInputTokens: 0,
+    cacheHitRatio: 0,
+    cacheWriteAmplification: 0,
     reasoningTokens: 0,
     pricedCostUsd: 0,
     unpricedCalls: 0,
-    independentlyAcceptedCalls: 0,
     toolResults: toolResults.length,
-    storedToolResultTokens: 0,
+    rawToolResultTokens: 0,
+    persistedToolResultTokens: 0,
+    verificationVisibleToolResultTokens: 0,
     modelVisibleToolResultTokens: 0,
-    reducedToolResultTokens: 0,
+    rawToPersistedReductionTokens: 0,
+    persistedToModelVisibleReductionTokens: 0,
+    rawToModelVisibleReductionTokens: 0,
   });
   for (const toolResult of toolResults) {
-    totals.storedToolResultTokens += toolResult.event.resultManifest.storedOutput.tokens;
+    totals.rawToolResultTokens += toolResult.event.resultManifest.rawReceived.tokens;
+    totals.persistedToolResultTokens += toolResult.event.resultManifest.persistedOutput.tokens;
+    totals.verificationVisibleToolResultTokens += toolResult.event.resultManifest.verificationVisible.tokens;
     totals.modelVisibleToolResultTokens += toolResult.event.resultManifest.modelVisible.tokens;
-    totals.reducedToolResultTokens += toolResult.event.resultManifest.reductionTokens;
+    totals.rawToPersistedReductionTokens += toolResult.event.resultManifest.reductions.rawToPersistedTokens;
+    totals.persistedToModelVisibleReductionTokens += toolResult.event.resultManifest.reductions.persistedToModelVisibleTokens;
+    totals.rawToModelVisibleReductionTokens += toolResult.event.resultManifest.reductions.rawToModelVisibleTokens;
   }
+  totals.cacheHitRatio = totals.inputTokens === 0 ? 0 : totals.cachedInputTokens / totals.inputTokens;
+  totals.cacheWriteAmplification = totals.inputTokens === 0 ? 0 : totals.cacheWriteInputTokens / totals.inputTokens;
   return totals;
 }
 
@@ -309,6 +323,20 @@ function requireEventFields(metadata: Record<string, unknown>, kind: EconomicsLe
       requireString(metadata.componentHash, "componentHash");
       requireString(metadata.phase, "phase");
       requireRequestManifest(metadata.requestManifest);
+      if (metadata.modelProfileId !== undefined) requireString(metadata.modelProfileId, "modelProfileId");
+      if (metadata.economicsControlHash !== undefined) requireHash(metadata.economicsControlHash, "economicsControlHash");
+      if (metadata.economicsControl !== undefined) {
+        const control = requireRecord(metadata.economicsControl, "economicsControl");
+        if (metadata.economicsControlHash === undefined || hashCanonical(control) !== metadata.economicsControlHash) {
+          throw new Error("Economics control snapshot does not match economicsControlHash.");
+        }
+      }
+      const cache = requireRecord(metadata.cache, "cache");
+      rejectUnknownFields(cache, new Set(["mode", "stablePrefixHash", "stablePrefixTokens", "prefixChanged"]), "cache");
+      if (cache.mode !== "provider_default" && cache.mode !== "stable_prefix") throw new Error("Economics cache mode is invalid.");
+      requireHash(cache.stablePrefixHash, "cache.stablePrefixHash");
+      requireNonNegativeInteger(cache.stablePrefixTokens, "cache.stablePrefixTokens");
+      if (typeof cache.prefixChanged !== "boolean") throw new Error("Economics cache prefixChanged must be boolean.");
       if (metadata.modelBudgetClass !== "action" && metadata.modelBudgetClass !== "maintenance") {
         throw new Error("Economics model call modelBudgetClass is invalid.");
       }
@@ -333,6 +361,7 @@ function requireEventFields(metadata: Record<string, unknown>, kind: EconomicsLe
       requireNonNegativeInteger(metadata.latencyMs, "latencyMs");
       requireUsage(metadata.usage);
       requirePricing(metadata.pricing);
+      requireInteger(metadata.providerReportedInputDeltaTokens, "providerReportedInputDeltaTokens");
       return;
     case "model_call.failed":
       requireNonNegativeInteger(metadata.latencyMs, "latencyMs");
@@ -377,13 +406,54 @@ function requireEventFields(metadata: Record<string, unknown>, kind: EconomicsLe
   }
 }
 
+function validateLifecycle(
+  calls: EconomicsCallProjectionV1[],
+  runOutcomes: EconomicsLedgerProjectionV1["runOutcomes"],
+  invalidEvents: EconomicsLedgerProjectionV1["invalidEvents"],
+): string[] {
+  const reasons = invalidEvents.map((event) => `invalid_event:${event.eventId ?? event.type}`);
+  for (const call of calls) {
+    if (call.request === undefined) reasons.push(`missing_request:${call.callId}`);
+    if ((call.completion === undefined) === (call.failure === undefined)) reasons.push(`missing_or_ambiguous_terminal:${call.callId}`);
+    const attempts = [...call.attempts].sort((left, right) => left.attempt - right.attempt);
+    attempts.forEach((entry, index) => {
+      if (entry.attempt !== index + 1) reasons.push(`non_contiguous_attempts:${call.callId}`);
+      if (entry.startedAt === undefined) reasons.push(`missing_attempt_start:${call.callId}:${entry.attempt}`);
+      if ((entry.completedAt === undefined) === (entry.failedAt === undefined)) reasons.push(`missing_or_ambiguous_attempt_terminal:${call.callId}:${entry.attempt}`);
+      if (entry.failedAt !== undefined) {
+        const hasNext = attempts[index + 1]?.attempt === entry.attempt + 1;
+        if (entry.willRetry !== hasNext) reasons.push(`retry_disagrees_with_attempts:${call.callId}:${entry.attempt}`);
+      }
+    });
+    const request = call.request;
+    const completion = call.completion;
+    if (request !== undefined) {
+      if (request.phase.trim().length === 0) reasons.push(`missing_phase:${call.callId}`);
+      if (request.economicsControl === undefined || request.economicsControlHash === undefined) reasons.push(`missing_control_snapshot:${call.callId}`);
+      if (request.modelProfileId === undefined) reasons.push(`missing_model_profile:${call.callId}`);
+    }
+    if (completion !== undefined) {
+      if (completion.provider === undefined) reasons.push(`missing_provider:${call.callId}`);
+      if (completion.model === undefined) reasons.push(`missing_model:${call.callId}`);
+      if (completion.pricing.status !== "priced") reasons.push(`unpriced_call:${call.callId}`);
+    }
+  }
+  if (runOutcomes.length !== 1) reasons.push("independent_run_outcome_count");
+  else if (runOutcomes[0]?.event.independentlyEvaluated !== true || runOutcomes[0].event.acceptance === "not_evaluated") reasons.push("independent_run_outcome_missing");
+  return [...new Set(reasons)].sort();
+}
+
 function requireRequestManifest(value: unknown): void {
   const manifest = requireRecord(value, "requestManifest");
   rejectUnknownFields(manifest, REQUEST_MANIFEST_FIELDS, "requestManifest");
   if (manifest.version !== 1) throw new Error("Economics request manifest version must be 1.");
   requireTokenCount(manifest.requestCount, "requestManifest.requestCount");
   requireTokenCount(manifest.providerOverhead, "requestManifest.providerOverhead");
-  requireNonNegativeInteger(manifest.unattributedContextTokens, "requestManifest.unattributedContextTokens");
+  requireInteger(manifest.unattributedContextTokens, "requestManifest.unattributedContextTokens");
+  const reconciliation = requireRecord(manifest.reconciliation, "requestManifest.reconciliation");
+  rejectUnknownFields(reconciliation, new Set(["componentSumToCanonicalRequestTokens", "canonicalRequestToProviderPayloadTokens"]), "requestManifest.reconciliation");
+  requireInteger(reconciliation.componentSumToCanonicalRequestTokens, "requestManifest.reconciliation.componentSumToCanonicalRequestTokens");
+  requireInteger(reconciliation.canonicalRequestToProviderPayloadTokens, "requestManifest.reconciliation.canonicalRequestToProviderPayloadTokens");
   if (Array.isArray(manifest.contextSections) === false) throw new Error("Economics request manifest contextSections must be an array.");
   manifest.contextSections.forEach((section, index) => requireContextCandidate(section, `requestManifest.contextSections[${index}]`));
   requireToolSurface(manifest.toolSurface);
@@ -437,7 +507,7 @@ function requireToolExposure(value: unknown, toolSurfaceValue: unknown): void {
   ) {
     throw new Error("Economics tool exposure model-visible surface does not match the request tool surface.");
   }
-  if (schema.method === "exact" && exposure.schemaBudgetEnforceable !== true) {
+  if (schema.method !== "conservative_estimate" && exposure.schemaBudgetEnforceable !== true) {
     throw new Error("Economics tool exposure exact schema counts must be enforceable.");
   }
   const expectedReasons: string[] = [];
@@ -499,7 +569,9 @@ function requireContextManifest(value: unknown): void {
   requireTokenCount(manifest.toolSchema, "requestManifest.decision.manifest.toolSchema");
   requireTokenCount(manifest.providerOverhead, "requestManifest.decision.manifest.providerOverhead");
   if (typeof manifest.enforceable !== "boolean" || typeof manifest.wouldBlock !== "boolean") throw new Error("Economics context manifest boolean fields are invalid.");
-  if (Array.isArray(manifest.countMethods) === false || manifest.countMethods.some((method) => method !== "exact" && method !== "estimated")) throw new Error("Economics context manifest countMethods is invalid.");
+  if (Array.isArray(manifest.countMethods) === false || manifest.countMethods.some((method) =>
+    method !== "provider_reported" && method !== "model_tokenizer" && method !== "conservative_estimate"
+  )) throw new Error("Economics context manifest countMethods is invalid.");
   if (Array.isArray(manifest.sections) === false) throw new Error("Economics context manifest sections must be an array.");
   manifest.sections.forEach((value, index) => {
     const field = `requestManifest.decision.manifest.sections[${index}]`;
@@ -539,13 +611,21 @@ function requireToolResultManifest(value: unknown): void {
   const manifest = requireRecord(value, "resultManifest");
   rejectUnknownFields(manifest, TOOL_RESULT_MANIFEST_FIELDS, "resultManifest");
   if (manifest.version !== 1) throw new Error("Economics tool result manifest version must be 1.");
-  requireHash(manifest.storedOutputHash, "resultManifest.storedOutputHash");
-  requireTokenCount(manifest.storedOutput, "resultManifest.storedOutput");
+  requireHash(manifest.rawReceivedHash, "resultManifest.rawReceivedHash");
+  requireTokenCount(manifest.rawReceived, "resultManifest.rawReceived");
+  if (manifest.durableRawArtifactRef !== undefined) requireString(manifest.durableRawArtifactRef, "resultManifest.durableRawArtifactRef");
+  requireHash(manifest.persistedOutputHash, "resultManifest.persistedOutputHash");
+  requireTokenCount(manifest.persistedOutput, "resultManifest.persistedOutput");
+  requireHash(manifest.verificationVisibleHash, "resultManifest.verificationVisibleHash");
+  requireTokenCount(manifest.verificationVisible, "resultManifest.verificationVisible");
   requireHash(manifest.modelVisibleHash, "resultManifest.modelVisibleHash");
   requireTokenCount(manifest.modelVisible, "resultManifest.modelVisible");
-  requireNonNegativeInteger(manifest.reductionTokens, "resultManifest.reductionTokens");
+  const reductions = requireRecord(manifest.reductions, "resultManifest.reductions");
+  rejectUnknownFields(reductions, new Set(["rawToPersistedTokens", "persistedToModelVisibleTokens", "rawToModelVisibleTokens"]), "resultManifest.reductions");
+  requireNonNegativeInteger(reductions.rawToPersistedTokens, "resultManifest.reductions.rawToPersistedTokens");
+  requireNonNegativeInteger(reductions.persistedToModelVisibleTokens, "resultManifest.reductions.persistedToModelVisibleTokens");
+  requireNonNegativeInteger(reductions.rawToModelVisibleTokens, "resultManifest.reductions.rawToModelVisibleTokens");
   if (typeof manifest.truncated !== "boolean") throw new Error("Economics tool result manifest truncated must be boolean.");
-  if (manifest.rawOutputRef !== undefined) requireString(manifest.rawOutputRef, "resultManifest.rawOutputRef");
 }
 
 function requireTokenCount(value: unknown, field: string): void {
@@ -554,8 +634,8 @@ function requireTokenCount(value: unknown, field: string): void {
   if (count.version !== 1) throw new Error(`Economics ledger event ${field}.version must be 1.`);
   requireNonNegativeInteger(count.tokens, `${field}.tokens`);
   requireNonNegativeInteger(count.bytes, `${field}.bytes`);
-  if (count.method !== "exact" && count.method !== "estimated") throw new Error(`Economics ledger event ${field}.method is invalid.`);
-  if (count.confidence !== "exact" && count.confidence !== "conservative") throw new Error(`Economics ledger event ${field}.confidence is invalid.`);
+  if (count.method !== "provider_reported" && count.method !== "model_tokenizer" && count.method !== "conservative_estimate") throw new Error(`Economics ledger event ${field}.method is invalid.`);
+  if (count.confidence !== "provider_exact" && count.confidence !== "model_compatible" && count.confidence !== "conservative") throw new Error(`Economics ledger event ${field}.confidence is invalid.`);
   requireString(count.counter, `${field}.counter`);
   requireString(count.counterVersion, `${field}.counterVersion`);
 }
@@ -645,6 +725,13 @@ function requirePositiveInteger(value: unknown, field: string): number {
 function requireNonNegativeInteger(value: unknown, field: string): number {
   if (typeof value !== "number" || Number.isSafeInteger(value) === false || value < 0) {
     throw new Error(`Economics ledger event ${field} must be a non-negative safe integer.`);
+  }
+  return value;
+}
+
+function requireInteger(value: unknown, field: string): number {
+  if (typeof value !== "number" || Number.isSafeInteger(value) === false) {
+    throw new Error(`Economics ledger event ${field} must be a safe integer.`);
   }
   return value;
 }

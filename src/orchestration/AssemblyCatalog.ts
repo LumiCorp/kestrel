@@ -33,8 +33,8 @@ export class AssemblyCatalog {
       contextPolicyId: `context-policy:${this.profile?.id ?? "default"}:default`,
       label: `${this.profile?.label ?? "Default"} context policy`,
       defaultAction: "continue",
-      ...(this.profile?.harnessEconomicsPolicy !== undefined
-        ? { economicsPolicy: this.profile.harnessEconomicsPolicy }
+      ...(this.profile?.harnessEconomics !== undefined
+        ? { economicsPolicy: this.profile.harnessEconomics.policy }
         : {}),
       metadata: {
         source: "profile_default",
@@ -107,8 +107,8 @@ export class AssemblyCatalog {
             environmentCapabilityPackIds: [...runtimeIdentity.environmentCapabilityPackIds],
             effectiveAssemblyId: runtimeIdentity.effectiveAssemblyId,
             effectiveAssemblyLabel: assemblyLabel,
-            ...(this.profile.modelEconomicsProfile !== undefined
-              ? { modelEconomicsProfile: this.profile.modelEconomicsProfile }
+            ...(this.profile.harnessEconomics !== undefined
+              ? { harnessEconomics: this.profile.harnessEconomics }
               : {}),
           },
           compatibility,

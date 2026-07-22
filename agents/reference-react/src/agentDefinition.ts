@@ -103,6 +103,7 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
           createAgentLoopStep({
             agentProvider: config.agentProvider,
             agentModel: config.agentModel,
+            maintenanceModel: config.maintenanceModel,
             agentToolsProvider: config.agentToolsProvider,
             capabilityManifestProvider: config.capabilityManifestProvider,
             defaultGoal: config.defaultGoal,
