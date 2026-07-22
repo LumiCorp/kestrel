@@ -86,6 +86,7 @@ import {
   kestrelOneGoogleCalendarListEventsTool,
   kestrelOneGoogleCalendarUpdateEventTool,
 } from "./kestrelOne/google-calendar.js";
+import { kestrelOneEmailSendTool } from "./kestrelOne/email.js";
 
 const DEFAULT_MODULES: SharedToolModule[] = [
   weatherCurrentTool,
@@ -154,6 +155,7 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   kestrelOneGoogleCalendarDeleteEventTool,
   kestrelOneGoogleCalendarListAvailabilitySubjectsTool,
   kestrelOneGoogleCalendarCheckAvailabilityTool,
+  kestrelOneEmailSendTool,
 ];
 
 export const BALANCED_STARTER_TOOL_NAMES = [

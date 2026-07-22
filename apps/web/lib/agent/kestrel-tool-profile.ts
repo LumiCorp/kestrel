@@ -25,6 +25,10 @@ const GITHUB_TOOL_CAPABILITIES = new Map<string, string>([
   ["kestrel_one.github_workflow_dispatch", "workflow.dispatch"],
 ] as const);
 
+const EMAIL_TOOL_CAPABILITIES = new Map<string, string>([
+  ["kestrel_one.email_send", "send"],
+] as const);
+
 const TAVILY_TOOL_CAPABILITIES = new Map<string, string>([
   ["internet.search", "search"],
   ["internet.search_advanced", "search_advanced"],
@@ -119,6 +123,10 @@ export function restrictKestrelOneProfileTools(input: {
     input.effectiveCapabilities,
     "github"
   );
+  const emailApprovalByCapability = appApprovalModes(
+    input.effectiveCapabilities,
+    "email"
+  );
   const builtInApprovalByApp = new Map(
     [
       ...new Set(
@@ -143,6 +151,10 @@ export function restrictKestrelOneProfileTools(input: {
     ...[...GITHUB_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
       const approvalMode = githubApprovalByCapability.get(capability);
       return approvalMode ? [[toolName, approvalMode] as const] : [];
+    }),
+    ...[...EMAIL_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
+      const approvalMode = emailApprovalByCapability.get(capability);
+      return approvalMode ? [[toolName, "ask"] as const] : [];
     }),
     ...[...BUILT_IN_TOOL_CAPABILITIES].flatMap(
       ([toolName, { appKey, capabilityKey }]) => {
@@ -176,6 +188,13 @@ export function restrictKestrelOneProfileTools(input: {
       if (
         githubCapability !== undefined &&
         !githubApprovalByCapability.has(githubCapability)
+      ) {
+        return false;
+      }
+      const emailCapability = EMAIL_TOOL_CAPABILITIES.get(toolName);
+      if (
+        emailCapability !== undefined &&
+        !emailApprovalByCapability.has(emailCapability)
       ) {
         return false;
       }

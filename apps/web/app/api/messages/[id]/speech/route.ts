@@ -33,7 +33,10 @@ export async function POST(
     const body = bodySchema.parse(await request.json().catch(() => ({})));
     const resolvedSpeechModel =
       body.modelId ||
-      (await getSpeechModelForLanguageSelection(body.languageModelId))?.id;
+      (await getSpeechModelForLanguageSelection(
+        body.languageModelId,
+        organizationId
+      ))?.id;
     const asset = await getOrCreateMessageSpeechAsset({
       messageId: params.id,
       userId: session.user.id,

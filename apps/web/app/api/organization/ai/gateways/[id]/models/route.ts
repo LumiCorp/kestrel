@@ -1,0 +1,91 @@
+import { type NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { getSafeGatewayAdminError } from "@/lib/ai/gateway-admin-error";
+import {
+  deleteGatewayModel,
+  GATEWAY_MODALITIES,
+  listModelsForGateway,
+  saveGatewayModel,
+} from "@/lib/ai/gateways";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+
+function safeErrorResponse(error: unknown) {
+  const result = getSafeGatewayAdminError(error);
+  return NextResponse.json(result.body, { status: result.status });
+}
+
+const paramsSchema = z.object({
+  id: z.string().min(1),
+});
+
+const bodySchema = z.object({
+  id: z.string().min(1).optional(),
+  rawModelId: z.string().trim().min(1),
+  alias: z.string().trim().min(1).nullable().optional(),
+  modality: z.enum(GATEWAY_MODALITIES),
+  approved: z.boolean().optional(),
+  isDefault: z.boolean().optional(),
+  description: z.string().nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
+const deleteQuerySchema = z.object({
+  modelId: z.string().min(1),
+});
+
+export async function GET(
+  _request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { organizationId } = await requireOrganizationAdmin();
+    const params = paramsSchema.parse(await context.params);
+    const models = await listModelsForGateway(organizationId, params.id);
+    return NextResponse.json({ models });
+  } catch (error) {
+    return safeErrorResponse(error);
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { organizationId } = await requireOrganizationAdmin();
+    const params = paramsSchema.parse(await context.params);
+    const body = bodySchema.parse(await request.json());
+    const model = await saveGatewayModel({
+      ...body,
+      organizationId,
+      gatewayId: params.id,
+    });
+    return NextResponse.json({ model }, { status: body.id ? 200 : 201 });
+  } catch (error) {
+    return safeErrorResponse(error);
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { organizationId } = await requireOrganizationAdmin();
+    const params = paramsSchema.parse(await context.params);
+    const query = deleteQuerySchema.parse({
+      modelId: request.nextUrl.searchParams.get("modelId"),
+    });
+    const model = await deleteGatewayModel(
+      organizationId,
+      params.id,
+      query.modelId
+    );
+    if (!model) {
+      return NextResponse.json({ error: "Model not found" }, { status: 404 });
+    }
+    return NextResponse.json({ model });
+  } catch (error) {
+    return safeErrorResponse(error);
+  }
+}

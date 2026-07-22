@@ -181,6 +181,7 @@ export async function createOrganizationEnvironment(input: {
   organizationId: string;
   userId: string;
   environment: CreateEnvironmentInput;
+  runtimeTemplate?: string;
 }) {
   const environmentId = crypto.randomUUID();
   const operationId = crypto.randomUUID();
@@ -227,7 +228,7 @@ export async function createOrganizationEnvironment(input: {
         region: input.environment.region,
         status: "requested",
         isDefault,
-        runtimeTemplate: ENVIRONMENT_RUNTIME_TEMPLATE,
+        runtimeTemplate: input.runtimeTemplate ?? ENVIRONMENT_RUNTIME_TEMPLATE,
         idleTimeoutMinutes: ENVIRONMENT_IDLE_TIMEOUT_MINUTES,
         createdAt: now,
         updatedAt: now,
@@ -250,7 +251,7 @@ export async function createOrganizationEnvironment(input: {
         idempotencyKey: environmentProvisionIdempotencyKey(environmentId),
         input: {
           region: input.environment.region,
-          runtimeTemplate: ENVIRONMENT_RUNTIME_TEMPLATE,
+          runtimeTemplate: input.runtimeTemplate ?? ENVIRONMENT_RUNTIME_TEMPLATE,
         },
         createdAt: now,
         updatedAt: now,

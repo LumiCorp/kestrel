@@ -223,7 +223,9 @@ export async function listProjectAppConfigurations(input: {
       (connection) =>
         connection.appKey === definition.key &&
         connection.status === "connected" &&
-        (((definition.connectionModel === "environment" ||
+        ((definition.connectionModel === "organization" &&
+          connection.ownerType === "organization") ||
+          ((definition.connectionModel === "environment" ||
           definition.connectionModel === "hybrid") &&
           connection.environmentId === binding.environmentId &&
           (connection.ownerType === "environment" ||
@@ -448,11 +450,13 @@ export async function attachProjectAppConnection(input: {
   }
   const validShared =
     input.scope === "shared" &&
-    (definition.connectionModel === "environment" ||
-      definition.connectionModel === "hybrid") &&
-    connection.environmentId === binding.environmentId &&
-    (connection.ownerType === "environment" ||
-      connection.ownerType === "deployment_managed");
+    ((definition.connectionModel === "organization" &&
+      connection.ownerType === "organization") ||
+      ((definition.connectionModel === "environment" ||
+        definition.connectionModel === "hybrid") &&
+        connection.environmentId === binding.environmentId &&
+        (connection.ownerType === "environment" ||
+          connection.ownerType === "deployment_managed")));
   const validPersonal =
     input.scope === "personal" &&
     (definition.connectionModel === "personal" ||
@@ -603,7 +607,11 @@ export async function saveProjectAppCapabilityPolicy(input: {
       "This capability is not available in the Project Environment."
     );
   }
-  const approvalMode = input.enabled ? input.approvalMode : "deny";
+  const approvalMode = input.enabled
+    ? input.appKey === "email" && input.capabilityKey === "send"
+      ? "ask"
+      : input.approvalMode
+    : "deny";
   if (
     input.enabled &&
     (!grant.enabled ||
@@ -816,6 +824,7 @@ function selectByScopeAndStatus(
     if (personal) return personal;
   }
   if (
+    connectionModel === "organization" ||
     connectionModel === "environment" ||
     connectionModel === "hybrid"
   ) {
@@ -845,6 +854,7 @@ function selectEffectiveAttachment(input: {
     if (personal) return personal;
   }
   if (
+    input.connectionModel === "organization" ||
     input.connectionModel === "environment" ||
     input.connectionModel === "hybrid"
   ) {

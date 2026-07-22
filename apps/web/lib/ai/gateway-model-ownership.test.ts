@@ -6,7 +6,7 @@ import { contractTest } from "../../../../tests/helpers/contract-test.js";
 contractTest("web.hermetic", "gateway model mutations remain scoped to the gateway in the route", async () => {
   const source = await readFile(
     new URL(
-      "../../app/api/admin/gateways/[id]/models/route.ts",
+      "../../app/api/organization/ai/gateways/[id]/models/route.ts",
       import.meta.url
     ),
     "utf8"
@@ -18,7 +18,7 @@ contractTest("web.hermetic", "gateway model mutations remain scoped to the gatew
   );
   assert.match(
     source,
-    /deleteGatewayModel\(params\.id, query\.modelId\)/u
+    /deleteGatewayModel\(\s*organizationId,\s*params\.id,\s*query\.modelId\s*\)/u
   );
 });
 

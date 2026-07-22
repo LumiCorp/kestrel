@@ -75,7 +75,7 @@ export function EnvironmentsAdminClient({
   const [rolloutBusy, setRolloutBusy] = useState(false);
 
   const refreshLiveState = useCallback(async (signal: AbortSignal) => {
-    const response = await fetch("/api/admin/environments", {
+    const response = await fetch("/api/organization/environments", {
       cache: "no-store",
       signal,
     });
@@ -106,7 +106,7 @@ export function EnvironmentsAdminClient({
   async function createEnvironment() {
     setBusy(true);
     try {
-      const response = await fetch("/api/admin/environments", {
+      const response = await fetch("/api/organization/environments", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, region }),
@@ -132,7 +132,7 @@ export function EnvironmentsAdminClient({
   async function updateRollout(enabled: boolean) {
     setRolloutBusy(true);
     try {
-      const response = await fetch("/api/admin/environments", {
+      const response = await fetch("/api/organization/environments", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -274,7 +274,7 @@ export function EnvironmentsAdminClient({
             </TableHeader>
             <TableBody>
               {environments.map((environment) => {
-                const href = `/settings/environments/${environment.id}`;
+                const href = `/settings/organization/environments/${environment.id}`;
                 return (
                   <TableRow key={environment.id}>
                     <TableCell>

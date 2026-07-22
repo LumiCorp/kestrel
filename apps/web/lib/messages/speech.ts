@@ -112,6 +112,7 @@ export async function getOrCreateMessageSpeechAsset(input: {
   }
 
   const speech = await generateSpeechForModel({
+    organizationId: input.organizationId,
     modelId: input.modelId,
     text: playable.text,
     voice,

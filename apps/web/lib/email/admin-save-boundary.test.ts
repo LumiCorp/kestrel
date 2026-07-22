@@ -8,7 +8,7 @@ import { contractTest } from "../../../../tests/helpers/contract-test.js";
 const routeSource = fs.readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../../app/api/admin/email/route.ts"
+    "../../app/api/platform/email/route.ts"
   ),
   "utf8"
 );

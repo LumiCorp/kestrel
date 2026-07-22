@@ -2009,7 +2009,7 @@ export const appDefinitions = pgTable(
       enum: ["built_in", "external", "custom"],
     }).notNull(),
     connectionModel: text("connection_model", {
-      enum: ["none", "personal", "environment", "hybrid"],
+      enum: ["none", "organization", "personal", "environment", "hybrid"],
     }).notNull(),
     connectionRequirement: text("connection_requirement", {
       enum: ["none", "optional", "required"],
@@ -2196,7 +2196,13 @@ export const appConnections = pgTable(
       .notNull()
       .references(() => appDefinitions.key, { onDelete: "cascade" }),
     ownerType: text("owner_type", {
-      enum: ["system", "personal", "environment", "deployment_managed"],
+      enum: [
+        "system",
+        "organization",
+        "personal",
+        "environment",
+        "deployment_managed",
+      ],
     }).notNull(),
     environmentId: text("environment_id"),
     userId: text("user_id").references(() => users.id, {
@@ -2239,6 +2245,9 @@ export const appConnections = pgTable(
     uniqueIndex("app_connections_personal_name_idx")
       .on(table.organizationId, table.appKey, table.userId, table.name)
       .where(sql`${table.ownerType} = 'personal'`),
+    uniqueIndex("app_connections_organization_name_idx")
+      .on(table.organizationId, table.appKey, table.name)
+      .where(sql`${table.ownerType} = 'organization'`),
     uniqueIndex("app_connections_environment_name_idx")
       .on(table.environmentId, table.appKey, table.name)
       .where(sql`${table.ownerType} in ('environment', 'deployment_managed')`),
@@ -2252,6 +2261,8 @@ export const appConnections = pgTable(
       "app_connections_owner_scope_check",
       sql`(
         (${table.ownerType} = 'system' and ${table.environmentId} is null and ${table.userId} is null and ${table.credentialId} is null)
+        or
+        (${table.ownerType} = 'organization' and ${table.environmentId} is null and ${table.userId} is null and ${table.credentialId} is null)
         or
         (${table.ownerType} = 'personal' and ${table.userId} is not null and ${table.environmentId} is null and ${table.credentialId} is null)
         or
@@ -3491,10 +3502,13 @@ export const aiProviderConnections = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    provider: text("provider", { enum: ["runpod"] }).notNull(),
-    scope: text("scope", { enum: ["platform"] })
+    organizationId: text("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
+    provider: text("provider", { enum: ["fly", "runpod"] }).notNull(),
+    scope: text("scope", { enum: ["organization"] })
       .notNull()
-      .default("platform"),
+      .default("organization"),
     displayName: text("display_name").notNull(),
     apiKeyEnvVar: text("api_key_env_var"),
     apiKey: text("api_key"),
@@ -3512,10 +3526,10 @@ export const aiProviderConnections = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex("ai_provider_connections_provider_scope_idx").on(
-      table.provider,
-      table.scope
-    ),
+    uniqueIndex("ai_provider_connections_organization_provider_idx")
+      .on(table.organizationId, table.provider)
+      .where(sql`${table.organizationId} is not null`),
+    index("ai_provider_connections_organization_idx").on(table.organizationId),
   ]
 );
 
@@ -3525,6 +3539,9 @@ export const aiDeploymentProfiles = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
     profileKey: text("profile_key").notNull(),
     version: integer("version").notNull(),
     displayName: text("display_name").notNull(),
@@ -3556,11 +3573,18 @@ export const aiDeploymentProfiles = pgTable(
   },
   (table) => [
     uniqueIndex("ai_deployment_profiles_key_version_idx").on(
+      table.organizationId,
       table.profileKey,
       table.version
     ),
-    uniqueIndex("ai_deployment_profiles_spec_hash_idx").on(table.specHash),
-    index("ai_deployment_profiles_status_idx").on(table.status),
+    uniqueIndex("ai_deployment_profiles_spec_hash_idx").on(
+      table.organizationId,
+      table.specHash
+    ),
+    index("ai_deployment_profiles_status_idx").on(
+      table.organizationId,
+      table.status
+    ),
   ]
 );
 
@@ -3685,6 +3709,9 @@ export const aiGatewayModels = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
     gatewayId: text("gateway_id")
       .notNull()
       .references(() => aiGateways.id, { onDelete: "cascade" }),
@@ -3710,7 +3737,10 @@ export const aiGatewayModels = pgTable(
       table.gatewayId,
       table.rawModelId
     ),
-    uniqueIndex("ai_gateway_models_alias_idx").on(table.alias),
+    uniqueIndex("ai_gateway_models_alias_idx").on(
+      table.organizationId,
+      table.alias
+    ),
   ]
 );
 
@@ -4410,6 +4440,107 @@ export const platformEmailConfig = pgTable("platform_email_config", {
     .notNull()
     .defaultNow(),
 });
+
+export const organizationEmailConfig = pgTable(
+  "organization_email_config",
+  {
+    organizationId: text("organization_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["resend"] })
+      .notNull()
+      .default("resend"),
+    enabled: boolean("enabled").notNull().default(false),
+    encryptedApiKey: text("encrypted_api_key"),
+    fromName: text("from_name").notNull(),
+    fromEmail: text("from_email").notNull(),
+    replyTo: text("reply_to"),
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    lastTestMessageId: text("last_test_message_id"),
+    lastTestConfigFingerprint: text("last_test_config_fingerprint"),
+    lastErrorCode: text("last_error_code"),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  }
+);
+
+export const organizationInfrastructureSettings = pgTable(
+  "organization_infrastructure_settings",
+  {
+    organizationId: text("organization_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    allowedRegions: jsonb("allowed_regions")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    defaultRegion: text("default_region"),
+    allowedRuntimeTemplates: jsonb("allowed_runtime_templates")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    defaultRuntimeTemplate: text("default_runtime_template"),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  }
+);
+
+export const organizationEmailDeliveries = pgTable(
+  "organization_email_deliveries",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    threadId: text("thread_id").references(() => threads.id, {
+      onDelete: "set null",
+    }),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    approvalId: text("approval_id").references(() => appOperationApprovals.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", {
+      enum: ["accepted", "rejected", "failed"],
+    }).notNull(),
+    providerMessageId: text("provider_message_id"),
+    recipientCount: integer("recipient_count").notNull(),
+    recipientDomains: jsonb("recipient_domains").$type<string[]>().notNull(),
+    subjectHash: text("subject_hash").notNull(),
+    failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("organization_email_deliveries_org_created_idx").on(
+      table.organizationId,
+      table.createdAt
+    ),
+    index("organization_email_deliveries_project_idx").on(table.projectId),
+    index("organization_email_deliveries_approval_idx").on(table.approvalId),
+  ]
+);
 
 export const adminApiKeys = pgTable(
   "admin_api_keys",

@@ -17,14 +17,10 @@ import type { OrganizationSnapshot, Session } from "@/lib/auth-types";
 export function AppSidebar({
   activeOrganization,
   session,
-  isAdmin,
-  canManageOrganization = false,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   activeOrganization: OrganizationSnapshot | null;
   session: Session | null;
-  isAdmin: boolean;
-  canManageOrganization?: boolean;
 }) {
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -35,10 +31,7 @@ export function AppSidebar({
         <NavMain />
       </SidebarContent>
       <SidebarFooter>
-        <NavSettings
-          canManageOrganization={canManageOrganization}
-          isAdmin={isAdmin}
-        />
+        <NavSettings />
         <NavUser session={session} />
       </SidebarFooter>
       <SidebarRail />

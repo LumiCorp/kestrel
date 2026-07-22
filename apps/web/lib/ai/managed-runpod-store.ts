@@ -25,13 +25,17 @@ const ACTIVE_DEPLOYMENT_STATUSES = [
   "delete_failed",
 ] as const;
 
-export async function listManagedRunPodProfiles(input?: {
+export async function listManagedRunPodProfiles(input: {
+  organizationId: string;
   includeInactive?: boolean;
 }) {
   return knowledgeDb.query.aiDeploymentProfiles.findMany({
-    where: input?.includeInactive
-      ? undefined
-      : eq(schema.aiDeploymentProfiles.status, "active"),
+    where: and(
+      eq(schema.aiDeploymentProfiles.organizationId, input.organizationId),
+      input.includeInactive
+        ? undefined
+        : eq(schema.aiDeploymentProfiles.status, "active")
+    ),
     orderBy: [
       schema.aiDeploymentProfiles.displayName,
       desc(schema.aiDeploymentProfiles.version),
@@ -70,12 +74,16 @@ export function sanitizeManagedRunPodDeployment(
 }
 
 export async function createManagedRunPodProfile(input: {
+  organizationId: string;
   actorUserId: string;
   profile: ManagedRunPodProfileInput;
 }) {
   const profile = managedRunPodProfileInputSchema.parse(input.profile);
   const latest = await knowledgeDb.query.aiDeploymentProfiles.findFirst({
-    where: eq(schema.aiDeploymentProfiles.profileKey, profile.profileKey),
+    where: and(
+      eq(schema.aiDeploymentProfiles.organizationId, input.organizationId),
+      eq(schema.aiDeploymentProfiles.profileKey, profile.profileKey)
+    ),
     orderBy: [desc(schema.aiDeploymentProfiles.version)],
     columns: { version: true },
   });
@@ -83,6 +91,7 @@ export async function createManagedRunPodProfile(input: {
     .insert(schema.aiDeploymentProfiles)
     .values({
       id: crypto.randomUUID(),
+      organizationId: input.organizationId,
       ...profile,
       version: (latest?.version ?? 0) + 1,
       provider: "runpod",
@@ -96,13 +105,19 @@ export async function createManagedRunPodProfile(input: {
 }
 
 export async function queueManagedRunPodQualification(input: {
+  organizationId: string;
   profileId: string;
 }) {
   return knowledgeDb.transaction(async (tx) => {
     const [profile] = await tx
       .select()
       .from(schema.aiDeploymentProfiles)
-      .where(eq(schema.aiDeploymentProfiles.id, input.profileId))
+      .where(
+        and(
+          eq(schema.aiDeploymentProfiles.id, input.profileId),
+          eq(schema.aiDeploymentProfiles.organizationId, input.organizationId)
+        )
+      )
       .limit(1)
       .for("update");
     if (!profile || profile.status !== "draft") {
@@ -127,6 +142,7 @@ export async function queueManagedRunPodQualification(input: {
 }
 
 export async function activateManagedRunPodProfile(input: {
+  organizationId: string;
   profileId: string;
   actorUserId: string;
 }) {
@@ -134,7 +150,12 @@ export async function activateManagedRunPodProfile(input: {
     const [profile] = await tx
       .select()
       .from(schema.aiDeploymentProfiles)
-      .where(eq(schema.aiDeploymentProfiles.id, input.profileId))
+      .where(
+        and(
+          eq(schema.aiDeploymentProfiles.id, input.profileId),
+          eq(schema.aiDeploymentProfiles.organizationId, input.organizationId)
+        )
+      )
       .limit(1)
       .for("update");
     const evidence = profile?.qualificationEvidence as Record<
@@ -156,6 +177,7 @@ export async function activateManagedRunPodProfile(input: {
       .where(
         and(
           eq(schema.aiDeploymentProfiles.profileKey, profile.profileKey),
+          eq(schema.aiDeploymentProfiles.organizationId, input.organizationId),
           eq(schema.aiDeploymentProfiles.status, "active"),
           ne(schema.aiDeploymentProfiles.id, profile.id)
         )
@@ -167,17 +189,30 @@ export async function activateManagedRunPodProfile(input: {
         activatedByUserId: input.actorUserId,
         updatedAt: new Date(),
       })
-      .where(eq(schema.aiDeploymentProfiles.id, input.profileId))
+      .where(
+        and(
+          eq(schema.aiDeploymentProfiles.id, input.profileId),
+          eq(schema.aiDeploymentProfiles.organizationId, input.organizationId)
+        )
+      )
       .returning();
     return updated;
   });
 }
 
-export async function deprecateManagedRunPodProfile(profileId: string) {
+export async function deprecateManagedRunPodProfile(input: {
+  organizationId: string;
+  profileId: string;
+}) {
   const [updated] = await knowledgeDb
     .update(schema.aiDeploymentProfiles)
     .set({ status: "deprecated", updatedAt: new Date() })
-    .where(eq(schema.aiDeploymentProfiles.id, profileId))
+    .where(
+      and(
+        eq(schema.aiDeploymentProfiles.id, input.profileId),
+        eq(schema.aiDeploymentProfiles.organizationId, input.organizationId)
+      )
+    )
     .returning();
   return updated;
 }
@@ -358,6 +393,7 @@ export async function createManagedRunPodDeployment(input: {
     const profile = await tx.query.aiDeploymentProfiles.findFirst({
       where: and(
         eq(schema.aiDeploymentProfiles.id, input.profileId),
+        eq(schema.aiDeploymentProfiles.organizationId, input.organizationId),
         eq(schema.aiDeploymentProfiles.status, "active")
       ),
     });
@@ -451,7 +487,7 @@ export async function listManagedRunPodDeployments(
   }));
 }
 
-export async function listManagedRunPodFleet() {
+export async function listManagedRunPodFleet(organizationId: string) {
   const [deployments, usage] = await Promise.all([
     knowledgeDb
       .select({
@@ -468,13 +504,20 @@ export async function listManagedRunPodFleet() {
         schema.organizations,
         eq(schema.organizations.id, schema.aiDeployments.organizationId)
       )
+      .where(eq(schema.aiDeployments.organizationId, organizationId))
       .orderBy(desc(schema.aiDeployments.createdAt)),
-    knowledgeDb.query.aiDeploymentUsage.findMany({
-      orderBy: [desc(schema.aiDeploymentUsage.bucketStartedAt)],
-    }),
+    knowledgeDb
+      .select({ usage: schema.aiDeploymentUsage })
+      .from(schema.aiDeploymentUsage)
+      .innerJoin(
+        schema.aiDeployments,
+        eq(schema.aiDeployments.id, schema.aiDeploymentUsage.deploymentId)
+      )
+      .where(eq(schema.aiDeployments.organizationId, organizationId))
+      .orderBy(desc(schema.aiDeploymentUsage.bucketStartedAt)),
   ]);
   const spendByDeployment = new Map<string, number>();
-  for (const record of usage) {
+  for (const { usage: record } of usage) {
     spendByDeployment.set(
       record.deploymentId,
       (spendByDeployment.get(record.deploymentId) ?? 0) + record.amountUsd

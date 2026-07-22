@@ -163,7 +163,7 @@ export async function resolveOptionalLanguageModel(input: {
   modelId?: string | null;
   usage?: LanguageModelUsage;
   surface: AISurface;
-  organizationId?: string;
+  organizationId: string;
   environmentId?: string;
 }): Promise<ResolvedLanguageModel | null> {
   if (getAISurfacePolicy(input.surface) !== "gateway-required") {
@@ -194,7 +194,7 @@ export async function resolveRequiredLanguageModel(input: {
   modelId?: string | null;
   usage?: LanguageModelUsage;
   surface: AISurface;
-  organizationId?: string;
+  organizationId: string;
   environmentId?: string;
 }): Promise<ResolvedLanguageModel> {
   const resolved = await resolveOptionalLanguageModel(input);
@@ -228,11 +228,17 @@ export async function resolveRequiredLanguageModel(input: {
 }
 
 export async function generateSpeechForModel(input: {
+  organizationId: string;
+  environmentId?: string;
   modelId?: string | null;
   text: string;
   voice?: string;
 }) {
-  const resolved = await resolveSpeechModelHandle(input.modelId);
+  const resolved = await resolveSpeechModelHandle({
+    selection: input.modelId,
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+  });
 
   if (!resolved) {
     return null;
@@ -253,11 +259,17 @@ export async function generateSpeechForModel(input: {
 }
 
 export async function generateImageForModel(input: {
+  organizationId: string;
+  environmentId?: string;
   modelId?: string | null;
   prompt: string;
   size?: `${number}x${number}`;
 }) {
-  const resolved = await resolveImageModelHandle(input.modelId);
+  const resolved = await resolveImageModelHandle({
+    selection: input.modelId,
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+  });
 
   if (!resolved) {
     return null;

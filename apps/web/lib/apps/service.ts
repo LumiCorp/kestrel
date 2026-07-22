@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { listCoreAppDefinitions } from "./catalog";
@@ -223,7 +223,12 @@ export async function ensureEnvironmentAppPolicies(input: {
 function resolveReadiness(input: {
   installMode: "inherited" | "explicit";
   installationStatus: AppInstallationStatus;
-  connectionModel: "none" | "personal" | "environment" | "hybrid";
+  connectionModel:
+    | "none"
+    | "organization"
+    | "personal"
+    | "environment"
+    | "hybrid";
   connectionRequirement: "none" | "optional" | "required";
   connections: AppConnectionSummary[];
 }): AppReadiness {
@@ -503,7 +508,10 @@ export async function listAppConnectionsForEnvironment(input: {
   return knowledgeDb.query.appConnections.findMany({
     where: and(
       eq(schema.appConnections.organizationId, input.organizationId),
-      eq(schema.appConnections.environmentId, input.environmentId),
+      or(
+        eq(schema.appConnections.environmentId, input.environmentId),
+        eq(schema.appConnections.ownerType, "organization")
+      ),
       input.appKeys?.length
         ? inArray(schema.appConnections.appKey, input.appKeys)
         : undefined
@@ -576,10 +584,13 @@ export async function getEnvironmentAppConfiguration(input: {
         ),
     }),
     knowledgeDb.query.appConnections.findMany({
-      where: (table, { and: all, eq: equals }) =>
+      where: (table, { and: all, eq: equals, or: either }) =>
         all(
           equals(table.organizationId, input.organizationId),
-          equals(table.environmentId, input.environmentId),
+          either(
+            equals(table.environmentId, input.environmentId),
+            equals(table.ownerType, "organization")
+          ),
           equals(table.appKey, input.appKey)
         ),
       orderBy: (table, { asc }) => [asc(table.name)],
@@ -903,14 +914,23 @@ export async function saveEnvironmentAppCapabilityGrant(input: {
   if (!capability) {
     throw new AppServiceError("APP_NOT_FOUND", "App capability not found.");
   }
+  const grant =
+    input.appKey === "email" && input.capabilityKey === "send"
+      ? {
+          ...input.grant,
+          approvalMode: input.grant.enabled ? ("ask" as const) : ("deny" as const),
+          loggingMode: "metadata_only" as const,
+          rateLimitMode: "strict" as const,
+        }
+      : input.grant;
   const now = new Date();
-  const [grant] = await knowledgeDb
+  const [savedGrant] = await knowledgeDb
     .insert(schema.environmentAppCapabilityGrants)
     .values({
       environmentId: input.environmentId,
       appKey: input.appKey,
       capabilityKey: input.capabilityKey,
-      ...input.grant,
+      ...grant,
       settings: capability.defaultSettings,
       createdAt: now,
       updatedAt: now,
@@ -921,11 +941,12 @@ export async function saveEnvironmentAppCapabilityGrant(input: {
         schema.environmentAppCapabilityGrants.appKey,
         schema.environmentAppCapabilityGrants.capabilityKey,
       ],
-      set: { ...input.grant, updatedAt: now },
+      set: { ...grant, updatedAt: now },
     })
     .returning();
-  if (!grant) throw new Error("Environment App capability could not be saved.");
-  return grant;
+  if (!savedGrant)
+    throw new Error("Environment App capability could not be saved.");
+  return savedGrant;
 }
 
 export async function resolveEnvironmentAppCredential(input: {

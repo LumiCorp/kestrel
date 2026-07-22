@@ -13,16 +13,24 @@ import {
 } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
+import { getOrganizationInfrastructureSettings } from "@/lib/environments/organization-infrastructure-settings";
 
 export async function createAdminEnvironment(input: {
   organizationId: string;
   actorUserId: string;
   environment: CreateEnvironmentInput;
 }) {
+  const infrastructure = await getOrganizationInfrastructureSettings(
+    input.organizationId
+  );
+  if (!infrastructure.allowedRegions.includes(input.environment.region)) {
+    throw new Error("The selected region is not allowed by organization infrastructure settings.");
+  }
   const created = await createOrganizationEnvironment({
     organizationId: input.organizationId,
     userId: input.actorUserId,
     environment: input.environment,
+    runtimeTemplate: infrastructure.defaultRuntimeTemplate,
   });
   await logAdminEvent({
     organizationId: input.organizationId,

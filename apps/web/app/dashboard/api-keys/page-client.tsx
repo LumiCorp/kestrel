@@ -83,7 +83,7 @@ export function UserApiKeysClient() {
       <AdminPageHeader
         actions={
           <Button asChild size="sm" variant="outline">
-            <Link href="/dashboard/user">Back to User Settings</Link>
+            <Link href="/settings/profile">Back to Profile</Link>
           </Button>
         }
         description="Create personal API keys for SDK clients, scripts, and automation workflows."
