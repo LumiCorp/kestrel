@@ -324,10 +324,12 @@ contractTest("runtime.process", "run.start emits started/log/completed protocol 
     },
     modelCredential: {
       source: "kestrel-one",
+      runId: "run-managed",
       organizationId: "org-acme",
       environmentId: "env-production",
       gatewayId: "gateway-openrouter",
       rawModelId: "openai/gpt-5.4",
+      provider: "openrouter",
     },
   };
   let receivedProfile: TuiProfile | undefined;

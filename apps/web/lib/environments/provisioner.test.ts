@@ -69,6 +69,9 @@ function fixture(
     async setEnvironmentProvisioning() {
       calls.push("environment:provisioning");
     },
+    async stageEnvironmentGatewayIdentity() {
+      calls.push("environment:gateway-token-staged");
+    },
     async setEnvironmentDeleting() {
       calls.push("environment:deleting");
     },
@@ -151,6 +154,7 @@ function fixture(
         region: "iad",
         routerUrl: "https://app-name.fly.dev",
         sharedIp: "203.0.113.1",
+        serviceToken: "gateway-service-token",
       };
     },
     async ensureWorkspaceVolume() {
@@ -221,7 +225,6 @@ function createProvisioner(
     ticketPublicKey:
       "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
     controlPlaneUrl: "https://kestrel.example",
-    credentialBrokerToken: "credential-broker-token",
     backupWorkspace,
   });
 }
@@ -236,6 +239,7 @@ contractTest("web.hermetic", "Environment provisioning durably follows requested
     "provider:app",
     "operation:stage:environment.machine.starting",
     "provider:gateway",
+    "environment:gateway-token-staged",
     "provider:wait",
     "operation:stage:environment.health.checking",
     "provider:health",
@@ -259,22 +263,43 @@ contractTest("web.hermetic", "Environment updates preserve Workspaces, update in
       flyVolumeId: "workspace-volume-id",
     },
   ];
+  const machineUpdates: Parameters<typeof provider.updateMachineImage>[0][] = [];
+  let gatewayUpdate:
+    | Parameters<typeof repository.completeEnvironmentGatewayUpdate>[0]
+    | undefined;
+  let workspaceUpdate:
+    | Parameters<typeof repository.completeWorkspaceRebuild>[0]
+    | undefined;
+  repository.completeEnvironmentGatewayUpdate = async (input) => {
+    gatewayUpdate = input;
+    calls.push("environment:gateway-updated");
+  };
+  repository.completeWorkspaceRebuild = async (input) => {
+    workspaceUpdate = input;
+    calls.push("workspace:rebuilt");
+  };
   provider.updateMachineImage = async (input) => {
+    machineUpdates.push(input);
     calls.push(`provider:image:${input.machineId}`);
     return { id: input.machineId, state: "replacing", region: "iad" };
   };
   provider.startMachine = async () => {
     calls.push("provider:start");
   };
-  const provisioner = createProvisioner(repository, provider, async (input) => {
-    calls.push(`backup:${input.workspaceId}`);
-  });
+  const provisioner = createProvisioner(
+    repository,
+    provider,
+    async (input) => {
+      calls.push(`backup:${input.workspaceId}`);
+    }
+  );
   assert.equal(await provisioner.process("operation-id"), "processed");
   assert.deepEqual(calls, [
     "operation:stage:environment.update.backing_up",
     "backup:workspace-id",
     "operation:stage:environment.update.gateway",
     "provider:image:gateway-machine-id",
+    "environment:gateway-token-staged",
     "provider:wait",
     "provider:health",
     "environment:gateway-updated",
@@ -288,6 +313,25 @@ contractTest("web.hermetic", "Environment updates preserve Workspaces, update in
     "environment:runtime-updated",
     "operation:completed",
   ]);
+  assert.deepEqual(machineUpdates[0]?.envPatch, {
+    KESTREL_ENVIRONMENT_ID: "environment-id",
+    KESTREL_CONTROL_PLANE_URL: "https://kestrel.example",
+    KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN:
+      machineUpdates[0]?.envPatch?.KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN,
+  });
+  assert.ok(
+    machineUpdates[0]?.envPatch?.KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN
+  );
+  assert.deepEqual(machineUpdates[1]?.envPatch, {
+    KESTREL_ENVIRONMENT_GATEWAY_URL:
+      "https://kestrel-env-existing.fly.dev",
+    KESTREL_WORKSPACE_SERVICE_TOKEN:
+      machineUpdates[1]?.envPatch?.KESTREL_WORKSPACE_SERVICE_TOKEN,
+    KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: undefined,
+  });
+  assert.ok(machineUpdates[1]?.envPatch?.KESTREL_WORKSPACE_SERVICE_TOKEN);
+  assert.ok(gatewayUpdate?.gatewayServiceTokenHash);
+  assert.ok(workspaceUpdate?.serviceTokenHash);
 });
 
 contractTest("web.hermetic", "Workspace provisioning persists provider resources only after readiness", async () => {

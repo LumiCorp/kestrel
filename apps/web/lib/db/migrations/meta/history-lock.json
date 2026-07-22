@@ -41,5 +41,6 @@
   "0037_environment_update_operation": "1784239200000:8654826c46123a9cee9f7621e94234f21101384ecfcde112e422f36a1753b63f",
   "0038_durable_turn_interaction_mode": "1784584800000:d847a467aedcd74087c23e3128153aed6298b4b1d41105cbfef94daf7ee128fe",
   "0039_organization_settings_prepare": "1784588400000:a37a1325a06e6eba2c20658df24874db1d1b9271f7b257ff3b9078a02eefb2ae",
-  "0040_persistent_collaborator_dialogs": "1784671200000:900a281dd0c251e5ed7343e7536d7c719cd0dfe2cb0ca297130cdf7cbfabc586"
+  "0040_persistent_collaborator_dialogs": "1784671200000:900a281dd0c251e5ed7343e7536d7c719cd0dfe2cb0ca297130cdf7cbfabc586",
+  "0041_trusted_environment_gateway": "1784674800000:78237dbd89f4f13f4ea29afcec753558e0a3e589ebc9ca35013304646fe3e465"
 }

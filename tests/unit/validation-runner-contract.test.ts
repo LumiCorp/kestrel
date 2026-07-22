@@ -135,6 +135,14 @@ contractTest(
 
 contractTest(
   "runtime.hermetic",
+  "PostgreSQL validation keeps its generated database authority hermetic",
+  () => {
+    assert.match(runner, /KESTREL_DISABLE_DOTENV: "1"/u);
+  },
+);
+
+contractTest(
+  "runtime.hermetic",
   "focused audit checks mutations and contracts without replaying validation boundaries",
   () => {
     const auditLeaf = runner.slice(
@@ -173,6 +181,8 @@ contractTest(
     );
     assert.match(productPlaywright, /timeout:\s*0/u);
     assert.match(productPlaywright, /expect:\s*\{ timeout:\s*0 \}/u);
+    assert.match(productPlaywright, /KESTREL_ENVIRONMENT_GATEWAY_URL/u);
+    assert.match(productPlaywright, /KESTREL_WORKSPACE_SERVICE_TOKEN/u);
   },
 );
 

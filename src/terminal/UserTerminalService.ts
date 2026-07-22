@@ -6,6 +6,7 @@ import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { agentChildEnvironment } from "../runtime/agentChildEnvironment.js";
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 32;
@@ -334,7 +335,9 @@ async function resolveShellPath(requested: string | undefined): Promise<string> 
 
 function terminalEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(environment).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    Object.entries(agentChildEnvironment(environment)).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
   );
 }
 

@@ -13,12 +13,6 @@ export type GatewayCredentialAuthorityHealth = {
 export function getGatewayCredentialAuthorityHealth(
   env: NodeJS.ProcessEnv = process.env
 ): GatewayCredentialAuthorityHealth {
-  if (!env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN?.trim()) {
-    return {
-      ok: false,
-      code: "GATEWAY_CREDENTIAL_BROKER_NOT_CONFIGURED",
-    };
-  }
   try {
     assertGatewayCredentialEncryptionConfigured(env);
     return { ok: true, code: null };

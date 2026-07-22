@@ -22,3 +22,4 @@ async function handle(request: Request, context: RuntimeRouteContext) {
 
 export const GET = handle;
 export const POST = handle;
+export const DELETE = handle;

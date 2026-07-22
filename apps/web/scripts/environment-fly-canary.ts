@@ -99,6 +99,7 @@ async function provisionCanaryEnvironment(identity: CanaryIdentity) {
     region,
     runtimeImage: routerImage,
     ticketPublicKey: publicKey,
+    controlPlaneUrl: "https://canary.invalid",
   });
   if (gateway.state !== "started") {
     await provider.waitForMachine({
@@ -129,7 +130,7 @@ async function provisionCanaryEnvironment(identity: CanaryIdentity) {
     runtimeImage: workspaceImage,
     ticketPublicKey: publicKey,
     controlPlaneUrl: "https://canary.invalid",
-    credentialBrokerToken: "canary-not-used",
+    serviceToken: "canary-workspace-service-token",
     source: { type: "blank" as const },
     idleTimeoutMinutes: 15,
   };
@@ -156,6 +157,7 @@ async function provisionCanaryEnvironment(identity: CanaryIdentity) {
       region,
       runtimeImage: routerImage,
       ticketPublicKey: publicKey,
+      controlPlaneUrl: "https://canary.invalid",
     }),
     provider.ensureWorkspaceVolume({
       appName: identity.appName,

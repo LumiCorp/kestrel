@@ -3,10 +3,14 @@ import { generateKeyPairSync } from "node:crypto";
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
   ENVIRONMENT_TOOL_CREDENTIAL_AUDIENCE,
+  PREVIEW_RELAY_TICKET_AUDIENCE,
+  PREVIEW_RELAY_TICKET_VERSION,
   signEnvironmentExecutionTicket,
   signEnvironmentToolCredential,
+  signPreviewRelayTicket,
   verifyEnvironmentExecutionTicket,
   verifyEnvironmentToolCredential,
+  verifyPreviewRelayTicket,
   type EnvironmentExecutionTicket,
   type EnvironmentToolCredentialTicket,
 } from "../src/index.js";
@@ -44,6 +48,31 @@ contractTest("packages.hermetic", "execution tickets bind the complete routing i
     verifyEnvironmentExecutionTicket({ token, publicKey, now: 1100 }),
     ticket,
   );
+});
+
+contractTest("packages.hermetic", "preview relay tickets bind one hostname, Workspace Machine, and loopback port", () => {
+  const relayTicket = {
+    version: PREVIEW_RELAY_TICKET_VERSION,
+    audience: PREVIEW_RELAY_TICKET_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    workspaceId: "workspace-1",
+    flyAppName: "kestrel-env-1",
+    flyMachineId: "machine-1",
+    previewId: "preview-1",
+    hostname: "p-one.previews.example.com",
+    port: 5173,
+    issuedAt: 1000,
+    expiresAt: 1120,
+    nonce: "relay-nonce",
+  } as const;
+  const token = signPreviewRelayTicket({ ticket: relayTicket, privateKey });
+  assert.deepEqual(
+    verifyPreviewRelayTicket({ token, publicKey, now: 1050 }),
+    relayTicket
+  );
+  assert.throws(() => verifyPreviewRelayTicket({ token: `${token}x`, publicKey, now: 1050 }));
+  assert.throws(() => verifyPreviewRelayTicket({ token, publicKey, now: 1120 }));
 });
 
 contractTest("packages.hermetic", "execution tickets reject tampering, expiration, and excessive lifetime", () => {

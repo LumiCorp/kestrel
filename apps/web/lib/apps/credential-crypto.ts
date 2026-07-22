@@ -83,6 +83,18 @@ export const appCredentialPayloadSchema = z
       kind: z.literal("secret_headers"),
       headers: secretHeadersSchema,
     }),
+    z.object({
+      kind: z.literal("ngrok_agent"),
+      authtoken: z.string().trim().min(1).max(16_384),
+      wildcardDomain: z
+        .string()
+        .trim()
+        .toLowerCase()
+        .max(253)
+        .regex(
+          /^\*\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u
+        ),
+    }),
   ])
   .superRefine((value, context) => {
     if (value.kind !== "oauth") return;

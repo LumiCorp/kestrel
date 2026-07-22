@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import postgres from "postgres";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
@@ -17,6 +17,10 @@ contractTest(
     process.env.KESTREL_APP_CREDENTIAL_KEYS = JSON.stringify({
       "test-key": randomBytes(32).toString("base64"),
     });
+    const { privateKey } = generateKeyPairSync("ed25519");
+    process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = privateKey
+      .export({ format: "pem", type: "pkcs8" })
+      .toString();
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
       new Response("{}", { status: 200 })) as unknown as typeof fetch;
@@ -27,6 +31,11 @@ contractTest(
       appService,
       projectAppService,
       tavilyRuntime,
+      appRuntime,
+      ngrokPreviewLifecycle,
+      environmentGatewayConfig,
+      environmentServiceTokens,
+      environmentReconcile,
       googleContract,
       googleOauth,
       googlePolicy,
@@ -39,6 +48,11 @@ contractTest(
       import("./service"),
       import("./project-service"),
       import("./tavily-runtime"),
+      import("./runtime"),
+      import("./ngrok-preview-lifecycle"),
+      import("@/lib/environments/gateway-config"),
+      import("@/lib/environments/service-tokens"),
+      import("@/lib/environments/reconcile"),
       import("@/lib/integrations/google-calendar-contract"),
       import("@/lib/integrations/google-calendar-oauth"),
       import("@/lib/integrations/google-calendar-policy"),
@@ -531,6 +545,290 @@ contractTest(
     });
     assert.equal(authorizedResearch.connectionId, primary.id);
     assert.equal(authorizedResearch.capability.approvalMode, "ask");
+
+    const ngrokConnection = await appService.saveEnvironmentAppConnection({
+      organizationId,
+      environmentId,
+      appKey: "ngrok",
+      actorUserId: userId,
+      connection: {
+        kind: "ngrok_agent",
+        name: "Environment previews",
+        authtoken: "ngrok-test-token",
+        wildcardDomain: `*.p-${suffix}.previews.example.test`,
+      },
+    });
+    await projectAppService.setProjectAppEnabled({
+      organizationId,
+      projectId,
+      appKey: "ngrok",
+      actorUserId: userId,
+      enabled: true,
+    });
+    await projectAppService.attachProjectAppConnection({
+      organizationId,
+      projectId,
+      appKey: "ngrok",
+      connectionId: ngrokConnection.id,
+      actorUserId: userId,
+      scope: "shared",
+      isDefault: true,
+    });
+    await sql`
+      UPDATE "environments"
+      SET "router_url" = 'https://environment-gateway.example.test'
+      WHERE "id" = ${environmentId}
+    `;
+    const publishPolicy = await appRuntime.authorizeAppRuntime({
+      ticket,
+      appKey: "ngrok",
+      capabilityKey: "publish",
+      approval: "auto",
+    });
+    const invokePreview = (input: {
+      capability: "publish" | "list" | "renew" | "close";
+      method: string;
+      path: string[];
+      body?: unknown;
+    }) =>
+      ngrokPreviewLifecycle.handleNgrokPreviewLifecycle({
+        request: new Request("https://kestrel.example.test/runtime", {
+          method: input.method,
+          headers: { authorization: "Bearer workspace-ticket" },
+          ...(input.body === undefined
+            ? {}
+            : {
+                body: JSON.stringify(input.body),
+                headers: {
+                  authorization: "Bearer workspace-ticket",
+                  "content-type": "application/json",
+                },
+              }),
+        }),
+        path: input.path,
+        capability: input.capability,
+        authorization: "Bearer workspace-ticket",
+        ticket,
+        policy: publishPolicy,
+      });
+
+    const concurrentPublishes = await Promise.allSettled(
+      [41_001, 41_002, 41_003, 41_004, 41_005, 41_006].map((port) =>
+        invokePreview({
+          capability: "publish",
+          method: "POST",
+          path: ["previews"],
+          body: { port },
+        })
+      )
+    );
+    assert.equal(
+      concurrentPublishes.filter((result) => result.status === "fulfilled").length,
+      5
+    );
+    assert.equal(
+      concurrentPublishes.filter(
+        (result) =>
+          result.status === "rejected" &&
+          result.reason instanceof appRuntime.AppRuntimeError &&
+          result.reason.code === "WORKSPACE_PREVIEW_LIMIT_REACHED"
+      ).length,
+      1
+    );
+    const activePreviews = await sql<
+      Array<{ id: string; port: number; status: string; expiresAt: Date }>
+    >`
+      SELECT "id", "port", "status", "expires_at" AS "expiresAt"
+      FROM "workspace_preview_leases"
+      WHERE "workspace_id" = ${workspaceId}
+      ORDER BY "port"
+    `;
+    assert.equal(activePreviews.length, 5);
+    assert.deepEqual(
+      activePreviews.map((preview) => preview.status),
+      ["active", "active", "active", "active", "active"]
+    );
+
+    await sql`
+      UPDATE "workspace_preview_leases"
+      SET "expires_at" = ${new Date(Date.now() - 1_000)}
+      WHERE "id" = ${activePreviews[4]!.id}
+    `;
+    const listed = await invokePreview({
+      capability: "list",
+      method: "GET",
+      path: ["previews"],
+    });
+    const listedBody = (await listed.json()) as {
+      previews: Array<{ id: string }>;
+    };
+    assert.equal(listedBody.previews.length, 4);
+    assert.equal(
+      listedBody.previews.some((preview) => preview.id === activePreviews[4]!.id),
+      false
+    );
+    const [expiredPreview] = await sql<Array<{ status: string }>>`
+      SELECT "status" FROM "workspace_preview_leases"
+      WHERE "id" = ${activePreviews[4]!.id}
+    `;
+    assert.equal(expiredPreview?.status, "expired");
+
+    const renewed = await invokePreview({
+      capability: "renew",
+      method: "POST",
+      path: ["previews", activePreviews[0]!.id],
+      body: { ttlMinutes: 120 },
+    });
+    const renewedBody = (await renewed.json()) as {
+      preview: { id: string; expiresAt: string };
+    };
+    assert.equal(renewedBody.preview.id, activePreviews[0]!.id);
+    assert.ok(
+      new Date(renewedBody.preview.expiresAt).getTime() >
+        activePreviews[0]!.expiresAt.getTime()
+    );
+
+    let failNextGatewayRefresh = true;
+    globalThis.fetch = (async (request) => {
+      const url = String(request);
+      if (url.endsWith("/internal/config/refresh") && failNextGatewayRefresh) {
+        failNextGatewayRefresh = false;
+        return new Response("gateway unavailable", { status: 503 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    await assert.rejects(
+      invokePreview({
+        capability: "close",
+        method: "DELETE",
+        path: ["previews", activePreviews[0]!.id],
+      }),
+      (error: unknown) =>
+        error instanceof appRuntime.AppRuntimeError &&
+        error.code === "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE"
+    );
+    const [closingPreview] = await sql<Array<{ status: string }>>`
+      SELECT "status" FROM "workspace_preview_leases"
+      WHERE "id" = ${activePreviews[0]!.id}
+    `;
+    assert.equal(closingPreview?.status, "closing");
+    await invokePreview({
+      capability: "close",
+      method: "DELETE",
+      path: ["previews", activePreviews[0]!.id],
+    });
+    const [closedPreview] = await sql<Array<{ status: string }>>`
+      SELECT "status" FROM "workspace_preview_leases"
+      WHERE "id" = ${activePreviews[0]!.id}
+    `;
+    assert.equal(closedPreview?.status, "closed");
+
+    const samePortPublishes = await Promise.all([
+      invokePreview({
+        capability: "publish",
+        method: "POST",
+        path: ["previews"],
+        body: { port: 41_100 },
+      }),
+      invokePreview({
+        capability: "publish",
+        method: "POST",
+        path: ["previews"],
+        body: { port: 41_100 },
+      }),
+    ]);
+    const samePortBodies = await Promise.all(
+      samePortPublishes.map((response) => response.json() as Promise<{
+        preview: { id: string };
+      }>)
+    );
+    assert.equal(samePortBodies[0]!.preview.id, samePortBodies[1]!.preview.id);
+    const samePortRows = await sql<Array<{ count: string }>>`
+      SELECT count(*)::text AS "count"
+      FROM "workspace_preview_leases"
+      WHERE "workspace_id" = ${workspaceId}
+        AND "port" = 41100
+        AND "status" IN ('provisioning', 'active', 'closing')
+    `;
+    assert.equal(samePortRows[0]?.count, "1");
+
+    failNextGatewayRefresh = true;
+    await assert.rejects(
+      appService.disconnectEnvironmentAppConnection({
+        organizationId,
+        environmentId,
+        appKey: "ngrok",
+        connectionId: ngrokConnection.id,
+      }),
+      /Environment gateway refresh failed \(503\)/u
+    );
+    const previewsAwaitingDisconnect = await sql<Array<{ count: string }>>`
+      SELECT count(*)::text AS "count"
+      FROM "workspace_preview_leases"
+      WHERE "connection_id" = ${ngrokConnection.id}
+        AND "status" = 'closing'
+    `;
+    assert.equal(previewsAwaitingDisconnect[0]?.count, "4");
+    assert.equal(
+      await environmentReconcile.reconcileClosingWorkspacePreviews(),
+      4
+    );
+    const remainingNgrokPreviews = await sql<Array<{ count: string }>>`
+      SELECT count(*)::text AS "count"
+      FROM "workspace_preview_leases"
+      WHERE "connection_id" = ${ngrokConnection.id}
+        AND "status" IN ('provisioning', 'active', 'closing')
+    `;
+    assert.equal(remainingNgrokPreviews[0]?.count, "0");
+    await appRuntime.markAppConnectionHealthy({
+      organizationId,
+      environmentId,
+      appKey: "ngrok",
+      connectionId: ngrokConnection.id,
+    });
+    const [disconnectedNgrok] = await sql<Array<{ status: string }>>`
+      SELECT "status" FROM "app_connections"
+      WHERE "id" = ${ngrokConnection.id}
+    `;
+    assert.equal(disconnectedNgrok?.status, "disconnected");
+
+    await sql`
+      UPDATE "app_connections" connection
+      SET "status" = 'degraded'
+      WHERE connection."id" = ${ngrokConnection.id}
+    `;
+    await sql`
+      UPDATE "app_credentials" credential
+      SET "status" = 'active', "encrypted_payload" = 'kapp:v1:invalid',
+          "revoked_at" = NULL
+      FROM "app_connections" connection
+      WHERE connection."id" = ${ngrokConnection.id}
+        AND credential."id" = connection."credential_id"
+    `;
+    await sql`
+      UPDATE "environments"
+      SET
+        "fly_app_name" = 'apps-runtime-test',
+        "gateway_service_token_hash" = ${environmentServiceTokens.hashEnvironmentServiceToken("gateway-service-token")}
+      WHERE "id" = ${environmentId}
+    `;
+    const configWithoutBrokenNgrok =
+      await environmentGatewayConfig.resolveEnvironmentGatewayConfig({
+        environmentId,
+        authorization: "Bearer gateway-service-token",
+      });
+    assert.equal(configWithoutBrokenNgrok.ngrok, null);
+    const [degradedBrokenNgrok] = await sql<
+      Array<{ status: string; failureCode: string | null }>
+    >`
+      SELECT "status", "failure_code" AS "failureCode"
+      FROM "app_connections"
+      WHERE "id" = ${ngrokConnection.id}
+    `;
+    assert.deepEqual(degradedBrokenNgrok, {
+      status: "degraded",
+      failureCode: "NGROK_CREDENTIAL_UNAVAILABLE",
+    });
 
     await appService.setAppInstallation({
       organizationId,

@@ -6,6 +6,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { agentChildEnvironment } from "../runtime/agentChildEnvironment.js";
 import { normalizeDevShellExecCommand } from "./normalizeCommand.js";
 import {
   createDevShellSourceWriteGuard,
@@ -1523,7 +1524,7 @@ function buildShellEnv(
   }
   base.NPM_CONFIG_WORKSPACE_DIR = workspaceRoot;
   base.npm_config_workspace_dir = workspaceRoot;
-  return base;
+  return agentChildEnvironment(base);
 }
 
 function resolveDevShellClientDirs(): string[] {

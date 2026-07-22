@@ -30,11 +30,12 @@ export type ToolProviderAppContract = {
   authMethods: Array<
     | "none"
     | "api_key"
+    | "agent_token"
     | "oauth_personal"
     | "oauth_environment"
     | "deployment_managed"
   >;
-  delivery: "native" | "oauth" | "api_key" | "mcp" | "webhook" | "source";
+  delivery: "native" | "lifecycle" | "oauth" | "api_key" | "mcp" | "webhook" | "source";
   installMode: "inherited" | "explicit";
   icon: string | null;
 };

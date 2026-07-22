@@ -41,6 +41,7 @@ export type EnvironmentProviderGateway = {
   region: string;
   routerUrl: string;
   sharedIp: string;
+  serviceToken: string;
 };
 
 export type EnvironmentProviderInventory = {
@@ -68,7 +69,7 @@ export type WorkspaceMachineProvisioningInput = {
   runtimeImage: string;
   ticketPublicKey: string;
   controlPlaneUrl: string;
-  credentialBrokerToken: string;
+  serviceToken?: string | undefined;
   source: {
     type: "blank" | "github";
     resourceId?: string | undefined;
@@ -89,6 +90,8 @@ export interface EnvironmentInfrastructureProvider {
     region: string;
     runtimeImage: string;
     ticketPublicKey: string;
+    controlPlaneUrl: string;
+    serviceToken?: string | undefined;
   }): Promise<EnvironmentProviderGateway>;
   ensureWorkspaceVolume(input: {
     appName: string;
@@ -139,6 +142,7 @@ export interface EnvironmentInfrastructureProvider {
     appName: string;
     machineId: string;
     runtimeImage: string;
+    envPatch?: Record<string, string | undefined> | undefined;
   }): Promise<EnvironmentProviderMachine>;
 }
 

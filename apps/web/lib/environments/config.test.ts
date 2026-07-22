@@ -129,7 +129,7 @@ function validEnvironment() {
     KESTREL_WORKSPACE_BACKUP_KEY: randomBytes(32).toString("base64"),
     KESTREL_WORKSPACE_BACKUP_KEY_ID: "workspace-backup-v1",
     KESTREL_ONE_APP_URL: "https://kestrel-one.example",
-    KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "broker-secret",
+    KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "legacy-rollout-broker-secret",
     KESTREL_ONE_TOOL_TOKEN: "tool-secret",
     KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID: "key-v1",
     KESTREL_GATEWAY_CREDENTIAL_KEYS: JSON.stringify({

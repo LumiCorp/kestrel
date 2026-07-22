@@ -4,7 +4,6 @@ import {
   createProviderGatewayForLease,
   GATEWAY_CREDENTIAL_CACHE_TTL_MS,
   GATEWAY_CREDENTIAL_LEASE_VERSION,
-  GatewayCredentialBrokerClient,
   GatewayCredentialBrokerError,
   type GatewayCredentialLease,
   GatewayCredentialLeaseCache,
@@ -15,10 +14,12 @@ import { contractTest } from "../helpers/contract-test.js";
 
 const reference = {
   source: "kestrel-one" as const,
+  runId: "run-1",
   organizationId: "org-acme",
   environmentId: "env-production",
   gatewayId: "gateway-openrouter",
   rawModelId: "openai/gpt-5.4",
+  provider: "openrouter" as const,
 };
 
 function lease(input: {
@@ -39,79 +40,6 @@ function lease(input: {
     expiresAt: new Date(input.expiresAtMs).toISOString(),
   };
 }
-
-contractTest("runtime.hermetic", "credential broker client sends its dedicated token and validates the lease", async () => {
-  let authorization: string | null = null;
-  let requestBody: Record<string, unknown> | undefined;
-  const client = new GatewayCredentialBrokerClient({
-    appUrl: "http://127.0.0.1:43103",
-    token: "broker-secret",
-    fetchImpl: async (_url, init) => {
-      authorization = new Headers(init?.headers).get("authorization");
-      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return Response.json(
-        lease({
-          leaseId: "lease-1",
-          expiresAtMs: Date.now() + GATEWAY_CREDENTIAL_CACHE_TTL_MS,
-        })
-      );
-    },
-  });
-
-  const result = await client.issueLease(reference);
-
-  assert.equal(authorization, "Bearer broker-secret");
-  assert.equal(requestBody?.gatewayId, reference.gatewayId);
-  assert.equal(requestBody?.organizationId, reference.organizationId);
-  assert.equal(requestBody?.environmentId, reference.environmentId);
-  assert.equal(result.leaseId, "lease-1");
-});
-
-contractTest("runtime.hermetic", "credential broker rejects cleartext non-loopback endpoints", () => {
-  assert.throws(
-    () =>
-      new GatewayCredentialBrokerClient({
-        appUrl: "http://app.internal",
-        token: "broker-secret",
-      }),
-    (error: unknown) =>
-      error instanceof GatewayCredentialBrokerError &&
-      error.code === "GATEWAY_CREDENTIAL_BROKER_INSECURE"
-  );
-});
-
-contractTest("runtime.hermetic", "credential broker errors never include a response secret", async () => {
-  const client = new GatewayCredentialBrokerClient({
-    appUrl: "https://app.example.test",
-    token: "broker-secret",
-    fetchImpl: async () =>
-      Response.json(
-        { code: "GATEWAY_CREDENTIAL_MISSING", error: "provider-secret" },
-        { status: 503 }
-      ),
-  });
-
-  await assert.rejects(client.issueLease(reference), (error: unknown) => {
-    assert.equal(String(error).includes("provider-secret"), false);
-    return true;
-  });
-});
-
-contractTest("runtime.hermetic", "credential broker transport errors never include thrown secret text", async () => {
-  const client = new GatewayCredentialBrokerClient({
-    appUrl: "https://app.example.test",
-    token: "broker-secret",
-    fetchImpl: async () => {
-      throw new Error("transport exposed provider-secret and broker-secret");
-    },
-  });
-
-  await assert.rejects(client.issueLease(reference), (error: unknown) => {
-    assert.equal(String(error).includes("provider-secret"), false);
-    assert.equal(String(error).includes("broker-secret"), false);
-    return true;
-  });
-});
 
 contractTest("runtime.hermetic", "credential cache reuses a lease until its bounded expiry", async () => {
   let now = 1_000_000;
@@ -178,6 +106,28 @@ contractTest("runtime.hermetic", "credential cache isolates otherwise identical 
   });
   assert.equal(first.leaseId, "lease-1");
   assert.equal(second.leaseId, "lease-2");
+  assert.equal(loads, 2);
+});
+
+contractTest("runtime.hermetic", "credential cache isolates otherwise identical references by run", async () => {
+  let loads = 0;
+  const cache = new GatewayCredentialLeaseCache({
+    random: () => 0,
+    load: async (current) => ({
+      ...lease({
+        leaseId: `${current.runId}:lease-${++loads}`,
+        expiresAtMs: Date.now() + GATEWAY_CREDENTIAL_CACHE_TTL_MS,
+      }),
+    }),
+  });
+
+  const first = await cache.get(reference);
+  const second = await cache.get({
+    ...reference,
+    runId: "run-2",
+  });
+  assert.equal(first.leaseId, "run-1:lease-1");
+  assert.equal(second.leaseId, "run-2:lease-2");
   assert.equal(loads, 2);
 });
 

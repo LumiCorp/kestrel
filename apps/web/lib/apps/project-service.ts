@@ -222,14 +222,16 @@ export async function listProjectAppConfigurations(input: {
     const available = connectionRows.filter(
       (connection) =>
         connection.appKey === definition.key &&
-        connection.status === "connected" &&
+        (connection.status === "connected" ||
+          (definition.delivery === "lifecycle" &&
+            connection.status === "degraded")) &&
         ((definition.connectionModel === "organization" &&
           connection.ownerType === "organization") ||
           ((definition.connectionModel === "environment" ||
-          definition.connectionModel === "hybrid") &&
-          connection.environmentId === binding.environmentId &&
-          (connection.ownerType === "environment" ||
-            connection.ownerType === "deployment_managed")) ||
+            definition.connectionModel === "hybrid") &&
+            connection.environmentId === binding.environmentId &&
+            (connection.ownerType === "environment" ||
+              connection.ownerType === "deployment_managed")) ||
           ((definition.connectionModel === "personal" ||
             definition.connectionModel === "hybrid") &&
             connection.ownerType === "personal" &&
@@ -434,12 +436,17 @@ export async function attachProjectAppConnection(input: {
 }) {
   const { binding, definition } = await requireProjectAppContext(input);
   const connection = await knowledgeDb.query.appConnections.findFirst({
-    where: (table, { and: all, eq: equals }) =>
+    where: (table, { and: all, eq: equals, inArray: among }) =>
       all(
         equals(table.id, input.connectionId),
         equals(table.organizationId, input.organizationId),
         equals(table.appKey, input.appKey),
-        equals(table.status, "connected")
+        among(
+          table.status,
+          definition.delivery === "lifecycle"
+            ? ["connected", "degraded"]
+            : ["connected"]
+        )
       ),
   });
   if (!connection) {

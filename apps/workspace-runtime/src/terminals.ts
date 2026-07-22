@@ -16,6 +16,12 @@ type TerminalSession = {
 export class WorkspaceTerminalRegistry {
   private readonly sessions = new Map<string, TerminalSession>();
 
+  constructor(
+    private readonly childEnvironment: () => NodeJS.ProcessEnv = () => ({
+      ...process.env,
+    })
+  ) {}
+
   get activeCount() {
     return [...this.sessions.values()].filter(
       (session) => session.status === "running"
@@ -26,7 +32,7 @@ export class WorkspaceTerminalRegistry {
     const id = randomUUID();
     const child = spawn("script", ["-qefc", "/bin/bash", "/dev/null"], {
       cwd,
-      env: { ...process.env, TERM: "xterm-256color" },
+      env: { ...this.childEnvironment(), TERM: "xterm-256color" },
       stdio: ["pipe", "pipe", "pipe"],
     });
     const session: TerminalSession = {

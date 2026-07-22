@@ -129,7 +129,8 @@ export async function markAppConnectionDegraded(input: {
         eq(schema.appConnections.id, input.connectionId),
         eq(schema.appConnections.organizationId, input.organizationId),
         eq(schema.appConnections.environmentId, input.environmentId),
-        eq(schema.appConnections.appKey, input.appKey)
+        eq(schema.appConnections.appKey, input.appKey),
+        inArray(schema.appConnections.status, ["connected", "degraded"])
       )
     );
 }
@@ -155,7 +156,8 @@ export async function markAppConnectionHealthy(input: {
         eq(schema.appConnections.id, input.connectionId),
         eq(schema.appConnections.organizationId, input.organizationId),
         eq(schema.appConnections.environmentId, input.environmentId),
-        eq(schema.appConnections.appKey, input.appKey)
+        eq(schema.appConnections.appKey, input.appKey),
+        inArray(schema.appConnections.status, ["connected", "degraded"])
       )
     );
 }

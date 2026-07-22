@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
   type EnvironmentInfrastructureProvider,
@@ -197,6 +198,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     region: string;
     runtimeImage: string;
     ticketPublicKey: string;
+    controlPlaneUrl: string;
+    serviceToken?: string | undefined;
   }): Promise<EnvironmentProviderGateway> {
     const sharedIp = await this.ensureEnvironmentSharedIp(input.appName);
     const listed = parseResponse(
@@ -211,6 +214,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         machine.config?.metadata?.kestrel_environment_gateway === "true" &&
         machine.config.metadata.kestrel_environment_id === input.environmentId
     );
+    const serviceToken =
+      input.serviceToken ??
+      existing?.config?.env?.KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN ??
+      randomBytes(32).toString("base64url");
+    const gatewayConfigInput = { ...input, serviceToken };
     if (
       existing &&
       (existing.config?.image !== input.runtimeImage ||
@@ -224,8 +232,28 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         "Existing Environment gateway Machine does not satisfy the immutable ingress contract."
       );
     }
-    const machine = existing
-      ? toMachine(existing)
+    const identityChanged =
+      existing &&
+      (existing.config?.env?.KESTREL_CONTROL_PLANE_URL !==
+        input.controlPlaneUrl ||
+        existing.config.env.KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN !==
+          serviceToken);
+    const reconciled = identityChanged
+      ? parseResponse(
+          machineSchema,
+          await this.request(
+            `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(existing.id)}`,
+            {
+              method: "POST",
+              body: jsonBody({
+                config: environmentGatewayMachineConfig(gatewayConfigInput),
+              }),
+            }
+          )
+        )
+      : existing;
+    const machine = reconciled
+      ? toMachine(reconciled)
       : toMachine(
           parseResponse(
             machineSchema,
@@ -237,7 +265,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
                   name: environmentGatewayMachineName(input.environmentId),
                   region: input.region,
                   skip_launch: false,
-                  config: environmentGatewayMachineConfig(input),
+                  config: environmentGatewayMachineConfig(gatewayConfigInput),
                 }),
               }
             )
@@ -255,6 +283,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       region: machine.region,
       routerUrl: `https://${input.appName}.fly.dev`,
       sharedIp,
+      serviceToken,
     };
   }
 
@@ -391,7 +420,13 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           "Existing Workspace Machine is in a different region."
         );
       }
-      return toMachine(existing);
+      return toMachine(
+        await this.reconcileWorkspaceServiceToken({
+          appName: input.appName,
+          machine: existing,
+          serviceToken: input.serviceToken,
+        })
+      );
     }
 
     return this.createWorkspaceMachine(
@@ -415,7 +450,15 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         machine.config?.metadata?.kestrel_workspace_id === input.workspaceId &&
         machine.config.metadata.kestrel_replacement_id === input.replacementId
     );
-    if (existing) return toMachine(existing);
+    if (existing) {
+      return toMachine(
+        await this.reconcileWorkspaceServiceToken({
+          appName: input.appName,
+          machine: existing,
+          serviceToken: input.serviceToken,
+        })
+      );
+    }
     return this.createWorkspaceMachine(
       input,
       replacementWorkspaceMachineName(input.workspaceId, input.replacementId),
@@ -444,6 +487,41 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       )
     );
     return toMachine(machine);
+  }
+
+  private async reconcileWorkspaceServiceToken(input: {
+    appName: string;
+    machine: z.infer<typeof machineSchema>;
+    serviceToken?: string | undefined;
+  }) {
+    if (
+      !input.serviceToken ||
+      input.machine.config?.env?.KESTREL_WORKSPACE_SERVICE_TOKEN === input.serviceToken
+    ) return input.machine;
+    if (!input.machine.config) {
+      throw new EnvironmentProviderError(
+        "FLY_RESOURCE_CONFLICT",
+        "Existing Workspace Machine configuration is unavailable for service identity rotation."
+      );
+    }
+    return parseResponse(
+      machineSchema,
+      await this.request(
+        `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machine.id)}`,
+        {
+          method: "POST",
+          body: jsonBody({
+            config: {
+              ...input.machine.config,
+              env: {
+                ...input.machine.config.env,
+                KESTREL_WORKSPACE_SERVICE_TOKEN: input.serviceToken,
+              },
+            },
+          }),
+        }
+      )
+    );
   }
 
   async getMachine(input: {
@@ -670,6 +748,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     appName: string;
     machineId: string;
     runtimeImage: string;
+    envPatch?: Record<string, string | undefined> | undefined;
   }) {
     const current = parseResponse(
       machineSchema,
@@ -684,7 +763,14 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         "Fly Machine configuration is unavailable for image update."
       );
     }
-    if (sameImageDigest(current.config.image, input.runtimeImage)) {
+    const nextEnvironment = applyEnvironmentPatch(
+      current.config.env ?? {},
+      input.envPatch
+    );
+    if (
+      sameImageDigest(current.config.image, input.runtimeImage) &&
+      environmentsEqual(current.config.env ?? {}, nextEnvironment)
+    ) {
       return toMachine(current);
     }
     const updated = parseResponse(
@@ -694,7 +780,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         {
           method: "POST",
           body: jsonBody({
-            config: { ...current.config, image: input.runtimeImage },
+            config: {
+              ...current.config,
+              image: input.runtimeImage,
+              env: nextEnvironment,
+            },
             current_version: current.instance_id,
             skip_launch: current.state !== "started",
           }),
@@ -774,7 +864,10 @@ function workspaceMachineConfig(
       KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: input.ticketPublicKey,
       KESTREL_CONTROL_PLANE_URL: input.controlPlaneUrl,
       KESTREL_ONE_APP_URL: input.controlPlaneUrl,
-      KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: input.credentialBrokerToken,
+      KESTREL_ENVIRONMENT_GATEWAY_URL: `https://${input.appName}.fly.dev`,
+      ...(input.serviceToken
+        ? { KESTREL_WORKSPACE_SERVICE_TOKEN: input.serviceToken }
+        : {}),
       KESTREL_WORKSPACE_SOURCE_TYPE: input.source.type,
       ...(input.source.resourceId
         ? { KESTREL_WORKSPACE_SOURCE_RESOURCE_ID: input.source.resourceId }
@@ -821,13 +914,18 @@ function environmentGatewayMachineConfig(input: {
   environmentId: string;
   runtimeImage: string;
   ticketPublicKey: string;
+  controlPlaneUrl: string;
+  serviceToken: string;
 }) {
   return {
     image: input.runtimeImage,
     auto_destroy: false,
     env: {
       KESTREL_ENVIRONMENT_APP_NAME: input.appName,
+      KESTREL_ENVIRONMENT_ID: input.environmentId,
       KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: input.ticketPublicKey,
+      KESTREL_CONTROL_PLANE_URL: input.controlPlaneUrl,
+      KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN: input.serviceToken,
       PORT: "8080",
     },
     metadata: {
@@ -952,6 +1050,27 @@ function sameImageDigest(current: string | undefined, requested: string) {
   return Boolean(
     currentDigest && requestedDigest && currentDigest === requestedDigest
   );
+}
+
+function applyEnvironmentPatch(
+  current: Record<string, string>,
+  patch: Record<string, string | undefined> | undefined
+) {
+  const next = { ...current };
+  for (const [name, value] of Object.entries(patch ?? {})) {
+    if (value === undefined) delete next[name];
+    else next[name] = value;
+  }
+  return next;
+}
+
+function environmentsEqual(
+  left: Record<string, string>,
+  right: Record<string, string>
+) {
+  const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
+  const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
 }
 
 function parseResponse<T>(schema: z.ZodType<T>, value: unknown): T {

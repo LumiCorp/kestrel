@@ -1,5 +1,8 @@
 import { sign, verify } from "node:crypto";
 
+export * from "./gateway-config.js";
+export * from "./preview-relay.js";
+
 export const ENVIRONMENT_ROUTER_AUDIENCE = "kestrel-environment-router";
 export const ENVIRONMENT_TICKET_VERSION = 1;
 export const ENVIRONMENT_TICKET_MAX_TTL_SECONDS = 300;

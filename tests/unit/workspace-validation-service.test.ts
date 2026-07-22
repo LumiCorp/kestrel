@@ -48,6 +48,26 @@ contractTest("runtime.hermetic", "WorkspaceValidationService records output, exi
   assert.equal(stale.readiness.state, "stale");
 });
 
+contractTest("runtime.hermetic", "WorkspaceValidationService strips trusted runner credentials from validation processes", async () => {
+  const originalToken = process.env.KESTREL_WORKSPACE_SERVICE_TOKEN;
+  process.env.KESTREL_WORKSPACE_SERVICE_TOKEN = "workspace-secret";
+  try {
+    const root = await configuredWorkspace([
+      { id: "environment", label: "Environment", kind: "test", command: process.execPath, args: ["-e", "console.log(process.env.KESTREL_WORKSPACE_SERVICE_TOKEN ?? 'missing')"], required: true },
+    ]);
+    const service = new WorkspaceValidationService(path.join(root, ".kestrel", "results.json"));
+    await service.initialize();
+    await service.runAction({ sessionId: "session-1", threadId: "thread-1", workspaceRoot: root, candidateFingerprint: fp("a"), actionId: "environment" });
+    const settled = await waitFor(service, root, fp("a"));
+
+    assert.equal(settled.results[0]?.outcome, "passed");
+    assert.equal(settled.results[0]?.output.map((entry) => entry.text).join("").trim(), "missing");
+  } finally {
+    if (originalToken === undefined) delete process.env.KESTREL_WORKSPACE_SERVICE_TOKEN;
+    else process.env.KESTREL_WORKSPACE_SERVICE_TOKEN = originalToken;
+  }
+});
+
 contractTest("runtime.hermetic", "WorkspaceValidationService invalidates and terminates a running result when the candidate changes", async () => {
   const root = await configuredWorkspace([
     { id: "slow", label: "Slow", kind: "test", command: process.execPath, args: ["-e", "setTimeout(() => process.exit(0), 10000)"], required: true },

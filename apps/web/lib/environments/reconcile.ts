@@ -19,6 +19,8 @@ import {
   selectOrphanVolumeIds,
 } from "./reconcile-contract";
 import { selectDueDailyBackupCandidate } from "./reconcile-selection";
+import { hashEnvironmentServiceToken } from "./service-tokens";
+import { refreshEnvironmentGateway } from "./gateway-refresh";
 
 export async function reconcileHostedEnvironments() {
   const now = new Date();
@@ -55,6 +57,7 @@ export async function reconcileHostedEnvironments() {
     adoptedVolumeCount += result.adoptedVolumeCount;
     degradedWorkspaceCount += result.degradedWorkspaceCount;
   }
+  const finalizedPreviewCount = await reconcileClosingWorkspacePreviews(now);
   await expireWorkspaceBackups(now);
   await createDueDailyBackup(now);
   return {
@@ -63,6 +66,7 @@ export async function reconcileHostedEnvironments() {
     workspaceCount,
     adoptedVolumeCount,
     degradedWorkspaceCount,
+    finalizedPreviewCount,
   };
 }
 
@@ -190,6 +194,37 @@ async function reconcileOrganizationEnvironments(input: {
   };
 }
 
+export async function reconcileClosingWorkspacePreviews(now = new Date()) {
+  const environments = await knowledgeDb
+    .selectDistinct({
+      organizationId: schema.workspacePreviewLeases.organizationId,
+      environmentId: schema.workspacePreviewLeases.environmentId,
+    })
+    .from(schema.workspacePreviewLeases)
+    .where(eq(schema.workspacePreviewLeases.status, "closing"));
+  let finalized = 0;
+  for (const environment of environments) {
+    try {
+      await refreshEnvironmentGateway(environment);
+      const closed = await knowledgeDb
+        .update(schema.workspacePreviewLeases)
+        .set({ status: "closed", closedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(
+              schema.workspacePreviewLeases.environmentId,
+              environment.environmentId
+            ),
+            eq(schema.workspacePreviewLeases.status, "closing")
+          )
+        )
+        .returning({ id: schema.workspacePreviewLeases.id });
+      finalized += closed.length;
+    } catch {}
+  }
+  return finalized;
+}
+
 async function markWorkspaceDegraded(
   workspaceId: string,
   now: Date,
@@ -300,7 +335,19 @@ async function reconcileEnvironmentGateways(
         region: environment.region,
         runtimeImage: environment.routerImage,
         ticketPublicKey,
+        controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
       });
+      const gatewayServiceTokenHash = hashEnvironmentServiceToken(
+        gateway.serviceToken
+      );
+      if (
+        environment.gatewayServiceTokenHash !== gatewayServiceTokenHash
+      ) {
+        await knowledgeDb
+          .update(schema.environments)
+          .set({ gatewayServiceTokenHash, updatedAt: new Date() })
+          .where(eq(schema.environments.id, environment.id));
+      }
       if (gateway.state !== "started") {
         await provider.startMachine({
           appName: environment.flyAppName,

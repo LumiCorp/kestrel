@@ -19,4 +19,4 @@ EXPECTED_GIT_SHA="$RELEASE_SHA" \
   deploy/fly/kestrel-one-runner/smoke.sh "$IMAGE"
 ```
 
-Production deployment must follow the gateway-only rollout runbook. In particular, pass this directory's `Dockerfile.dockerignore` explicitly and record the resulting Fly image digest before changing the Vercel alias.
+Production deployment must follow the [Hosted Environment runtime rollout](./ROLLOUT.md). In particular, pass this directory's `Dockerfile.dockerignore` explicitly and record the resulting Fly image digest before changing the Vercel alias.

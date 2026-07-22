@@ -56,14 +56,15 @@ export function toKestrelOneRuntimeModelSelection(input: {
 
 export function applyKestrelOneModelToProfile(
   profile: RunnerProfile,
-  selection: KestrelOneRuntimeModelSelection
+  selection: KestrelOneRuntimeModelSelection,
+  runId: string
 ): RunnerProfile {
   const agentStageConfig = asRecord(profile.agentStageConfig);
   const modelByStage = asRecord(agentStageConfig.modelByStage);
 
   return {
     ...profile,
-    id: `${profile.id}:model:${encodeURIComponent(selection.id)}`,
+    id: `${profile.id}:model:${encodeURIComponent(selection.id)}:run:${encodeURIComponent(runId)}`,
     label: `${profile.label} · ${selection.id}`,
     modelProvider: selection.provider,
     model: selection.model,
@@ -76,10 +77,12 @@ export function applyKestrelOneModelToProfile(
     },
     modelCredential: {
       source: "kestrel-one",
+      runId,
       gatewayId: selection.gatewayId,
       organizationId: selection.organizationId,
       environmentId: selection.environmentId,
       rawModelId: selection.model,
+      provider: selection.provider,
     },
     default: false,
   };
