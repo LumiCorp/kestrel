@@ -25,6 +25,17 @@ export function pricingBasisForRate(rate: PriceableRate): PricingBasis {
   return rate.provenance === "assumption" ? "assumed" : "measured_at_rate";
 }
 
+export function parseModelCostIdentity(model: string) {
+  const normalized = model.trim();
+  const separator = normalized.indexOf("/");
+  return separator > 0
+    ? {
+        provider: normalized.slice(0, separator),
+        service: normalized.slice(separator + 1),
+      }
+    : { provider: "unknown", service: normalized };
+}
+
 function daysInUtcMonth(date: Date) {
   return new Date(
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculateRateAmount, pricingBasisForRate } from "./pricing";
+import {
+  calculateRateAmount,
+  parseModelCostIdentity,
+  pricingBasisForRate,
+} from "./pricing";
 
 test("monthly fixed fees accrue against the applicable calendar month", () => {
   assert.equal(
@@ -61,4 +65,15 @@ test("pricing basis keeps assumptions and allocated fees distinguishable", () =>
     }),
     "allocated_fixed"
   );
+});
+
+test("model cost identity separates provider and service", () => {
+  assert.deepEqual(parseModelCostIdentity("openai/gpt-5-mini"), {
+    provider: "openai",
+    service: "gpt-5-mini",
+  });
+  assert.deepEqual(parseModelCostIdentity("gpt-5-mini"), {
+    provider: "unknown",
+    service: "gpt-5-mini",
+  });
 });

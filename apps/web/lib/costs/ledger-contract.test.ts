@@ -41,9 +41,9 @@ contractTest("web.hermetic", "billable app effects are metered before upstream f
 contractTest("web.hermetic", "cost workers stay in the durable environment worker", () => {
   const queue = read("lib/knowledge/queue.ts");
   const worker = queue.slice(queue.indexOf("startEnvironmentLifecycleWorker"));
-  assert.match(worker, /boss\.work\(COST_PRICING_QUEUE/u);
-  assert.match(worker, /boss\.work\(COST_ACCRUAL_QUEUE/u);
-  assert.match(worker, /boss\.work\(COST_FLY_METERING_QUEUE/u);
+  assert.match(worker, /boss\.work\(\s*COST_PRICING_QUEUE/u);
+  assert.match(worker, /boss\.work\(\s*COST_ACCRUAL_QUEUE/u);
+  assert.match(worker, /boss\.work\(\s*COST_FLY_METERING_QUEUE/u);
   assert.match(worker, /backfill: "incremental"/u);
   assert.match(worker, /backfill: "startup"/u);
 });

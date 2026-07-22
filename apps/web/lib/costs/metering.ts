@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   and,
+  desc,
   eq,
   gt,
   gte,
@@ -11,12 +12,14 @@ import {
   lte,
   ne,
   or,
+  sql,
 } from "drizzle-orm";
 import { createFlyProviderClient } from "@/lib/environments/fly-connection";
 import type { EnvironmentProviderMachine } from "@/lib/environments/providers/contracts";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { flyPublicEgressService, queryFlyPublicEgressHour } from "./fly-metrics";
 import { describeFlyMachineUsage } from "./fly-usage";
+import { parseModelCostIdentity } from "./pricing";
 import { recordUsageEvent } from "./store";
 
 export async function meterPersistedModelMessages(messageIds: string[]) {
@@ -514,11 +517,6 @@ async function meterFlyMachine(input: {
   });
 }
 
-function providerFromModel(model: string) {
-  const separator = model.indexOf("/");
-  return separator > 0 ? model.slice(0, separator) : "unknown";
-}
-
 async function resolveModelIdentity(organizationId: string, model: string) {
   const [match] = await knowledgeDb
     .select({
@@ -542,9 +540,15 @@ async function resolveModelIdentity(organizationId: string, model: string) {
         )
       )
     )
+    .orderBy(
+      desc(
+        sql`case when ${schema.aiGatewayModels.organizationId} is null then 0 else 1 end`
+      )
+    )
     .limit(1);
+  const fallback = parseModelCostIdentity(model);
   return {
-    provider: match?.provider ?? providerFromModel(model),
-    service: match?.rawModelId ?? model,
+    provider: match?.provider ?? fallback.provider,
+    service: match?.rawModelId ?? fallback.service,
   };
 }
