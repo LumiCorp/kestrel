@@ -538,6 +538,26 @@ contractTest("packages.hermetic", "canonical command parser rejects unknown and 
 });
 
 contractTest("packages.hermetic", "canonical project actions reject malformed provided optional fields", () => {
+  const proposalRevision = parseRunnerCommandV2({
+    id: "command-task-proposal-revision",
+    type: "project.action",
+    payload: {
+      type: "task.propose",
+      sessionId: "session-1",
+      actionId: "action-proposal-revision",
+      actionTs: "2026-07-13T12:00:00.000Z",
+      taskId: "T-2",
+      title: "Revise the proposal",
+      instructions: "Preserve the human approval boundary.",
+      order: 1,
+    },
+  });
+  assert.equal(proposalRevision.type, "project.action");
+  if (proposalRevision.type === "project.action" && proposalRevision.payload.type === "task.propose") {
+    assert.equal(proposalRevision.payload.taskId, "T-2");
+    assert.equal(proposalRevision.payload.order, 1);
+  }
+
   assert.throws(
     () => parseRunnerCommandV2({
       id: "command-git-push-invalid-branch",
@@ -566,6 +586,22 @@ contractTest("packages.hermetic", "canonical project actions reject malformed pr
       },
     }),
     /priority must be one of low, medium, high, urgent/u,
+  );
+  assert.throws(
+    () => parseRunnerCommandV2({
+      id: "command-task-propose-invalid-order",
+      type: "project.action",
+      payload: {
+        type: "task.propose",
+        sessionId: "session-1",
+        actionId: "action-invalid-order",
+        actionTs: "2026-07-13T12:00:00.000Z",
+        title: "Invalid proposal order",
+        instructions: "Reject non-positive proposal order.",
+        order: 0,
+      },
+    }),
+    /order must be a positive integer/u,
   );
 
   assert.throws(

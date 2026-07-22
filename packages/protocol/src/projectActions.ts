@@ -156,13 +156,23 @@ export type RunnerProjectBoardAction =
 
 export type RunnerTaskAction =
   | ({
-      type: "task.create" | "task.propose";
+      type: "task.create";
       title: string;
       instructions: string;
       acceptanceCriteria?: string | undefined;
       priority?: RunnerTaskPriority | undefined;
       projectPath?: string | undefined;
       projectLabel?: string | undefined;
+    } & RunnerTaskActionBase)
+  | ({
+      type: "task.propose";
+      title: string;
+      instructions: string;
+      acceptanceCriteria?: string | undefined;
+      priority?: RunnerTaskPriority | undefined;
+      projectPath?: string | undefined;
+      projectLabel?: string | undefined;
+      order?: number | undefined;
     } & RunnerTaskActionBase)
   | ({ type: "task.approve" | "task.retry"; taskId: string } & RunnerTaskActionBase)
   | ({
@@ -512,7 +522,6 @@ function parseTaskAction(
   };
   switch (type) {
     case "task.create":
-    case "task.propose":
       return {
         ...base,
         title: requireNonEmptyString(record.title, "project.action payload.title"),
@@ -536,6 +545,33 @@ function parseTaskAction(
           "project.action payload.projectLabel",
           "projectLabel",
         ),
+      };
+    case "task.propose":
+      return {
+        ...base,
+        ...optionalString(record.taskId, "project.action payload.taskId", "taskId"),
+        title: requireNonEmptyString(record.title, "project.action payload.title"),
+        instructions: requireNonEmptyString(
+          record.instructions,
+          "project.action payload.instructions",
+        ),
+        ...optionalString(
+          record.acceptanceCriteria,
+          "project.action payload.acceptanceCriteria",
+          "acceptanceCriteria",
+        ),
+        ...optionalTaskPriority(record.priority),
+        ...optionalString(
+          record.projectPath,
+          "project.action payload.projectPath",
+          "projectPath",
+        ),
+        ...optionalString(
+          record.projectLabel,
+          "project.action payload.projectLabel",
+          "projectLabel",
+        ),
+        ...optionalPositiveInteger(record.order, "project.action payload.order", "order"),
       };
     case "task.update":
       return {
@@ -784,6 +820,15 @@ function optionalNonNegativeInteger(
     );
   }
   return { [key]: value };
+}
+
+function optionalPositiveInteger(
+  value: unknown,
+  label: string,
+  key: string,
+): Record<string, unknown> {
+  const parsed = optionalPositiveIntegerValue(value, label);
+  return parsed === undefined ? {} : { [key]: parsed };
 }
 
 function optionalPositiveIntegerValue(value: unknown, label: string): number | undefined {

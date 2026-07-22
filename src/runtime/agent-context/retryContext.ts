@@ -149,6 +149,8 @@ function retryInstructionForAction(action: string | undefined): string | undefin
       return "Call kestrel_handoff_to_build with an operator-facing message and compact continuation object.";
     case "write_session_plan_before_handoff":
       return "Call planning_write_document now to create or update the current session PLAN.md. Do not call kestrel_handoff_to_build again until that tool result confirms the session plan document exists.";
+    case "write_session_plan_before_task_publication":
+      return "Call planning_write_document now to create or update the current session PLAN.md. Do not call task_propose again until that tool result confirms the session plan document exists.";
     case "choose_valid_build_mode_action":
       return "Choose a valid build-mode tool action, ask_user, cannot_satisfy, or grounded goal_satisfied closeout.";
     case "choose_available_tool_or_concrete_blocker":
