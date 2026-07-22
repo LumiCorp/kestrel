@@ -7,6 +7,7 @@ import {
   assertLocalEnvironmentRuntimeConfiguration,
   getHostedEnvironmentBuildPreflightPhase,
   getHostedEnvironmentRuntimeMode,
+  hostedEnvironmentPreflightRequiresQuietCutover,
   hostedEnvironmentsDeploymentEnabled,
   hostedEnvironmentsEnabled,
   hostedEnvironmentsOrganizationEnabled,
@@ -84,13 +85,13 @@ contractTest("web.hermetic", "production builds select a fail-closed hosted Envi
       VERCEL_ENV: "production",
       KESTREL_ENVIRONMENTS_ENABLED: "true",
     }),
-    "cutover"
+    "deploy"
   );
   assert.equal(
     getHostedEnvironmentBuildPreflightPhase({
       VERCEL_ENV: "production",
     }),
-    "cutover"
+    "deploy"
   );
   assert.throws(
     () =>
@@ -99,6 +100,36 @@ contractTest("web.hermetic", "production builds select a fail-closed hosted Envi
         KESTREL_ENVIRONMENTS_ENABLED: "enabled",
       }),
     /must be true or false when configured/u
+  );
+});
+
+contractTest("web.hermetic", "steady-state deployment does not require a quiet Environment execution boundary", () => {
+  assert.equal(
+    hostedEnvironmentPreflightRequiresQuietCutover("prepare"),
+    false
+  );
+  assert.equal(
+    hostedEnvironmentPreflightRequiresQuietCutover("deploy"),
+    false
+  );
+  assert.equal(
+    hostedEnvironmentPreflightRequiresQuietCutover("cutover"),
+    true
+  );
+});
+
+contractTest("web.hermetic", "Vercel production delegates to the phased deployment preflight", async () => {
+  const source = await readFile(
+    new URL("../../scripts/vercel-production-preflight.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(
+    source,
+    /await import\("\.\/hosted-environment-build-preflight"\)/u
+  );
+  assert.doesNotMatch(
+    source,
+    /await import\("\.\/hosted-environment-preflight"\)/u
   );
 });
 

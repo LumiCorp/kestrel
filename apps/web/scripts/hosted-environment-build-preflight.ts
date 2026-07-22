@@ -15,7 +15,7 @@ const result = spawnSync(
     "--import",
     "tsx",
     "scripts/hosted-environment-preflight.ts",
-    ...(phase === "prepare" ? ["--prepare"] : []),
+    `--${phase}`,
     "--json",
   ],
   {
