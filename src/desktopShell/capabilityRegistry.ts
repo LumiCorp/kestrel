@@ -103,7 +103,6 @@ const FREE_NETWORK_TOOLS = [
   "time.convert",
   "geo.geocode",
   "finance.exchange_rates",
-  "news.hacker_news",
 ];
 
 const FILESYSTEM_TOOLS = [
@@ -296,7 +295,7 @@ export function resolveDesktopCapabilityView(
   capabilities.push(
     simpleCapability({
       id: "tools.network.free", category: "tools_services", name: "Free network tools",
-      description: "Time, geocoding, exchange-rate, and Hacker News tools that need connectivity but no account.",
+      description: "Time, geocoding, and exchange-rate tools that need connectivity but no account.",
       toolNames: FREE_NETWORK_TOOLS, enabled: settings.capabilityPacks.includes("balanced"),
       readiness: settings.capabilityPacks.includes("balanced") ? "ready" : "disabled",
       detail: "No credential is required. Internet connectivity is required at execution time.",
@@ -355,19 +354,19 @@ export function resolveDesktopCapabilityView(
     (server) => server.sourceKind !== "desktop-managed",
   );
   capabilities.push(simpleCapability({
-    id: "connections.mcp", category: "connections", name: "MCP connections",
-    description: "External tool servers using stdio, HTTP, or SSE transports.",
+    id: "connections.mcp", category: "connections", name: "Apps",
+    description: "Additional Apps connected locally or through a hosted service.",
     toolNames: activeMcp.flatMap((server) => server.tools?.map((tool) => tool.name) ?? []),
     enabled: activeMcp.length > 0,
     readiness: activeMcp.length > 0 ? "ready" : discoveredMcp.length > 0 ? "setup_required" : "disabled",
     detail: activeMcp.length > 0
-      ? `${activeMcp.length} verified server${activeMcp.length === 1 ? " is" : "s are"} active in the effective Desktop runtime profile.`
+      ? `${activeMcp.length} verified App${activeMcp.length === 1 ? " is" : "s are"} active for Desktop conversations.`
       : discoveredMcp.length > 0
-        ? `${discoveredMcp.length} server${discoveredMcp.length === 1 ? " is" : "s are"} available to import and verify.`
-        : "No MCP servers are active in the effective Desktop runtime profile.",
-    requirementKind: "configuration", requirementLabel: "Enabled and verified MCP server",
+        ? `${discoveredMcp.length} App${discoveredMcp.length === 1 ? " is" : "s are"} available to import and verify.`
+        : "No custom Apps are active for Desktop conversations.",
+    requirementKind: "configuration", requirementLabel: "Enabled and verified Custom App",
     requirementSatisfied: activeMcp.length > 0,
-    verificationStrategy: "Connect, initialize, list tools, and preserve approval policy before activating a server.",
+    verificationStrategy: "Connect, inspect capabilities, and preserve approval policy before activating an App.",
     settingsSection: "settings/connections/mcp",
   }));
 

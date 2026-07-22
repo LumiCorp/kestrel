@@ -8,6 +8,8 @@ import type {
   DesktopLegacyUiStateEntries,
   DesktopManagedProjectRun,
   DesktopMcpServerMutationInput,
+  DesktopAppConnectionSession,
+  DesktopStandardAppConnectionInput,
   DesktopPackageManager,
   DesktopProjectAction,
   DesktopProjectFilesChangedEvent,
@@ -49,10 +51,14 @@ const desktopBridge: DesktopBridge = {
   getUiState(): Promise<DesktopUiStateV1 | null> {
     return ipcRenderer.invoke("desktop:get-ui-state");
   },
-  syncLegacyUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult> {
+  syncLegacyUiState(
+    entries: DesktopLegacyUiStateEntries,
+  ): Promise<DesktopUiStateSyncResult> {
     return ipcRenderer.invoke("desktop:sync-legacy-ui-state", entries);
   },
-  saveUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult> {
+  saveUiState(
+    entries: DesktopLegacyUiStateEntries,
+  ): Promise<DesktopUiStateSyncResult> {
     return ipcRenderer.invoke("desktop:save-ui-state", entries);
   },
   runTurn(request: DesktopRunTurnRequest): Promise<DesktopRunnerEvent> {
@@ -65,7 +71,11 @@ const desktopBridge: DesktopBridge = {
     return ipcRenderer.invoke("desktop:list-attachments", threadId);
   },
   removeAttachment(threadId, attachmentId) {
-    return ipcRenderer.invoke("desktop:remove-attachment", threadId, attachmentId);
+    return ipcRenderer.invoke(
+      "desktop:remove-attachment",
+      threadId,
+      attachmentId,
+    );
   },
   submitOperatorControl(request) {
     return ipcRenderer.invoke("desktop:operator-control", request);
@@ -74,7 +84,10 @@ const desktopBridge: DesktopBridge = {
     return ipcRenderer.invoke("desktop:cancel-run", request);
   },
   onRunnerEvent(listener) {
-    const handler = (_event: Electron.IpcRendererEvent, runnerEvent: DesktopRunnerEvent) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      runnerEvent: DesktopRunnerEvent,
+    ) => {
       listener(runnerEvent);
     };
     ipcRenderer.on("desktop:runner-event", handler);
@@ -92,7 +105,10 @@ const desktopBridge: DesktopBridge = {
     return ipcRenderer.invoke("desktop:get-boot-state");
   },
   onBootState(listener) {
-    const handler = (_event: Electron.IpcRendererEvent, state: DesktopBootState) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: DesktopBootState,
+    ) => {
       listener(state);
     };
     ipcRenderer.on("desktop:boot-state", handler);
@@ -155,7 +171,10 @@ const desktopBridge: DesktopBridge = {
     return ipcRenderer.invoke("desktop:reveal-database-files", target);
   },
   onRuntimeHealth(listener) {
-    const handler = (_event: Electron.IpcRendererEvent, status: DesktopRuntimeHealth) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      status: DesktopRuntimeHealth,
+    ) => {
       listener(status);
     };
     ipcRenderer.on("desktop:runtime-health", handler);
@@ -164,22 +183,44 @@ const desktopBridge: DesktopBridge = {
     };
   },
   listDirectory(rootPath, directoryPath, threadId) {
-    return ipcRenderer.invoke("desktop:list-directory", rootPath, directoryPath, threadId);
+    return ipcRenderer.invoke(
+      "desktop:list-directory",
+      rootPath,
+      directoryPath,
+      threadId,
+    );
   },
   searchProjectFiles(rootPath, query, threadId) {
-    return ipcRenderer.invoke("desktop:search-project-files", rootPath, query, threadId);
+    return ipcRenderer.invoke(
+      "desktop:search-project-files",
+      rootPath,
+      query,
+      threadId,
+    );
   },
   searchProjectContent(rootPath, query, threadId) {
-    return ipcRenderer.invoke("desktop:search-project-content", rootPath, query, threadId);
+    return ipcRenderer.invoke(
+      "desktop:search-project-content",
+      rootPath,
+      query,
+      threadId,
+    );
   },
   watchProjectFiles(rootPath, threadId) {
-    return ipcRenderer.invoke("desktop:watch-project-files", rootPath, threadId);
+    return ipcRenderer.invoke(
+      "desktop:watch-project-files",
+      rootPath,
+      threadId,
+    );
   },
   unwatchProjectFiles(rootPath) {
     return ipcRenderer.invoke("desktop:unwatch-project-files", rootPath);
   },
   onProjectFilesChanged(listener) {
-    const handler = (_event: Electron.IpcRendererEvent, changedEvent: DesktopProjectFilesChangedEvent) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      changedEvent: DesktopProjectFilesChangedEvent,
+    ) => {
       listener(changedEvent);
     };
     ipcRenderer.on("desktop:project-files-changed", handler);
@@ -196,6 +237,19 @@ const desktopBridge: DesktopBridge = {
   discoverMcpServers() {
     return ipcRenderer.invoke("desktop:discover-mcp-servers");
   },
+  startStandardAppConnection(
+    input: DesktopStandardAppConnectionInput,
+  ): Promise<DesktopAppConnectionSession> {
+    return ipcRenderer.invoke("desktop:start-standard-app-connection", input);
+  },
+  getStandardAppConnectionStatus(
+    sessionId: string,
+  ): Promise<DesktopAppConnectionSession> {
+    return ipcRenderer.invoke(
+      "desktop:get-standard-app-connection-status",
+      sessionId,
+    );
+  },
   saveMcpServer(input: DesktopMcpServerMutationInput) {
     return ipcRenderer.invoke("desktop:save-mcp-server", input);
   },
@@ -203,7 +257,12 @@ const desktopBridge: DesktopBridge = {
     return ipcRenderer.invoke("desktop:delete-mcp-server", id);
   },
   readProjectLauncher(projectPath, packageManagerOverride, threadId?: string) {
-    return ipcRenderer.invoke("desktop:read-project-launcher", projectPath, packageManagerOverride, threadId);
+    return ipcRenderer.invoke(
+      "desktop:read-project-launcher",
+      projectPath,
+      packageManagerOverride,
+      threadId,
+    );
   },
   listWorkspaceSkills(projectPath) {
     return ipcRenderer.invoke("desktop:list-workspace-skills", projectPath);
@@ -237,14 +296,20 @@ const desktopBridge: DesktopBridge = {
     return ipcRenderer.invoke("desktop:restart-project-run", runId);
   },
   onPreviewDiagnostic(listener) {
-    const handler = (_event: Electron.IpcRendererEvent, diagnostic: import("./contracts.js").DesktopPreviewDiagnostic) => listener(diagnostic);
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      diagnostic: import("./contracts.js").DesktopPreviewDiagnostic,
+    ) => listener(diagnostic);
     ipcRenderer.on("desktop:preview-diagnostic", handler);
-    return () => ipcRenderer.removeListener("desktop:preview-diagnostic", handler);
+    return () =>
+      ipcRenderer.removeListener("desktop:preview-diagnostic", handler);
   },
   getProjectSnapshot(sessionId): Promise<DesktopProjectSnapshotResponse> {
     return ipcRenderer.invoke("desktop:get-project-snapshot", sessionId);
   },
-  runProjectAction(action: DesktopProjectAction): Promise<DesktopProjectSnapshotResponse> {
+  runProjectAction(
+    action: DesktopProjectAction,
+  ): Promise<DesktopProjectSnapshotResponse> {
     return ipcRenderer.invoke("desktop:run-project-action", action);
   },
   getOperatorThread(threadId) {
@@ -319,22 +384,53 @@ const desktopBridge: DesktopBridge = {
   mutateWorkspaceChanges(input) {
     return ipcRenderer.invoke("desktop:mutate-workspace-changes", input);
   },
-  addWorkspaceFeedback(input) { return ipcRenderer.invoke("desktop:add-workspace-feedback", input); },
-  listWorkspaceFeedback(input) { return ipcRenderer.invoke("desktop:list-workspace-feedback", input); },
-  removeWorkspaceFeedback(input) { return ipcRenderer.invoke("desktop:remove-workspace-feedback", input); },
-  submitWorkspaceFeedback(input) { return ipcRenderer.invoke("desktop:submit-workspace-feedback", input); },
-  runWorkspaceReview(input) { return ipcRenderer.invoke("desktop:run-workspace-review", input); },
-  listWorkspaceReviews(input) { return ipcRenderer.invoke("desktop:list-workspace-review", input); },
-  updateWorkspaceReviewFinding(input) { return ipcRenderer.invoke("desktop:update-workspace-review", input); },
-  submitWorkspaceReviewFindings(input) { return ipcRenderer.invoke("desktop:submit-workspace-review", input); },
-  inspectWorkspaceValidation(input) { return ipcRenderer.invoke("desktop:inspect-workspace-validation", input); },
-  runWorkspaceValidation(input) { return ipcRenderer.invoke("desktop:run-workspace-validation", input); },
-  cancelWorkspaceValidation(input) { return ipcRenderer.invoke("desktop:cancel-workspace-validation", input); },
-  submitWorkspaceValidationFailures(input) { return ipcRenderer.invoke("desktop:submit-workspace-validation", input); },
-  inspectWorkspaceGit(input) { return ipcRenderer.invoke("desktop:inspect-workspace-git", input); },
-  performWorkspaceGitAction(input) { return ipcRenderer.invoke("desktop:action-workspace-git", input); },
+  addWorkspaceFeedback(input) {
+    return ipcRenderer.invoke("desktop:add-workspace-feedback", input);
+  },
+  listWorkspaceFeedback(input) {
+    return ipcRenderer.invoke("desktop:list-workspace-feedback", input);
+  },
+  removeWorkspaceFeedback(input) {
+    return ipcRenderer.invoke("desktop:remove-workspace-feedback", input);
+  },
+  submitWorkspaceFeedback(input) {
+    return ipcRenderer.invoke("desktop:submit-workspace-feedback", input);
+  },
+  runWorkspaceReview(input) {
+    return ipcRenderer.invoke("desktop:run-workspace-review", input);
+  },
+  listWorkspaceReviews(input) {
+    return ipcRenderer.invoke("desktop:list-workspace-review", input);
+  },
+  updateWorkspaceReviewFinding(input) {
+    return ipcRenderer.invoke("desktop:update-workspace-review", input);
+  },
+  submitWorkspaceReviewFindings(input) {
+    return ipcRenderer.invoke("desktop:submit-workspace-review", input);
+  },
+  inspectWorkspaceValidation(input) {
+    return ipcRenderer.invoke("desktop:inspect-workspace-validation", input);
+  },
+  runWorkspaceValidation(input) {
+    return ipcRenderer.invoke("desktop:run-workspace-validation", input);
+  },
+  cancelWorkspaceValidation(input) {
+    return ipcRenderer.invoke("desktop:cancel-workspace-validation", input);
+  },
+  submitWorkspaceValidationFailures(input) {
+    return ipcRenderer.invoke("desktop:submit-workspace-validation", input);
+  },
+  inspectWorkspaceGit(input) {
+    return ipcRenderer.invoke("desktop:inspect-workspace-git", input);
+  },
+  performWorkspaceGitAction(input) {
+    return ipcRenderer.invoke("desktop:action-workspace-git", input);
+  },
   onProjectRuns(listener) {
-    const handler = (_event: Electron.IpcRendererEvent, runs: DesktopManagedProjectRun[]) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      runs: DesktopManagedProjectRun[],
+    ) => {
       listener(runs);
     };
     ipcRenderer.on("desktop:project-runs", handler);
@@ -343,7 +439,10 @@ const desktopBridge: DesktopBridge = {
     };
   },
   onCommand(listener) {
-    const handler = (_event: Electron.IpcRendererEvent, command: DesktopShellCommand) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      command: DesktopShellCommand,
+    ) => {
       listener(command);
     };
     ipcRenderer.on("desktop:command", handler);

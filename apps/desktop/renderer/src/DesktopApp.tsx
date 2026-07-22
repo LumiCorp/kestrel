@@ -1118,8 +1118,8 @@ export function DesktopApp() {
             <button
               className={surface === "mcp" ? "active" : ""}
               type="button"
-              title="MCP servers"
-              aria-label="MCP servers"
+              title="Apps"
+              aria-label="Apps"
               onClick={() => setSurface("mcp")}
             >
               <Plug size={17} />
@@ -1233,7 +1233,7 @@ export function DesktopApp() {
                             : surface === "terminal"
                               ? "Terminal"
                               : surface === "mcp"
-                                ? "MCP servers"
+                                ? "Apps"
                                 : "Diagnostics"}
               </span>
               <p>
@@ -1246,7 +1246,7 @@ export function DesktopApp() {
                 surface === "terminal"
                   ? activeThread.title
                   : surface === "mcp"
-                    ? "Local integrations"
+                    ? "Apps available on this device"
                     : (runtimeHealth?.state ?? "unknown")}
               </p>
             </div>
@@ -1835,7 +1835,7 @@ function surfacePageTitle(surface: DesktopSurface): string {
   if (surface === "validation") return "Validation";
   if (surface === "git") return "Git and pull requests";
   if (surface === "preview") return "Preview";
-  if (surface === "mcp") return "MCP servers";
+  if (surface === "mcp") return "Apps";
   return surface === "settings" ? "Settings" : "Diagnostics";
 }
 

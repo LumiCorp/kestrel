@@ -1,7 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import { SessionStore } from "../../cli/session/SessionStore.js";
@@ -14,11 +21,24 @@ import {
 } from "../../cli/runner/RunnerService.js";
 import { HistoryStore } from "../../cli/history/HistoryStore.js";
 import { UiStateStore } from "../../cli/ink/persistence/UiStateStore.js";
-import { DiagnosticLogStore, type DiagnosticLogEntry } from "../../cli/diagnostics/DiagnosticLogStore.js";
+import {
+  DiagnosticLogStore,
+  type DiagnosticLogEntry,
+} from "../../cli/diagnostics/DiagnosticLogStore.js";
 import { KcronStateStore, type KcronStateFile } from "../../cli/kcron/state.js";
 import { withLocalCoreDaemonStoreOwnership } from "../../cli/localCoreStoreOwnership.js";
-import type { SessionsFile, TuiHistoryRecord, TuiProfile, UiState, WorkspacesFile } from "../../cli/contracts.js";
-import { readRuntimeSettings, writeRuntimeSettings, type RuntimeSettingsFile } from "../../cli/config/RuntimeSettings.js";
+import type {
+  SessionsFile,
+  TuiHistoryRecord,
+  TuiProfile,
+  UiState,
+  WorkspacesFile,
+} from "../../cli/contracts.js";
+import {
+  readRuntimeSettings,
+  writeRuntimeSettings,
+  type RuntimeSettingsFile,
+} from "../../cli/config/RuntimeSettings.js";
 import { buildSupportBundle } from "../diagnostics/supportBundle.js";
 import type { SessionStore as RuntimeSessionStore } from "../kestrel/contracts/store.js";
 import {
@@ -26,7 +46,10 @@ import {
   parseModelPolicyV1,
   type ModelPolicyV1,
 } from "../profile/modelPolicy.js";
-import { RunReplayService, type ReplayQuery } from "../replay/RunReplayService.js";
+import {
+  RunReplayService,
+  type ReplayQuery,
+} from "../replay/RunReplayService.js";
 import { buildRuntimeReplayBundle } from "../replay/RuntimeReplayBundle.js";
 import type {
   DesktopManagedProjectRun,
@@ -52,7 +75,10 @@ import {
   DesktopProjectRunRegistry,
 } from "./desktopProjectRuns.js";
 import { DesktopUiStateStore } from "./desktopUiState.js";
-import { DesktopAttachmentStore, DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES } from "./desktopAttachments.js";
+import {
+  DesktopAttachmentStore,
+  DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES,
+} from "./desktopAttachments.js";
 import { syncDesktopThreadWorkspace } from "./desktopThreadWorkspace.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
@@ -69,6 +95,14 @@ import {
   parseLocalCoreMcpVerificationInput,
   verifyAndStoreLocalCoreMcpServer,
 } from "./mcpVerification.js";
+import {
+  LocalCoreMcpOAuthSessionManager,
+  parseLocalCoreMcpOAuthSessionStartInput,
+} from "./mcpOAuthSessions.js";
+import { LocalCoreMicrosoft365OAuthSessionManager } from "./microsoft365OAuthSessions.js";
+import { LocalCoreMicrosoft365Service } from "./microsoft365Service.js";
+import { LocalCoreGoogleWorkspaceOAuthSessionManager } from "./googleWorkspaceOAuthSessions.js";
+import { LocalCoreGoogleWorkspaceService } from "./googleWorkspaceService.js";
 import { verifyAndStoreLocalCoreExternalDatabase } from "./externalDatabaseVerification.js";
 import { detectLocalCoreMigrationState } from "./legacyState.js";
 import { releaseCoreLock, writeCoreLockHeartbeat } from "./lock.js";
@@ -95,8 +129,10 @@ import {
 } from "./store.js";
 
 const MAX_BODY_BYTES = 256 * 1024;
-const MAX_DESKTOP_UI_STATE_BODY_BYTES = DESKTOP_UI_STATE_MAX_BYTES + 1024 * 1024;
-const MAX_DESKTOP_ATTACHMENT_BODY_BYTES = Math.ceil(DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES * 4 / 3) + 1024 * 1024;
+const MAX_DESKTOP_UI_STATE_BODY_BYTES =
+  DESKTOP_UI_STATE_MAX_BYTES + 1024 * 1024;
+const MAX_DESKTOP_ATTACHMENT_BODY_BYTES =
+  Math.ceil((DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES * 4) / 3) + 1024 * 1024;
 
 export interface LocalCoreApiServer {
   status: LocalCoreStatus;
@@ -114,7 +150,9 @@ interface ProjectRunEventClient {
 export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOptions {
   idleTimeoutMs?: number | undefined;
   heartbeatMs?: number | undefined;
-  executionRuntimeFactory?: ConstructorParameters<typeof RunnerHost>[1] | undefined;
+  executionRuntimeFactory?:
+    | ConstructorParameters<typeof RunnerHost>[1]
+    | undefined;
   /**
    * Dormant credential/runtime-environment substrate. Supplying a store makes
    * its captured values authoritative for newly created Core runtimes. The
@@ -140,8 +178,8 @@ export async function startLocalCoreApiServer(
   options: StartLocalCoreApiServerOptions,
 ): Promise<LocalCoreApiServer> {
   if (
-    options.credentialStore !== undefined
-    && options.executionRuntimeFactory !== undefined
+    options.credentialStore !== undefined &&
+    options.executionRuntimeFactory !== undefined
   ) {
     throw new Error(
       "Local Core credentialStore cannot be combined with executionRuntimeFactory because the custom runtime boundary cannot accept the authoritative credential environment.",
@@ -162,7 +200,9 @@ export async function startLocalCoreApiServer(
   const authorityKey = await realpath(paths.stateRootPath);
   const authorityId = randomBytes(16).toString("hex");
   if (activeLocalCoreAuthorities.has(authorityKey)) {
-    throw new Error(`Kestrel Local Core already has an active authority for '${authorityKey}'.`);
+    throw new Error(
+      `Kestrel Local Core already has an active authority for '${authorityKey}'.`,
+    );
   }
   activeLocalCoreAuthorities.add(authorityKey);
 
@@ -178,10 +218,26 @@ export async function startLocalCoreApiServer(
   let activeRuntimeConfigurationMutations = 0;
   let closePromise: Promise<void> | undefined;
   const projectRunEventClients = new Set<ProjectRunEventClient>();
+  const mcpOAuthSessions = options.credentialStore?.available
+    ? new LocalCoreMcpOAuthSessionManager({
+        credentialStore: options.credentialStore,
+      })
+    : undefined;
+  const microsoft365OAuthSessions = options.credentialStore?.available
+    ? new LocalCoreMicrosoft365OAuthSessionManager({
+        credentialStore: options.credentialStore,
+      })
+    : undefined;
+  const googleWorkspaceOAuthSessions = options.credentialStore?.available
+    ? new LocalCoreGoogleWorkspaceOAuthSessionManager({ credentialStore: options.credentialStore })
+    : undefined;
 
   try {
     await new DesktopAttachmentStore(home.homePath).cleanup();
-    const readyOptions = await resolveCoreOwnedReadyOptions(home.homePath, options);
+    const readyOptions = await resolveCoreOwnedReadyOptions(
+      home.homePath,
+      options,
+    );
     let status = await ensureLocalCoreReady({
       ...readyOptions,
       lockOwnerPid: process.pid,
@@ -206,7 +262,10 @@ export async function startLocalCoreApiServer(
 
     projectRunRegistry = new DesktopProjectRunRegistry({
       ledger: createDesktopProjectRunLedger({
-        ledgerPath: path.join(paths.workspaceRegistryPath, "desktop-project-runs.json"),
+        ledgerPath: path.join(
+          paths.workspaceRegistryPath,
+          "desktop-project-runs.json",
+        ),
       }),
       onRunsChanged(runs) {
         broadcastProjectRuns(projectRunEventClients, runs);
@@ -258,9 +317,10 @@ export async function startLocalCoreApiServer(
       previous: LocalCoreExecutionBundle | undefined,
       operation: "restart" | "reset" | "update runtime configuration",
     ): void => {
-      const action = operation === "update runtime configuration"
-        ? "update runtime configuration for"
-        : operation;
+      const action =
+        operation === "update runtime configuration"
+          ? "update runtime configuration for"
+          : operation;
       if (previous?.handler.hasActiveExecutions() === true) {
         throw new LocalCoreApiRequestError(
           409,
@@ -349,154 +409,172 @@ export async function startLocalCoreApiServer(
       }
     };
 
-    const restartExecution = (): Promise<LocalCoreStatus> => beginMaintenance({
-      kind: "restart",
-      coalesce: true,
-      async run() {
-        const previous = executionBundle;
-        assertRuntimeStoreCanEnterMaintenance(previous, "restart");
+    const restartExecution = (): Promise<LocalCoreStatus> =>
+      beginMaintenance({
+        kind: "restart",
+        coalesce: true,
+        async run() {
+          const previous = executionBundle;
+          assertRuntimeStoreCanEnterMaintenance(previous, "restart");
 
-        executionBundle = undefined;
-        status = markExecutionRestarting(status);
-        try {
-          await previous?.handler.close({ abortActiveRuns: false });
-          await closeLocalCoreStore(home.homePath);
+          executionBundle = undefined;
+          status = markExecutionRestarting(status);
+          try {
+            await previous?.handler.close({ abortActiveRuns: false });
+            await closeLocalCoreStore(home.homePath);
 
-          const next = await ensureLocalCoreReady({
-            ...await resolveCoreOwnedReadyOptions(home.homePath, options),
-            lockOwnerPid: process.pid,
-            lockAuthorityId: authorityId,
-          });
-          assertLocalCoreApiOwnership(next, authorityId);
-          status = next;
-          const nextBundle = await createExecutionBundle({
-            status: next,
-            options,
-            token,
-            runtimeConfigurationStore,
-          });
-          executionBundle = nextBundle;
-          return next;
-        } catch (error) {
-          status = markExecutionUnavailable(status, error);
-          throw error;
-        }
-      },
-    });
+            const next = await ensureLocalCoreReady({
+              ...(await resolveCoreOwnedReadyOptions(home.homePath, options)),
+              lockOwnerPid: process.pid,
+              lockAuthorityId: authorityId,
+            });
+            assertLocalCoreApiOwnership(next, authorityId);
+            status = next;
+            const nextBundle = await createExecutionBundle({
+              status: next,
+              options,
+              token,
+              runtimeConfigurationStore,
+            });
+            executionBundle = nextBundle;
+            return next;
+          } catch (error) {
+            status = markExecutionUnavailable(status, error);
+            throw error;
+          }
+        },
+      });
 
     const updateRuntimeConfiguration = (
       update: (
         lastKnownConfiguration: LocalCoreRuntimeConfigurationV1 | undefined,
       ) => Promise<LocalCoreRuntimeConfigurationV1>,
-    ): Promise<LocalCoreRuntimeConfigurationV1> => beginMaintenance({
-      kind: "runtime_configuration_update",
-      coalesce: false,
-      async run() {
-        const previous = executionBundle;
-        assertRuntimeStoreCanEnterMaintenance(
-          previous,
-          "update runtime configuration",
-        );
-
-        // Validate and persist the complete next snapshot before retiring the
-        // healthy bundle. While this maintenance lease is held, no new runtime
-        // request can observe the old configuration after the write.
-        const runtimeConfiguration = await update(previous?.runtimeConfiguration);
-        executionBundle = undefined;
-        status = markExecutionRestarting(status);
-        try {
-          await previous?.handler.close({ abortActiveRuns: false });
-          await closeLocalCoreStore(home.homePath);
-
-          const next = await ensureLocalCoreReady({
-            ...await resolveCoreOwnedReadyOptions(home.homePath, options),
-            lockOwnerPid: process.pid,
-            lockAuthorityId: authorityId,
-          });
-          assertLocalCoreApiOwnership(next, authorityId);
-          status = next;
-          const nextBundle = await createExecutionBundle({
-            status: next,
-            options,
-            token,
-            runtimeConfigurationStore,
-            runtimeConfiguration,
-          });
-          executionBundle = nextBundle;
-          return runtimeConfiguration;
-        } catch (error) {
-          status = markExecutionUnavailable(status, error);
-          throw error;
-        }
-      },
-    });
-
-    const resetRuntimeStore = (): Promise<LocalCoreRuntimeStoreResetResult> => beginMaintenance({
-      kind: "runtime_store_reset",
-      coalesce: false,
-      async run() {
-        const previous = executionBundle;
-        assertRuntimeStoreCanEnterMaintenance(previous, "reset");
-
-        const readyOptions = await resolveCoreOwnedReadyOptions(home.homePath, options);
-        const configuredMode = readyOptions.databaseMode === "external"
-          ? "external"
-          : "pglite";
-        if (status.dbMode !== "pglite" || configuredMode !== "pglite") {
-          throw new LocalCoreApiRequestError(
-            409,
-            "LOCAL_CORE_RUNTIME_STORE_RESET_UNSUPPORTED",
-            "Local Core can reset only its Core-owned PGlite runtime store.",
+    ): Promise<LocalCoreRuntimeConfigurationV1> =>
+      beginMaintenance({
+        kind: "runtime_configuration_update",
+        coalesce: false,
+        async run() {
+          const previous = executionBundle;
+          assertRuntimeStoreCanEnterMaintenance(
+            previous,
+            "update runtime configuration",
           );
-        }
 
-        executionBundle = undefined;
-        status = markExecutionResetting(status);
-        let reset: LocalCoreRuntimeStoreReset | undefined;
-        try {
-          await previous?.handler.close({ abortActiveRuns: false });
-          reset = await archiveLocalCorePgliteStore({ homePath: home.homePath });
+          // Validate and persist the complete next snapshot before retiring the
+          // healthy bundle. While this maintenance lease is held, no new runtime
+          // request can observe the old configuration after the write.
+          const runtimeConfiguration = await update(
+            previous?.runtimeConfiguration,
+          );
+          executionBundle = undefined;
+          status = markExecutionRestarting(status);
+          try {
+            await previous?.handler.close({ abortActiveRuns: false });
+            await closeLocalCoreStore(home.homePath);
 
-          const next = await ensureLocalCoreReady({
-            ...readyOptions,
-            lockOwnerPid: process.pid,
-            lockAuthorityId: authorityId,
-          });
-          assertLocalCoreApiOwnership(next, authorityId);
-          status = next;
-          const nextBundle = await createExecutionBundle({
-            status: next,
+            const next = await ensureLocalCoreReady({
+              ...(await resolveCoreOwnedReadyOptions(home.homePath, options)),
+              lockOwnerPid: process.pid,
+              lockAuthorityId: authorityId,
+            });
+            assertLocalCoreApiOwnership(next, authorityId);
+            status = next;
+            const nextBundle = await createExecutionBundle({
+              status: next,
+              options,
+              token,
+              runtimeConfigurationStore,
+              runtimeConfiguration,
+            });
+            executionBundle = nextBundle;
+            return runtimeConfiguration;
+          } catch (error) {
+            status = markExecutionUnavailable(status, error);
+            throw error;
+          }
+        },
+      });
+
+    const resetRuntimeStore = (): Promise<LocalCoreRuntimeStoreResetResult> =>
+      beginMaintenance({
+        kind: "runtime_store_reset",
+        coalesce: false,
+        async run() {
+          const previous = executionBundle;
+          assertRuntimeStoreCanEnterMaintenance(previous, "reset");
+
+          const readyOptions = await resolveCoreOwnedReadyOptions(
+            home.homePath,
             options,
-            token,
-            runtimeConfigurationStore,
-          });
-          if (nextBundle === undefined) {
-            throw new Error(
-              next.lastError?.message
-                ?? "Local Core remained blocked after resetting its runtime store.",
+          );
+          const configuredMode =
+            readyOptions.databaseMode === "external" ? "external" : "pglite";
+          if (status.dbMode !== "pglite" || configuredMode !== "pglite") {
+            throw new LocalCoreApiRequestError(
+              409,
+              "LOCAL_CORE_RUNTIME_STORE_RESET_UNSUPPORTED",
+              "Local Core can reset only its Core-owned PGlite runtime store.",
             );
           }
-          executionBundle = nextBundle;
-          return { reset, status: next };
-        } catch (error) {
-          status = markRuntimeStoreResetFailed(status, error, reset);
-          throw new LocalCoreApiRequestError(
-            500,
-            "LOCAL_CORE_RUNTIME_STORE_RESET_FAILED",
-            status.lastError?.message ?? "Local Core could not reset its runtime store.",
-          );
-        }
-      },
-    });
+
+          executionBundle = undefined;
+          status = markExecutionResetting(status);
+          let reset: LocalCoreRuntimeStoreReset | undefined;
+          try {
+            await previous?.handler.close({ abortActiveRuns: false });
+            reset = await archiveLocalCorePgliteStore({
+              homePath: home.homePath,
+            });
+
+            const next = await ensureLocalCoreReady({
+              ...readyOptions,
+              lockOwnerPid: process.pid,
+              lockAuthorityId: authorityId,
+            });
+            assertLocalCoreApiOwnership(next, authorityId);
+            status = next;
+            const nextBundle = await createExecutionBundle({
+              status: next,
+              options,
+              token,
+              runtimeConfigurationStore,
+            });
+            if (nextBundle === undefined) {
+              throw new Error(
+                next.lastError?.message ??
+                  "Local Core remained blocked after resetting its runtime store.",
+              );
+            }
+            executionBundle = nextBundle;
+            return { reset, status: next };
+          } catch (error) {
+            status = markRuntimeStoreResetFailed(status, error, reset);
+            throw new LocalCoreApiRequestError(
+              500,
+              "LOCAL_CORE_RUNTIME_STORE_RESET_FAILED",
+              status.lastError?.message ??
+                "Local Core could not reset its runtime store.",
+            );
+          }
+        },
+      });
 
     server = http.createServer(async (request, response) => {
       if (isRuntimeV2Request(request.url)) {
         const activeExecution = executionBundle;
-        if (activeExecution === undefined || maintenanceOperation !== undefined) {
-          writeJson(response, 503, errorBody(
-            "LOCAL_CORE_EXECUTION_UNAVAILABLE",
-            status.lastError?.message ?? "Local Core execution is unavailable until Core is healthy.",
-          ));
+        if (
+          activeExecution === undefined ||
+          maintenanceOperation !== undefined
+        ) {
+          writeJson(
+            response,
+            503,
+            errorBody(
+              "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+              status.lastError?.message ??
+                "Local Core execution is unavailable until Core is healthy.",
+            ),
+          );
           return;
         }
         activeExecution.handler.handle(request, response);
@@ -517,6 +595,9 @@ export async function startLocalCoreApiServer(
           resetRuntimeStore,
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
+          mcpOAuthSessions,
+          microsoft365OAuthSessions,
+          googleWorkspaceOAuthSessions,
         });
       });
     });
@@ -541,6 +622,9 @@ export async function startLocalCoreApiServer(
       }
       closePromise = (async () => {
         await maintenanceOperation?.promise.catch(() => {});
+        await mcpOAuthSessions?.close();
+        await microsoft365OAuthSessions?.close();
+        await googleWorkspaceOAuthSessions?.close();
         const activeExecution = executionBundle;
         executionBundle = undefined;
         await closeServer({
@@ -566,12 +650,12 @@ export async function startLocalCoreApiServer(
       }
       idleTimeout = setTimeout(() => {
         if (
-          projectRunRegistry?.hasActiveRuns() === true
-          || executionBundle?.handler.hasActiveExecutions() === true
-          || executionBundle?.handler.hasActiveRequests() === true
-          || activeRuntimeStoreRequests > 0
-          || activeRuntimeConfigurationMutations > 0
-          || maintenanceOperation !== undefined
+          projectRunRegistry?.hasActiveRuns() === true ||
+          executionBundle?.handler.hasActiveExecutions() === true ||
+          executionBundle?.handler.hasActiveRequests() === true ||
+          activeRuntimeStoreRequests > 0 ||
+          activeRuntimeConfigurationMutations > 0 ||
+          maintenanceOperation !== undefined
         ) {
           scheduleIdleTimeout();
           return;
@@ -597,6 +681,9 @@ export async function startLocalCoreApiServer(
       close: closeOnce,
     };
   } catch (error) {
+    await mcpOAuthSessions?.close();
+    await microsoft365OAuthSessions?.close();
+    await googleWorkspaceOAuthSessions?.close();
     if (idleTimeout !== undefined) {
       clearTimeout(idleTimeout);
     }
@@ -628,10 +715,11 @@ async function createExecutionBundle(input: {
   runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
 }): Promise<LocalCoreExecutionBundle | undefined> {
   if (input.status.state === "blocked") {
-    return ;
+    return;
   }
-  const runtimeConfiguration = input.runtimeConfiguration
-    ?? await input.runtimeConfigurationStore.read();
+  const runtimeConfiguration =
+    input.runtimeConfiguration ??
+    (await input.runtimeConfigurationStore.read());
   const repoRoot = normalizeString(input.options.repoRoot);
   const storeHandle = await ensureLocalCoreStore({
     homePath: input.status.home.homePath,
@@ -652,22 +740,26 @@ async function createExecutionBundle(input: {
   });
   let runtimeFactory = input.options.executionRuntimeFactory;
   if (runtimeFactory === undefined) {
-    const runtimeEnvironmentResolver = await createLocalCoreRuntimeEnvironmentResolver({
-      baseEnv: input.options.env ?? process.env,
-      runtimeConfiguration,
-      mcpCredentialBindings: await readConfiguredMcpCredentialBindings(
-        input.status.home.homePath,
-      ),
-      mcpEnvironmentOptions: await readDesktopDeveloperEnvironmentOptions(
-        input.status.home.homePath,
-      ),
-      ...(input.options.credentialStore !== undefined
-        ? { credentialStore: input.options.credentialStore }
-        : {}),
-    });
+    const runtimeEnvironmentResolver =
+      await createLocalCoreRuntimeEnvironmentResolver({
+        baseEnv: input.options.env ?? process.env,
+        runtimeConfiguration,
+        mcpCredentialBindings: await readConfiguredMcpCredentialBindings(
+          input.status.home.homePath,
+        ),
+        mcpEnvironmentOptions: await readDesktopDeveloperEnvironmentOptions(
+          input.status.home.homePath,
+        ),
+        ...(input.options.credentialStore !== undefined
+          ? { credentialStore: input.options.credentialStore }
+          : {}),
+      });
     runtimeFactory = createLocalCoreRunnerRuntimeFactory(storeHandle.store, {
       runtimeEnvironmentResolver,
       homePath: input.status.home.homePath,
+      ...(input.options.credentialStore !== undefined
+        ? { credentialStore: input.options.credentialStore }
+        : {}),
     });
   }
   const handler = createRunnerServiceHttpHandler({
@@ -695,18 +787,24 @@ async function createExecutionBundle(input: {
   }
 }
 
-function assertLocalCoreApiOwnership(status: LocalCoreStatus, authorityId: string): void {
+function assertLocalCoreApiOwnership(
+  status: LocalCoreStatus,
+  authorityId: string,
+): void {
   if (
-    status.lock.state === "live"
-    && status.lock.lock.ownerPid === process.pid
-    && status.lock.lock.authorityId === authorityId
+    status.lock.state === "live" &&
+    status.lock.lock.ownerPid === process.pid &&
+    status.lock.lock.authorityId === authorityId
   ) {
     return;
   }
-  const owner = status.lock.state === "live" || status.lock.state === "incompatible"
-    ? ` Owner pid: ${status.lock.lock.ownerPid}.`
-    : "";
-  throw new Error(`Kestrel Local Core API could not acquire sole execution authority.${owner}`);
+  const owner =
+    status.lock.state === "live" || status.lock.state === "incompatible"
+      ? ` Owner pid: ${status.lock.lock.ownerPid}.`
+      : "";
+  throw new Error(
+    `Kestrel Local Core API could not acquire sole execution authority.${owner}`,
+  );
 }
 
 function markExecutionRestarting(status: LocalCoreStatus): LocalCoreStatus {
@@ -727,7 +825,10 @@ function markExecutionResetting(status: LocalCoreStatus): LocalCoreStatus {
   };
 }
 
-function markExecutionUnavailable(status: LocalCoreStatus, error: unknown): LocalCoreStatus {
+function markExecutionUnavailable(
+  status: LocalCoreStatus,
+  error: unknown,
+): LocalCoreStatus {
   const cause = error instanceof Error ? error.message : String(error);
   return {
     ...status,
@@ -768,7 +869,10 @@ function markRuntimeStoreResetFailed(
   };
 }
 
-async function listenOnSocket(server: http.Server, socketPath: string): Promise<void> {
+async function listenOnSocket(
+  server: http.Server,
+  socketPath: string,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
       server.off("listening", onListening);
@@ -808,10 +912,12 @@ async function cleanupFailedLocalCoreStartup(input: {
     cleanup.push(input.executionHandler.close({ abortActiveRuns: true }));
   }
   if (input.server !== undefined) {
-    cleanup.push(new Promise<void>((resolve) => {
-      input.server!.close(() => resolve());
-      input.server!.closeAllConnections?.();
-    }));
+    cleanup.push(
+      new Promise<void>((resolve) => {
+        input.server!.close(() => resolve());
+        input.server!.closeAllConnections?.();
+      }),
+    );
   }
   await Promise.allSettled(cleanup);
   await closeLocalCoreStore(input.homePath).catch(() => {});
@@ -846,7 +952,9 @@ async function handleRequest(input: {
   status: LocalCoreStatus;
   ensureOptions: StartLocalCoreApiServerOptions;
   runtimeConfigurationStore: LocalCoreRuntimeConfigurationStore;
-  withRuntimeStore<T>(callback: (store: RuntimeSessionStore) => Promise<T>): Promise<T>;
+  withRuntimeStore<T>(
+    callback: (store: RuntimeSessionStore) => Promise<T>,
+  ): Promise<T>;
   withRuntimeConfigurationMutation<T>(callback: () => Promise<T>): Promise<T>;
   updateRuntimeConfiguration(
     update: (
@@ -857,6 +965,9 @@ async function handleRequest(input: {
   resetRuntimeStore(): Promise<LocalCoreRuntimeStoreResetResult>;
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
+  mcpOAuthSessions?: LocalCoreMcpOAuthSessionManager | undefined;
+  microsoft365OAuthSessions?: LocalCoreMicrosoft365OAuthSessionManager | undefined;
+  googleWorkspaceOAuthSessions?: LocalCoreGoogleWorkspaceOAuthSessionManager | undefined;
 }): Promise<void> {
   try {
     const method = input.request.method ?? "GET";
@@ -867,7 +978,14 @@ async function handleRequest(input: {
     }
 
     if (isAuthorized(input.request, input.token) === false) {
-      writeJson(input.response, 401, errorBody("LOCAL_CORE_API_UNAUTHORIZED", "Local Core API token is missing or invalid."));
+      writeJson(
+        input.response,
+        401,
+        errorBody(
+          "LOCAL_CORE_API_UNAUTHORIZED",
+          "Local Core API token is missing or invalid.",
+        ),
+      );
       return;
     }
 
@@ -887,7 +1005,7 @@ async function handleRequest(input: {
     }
     if (method === "PATCH" && url.pathname === "/v1/settings") {
       const patch = await input.withRuntimeConfigurationMutation(async () =>
-        parseSettingsPatch(await readJsonBody(input.request))
+        parseSettingsPatch(await readJsonBody(input.request)),
       );
       let settings: Record<string, unknown>;
       if (patch.modelPolicy !== undefined) {
@@ -927,7 +1045,10 @@ async function handleRequest(input: {
       });
       return;
     }
-    if (method === "POST" && url.pathname === "/v1/runtime/configuration/repair") {
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/runtime/configuration/repair"
+    ) {
       const runtimeConfiguration = await input.withRuntimeConfigurationMutation(
         async () => {
           try {
@@ -948,12 +1069,13 @@ async function handleRequest(input: {
       );
       try {
         const repaired = await input.updateRuntimeConfiguration(
-          async (lastKnownConfiguration) => await input.runtimeConfigurationStore.repairInvalid(
-            runtimeConfiguration,
-            {
-              lastKnownGeneration: lastKnownConfiguration?.generation,
-            },
-          ),
+          async (lastKnownConfiguration) =>
+            await input.runtimeConfigurationStore.repairInvalid(
+              runtimeConfiguration,
+              {
+                lastKnownGeneration: lastKnownConfiguration?.generation,
+              },
+            ),
         );
         writeJson(input.response, 200, {
           ok: true,
@@ -961,8 +1083,8 @@ async function handleRequest(input: {
         });
       } catch (error) {
         if (
-          error instanceof LocalCoreRuntimeConfigurationError
-          && error.code === "LOCAL_CORE_RUNTIME_CONFIGURATION_REPAIR_NOT_REQUIRED"
+          error instanceof LocalCoreRuntimeConfigurationError &&
+          error.code === "LOCAL_CORE_RUNTIME_CONFIGURATION_REPAIR_NOT_REQUIRED"
         ) {
           throw new LocalCoreApiRequestError(409, error.code, error.message);
         }
@@ -971,8 +1093,9 @@ async function handleRequest(input: {
       return;
     }
     if (method === "GET" && url.pathname === "/v1/credentials") {
-      const credentialStore = input.ensureOptions.credentialStore
-        ?? new UnavailableLocalCoreCredentialStore();
+      const credentialStore =
+        input.ensureOptions.credentialStore ??
+        new UnavailableLocalCoreCredentialStore();
       writeJson(input.response, 200, {
         ok: true,
         credentials: await readLocalCoreCredentialStoreStatus(credentialStore),
@@ -981,8 +1104,9 @@ async function handleRequest(input: {
     }
     const credentialId = parseCredentialPath(url.pathname);
     if (credentialId !== undefined && method === "PUT") {
-      const credentialStore = input.ensureOptions.credentialStore
-        ?? new UnavailableLocalCoreCredentialStore();
+      const credentialStore =
+        input.ensureOptions.credentialStore ??
+        new UnavailableLocalCoreCredentialStore();
       const body = await readJsonBody(input.request);
       const secret = parseCredentialMutationBody(body);
       await credentialStore.set(credentialId, secret);
@@ -993,8 +1117,9 @@ async function handleRequest(input: {
       return;
     }
     if (credentialId !== undefined && method === "DELETE") {
-      const credentialStore = input.ensureOptions.credentialStore
-        ?? new UnavailableLocalCoreCredentialStore();
+      const credentialStore =
+        input.ensureOptions.credentialStore ??
+        new UnavailableLocalCoreCredentialStore();
       const deleted = await credentialStore.delete(credentialId);
       writeJson(input.response, 200, {
         ok: true,
@@ -1004,8 +1129,9 @@ async function handleRequest(input: {
       return;
     }
     if (method === "POST" && url.pathname === "/v1/mcp/verify") {
-      const credentialStore = input.ensureOptions.credentialStore
-        ?? new UnavailableLocalCoreCredentialStore();
+      const credentialStore =
+        input.ensureOptions.credentialStore ??
+        new UnavailableLocalCoreCredentialStore();
       const verification = await verifyAndStoreLocalCoreMcpServer(
         parseLocalCoreMcpVerificationInput(await readJsonBody(input.request)),
         {
@@ -1019,15 +1145,122 @@ async function handleRequest(input: {
       writeJson(input.response, 200, { ok: true, verification });
       return;
     }
+    if (method === "POST" && url.pathname === "/v1/mcp/oauth/start") {
+      if (input.mcpOAuthSessions === undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE",
+          "Secure App authorization storage is unavailable.",
+        );
+      }
+      const session = await input.mcpOAuthSessions.start(
+        parseLocalCoreMcpOAuthSessionStartInput(
+          await readJsonBody(input.request),
+        ),
+      );
+      writeJson(input.response, 200, { ok: true, session });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/apps/microsoft-365/oauth/start") {
+      if (input.microsoft365OAuthSessions === undefined) {
+        throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
+      }
+      const body = await readJsonBody(input.request) as Record<string, unknown>;
+      const session = await input.microsoft365OAuthSessions.start({
+        clientId: body.clientId as string,
+        packs: body.packs as import("../apps/microsoft365.js").Microsoft365Pack[],
+      });
+      writeJson(input.response, 200, { ok: true, session });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/apps/google-workspace/oauth/start") {
+      if (input.googleWorkspaceOAuthSessions === undefined) throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
+      const body = await readJsonBody(input.request) as Record<string, unknown>;
+      const session = await input.googleWorkspaceOAuthSessions.start({ clientId: body.clientId as string, packs: body.packs as import("../apps/googleWorkspace.js").GoogleWorkspacePack[] });
+      writeJson(input.response, 200, { ok: true, session });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/apps/google-workspace/verify") {
+      const credentialStore = input.ensureOptions.credentialStore ?? new UnavailableLocalCoreCredentialStore();
+      if (!credentialStore.available) throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
+      const body = await readJsonBody(input.request) as Record<string, unknown>;
+      if (!Array.isArray(body.packs) || body.packs.length !== 1 || body.packs[0] !== "calendar") throw new LocalCoreApiRequestError(400, "LOCAL_CORE_GOOGLE_WORKSPACE_CAPABILITIES_INVALID", "Choose valid Google Workspace capabilities before connecting.");
+      const verification = await new LocalCoreGoogleWorkspaceService({ credentialStore }).verify(["calendar"]);
+      writeJson(input.response, 200, { ok: true, verification });
+      return;
+    }
+    if (method === "GET" && url.pathname.startsWith("/v1/apps/google-workspace/oauth/sessions/")) {
+      if (input.googleWorkspaceOAuthSessions === undefined) throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
+      const session = input.googleWorkspaceOAuthSessions.status(decodeURIComponent(url.pathname.slice("/v1/apps/google-workspace/oauth/sessions/".length)));
+      if (session === undefined) throw new LocalCoreApiRequestError(404, "LOCAL_CORE_APP_AUTHORIZATION_NOT_FOUND", "The App authorization session was not found.");
+      writeJson(input.response, 200, { ok: true, session });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/apps/microsoft-365/verify") {
+      const credentialStore = input.ensureOptions.credentialStore ?? new UnavailableLocalCoreCredentialStore();
+      if (!credentialStore.available) throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
+      const body = await readJsonBody(input.request) as Record<string, unknown>;
+      const packs = body.packs;
+      if (!Array.isArray(packs) || packs.length === 0 || packs.some((pack) => pack !== "outlook" && pack !== "teams" && pack !== "sharepoint")) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_MICROSOFT_365_CAPABILITIES_INVALID", "Choose valid Microsoft 365 capabilities before connecting.");
+      }
+      const verification = await new LocalCoreMicrosoft365Service({ credentialStore }).verify(
+        packs as import("../apps/microsoft365.js").Microsoft365Pack[],
+      );
+      writeJson(input.response, 200, { ok: true, verification });
+      return;
+    }
+    if (method === "GET" && url.pathname.startsWith("/v1/apps/microsoft-365/oauth/sessions/")) {
+      if (input.microsoft365OAuthSessions === undefined) {
+        throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
+      }
+      const session = input.microsoft365OAuthSessions.status(decodeURIComponent(url.pathname.slice("/v1/apps/microsoft-365/oauth/sessions/".length)));
+      if (session === undefined) throw new LocalCoreApiRequestError(404, "LOCAL_CORE_APP_AUTHORIZATION_NOT_FOUND", "The App authorization session was not found.");
+      writeJson(input.response, 200, { ok: true, session });
+      return;
+    }
+    if (
+      method === "GET" &&
+      url.pathname.startsWith("/v1/mcp/oauth/sessions/")
+    ) {
+      if (input.mcpOAuthSessions === undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE",
+          "Secure App authorization storage is unavailable.",
+        );
+      }
+      const sessionId = decodeURIComponent(
+        url.pathname.slice("/v1/mcp/oauth/sessions/".length),
+      );
+      const session = input.mcpOAuthSessions.status(sessionId);
+      if (session === undefined) {
+        throw new LocalCoreApiRequestError(
+          404,
+          "LOCAL_CORE_APP_AUTHORIZATION_NOT_FOUND",
+          "The App authorization session was not found.",
+        );
+      }
+      writeJson(input.response, 200, { ok: true, session });
+      return;
+    }
     if (method === "POST" && url.pathname === "/v1/database/external/verify") {
-      const credentialStore = input.ensureOptions.credentialStore
-        ?? new UnavailableLocalCoreCredentialStore();
+      const credentialStore =
+        input.ensureOptions.credentialStore ??
+        new UnavailableLocalCoreCredentialStore();
       const body = await readJsonBody(input.request);
-      const record = typeof body === "object" && body !== null && Array.isArray(body) === false
-        ? body as Record<string, unknown>
-        : {};
+      const record =
+        typeof body === "object" &&
+        body !== null &&
+        Array.isArray(body) === false
+          ? (body as Record<string, unknown>)
+          : {};
       if (Object.keys(record).some((key) => key !== "databaseUrl")) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_EXTERNAL_DATABASE_INVALID", "External database verification request is invalid.");
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_EXTERNAL_DATABASE_INVALID",
+          "External database verification request is invalid.",
+        );
       }
       const verification = await verifyAndStoreLocalCoreExternalDatabase(
         record.databaseUrl,
@@ -1049,36 +1282,74 @@ async function handleRequest(input: {
     }
     if (method === "GET" && url.pathname === "/v1/desktop/attachments") {
       const threadId = normalizeString(url.searchParams.get("threadId"));
-      if (threadId === undefined) throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId is required.");
-      writeJson(input.response, 200, { ok: true, attachments: await new DesktopAttachmentStore(input.status.home.homePath).list(threadId) });
+      if (threadId === undefined)
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "threadId is required.",
+        );
+      writeJson(input.response, 200, {
+        ok: true,
+        attachments: await new DesktopAttachmentStore(
+          input.status.home.homePath,
+        ).list(threadId),
+      });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/desktop/attachments") {
-      const body = await readJsonBody(input.request, MAX_DESKTOP_ATTACHMENT_BODY_BYTES);
+      const body = await readJsonBody(
+        input.request,
+        MAX_DESKTOP_ATTACHMENT_BODY_BYTES,
+      );
       if (typeof body !== "object" || body === null || Array.isArray(body)) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment body must be an object.");
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "Attachment body must be an object.",
+        );
       }
       const record = body as Record<string, unknown>;
       const threadId = normalizeString(record.threadId);
       const filename = normalizeString(record.filename);
       const data = normalizeString(record.data);
-      if (threadId === undefined || filename === undefined || data === undefined) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId, filename, and data are required.");
+      if (
+        threadId === undefined ||
+        filename === undefined ||
+        data === undefined
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "threadId, filename, and data are required.",
+        );
       }
-      const attachment = await new DesktopAttachmentStore(input.status.home.homePath).import({
+      const attachment = await new DesktopAttachmentStore(
+        input.status.home.homePath,
+      ).import({
         threadId,
         filename,
         data: decodeStrictBase64(data),
-        ...(normalizeString(record.mimeType) !== undefined ? { mimeType: normalizeString(record.mimeType) } : {}),
-        ...(normalizeString(record.sha256) !== undefined ? { sha256: normalizeString(record.sha256) } : {}),
+        ...(normalizeString(record.mimeType) !== undefined
+          ? { mimeType: normalizeString(record.mimeType) }
+          : {}),
+        ...(normalizeString(record.sha256) !== undefined
+          ? { sha256: normalizeString(record.sha256) }
+          : {}),
       });
       writeJson(input.response, 201, { ok: true, attachment });
       return;
     }
-    if (method === "POST" && url.pathname === "/v1/desktop/attachments/resolve") {
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/desktop/attachments/resolve"
+    ) {
       const body = await readJsonBody(input.request);
       if (typeof body !== "object" || body === null || Array.isArray(body)) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment resolution body must be an object.");
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "Attachment resolution body must be an object.",
+        );
       }
       const record = body as Record<string, unknown>;
       const threadId = normalizeString(record.threadId);
@@ -1086,17 +1357,32 @@ async function handleRequest(input: {
         ? record.attachmentIds.flatMap((id) => normalizeString(id) ?? [])
         : undefined;
       if (threadId === undefined || attachmentIds === undefined) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId and attachmentIds are required.");
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "threadId and attachmentIds are required.",
+        );
       }
-      const attachments = await new DesktopAttachmentStore(input.status.home.homePath).resolve(threadId, attachmentIds);
+      const attachments = await new DesktopAttachmentStore(
+        input.status.home.homePath,
+      ).resolve(threadId, attachmentIds);
       writeJson(input.response, 200, { ok: true, attachments });
       return;
     }
-    const attachmentMatch = url.pathname.match(/^\/v1\/desktop\/attachments\/([^/]+)$/u);
+    const attachmentMatch = url.pathname.match(
+      /^\/v1\/desktop\/attachments\/([^/]+)$/u,
+    );
     if (method === "DELETE" && attachmentMatch?.[1] !== undefined) {
       const threadId = normalizeString(url.searchParams.get("threadId"));
-      if (threadId === undefined) throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId is required.");
-      const removed = await new DesktopAttachmentStore(input.status.home.homePath).remove(threadId, decodeURIComponent(attachmentMatch[1]));
+      if (threadId === undefined)
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "threadId is required.",
+        );
+      const removed = await new DesktopAttachmentStore(
+        input.status.home.homePath,
+      ).remove(threadId, decodeURIComponent(attachmentMatch[1]));
       writeJson(input.response, 200, { ok: true, removed });
       return;
     }
@@ -1108,45 +1394,77 @@ async function handleRequest(input: {
       return;
     }
     if (method === "PUT" && url.pathname === "/v1/desktop/ui-state") {
-      const body = await readJsonBody(input.request, MAX_DESKTOP_UI_STATE_BODY_BYTES);
-      const state = parseDesktopUiStateV1(normalizeObjectField(body, "state"));
-      writeJson(
-        input.response,
-        200,
-        { ok: true, ...await new DesktopUiStateStore(input.status.home.homePath).sync(state) },
+      const body = await readJsonBody(
+        input.request,
+        MAX_DESKTOP_UI_STATE_BODY_BYTES,
       );
+      const state = parseDesktopUiStateV1(normalizeObjectField(body, "state"));
+      writeJson(input.response, 200, {
+        ok: true,
+        ...(await new DesktopUiStateStore(input.status.home.homePath).sync(
+          state,
+        )),
+      });
       return;
     }
     if (method === "PUT" && url.pathname === "/v1/desktop/thread-workspace") {
       const bodyValue = await readJsonBody(input.request);
-      if (typeof bodyValue !== "object" || bodyValue === null || Array.isArray(bodyValue)) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_DESKTOP_THREAD_WORKSPACE_INVALID", "Thread workspace registration must be an object.");
+      if (
+        typeof bodyValue !== "object" ||
+        bodyValue === null ||
+        Array.isArray(bodyValue)
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_DESKTOP_THREAD_WORKSPACE_INVALID",
+          "Thread workspace registration must be an object.",
+        );
       }
       const body = bodyValue as Record<string, unknown>;
       const sessionId = normalizeString(body.sessionId);
       const threadId = normalizeString(body.threadId);
-      const workspace = normalizeObjectField<Record<string, unknown>>(body, "workspace");
+      const workspace = normalizeObjectField<Record<string, unknown>>(
+        body,
+        "workspace",
+      );
       const workspaceId = normalizeString(workspace.workspaceId);
       const workspaceRoot = normalizeString(workspace.workspaceRoot);
       const appRoot = normalizeString(workspace.appRoot);
-      if (sessionId === undefined || threadId === undefined || workspaceId === undefined || workspaceRoot === undefined || appRoot === undefined) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_DESKTOP_THREAD_WORKSPACE_INVALID", "sessionId, threadId, workspaceId, workspaceRoot, and appRoot are required.");
+      if (
+        sessionId === undefined ||
+        threadId === undefined ||
+        workspaceId === undefined ||
+        workspaceRoot === undefined ||
+        appRoot === undefined
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_DESKTOP_THREAD_WORKSPACE_INVALID",
+          "sessionId, threadId, workspaceId, workspaceRoot, and appRoot are required.",
+        );
       }
       try {
-        const thread = await input.withRuntimeStore(async (store) => await syncDesktopThreadWorkspace(store, {
-          sessionId,
-          threadId,
-          workspace: {
-            ...workspace,
-            workspaceId,
-            workspaceRoot,
-            appRoot,
-            commands: normalizeObjectField(workspace, "commands"),
-          },
-        }));
+        const thread = await input.withRuntimeStore(
+          async (store) =>
+            await syncDesktopThreadWorkspace(store, {
+              sessionId,
+              threadId,
+              workspace: {
+                ...workspace,
+                workspaceId,
+                workspaceRoot,
+                appRoot,
+                commands: normalizeObjectField(workspace, "commands"),
+              },
+            }),
+        );
         writeJson(input.response, 200, { ok: true, thread });
       } catch (error) {
-        throw new LocalCoreApiRequestError(409, "LOCAL_CORE_DESKTOP_THREAD_WORKSPACE_CONFLICT", error instanceof Error ? error.message : String(error));
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_DESKTOP_THREAD_WORKSPACE_CONFLICT",
+          error instanceof Error ? error.message : String(error),
+        );
       }
       return;
     }
@@ -1161,18 +1479,23 @@ async function handleRequest(input: {
       return;
     }
     if (method === "GET" && url.pathname === "/v1/runtime-settings") {
-      writeJson(input.response, 200, { ok: true, runtimeSettings: await readRuntimeSettings(input.status.home.homePath) });
+      writeJson(input.response, 200, {
+        ok: true,
+        runtimeSettings: await readRuntimeSettings(input.status.home.homePath),
+      });
       return;
     }
     if (method === "PUT" && url.pathname === "/v1/runtime-settings") {
-      const runtimeSettings = await input.withRuntimeConfigurationMutation(async () => {
-        const body = await readJsonBody(input.request);
-        await writeRuntimeSettings(
-          input.status.home.homePath,
-          normalizeObjectField<RuntimeSettingsFile>(body, "runtimeSettings"),
-        );
-        return await readRuntimeSettings(input.status.home.homePath);
-      });
+      const runtimeSettings = await input.withRuntimeConfigurationMutation(
+        async () => {
+          const body = await readJsonBody(input.request);
+          await writeRuntimeSettings(
+            input.status.home.homePath,
+            normalizeObjectField<RuntimeSettingsFile>(body, "runtimeSettings"),
+          );
+          return await readRuntimeSettings(input.status.home.homePath);
+        },
+      );
       writeJson(input.response, 200, { ok: true, runtimeSettings });
       return;
     }
@@ -1184,7 +1507,9 @@ async function handleRequest(input: {
     if (method === "PUT" && url.pathname === "/v1/workspaces") {
       const body = await readJsonBody(input.request);
       const store = new WorkspaceStore(input.status.home.homePath);
-      await store.save(normalizeObjectField<WorkspacesFile>(body, "workspaces"));
+      await store.save(
+        normalizeObjectField<WorkspacesFile>(body, "workspaces"),
+      );
       writeJson(input.response, 200, { ok: true, ...(await store.load()) });
       return;
     }
@@ -1195,14 +1520,25 @@ async function handleRequest(input: {
       const entry = normalizeWorkspaceBody(body);
       const saved = store.upsert(file, entry);
       await store.save(saved);
-      writeJson(input.response, 201, { ok: true, workspace: entry, workspaces: saved.workspaces });
+      writeJson(input.response, 201, {
+        ok: true,
+        workspace: entry,
+        workspaces: saved.workspaces,
+      });
       return;
     }
     const workspaceDelete = url.pathname.match(/^\/v1\/workspaces\/([^/]+)$/u);
     if (method === "DELETE" && workspaceDelete !== null) {
       const encodedWorkspaceId = workspaceDelete[1];
       if (encodedWorkspaceId === undefined) {
-        writeJson(input.response, 400, errorBody("LOCAL_CORE_WORKSPACE_ID_REQUIRED", "Workspace id is required."));
+        writeJson(
+          input.response,
+          400,
+          errorBody(
+            "LOCAL_CORE_WORKSPACE_ID_REQUIRED",
+            "Workspace id is required.",
+          ),
+        );
         return;
       }
       const workspaceId = decodeURIComponent(encodedWorkspaceId);
@@ -1210,7 +1546,9 @@ async function handleRequest(input: {
       const file = await store.load();
       const next = {
         version: file.version,
-        workspaces: file.workspaces.filter((workspace) => workspace.workspaceId !== workspaceId),
+        workspaces: file.workspaces.filter(
+          (workspace) => workspace.workspaceId !== workspaceId,
+        ),
       };
       await store.save(next);
       writeJson(input.response, 200, { ok: true, workspaces: next.workspaces });
@@ -1232,7 +1570,14 @@ async function handleRequest(input: {
     if (method === "GET" && sessionGet !== null) {
       const encodedSessionName = sessionGet[1];
       if (encodedSessionName === undefined) {
-        writeJson(input.response, 400, errorBody("LOCAL_CORE_SESSION_ID_REQUIRED", "Session id is required."));
+        writeJson(
+          input.response,
+          400,
+          errorBody(
+            "LOCAL_CORE_SESSION_ID_REQUIRED",
+            "Session id is required.",
+          ),
+        );
         return;
       }
       const sessionName = decodeURIComponent(encodedSessionName);
@@ -1240,7 +1585,11 @@ async function handleRequest(input: {
       const file = await store.load();
       const session = store.findByName(file, sessionName);
       if (session === undefined) {
-        writeJson(input.response, 404, errorBody("LOCAL_CORE_SESSION_NOT_FOUND", "Session was not found."));
+        writeJson(
+          input.response,
+          404,
+          errorBody("LOCAL_CORE_SESSION_NOT_FOUND", "Session was not found."),
+        );
         return;
       }
       writeJson(input.response, 200, { ok: true, session });
@@ -1249,15 +1598,19 @@ async function handleRequest(input: {
     if (method === "GET" && url.pathname === "/v1/runs") {
       writeJson(input.response, 200, {
         ok: true,
-        runs: await input.withRuntimeStore(async (runtimeStore) =>
-          await runtimeStore.listRunSummaries({ limit: 100 })),
+        runs: await input.withRuntimeStore(
+          async (runtimeStore) =>
+            await runtimeStore.listRunSummaries({ limit: 100 }),
+        ),
       });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/runtime/replay") {
       const query = normalizeReplayQueryBody(await readJsonBody(input.request));
-      const replay = await input.withRuntimeStore(async (runtimeStore) =>
-        await new RunReplayService(runtimeStore).replay(query));
+      const replay = await input.withRuntimeStore(
+        async (runtimeStore) =>
+          await new RunReplayService(runtimeStore).replay(query),
+      );
       writeJson(input.response, 200, { ok: true, replay });
       return;
     }
@@ -1273,60 +1626,113 @@ async function handleRequest(input: {
     }
     if (method === "POST" && url.pathname === "/v1/runtime/bundle") {
       const query = normalizeReplayQueryBody(await readJsonBody(input.request));
-      const bundle = await input.withRuntimeStore(async (runtimeStore) =>
-        (await buildRuntimeReplayBundle(runtimeStore, query)).bundle);
+      const bundle = await input.withRuntimeStore(
+        async (runtimeStore) =>
+          (await buildRuntimeReplayBundle(runtimeStore, query)).bundle,
+      );
       writeJson(input.response, 200, { ok: true, bundle });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/desktop/project-launcher") {
       const projectPath = normalizeString(url.searchParams.get("projectPath"));
       if (projectPath === undefined) {
-        writeJson(input.response, 400, errorBody("LOCAL_CORE_DESKTOP_PROJECT_PATH_REQUIRED", "projectPath is required."));
+        writeJson(
+          input.response,
+          400,
+          errorBody(
+            "LOCAL_CORE_DESKTOP_PROJECT_PATH_REQUIRED",
+            "projectPath is required.",
+          ),
+        );
         return;
       }
-      const packageManagerOverride = normalizePackageManager(url.searchParams.get("packageManagerOverride"));
+      const packageManagerOverride = normalizePackageManager(
+        url.searchParams.get("packageManagerOverride"),
+      );
       const launcher = await input.projectRunRegistry.readProjectLauncher({
         projectPath,
-        ...(packageManagerOverride !== undefined ? { packageManagerOverride } : {}),
+        ...(packageManagerOverride !== undefined
+          ? { packageManagerOverride }
+          : {}),
       });
       writeJson(input.response, 200, { ok: true, launcher: launcher ?? null });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/desktop/project-runs") {
-      writeJson(input.response, 200, { ok: true, runs: input.projectRunRegistry.listRuns() });
+      writeJson(input.response, 200, {
+        ok: true,
+        runs: input.projectRunRegistry.listRuns(),
+      });
       return;
     }
-    if (method === "GET" && url.pathname === "/v1/desktop/project-runs/events") {
-      openProjectRunEvents(input.response, input.projectRunEventClients, input.projectRunRegistry.listRuns());
+    if (
+      method === "GET" &&
+      url.pathname === "/v1/desktop/project-runs/events"
+    ) {
+      openProjectRunEvents(
+        input.response,
+        input.projectRunEventClients,
+        input.projectRunRegistry.listRuns(),
+      );
       return;
     }
     if (method === "POST" && url.pathname === "/v1/desktop/project-runs") {
       const body = await readJsonBody(input.request);
       const payload = normalizeProjectRunStartBody(body);
       const run = await input.projectRunRegistry.startRun(payload);
-      writeJson(input.response, 201, { ok: true, run, runs: input.projectRunRegistry.listRuns() });
+      writeJson(input.response, 201, {
+        ok: true,
+        run,
+        runs: input.projectRunRegistry.listRuns(),
+      });
       return;
     }
-    const desktopRunStop = url.pathname.match(/^\/v1\/desktop\/project-runs\/([^/]+)\/stop$/u);
+    const desktopRunStop = url.pathname.match(
+      /^\/v1\/desktop\/project-runs\/([^/]+)\/stop$/u,
+    );
     if (method === "POST" && desktopRunStop !== null) {
       const runId = decodeURIComponent(desktopRunStop[1] ?? "");
       if (runId.trim().length === 0) {
-        writeJson(input.response, 400, errorBody("LOCAL_CORE_DESKTOP_PROJECT_RUN_ID_REQUIRED", "runId is required."));
+        writeJson(
+          input.response,
+          400,
+          errorBody(
+            "LOCAL_CORE_DESKTOP_PROJECT_RUN_ID_REQUIRED",
+            "runId is required.",
+          ),
+        );
         return;
       }
       const run = await input.projectRunRegistry.stopRun(runId);
-      writeJson(input.response, 200, { ok: true, run: run ?? null, runs: input.projectRunRegistry.listRuns() });
+      writeJson(input.response, 200, {
+        ok: true,
+        run: run ?? null,
+        runs: input.projectRunRegistry.listRuns(),
+      });
       return;
     }
-    const desktopRunRestart = url.pathname.match(/^\/v1\/desktop\/project-runs\/([^/]+)\/restart$/u);
+    const desktopRunRestart = url.pathname.match(
+      /^\/v1\/desktop\/project-runs\/([^/]+)\/restart$/u,
+    );
     if (method === "POST" && desktopRunRestart !== null) {
       const runId = decodeURIComponent(desktopRunRestart[1] ?? "");
       if (runId.trim().length === 0) {
-        writeJson(input.response, 400, errorBody("LOCAL_CORE_DESKTOP_PROJECT_RUN_ID_REQUIRED", "runId is required."));
+        writeJson(
+          input.response,
+          400,
+          errorBody(
+            "LOCAL_CORE_DESKTOP_PROJECT_RUN_ID_REQUIRED",
+            "runId is required.",
+          ),
+        );
         return;
       }
       const run = await input.projectRunRegistry.restartRun(runId);
-      writeJson(input.response, 200, { ok: true, run, runs: input.projectRunRegistry.listRuns() });
+      writeJson(input.response, 200, {
+        ok: true,
+        run,
+        runs: input.projectRunRegistry.listRuns(),
+      });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/profiles") {
@@ -1349,7 +1755,8 @@ async function handleRequest(input: {
         const store = new ProfileStore(input.status.home.homePath);
         const profiles = normalizeArrayField<TuiProfile>(body, "profiles");
         assertNoLocalCoreReservedProfileCollision(profiles);
-        const runtimeConfiguration = await input.runtimeConfigurationStore.read();
+        const runtimeConfiguration =
+          await input.runtimeConfigurationStore.read();
         await store.save(profiles);
         return {
           profiles: resolveLocalCoreConfiguredProfiles(
@@ -1364,21 +1771,35 @@ async function handleRequest(input: {
     }
     if (method === "POST" && url.pathname === "/v1/history") {
       const body = await readJsonBody(input.request);
-      await new HistoryStore(input.status.home.homePath).append(normalizeObjectField<TuiHistoryRecord>(body, "record"));
+      await new HistoryStore(input.status.home.homePath).append(
+        normalizeObjectField<TuiHistoryRecord>(body, "record"),
+      );
       writeJson(input.response, 200, { ok: true });
       return;
     }
-    const historyTranscript = url.pathname.match(/^\/v1\/history\/transcript\/([^/]+)$/u);
+    const historyTranscript = url.pathname.match(
+      /^\/v1\/history\/transcript\/([^/]+)$/u,
+    );
     if (method === "GET" && historyTranscript !== null) {
       const encodedSessionId = historyTranscript[1];
       if (encodedSessionId === undefined) {
-        writeJson(input.response, 400, errorBody("LOCAL_CORE_SESSION_ID_REQUIRED", "Session id is required."));
+        writeJson(
+          input.response,
+          400,
+          errorBody(
+            "LOCAL_CORE_SESSION_ID_REQUIRED",
+            "Session id is required.",
+          ),
+        );
         return;
       }
-      const maxItems = parsePositiveInteger(url.searchParams.get("maxItems")) ?? undefined;
+      const maxItems =
+        parsePositiveInteger(url.searchParams.get("maxItems")) ?? undefined;
       writeJson(input.response, 200, {
         ok: true,
-        transcript: await new HistoryStore(input.status.home.homePath).readTranscript(decodeURIComponent(encodedSessionId), maxItems),
+        transcript: await new HistoryStore(
+          input.status.home.homePath,
+        ).readTranscript(decodeURIComponent(encodedSessionId), maxItems),
       });
       return;
     }
@@ -1387,23 +1808,37 @@ async function handleRequest(input: {
       const sessionIds = normalizeOptionalStringArrayField(body, "sessionIds");
       writeJson(input.response, 200, {
         ok: true,
-        overviews: await new HistoryStore(input.status.home.homePath).readSessionOverviews(sessionIds),
+        overviews: await new HistoryStore(
+          input.status.home.homePath,
+        ).readSessionOverviews(sessionIds),
       });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/ui-state") {
-      writeJson(input.response, 200, { ok: true, state: await new UiStateStore(input.status.home.homePath).load() ?? null });
+      writeJson(input.response, 200, {
+        ok: true,
+        state:
+          (await new UiStateStore(input.status.home.homePath).load()) ?? null,
+      });
       return;
     }
     if (method === "PUT" && url.pathname === "/v1/ui-state") {
       const body = await readJsonBody(input.request);
-      await new UiStateStore(input.status.home.homePath).save(normalizeObjectField<UiState>(body, "state"));
-      writeJson(input.response, 200, { ok: true, state: await new UiStateStore(input.status.home.homePath).load() ?? null });
+      await new UiStateStore(input.status.home.homePath).save(
+        normalizeObjectField<UiState>(body, "state"),
+      );
+      writeJson(input.response, 200, {
+        ok: true,
+        state:
+          (await new UiStateStore(input.status.home.homePath).load()) ?? null,
+      });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/diagnostics/log") {
       const body = await readJsonBody(input.request);
-      await new DiagnosticLogStore(input.status.home.homePath).append(normalizeObjectField<DiagnosticLogEntry>(body, "entry"));
+      await new DiagnosticLogStore(input.status.home.homePath).append(
+        normalizeObjectField<DiagnosticLogEntry>(body, "entry"),
+      );
       writeJson(input.response, 200, { ok: true });
       return;
     }
@@ -1420,37 +1855,58 @@ async function handleRequest(input: {
       return;
     }
     if (method === "GET" && url.pathname === "/v1/kcron/state") {
-      writeJson(input.response, 200, { ok: true, state: await new KcronStateStore(input.status.home.homePath).load() });
+      writeJson(input.response, 200, {
+        ok: true,
+        state: await new KcronStateStore(input.status.home.homePath).load(),
+      });
       return;
     }
     if (method === "PUT" && url.pathname === "/v1/kcron/state") {
       const body = await readJsonBody(input.request);
       const state = normalizeObjectField<KcronStateFile>(body, "state");
       await new KcronStateStore(input.status.home.homePath).save(state);
-      writeJson(input.response, 200, { ok: true, state: await new KcronStateStore(input.status.home.homePath).load() });
+      writeJson(input.response, 200, {
+        ok: true,
+        state: await new KcronStateStore(input.status.home.homePath).load(),
+      });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/kcron/lease/acquire") {
       const body = await readJsonBody(input.request);
       const ownerPid = normalizeNumberField(body, "ownerPid");
-      const acquired = await acquireKcronLease(input.status.home.homePath, ownerPid);
+      const acquired = await acquireKcronLease(
+        input.status.home.homePath,
+        ownerPid,
+      );
       writeJson(input.response, 200, { ok: acquired.acquired, ...acquired });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/kcron/lease/heartbeat") {
       const body = await readJsonBody(input.request);
       const ownerPid = normalizeNumberField(body, "ownerPid");
-      writeJson(input.response, 200, { ok: true, state: await heartbeatKcronLease(input.status.home.homePath, ownerPid) });
+      writeJson(input.response, 200, {
+        ok: true,
+        state: await heartbeatKcronLease(input.status.home.homePath, ownerPid),
+      });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/kcron/lease/release") {
       const body = await readJsonBody(input.request);
       const ownerPid = normalizeNumberField(body, "ownerPid");
-      writeJson(input.response, 200, { ok: true, state: await releaseKcronLease(input.status.home.homePath, ownerPid) });
+      writeJson(input.response, 200, {
+        ok: true,
+        state: await releaseKcronLease(input.status.home.homePath, ownerPid),
+      });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/support-bundle") {
-      writeJson(input.response, 200, { ok: true, supportBundle: buildLocalCoreSupportBundle(input.status, input.ensureOptions.env ?? process.env) });
+      writeJson(input.response, 200, {
+        ok: true,
+        supportBundle: buildLocalCoreSupportBundle(
+          input.status,
+          input.ensureOptions.env ?? process.env,
+        ),
+      });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/restart") {
@@ -1465,7 +1921,9 @@ async function handleRequest(input: {
     }
     if (method === "POST" && url.pathname === "/v1/runtime/store/reset") {
       try {
-        parseLocalCoreRuntimeStoreResetRequest(await readJsonBody(input.request));
+        parseLocalCoreRuntimeStoreResetRequest(
+          await readJsonBody(input.request),
+        );
       } catch {
         throw new LocalCoreApiRequestError(
           400,
@@ -1488,26 +1946,38 @@ async function handleRequest(input: {
       return;
     }
 
-    writeJson(input.response, 404, errorBody("LOCAL_CORE_API_NOT_FOUND", `Unknown Local Core API endpoint: ${method} ${url.pathname}`));
+    writeJson(
+      input.response,
+      404,
+      errorBody(
+        "LOCAL_CORE_API_NOT_FOUND",
+        `Unknown Local Core API endpoint: ${method} ${url.pathname}`,
+      ),
+    );
   } catch (error) {
-    const requestError = error instanceof LocalCoreApiRequestError ? error : undefined;
-    const profileIdError = error instanceof LocalCoreReservedProfileIdError ? error : undefined;
-    const runtimeConfigurationError = error instanceof LocalCoreRuntimeConfigurationError
-      ? error
-      : undefined;
-    writeJson(input.response, requestError?.statusCode ?? (profileIdError === undefined ? 500 : 409), errorBody(
-      requestError?.code
-        ?? (profileIdError !== undefined
-          ? "LOCAL_CORE_PROFILE_ID_RESERVED"
-          : runtimeConfigurationError?.code ?? "LOCAL_CORE_API_ERROR"),
-      error instanceof Error ? error.message : String(error),
-    ));
+    const requestError =
+      error instanceof LocalCoreApiRequestError ? error : undefined;
+    const profileIdError =
+      error instanceof LocalCoreReservedProfileIdError ? error : undefined;
+    const runtimeConfigurationError =
+      error instanceof LocalCoreRuntimeConfigurationError ? error : undefined;
+    writeJson(
+      input.response,
+      requestError?.statusCode ?? (profileIdError === undefined ? 500 : 409),
+      errorBody(
+        requestError?.code ??
+          (profileIdError !== undefined
+            ? "LOCAL_CORE_PROFILE_ID_RESERVED"
+            : (runtimeConfigurationError?.code ?? "LOCAL_CORE_API_ERROR")),
+        error instanceof Error ? error.message : String(error),
+      ),
+    );
   }
 }
 
 function parseCredentialPath(pathname: string) {
   const match = /^\/v1\/credentials\/([^/]+)$/u.exec(pathname);
-  if (match === null) return ;
+  if (match === null) return;
   try {
     return parseLocalCoreCredentialId(decodeURIComponent(match[1] ?? ""));
   } catch (error) {
@@ -1532,12 +2002,19 @@ function parseCredentialMutationBody(value: unknown): string {
   return parseLocalCoreCredentialSecret(body.secret);
 }
 
-function normalizeObjectField<T extends object = Record<string, unknown>>(value: unknown, field: string): T {
+function normalizeObjectField<T extends object = Record<string, unknown>>(
+  value: unknown,
+  field: string,
+): T {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Request body must be an object with '${field}'.`);
   }
   const candidate = (value as Record<string, unknown>)[field];
-  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate)
+  ) {
     throw new Error(`Request body field '${field}' must be an object.`);
   }
   return candidate as T;
@@ -1554,16 +2031,24 @@ function normalizeArrayField<T>(value: unknown, field: string): T[] {
   return candidate as T[];
 }
 
-function normalizeOptionalStringArrayField(value: unknown, field: string): string[] | undefined {
+function normalizeOptionalStringArrayField(
+  value: unknown,
+  field: string,
+): string[] | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Request body must be an object with '${field}'.`);
   }
   const candidate = (value as Record<string, unknown>)[field];
   if (candidate === undefined) {
-    return ;
+    return;
   }
-  if (Array.isArray(candidate) === false || candidate.some((entry) => typeof entry !== "string")) {
-    throw new Error(`Request body field '${field}' must be an array of strings.`);
+  if (
+    Array.isArray(candidate) === false ||
+    candidate.some((entry) => typeof entry !== "string")
+  ) {
+    throw new Error(
+      `Request body field '${field}' must be an array of strings.`,
+    );
   }
   return candidate;
 }
@@ -1584,7 +2069,11 @@ function normalizeReplayQueryBody(value: unknown): ReplayQuery {
     throw invalidReplayQuery("Request body must be an object with 'query'.");
   }
   const candidate = (value as Record<string, unknown>).query;
-  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate)
+  ) {
     throw invalidReplayQuery("Request body field 'query' must be an object.");
   }
   const record = candidate as Record<string, unknown>;
@@ -1592,17 +2081,26 @@ function normalizeReplayQueryBody(value: unknown): ReplayQuery {
   const sessionId = normalizeReplayQueryString(record, "sessionId");
   const threadId = normalizeReplayQueryString(record, "threadId");
   const delegationId = normalizeReplayQueryString(record, "delegationId");
-  if (runId === undefined && sessionId === undefined && threadId === undefined && delegationId === undefined) {
-    throw invalidReplayQuery("Replay query requires runId, sessionId, threadId, or delegationId.");
+  if (
+    runId === undefined &&
+    sessionId === undefined &&
+    threadId === undefined &&
+    delegationId === undefined
+  ) {
+    throw invalidReplayQuery(
+      "Replay query requires runId, sessionId, threadId, or delegationId.",
+    );
   }
   const fromTimestamp = normalizeReplayQueryTimestamp(record, "fromTimestamp");
   const toTimestamp = normalizeReplayQueryTimestamp(record, "toTimestamp");
   if (
-    fromTimestamp !== undefined
-    && toTimestamp !== undefined
-    && Date.parse(fromTimestamp) > Date.parse(toTimestamp)
+    fromTimestamp !== undefined &&
+    toTimestamp !== undefined &&
+    Date.parse(fromTimestamp) > Date.parse(toTimestamp)
   ) {
-    throw invalidReplayQuery("Replay query fromTimestamp must not be after toTimestamp.");
+    throw invalidReplayQuery(
+      "Replay query fromTimestamp must not be after toTimestamp.",
+    );
   }
   const limit = normalizeReplayQueryLimit(record.limit);
   return {
@@ -1622,11 +2120,13 @@ function normalizeReplayQueryString(
 ): string | undefined {
   const value = record[field];
   if (value === undefined) {
-    return ;
+    return;
   }
   const normalized = normalizeString(value);
   if (normalized === undefined) {
-    throw invalidReplayQuery(`Replay query field '${field}' must be a non-empty string.`);
+    throw invalidReplayQuery(
+      `Replay query field '${field}' must be a non-empty string.`,
+    );
   }
   return normalized;
 }
@@ -1637,30 +2137,44 @@ function normalizeReplayQueryTimestamp(
 ): string | undefined {
   const value = normalizeReplayQueryString(record, field);
   if (value === undefined) {
-    return ;
+    return;
   }
   const timestamp = Date.parse(value);
   if (Number.isFinite(timestamp) === false) {
-    throw invalidReplayQuery(`Replay query field '${field}' must be a valid timestamp.`);
+    throw invalidReplayQuery(
+      `Replay query field '${field}' must be a valid timestamp.`,
+    );
   }
   return new Date(timestamp).toISOString();
 }
 
 function normalizeReplayQueryLimit(value: unknown): number | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
-  if (typeof value !== "number" || Number.isSafeInteger(value) === false || value <= 0) {
-    throw invalidReplayQuery("Replay query field 'limit' must be a positive integer.");
+  if (
+    typeof value !== "number" ||
+    Number.isSafeInteger(value) === false ||
+    value <= 0
+  ) {
+    throw invalidReplayQuery(
+      "Replay query field 'limit' must be a positive integer.",
+    );
   }
   return value;
 }
 
 function invalidReplayQuery(message: string): LocalCoreApiRequestError {
-  return new LocalCoreApiRequestError(400, "LOCAL_CORE_RUNTIME_QUERY_INVALID", message);
+  return new LocalCoreApiRequestError(
+    400,
+    "LOCAL_CORE_RUNTIME_QUERY_INVALID",
+    message,
+  );
 }
 
-function normalizePackageManager(value: unknown): DesktopPackageManager | undefined {
+function normalizePackageManager(
+  value: unknown,
+): DesktopPackageManager | undefined {
   return value === "npm" || value === "pnpm" ? value : undefined;
 }
 
@@ -1681,7 +2195,9 @@ function normalizeProjectRunStartBody(value: unknown): {
   if (scriptName === undefined) {
     throw new Error("Project run body requires scriptName.");
   }
-  const packageManagerOverride = normalizePackageManager(record.packageManagerOverride);
+  const packageManagerOverride = normalizePackageManager(
+    record.packageManagerOverride,
+  );
   return {
     projectPath,
     scriptName,
@@ -1716,20 +2232,26 @@ function broadcastProjectRuns(
   }
 }
 
-function writeProjectRunEvent(response: ServerResponse, runs: DesktopManagedProjectRun[]): void {
+function writeProjectRunEvent(
+  response: ServerResponse,
+  runs: DesktopManagedProjectRun[],
+): void {
   response.write("event: project-runs\n");
   response.write(`data: ${JSON.stringify({ runs })}\n\n`);
 }
 
 function parsePositiveInteger(value: string | null): number | undefined {
   if (value === null || value.trim().length === 0) {
-    return ;
+    return;
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-async function acquireKcronLease(homePath: string, ownerPid: number): Promise<{
+async function acquireKcronLease(
+  homePath: string,
+  ownerPid: number,
+): Promise<{
   acquired: boolean;
   state: KcronStateFile;
   reason?: string | undefined;
@@ -1737,7 +2259,11 @@ async function acquireKcronLease(homePath: string, ownerPid: number): Promise<{
   const store = new KcronStateStore(homePath);
   const state = await store.load();
   const existingPid = state.daemon?.pid;
-  if (existingPid !== undefined && existingPid !== ownerPid && isPidRunning(existingPid)) {
+  if (
+    existingPid !== undefined &&
+    existingPid !== ownerPid &&
+    isPidRunning(existingPid)
+  ) {
     return {
       acquired: false,
       state,
@@ -1754,7 +2280,10 @@ async function acquireKcronLease(homePath: string, ownerPid: number): Promise<{
   return { acquired: true, state };
 }
 
-async function heartbeatKcronLease(homePath: string, ownerPid: number): Promise<KcronStateFile> {
+async function heartbeatKcronLease(
+  homePath: string,
+  ownerPid: number,
+): Promise<KcronStateFile> {
   const store = new KcronStateStore(homePath);
   const state = await store.load();
   if (state.daemon?.pid === ownerPid) {
@@ -1767,7 +2296,10 @@ async function heartbeatKcronLease(homePath: string, ownerPid: number): Promise<
   return state;
 }
 
-async function releaseKcronLease(homePath: string, ownerPid: number): Promise<KcronStateFile> {
+async function releaseKcronLease(
+  homePath: string,
+  ownerPid: number,
+): Promise<KcronStateFile> {
   const store = new KcronStateStore(homePath);
   const state = await store.load();
   if (state.daemon?.pid === ownerPid) {
@@ -1800,7 +2332,11 @@ async function ensureApiToken(tokenPath: string): Promise<string> {
   const token = randomBytes(32).toString("hex");
   await mkdir(path.dirname(tokenPath), { recursive: true });
   try {
-    await writeFile(tokenPath, `${token}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await writeFile(tokenPath, `${token}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
     return token;
   } catch (error) {
     if (isAlreadyExistsError(error)) {
@@ -1828,28 +2364,39 @@ async function resolveCoreOwnedReadyOptions(
 ): Promise<EnsureLocalCoreReadyOptions> {
   const settings = await readLocalSettings(homePath);
   const legacySettingsDatabaseUrl = normalizeString(settings.databaseUrl);
-  const settingsDatabaseMode = settings.databaseMode === "external"
-    ? "external"
-    : settings.databaseMode === "default"
-      ? "pglite"
-      : undefined;
+  const settingsDatabaseMode =
+    settings.databaseMode === "external"
+      ? "external"
+      : settings.databaseMode === "default"
+        ? "pglite"
+        : undefined;
   const databaseMode = settingsDatabaseMode ?? options.databaseMode ?? "pglite";
-  let storedDatabaseUrl = options.credentialStore?.available === true
-    ? await options.credentialStore.get("data.database.external")
-    : undefined;
-  if (storedDatabaseUrl === undefined && legacySettingsDatabaseUrl !== undefined && options.credentialStore?.available === true) {
-    await options.credentialStore.set("data.database.external", legacySettingsDatabaseUrl);
+  let storedDatabaseUrl =
+    options.credentialStore?.available === true
+      ? await options.credentialStore.get("data.database.external")
+      : undefined;
+  if (
+    storedDatabaseUrl === undefined &&
+    legacySettingsDatabaseUrl !== undefined &&
+    options.credentialStore?.available === true
+  ) {
+    await options.credentialStore.set(
+      "data.database.external",
+      legacySettingsDatabaseUrl,
+    );
     await patchLocalSettings(homePath, { databaseUrl: null });
     storedDatabaseUrl = legacySettingsDatabaseUrl;
   }
-  const externalDatabaseUrl = storedDatabaseUrl
-    ?? legacySettingsDatabaseUrl
-    ?? options.externalDatabaseUrl;
+  const externalDatabaseUrl =
+    storedDatabaseUrl ??
+    legacySettingsDatabaseUrl ??
+    options.externalDatabaseUrl;
   return {
     ...options,
     ownerExecutable: options.ownerExecutable ?? process.execPath,
     databaseMode,
-    externalDatabaseUrl: databaseMode === "external" ? externalDatabaseUrl : undefined,
+    externalDatabaseUrl:
+      databaseMode === "external" ? externalDatabaseUrl : undefined,
   };
 }
 
@@ -1903,12 +2450,16 @@ async function patchLocalSettings(
   await writeLocalSettings(homePath, next);
 }
 
-async function readLocalSettings(homePath: string): Promise<Record<string, unknown>> {
+async function readLocalSettings(
+  homePath: string,
+): Promise<Record<string, unknown>> {
   const filePath = path.join(homePath, "settings", "local-core-settings.json");
   try {
     const parsed = JSON.parse(await readFile(filePath, "utf8")) as unknown;
-    return typeof parsed === "object" && parsed !== null && Array.isArray(parsed) === false
-      ? parsed as Record<string, unknown>
+    return typeof parsed === "object" &&
+      parsed !== null &&
+      Array.isArray(parsed) === false
+      ? (parsed as Record<string, unknown>)
       : {};
   } catch (error) {
     if (isNotFoundError(error)) {
@@ -1918,21 +2469,46 @@ async function readLocalSettings(homePath: string): Promise<Record<string, unkno
   }
 }
 
-async function readConfiguredMcpCredentialBindings(homePath: string): Promise<{
-  credentialId: LocalCoreCredentialId;
-  envKey: string;
-}[]> {
+async function readConfiguredMcpCredentialBindings(homePath: string): Promise<
+  {
+    credentialId: LocalCoreCredentialId;
+    envKey: string;
+  }[]
+> {
   const settings = await readLocalSettings(homePath);
   if (Array.isArray(settings.mcpServers) === false) return [];
-  const bindings = new Map<string, { credentialId: LocalCoreCredentialId; envKey: string }>();
+  const bindings = new Map<
+    string,
+    { credentialId: LocalCoreCredentialId; envKey: string }
+  >();
   for (const rawServer of settings.mcpServers) {
-    if (typeof rawServer !== "object" || rawServer === null || Array.isArray(rawServer)) continue;
+    if (
+      typeof rawServer !== "object" ||
+      rawServer === null ||
+      Array.isArray(rawServer)
+    )
+      continue;
     const server = rawServer as Record<string, unknown>;
-    if (server.enabled !== true || typeof server.id !== "string" || Array.isArray(server.credentials) === false) continue;
+    if (
+      server.enabled !== true ||
+      typeof server.id !== "string" ||
+      Array.isArray(server.credentials) === false
+    )
+      continue;
     for (const rawBinding of server.credentials) {
-      if (typeof rawBinding !== "object" || rawBinding === null || Array.isArray(rawBinding)) continue;
+      if (
+        typeof rawBinding !== "object" ||
+        rawBinding === null ||
+        Array.isArray(rawBinding)
+      )
+        continue;
       const binding = rawBinding as Record<string, unknown>;
-      if (binding.configured !== true || typeof binding.envKey !== "string" || /^[A-Za-z_][A-Za-z0-9_]*$/u.test(binding.envKey) === false) continue;
+      if (
+        binding.configured !== true ||
+        typeof binding.envKey !== "string" ||
+        /^[A-Za-z_][A-Za-z0-9_]*$/u.test(binding.envKey) === false
+      )
+        continue;
       try {
         const credentialId = parseLocalCoreCredentialId(binding.credentialId);
         if (credentialId.startsWith(`mcp.${server.id}.`) === false) continue;
@@ -1950,16 +2526,21 @@ async function readDesktopDeveloperEnvironmentOptions(
 ): Promise<Partial<Record<"SHELL" | "PATH", string>>> {
   const settings = await readLocalSettings(homePath);
   return {
-    ...(typeof settings.developerShellPath === "string" && settings.developerShellPath.trim().length > 0
+    ...(typeof settings.developerShellPath === "string" &&
+    settings.developerShellPath.trim().length > 0
       ? { SHELL: settings.developerShellPath.trim() }
       : {}),
-    ...(typeof settings.developerPath === "string" && settings.developerPath.trim().length > 0
+    ...(typeof settings.developerPath === "string" &&
+    settings.developerPath.trim().length > 0
       ? { PATH: settings.developerPath.trim() }
       : {}),
   };
 }
 
-async function writeLocalSettings(homePath: string, value: Record<string, unknown>): Promise<void> {
+async function writeLocalSettings(
+  homePath: string,
+  value: Record<string, unknown>,
+): Promise<void> {
   const filePath = path.join(homePath, "settings", "local-core-settings.json");
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -1969,26 +2550,36 @@ async function providerReadiness(
   env: NodeJS.ProcessEnv,
   credentialStore?: LocalCoreCredentialStore | undefined,
 ): Promise<Record<string, unknown>> {
-  const credentialStatus = credentialStore === undefined
-    ? undefined
-    : await readLocalCoreCredentialStoreStatus(credentialStore);
+  const credentialStatus =
+    credentialStore === undefined
+      ? undefined
+      : await readLocalCoreCredentialStoreStatus(credentialStore);
   return {
     openrouter: providerCredentialReadiness({
-      configured: credentialStatus === undefined
-        ? normalizeString(env.OPENROUTER_API_KEY) !== undefined
-        : isCredentialConfigured(credentialStatus, "provider.openrouter.default"),
+      configured:
+        credentialStatus === undefined
+          ? normalizeString(env.OPENROUTER_API_KEY) !== undefined
+          : isCredentialConfigured(
+              credentialStatus,
+              "provider.openrouter.default",
+            ),
       available: credentialStatus?.available ?? true,
     }),
     openai: providerCredentialReadiness({
-      configured: credentialStatus === undefined
-        ? normalizeString(env.OPENAI_API_KEY) !== undefined
-        : isCredentialConfigured(credentialStatus, "provider.openai.default"),
+      configured:
+        credentialStatus === undefined
+          ? normalizeString(env.OPENAI_API_KEY) !== undefined
+          : isCredentialConfigured(credentialStatus, "provider.openai.default"),
       available: credentialStatus?.available ?? true,
     }),
     anthropic: providerCredentialReadiness({
-      configured: credentialStatus === undefined
-        ? normalizeString(env.ANTHROPIC_API_KEY) !== undefined
-        : isCredentialConfigured(credentialStatus, "provider.anthropic.default"),
+      configured:
+        credentialStatus === undefined
+          ? normalizeString(env.ANTHROPIC_API_KEY) !== undefined
+          : isCredentialConfigured(
+              credentialStatus,
+              "provider.anthropic.default",
+            ),
       available: credentialStatus?.available ?? true,
     }),
     ollama: {
@@ -2022,7 +2613,10 @@ function isCredentialConfigured(
   status: LocalCoreCredentialStoreStatus,
   id: LocalCoreCredentialStoreStatus["credentials"][number]["id"],
 ): boolean {
-  return status.credentials.find((credential) => credential.id === id)?.configured ?? false;
+  return (
+    status.credentials.find((credential) => credential.id === id)?.configured ??
+    false
+  );
 }
 
 function normalizeWorkspaceBody(value: unknown): {
@@ -2044,7 +2638,9 @@ function normalizeWorkspaceBody(value: unknown): {
     throw new Error("Workspace body requires rootPath.");
   }
   const now = new Date().toISOString();
-  const workspaceId = normalizeString(record.workspaceId) ?? `workspace-${createHash("sha256").update(path.resolve(rootPath)).digest("hex").slice(0, 12)}`;
+  const workspaceId =
+    normalizeString(record.workspaceId) ??
+    `workspace-${createHash("sha256").update(path.resolve(rootPath)).digest("hex").slice(0, 12)}`;
   const launchCwd = normalizeString(record.launchCwd);
   const label = normalizeString(record.label);
   const lastUsedAt = normalizeString(record.lastUsedAt);
@@ -2053,19 +2649,28 @@ function normalizeWorkspaceBody(value: unknown): {
     rootPath: path.resolve(rootPath),
     ...(launchCwd !== undefined ? { launchCwd: path.resolve(launchCwd) } : {}),
     ...(label !== undefined ? { label } : {}),
-    automationEnabled: typeof record.automationEnabled === "boolean" ? record.automationEnabled : false,
+    automationEnabled:
+      typeof record.automationEnabled === "boolean"
+        ? record.automationEnabled
+        : false,
     discoveredAt: normalizeString(record.discoveredAt) ?? now,
     updatedAt: normalizeString(record.updatedAt) ?? now,
     ...(lastUsedAt !== undefined ? { lastUsedAt } : {}),
   };
 }
 
-function buildLocalCoreSupportBundle(status: LocalCoreStatus, env: NodeJS.ProcessEnv): unknown {
+function buildLocalCoreSupportBundle(
+  status: LocalCoreStatus,
+  env: NodeJS.ProcessEnv,
+): unknown {
   const apiSocketPath =
-    status.lock.state === "live" || status.lock.state === "stale" || status.lock.state === "incompatible"
+    status.lock.state === "live" ||
+    status.lock.state === "stale" ||
+    status.lock.state === "incompatible"
       ? status.lock.lock.socketPath
       : undefined;
-  const databaseSocketPath = status.databaseSocketPath ?? status.database.socketPath;
+  const databaseSocketPath =
+    status.databaseSocketPath ?? status.database.socketPath;
   return buildSupportBundle({
     source: "desktop",
     generatedAt: new Date().toISOString(),
@@ -2091,12 +2696,18 @@ function buildLocalCoreSupportBundle(status: LocalCoreStatus, env: NodeJS.Proces
           ? { apiSocketPath, apiSocketPresent: existsSync(apiSocketPath) }
           : {}),
         ...(databaseSocketPath !== undefined
-          ? { databaseSocketPath, databaseSocketPresent: existsSync(databaseSocketPath) }
+          ? {
+              databaseSocketPath,
+              databaseSocketPresent: existsSync(databaseSocketPath),
+            }
           : {}),
       },
     },
     extra: {
-      legacyState: detectLocalCoreMigrationState({ env, platform: status.home.platform }),
+      legacyState: detectLocalCoreMigrationState({
+        env,
+        platform: status.home.platform,
+      }),
     },
     logs: [
       { label: "Local Core logs", path: status.logsPath },
@@ -2132,7 +2743,11 @@ async function readJsonBody(
   return JSON.parse(raw) as unknown;
 }
 
-function writeJson(response: ServerResponse, status: number, body: unknown): void {
+function writeJson(
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+): void {
   const payload = `${JSON.stringify(body)}\n`;
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -2187,9 +2802,11 @@ async function closeServer(input: {
     });
     input.server.closeIdleConnections?.();
   });
-  await input.executionHandler?.close({ abortActiveRuns: true }).catch((error) => {
-    errors.push(asError(error));
-  });
+  await input.executionHandler
+    ?.close({ abortActiveRuns: true })
+    .catch((error) => {
+      errors.push(asError(error));
+    });
   input.server.closeAllConnections?.();
   await serverClosed.catch((error) => {
     errors.push(asError(error));
@@ -2225,25 +2842,49 @@ function asError(error: unknown): Error {
 }
 
 function normalizeString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 function decodeStrictBase64(value: string): Buffer {
   const normalized = value.replace(/\s/gu, "");
-  if (normalized.length === 0 || normalized.length % 4 !== 0 || /^[A-Za-z0-9+/]+={0,2}$/u.test(normalized) === false) {
-    throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment data must be valid base64.");
+  if (
+    normalized.length === 0 ||
+    normalized.length % 4 !== 0 ||
+    /^[A-Za-z0-9+/]+={0,2}$/u.test(normalized) === false
+  ) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+      "Attachment data must be valid base64.",
+    );
   }
   const decoded = Buffer.from(normalized, "base64");
   if (decoded.toString("base64") !== normalized) {
-    throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment data must be canonical base64.");
+    throw new LocalCoreApiRequestError(
+      400,
+      "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+      "Attachment data must be canonical base64.",
+    );
   }
   return decoded;
 }
 
 function isNotFoundError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
 }
 
 function isAlreadyExistsError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EEXIST"
+  );
 }

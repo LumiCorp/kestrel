@@ -24,6 +24,8 @@ import type {
   DesktopMicrophoneAccess,
   DesktopMicrophoneAccessState,
   DesktopMcpDiscoveryResult,
+  DesktopAppConnectionSession,
+  DesktopStandardAppConnectionInput,
   DesktopMcpServerMutationInput,
   DesktopPackageManager,
   DesktopProjectLauncherDescriptor,
@@ -74,7 +76,10 @@ import type {
   DesktopWorkspaceFeedbackSubmitResult,
 } from "../../../src/desktopShell/contracts.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
-import type { WorkspaceSkillInstallation, WorkspaceSkillSource } from "../../../src/skills/contracts.js";
+import type {
+  WorkspaceSkillInstallation,
+  WorkspaceSkillSource,
+} from "../../../src/skills/contracts.js";
 export {
   DESKTOP_BRIDGE_CAPABILITIES,
   DESKTOP_BRIDGE_VERSION,
@@ -139,6 +144,8 @@ export type {
   DesktopMicrophoneAccess,
   DesktopMicrophoneAccessState,
   DesktopMcpDiscoveryResult,
+  DesktopAppConnectionSession,
+  DesktopStandardAppConnectionInput,
   DesktopMcpDiscoverySourceKind,
   DesktopMcpCredentialBinding,
   DesktopMcpCredentialKind,
@@ -198,7 +205,10 @@ export type {
   DesktopUiStateSyncResult,
   DesktopUiStateV1,
 } from "../../../src/desktopShell/contracts.js";
-export type { WorkspaceSkillInstallation, WorkspaceSkillSource } from "../../../src/skills/contracts.js";
+export type {
+  WorkspaceSkillInstallation,
+  WorkspaceSkillSource,
+} from "../../../src/skills/contracts.js";
 export type {
   DesktopAppDefinition,
   DesktopAppRef,
@@ -249,27 +259,42 @@ export interface DesktopBridge {
   getAppInfo(): Promise<DesktopAppInfo>;
   getSupportBundle(): Promise<DesktopSupportBundle>;
   getCapabilities(): Promise<DesktopCapabilityView>;
-  configureCapability(input: DesktopCapabilityConfigurationInput): Promise<DesktopCapabilityConfigurationResult>;
+  configureCapability(
+    input: DesktopCapabilityConfigurationInput,
+  ): Promise<DesktopCapabilityConfigurationResult>;
   getSettings(): Promise<DesktopRendererSettings>;
-  saveSettings(settings: DesktopRendererSettingsUpdate): Promise<DesktopRendererSettings>;
+  saveSettings(
+    settings: DesktopRendererSettingsUpdate,
+  ): Promise<DesktopRendererSettings>;
   getUiState(): Promise<DesktopUiStateV1 | null>;
-  syncLegacyUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult>;
-  saveUiState(entries: DesktopLegacyUiStateEntries): Promise<DesktopUiStateSyncResult>;
+  syncLegacyUiState(
+    entries: DesktopLegacyUiStateEntries,
+  ): Promise<DesktopUiStateSyncResult>;
+  saveUiState(
+    entries: DesktopLegacyUiStateEntries,
+  ): Promise<DesktopUiStateSyncResult>;
   runTurn(request: DesktopRunTurnRequest): Promise<DesktopRunnerEvent>;
   selectAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
   listAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
   removeAttachment(threadId: string, attachmentId: string): Promise<boolean>;
-  submitOperatorControl(request: DesktopOperatorControlRequest): Promise<DesktopRuntimeThreadInspection>;
+  submitOperatorControl(
+    request: DesktopOperatorControlRequest,
+  ): Promise<DesktopRuntimeThreadInspection>;
   cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunnerEvent>;
   onRunnerEvent(listener: (event: DesktopRunnerEvent) => void): () => void;
   getModelPolicy(): Promise<ModelPolicyV1>;
-  getModelCatalog(provider: DesktopRendererSettings["selectedProvider"]): Promise<DesktopProviderModelCatalog>;
+  getModelCatalog(
+    provider: DesktopRendererSettings["selectedProvider"],
+  ): Promise<DesktopProviderModelCatalog>;
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   pickWorkspace(): Promise<string | undefined>;
   pickProjectFolder(): Promise<DesktopProjectRegistration | undefined>;
   openExternal(url: string): Promise<void>;
-  openProjectRunPreview(input: { runId: string; url?: string | undefined }): Promise<void>;
+  openProjectRunPreview(input: {
+    runId: string;
+    url?: string | undefined;
+  }): Promise<void>;
   openFileEditor(input: DesktopOpenFileEditorInput): Promise<void>;
   openPath(input: DesktopPathTargetInput): Promise<void>;
   revealPath(input: DesktopPathTargetInput): Promise<void>;
@@ -285,23 +310,63 @@ export interface DesktopBridge {
   repairDatabase(): Promise<DesktopDatabaseStatus>;
   revealDatabaseFiles(target: "log" | "data"): Promise<void>;
   onRuntimeHealth(listener: (status: DesktopRuntimeHealth) => void): () => void;
-  listDirectory(rootPath: string, directoryPath?: string, threadId?: string): Promise<DesktopDirectoryListing>;
-  searchProjectFiles(rootPath: string, query: string, threadId?: string): Promise<DesktopFileSearchResponse>;
-  searchProjectContent(rootPath: string, query: string, threadId?: string): Promise<DesktopFileContentSearchResponse>;
+  listDirectory(
+    rootPath: string,
+    directoryPath?: string,
+    threadId?: string,
+  ): Promise<DesktopDirectoryListing>;
+  searchProjectFiles(
+    rootPath: string,
+    query: string,
+    threadId?: string,
+  ): Promise<DesktopFileSearchResponse>;
+  searchProjectContent(
+    rootPath: string,
+    query: string,
+    threadId?: string,
+  ): Promise<DesktopFileContentSearchResponse>;
   watchProjectFiles(rootPath: string, threadId?: string): Promise<void>;
   unwatchProjectFiles(rootPath: string): Promise<void>;
-  onProjectFilesChanged(listener: (event: DesktopProjectFilesChangedEvent) => void): () => void;
+  onProjectFilesChanged(
+    listener: (event: DesktopProjectFilesChangedEvent) => void,
+  ): () => void;
   readFile(input: DesktopFileReadInput): Promise<DesktopFileContent>;
   writeFile(input: DesktopFileWriteInput): Promise<DesktopFileContent>;
   discoverMcpServers(): Promise<DesktopMcpDiscoveryResult>;
-  saveMcpServer(input: DesktopMcpServerMutationInput): Promise<DesktopMcpDiscoveryResult>;
+  startStandardAppConnection(
+    input: DesktopStandardAppConnectionInput,
+  ): Promise<DesktopAppConnectionSession>;
+  getStandardAppConnectionStatus(
+    sessionId: string,
+  ): Promise<DesktopAppConnectionSession>;
+  saveMcpServer(
+    input: DesktopMcpServerMutationInput,
+  ): Promise<DesktopMcpDiscoveryResult>;
   deleteMcpServer(id: string): Promise<DesktopMcpDiscoveryResult>;
-  readProjectLauncher(projectPath: string, packageManagerOverride?: DesktopPackageManager, threadId?: string): Promise<DesktopProjectLauncherDescriptor | undefined>;
-  listWorkspaceSkills(projectPath: string): Promise<WorkspaceSkillInstallation[]>;
-  installWorkspaceSkill(projectPath: string, source: WorkspaceSkillSource): Promise<WorkspaceSkillInstallation>;
-  updateWorkspaceSkill(projectPath: string, installationId: string, source: WorkspaceSkillSource): Promise<WorkspaceSkillInstallation>;
-  syncWorkspaceSkills(projectPath: string): Promise<WorkspaceSkillInstallation[]>;
-  removeWorkspaceSkill(projectPath: string, installationId: string): Promise<WorkspaceSkillInstallation[]>;
+  readProjectLauncher(
+    projectPath: string,
+    packageManagerOverride?: DesktopPackageManager,
+    threadId?: string,
+  ): Promise<DesktopProjectLauncherDescriptor | undefined>;
+  listWorkspaceSkills(
+    projectPath: string,
+  ): Promise<WorkspaceSkillInstallation[]>;
+  installWorkspaceSkill(
+    projectPath: string,
+    source: WorkspaceSkillSource,
+  ): Promise<WorkspaceSkillInstallation>;
+  updateWorkspaceSkill(
+    projectPath: string,
+    installationId: string,
+    source: WorkspaceSkillSource,
+  ): Promise<WorkspaceSkillInstallation>;
+  syncWorkspaceSkills(
+    projectPath: string,
+  ): Promise<WorkspaceSkillInstallation[]>;
+  removeWorkspaceSkill(
+    projectPath: string,
+    installationId: string,
+  ): Promise<WorkspaceSkillInstallation[]>;
   listProjectRuns(): Promise<DesktopManagedProjectRun[]>;
   startProjectRun(input: {
     projectPath: string;
@@ -311,13 +376,23 @@ export interface DesktopBridge {
   }): Promise<DesktopManagedProjectRun>;
   stopProjectRun(runId: string): Promise<DesktopManagedProjectRun | undefined>;
   restartProjectRun(runId: string): Promise<DesktopManagedProjectRun>;
-  onPreviewDiagnostic(listener: (diagnostic: DesktopPreviewDiagnostic) => void): () => void;
-  getProjectSnapshot(sessionId: string): Promise<DesktopProjectSnapshotResponse>;
-  runProjectAction(action: DesktopProjectAction): Promise<DesktopProjectSnapshotResponse>;
+  onPreviewDiagnostic(
+    listener: (diagnostic: DesktopPreviewDiagnostic) => void,
+  ): () => void;
+  getProjectSnapshot(
+    sessionId: string,
+  ): Promise<DesktopProjectSnapshotResponse>;
+  runProjectAction(
+    action: DesktopProjectAction,
+  ): Promise<DesktopProjectSnapshotResponse>;
   getOperatorThread(threadId: string): Promise<DesktopRuntimeThreadInspection>;
-  listOperatorRuns(query?: DesktopRuntimeRunIndexQuery): Promise<DesktopRuntimeRunIndex>;
+  listOperatorRuns(
+    query?: DesktopRuntimeRunIndexQuery,
+  ): Promise<DesktopRuntimeRunIndex>;
   getOperatorRun(runId: string): Promise<DesktopRuntimeRunInspection>;
-  getWorkspaceLifecycle(sessionId: string): Promise<DesktopWorkspaceLifecycleState>;
+  getWorkspaceLifecycle(
+    sessionId: string,
+  ): Promise<DesktopWorkspaceLifecycleState>;
   captureWorkspaceCheckpoint(input: {
     sessionId: string;
     label: string;
@@ -339,7 +414,10 @@ export interface DesktopBridge {
     targetCheckpointId?: string | undefined;
     targetGitRef?: string | undefined;
   }): Promise<DesktopWorkspaceCheckpointDiffResult>;
-  cleanupWorkspaceCheckpoints(input: { sessionId: string; reason?: string }): Promise<DesktopWorkspaceCheckpointCleanupResult>;
+  cleanupWorkspaceCheckpoints(input: {
+    sessionId: string;
+    reason?: string;
+  }): Promise<DesktopWorkspaceCheckpointCleanupResult>;
   previewWorkspacePromotion(input: {
     sessionId: string;
     promotionId: string;
@@ -372,28 +450,139 @@ export interface DesktopBridge {
     sessionId: string;
     threadId: string;
   }): Promise<DesktopManagedWorktreeInspectionResult>;
-  startUserTerminal(input: { sessionId: string; threadId: string; cols?: number; rows?: number }): Promise<DesktopUserTerminal>;
-  listUserTerminals(input: { sessionId: string; threadId?: string }): Promise<DesktopUserTerminal[]>;
-  readUserTerminal(input: { sessionId: string; terminalId: string; cursor?: number }): Promise<DesktopUserTerminalReadResult>;
-  writeUserTerminal(input: { sessionId: string; terminalId: string; data: string }): Promise<DesktopUserTerminal>;
-  resizeUserTerminal(input: { sessionId: string; terminalId: string; cols: number; rows: number }): Promise<DesktopUserTerminal>;
-  stopUserTerminal(input: { sessionId: string; terminalId: string }): Promise<DesktopUserTerminal>;
-  inspectWorkspaceChanges(input: { sessionId: string; threadId: string; projectPath?: string; scope: DesktopWorkspaceChangeScope; options?: Partial<DesktopWorkspaceDiffOptions> }): Promise<DesktopWorkspaceChangeSnapshot>;
-  mutateWorkspaceChanges(input: { sessionId: string; threadId: string; expectedFingerprint: string; scope?: DesktopWorkspaceChangeScope; options?: Partial<DesktopWorkspaceDiffOptions>; mutation: DesktopWorkspaceChangeMutation }): Promise<DesktopWorkspaceChangeMutationResult>;
-  addWorkspaceFeedback(input: { sessionId: string; threadId: string; candidateFingerprint: string; path: string; line: number; side: "LEFT" | "RIGHT"; body: string }): Promise<DesktopWorkspaceFeedbackSnapshot>;
-  listWorkspaceFeedback(input: { sessionId: string; threadId: string }): Promise<DesktopWorkspaceFeedbackSnapshot>;
-  removeWorkspaceFeedback(input: { sessionId: string; threadId: string; candidateFingerprint: string; commentId: string }): Promise<DesktopWorkspaceFeedbackSnapshot>;
-  submitWorkspaceFeedback(input: { sessionId: string; threadId: string; candidateFingerprint: string; commentIds: string[] }): Promise<DesktopWorkspaceFeedbackSubmitResult>;
-  runWorkspaceReview(input: { sessionId: string; threadId: string; scope: DesktopWorkspaceChangeScope; mode?: "current_thread" | "detached_thread"; reviewerProfileId?: string; reviewerModel?: string }): Promise<DesktopWorkspaceReviewSnapshot>;
-  listWorkspaceReviews(input: { sessionId: string; threadId: string }): Promise<DesktopWorkspaceReviewSnapshot>;
-  updateWorkspaceReviewFinding(input: { sessionId: string; threadId: string; candidateFingerprint: string; reviewId: string; findingId: string; action: "accept" | "dismiss" | "reopen" | "mark_fixed"; reason?: string }): Promise<DesktopWorkspaceReviewSnapshot>;
-  submitWorkspaceReviewFindings(input: { sessionId: string; threadId: string; candidateFingerprint: string; reviewId: string; findingIds: string[]; request: "address" | "more_evidence" | "verify" }): Promise<{ snapshot: DesktopWorkspaceReviewSnapshot; runId: string }>;
-  inspectWorkspaceValidation(input: { sessionId: string; threadId: string }): Promise<DesktopWorkspaceValidationSnapshot>;
-  runWorkspaceValidation(input: { sessionId: string; threadId: string; candidateFingerprint: string; actionId?: string; suiteId?: string }): Promise<DesktopWorkspaceValidationSnapshot>;
-  cancelWorkspaceValidation(input: { sessionId: string; threadId: string; resultId: string }): Promise<DesktopWorkspaceValidationSnapshot>;
-  submitWorkspaceValidationFailures(input: { sessionId: string; threadId: string; resultIds: string[] }): Promise<{ snapshot: DesktopWorkspaceValidationSnapshot; runId: string }>;
-  inspectWorkspaceGit(input: { sessionId: string; threadId: string }): Promise<DesktopWorkspaceGitSnapshot>;
-  performWorkspaceGitAction(input: { sessionId: string; threadId: string; candidateFingerprint: string; expectedHeadSha?: string; action: DesktopWorkspaceGitAction }): Promise<DesktopWorkspaceGitSnapshot>;
-  onProjectRuns(listener: (runs: DesktopManagedProjectRun[]) => void): () => void;
+  startUserTerminal(input: {
+    sessionId: string;
+    threadId: string;
+    cols?: number;
+    rows?: number;
+  }): Promise<DesktopUserTerminal>;
+  listUserTerminals(input: {
+    sessionId: string;
+    threadId?: string;
+  }): Promise<DesktopUserTerminal[]>;
+  readUserTerminal(input: {
+    sessionId: string;
+    terminalId: string;
+    cursor?: number;
+  }): Promise<DesktopUserTerminalReadResult>;
+  writeUserTerminal(input: {
+    sessionId: string;
+    terminalId: string;
+    data: string;
+  }): Promise<DesktopUserTerminal>;
+  resizeUserTerminal(input: {
+    sessionId: string;
+    terminalId: string;
+    cols: number;
+    rows: number;
+  }): Promise<DesktopUserTerminal>;
+  stopUserTerminal(input: {
+    sessionId: string;
+    terminalId: string;
+  }): Promise<DesktopUserTerminal>;
+  inspectWorkspaceChanges(input: {
+    sessionId: string;
+    threadId: string;
+    projectPath?: string;
+    scope: DesktopWorkspaceChangeScope;
+    options?: Partial<DesktopWorkspaceDiffOptions>;
+  }): Promise<DesktopWorkspaceChangeSnapshot>;
+  mutateWorkspaceChanges(input: {
+    sessionId: string;
+    threadId: string;
+    expectedFingerprint: string;
+    scope?: DesktopWorkspaceChangeScope;
+    options?: Partial<DesktopWorkspaceDiffOptions>;
+    mutation: DesktopWorkspaceChangeMutation;
+  }): Promise<DesktopWorkspaceChangeMutationResult>;
+  addWorkspaceFeedback(input: {
+    sessionId: string;
+    threadId: string;
+    candidateFingerprint: string;
+    path: string;
+    line: number;
+    side: "LEFT" | "RIGHT";
+    body: string;
+  }): Promise<DesktopWorkspaceFeedbackSnapshot>;
+  listWorkspaceFeedback(input: {
+    sessionId: string;
+    threadId: string;
+  }): Promise<DesktopWorkspaceFeedbackSnapshot>;
+  removeWorkspaceFeedback(input: {
+    sessionId: string;
+    threadId: string;
+    candidateFingerprint: string;
+    commentId: string;
+  }): Promise<DesktopWorkspaceFeedbackSnapshot>;
+  submitWorkspaceFeedback(input: {
+    sessionId: string;
+    threadId: string;
+    candidateFingerprint: string;
+    commentIds: string[];
+  }): Promise<DesktopWorkspaceFeedbackSubmitResult>;
+  runWorkspaceReview(input: {
+    sessionId: string;
+    threadId: string;
+    scope: DesktopWorkspaceChangeScope;
+    mode?: "current_thread" | "detached_thread";
+    reviewerProfileId?: string;
+    reviewerModel?: string;
+  }): Promise<DesktopWorkspaceReviewSnapshot>;
+  listWorkspaceReviews(input: {
+    sessionId: string;
+    threadId: string;
+  }): Promise<DesktopWorkspaceReviewSnapshot>;
+  updateWorkspaceReviewFinding(input: {
+    sessionId: string;
+    threadId: string;
+    candidateFingerprint: string;
+    reviewId: string;
+    findingId: string;
+    action: "accept" | "dismiss" | "reopen" | "mark_fixed";
+    reason?: string;
+  }): Promise<DesktopWorkspaceReviewSnapshot>;
+  submitWorkspaceReviewFindings(input: {
+    sessionId: string;
+    threadId: string;
+    candidateFingerprint: string;
+    reviewId: string;
+    findingIds: string[];
+    request: "address" | "more_evidence" | "verify";
+  }): Promise<{ snapshot: DesktopWorkspaceReviewSnapshot; runId: string }>;
+  inspectWorkspaceValidation(input: {
+    sessionId: string;
+    threadId: string;
+  }): Promise<DesktopWorkspaceValidationSnapshot>;
+  runWorkspaceValidation(input: {
+    sessionId: string;
+    threadId: string;
+    candidateFingerprint: string;
+    actionId?: string;
+    suiteId?: string;
+  }): Promise<DesktopWorkspaceValidationSnapshot>;
+  cancelWorkspaceValidation(input: {
+    sessionId: string;
+    threadId: string;
+    resultId: string;
+  }): Promise<DesktopWorkspaceValidationSnapshot>;
+  submitWorkspaceValidationFailures(input: {
+    sessionId: string;
+    threadId: string;
+    resultIds: string[];
+  }): Promise<{ snapshot: DesktopWorkspaceValidationSnapshot; runId: string }>;
+  inspectWorkspaceGit(input: {
+    sessionId: string;
+    threadId: string;
+  }): Promise<DesktopWorkspaceGitSnapshot>;
+  performWorkspaceGitAction(input: {
+    sessionId: string;
+    threadId: string;
+    candidateFingerprint: string;
+    expectedHeadSha?: string;
+    action: DesktopWorkspaceGitAction;
+  }): Promise<DesktopWorkspaceGitSnapshot>;
+  onProjectRuns(
+    listener: (runs: DesktopManagedProjectRun[]) => void,
+  ): () => void;
   onCommand(listener: (command: DesktopShellCommand) => void): () => void;
 }

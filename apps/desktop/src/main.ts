@@ -39,15 +39,18 @@ import { resolveKestrelCoreHome } from "../../../src/localCore/home.js";
 import type { LocalCoreClient } from "../../../src/localCore/client.js";
 import { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
-import type {
-  LocalCoreCredentialId,
-} from "../../../src/localCore/credentialStore.js";
+import type { LocalCoreCredentialId } from "../../../src/localCore/credentialStore.js";
+import { listMcpOAuthCredentialIds } from "../../../src/localCore/mcpOAuthProvider.js";
 import {
   createWebRunnerAdapter,
   type WebRunnerAdapter,
   type WebRunnerRequestContext,
 } from "../../../src/web/index.js";
-import { parseRunnerEventV2 } from "@kestrel-agents/protocol";
+import {
+  KESTREL_APP_IDS,
+  KESTREL_STANDARD_APP_MANIFESTS,
+  parseRunnerEventV2,
+} from "@kestrel-agents/protocol";
 import { deriveDesktopReadiness } from "../../../src/desktopShell/readiness.js";
 import { redactDiagnosticValue } from "../../../src/diagnostics/redaction.js";
 import { resolveDesktopCapabilityView } from "../../../src/desktopShell/capabilityRegistry.js";
@@ -62,12 +65,19 @@ import {
 import { resolveProviderModelCatalog } from "../../../src/profile/modelCatalogDiscovery.js";
 import {
   assertDesktopModelConfigurationHistoryPreserved,
-  getDesktopAppDefinition,
-  listDesktopAppDefinitions,
+  formatDesktopWorkflowInstructions,
+  resolveDesktopWorkflowSelections,
   resolveDesktopModelConfiguration,
   type DesktopExecutionSelection,
 } from "../../../src/desktopShell/configuration.js";
-import { resolveDesktopLibexecRoot, resolveDesktopPathConfig } from "./config.js";
+import {
+  desktopStandardAppToolRequiresApproval,
+  getDesktopStandardAppConnection,
+} from "../../../src/desktopShell/standardAppConnections.js";
+import {
+  resolveDesktopLibexecRoot,
+  resolveDesktopPathConfig,
+} from "./config.js";
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import type {
   DesktopBootState,
@@ -86,6 +96,8 @@ import type {
   DesktopLegacyUiStateEntries,
   DesktopUiStateV1,
   DesktopMcpDiscoveryResult,
+  DesktopAppConnectionSession,
+  DesktopStandardAppConnectionInput,
   DesktopMcpServerConfig,
   DesktopMcpServerMutationInput,
   DesktopMicrophoneAccess,
@@ -106,6 +118,7 @@ import type {
   DesktopShellCommand,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
+import { resolveDesktopPublicAppClientId } from "./appConnectionConfig.js";
 import {
   assertWithinRoot,
   parseDesktopPathTargetInput,
@@ -119,11 +132,15 @@ import {
   type DesktopRunnerControlTransport,
 } from "./localCoreRunnerTransport.js";
 import {
+  buildDesktopExecutionProfile,
   buildDesktopRunnerProfile,
   createDefaultDesktopSettings,
   normalizeDesktopSettings,
 } from "./settingsStore.js";
-import { createCoreOwnedDesktopDatabaseController, type DesktopDatabaseController } from "./databaseController.js";
+import {
+  createCoreOwnedDesktopDatabaseController,
+  type DesktopDatabaseController,
+} from "./databaseController.js";
 import { archiveRuntimeStore } from "./runtimeStoreReset.js";
 import { ensureDesktopRunnerResponsive } from "./runnerHandshake.js";
 import { buildDesktopSupportBundle } from "./supportBundle.js";
@@ -142,7 +159,10 @@ import { probeDesktopCapabilities } from "./capabilityProbes.js";
 import { verifyDesktopModelCapability } from "./modelProviderVerification.js";
 import { verifyDesktopToolProvider } from "./toolProviderVerification.js";
 import { buildDesktopCapabilityConfigurationPlan } from "./capabilityConfiguration.js";
-import { deriveDesktopWorkspaceId, resolveDesktopThreadWorkspace } from "./threadWorkspace.js";
+import {
+  deriveDesktopWorkspaceId,
+  resolveDesktopThreadWorkspace,
+} from "./threadWorkspace.js";
 import { WorkspaceSkillManager } from "../../../src/skills/WorkspaceSkillStore.js";
 import type { WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
@@ -170,7 +190,10 @@ import {
   retryDesktopManagedWorktreeSetup,
 } from "./workspaceLifecycle.js";
 import { runDesktopUserTerminalCommand } from "./userTerminal.js";
-import { inspectDesktopWorkspaceChanges, mutateDesktopWorkspaceChanges } from "./workspaceChanges.js";
+import {
+  inspectDesktopWorkspaceChanges,
+  mutateDesktopWorkspaceChanges,
+} from "./workspaceChanges.js";
 import { runDesktopWorkspaceFeedback } from "./workspaceFeedback.js";
 import { runDesktopWorkspaceReview } from "./workspaceReview.js";
 import { runDesktopWorkspaceValidation } from "./workspaceValidation.js";
@@ -178,11 +201,21 @@ import { runDesktopWorkspaceGit } from "./workspaceGit.js";
 import { isAllowedEmbeddedPreviewUrl } from "./previewSecurity.js";
 
 declare global {
-  var __kestrelDesktopRunnerTransportFactory: (() => DesktopProtocolTransport) | undefined;
+  var __kestrelDesktopRunnerTransportFactory:
+    | (() => DesktopProtocolTransport)
+    | undefined;
   var __kestrelDesktopProfileOverride:
     | {
         presetId?: "desktop_dev_local" | undefined;
-        capabilityPacks?: Array<"balanced" | "filesystem" | "dev_shell" | "desktop_host" | "sandbox_code"> | undefined;
+        capabilityPacks?:
+          | Array<
+              | "balanced"
+              | "filesystem"
+              | "dev_shell"
+              | "desktop_host"
+              | "sandbox_code"
+            >
+          | undefined;
         version: number;
       }
     | undefined;
@@ -198,6 +231,8 @@ let bootState: DesktopBootState = {
   updatedAt: bootStartedAt,
 };
 let runnerTransport: DesktopRunnerControlTransport | undefined;
+const microsoft365AuthorizationSessionIds = new Set<string>();
+const googleWorkspaceAuthorizationSessionIds = new Set<string>();
 let desktopConfig: ReturnType<typeof resolveDesktopPathConfig> | undefined;
 let localCoreStatus: LocalCoreStatus | undefined;
 let runtimeHealth: DesktopRuntimeHealth = {
@@ -250,12 +285,14 @@ interface DesktopProjectFileWatcher {
 }
 
 const rejectedDaemonAppLaunch = isLocalCoreDaemonElectronAppLaunch();
-const ownsSingleInstanceLock = rejectedDaemonAppLaunch === false
-  && electronSquirrelStartup === false
-  && app.requestSingleInstanceLock();
-const shouldStartDesktopMain = rejectedDaemonAppLaunch === false
-  && electronSquirrelStartup === false
-  && ownsSingleInstanceLock;
+const ownsSingleInstanceLock =
+  rejectedDaemonAppLaunch === false &&
+  electronSquirrelStartup === false &&
+  app.requestSingleInstanceLock();
+const shouldStartDesktopMain =
+  rejectedDaemonAppLaunch === false &&
+  electronSquirrelStartup === false &&
+  ownsSingleInstanceLock;
 
 if (rejectedDaemonAppLaunch) {
   process.stderr.write(
@@ -276,7 +313,10 @@ async function main(): Promise<void> {
   if (localCoreHome.source !== "isolated_dev_home") {
     process.env.KESTREL_CORE_HOME = localCoreHome.homePath;
   }
-  if (process.env.KESTREL_HOME === undefined || process.env.KESTREL_HOME.trim().length === 0) {
+  if (
+    process.env.KESTREL_HOME === undefined ||
+    process.env.KESTREL_HOME.trim().length === 0
+  ) {
     process.env.KESTREL_HOME = localCoreHome.homePath;
   }
   if (process.platform === "darwin") {
@@ -334,7 +374,10 @@ async function main(): Promise<void> {
     onLine(line) {
       try {
         const event = parseRunnerEventV2(JSON.parse(line));
-        if ((event.type.startsWith("run.") || event.type === "task.updated") && mainWindow?.isDestroyed() === false) {
+        if (
+          (event.type.startsWith("run.") || event.type === "task.updated") &&
+          mainWindow?.isDestroyed() === false
+        ) {
           mainWindow.webContents.send("desktop:runner-event", event);
         }
       } catch {
@@ -368,18 +411,21 @@ async function main(): Promise<void> {
       app.quit();
     }
   });
-  app.on("before-quit", createDesktopBeforeQuitHandler({
-    stopProjectRuns: stopCoreProjectRuns,
-    closeWebServer: async () => {},
-    stopRunner: async () => {
-      unsubscribeProjectRunEvents?.();
-      await desktopRunnerAdapter?.close();
-      desktopRunnerAdapter = undefined;
-      await runnerTransport?.stop();
-      await databaseController?.close();
-    },
-    quitApp: () => app.quit(),
-  }));
+  app.on(
+    "before-quit",
+    createDesktopBeforeQuitHandler({
+      stopProjectRuns: stopCoreProjectRuns,
+      closeWebServer: async () => {},
+      stopRunner: async () => {
+        unsubscribeProjectRunEvents?.();
+        await desktopRunnerAdapter?.close();
+        desktopRunnerAdapter = undefined;
+        await runnerTransport?.stop();
+        await databaseController?.close();
+      },
+      quitApp: () => app.quit(),
+    }),
+  );
 }
 
 if (shouldStartDesktopMain) {
@@ -394,7 +440,8 @@ if (shouldStartDesktopMain) {
     mainWindow.focus();
   });
   void main().catch((error) => {
-    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    const message =
+      error instanceof Error ? (error.stack ?? error.message) : String(error);
     console.error("Kestrel Desktop failed to start", { error });
     dialog.showErrorBox("Kestrel could not start", message);
     app.quit();
@@ -431,16 +478,24 @@ async function ensureMainWindow(): Promise<void> {
       webviewTag: true,
     },
   });
-  window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-    if (params.partition !== "persist:kestrel-preview" || (params.src !== undefined && params.src !== "about:blank" && !isAllowedEmbeddedPreviewUrl(params.src))) {
-      event.preventDefault();
-      return;
-    }
-    webPreferences.nodeIntegration = false;
-    webPreferences.contextIsolation = true;
-    webPreferences.sandbox = true;
-    delete webPreferences.preload;
-  });
+  window.webContents.on(
+    "will-attach-webview",
+    (event, webPreferences, params) => {
+      if (
+        params.partition !== "persist:kestrel-preview" ||
+        (params.src !== undefined &&
+          params.src !== "about:blank" &&
+          !isAllowedEmbeddedPreviewUrl(params.src))
+      ) {
+        event.preventDefault();
+        return;
+      }
+      webPreferences.nodeIntegration = false;
+      webPreferences.contextIsolation = true;
+      webPreferences.sandbox = true;
+      delete webPreferences.preload;
+    },
+  );
   window.on("ready-to-show", () => {
     window.show();
   });
@@ -454,10 +509,13 @@ async function ensureMainWindow(): Promise<void> {
   await window.loadFile(desktopConfig.bootHtmlPath);
 
   if (bootState.phase === "ready") {
-    updateBootState({
-      phase: "ready",
-      message: "Desktop ready.",
-    }, window.webContents);
+    updateBootState(
+      {
+        phase: "ready",
+        message: "Desktop ready.",
+      },
+      window.webContents,
+    );
     await window.loadFile(desktopConfig.rendererHtmlPath);
     return;
   }
@@ -475,25 +533,55 @@ function configureEmbeddedPreviewSecurity(): void {
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() !== "webview") return;
     embeddedPreviewWebContentsIds.add(contents.id);
-    contents.once("destroyed", () => embeddedPreviewWebContentsIds.delete(contents.id));
+    contents.once("destroyed", () =>
+      embeddedPreviewWebContentsIds.delete(contents.id),
+    );
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
     contents.on("will-navigate", (event, url) => {
       if (!isAllowedEmbeddedPreviewUrl(url)) event.preventDefault();
     });
-    contents.on("console-message", (_event, level, message, _line, sourceId) => {
-      sendPreviewDiagnostic({ webContentsId: contents.id, kind: "console", level, message, ...(sourceId ? { url: sourceId } : {}) });
-    });
-    contents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
-      if (errorCode === -3) return;
-      sendPreviewDiagnostic({ webContentsId: contents.id, kind: "load_error", message: `${errorDescription} (${errorCode})`, ...(validatedUrl ? { url: validatedUrl } : {}) });
-    });
+    contents.on(
+      "console-message",
+      (_event, level, message, _line, sourceId) => {
+        sendPreviewDiagnostic({
+          webContentsId: contents.id,
+          kind: "console",
+          level,
+          message,
+          ...(sourceId ? { url: sourceId } : {}),
+        });
+      },
+    );
+    contents.on(
+      "did-fail-load",
+      (_event, errorCode, errorDescription, validatedUrl) => {
+        if (errorCode === -3) return;
+        sendPreviewDiagnostic({
+          webContentsId: contents.id,
+          kind: "load_error",
+          message: `${errorDescription} (${errorCode})`,
+          ...(validatedUrl ? { url: validatedUrl } : {}),
+        });
+      },
+    );
   });
   const previewSession = session.fromPartition("persist:kestrel-preview");
-  previewSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  previewSession.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => callback(false),
+  );
   previewSession.setPermissionCheckHandler(() => false);
   previewSession.webRequest.onErrorOccurred((details) => {
-    if (details.webContentsId === undefined || !embeddedPreviewWebContentsIds.has(details.webContentsId)) return;
-    sendPreviewDiagnostic({ webContentsId: details.webContentsId, kind: "network_error", message: details.error, url: details.url });
+    if (
+      details.webContentsId === undefined ||
+      !embeddedPreviewWebContentsIds.has(details.webContentsId)
+    )
+      return;
+    sendPreviewDiagnostic({
+      webContentsId: details.webContentsId,
+      kind: "network_error",
+      message: details.error,
+      url: details.url,
+    });
   });
 }
 
@@ -525,43 +613,62 @@ async function bootDesktop(input: {
         message: "Kestrel Local Core database controller is unavailable.",
       });
     }
-    updateBootState({
-      phase: "starting_database",
-      message: "Checking Kestrel Local Core database…",
-      database: databaseStatus,
-    }, input.window.webContents);
+    updateBootState(
+      {
+        phase: "starting_database",
+        message: "Checking Kestrel Local Core database…",
+        database: databaseStatus,
+      },
+      input.window.webContents,
+    );
     const database = await databaseController.prepare();
     currentDatabaseUrl = database.databaseUrl;
     databaseStatus = database.status;
-    updateBootState({
-      phase: "starting_runtime",
-      message: "Starting Kestrel runtime…",
-      database: databaseStatus,
-    }, input.window.webContents);
+    updateBootState(
+      {
+        phase: "starting_runtime",
+        message: "Starting Kestrel runtime…",
+        database: databaseStatus,
+      },
+      input.window.webContents,
+    );
     await ensureDesktopRunnerResponsive(input.runnerTransport);
 
-    updateBootState({
-      phase: "starting_web",
-      message: "Opening desktop renderer…",
-      database: databaseStatus,
-    }, input.window.webContents);
-    updateBootState({
-      phase: "ready",
-      message: "Desktop ready.",
-      database: databaseStatus,
-    }, input.window.webContents);
+    updateBootState(
+      {
+        phase: "starting_web",
+        message: "Opening desktop renderer…",
+        database: databaseStatus,
+      },
+      input.window.webContents,
+    );
+    updateBootState(
+      {
+        phase: "ready",
+        message: "Desktop ready.",
+        database: databaseStatus,
+      },
+      input.window.webContents,
+    );
     await input.window.loadFile(input.config.rendererHtmlPath);
   } catch (error) {
     if (databaseController !== undefined) {
-      databaseStatus = await databaseController.getStatus().catch(() => databaseStatus);
+      databaseStatus = await databaseController
+        .getStatus()
+        .catch(() => databaseStatus);
     }
-    updateBootState({
-      phase: "failed",
-      message: "Desktop startup failed.",
-      ...(readDesktopErrorCode(error) !== undefined ? { code: readDesktopErrorCode(error) } : {}),
-      details: error instanceof Error ? error.message : String(error),
-      database: databaseStatus,
-    }, input.window.webContents);
+    updateBootState(
+      {
+        phase: "failed",
+        message: "Desktop startup failed.",
+        ...(readDesktopErrorCode(error) !== undefined
+          ? { code: readDesktopErrorCode(error) }
+          : {}),
+        details: error instanceof Error ? error.message : String(error),
+        database: databaseStatus,
+      },
+      input.window.webContents,
+    );
   }
 }
 
@@ -680,12 +787,12 @@ function registerIpcHandlers(
   }));
   ipcMain.handle("desktop:get-support-bundle", async () => {
     const manager = requireLocalCoreConnectionManager();
-    const coreBundle = await manager.executeIdempotent(
-      async (client) => await client.supportBundle(),
-    ).catch((error) => ({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }));
+    const coreBundle = await manager
+      .executeIdempotent(async (client) => await client.supportBundle())
+      .catch((error) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
     return buildDesktopSupportBundle({
       generatedAt: new Date().toISOString(),
       appInfo: {
@@ -708,155 +815,214 @@ function registerIpcHandlers(
       coreSupportBundle: coreBundle,
     });
   });
-  ipcMain.handle("desktop:get-settings", async () => await readDesktopRendererSettings());
-  ipcMain.handle("desktop:get-capabilities", async () => await readDesktopCapabilityView());
-  ipcMain.handle("desktop:configure-capability", async (_event, input: unknown): Promise<DesktopCapabilityConfigurationResult> => {
-    let configuration;
-    let credentialAppliedDuringVerification = false;
-    try {
-      configuration = parseDesktopCapabilityConfigurationInput(input);
-    } catch (error) {
-      throw createDesktopError({
-        code: "desktop.invalid_capability_configuration",
-        message: "Desktop capability configuration is invalid.",
-        details: error instanceof Error ? error.message : String(error),
-      });
-    }
-    const previousSettings = structuredClone(desktopSettings);
-    const previousModelPolicy = structuredClone(desktopModelPolicy);
-    let plan: ReturnType<typeof buildDesktopCapabilityConfigurationPlan>;
-    try {
-      plan = buildDesktopCapabilityConfigurationPlan({
-        currentSettings: desktopSettings,
-        currentModelPolicy: desktopModelPolicy,
-        configuration,
-      });
-      if (plan.requiresVerification && plan.registration.modelProvider !== undefined) {
-        await verifyDesktopModelCapability({
-          provider: plan.registration.modelProvider,
-          settings: plan.settings,
-          ...(typeof plan.credential?.value === "string" ? { apiKey: plan.credential.value } : {}),
+  ipcMain.handle(
+    "desktop:get-settings",
+    async () => await readDesktopRendererSettings(),
+  );
+  ipcMain.handle(
+    "desktop:get-capabilities",
+    async () => await readDesktopCapabilityView(),
+  );
+  ipcMain.handle(
+    "desktop:configure-capability",
+    async (
+      _event,
+      input: unknown,
+    ): Promise<DesktopCapabilityConfigurationResult> => {
+      let configuration;
+      let credentialAppliedDuringVerification = false;
+      try {
+        configuration = parseDesktopCapabilityConfigurationInput(input);
+      } catch (error) {
+        throw createDesktopError({
+          code: "desktop.invalid_capability_configuration",
+          message: "Desktop capability configuration is invalid.",
+          details: error instanceof Error ? error.message : String(error),
         });
-      } else if (
-        plan.requiresVerification
-        && (configuration.capabilityId === "tools.internet.tavily" || configuration.capabilityId === "tools.weather")
-      ) {
-        if (typeof plan.credential?.value !== "string") {
-          throw new Error("A credential is required to verify this provider configuration.");
-        }
-        await verifyDesktopToolProvider({
-          capabilityId: configuration.capabilityId,
-          credential: plan.credential.value,
-          settings: plan.settings,
-        });
-      } else if (
-        plan.requiresVerification
-        && configuration.capabilityId === "data.database"
-        && plan.settings.databaseMode === "external"
-      ) {
-        if (typeof plan.credential?.value !== "string") {
-          throw new Error("Enter the PostgreSQL connection URL to verify external storage.");
-        }
-        await requireLocalCoreConnectionManager().executeOnce(
-          async (client) => await client.verifyExternalDatabase(plan.credential!.value as string),
-        );
-        credentialAppliedDuringVerification = true;
       }
-    } catch (error) {
-      throw createDesktopError({
-        code: "desktop.capability_verification_failed",
-        message: "Desktop could not verify this capability configuration.",
-        details: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    const capabilityVerifications = { ...plan.settings.capabilityVerifications };
-    if (plan.credential?.value === null) {
-      delete capabilityVerifications[configuration.capabilityId];
-    } else if (plan.requiresVerification) {
-      capabilityVerifications[configuration.capabilityId] = new Date().toISOString();
-    }
-    const appliedSettings = {
-      ...plan.settings,
-      capabilityVerifications,
-      ...(plan.registration.modelProvider !== undefined && configuration.enabled === true
-        ? {
-            providerSelectionCompletedAt:
-              plan.settings.providerSelectionCompletedAt ?? new Date().toISOString(),
+      const previousSettings = structuredClone(desktopSettings);
+      const previousModelPolicy = structuredClone(desktopModelPolicy);
+      let plan: ReturnType<typeof buildDesktopCapabilityConfigurationPlan>;
+      try {
+        plan = buildDesktopCapabilityConfigurationPlan({
+          currentSettings: desktopSettings,
+          currentModelPolicy: desktopModelPolicy,
+          configuration,
+        });
+        if (
+          plan.requiresVerification &&
+          plan.registration.modelProvider !== undefined
+        ) {
+          await verifyDesktopModelCapability({
+            provider: plan.registration.modelProvider,
+            settings: plan.settings,
+            ...(typeof plan.credential?.value === "string"
+              ? { apiKey: plan.credential.value }
+              : {}),
+          });
+        } else if (
+          plan.requiresVerification &&
+          (configuration.capabilityId === "tools.internet.tavily" ||
+            configuration.capabilityId === "tools.weather")
+        ) {
+          if (typeof plan.credential?.value !== "string") {
+            throw new Error(
+              "A credential is required to verify this provider configuration.",
+            );
           }
-        : {}),
-      modelPolicy: plan.modelPolicy,
-    };
-    await saveDesktopCoreSettings(appliedSettings);
-    try {
+          await verifyDesktopToolProvider({
+            capabilityId: configuration.capabilityId,
+            credential: plan.credential.value,
+            settings: plan.settings,
+          });
+        } else if (
+          plan.requiresVerification &&
+          configuration.capabilityId === "data.database" &&
+          plan.settings.databaseMode === "external"
+        ) {
+          if (typeof plan.credential?.value !== "string") {
+            throw new Error(
+              "Enter the PostgreSQL connection URL to verify external storage.",
+            );
+          }
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.verifyExternalDatabase(
+                plan.credential!.value as string,
+              ),
+          );
+          credentialAppliedDuringVerification = true;
+        }
+      } catch (error) {
+        throw createDesktopError({
+          code: "desktop.capability_verification_failed",
+          message: "Desktop could not verify this capability configuration.",
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      const capabilityVerifications = {
+        ...plan.settings.capabilityVerifications,
+      };
       if (plan.credential?.value === null) {
-        await requireLocalCoreConnectionManager().executeOnce(
-          async (client) => await client.deleteCredential(plan.credential!.id),
+        delete capabilityVerifications[configuration.capabilityId];
+      } else if (plan.requiresVerification) {
+        capabilityVerifications[configuration.capabilityId] =
+          new Date().toISOString();
+      }
+      const appliedSettings = {
+        ...plan.settings,
+        capabilityVerifications,
+        ...(plan.registration.modelProvider !== undefined &&
+        configuration.enabled === true
+          ? {
+              providerSelectionCompletedAt:
+                plan.settings.providerSelectionCompletedAt ??
+                new Date().toISOString(),
+            }
+          : {}),
+        modelPolicy: plan.modelPolicy,
+      };
+      await saveDesktopCoreSettings(appliedSettings);
+      try {
+        if (plan.credential?.value === null) {
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.deleteCredential(plan.credential!.id),
+          );
+        } else if (
+          typeof plan.credential?.value === "string" &&
+          credentialAppliedDuringVerification === false
+        ) {
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.setCredential(
+                plan.credential!.id,
+                plan.credential!.value as string,
+              ),
+          );
+        }
+      } catch (error) {
+        await saveDesktopCoreSettings({
+          ...previousSettings,
+          modelPolicy: previousModelPolicy,
+        });
+        throw createDesktopError({
+          code: "desktop.capability_credential_apply_failed",
+          message:
+            "Desktop could not apply the verified credential. The previous configuration was preserved.",
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+      syncDesktopWebEnvironment(desktopSettings);
+      applyDesktopProfileOverride(desktopSettings);
+      await resetDesktopRunnerAdapter();
+      let runtimeRestarted = false;
+      if (plan.restartRuntime) {
+        updateBootState(
+          {
+            phase: "starting_runtime",
+            message: `Applying ${configuration.capabilityId} configuration…`,
+            database: databaseStatus,
+          },
+          mainWindow?.webContents,
         );
-      } else if (typeof plan.credential?.value === "string" && credentialAppliedDuringVerification === false) {
-        await requireLocalCoreConnectionManager().executeOnce(
-          async (client) => await client.setCredential(plan.credential!.id, plan.credential!.value as string),
+        await runnerTransport.restart();
+        runtimeRestarted = true;
+        if (configuration.capabilityId === "data.database") {
+          await reconfigureDatabaseController(desktopSettings);
+        }
+        updateBootState(
+          {
+            phase: "ready",
+            message: "Desktop ready.",
+            database: databaseStatus,
+          },
+          mainWindow?.webContents,
         );
       }
-    } catch (error) {
-      await saveDesktopCoreSettings({ ...previousSettings, modelPolicy: previousModelPolicy });
-      throw createDesktopError({
-        code: "desktop.capability_credential_apply_failed",
-        message: "Desktop could not apply the verified credential. The previous configuration was preserved.",
-        details: error instanceof Error ? error.message : String(error),
-      });
-    }
-    syncDesktopWebEnvironment(desktopSettings);
-    applyDesktopProfileOverride(desktopSettings);
-    await resetDesktopRunnerAdapter();
-    let runtimeRestarted = false;
-    if (plan.restartRuntime) {
-      updateBootState({
-        phase: "starting_runtime",
-        message: `Applying ${configuration.capabilityId} configuration…`,
-        database: databaseStatus,
-      }, mainWindow?.webContents);
-      await runnerTransport.restart();
-      runtimeRestarted = true;
-      if (configuration.capabilityId === "data.database") {
-        await reconfigureDatabaseController(desktopSettings);
+      runtimeHealth = deriveRuntimeHealth(bootState);
+      mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
+      return {
+        capabilityId: configuration.capabilityId,
+        applied: true,
+        runtimeRestarted,
+        view: await readDesktopCapabilityView(),
+      };
+    },
+  );
+  ipcMain.handle(
+    "desktop:get-ui-state",
+    async () =>
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.getDesktopUiState(),
+      ),
+  );
+  ipcMain.handle(
+    "desktop:sync-legacy-ui-state",
+    async (_event, input: unknown) => {
+      let entries: DesktopLegacyUiStateEntries;
+      try {
+        entries = parseDesktopLegacyUiStateEntries(input);
+      } catch (error) {
+        throw createDesktopError({
+          code: "desktop.invalid_ui_state",
+          message: "Desktop UI state migration payload is invalid.",
+          details: error instanceof Error ? error.message : String(error),
+        });
       }
-      updateBootState({ phase: "ready", message: "Desktop ready.", database: databaseStatus }, mainWindow?.webContents);
-    }
-    runtimeHealth = deriveRuntimeHealth(bootState);
-    mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
-    return {
-      capabilityId: configuration.capabilityId,
-      applied: true,
-      runtimeRestarted,
-      view: await readDesktopCapabilityView(),
-    };
-  });
-  ipcMain.handle("desktop:get-ui-state", async () => await requireLocalCoreConnectionManager().executeIdempotent(
-      async (client) => await client.getDesktopUiState(),
-    ));
-  ipcMain.handle("desktop:sync-legacy-ui-state", async (_event, input: unknown) => {
-    let entries: DesktopLegacyUiStateEntries;
-    try {
-      entries = parseDesktopLegacyUiStateEntries(input);
-    } catch (error) {
-      throw createDesktopError({
-        code: "desktop.invalid_ui_state",
-        message: "Desktop UI state migration payload is invalid.",
-        details: error instanceof Error ? error.message : String(error),
-      });
-    }
-    const state: DesktopUiStateV1 = {
-      version: DESKTOP_UI_STATE_VERSION,
-      source: DESKTOP_UI_STATE_SOURCE,
-      sourceAppVersion: app.getVersion(),
-      capturedAt: new Date().toISOString(),
-      entries,
-    };
-    return await requireLocalCoreConnectionManager().executeIdempotent(
-      async (client) => await client.syncDesktopUiState(state),
-    );
-  });
+      const state: DesktopUiStateV1 = {
+        version: DESKTOP_UI_STATE_VERSION,
+        source: DESKTOP_UI_STATE_SOURCE,
+        sourceAppVersion: app.getVersion(),
+        capturedAt: new Date().toISOString(),
+        entries,
+      };
+      return await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.syncDesktopUiState(state),
+      );
+    },
+  );
   ipcMain.handle("desktop:save-ui-state", async (_event, input: unknown) => {
     let entries: DesktopLegacyUiStateEntries;
     try {
@@ -901,27 +1067,63 @@ function registerIpcHandlers(
       ...turnRequest
     } = request;
     const runProfile = resolveDesktopExecutionProfile(executionSelection);
+    const workflows = resolveDesktopWorkflowSelections(
+      executionSelection,
+      desktopSettings.mcpServers,
+    );
+    const unavailableWorkflow = workflows.find((workflow) => !workflow.ready);
+    if (unavailableWorkflow !== undefined) {
+      const missingRoles = unavailableWorkflow.dependencies
+        .filter((dependency) => dependency.missing)
+        .map((dependency) => dependency.role);
+      throw createDesktopError({
+        code: "desktop.workflow_dependencies_unavailable",
+        message: `${unavailableWorkflow.name} needs selected, connected Apps for: ${missingRoles.join(", ")}.`,
+      });
+    }
+    const workflowInstructions = formatDesktopWorkflowInstructions(workflows);
     const canonicalThreadId = `thread-main:${request.sessionId}`;
     if (threadId !== undefined && threadId !== canonicalThreadId) {
-      throw createDesktopError({ code: "desktop.invalid_run_thread", message: "Desktop run thread does not match its Local Core session." });
+      throw createDesktopError({
+        code: "desktop.invalid_run_thread",
+        message: "Desktop run thread does not match its Local Core session.",
+      });
     }
     if (attachmentIds !== undefined) {
-      const listed = await requireLocalCoreConnectionManager().executeIdempotent(
-        async (client) => await client.listDesktopAttachments(canonicalThreadId),
+      const listed =
+        await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) =>
+            await client.listDesktopAttachments(canonicalThreadId),
+        );
+      const selected = attachmentIds.map((attachmentId) =>
+        listed.find((entry) => entry.attachmentId === attachmentId),
       );
-      const selected = attachmentIds.map((attachmentId) => listed.find((entry) => entry.attachmentId === attachmentId));
       if (selected.some((entry) => entry === undefined)) {
-        throw createDesktopError({ code: "desktop.attachment_unavailable", message: "One or more attachments are unavailable for this thread." });
+        throw createDesktopError({
+          code: "desktop.attachment_unavailable",
+          message: "One or more attachments are unavailable for this thread.",
+        });
       }
-      if (selected.some((entry) => entry?.kind === "image") && runProfile.modelCapabilities?.visionInputEnabled !== true) {
-        throw createDesktopError({ code: "desktop.model_vision_unavailable", message: "The selected model does not accept image attachments." });
+      if (
+        selected.some((entry) => entry?.kind === "image") &&
+        runProfile.modelCapabilities?.visionInputEnabled !== true
+      ) {
+        throw createDesktopError({
+          code: "desktop.model_vision_unavailable",
+          message: "The selected model does not accept image attachments.",
+        });
       }
     }
-    const attachments = attachmentIds === undefined
-      ? undefined
-      : await requireLocalCoreConnectionManager().executeIdempotent(
-          async (client) => await client.resolveDesktopAttachments(canonicalThreadId, attachmentIds),
-        );
+    const attachments =
+      attachmentIds === undefined
+        ? undefined
+        : await requireLocalCoreConnectionManager().executeIdempotent(
+            async (client) =>
+              await client.resolveDesktopAttachments(
+                canonicalThreadId,
+                attachmentIds,
+              ),
+          );
     const workspace = resolveDesktopThreadWorkspace({
       ...(projectPath !== undefined ? { projectPath } : {}),
       projects: desktopSettings.projects,
@@ -930,16 +1132,27 @@ function registerIpcHandlers(
       ...(workspaceBaseRef !== undefined ? { workspaceBaseRef } : {}),
       ...(workspaceSetup !== undefined ? { workspaceSetup } : {}),
     });
-    const skillWorkspaceRoot = projectPath === undefined ? undefined : path.resolve(workspace.sourceWorkspaceRoot ?? workspace.workspaceRoot);
+    const skillWorkspaceRoot =
+      projectPath === undefined
+        ? undefined
+        : path.resolve(
+            workspace.sourceWorkspaceRoot ?? workspace.workspaceRoot,
+          );
     if (skillWorkspaceRoot !== undefined) {
       await activateDesktopWorkspaceSkills(skillWorkspaceRoot);
-      activeDesktopWorkspaceRunCounts.set(skillWorkspaceRoot, (activeDesktopWorkspaceRunCounts.get(skillWorkspaceRoot) ?? 0) + 1);
+      activeDesktopWorkspaceRunCounts.set(
+        skillWorkspaceRoot,
+        (activeDesktopWorkspaceRunCounts.get(skillWorkspaceRoot) ?? 0) + 1,
+      );
     }
     try {
       return await requireDesktopRunnerAdapter(runnerTransport).runTurnStream(
         {
           ...turnRequest,
           ...(attachments !== undefined ? { attachments } : {}),
+          ...(workflowInstructions !== undefined
+            ? { systemInstructions: [workflowInstructions] }
+            : {}),
           workspace,
           metadata: { desktopExecutionSelection: executionSelection },
         },
@@ -950,66 +1163,173 @@ function registerIpcHandlers(
       );
     } finally {
       if (skillWorkspaceRoot !== undefined) {
-        const remaining = (activeDesktopWorkspaceRunCounts.get(skillWorkspaceRoot) ?? 1) - 1;
-        if (remaining > 0) activeDesktopWorkspaceRunCounts.set(skillWorkspaceRoot, remaining);
+        const remaining =
+          (activeDesktopWorkspaceRunCounts.get(skillWorkspaceRoot) ?? 1) - 1;
+        if (remaining > 0)
+          activeDesktopWorkspaceRunCounts.set(skillWorkspaceRoot, remaining);
         else activeDesktopWorkspaceRunCounts.delete(skillWorkspaceRoot);
       }
     }
   });
-  ipcMain.handle("desktop:select-attachments", async (_event, threadId: unknown): Promise<DesktopAttachmentMetadata[]> => {
-    const normalizedThreadId = parseDesktopThreadId(threadId);
-    const dialogOptions: Electron.OpenDialogOptions = {
-      title: "Attach files",
-      properties: ["openFile", "multiSelections"],
-      filters: [
-        { name: "Images and text/code", extensions: ["png", "jpg", "jpeg", "webp", "gif", "txt", "md", "markdown", "json", "yaml", "yml", "csv", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "go", "rs", "java", "kt", "swift", "c", "h", "cc", "cpp", "hpp", "cs", "php", "sh", "zsh", "sql", "html", "css", "scss", "toml", "xml", "vue", "svelte"] },
-      ],
-    };
-    const selection = mainWindow === undefined
-      ? await dialog.showOpenDialog(dialogOptions)
-      : await dialog.showOpenDialog(mainWindow, dialogOptions);
-    if (selection.canceled) return [];
-    if (selection.filePaths.length > 8) throw createDesktopError({ code: "desktop.too_many_attachments", message: "Select no more than 8 attachments at once." });
-    const imported: DesktopAttachmentMetadata[] = [];
-    for (const filePath of selection.filePaths) {
-      const bytes = await readFile(filePath);
-      imported.push(await requireLocalCoreConnectionManager().executeOnce(async (client) => await client.importDesktopAttachment({
-        threadId: normalizedThreadId,
-        filename: path.basename(filePath),
-        mimeType: desktopAttachmentMimeType(filePath),
-        data: bytes.toString("base64"),
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-      })));
-    }
-    return imported;
-  });
-  ipcMain.handle("desktop:list-attachments", async (_event, threadId: unknown) => await requireLocalCoreConnectionManager().executeIdempotent(
-    async (client) => await client.listDesktopAttachments(parseDesktopThreadId(threadId)),
-  ));
-  ipcMain.handle("desktop:remove-attachment", async (_event, threadId: unknown, attachmentId: unknown) => await requireLocalCoreConnectionManager().executeOnce(
-    async (client) => await client.removeDesktopAttachment(parseDesktopThreadId(threadId), parseDesktopAttachmentId(attachmentId)),
-  ));
+  ipcMain.handle(
+    "desktop:select-attachments",
+    async (_event, threadId: unknown): Promise<DesktopAttachmentMetadata[]> => {
+      const normalizedThreadId = parseDesktopThreadId(threadId);
+      const dialogOptions: Electron.OpenDialogOptions = {
+        title: "Attach files",
+        properties: ["openFile", "multiSelections"],
+        filters: [
+          {
+            name: "Images and text/code",
+            extensions: [
+              "png",
+              "jpg",
+              "jpeg",
+              "webp",
+              "gif",
+              "txt",
+              "md",
+              "markdown",
+              "json",
+              "yaml",
+              "yml",
+              "csv",
+              "ts",
+              "tsx",
+              "js",
+              "jsx",
+              "mjs",
+              "cjs",
+              "py",
+              "rb",
+              "go",
+              "rs",
+              "java",
+              "kt",
+              "swift",
+              "c",
+              "h",
+              "cc",
+              "cpp",
+              "hpp",
+              "cs",
+              "php",
+              "sh",
+              "zsh",
+              "sql",
+              "html",
+              "css",
+              "scss",
+              "toml",
+              "xml",
+              "vue",
+              "svelte",
+            ],
+          },
+        ],
+      };
+      const selection =
+        mainWindow === undefined
+          ? await dialog.showOpenDialog(dialogOptions)
+          : await dialog.showOpenDialog(mainWindow, dialogOptions);
+      if (selection.canceled) return [];
+      if (selection.filePaths.length > 8)
+        throw createDesktopError({
+          code: "desktop.too_many_attachments",
+          message: "Select no more than 8 attachments at once.",
+        });
+      const imported: DesktopAttachmentMetadata[] = [];
+      for (const filePath of selection.filePaths) {
+        const bytes = await readFile(filePath);
+        imported.push(
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.importDesktopAttachment({
+                threadId: normalizedThreadId,
+                filename: path.basename(filePath),
+                mimeType: desktopAttachmentMimeType(filePath),
+                data: bytes.toString("base64"),
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+              }),
+          ),
+        );
+      }
+      return imported;
+    },
+  );
+  ipcMain.handle(
+    "desktop:list-attachments",
+    async (_event, threadId: unknown) =>
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) =>
+          await client.listDesktopAttachments(parseDesktopThreadId(threadId)),
+      ),
+  );
+  ipcMain.handle(
+    "desktop:remove-attachment",
+    async (_event, threadId: unknown, attachmentId: unknown) =>
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.removeDesktopAttachment(
+            parseDesktopThreadId(threadId),
+            parseDesktopAttachmentId(attachmentId),
+          ),
+      ),
+  );
   ipcMain.handle("desktop:operator-control", async (_event, input: unknown) => {
     let request: DesktopOperatorControlRequest;
-    try { request = parseDesktopOperatorControlRequest(input); }
-    catch (error) { throw createDesktopError({ code: "desktop.invalid_operator_control", message: "Desktop operator control request is invalid.", details: error instanceof Error ? error.message : String(error) }); }
+    try {
+      request = parseDesktopOperatorControlRequest(input);
+    } catch (error) {
+      throw createDesktopError({
+        code: "desktop.invalid_operator_control",
+        message: "Desktop operator control request is invalid.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
     const { attachmentIds, ...control } = request;
     if (attachmentIds !== undefined) {
-      const listed = await requireLocalCoreConnectionManager().executeIdempotent(async (client) => await client.listDesktopAttachments(request.threadId));
-      const selected = attachmentIds.map((attachmentId) => listed.find((entry) => entry.attachmentId === attachmentId));
-      if (selected.some((entry) => entry === undefined)) throw createDesktopError({ code: "desktop.attachment_unavailable", message: "One or more attachments are unavailable for this thread." });
-      if (selected.some((entry) => entry?.kind === "image") && desktopModelPolicy.modelCapabilities.visionInputEnabled !== true) {
-        throw createDesktopError({ code: "desktop.model_vision_unavailable", message: "The selected model does not accept image attachments." });
+      const listed =
+        await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) =>
+            await client.listDesktopAttachments(request.threadId),
+        );
+      const selected = attachmentIds.map((attachmentId) =>
+        listed.find((entry) => entry.attachmentId === attachmentId),
+      );
+      if (selected.some((entry) => entry === undefined))
+        throw createDesktopError({
+          code: "desktop.attachment_unavailable",
+          message: "One or more attachments are unavailable for this thread.",
+        });
+      if (
+        selected.some((entry) => entry?.kind === "image") &&
+        desktopModelPolicy.modelCapabilities.visionInputEnabled !== true
+      ) {
+        throw createDesktopError({
+          code: "desktop.model_vision_unavailable",
+          message: "The selected model does not accept image attachments.",
+        });
       }
     }
-    const attachments = attachmentIds !== undefined && request.action !== "enqueue_follow_up"
-      ? await requireLocalCoreConnectionManager().executeIdempotent(async (client) => await client.resolveDesktopAttachments(request.threadId, attachmentIds))
-      : undefined;
+    const attachments =
+      attachmentIds !== undefined && request.action !== "enqueue_follow_up"
+        ? await requireLocalCoreConnectionManager().executeIdempotent(
+            async (client) =>
+              await client.resolveDesktopAttachments(
+                request.threadId,
+                attachmentIds,
+              ),
+          )
+        : undefined;
     return runDesktopOperatorControl({
       adapter: requireDesktopRunnerAdapter(runnerTransport),
       request: {
         ...control,
-        ...(request.action === "enqueue_follow_up" && attachmentIds !== undefined ? { attachmentIds } : {}),
+        ...(request.action === "enqueue_follow_up" &&
+        attachmentIds !== undefined
+          ? { attachmentIds }
+          : {}),
         ...(attachments !== undefined ? { attachments } : {}),
       },
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
@@ -1035,51 +1355,70 @@ function registerIpcHandlers(
     );
   });
   ipcMain.handle("desktop:get-model-policy", async () => desktopModelPolicy);
-  ipcMain.handle("desktop:get-model-catalog", async (_event, provider: unknown) => {
-    if (provider !== "openrouter" && provider !== "openai" && provider !== "anthropic"
-      && provider !== "ollama" && provider !== "lmstudio") {
-      throw createDesktopError({
-        code: "desktop.invalid_model_provider",
-        message: "Desktop model provider is invalid.",
-      });
-    }
-    return await resolveProviderModelCatalog(provider, process.env);
-  });
-  ipcMain.handle("desktop:save-settings", async (_event, nextSettings: unknown) => {
-    let update: DesktopRendererSettingsUpdate;
-    try {
-      update = parseDesktopRendererSettingsUpdate(nextSettings);
-      if (update.modelConfigurations !== undefined) {
-        assertDesktopModelConfigurationHistoryPreserved(
-          desktopSettings.modelConfigurations,
-          update.modelConfigurations,
-        );
+  ipcMain.handle(
+    "desktop:get-model-catalog",
+    async (_event, provider: unknown) => {
+      if (
+        provider !== "openrouter" &&
+        provider !== "openai" &&
+        provider !== "anthropic" &&
+        provider !== "ollama" &&
+        provider !== "lmstudio"
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_model_provider",
+          message: "Desktop model provider is invalid.",
+        });
       }
-    } catch (error) {
-      throw createDesktopError({
-        code: "desktop.invalid_settings",
-        message: "Desktop settings update is invalid.",
-        details: error instanceof Error ? error.message : String(error),
+      return await resolveProviderModelCatalog(provider, process.env);
+    },
+  );
+  ipcMain.handle(
+    "desktop:save-settings",
+    async (_event, nextSettings: unknown) => {
+      let update: DesktopRendererSettingsUpdate;
+      try {
+        update = parseDesktopRendererSettingsUpdate(nextSettings);
+        if (update.modelConfigurations !== undefined) {
+          assertDesktopModelConfigurationHistoryPreserved(
+            desktopSettings.modelConfigurations,
+            update.modelConfigurations,
+          );
+        }
+      } catch (error) {
+        throw createDesktopError({
+          code: "desktop.invalid_settings",
+          message: "Desktop settings update is invalid.",
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const nextProjects = update.projects ?? desktopSettings.projects;
+      const preparedProjects =
+        await prepareDesktopSettingsProjectRegistrations(nextProjects);
+      const normalized = normalizeDesktopSettings(
+        {
+          ...desktopSettings,
+          projects: preparedProjects,
+          modelConfigurations:
+            update.modelConfigurations ?? desktopSettings.modelConfigurations,
+          defaultModelConfigurationId:
+            update.defaultModelConfigurationId ??
+            desktopSettings.defaultModelConfigurationId,
+          defaultEnabledAppIds:
+            update.defaultEnabledAppIds ?? desktopSettings.defaultEnabledAppIds,
+          appearanceTheme:
+            update.appearanceTheme ?? desktopSettings.appearanceTheme,
+        },
+        { fallbackModelPolicy: desktopModelPolicy },
+      );
+      return persistDesktopRendererConfiguration(runnerTransport, {
+        settings: normalized,
+        restartRuntime: false,
+        resetRunnerProfile: false,
+        restartMessage: "Applying project settings…",
       });
-    }
-    const nextProjects = update.projects ?? desktopSettings.projects;
-    const preparedProjects = await prepareDesktopSettingsProjectRegistrations(nextProjects);
-    const normalized = normalizeDesktopSettings({
-      ...desktopSettings,
-      projects: preparedProjects,
-      modelConfigurations: update.modelConfigurations ?? desktopSettings.modelConfigurations,
-      defaultModelConfigurationId:
-        update.defaultModelConfigurationId ?? desktopSettings.defaultModelConfigurationId,
-      defaultEnabledAppIds: update.defaultEnabledAppIds ?? desktopSettings.defaultEnabledAppIds,
-      appearanceTheme: update.appearanceTheme ?? desktopSettings.appearanceTheme,
-    }, { fallbackModelPolicy: desktopModelPolicy });
-    return persistDesktopRendererConfiguration(runnerTransport, {
-      settings: normalized,
-      restartRuntime: false,
-      resetRunnerProfile: false,
-      restartMessage: "Applying project settings…",
-    });
-  });
+    },
+  );
   ipcMain.handle("desktop:get-boot-state", () => bootState);
   ipcMain.handle("desktop:pick-workspace", async () => {
     const result = await dialog.showOpenDialog({
@@ -1088,21 +1427,25 @@ function registerIpcHandlers(
     });
     return result.canceled === true ? undefined : result.filePaths[0];
   });
-  ipcMain.handle("desktop:pick-project-folder", async (): Promise<DesktopProjectRegistration | undefined> => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openDirectory", "createDirectory"],
-      title: "Add project folder",
-    });
-    const selectedPath = result.canceled === true ? undefined : result.filePaths[0];
-    if (selectedPath === undefined) {
-      return ;
-    }
-    await ensureDesktopProjectGitBootstrap(selectedPath);
-    return {
-      path: selectedPath,
-      label: path.basename(selectedPath),
-    };
-  });
+  ipcMain.handle(
+    "desktop:pick-project-folder",
+    async (): Promise<DesktopProjectRegistration | undefined> => {
+      const result = await dialog.showOpenDialog({
+        properties: ["openDirectory", "createDirectory"],
+        title: "Add project folder",
+      });
+      const selectedPath =
+        result.canceled === true ? undefined : result.filePaths[0];
+      if (selectedPath === undefined) {
+        return;
+      }
+      await ensureDesktopProjectGitBootstrap(selectedPath);
+      return {
+        path: selectedPath,
+        label: path.basename(selectedPath),
+      };
+    },
+  );
   ipcMain.handle("desktop:open-external", async (_event, url: unknown) => {
     if (typeof url !== "string" || /^https?:\/\//u.test(url) === false) {
       throw createDesktopError({
@@ -1112,32 +1455,40 @@ function registerIpcHandlers(
     }
     await shell.openExternal(url);
   });
-  ipcMain.handle("desktop:open-project-run-preview", async (_event, input: unknown) => {
-    if (typeof input !== "object" || input === null || Array.isArray(input)) {
-      throw createDesktopError({
-        code: "desktop.invalid_project_run_preview_input",
-        message: "desktop.openProjectRunPreview requires a project run payload.",
+  ipcMain.handle(
+    "desktop:open-project-run-preview",
+    async (_event, input: unknown) => {
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        throw createDesktopError({
+          code: "desktop.invalid_project_run_preview_input",
+          message:
+            "desktop.openProjectRunPreview requires a project run payload.",
+        });
+      }
+      const payload = input as Record<string, unknown>;
+      if (
+        typeof payload.runId !== "string" ||
+        payload.runId.trim().length === 0
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_project_run_id",
+          message: "desktop.openProjectRunPreview requires a run id.",
+        });
+      }
+      if (payload.url !== undefined && typeof payload.url !== "string") {
+        throw createDesktopError({
+          code: "desktop.invalid_project_run_preview_url",
+          message:
+            "desktop.openProjectRunPreview requires an http(s) URL when a URL is provided.",
+        });
+      }
+      const preview = await resolveCoreProjectRunPreviewUrl({
+        runId: payload.runId,
+        ...(typeof payload.url === "string" ? { url: payload.url } : {}),
       });
-    }
-    const payload = input as Record<string, unknown>;
-    if (typeof payload.runId !== "string" || payload.runId.trim().length === 0) {
-      throw createDesktopError({
-        code: "desktop.invalid_project_run_id",
-        message: "desktop.openProjectRunPreview requires a run id.",
-      });
-    }
-    if (payload.url !== undefined && typeof payload.url !== "string") {
-      throw createDesktopError({
-        code: "desktop.invalid_project_run_preview_url",
-        message: "desktop.openProjectRunPreview requires an http(s) URL when a URL is provided.",
-      });
-    }
-    const preview = await resolveCoreProjectRunPreviewUrl({
-      runId: payload.runId,
-      ...(typeof payload.url === "string" ? { url: payload.url } : {}),
-    });
-    await openProjectRunPreviewWindow(preview.run, preview.url);
-  });
+      await openProjectRunPreviewWindow(preview.run, preview.url);
+    },
+  );
   ipcMain.handle("desktop:open-file-editor", async (_event, input: unknown) => {
     const editorInput = parseDesktopOpenFileEditorInput(input);
     const projectPath = await resolveDesktopAuthorizedWorkspaceRoot(
@@ -1152,7 +1503,10 @@ function registerIpcHandlers(
       invalidInputCode: "desktop.invalid_open_input",
       invalidTargetCode: "desktop.invalid_open_path",
     });
-    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(parsed.rootPath, parsed.threadId);
+    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(
+      parsed.rootPath,
+      parsed.threadId,
+    );
     const resolved = await resolveVerifiedDesktopPathTarget(
       { ...parsed, rootPath },
       [rootPath],
@@ -1165,7 +1519,10 @@ function registerIpcHandlers(
       invalidInputCode: "desktop.invalid_reveal_input",
       invalidTargetCode: "desktop.invalid_reveal_path",
     });
-    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(parsed.rootPath, parsed.threadId);
+    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(
+      parsed.rootPath,
+      parsed.threadId,
+    );
     const resolved = await resolveVerifiedDesktopPathTarget(
       { ...parsed, rootPath },
       [rootPath],
@@ -1184,23 +1541,33 @@ function registerIpcHandlers(
       currentDatabaseUrl = database.databaseUrl;
       databaseStatus = database.status;
     }
-    updateBootState({
-      phase: "starting_runtime",
-      message: "Restarting Kestrel runtime…",
-      database: databaseStatus,
-    }, mainWindow?.webContents);
+    updateBootState(
+      {
+        phase: "starting_runtime",
+        message: "Restarting Kestrel runtime…",
+        database: databaseStatus,
+      },
+      mainWindow?.webContents,
+    );
     await stopCoreProjectRuns();
     await runnerTransport.stop();
     await ensureDesktopRunnerResponsive(runnerTransport);
     const status = runnerTransport.getStatus();
-    updateBootState({
-      phase: "ready",
-      message: "Desktop ready.",
-      database: databaseStatus,
-    }, mainWindow?.webContents);
+    updateBootState(
+      {
+        phase: "ready",
+        message: "Desktop ready.",
+        database: databaseStatus,
+      },
+      mainWindow?.webContents,
+    );
     return status;
   });
-  ipcMain.handle("desktop:request-microphone-access", async (): Promise<DesktopMicrophoneAccess> => requestDesktopMicrophoneAccess());
+  ipcMain.handle(
+    "desktop:request-microphone-access",
+    async (): Promise<DesktopMicrophoneAccess> =>
+      requestDesktopMicrophoneAccess(),
+  );
   ipcMain.handle("desktop:reset-runtime-store", async () => {
     if (desktopConfig === undefined) {
       throw createDesktopError({
@@ -1209,11 +1576,14 @@ function registerIpcHandlers(
       });
     }
     try {
-      updateBootState({
-        phase: "starting_runtime",
-        message: "Resetting local runtime store…",
-        database: databaseStatus,
-      }, mainWindow?.webContents);
+      updateBootState(
+        {
+          phase: "starting_runtime",
+          message: "Resetting local runtime store…",
+          database: databaseStatus,
+        },
+        mainWindow?.webContents,
+      );
       await stopCoreProjectRuns();
       await runnerTransport.stop();
       const reset = await archiveRuntimeStore(desktopConfig.runtimeHomePath);
@@ -1224,23 +1594,31 @@ function registerIpcHandlers(
       }
       await ensureDesktopRunnerResponsive(runnerTransport);
       const runtimeStatus = runnerTransport.getStatus();
-      updateBootState({
-        phase: "ready",
-        message: "Desktop ready.",
-        database: databaseStatus,
-      }, mainWindow?.webContents);
+      updateBootState(
+        {
+          phase: "ready",
+          message: "Desktop ready.",
+          database: databaseStatus,
+        },
+        mainWindow?.webContents,
+      );
       return {
         ...reset,
         runtimeStatus,
       };
     } catch (error) {
-      updateBootState({
-        phase: "failed",
-        message: "Runtime store reset failed.",
-        ...(readDesktopErrorCode(error) !== undefined ? { code: readDesktopErrorCode(error) } : {}),
-        details: error instanceof Error ? error.message : String(error),
-        database: databaseStatus,
-      }, mainWindow?.webContents);
+      updateBootState(
+        {
+          phase: "failed",
+          message: "Runtime store reset failed.",
+          ...(readDesktopErrorCode(error) !== undefined
+            ? { code: readDesktopErrorCode(error) }
+            : {}),
+          details: error instanceof Error ? error.message : String(error),
+          database: databaseStatus,
+        },
+        mainWindow?.webContents,
+      );
       throw error;
     }
   });
@@ -1252,7 +1630,9 @@ function registerIpcHandlers(
     const status = runnerTransport.getStatus();
     shell.showItemInFolder(status.logPath);
   });
-  ipcMain.handle("desktop:get-runtime-status", async () => runnerTransport.getStatus());
+  ipcMain.handle("desktop:get-runtime-status", async () =>
+    runnerTransport.getStatus(),
+  );
   ipcMain.handle("desktop:get-runtime-health", async () => runtimeHealth);
   ipcMain.handle("desktop:get-database-status", async () => {
     if (databaseController === undefined) {
@@ -1287,520 +1667,1120 @@ function registerIpcHandlers(
     mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
     return databaseStatus;
   });
-  ipcMain.handle("desktop:reveal-database-files", async (_event, target: unknown) => {
-    if (target !== "log" && target !== "data") {
-      throw createDesktopError({
-        code: "desktop.invalid_database_reveal_target",
-        message: "desktop.revealDatabaseFiles requires 'log' or 'data'.",
-      });
-    }
-    const filePath = target === "log" ? databaseController?.getLogPath() : databaseController?.getDataPath();
-    if (filePath === undefined) {
-      throw createDesktopError({
-        code: "desktop.database_path_unavailable",
-        message: `Database ${target} path is unavailable.`,
-      });
-    }
-    shell.showItemInFolder(filePath);
-  });
-  ipcMain.handle("desktop:list-directory", async (_event, rootPath: unknown, directoryPath: unknown, threadId: unknown): Promise<DesktopDirectoryListing> => {
-    if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
-      throw createDesktopError({
-        code: "desktop.invalid_root_path",
-        message: "desktop.listDirectory requires a project root path.",
-      });
-    }
-    const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(rootPath, parseOptionalThreadId(threadId));
-    const resolvedDirectory = typeof directoryPath === "string" && directoryPath.trim().length > 0
-      ? path.resolve(directoryPath)
-      : resolvedRoot;
-    assertWithinRoot(resolvedRoot, resolvedDirectory, "directoryPath");
-    await resolveVerifiedDesktopPathTarget(
-      { rootPath: resolvedRoot, targetPath: resolvedDirectory },
-      [resolvedRoot],
-      "directoryPath",
-    );
-    const directoryEntries = await readdir(resolvedDirectory, { withFileTypes: true });
-    const entries: DesktopFileEntry[] = (await Promise.all(
-      directoryEntries.map(async (entry): Promise<DesktopFileEntry | undefined> => {
-        const entryPath = path.join(resolvedDirectory, entry.name);
-        try {
-          const entryStats = await lstat(entryPath);
-          return {
-            path: entryPath,
-            name: entry.name,
-            kind: entry.isDirectory() ? "directory" as const : "file" as const,
-            modifiedAt: entryStats.mtime.toISOString(),
-            ...(entry.isDirectory() ? {} : { sizeBytes: entryStats.size }),
-          };
-        } catch {
-          return {
-            path: entryPath,
-            name: entry.name,
-            kind: entry.isDirectory() ? "directory" as const : "file" as const,
-          };
-        }
-      }),
-    ))
-      .filter((entry): entry is DesktopFileEntry => entry !== undefined)
-      .sort((left, right) => {
-        if (left.kind !== right.kind) {
-          return left.kind === "directory" ? -1 : 1;
-        }
-        return left.name.localeCompare(right.name);
-      });
-    const listing: DesktopDirectoryListing = {
-      rootPath: resolvedRoot,
-      directoryPath: resolvedDirectory,
-      entries,
-    };
-    projectFileIndex.rememberDirectoryListing(listing);
-    return listing;
-  });
-  ipcMain.handle("desktop:search-project-files", async (_event, rootPath: unknown, query: unknown, threadId: unknown): Promise<DesktopFileSearchResponse> => {
-    if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
-      throw createDesktopError({
-        code: "desktop.invalid_root_path",
-        message: "desktop.searchProjectFiles requires a project root path.",
-      });
-    }
-    const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(rootPath, parseOptionalThreadId(threadId));
-    if (typeof query !== "string" || query.trim().length === 0) {
-      return {
-        rootPath: resolvedRoot,
-        query: "",
-        results: [],
-        truncated: false,
-        fullSearchAvailable: true,
-      };
-    }
-    await resolveVerifiedDesktopPathTarget(
-      { rootPath: resolvedRoot, targetPath: resolvedRoot },
-      [resolvedRoot],
-    );
-    return projectFileIndex.search(resolvedRoot, query.trim());
-  });
-  ipcMain.handle("desktop:search-project-content", async (_event, rootPath: unknown, query: unknown, threadId: unknown): Promise<DesktopFileContentSearchResponse> => {
-    if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
-      throw createDesktopError({
-        code: "desktop.invalid_root_path",
-        message: "desktop.searchProjectContent requires a project root path.",
-      });
-    }
-    const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(rootPath, parseOptionalThreadId(threadId));
-    if (typeof query !== "string" || query.trim().length === 0) {
-      return {
-        rootPath: resolvedRoot,
-        query: "",
-        results: [],
-        truncated: false,
-        fullSearchAvailable: true,
-        scannedFileCount: 0,
-        skippedFileCount: 0,
-      };
-    }
-    if (query.trim().length > 256) {
-      throw createDesktopError({
-        code: "desktop.invalid_content_search_query",
-        message: "desktop.searchProjectContent supports queries up to 256 characters.",
-      });
-    }
-    await resolveVerifiedDesktopPathTarget(
-      { rootPath: resolvedRoot, targetPath: resolvedRoot },
-      [resolvedRoot],
-    );
-    return projectFileIndex.searchContent(resolvedRoot, query.trim());
-  });
-  ipcMain.handle("desktop:watch-project-files", async (event, rootPath: unknown, threadId: unknown) => {
-    const resolvedRoot = await parseDesktopProjectWatchRoot(
-      rootPath,
-      parseOptionalThreadId(threadId),
-      "desktop.watchProjectFiles",
-    );
-    startProjectFileWatcher(resolvedRoot, event.sender.id);
-    event.sender.once("destroyed", () => {
-      stopProjectFileWatcher(resolvedRoot, event.sender.id);
-    });
-  });
-  ipcMain.handle("desktop:unwatch-project-files", async (event, rootPath: unknown) => {
-    const resolvedRoot = parseDesktopProjectUnwatchRoot(rootPath, "desktop.unwatchProjectFiles");
-    stopProjectFileWatcher(resolvedRoot, event.sender.id);
-  });
-  ipcMain.handle("desktop:read-file", async (_event, input: unknown): Promise<DesktopFileContent> => {
-    const parsed = parseDesktopFileReadInput(input);
-    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(parsed.rootPath, parsed.threadId);
-    const resolved = await resolveVerifiedDesktopPathTarget(
-      { ...parsed, rootPath },
-      [rootPath],
-    );
-    const resolvedPath = resolved.targetPath;
-    const fileStats = await stat(resolvedPath);
-    if (fileStats.isFile() === false) {
-      throw createDesktopError({
-        code: "desktop.invalid_read_path",
-        message: "desktop.readFile requires a file path.",
-      });
-    }
-    const contentBuffer = await readEditableTextFileBuffer(resolvedPath, fileStats.size);
-    const diskContent = decodeUtf8TextFile(contentBuffer, resolvedPath);
-    const lineEnding = detectLineEnding(diskContent);
-    const content = normalizeEditorLineEndings(diskContent);
-    const editable =
-      fileStats.size <= EDITABLE_TEXT_FILE_MAX_BYTES && lineEnding !== "mixed";
-    const readOnlyReason =
-      fileStats.size > EDITABLE_TEXT_FILE_MAX_BYTES
-        ? "large_file"
-        : lineEnding === "mixed"
-          ? "mixed_line_endings"
-          : undefined;
-    return {
-      path: resolvedPath,
-      content,
-      contentHash: hashTextContent(diskContent),
-      modifiedAt: fileStats.mtime.toISOString(),
-      sizeBytes: fileStats.size,
-      lineEnding,
-      editable,
-      ...(readOnlyReason !== undefined ? { readOnlyReason } : {}),
-      ...resolveFileViewKind(resolvedPath),
-    };
-  });
-  ipcMain.handle("desktop:write-file", async (_event, input: unknown): Promise<DesktopFileContent> => {
-    const parsed = parseDesktopFileWriteInput(input);
-    const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(parsed.rootPath, parsed.threadId);
-    const resolved = await resolveVerifiedDesktopPathTarget(
-      { ...parsed, rootPath },
-      [rootPath],
-    );
-    const resolvedPath = resolved.targetPath;
-    const currentStats = await stat(resolvedPath);
-    if (currentStats.isFile() === false) {
-      throw createDesktopError({
-        code: "desktop.invalid_write_path",
-        message: "desktop.writeFile requires a file path.",
-      });
-    }
-    assertWritableDesktopTextFile(resolvedPath, currentStats.size);
-    const currentBuffer = await readFile(resolvedPath);
-    const currentContent = decodeUtf8TextFile(currentBuffer, resolvedPath);
-    assertWritableDesktopTextContent(currentContent);
-    const currentHash = hashTextContent(currentContent);
-    if (
-      parsed.expectedContentHash !== undefined &&
-      parsed.expectedContentHash !== currentHash
-    ) {
-      throw createDesktopError({
-        code: "desktop.stale_file_write",
-        message: "The file changed on disk before Kestrel saved it.",
-        details: `expectedContentHash=${parsed.expectedContentHash} currentHash=${currentHash}`,
-      });
-    }
-    const detectedLineEnding = detectLineEnding(currentContent);
-    if (detectedLineEnding === "mixed") {
-      throw createDesktopError({
-        code: "desktop.file_read_only_mixed_line_endings",
-        message: "This file is open read-only because it has mixed line endings.",
-      });
-    }
-    const lineEnding = parsed.lineEnding ?? detectedLineEnding;
-    const nextDiskContent = applyLineEnding(parsed.content, lineEnding);
-    await writeFile(resolvedPath, nextDiskContent, "utf8");
-    const nextStats = await stat(resolvedPath);
-    return {
-      path: resolvedPath,
-      content: normalizeEditorLineEndings(nextDiskContent),
-      contentHash: hashTextContent(nextDiskContent),
-      modifiedAt: nextStats.mtime.toISOString(),
-      sizeBytes: nextStats.size,
-      lineEnding: detectLineEnding(nextDiskContent),
-      editable: true,
-      ...resolveFileViewKind(resolvedPath),
-    };
-  });
-  ipcMain.handle("desktop:discover-mcp-servers", async (): Promise<DesktopMcpDiscoveryResult> => readDesktopMcpInventory());
-  ipcMain.handle("desktop:save-mcp-server", async (_event, input: unknown): Promise<DesktopMcpDiscoveryResult> => {
-    let configuration: DesktopMcpServerMutationInput;
-    try {
-      configuration = parseDesktopMcpServerMutationInput(input);
-    } catch (error) {
-      throw createDesktopError({ code: "desktop.invalid_mcp_server", message: "MCP server configuration is invalid.", details: error instanceof Error ? error.message : String(error) });
-    }
-    let server: DesktopMcpServerConfig;
-    try {
-      if (configuration.enabled) {
-        const prepared = prepareDesktopMcpVerification(configuration);
-        const verification = await requireLocalCoreConnectionManager().executeOnce(
-          async (client) => await client.verifyMcpServer(prepared.request),
-        );
-        server = completeDesktopMcpVerification(
-          configuration,
-          prepared.bindings,
-          verification,
-        );
-      } else {
-        const current = desktopSettings.mcpServers.find((entry) => entry.id === configuration.id);
-        if (current === undefined) throw new Error("Only an existing Desktop-managed MCP server can be disabled.");
-        server = { ...current, enabled: false };
+  ipcMain.handle(
+    "desktop:reveal-database-files",
+    async (_event, target: unknown) => {
+      if (target !== "log" && target !== "data") {
+        throw createDesktopError({
+          code: "desktop.invalid_database_reveal_target",
+          message: "desktop.revealDatabaseFiles requires 'log' or 'data'.",
+        });
       }
-    } catch (error) {
-      throw createDesktopError({ code: "desktop.mcp_verification_failed", message: `${configuration.name} could not be activated.`, details: error instanceof Error ? error.message : String(error) });
-    }
-    const previousServer = desktopSettings.mcpServers.find((entry) => entry.id === server.id);
-    await saveDesktopCoreSettings({
-      ...desktopSettings,
-      mcpServers: [...desktopSettings.mcpServers.filter((entry) => entry.id !== server.id), server],
-      capabilityVerifications: {
-        ...desktopSettings.capabilityVerifications,
-        ...(configuration.enabled ? { "connections.mcp": server.verifiedAt! } : {}),
-      },
-    });
-    const activeCredentialIds = new Set(server.credentials?.map((credential) => credential.credentialId) ?? []);
-    const removedCredentialIds = previousServer?.credentials
-      ?.map((credential) => credential.credentialId)
-      .filter((credentialId) => activeCredentialIds.has(credentialId) === false) ?? [];
-    if (removedCredentialIds.length > 0) {
-      await requireLocalCoreConnectionManager().executeOnce(async (client) => {
-        for (const credentialId of removedCredentialIds) await client.deleteCredential(credentialId);
+      const filePath =
+        target === "log"
+          ? databaseController?.getLogPath()
+          : databaseController?.getDataPath();
+      if (filePath === undefined) {
+        throw createDesktopError({
+          code: "desktop.database_path_unavailable",
+          message: `Database ${target} path is unavailable.`,
+        });
+      }
+      shell.showItemInFolder(filePath);
+    },
+  );
+  ipcMain.handle(
+    "desktop:list-directory",
+    async (
+      _event,
+      rootPath: unknown,
+      directoryPath: unknown,
+      threadId: unknown,
+    ): Promise<DesktopDirectoryListing> => {
+      if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
+        throw createDesktopError({
+          code: "desktop.invalid_root_path",
+          message: "desktop.listDirectory requires a project root path.",
+        });
+      }
+      const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(
+        rootPath,
+        parseOptionalThreadId(threadId),
+      );
+      const resolvedDirectory =
+        typeof directoryPath === "string" && directoryPath.trim().length > 0
+          ? path.resolve(directoryPath)
+          : resolvedRoot;
+      assertWithinRoot(resolvedRoot, resolvedDirectory, "directoryPath");
+      await resolveVerifiedDesktopPathTarget(
+        { rootPath: resolvedRoot, targetPath: resolvedDirectory },
+        [resolvedRoot],
+        "directoryPath",
+      );
+      const directoryEntries = await readdir(resolvedDirectory, {
+        withFileTypes: true,
       });
-    }
-    applyDesktopProfileOverride(desktopSettings);
-    await resetDesktopRunnerAdapter();
-    await runnerTransport.restart();
-    return await readDesktopMcpInventory();
-  });
-  ipcMain.handle("desktop:delete-mcp-server", async (_event, input: unknown): Promise<DesktopMcpDiscoveryResult> => {
-    if (typeof input !== "string" || /^[a-zA-Z0-9._-]+$/u.test(input) === false) {
-      throw createDesktopError({ code: "desktop.invalid_mcp_server", message: "MCP server id is invalid." });
-    }
-    const removed = desktopSettings.mcpServers.find((server) => server.id === input);
-    await saveDesktopCoreSettings({ ...desktopSettings, mcpServers: desktopSettings.mcpServers.filter((server) => server.id !== input) });
-    if (removed?.credentials !== undefined) {
-      await requireLocalCoreConnectionManager().executeOnce(async (client) => {
-        for (const credential of removed.credentials ?? []) {
-          await client.deleteCredential(credential.credentialId);
-        }
+      const entries: DesktopFileEntry[] = (
+        await Promise.all(
+          directoryEntries.map(
+            async (entry): Promise<DesktopFileEntry | undefined> => {
+              const entryPath = path.join(resolvedDirectory, entry.name);
+              try {
+                const entryStats = await lstat(entryPath);
+                return {
+                  path: entryPath,
+                  name: entry.name,
+                  kind: entry.isDirectory()
+                    ? ("directory" as const)
+                    : ("file" as const),
+                  modifiedAt: entryStats.mtime.toISOString(),
+                  ...(entry.isDirectory()
+                    ? {}
+                    : { sizeBytes: entryStats.size }),
+                };
+              } catch {
+                return {
+                  path: entryPath,
+                  name: entry.name,
+                  kind: entry.isDirectory()
+                    ? ("directory" as const)
+                    : ("file" as const),
+                };
+              }
+            },
+          ),
+        )
+      )
+        .filter((entry): entry is DesktopFileEntry => entry !== undefined)
+        .sort((left, right) => {
+          if (left.kind !== right.kind) {
+            return left.kind === "directory" ? -1 : 1;
+          }
+          return left.name.localeCompare(right.name);
+        });
+      const listing: DesktopDirectoryListing = {
+        rootPath: resolvedRoot,
+        directoryPath: resolvedDirectory,
+        entries,
+      };
+      projectFileIndex.rememberDirectoryListing(listing);
+      return listing;
+    },
+  );
+  ipcMain.handle(
+    "desktop:search-project-files",
+    async (
+      _event,
+      rootPath: unknown,
+      query: unknown,
+      threadId: unknown,
+    ): Promise<DesktopFileSearchResponse> => {
+      if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
+        throw createDesktopError({
+          code: "desktop.invalid_root_path",
+          message: "desktop.searchProjectFiles requires a project root path.",
+        });
+      }
+      const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(
+        rootPath,
+        parseOptionalThreadId(threadId),
+      );
+      if (typeof query !== "string" || query.trim().length === 0) {
+        return {
+          rootPath: resolvedRoot,
+          query: "",
+          results: [],
+          truncated: false,
+          fullSearchAvailable: true,
+        };
+      }
+      await resolveVerifiedDesktopPathTarget(
+        { rootPath: resolvedRoot, targetPath: resolvedRoot },
+        [resolvedRoot],
+      );
+      return projectFileIndex.search(resolvedRoot, query.trim());
+    },
+  );
+  ipcMain.handle(
+    "desktop:search-project-content",
+    async (
+      _event,
+      rootPath: unknown,
+      query: unknown,
+      threadId: unknown,
+    ): Promise<DesktopFileContentSearchResponse> => {
+      if (typeof rootPath !== "string" || rootPath.trim().length === 0) {
+        throw createDesktopError({
+          code: "desktop.invalid_root_path",
+          message: "desktop.searchProjectContent requires a project root path.",
+        });
+      }
+      const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(
+        rootPath,
+        parseOptionalThreadId(threadId),
+      );
+      if (typeof query !== "string" || query.trim().length === 0) {
+        return {
+          rootPath: resolvedRoot,
+          query: "",
+          results: [],
+          truncated: false,
+          fullSearchAvailable: true,
+          scannedFileCount: 0,
+          skippedFileCount: 0,
+        };
+      }
+      if (query.trim().length > 256) {
+        throw createDesktopError({
+          code: "desktop.invalid_content_search_query",
+          message:
+            "desktop.searchProjectContent supports queries up to 256 characters.",
+        });
+      }
+      await resolveVerifiedDesktopPathTarget(
+        { rootPath: resolvedRoot, targetPath: resolvedRoot },
+        [resolvedRoot],
+      );
+      return projectFileIndex.searchContent(resolvedRoot, query.trim());
+    },
+  );
+  ipcMain.handle(
+    "desktop:watch-project-files",
+    async (event, rootPath: unknown, threadId: unknown) => {
+      const resolvedRoot = await parseDesktopProjectWatchRoot(
+        rootPath,
+        parseOptionalThreadId(threadId),
+        "desktop.watchProjectFiles",
+      );
+      startProjectFileWatcher(resolvedRoot, event.sender.id);
+      event.sender.once("destroyed", () => {
+        stopProjectFileWatcher(resolvedRoot, event.sender.id);
       });
-    }
-    applyDesktopProfileOverride(desktopSettings);
-    await resetDesktopRunnerAdapter();
-    await runnerTransport.restart();
-    return await readDesktopMcpInventory();
-  });
-  ipcMain.handle("desktop:read-project-launcher", async (_event, projectPath: unknown, packageManagerOverride: unknown, threadId: unknown): Promise<DesktopProjectLauncherDescriptor | undefined> => {
-    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
-      throw createDesktopError({
-        code: "desktop.invalid_project_path",
-        message: "desktop.readProjectLauncher requires a project path.",
-      });
-    }
-    const authorizedProjectPath = await resolveDesktopAuthorizedWorkspaceRoot(
-      projectPath,
-      parseOptionalThreadId(threadId),
-    );
-    return requireLocalCoreConnectionManager().executeIdempotent(
-      async (client) => await client.readDesktopProjectLauncher({
-        projectPath: authorizedProjectPath,
-        ...(packageManagerOverride === "npm" || packageManagerOverride === "pnpm"
-          ? { packageManagerOverride }
+    },
+  );
+  ipcMain.handle(
+    "desktop:unwatch-project-files",
+    async (event, rootPath: unknown) => {
+      const resolvedRoot = parseDesktopProjectUnwatchRoot(
+        rootPath,
+        "desktop.unwatchProjectFiles",
+      );
+      stopProjectFileWatcher(resolvedRoot, event.sender.id);
+    },
+  );
+  ipcMain.handle(
+    "desktop:read-file",
+    async (_event, input: unknown): Promise<DesktopFileContent> => {
+      const parsed = parseDesktopFileReadInput(input);
+      const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(
+        parsed.rootPath,
+        parsed.threadId,
+      );
+      const resolved = await resolveVerifiedDesktopPathTarget(
+        { ...parsed, rootPath },
+        [rootPath],
+      );
+      const resolvedPath = resolved.targetPath;
+      const fileStats = await stat(resolvedPath);
+      if (fileStats.isFile() === false) {
+        throw createDesktopError({
+          code: "desktop.invalid_read_path",
+          message: "desktop.readFile requires a file path.",
+        });
+      }
+      const contentBuffer = await readEditableTextFileBuffer(
+        resolvedPath,
+        fileStats.size,
+      );
+      const diskContent = decodeUtf8TextFile(contentBuffer, resolvedPath);
+      const lineEnding = detectLineEnding(diskContent);
+      const content = normalizeEditorLineEndings(diskContent);
+      const editable =
+        fileStats.size <= EDITABLE_TEXT_FILE_MAX_BYTES &&
+        lineEnding !== "mixed";
+      const readOnlyReason =
+        fileStats.size > EDITABLE_TEXT_FILE_MAX_BYTES
+          ? "large_file"
+          : lineEnding === "mixed"
+            ? "mixed_line_endings"
+            : undefined;
+      return {
+        path: resolvedPath,
+        content,
+        contentHash: hashTextContent(diskContent),
+        modifiedAt: fileStats.mtime.toISOString(),
+        sizeBytes: fileStats.size,
+        lineEnding,
+        editable,
+        ...(readOnlyReason !== undefined ? { readOnlyReason } : {}),
+        ...resolveFileViewKind(resolvedPath),
+      };
+    },
+  );
+  ipcMain.handle(
+    "desktop:write-file",
+    async (_event, input: unknown): Promise<DesktopFileContent> => {
+      const parsed = parseDesktopFileWriteInput(input);
+      const rootPath = await resolveDesktopAuthorizedWorkspaceRoot(
+        parsed.rootPath,
+        parsed.threadId,
+      );
+      const resolved = await resolveVerifiedDesktopPathTarget(
+        { ...parsed, rootPath },
+        [rootPath],
+      );
+      const resolvedPath = resolved.targetPath;
+      const currentStats = await stat(resolvedPath);
+      if (currentStats.isFile() === false) {
+        throw createDesktopError({
+          code: "desktop.invalid_write_path",
+          message: "desktop.writeFile requires a file path.",
+        });
+      }
+      assertWritableDesktopTextFile(resolvedPath, currentStats.size);
+      const currentBuffer = await readFile(resolvedPath);
+      const currentContent = decodeUtf8TextFile(currentBuffer, resolvedPath);
+      assertWritableDesktopTextContent(currentContent);
+      const currentHash = hashTextContent(currentContent);
+      if (
+        parsed.expectedContentHash !== undefined &&
+        parsed.expectedContentHash !== currentHash
+      ) {
+        throw createDesktopError({
+          code: "desktop.stale_file_write",
+          message: "The file changed on disk before Kestrel saved it.",
+          details: `expectedContentHash=${parsed.expectedContentHash} currentHash=${currentHash}`,
+        });
+      }
+      const detectedLineEnding = detectLineEnding(currentContent);
+      if (detectedLineEnding === "mixed") {
+        throw createDesktopError({
+          code: "desktop.file_read_only_mixed_line_endings",
+          message:
+            "This file is open read-only because it has mixed line endings.",
+        });
+      }
+      const lineEnding = parsed.lineEnding ?? detectedLineEnding;
+      const nextDiskContent = applyLineEnding(parsed.content, lineEnding);
+      await writeFile(resolvedPath, nextDiskContent, "utf8");
+      const nextStats = await stat(resolvedPath);
+      return {
+        path: resolvedPath,
+        content: normalizeEditorLineEndings(nextDiskContent),
+        contentHash: hashTextContent(nextDiskContent),
+        modifiedAt: nextStats.mtime.toISOString(),
+        sizeBytes: nextStats.size,
+        lineEnding: detectLineEnding(nextDiskContent),
+        editable: true,
+        ...resolveFileViewKind(resolvedPath),
+      };
+    },
+  );
+  ipcMain.handle(
+    "desktop:discover-mcp-servers",
+    async (): Promise<DesktopMcpDiscoveryResult> => readDesktopMcpInventory(),
+  );
+  ipcMain.handle(
+    "desktop:start-standard-app-connection",
+    async (_event, rawInput: unknown): Promise<DesktopAppConnectionSession> => {
+      if (
+        typeof rawInput !== "object" ||
+        rawInput === null ||
+        Array.isArray(rawInput)
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_app_connection",
+          message: "The App connection request is invalid.",
+        });
+      }
+      const raw = rawInput as Record<string, unknown>;
+      if (
+        Object.keys(raw).some(
+          (key) => key !== "appId" && key !== "capabilityPacks",
+        ) ||
+        typeof raw.appId !== "string" ||
+        (raw.capabilityPacks !== undefined &&
+          (!Array.isArray(raw.capabilityPacks) ||
+            raw.capabilityPacks.some((pack) => typeof pack !== "string")))
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_app_connection",
+          message: "The App connection request is invalid.",
+        });
+      }
+      const input: DesktopStandardAppConnectionInput = {
+        appId: raw.appId,
+        ...(raw.capabilityPacks !== undefined
+          ? { capabilityPacks: raw.capabilityPacks as string[] }
           : {}),
-      }),
-    );
-  });
-  ipcMain.handle("desktop:list-workspace-skills", async (_event, projectPath: unknown) =>
-    await desktopWorkspaceSkillManager(projectPath).list());
-  ipcMain.handle("desktop:install-workspace-skill", async (_event, projectPath: unknown, source: unknown) =>
-    await desktopWorkspaceSkillManager(projectPath).install(parseDesktopWorkspaceSkillSource(source)));
-  ipcMain.handle("desktop:update-workspace-skill", async (_event, projectPath: unknown, installationId: unknown, source: unknown) =>
-    await desktopWorkspaceSkillManager(projectPath).updateSource(
-      requireDesktopString(installationId, "desktop.updateWorkspaceSkill requires an installation id."),
-      parseDesktopWorkspaceSkillSource(source),
-    ));
-  ipcMain.handle("desktop:sync-workspace-skills", async (_event, projectPath: unknown) =>
-    await desktopWorkspaceSkillManager(projectPath).syncAll());
-  ipcMain.handle("desktop:remove-workspace-skill", async (_event, projectPath: unknown, installationId: unknown) => {
-    const manager = desktopWorkspaceSkillManager(projectPath);
-    await manager.remove(requireDesktopString(installationId, "desktop.removeWorkspaceSkill requires an installation id."));
-    return await manager.list();
-  });
-  ipcMain.handle("desktop:list-project-runs", async (): Promise<DesktopManagedProjectRun[]> => requireLocalCoreConnectionManager().executeIdempotent(
-      async (client) => await client.listDesktopProjectRuns(),
-    ));
-  ipcMain.handle("desktop:start-project-run", async (_event, input: unknown): Promise<DesktopManagedProjectRun> => {
-    if (typeof input !== "object" || input === null || Array.isArray(input)) {
-      throw createDesktopError({
-        code: "desktop.invalid_project_run_input",
-        message: "desktop.startProjectRun requires a project run payload.",
+      };
+      const connection = getDesktopStandardAppConnection(input.appId);
+      if (connection?.kind !== "authorization") {
+        throw createDesktopError({
+          code: "desktop.app_connection_unavailable",
+          message: "This App does not support this Desktop connection flow.",
+        });
+      }
+      const manifest = KESTREL_STANDARD_APP_MANIFESTS.find(
+        (candidate) => candidate.id === connection.appId,
+      );
+      if (manifest === undefined) {
+        throw new Error("The published App manifest is unavailable.");
+      }
+      const capabilityPacks = [...new Set(input.capabilityPacks ?? [])];
+      const configuredScopes = connection.capabilityPackScopes;
+      if (
+        (configuredScopes === undefined && capabilityPacks.length > 0) ||
+        (configuredScopes !== undefined &&
+          (capabilityPacks.length === 0 ||
+            capabilityPacks.some(
+              (pack) => configuredScopes[pack] === undefined,
+            )))
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_app_connection",
+          message: `Choose valid ${manifest.name} capabilities before connecting.`,
+        });
+      }
+      const clientId = resolveDesktopPublicAppClientId({
+        appId: connection.appId,
+        environmentVariable: connection.clientIdEnvironmentVariable,
+        env: process.env,
+        configPath: path.join(app.getAppPath(), "app-connections.json"),
       });
-    }
-    const payload = input as Record<string, unknown>;
-    if (typeof payload.projectPath !== "string" || payload.projectPath.trim().length === 0) {
-      throw createDesktopError({
-        code: "desktop.invalid_project_path",
-        message: "desktop.startProjectRun requires a project path.",
+      if (connection.clientIdEnvironmentVariable && !clientId) {
+        throw createDesktopError({
+          code: "desktop.app_connection_unavailable",
+          message: `${manifest.name} is not configured for this Kestrel Desktop build.`,
+        });
+      }
+      const session = await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          connection.runtime === "native" &&
+          connection.appId === KESTREL_APP_IDS.MICROSOFT_365
+            ? await client.startMicrosoft365OAuth({
+                clientId: clientId!,
+                packs:
+                  capabilityPacks as import("../../../src/apps/microsoft365.js").Microsoft365Pack[],
+              })
+            : connection.runtime === "native" &&
+                connection.appId === KESTREL_APP_IDS.GOOGLE_WORKSPACE
+              ? await client.startGoogleWorkspaceOAuth({
+                  clientId: clientId!,
+                  packs:
+                    capabilityPacks as import("../../../src/apps/googleWorkspace.js").GoogleWorkspacePack[],
+                })
+              : await client.startMcpOAuth({
+                  credentialPrefix: connection.credentialPrefix,
+                  serverUrl: connection.url,
+                  appName: manifest.name,
+                  ...(clientId ? { clientId } : {}),
+                  ...(configuredScopes
+                    ? {
+                        scopes: [
+                          ...new Set(
+                            capabilityPacks.flatMap(
+                              (pack) => configuredScopes[pack] ?? [],
+                            ),
+                          ),
+                        ],
+                      }
+                    : {}),
+                }),
+      );
+      if (connection.appId === KESTREL_APP_IDS.MICROSOFT_365) {
+        microsoft365AuthorizationSessionIds.add(session.sessionId);
+      }
+      if (connection.appId === KESTREL_APP_IDS.GOOGLE_WORKSPACE) {
+        googleWorkspaceAuthorizationSessionIds.add(session.sessionId);
+      }
+      if (session.authorizationUrl !== undefined) {
+        await shell.openExternal(session.authorizationUrl);
+      }
+      return {
+        sessionId: session.sessionId,
+        state: session.state,
+        ...(session.error !== undefined ? { error: session.error } : {}),
+        expiresAt: session.expiresAt,
+      };
+    },
+  );
+  ipcMain.handle(
+    "desktop:get-standard-app-connection-status",
+    async (
+      _event,
+      sessionId: unknown,
+    ): Promise<DesktopAppConnectionSession> => {
+      if (typeof sessionId !== "string") {
+        throw createDesktopError({
+          code: "desktop.invalid_app_connection",
+          message: "The App connection session is invalid.",
+        });
+      }
+      const session = await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          microsoft365AuthorizationSessionIds.has(sessionId)
+            ? await client.microsoft365OAuthStatus(sessionId)
+            : googleWorkspaceAuthorizationSessionIds.has(sessionId)
+              ? await client.googleWorkspaceOAuthStatus(sessionId)
+              : await client.mcpOAuthStatus(sessionId),
+      );
+      if (session.state !== "awaiting_user") {
+        microsoft365AuthorizationSessionIds.delete(sessionId);
+        googleWorkspaceAuthorizationSessionIds.delete(sessionId);
+      }
+      return {
+        sessionId: session.sessionId,
+        state: session.state,
+        ...(session.error !== undefined ? { error: session.error } : {}),
+        expiresAt: session.expiresAt,
+      };
+    },
+  );
+  ipcMain.handle(
+    "desktop:save-mcp-server",
+    async (_event, input: unknown): Promise<DesktopMcpDiscoveryResult> => {
+      let configuration: DesktopMcpServerMutationInput;
+      try {
+        configuration = parseDesktopMcpServerMutationInput(input);
+      } catch (error) {
+        throw createDesktopError({
+          code: "desktop.invalid_mcp_server",
+          message: "MCP server configuration is invalid.",
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+      let server: DesktopMcpServerConfig;
+      try {
+        if (
+          configuration.appId !== undefined &&
+          desktopSettings.mcpServers.some(
+            (entry) =>
+              entry.appId === configuration.appId &&
+              entry.id !== configuration.id,
+          )
+        ) {
+          throw new Error(
+            "This standard App already has a Desktop connection.",
+          );
+        }
+        const standardConnection = configuration.appId
+          ? getDesktopStandardAppConnection(configuration.appId)
+          : undefined;
+        if (
+          configuration.enabled &&
+          standardConnection?.kind === "authorization" &&
+          standardConnection.runtime === "native"
+        ) {
+          const toolNames = [
+            ...new Set(
+              (configuration.capabilityPacks ?? []).flatMap(
+                (pack) => standardConnection.capabilityPackTools?.[pack] ?? [],
+              ),
+            ),
+          ];
+          if (toolNames.length === 0)
+            throw new Error("Choose at least one App capability.");
+          const verification =
+            await requireLocalCoreConnectionManager().executeOnce(
+              async (client) =>
+                configuration.appId === KESTREL_APP_IDS.GOOGLE_WORKSPACE
+                  ? await client.verifyGoogleWorkspace(
+                      (configuration.capabilityPacks ??
+                        []) as import("../../../src/apps/googleWorkspace.js").GoogleWorkspacePack[],
+                    )
+                  : await client.verifyMicrosoft365(
+                      (configuration.capabilityPacks ??
+                        []) as import("../../../src/apps/microsoft365.js").Microsoft365Pack[],
+                    ),
+            );
+          server = {
+            id: configuration.id,
+            appId: configuration.appId!,
+            name: configuration.name,
+            transport: "http",
+            url: configuration.url!,
+            enabled: true,
+            source: "Kestrel Desktop",
+            sourceKind: "desktop-managed",
+            oauthCredentialPrefix: configuration.oauthCredentialPrefix!,
+            capabilityPacks: [...(configuration.capabilityPacks ?? [])],
+            tools: toolNames.map((name) => {
+              const requiresApproval = desktopStandardAppToolRequiresApproval(
+                configuration.appId!,
+                name,
+              );
+              return {
+                name,
+                description: `${configuration.name} capability`,
+                approvalMode: requiresApproval ? "ask" : "auto",
+                allowedInteractionModes: requiresApproval
+                  ? ["chat", "build"]
+                  : ["chat", "plan", "build"],
+              };
+            }),
+            toolCount: toolNames.length,
+            verifiedAt: verification.verifiedAt,
+          };
+        } else if (configuration.enabled) {
+          const prepared = prepareDesktopMcpVerification(configuration);
+          const verification =
+            await requireLocalCoreConnectionManager().executeOnce(
+              async (client) => await client.verifyMcpServer(prepared.request),
+            );
+          server = completeDesktopMcpVerification(
+            configuration,
+            prepared.bindings,
+            verification,
+          );
+        } else {
+          const current = desktopSettings.mcpServers.find(
+            (entry) => entry.id === configuration.id,
+          );
+          if (current === undefined)
+            throw new Error(
+              "Only an existing Desktop-managed MCP server can be disabled.",
+            );
+          server = { ...current, enabled: false };
+        }
+      } catch (error) {
+        throw createDesktopError({
+          code: "desktop.mcp_verification_failed",
+          message: `${configuration.name} could not be activated.`,
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const previousServer = desktopSettings.mcpServers.find(
+        (entry) => entry.id === server.id,
+      );
+      await saveDesktopCoreSettings({
+        ...desktopSettings,
+        mcpServers: [
+          ...desktopSettings.mcpServers.filter(
+            (entry) => entry.id !== server.id,
+          ),
+          server,
+        ],
+        capabilityVerifications: {
+          ...desktopSettings.capabilityVerifications,
+          ...(configuration.enabled
+            ? { "connections.mcp": server.verifiedAt! }
+            : {}),
+        },
       });
-    }
-    if (typeof payload.scriptName !== "string" || payload.scriptName.trim().length === 0) {
-      throw createDesktopError({
-        code: "desktop.invalid_script_name",
-        message: "desktop.startProjectRun requires a script name.",
+      const activeCredentialIds = new Set(
+        server.credentials?.map((credential) => credential.credentialId) ?? [],
+      );
+      const removedCredentialIds =
+        previousServer?.credentials
+          ?.map((credential) => credential.credentialId)
+          .filter(
+            (credentialId) => activeCredentialIds.has(credentialId) === false,
+          ) ?? [];
+      if (
+        previousServer?.oauthCredentialPrefix !== undefined &&
+        previousServer.oauthCredentialPrefix !== server.oauthCredentialPrefix
+      ) {
+        removedCredentialIds.push(
+          ...listMcpOAuthCredentialIds(previousServer.oauthCredentialPrefix),
+        );
+      }
+      if (removedCredentialIds.length > 0) {
+        await requireLocalCoreConnectionManager().executeOnce(
+          async (client) => {
+            for (const credentialId of removedCredentialIds)
+              await client.deleteCredential(credentialId);
+          },
+        );
+      }
+      applyDesktopProfileOverride(desktopSettings);
+      await resetDesktopRunnerAdapter();
+      await runnerTransport.restart();
+      return await readDesktopMcpInventory();
+    },
+  );
+  ipcMain.handle(
+    "desktop:delete-mcp-server",
+    async (_event, input: unknown): Promise<DesktopMcpDiscoveryResult> => {
+      if (
+        typeof input !== "string" ||
+        /^[a-zA-Z0-9._-]+$/u.test(input) === false
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_mcp_server",
+          message: "MCP server id is invalid.",
+        });
+      }
+      const removed = desktopSettings.mcpServers.find(
+        (server) => server.id === input,
+      );
+      await saveDesktopCoreSettings({
+        ...desktopSettings,
+        mcpServers: desktopSettings.mcpServers.filter(
+          (server) => server.id !== input,
+        ),
       });
-    }
-    const projectPath = await resolveDesktopAuthorizedWorkspaceRoot(
-      payload.projectPath,
-      parseOptionalThreadId(payload.threadId),
-    );
-    const scriptName = payload.scriptName;
-    const packageManagerOverride = payload.packageManagerOverride === "npm" || payload.packageManagerOverride === "pnpm"
-      ? payload.packageManagerOverride
-      : undefined;
-    return requireLocalCoreConnectionManager().executeOnce(
-      async (client) => await client.startDesktopProjectRun({
+      if (
+        removed?.credentials !== undefined ||
+        removed?.oauthCredentialPrefix !== undefined
+      ) {
+        await requireLocalCoreConnectionManager().executeOnce(
+          async (client) => {
+            for (const credential of removed.credentials ?? []) {
+              await client.deleteCredential(credential.credentialId);
+            }
+            if (removed.oauthCredentialPrefix !== undefined) {
+              for (const credentialId of listMcpOAuthCredentialIds(
+                removed.oauthCredentialPrefix,
+              )) {
+                await client.deleteCredential(credentialId);
+              }
+            }
+          },
+        );
+      }
+      applyDesktopProfileOverride(desktopSettings);
+      await resetDesktopRunnerAdapter();
+      await runnerTransport.restart();
+      return await readDesktopMcpInventory();
+    },
+  );
+  ipcMain.handle(
+    "desktop:read-project-launcher",
+    async (
+      _event,
+      projectPath: unknown,
+      packageManagerOverride: unknown,
+      threadId: unknown,
+    ): Promise<DesktopProjectLauncherDescriptor | undefined> => {
+      if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+        throw createDesktopError({
+          code: "desktop.invalid_project_path",
+          message: "desktop.readProjectLauncher requires a project path.",
+        });
+      }
+      const authorizedProjectPath = await resolveDesktopAuthorizedWorkspaceRoot(
         projectPath,
-        scriptName,
-        ...(packageManagerOverride !== undefined ? { packageManagerOverride } : {}),
+        parseOptionalThreadId(threadId),
+      );
+      return requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) =>
+          await client.readDesktopProjectLauncher({
+            projectPath: authorizedProjectPath,
+            ...(packageManagerOverride === "npm" ||
+            packageManagerOverride === "pnpm"
+              ? { packageManagerOverride }
+              : {}),
+          }),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:list-workspace-skills",
+    async (_event, projectPath: unknown) =>
+      await desktopWorkspaceSkillManager(projectPath).list(),
+  );
+  ipcMain.handle(
+    "desktop:install-workspace-skill",
+    async (_event, projectPath: unknown, source: unknown) =>
+      await desktopWorkspaceSkillManager(projectPath).install(
+        parseDesktopWorkspaceSkillSource(source),
+      ),
+  );
+  ipcMain.handle(
+    "desktop:update-workspace-skill",
+    async (
+      _event,
+      projectPath: unknown,
+      installationId: unknown,
+      source: unknown,
+    ) =>
+      await desktopWorkspaceSkillManager(projectPath).updateSource(
+        requireDesktopString(
+          installationId,
+          "desktop.updateWorkspaceSkill requires an installation id.",
+        ),
+        parseDesktopWorkspaceSkillSource(source),
+      ),
+  );
+  ipcMain.handle(
+    "desktop:sync-workspace-skills",
+    async (_event, projectPath: unknown) =>
+      await desktopWorkspaceSkillManager(projectPath).syncAll(),
+  );
+  ipcMain.handle(
+    "desktop:remove-workspace-skill",
+    async (_event, projectPath: unknown, installationId: unknown) => {
+      const manager = desktopWorkspaceSkillManager(projectPath);
+      await manager.remove(
+        requireDesktopString(
+          installationId,
+          "desktop.removeWorkspaceSkill requires an installation id.",
+        ),
+      );
+      return await manager.list();
+    },
+  );
+  ipcMain.handle(
+    "desktop:list-project-runs",
+    async (): Promise<DesktopManagedProjectRun[]> =>
+      requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.listDesktopProjectRuns(),
+      ),
+  );
+  ipcMain.handle(
+    "desktop:start-project-run",
+    async (_event, input: unknown): Promise<DesktopManagedProjectRun> => {
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        throw createDesktopError({
+          code: "desktop.invalid_project_run_input",
+          message: "desktop.startProjectRun requires a project run payload.",
+        });
+      }
+      const payload = input as Record<string, unknown>;
+      if (
+        typeof payload.projectPath !== "string" ||
+        payload.projectPath.trim().length === 0
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_project_path",
+          message: "desktop.startProjectRun requires a project path.",
+        });
+      }
+      if (
+        typeof payload.scriptName !== "string" ||
+        payload.scriptName.trim().length === 0
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_script_name",
+          message: "desktop.startProjectRun requires a script name.",
+        });
+      }
+      const projectPath = await resolveDesktopAuthorizedWorkspaceRoot(
+        payload.projectPath,
+        parseOptionalThreadId(payload.threadId),
+      );
+      const scriptName = payload.scriptName;
+      const packageManagerOverride =
+        payload.packageManagerOverride === "npm" ||
+        payload.packageManagerOverride === "pnpm"
+          ? payload.packageManagerOverride
+          : undefined;
+      return requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.startDesktopProjectRun({
+            projectPath,
+            scriptName,
+            ...(packageManagerOverride !== undefined
+              ? { packageManagerOverride }
+              : {}),
+          }),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:stop-project-run",
+    async (
+      _event,
+      runId: unknown,
+    ): Promise<DesktopManagedProjectRun | undefined> => {
+      if (typeof runId !== "string" || runId.trim().length === 0) {
+        throw createDesktopError({
+          code: "desktop.invalid_project_run_id",
+          message: "desktop.stopProjectRun requires a run id.",
+        });
+      }
+      return requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.stopDesktopProjectRun(runId),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:restart-project-run",
+    async (_event, runId: unknown): Promise<DesktopManagedProjectRun> => {
+      if (typeof runId !== "string" || runId.trim().length === 0) {
+        throw createDesktopError({
+          code: "desktop.invalid_project_run_id",
+          message: "desktop.restartProjectRun requires a run id.",
+        });
+      }
+      return requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.restartDesktopProjectRun(runId),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:get-project-snapshot",
+    async (_event, sessionId: unknown) =>
+      getDesktopProjectSnapshot({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        sessionId,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
       }),
-    );
-  });
-  ipcMain.handle("desktop:stop-project-run", async (_event, runId: unknown): Promise<DesktopManagedProjectRun | undefined> => {
-    if (typeof runId !== "string" || runId.trim().length === 0) {
-      throw createDesktopError({
-        code: "desktop.invalid_project_run_id",
-        message: "desktop.stopProjectRun requires a run id.",
-      });
-    }
-    return requireLocalCoreConnectionManager().executeOnce(
-      async (client) => await client.stopDesktopProjectRun(runId),
-    );
-  });
-  ipcMain.handle("desktop:restart-project-run", async (_event, runId: unknown): Promise<DesktopManagedProjectRun> => {
-    if (typeof runId !== "string" || runId.trim().length === 0) {
-      throw createDesktopError({
-        code: "desktop.invalid_project_run_id",
-        message: "desktop.restartProjectRun requires a run id.",
-      });
-    }
-    return requireLocalCoreConnectionManager().executeOnce(
-      async (client) => await client.restartDesktopProjectRun(runId),
-    );
-  });
-  ipcMain.handle("desktop:get-project-snapshot", async (_event, sessionId: unknown) => getDesktopProjectSnapshot({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      sessionId,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:run-project-action", async (_event, action: unknown) => runDesktopProjectAction({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      action,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:get-operator-thread", async (_event, threadId: unknown) => getDesktopOperatorThread({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      threadId,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:list-operator-runs", async (_event, query: unknown) => await listDesktopOperatorRuns({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      query,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:get-operator-run", async (_event, runId: unknown) => getDesktopOperatorRun({
+  );
+  ipcMain.handle(
+    "desktop:run-project-action",
+    async (_event, action: unknown) =>
+      runDesktopProjectAction({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        action,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:get-operator-thread",
+    async (_event, threadId: unknown) =>
+      getDesktopOperatorThread({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        threadId,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:list-operator-runs",
+    async (_event, query: unknown) =>
+      await listDesktopOperatorRuns({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        query,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle("desktop:get-operator-run", async (_event, runId: unknown) =>
+    getDesktopOperatorRun({
       adapter: requireDesktopRunnerAdapter(runnerTransport),
       runId,
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:get-workspace-lifecycle", async (_event, sessionId: unknown) => getDesktopWorkspaceLifecycle({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      sessionId,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:capture-workspace-checkpoint", async (_event, request: unknown) => captureDesktopWorkspaceCheckpoint({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:restore-workspace-checkpoint", async (_event, request: unknown) => restoreDesktopWorkspaceCheckpoint({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:inspect-workspace-checkpoint", async (_event, request: unknown) => inspectDesktopWorkspaceCheckpoint({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:compare-workspace-checkpoint", async (_event, request: unknown) => compareDesktopWorkspaceCheckpoint({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:cleanup-workspace-checkpoints", async (_event, request: unknown) => cleanupDesktopWorkspaceCheckpoints({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
-  ipcMain.handle("desktop:preview-workspace-promotion", async (_event, request: unknown) => previewDesktopWorkspacePromotion({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:apply-workspace-promotion", async (_event, request: unknown) => applyDesktopWorkspacePromotion({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:undo-latest-workspace-promotion", async (_event, request: unknown) => undoLatestDesktopWorkspacePromotion({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:inspect-managed-worktree", async (_event, request: unknown) => inspectDesktopManagedWorktree({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:cleanup-managed-worktree", async (_event, request: unknown) => cleanupDesktopManagedWorktree({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:restore-managed-worktree", async (_event, request: unknown) => restoreDesktopManagedWorktree({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  ipcMain.handle("desktop:retry-managed-worktree-setup", async (_event, request: unknown) => retryDesktopManagedWorktreeSetup({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
-  for (const operation of ["start", "list", "read", "write", "resize", "stop"] as const) {
-    ipcMain.handle(`desktop:${operation}-user-terminal`, async (_event, request: unknown) => runDesktopUserTerminalCommand({
-      adapter: requireDesktopRunnerAdapter(runnerTransport),
-      request,
-      operation,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }));
+    }),
+  );
+  ipcMain.handle(
+    "desktop:get-workspace-lifecycle",
+    async (_event, sessionId: unknown) =>
+      getDesktopWorkspaceLifecycle({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        sessionId,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:capture-workspace-checkpoint",
+    async (_event, request: unknown) =>
+      captureDesktopWorkspaceCheckpoint({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:restore-workspace-checkpoint",
+    async (_event, request: unknown) =>
+      restoreDesktopWorkspaceCheckpoint({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:inspect-workspace-checkpoint",
+    async (_event, request: unknown) =>
+      inspectDesktopWorkspaceCheckpoint({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:compare-workspace-checkpoint",
+    async (_event, request: unknown) =>
+      compareDesktopWorkspaceCheckpoint({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:cleanup-workspace-checkpoints",
+    async (_event, request: unknown) =>
+      cleanupDesktopWorkspaceCheckpoints({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:preview-workspace-promotion",
+    async (_event, request: unknown) =>
+      previewDesktopWorkspacePromotion({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:apply-workspace-promotion",
+    async (_event, request: unknown) =>
+      applyDesktopWorkspacePromotion({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:undo-latest-workspace-promotion",
+    async (_event, request: unknown) =>
+      undoLatestDesktopWorkspacePromotion({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:inspect-managed-worktree",
+    async (_event, request: unknown) =>
+      inspectDesktopManagedWorktree({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:cleanup-managed-worktree",
+    async (_event, request: unknown) =>
+      cleanupDesktopManagedWorktree({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:restore-managed-worktree",
+    async (_event, request: unknown) =>
+      restoreDesktopManagedWorktree({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:retry-managed-worktree-setup",
+    async (_event, request: unknown) =>
+      retryDesktopManagedWorktreeSetup({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  for (const operation of [
+    "start",
+    "list",
+    "read",
+    "write",
+    "resize",
+    "stop",
+  ] as const) {
+    ipcMain.handle(
+      `desktop:${operation}-user-terminal`,
+      async (_event, request: unknown) =>
+        runDesktopUserTerminalCommand({
+          adapter: requireDesktopRunnerAdapter(runnerTransport),
+          request,
+          operation,
+          context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+        }),
+    );
   }
-  ipcMain.handle("desktop:inspect-workspace-changes", async (_event, request: unknown) => {
-    const record = typeof request === "object" && request !== null && !Array.isArray(request)
-      ? request as Record<string, unknown>
-      : {};
-    const sessionId = typeof record.sessionId === "string" ? record.sessionId.trim() : "";
-    const threadId = typeof record.threadId === "string" ? record.threadId.trim() : "";
-    const projectPath = typeof record.projectPath === "string" ? record.projectPath.trim() : undefined;
-    if (sessionId.length > 0 && threadId.length > 0) {
-      const workspace = resolveDesktopThreadWorkspace({
-        ...(projectPath ? { projectPath } : {}),
-        projects: desktopSettings.projects,
-        defaultKestrelRoot: requireLocalCoreStatus().home.productRootPath,
+  ipcMain.handle(
+    "desktop:inspect-workspace-changes",
+    async (_event, request: unknown) => {
+      const record =
+        typeof request === "object" &&
+        request !== null &&
+        !Array.isArray(request)
+          ? (request as Record<string, unknown>)
+          : {};
+      const sessionId =
+        typeof record.sessionId === "string" ? record.sessionId.trim() : "";
+      const threadId =
+        typeof record.threadId === "string" ? record.threadId.trim() : "";
+      const projectPath =
+        typeof record.projectPath === "string"
+          ? record.projectPath.trim()
+          : undefined;
+      if (sessionId.length > 0 && threadId.length > 0) {
+        const workspace = resolveDesktopThreadWorkspace({
+          ...(projectPath ? { projectPath } : {}),
+          projects: desktopSettings.projects,
+          defaultKestrelRoot: requireLocalCoreStatus().home.productRootPath,
+        });
+        await requireLocalCoreConnectionManager().executeOnce(
+          async (client) =>
+            await client.syncDesktopThreadWorkspace({
+              sessionId,
+              threadId,
+              workspace,
+            }),
+        );
+      }
+      return inspectDesktopWorkspaceChanges({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
       });
-      await requireLocalCoreConnectionManager().executeOnce(async (client) => await client.syncDesktopThreadWorkspace({ sessionId, threadId, workspace }));
-    }
-    return inspectDesktopWorkspaceChanges({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, context: DESKTOP_RUNNER_REQUEST_CONTEXT });
-  });
-  ipcMain.handle("desktop:mutate-workspace-changes", async (_event, request: unknown) => mutateDesktopWorkspaceChanges({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+    },
+  );
+  ipcMain.handle(
+    "desktop:mutate-workspace-changes",
+    async (_event, request: unknown) =>
+      mutateDesktopWorkspaceChanges({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        request,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
   for (const operation of ["add", "list", "remove", "submit"] as const) {
-    ipcMain.handle(`desktop:${operation}-workspace-feedback`, async (_event, request: unknown) => runDesktopWorkspaceFeedback({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, operation, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+    ipcMain.handle(
+      `desktop:${operation}-workspace-feedback`,
+      async (_event, request: unknown) =>
+        runDesktopWorkspaceFeedback({
+          adapter: requireDesktopRunnerAdapter(runnerTransport),
+          request,
+          operation,
+          context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+        }),
+    );
   }
-  for (const operation of ["run", "list", "update", "submit"] as const) ipcMain.handle(`desktop:${operation}-workspace-review`, async (_event, request: unknown) => runDesktopWorkspaceReview({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, operation, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
-  for (const operation of ["inspect", "run", "cancel", "submit"] as const) ipcMain.handle(`desktop:${operation}-workspace-validation`, async (_event, request: unknown) => runDesktopWorkspaceValidation({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, operation, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
-  for (const operation of ["inspect", "action"] as const) ipcMain.handle(`desktop:${operation}-workspace-git`, async (_event, request: unknown) => runDesktopWorkspaceGit({ adapter: requireDesktopRunnerAdapter(runnerTransport), request, operation, context: DESKTOP_RUNNER_REQUEST_CONTEXT }));
+  for (const operation of ["run", "list", "update", "submit"] as const)
+    ipcMain.handle(
+      `desktop:${operation}-workspace-review`,
+      async (_event, request: unknown) =>
+        runDesktopWorkspaceReview({
+          adapter: requireDesktopRunnerAdapter(runnerTransport),
+          request,
+          operation,
+          context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+        }),
+    );
+  for (const operation of ["inspect", "run", "cancel", "submit"] as const)
+    ipcMain.handle(
+      `desktop:${operation}-workspace-validation`,
+      async (_event, request: unknown) =>
+        runDesktopWorkspaceValidation({
+          adapter: requireDesktopRunnerAdapter(runnerTransport),
+          request,
+          operation,
+          context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+        }),
+    );
+  for (const operation of ["inspect", "action"] as const)
+    ipcMain.handle(
+      `desktop:${operation}-workspace-git`,
+      async (_event, request: unknown) =>
+        runDesktopWorkspaceGit({
+          adapter: requireDesktopRunnerAdapter(runnerTransport),
+          request,
+          operation,
+          context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+        }),
+    );
 }
 
 async function openProjectRunPreviewWindow(
@@ -1863,8 +2843,13 @@ function buildProjectRunPreviewTitle(run: DesktopManagedProjectRun): string {
   return `${projectName} ${run.scriptName} Preview - Kestrel`;
 }
 
-async function openFileEditorWindow(input: DesktopOpenFileEditorInput): Promise<void> {
-  if (desktopConfig === undefined || existsSync(desktopConfig.rendererHtmlPath) === false) {
+async function openFileEditorWindow(
+  input: DesktopOpenFileEditorInput,
+): Promise<void> {
+  if (
+    desktopConfig === undefined ||
+    existsSync(desktopConfig.rendererHtmlPath) === false
+  ) {
     throw createDesktopError({
       code: "desktop.renderer_unavailable",
       message: "Desktop renderer is not ready.",
@@ -1887,13 +2872,19 @@ async function openFileEditorWindow(input: DesktopOpenFileEditorInput): Promise<
     projectPath: resolvedProjectPath,
     projectLabel: input.projectLabel,
     ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
-    ...(input.lineNumber !== undefined ? { lineNumber: String(input.lineNumber) } : {}),
-    ...(input.columnNumber !== undefined ? { columnNumber: String(input.columnNumber) } : {}),
+    ...(input.lineNumber !== undefined
+      ? { lineNumber: String(input.lineNumber) }
+      : {}),
+    ...(input.columnNumber !== undefined
+      ? { columnNumber: String(input.columnNumber) }
+      : {}),
   };
   const existing = fileEditorWindows.get(resolvedFilePath);
   if (existing !== undefined && existing.isDestroyed() === false) {
     existing.setTitle(buildFileEditorTitle(resolvedFilePath));
-    await existing.loadFile(desktopConfig.rendererHtmlPath, { query: editorQuery });
+    await existing.loadFile(desktopConfig.rendererHtmlPath, {
+      query: editorQuery,
+    });
     existing.show();
     existing.focus();
     return;
@@ -1930,7 +2921,9 @@ async function openFileEditorWindow(input: DesktopOpenFileEditorInput): Promise<
     }
     return { action: "deny" };
   });
-  await editorWindow.loadFile(desktopConfig.rendererHtmlPath, { query: editorQuery });
+  await editorWindow.loadFile(desktopConfig.rendererHtmlPath, {
+    query: editorQuery,
+  });
 }
 
 function buildFileEditorTitle(filePath: string): string {
@@ -1942,25 +2935,32 @@ function ensureMediaPermissionHandler(window: BrowserWindow): void {
     return;
   }
   mediaPermissionHandlerInstalled = true;
-  window.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    if (permission !== "media") {
-      callback(false);
-      return;
-    }
-    const requestingOrigin = webContents.getURL();
-    if (isTrustedDesktopOrigin(requestingOrigin) === false) {
-      callback(false);
-      return;
-    }
-    const requestedMediaTypes = Array.isArray((details as { mediaTypes?: unknown }).mediaTypes)
-      ? (details as { mediaTypes: unknown[] }).mediaTypes
-      : [];
-    if (requestedMediaTypes.length > 0 && requestedMediaTypes.includes("audio") === false) {
-      callback(false);
-      return;
-    }
-    callback(true);
-  });
+  window.webContents.session.setPermissionRequestHandler(
+    (webContents, permission, callback, details) => {
+      if (permission !== "media") {
+        callback(false);
+        return;
+      }
+      const requestingOrigin = webContents.getURL();
+      if (isTrustedDesktopOrigin(requestingOrigin) === false) {
+        callback(false);
+        return;
+      }
+      const requestedMediaTypes = Array.isArray(
+        (details as { mediaTypes?: unknown }).mediaTypes,
+      )
+        ? (details as { mediaTypes: unknown[] }).mediaTypes
+        : [];
+      if (
+        requestedMediaTypes.length > 0 &&
+        requestedMediaTypes.includes("audio") === false
+      ) {
+        callback(false);
+        return;
+      }
+      callback(true);
+    },
+  );
 }
 
 function isTrustedDesktopOrigin(value: string): boolean {
@@ -2008,7 +3008,9 @@ async function requestDesktopMicrophoneAccess(): Promise<DesktopMicrophoneAccess
   }
   if (process.platform === "darwin") {
     if (currentState === "denied" || currentState === "restricted") {
-      await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+      await shell.openExternal(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+      );
       return { state: currentState, granted: false };
     }
     const granted = await systemPreferences.askForMediaAccess("microphone");
@@ -2056,7 +3058,10 @@ async function parseDesktopProjectWatchRoot(
       message: `${methodName} requires a project root path.`,
     });
   }
-  const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(rootPath, threadId);
+  const resolvedRoot = await resolveDesktopAuthorizedWorkspaceRoot(
+    rootPath,
+    threadId,
+  );
   await resolveVerifiedDesktopPathTarget(
     { rootPath: resolvedRoot, targetPath: resolvedRoot },
     [resolvedRoot],
@@ -2101,22 +3106,24 @@ async function resolveDesktopAuthorizedWorkspaceRoot(
     rootPath,
     registeredRootPaths: registeredDesktopProjectRootPaths(),
     ...(threadId !== undefined ? { threadId } : {}),
-    getOperatorThread: async (authoritativeThreadId) => getDesktopOperatorThread({
-      adapter: requireDesktopRunnerAdapter(requireDesktopRunnerTransport()),
-      threadId: authoritativeThreadId,
-      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-    }),
+    getOperatorThread: async (authoritativeThreadId) =>
+      getDesktopOperatorThread({
+        adapter: requireDesktopRunnerAdapter(requireDesktopRunnerTransport()),
+        threadId: authoritativeThreadId,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
   });
 }
 
 function parseOptionalThreadId(value: unknown): string | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (typeof value !== "string" || value.trim().length === 0) {
     throw createDesktopError({
       code: "desktop.invalid_operator_thread_id",
-      message: "Desktop workspace access requires a non-empty runtime thread ID.",
+      message:
+        "Desktop workspace access requires a non-empty runtime thread ID.",
     });
   }
   return value.trim();
@@ -2134,9 +3141,13 @@ function startProjectFileWatcher(rootPath: string, subscriberId: number): void {
     subscriberIds,
     watcher: undefined as unknown as FSWatcher,
   };
-  watcherRecord.watcher = watch(rootPath, { recursive: true }, (eventType, filename) => {
-    queueProjectFilesChangedEvent(watcherRecord, eventType, filename);
-  });
+  watcherRecord.watcher = watch(
+    rootPath,
+    { recursive: true },
+    (eventType, filename) => {
+      queueProjectFilesChangedEvent(watcherRecord, eventType, filename);
+    },
+  );
   watcherRecord.watcher.on("error", (error) => {
     for (const id of watcherRecord.subscriberIds) {
       const target = webContents.fromId(id);
@@ -2220,23 +3231,45 @@ function resolveWatchedProjectFilePath(
   filename: string | Buffer | null,
 ): string | undefined {
   if (filename === null) {
-    return ;
+    return;
   }
   const candidatePath = path.resolve(rootPath, filename.toString());
   try {
     assertWithinRoot(rootPath, candidatePath, "changedPath");
     return candidatePath;
   } catch {
-    return ;
+    return;
   }
 }
 
-function resolveFileViewKind(filePath: string): Pick<DesktopFileContent, "viewKind" | "language"> {
+function resolveFileViewKind(
+  filePath: string,
+): Pick<DesktopFileContent, "viewKind" | "language"> {
   const extension = path.extname(filePath).toLowerCase();
   if (extension === ".md" || extension === ".mdx") {
     return { viewKind: "markdown" };
   }
-  if ([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".css", ".html", ".sh", ".bash", ".py", ".go", ".rs", ".sql", ".yaml", ".yml"].includes(extension)) {
+  if (
+    [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".mjs",
+      ".cjs",
+      ".json",
+      ".css",
+      ".html",
+      ".sh",
+      ".bash",
+      ".py",
+      ".go",
+      ".rs",
+      ".sql",
+      ".yaml",
+      ".yml",
+    ].includes(extension)
+  ) {
     return {
       viewKind: "code",
       language: extension.slice(1),
@@ -2302,7 +3335,9 @@ function parseDesktopFileWriteInput(input: unknown): DesktopFileWriteInput {
   };
 }
 
-function parseDesktopOpenFileEditorInput(input: unknown): DesktopOpenFileEditorInput {
+function parseDesktopOpenFileEditorInput(
+  input: unknown,
+): DesktopOpenFileEditorInput {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw createDesktopError({
       code: "desktop.invalid_editor_input",
@@ -2310,26 +3345,39 @@ function parseDesktopOpenFileEditorInput(input: unknown): DesktopOpenFileEditorI
     });
   }
   const record = input as Record<string, unknown>;
-  if (typeof record.projectPath !== "string" || record.projectPath.trim().length === 0) {
+  if (
+    typeof record.projectPath !== "string" ||
+    record.projectPath.trim().length === 0
+  ) {
     throw createDesktopError({
       code: "desktop.invalid_project_path",
       message: "desktop.openFileEditor requires a project path.",
     });
   }
-  if (typeof record.filePath !== "string" || record.filePath.trim().length === 0) {
+  if (
+    typeof record.filePath !== "string" ||
+    record.filePath.trim().length === 0
+  ) {
     throw createDesktopError({
       code: "desktop.invalid_editor_file",
       message: "desktop.openFileEditor requires a file path.",
     });
   }
   const threadId = parseOptionalThreadId(record.threadId);
-  const lineNumber = parseOptionalSourcePosition(record.lineNumber, "lineNumber");
-  const columnNumber = parseOptionalSourcePosition(record.columnNumber, "columnNumber");
+  const lineNumber = parseOptionalSourcePosition(
+    record.lineNumber,
+    "lineNumber",
+  );
+  const columnNumber = parseOptionalSourcePosition(
+    record.columnNumber,
+    "columnNumber",
+  );
   return {
     projectPath: record.projectPath,
     filePath: record.filePath,
     projectLabel:
-      typeof record.projectLabel === "string" && record.projectLabel.trim().length > 0
+      typeof record.projectLabel === "string" &&
+      record.projectLabel.trim().length > 0
         ? record.projectLabel
         : path.basename(record.projectPath),
     ...(threadId !== undefined ? { threadId } : {}),
@@ -2338,11 +3386,19 @@ function parseDesktopOpenFileEditorInput(input: unknown): DesktopOpenFileEditorI
   };
 }
 
-function parseOptionalSourcePosition(value: unknown, field: string): number | undefined {
+function parseOptionalSourcePosition(
+  value: unknown,
+  field: string,
+): number | undefined {
   if (value === undefined) {
     return;
   }
-  if (typeof value !== "number" || Number.isInteger(value) === false || value < 1 || value > 10_000_000) {
+  if (
+    typeof value !== "number" ||
+    Number.isInteger(value) === false ||
+    value < 1 ||
+    value > 10_000_000
+  ) {
     throw createDesktopError({
       code: "desktop.invalid_editor_position",
       message: `desktop.openFileEditor ${field} must be a positive integer.`,
@@ -2351,12 +3407,18 @@ function parseOptionalSourcePosition(value: unknown, field: string): number | un
   return value;
 }
 
-async function readEditableTextFileBuffer(filePath: string, sizeBytes: number): Promise<Buffer> {
+async function readEditableTextFileBuffer(
+  filePath: string,
+  sizeBytes: number,
+): Promise<Buffer> {
   assertReadableDesktopTextFile(filePath, sizeBytes);
   return readFile(filePath);
 }
 
-function assertReadableDesktopTextFile(filePath: string, sizeBytes: number): void {
+function assertReadableDesktopTextFile(
+  filePath: string,
+  sizeBytes: number,
+): void {
   if (isBlockedBinaryFilePath(filePath)) {
     throw createDesktopError({
       code: "desktop.binary_file",
@@ -2372,7 +3434,10 @@ function assertReadableDesktopTextFile(filePath: string, sizeBytes: number): voi
   }
 }
 
-function assertWritableDesktopTextFile(filePath: string, sizeBytes: number): void {
+function assertWritableDesktopTextFile(
+  filePath: string,
+  sizeBytes: number,
+): void {
   assertReadableDesktopTextFile(filePath, sizeBytes);
   if (sizeBytes > EDITABLE_TEXT_FILE_MAX_BYTES) {
     throw createDesktopError({
@@ -2439,7 +3504,9 @@ function isBlockedBinaryFilePath(filePath: string): boolean {
   ].includes(extension);
 }
 
-function detectLineEnding(content: string): NonNullable<DesktopFileContent["lineEnding"]> {
+function detectLineEnding(
+  content: string,
+): NonNullable<DesktopFileContent["lineEnding"]> {
   const crlf = (content.match(/\r\n/gu) ?? []).length;
   const withoutCrlf = content.replace(/\r\n/gu, "");
   const lf = (withoutCrlf.match(/\n/gu) ?? []).length;
@@ -2483,13 +3550,20 @@ function hashTextContent(content: string): string {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && Array.isArray(value) === false;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray(value) === false
+  );
 }
 
-function deriveRuntimeHealth(nextBootState: DesktopBootState): DesktopRuntimeHealth {
+function deriveRuntimeHealth(
+  nextBootState: DesktopBootState,
+): DesktopRuntimeHealth {
   const status = runnerTransport?.getStatus();
   const onboarding = deriveDesktopOnboardingState(desktopSettings);
-  const providerRequirement = describeDesktopProviderRequirement(desktopSettings);
+  const providerRequirement =
+    describeDesktopProviderRequirement(desktopSettings);
   if (
     providerRequirement !== undefined &&
     onboarding.providerIssueOwnedBySetup
@@ -2517,7 +3591,9 @@ function deriveRuntimeHealth(nextBootState: DesktopBootState): DesktopRuntimeHea
     return {
       state: "blocked",
       summary: databaseStatus.summary,
-      details: databaseStatus.lastError?.details?.recommendedAction as string | undefined,
+      details: databaseStatus.lastError?.details?.recommendedAction as
+        | string
+        | undefined,
       running: status?.running ?? false,
       ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
       database: databaseStatus,
@@ -2528,7 +3604,9 @@ function deriveRuntimeHealth(nextBootState: DesktopBootState): DesktopRuntimeHea
       state: "blocked",
       summary: nextBootState.message,
       ...(nextBootState.code !== undefined ? { code: nextBootState.code } : {}),
-      ...(nextBootState.details !== undefined ? { details: nextBootState.details } : {}),
+      ...(nextBootState.details !== undefined
+        ? { details: nextBootState.details }
+        : {}),
       running: status?.running ?? false,
       ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
       database: databaseStatus,
@@ -2547,14 +3625,19 @@ function deriveRuntimeHealth(nextBootState: DesktopBootState): DesktopRuntimeHea
     state: "degraded",
     summary: nextBootState.message,
     ...(nextBootState.code !== undefined ? { code: nextBootState.code } : {}),
-    ...(nextBootState.details !== undefined ? { details: nextBootState.details } : {}),
+    ...(nextBootState.details !== undefined
+      ? { details: nextBootState.details }
+      : {}),
     running: status?.running ?? false,
     ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
     database: databaseStatus,
   };
 }
 
-function updateBootState(nextState: DesktopBootState, webContents: WebContents | undefined): void {
+function updateBootState(
+  nextState: DesktopBootState,
+  webContents: WebContents | undefined,
+): void {
   const updatedAt = new Date().toISOString();
   const previous = bootTimeline[bootTimeline.length - 1];
   if (
@@ -2573,7 +3656,9 @@ function updateBootState(nextState: DesktopBootState, webContents: WebContents |
   }
   bootState = {
     ...nextState,
-    ...(nextState.database !== undefined ? { database: nextState.database } : { database: databaseStatus }),
+    ...(nextState.database !== undefined
+      ? { database: nextState.database }
+      : { database: databaseStatus }),
     startedAt: nextState.startedAt ?? bootStartedAt,
     updatedAt,
     timeline: bootTimeline,
@@ -2629,7 +3714,9 @@ function inspectDesktopResources(): { ready: boolean; detail: string } {
   }
   return {
     ready: true,
-    detail: desktopConfig.isPackaged ? "Packaged resources resolved." : "Development resources resolved from the repo.",
+    detail: desktopConfig.isPackaged
+      ? "Packaged resources resolved."
+      : "Development resources resolved from the repo.",
   };
 }
 
@@ -2668,9 +3755,10 @@ async function readDesktopCapabilityView(): Promise<DesktopCapabilityView> {
     ),
     readDesktopMcpInventory(),
   ]);
-  const microphone = process.platform === "darwin"
-    ? systemPreferences.getMediaAccessStatus("microphone")
-    : "unknown";
+  const microphone =
+    process.platform === "darwin"
+      ? systemPreferences.getMediaAccessStatus("microphone")
+      : "unknown";
   const probes = await probeDesktopCapabilities({
     projects: desktopSettings.projects,
     databaseReady: databaseStatus?.state === "healthy",
@@ -2678,19 +3766,29 @@ async function readDesktopCapabilityView(): Promise<DesktopCapabilityView> {
     mcpServers: discovery.servers,
     settings: desktopSettings,
   });
-  return resolveDesktopCapabilityView({ settings: desktopSettings, credentials, probes });
+  return resolveDesktopCapabilityView({
+    settings: desktopSettings,
+    credentials,
+    probes,
+  });
 }
 
 function parseDesktopThreadId(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw createDesktopError({ code: "desktop.invalid_attachment_thread", message: "Attachment thread ID must be a non-empty string." });
+    throw createDesktopError({
+      code: "desktop.invalid_attachment_thread",
+      message: "Attachment thread ID must be a non-empty string.",
+    });
   }
   return value.trim();
 }
 
 function parseDesktopAttachmentId(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw createDesktopError({ code: "desktop.invalid_attachment_id", message: "Attachment ID must be a non-empty string." });
+    throw createDesktopError({
+      code: "desktop.invalid_attachment_id",
+      message: "Attachment ID must be a non-empty string.",
+    });
   }
   return value.trim();
 }
@@ -2710,7 +3808,9 @@ function desktopAttachmentMimeType(filePath: string): string {
 
 async function readDesktopMcpInventory(): Promise<DesktopMcpDiscoveryResult> {
   const discovered = await discoverMcpServersFromKnownConfigFiles();
-  const managedIds = new Set(desktopSettings.mcpServers.map((server) => server.id));
+  const managedIds = new Set(
+    desktopSettings.mcpServers.map((server) => server.id),
+  );
   return {
     ...discovered,
     servers: [
@@ -2719,7 +3819,9 @@ async function readDesktopMcpInventory(): Promise<DesktopMcpDiscoveryResult> {
         args: server.args !== undefined ? [...server.args] : undefined,
         tools: server.tools?.map((tool) => ({ ...tool })),
       })),
-      ...discovered.servers.filter((server) => managedIds.has(server.id) === false),
+      ...discovered.servers.filter(
+        (server) => managedIds.has(server.id) === false,
+      ),
     ],
   };
 }
@@ -2758,36 +3860,20 @@ function resolveDesktopExecutionProfile(selection: DesktopExecutionSelection) {
       details: JSON.stringify(selection.modelConfiguration),
     });
   }
-  const selectedAppTools = new Set<string>();
-  for (const app of selection.apps) {
-    const definition = getDesktopAppDefinition(app.id, app.contractVersion);
-    if (definition === undefined) {
-      throw createDesktopError({
-        code: "desktop.app_contract_not_found",
-        message: `The selected app contract '${app.id}@${app.contractVersion}' is unavailable.`,
-      });
-    }
-    for (const toolName of definition.toolNames) {
-      selectedAppTools.add(toolName);
-    }
-  }
-  const allAppTools = new Set(
-    listDesktopAppDefinitions().flatMap((definition) => definition.toolNames),
+  const result = buildDesktopExecutionProfile(
+    resolved.revision.policy,
+    desktopSettings,
+    selection,
   );
-  const baseProfile = buildDesktopRunnerProfile(resolved.revision.policy);
-  const toolAllowlist = [
-    ...(baseProfile.toolAllowlist ?? []).filter((toolName) => allAppTools.has(toolName) === false),
-    ...selectedAppTools,
-  ];
-  const fingerprint = createHash("sha256")
-    .update(JSON.stringify(selection))
-    .digest("hex")
-    .slice(0, 12);
+  if ("missingApp" in result) {
+    throw createDesktopError({
+      code: "desktop.app_contract_not_found",
+      message: `The selected app contract '${result.missingApp.id}@${result.missingApp.contractVersion}' is unavailable.`,
+    });
+  }
   return {
-    ...baseProfile,
-    id: `${baseProfile.id}-${fingerprint}`,
-    label: `${resolved.configuration.name} · ${baseProfile.label}`,
-    toolAllowlist: [...new Set(toolAllowlist)],
+    ...result.profile,
+    label: `${resolved.configuration.name} · ${result.profile.label}`,
   };
 }
 
@@ -2805,7 +3891,9 @@ async function refreshDesktopCoreState(): Promise<void> {
     fallbackModelPolicy: response.modelPolicy,
   });
   desktopModelPolicy = response.modelPolicy;
-  projectFileIndex.retainRoots(desktopSettings.projects.map((project) => project.path));
+  projectFileIndex.retainRoots(
+    desktopSettings.projects.map((project) => project.path),
+  );
 }
 
 async function migrateDesktopCredentialsToLocalCore(): Promise<void> {
@@ -2813,9 +3901,15 @@ async function migrateDesktopCredentialsToLocalCore(): Promise<void> {
     id: LocalCoreCredentialId;
     value: string | undefined;
   }> = [
-    { id: "provider.openrouter.default", value: desktopSettings.openrouterApiKey },
+    {
+      id: "provider.openrouter.default",
+      value: desktopSettings.openrouterApiKey,
+    },
     { id: "provider.openai.default", value: desktopSettings.openaiApiKey },
-    { id: "provider.anthropic.default", value: desktopSettings.anthropicApiKey },
+    {
+      id: "provider.anthropic.default",
+      value: desktopSettings.anthropicApiKey,
+    },
     { id: "tool.tavily.default", value: desktopSettings.tavilyApiKey },
     { id: "data.database.external", value: desktopSettings.databaseUrl },
   ];
@@ -2832,23 +3926,27 @@ async function migrateDesktopCredentialsToLocalCore(): Promise<void> {
   for (const credential of legacyCredentials) {
     const legacyValue = credential.value;
     if (
-      legacyValue !== undefined
-      && currentStatus.credentials.some(
+      legacyValue !== undefined &&
+      currentStatus.credentials.some(
         (status) => status.id === credential.id && status.configured,
       ) === false
     ) {
       await manager.executeOnce(
-        async (client) => await client.setCredential(credential.id, legacyValue),
+        async (client) =>
+          await client.setCredential(credential.id, legacyValue),
       );
     }
   }
-  await manager.executeOnce(async (client) => await client.patchSettings({
-    openrouterApiKey: null,
-    openaiApiKey: null,
-    anthropicApiKey: null,
-    tavilyApiKey: null,
-    databaseUrl: null,
-  }));
+  await manager.executeOnce(
+    async (client) =>
+      await client.patchSettings({
+        openrouterApiKey: null,
+        openaiApiKey: null,
+        anthropicApiKey: null,
+        tavilyApiKey: null,
+        databaseUrl: null,
+      }),
+  );
   await refreshDesktopCoreState();
 }
 
@@ -2859,16 +3957,21 @@ async function saveDesktopCoreSettings(
     fallbackModelPolicy: desktopModelPolicy,
   });
   const response = await requireLocalCoreConnectionManager().executeIdempotent(
-    async (client) => await client.patchDesktopSettings<Partial<DesktopSettings>>({
-      ...normalized,
-      ...(settings.modelPolicy !== undefined ? { modelPolicy: settings.modelPolicy } : {}),
-    }),
+    async (client) =>
+      await client.patchDesktopSettings<Partial<DesktopSettings>>({
+        ...normalized,
+        ...(settings.modelPolicy !== undefined
+          ? { modelPolicy: settings.modelPolicy }
+          : {}),
+      }),
   );
   desktopSettings = normalizeDesktopSettings(response.settings, {
     fallbackModelPolicy: response.modelPolicy,
   });
   desktopModelPolicy = response.modelPolicy;
-  projectFileIndex.retainRoots(desktopSettings.projects.map((project) => project.path));
+  projectFileIndex.retainRoots(
+    desktopSettings.projects.map((project) => project.path),
+  );
 }
 
 async function persistDesktopRendererConfiguration(
@@ -2893,17 +3996,23 @@ async function persistDesktopRendererConfiguration(
     await resetDesktopRunnerAdapter();
   }
   if (input.restartRuntime) {
-    updateBootState({
-      phase: "starting_runtime",
-      message: input.restartMessage,
-      database: databaseStatus,
-    }, mainWindow?.webContents);
+    updateBootState(
+      {
+        phase: "starting_runtime",
+        message: input.restartMessage,
+        database: databaseStatus,
+      },
+      mainWindow?.webContents,
+    );
     await runner.restart();
-    updateBootState({
-      phase: "ready",
-      message: "Desktop ready.",
-      database: databaseStatus,
-    }, mainWindow?.webContents);
+    updateBootState(
+      {
+        phase: "ready",
+        message: "Desktop ready.",
+        database: databaseStatus,
+      },
+      mainWindow?.webContents,
+    );
   }
   runtimeHealth = deriveRuntimeHealth(bootState);
   mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
@@ -2912,20 +4021,24 @@ async function persistDesktopRendererConfiguration(
 
 async function readDesktopRendererSettings(): Promise<DesktopRendererSettings> {
   const selectedProvider = desktopSettings.selectedProvider;
-  if (
-    selectedProvider === "ollama"
-    || selectedProvider === "lmstudio"
-  ) {
-    return toDesktopRendererSettings(desktopSettings, new Set([selectedProvider]));
+  if (selectedProvider === "ollama" || selectedProvider === "lmstudio") {
+    return toDesktopRendererSettings(
+      desktopSettings,
+      new Set([selectedProvider]),
+    );
   }
   const status = await requireLocalCoreConnectionManager().executeIdempotent(
     async (client) => await client.credentialStatus(),
   );
   const configuredProviders = new Set<DesktopModelProvider>();
   for (const provider of ["openrouter", "openai", "anthropic"] as const) {
-    if (status.credentials.some(
-      (credential) => credential.id === `provider.${provider}.default` && credential.configured,
-    )) {
+    if (
+      status.credentials.some(
+        (credential) =>
+          credential.id === `provider.${provider}.default` &&
+          credential.configured,
+      )
+    ) {
       configuredProviders.add(provider);
     }
   }
@@ -2933,7 +4046,8 @@ async function readDesktopRendererSettings(): Promise<DesktopRendererSettings> {
 }
 
 function subscribeToCoreProjectRuns(client?: LocalCoreClient): void {
-  const activeClient = client ?? requireLocalCoreConnectionManager().current()?.client;
+  const activeClient =
+    client ?? requireLocalCoreConnectionManager().current()?.client;
   if (activeClient === undefined) {
     throw createDesktopError({
       code: "desktop.local_core_api_unavailable",
@@ -2958,9 +4072,11 @@ async function stopCoreProjectRuns(): Promise<void> {
     return;
   }
   const runs = await client.listDesktopProjectRuns().catch(() => []);
-  await Promise.all(runs
-    .filter((run) => run.status === "running" || run.status === "stopping")
-    .map((run) => client.stopDesktopProjectRun(run.runId).catch(() => {})));
+  await Promise.all(
+    runs
+      .filter((run) => run.status === "running" || run.status === "stopping")
+      .map((run) => client.stopDesktopProjectRun(run.runId).catch(() => {})),
+  );
 }
 
 async function restartLocalCoreForDatabaseSettingsChange(): Promise<void> {
@@ -2977,10 +4093,11 @@ async function resolveCoreProjectRunPreviewUrl(input: {
   run: DesktopManagedProjectRun;
   url: string;
 }> {
-  const run = (await requireLocalCoreConnectionManager().executeIdempotent(
-    async (client) => await client.listDesktopProjectRuns(),
-  ))
-    .find((entry) => entry.runId === input.runId);
+  const run = (
+    await requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.listDesktopProjectRuns(),
+    )
+  ).find((entry) => entry.runId === input.runId);
   if (run === undefined) {
     throw createDesktopError({
       code: "desktop.project_run_not_found",
@@ -2997,14 +4114,18 @@ async function resolveCoreProjectRunPreviewUrl(input: {
   if (isPreviewableHttpUrl(requestedUrl) === false) {
     throw createDesktopError({
       code: "desktop.invalid_project_run_preview_url",
-      message: "Project run previews require an http(s) URL without embedded credentials.",
+      message:
+        "Project run previews require an http(s) URL without embedded credentials.",
     });
   }
-  const matchedUrl = run.previewUrls?.find((entry) => entry.url === requestedUrl)?.url;
+  const matchedUrl = run.previewUrls?.find(
+    (entry) => entry.url === requestedUrl,
+  )?.url;
   if (matchedUrl === undefined) {
     throw createDesktopError({
       code: "desktop.project_run_preview_url_not_recorded",
-      message: "Project run previews can only open URLs emitted by that managed run.",
+      message:
+        "Project run previews can only open URLs emitted by that managed run.",
     });
   }
   return { run, url: matchedUrl };
@@ -3013,40 +4134,56 @@ async function resolveCoreProjectRunPreviewUrl(input: {
 function isPreviewableHttpUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
-    return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
       parsed.username.length === 0 &&
-      parsed.password.length === 0;
+      parsed.password.length === 0
+    );
   } catch {
     return false;
   }
 }
 
-function desktopWorkspaceSkillManager(projectPath: unknown): WorkspaceSkillManager {
-  const requested = requireDesktopString(projectPath, "Desktop workspace skills require a project path.");
+function desktopWorkspaceSkillManager(
+  projectPath: unknown,
+): WorkspaceSkillManager {
+  const requested = requireDesktopString(
+    projectPath,
+    "Desktop workspace skills require a project path.",
+  );
   const workspaceRoot = resolveRegisteredDesktopProjectRoot(
     requested,
     desktopSettings.projects.map((project) => project.path),
   );
   const existing = desktopWorkspaceSkillManagers.get(workspaceRoot);
   if (existing !== undefined) return existing;
-  const manager = new WorkspaceSkillManager({
-    workspaceId: deriveDesktopWorkspaceId(workspaceRoot),
-    workspaceRoot,
-  }, {
-    isWorkspaceIdle: async () => (activeDesktopWorkspaceRunCounts.get(path.resolve(workspaceRoot)) ?? 0) === 0,
-  });
+  const manager = new WorkspaceSkillManager(
+    {
+      workspaceId: deriveDesktopWorkspaceId(workspaceRoot),
+      workspaceRoot,
+    },
+    {
+      isWorkspaceIdle: async () =>
+        (activeDesktopWorkspaceRunCounts.get(path.resolve(workspaceRoot)) ??
+          0) === 0,
+    },
+  );
   desktopWorkspaceSkillManagers.set(workspaceRoot, manager);
   return manager;
 }
 
-async function activateDesktopWorkspaceSkills(workspaceRoot: string): Promise<void> {
+async function activateDesktopWorkspaceSkills(
+  workspaceRoot: string,
+): Promise<void> {
   const normalizedRoot = path.resolve(workspaceRoot);
   if (activatedDesktopWorkspaceSkills.has(normalizedRoot)) return;
   await desktopWorkspaceSkillManager(normalizedRoot).syncAll();
   activatedDesktopWorkspaceSkills.add(normalizedRoot);
 }
 
-function parseDesktopWorkspaceSkillSource(value: unknown): WorkspaceSkillSource {
+function parseDesktopWorkspaceSkillSource(
+  value: unknown,
+): WorkspaceSkillSource {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw createDesktopError({
       code: "desktop.invalid_workspace_skill_source",
@@ -3054,12 +4191,20 @@ function parseDesktopWorkspaceSkillSource(value: unknown): WorkspaceSkillSource 
     });
   }
   const record = value as Record<string, unknown>;
-  const gitUrl = requireDesktopString(record.gitUrl, "Workspace skill Git URL is required.");
-  const branch = requireDesktopString(record.branch, "Workspace skill branch is required.");
+  const gitUrl = requireDesktopString(
+    record.gitUrl,
+    "Workspace skill Git URL is required.",
+  );
+  const branch = requireDesktopString(
+    record.branch,
+    "Workspace skill branch is required.",
+  );
   return {
     gitUrl,
     branch,
-    ...(typeof record.path === "string" && record.path.trim().length > 0 ? { path: record.path.trim() } : {}),
+    ...(typeof record.path === "string" && record.path.trim().length > 0
+      ? { path: record.path.trim() }
+      : {}),
   };
 }
 
@@ -3114,13 +4259,17 @@ async function ensureDesktopLocalCoreReady(
 function createAppDatabaseController(
   settings: DesktopSettings,
 ): DesktopDatabaseController {
-  currentDatabaseUrlSource = settings.databaseMode === "external" ? "desktop_external" : "desktop_managed";
+  currentDatabaseUrlSource =
+    settings.databaseMode === "external"
+      ? "desktop_external"
+      : "desktop_managed";
   return createCoreOwnedDesktopDatabaseController({
     readCurrentStatus: () => localCoreStatus,
     ensureReady: async () => {
-      localCoreStatus = await requireLocalCoreConnectionManager().executeIdempotent(
-        async (client) => await client.status(),
-      );
+      localCoreStatus =
+        await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) => await client.status(),
+        );
       currentDatabaseUrl = localCoreStatus.databaseUrl;
       return localCoreStatus;
     },

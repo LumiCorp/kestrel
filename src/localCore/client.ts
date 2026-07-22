@@ -26,7 +26,10 @@ import {
   type LocalCoreStatus,
 } from "./contracts.js";
 import type { DesktopAttachmentMetadata } from "./desktopAttachments.js";
-import type { RunTurnAttachment, ThreadRecord } from "../kestrel/contracts/orchestration.js";
+import type {
+  RunTurnAttachment,
+  ThreadRecord,
+} from "../kestrel/contracts/orchestration.js";
 import type { WorkspaceRuntimeContext } from "../../cli/contracts.js";
 import {
   parseLocalCoreCredentialId,
@@ -43,7 +46,15 @@ import type {
   LocalCoreMcpVerificationInput,
   LocalCoreMcpVerificationResult,
 } from "./mcpVerification.js";
+import {
+  parseLocalCoreMcpOAuthSessionStartInput,
+  parseLocalCoreMcpOAuthSessionView,
+  type LocalCoreMcpOAuthSessionStartInput,
+  type LocalCoreMcpOAuthSessionView,
+} from "./mcpOAuthSessions.js";
 import type { LocalCoreExternalDatabaseVerificationResult } from "./externalDatabaseVerification.js";
+import type { Microsoft365Pack } from "../apps/microsoft365.js";
+import type { GoogleWorkspacePack } from "../apps/googleWorkspace.js";
 
 export interface LocalCoreClientOptions {
   socketPath: string;
@@ -63,7 +74,7 @@ export class LocalCoreClient {
   }
 
   async health(): Promise<{ ok: true }> {
-    return await this.get("/v1/health", { auth: false }) as { ok: true };
+    return (await this.get("/v1/health", { auth: false })) as { ok: true };
   }
 
   async status(): Promise<LocalCoreStatus> {
@@ -99,7 +110,8 @@ export class LocalCoreClient {
     runtimeConfiguration: LocalCoreRuntimeConfigurationV1,
   ): Promise<LocalCoreRuntimeConfigurationV1> {
     const response = await this.post("/v1/runtime/configuration/repair", {
-      runtimeConfiguration: parseLocalCoreRuntimeConfiguration(runtimeConfiguration),
+      runtimeConfiguration:
+        parseLocalCoreRuntimeConfiguration(runtimeConfiguration),
     });
     return parseLocalCoreRuntimeConfiguration(
       readObjectField<Record<string, unknown>>(
@@ -141,7 +153,10 @@ export class LocalCoreClient {
 
   async deleteCredential(
     id: LocalCoreCredentialId,
-  ): Promise<{ deleted: boolean; credentials: LocalCoreCredentialStoreStatus }> {
+  ): Promise<{
+    deleted: boolean;
+    credentials: LocalCoreCredentialStoreStatus;
+  }> {
     const credentialId = parseLocalCoreCredentialId(id);
     const response = await this.delete(
       `/v1/credentials/${encodeURIComponent(credentialId)}`,
@@ -169,10 +184,72 @@ export class LocalCoreClient {
     );
   }
 
+  async startMcpOAuth(
+    input: LocalCoreMcpOAuthSessionStartInput,
+  ): Promise<LocalCoreMcpOAuthSessionView> {
+    const response = await this.post(
+      "/v1/mcp/oauth/start",
+      parseLocalCoreMcpOAuthSessionStartInput(input),
+    );
+    return parseLocalCoreMcpOAuthSessionView(
+      readObjectField(response, "session", "App authorization session"),
+    );
+  }
+
+  async mcpOAuthStatus(
+    sessionId: string,
+  ): Promise<LocalCoreMcpOAuthSessionView> {
+    const response = await this.get(
+      `/v1/mcp/oauth/sessions/${encodeURIComponent(sessionId)}`,
+    );
+    return parseLocalCoreMcpOAuthSessionView(
+      readObjectField(response, "session", "App authorization session"),
+    );
+  }
+
+  async startMicrosoft365OAuth(input: {
+    clientId: string;
+    packs: Microsoft365Pack[];
+  }): Promise<LocalCoreMcpOAuthSessionView> {
+    const response = await this.post("/v1/apps/microsoft-365/oauth/start", input);
+    return parseLocalCoreMcpOAuthSessionView(
+      readObjectField(response, "session", "Microsoft 365 authorization session"),
+    );
+  }
+
+  async microsoft365OAuthStatus(sessionId: string): Promise<LocalCoreMcpOAuthSessionView> {
+    const response = await this.get(`/v1/apps/microsoft-365/oauth/sessions/${encodeURIComponent(sessionId)}`);
+    return parseLocalCoreMcpOAuthSessionView(
+      readObjectField(response, "session", "Microsoft 365 authorization session"),
+    );
+  }
+
+  async verifyMicrosoft365(packs: Microsoft365Pack[]): Promise<{ verifiedAt: string }> {
+    const response = await this.post("/v1/apps/microsoft-365/verify", { packs });
+    return readObjectField<{ verifiedAt: string }>(response, "verification", "Microsoft 365 verification");
+  }
+
+  async startGoogleWorkspaceOAuth(input: { clientId: string; packs: GoogleWorkspacePack[] }): Promise<LocalCoreMcpOAuthSessionView> {
+    const response = await this.post("/v1/apps/google-workspace/oauth/start", input);
+    return parseLocalCoreMcpOAuthSessionView(readObjectField(response, "session", "Google Workspace authorization session"));
+  }
+
+  async googleWorkspaceOAuthStatus(sessionId: string): Promise<LocalCoreMcpOAuthSessionView> {
+    const response = await this.get(`/v1/apps/google-workspace/oauth/sessions/${encodeURIComponent(sessionId)}`);
+    return parseLocalCoreMcpOAuthSessionView(readObjectField(response, "session", "Google Workspace authorization session"));
+  }
+
+  async verifyGoogleWorkspace(packs: GoogleWorkspacePack[]): Promise<{ verifiedAt: string }> {
+    const response = await this.post("/v1/apps/google-workspace/verify", { packs });
+    return readObjectField<{ verifiedAt: string }>(response, "verification", "Google Workspace verification");
+  }
+
   async verifyExternalDatabase(
     databaseUrl: string,
   ): Promise<LocalCoreExternalDatabaseVerificationResult> {
-    const response = await this.post("/v1/database/external/verify", { databaseUrl });
+    const response = await this.post("/v1/database/external/verify", {
+      databaseUrl,
+    });
     return readObjectField<LocalCoreExternalDatabaseVerificationResult>(
       response,
       "verification",
@@ -196,21 +273,41 @@ export class LocalCoreClient {
     modelPolicy: ResolvedModelPolicy;
   }> {
     const response = await this.settings();
-    const settings = readObjectField<Record<string, unknown>>(response, "settings", "settings");
-    const modelPolicy = readObjectField<ResolvedModelPolicy>(settings, "modelPolicy", "settings.modelPolicy");
+    const settings = readObjectField<Record<string, unknown>>(
+      response,
+      "settings",
+      "settings",
+    );
+    const modelPolicy = readObjectField<ResolvedModelPolicy>(
+      settings,
+      "modelPolicy",
+      "settings.modelPolicy",
+    );
     return {
       settings: settings as TSettings,
       modelPolicy,
     };
   }
 
-  async patchDesktopSettings<TSettings = Record<string, unknown>>(settings: TSettings): Promise<{
+  async patchDesktopSettings<TSettings = Record<string, unknown>>(
+    settings: TSettings,
+  ): Promise<{
     settings: TSettings;
     modelPolicy: ResolvedModelPolicy;
   }> {
-    const response = await this.patchSettings(settings as Record<string, unknown>);
-    const nextSettings = readObjectField<Record<string, unknown>>(response, "settings", "settings");
-    const modelPolicy = readObjectField<ResolvedModelPolicy>(nextSettings, "modelPolicy", "settings.modelPolicy");
+    const response = await this.patchSettings(
+      settings as Record<string, unknown>,
+    );
+    const nextSettings = readObjectField<Record<string, unknown>>(
+      response,
+      "settings",
+      "settings",
+    );
+    const modelPolicy = readObjectField<ResolvedModelPolicy>(
+      nextSettings,
+      "modelPolicy",
+      "settings.modelPolicy",
+    );
     return {
       settings: nextSettings as TSettings,
       modelPolicy,
@@ -219,23 +316,39 @@ export class LocalCoreClient {
 
   async getDesktopUiState(): Promise<DesktopUiStateV1 | null> {
     const response = await this.get("/v1/desktop/ui-state");
-    if (typeof response !== "object" || response === null || Array.isArray(response)) {
-      throw new Error("Local Core Desktop UI state response must be an object.");
+    if (
+      typeof response !== "object" ||
+      response === null ||
+      Array.isArray(response)
+    ) {
+      throw new Error(
+        "Local Core Desktop UI state response must be an object.",
+      );
     }
     const state = (response as Record<string, unknown>).state;
     return state === null ? null : parseDesktopUiStateV1(state);
   }
 
-  async syncDesktopUiState(state: DesktopUiStateV1): Promise<DesktopUiStateSyncResult> {
+  async syncDesktopUiState(
+    state: DesktopUiStateV1,
+  ): Promise<DesktopUiStateSyncResult> {
     const response = await this.put("/v1/desktop/ui-state", {
       state: parseDesktopUiStateV1(state),
     });
-    if (typeof response !== "object" || response === null || Array.isArray(response)) {
-      throw new Error("Local Core Desktop UI state sync response must be an object.");
+    if (
+      typeof response !== "object" ||
+      response === null ||
+      Array.isArray(response)
+    ) {
+      throw new Error(
+        "Local Core Desktop UI state sync response must be an object.",
+      );
     }
     const record = response as Record<string, unknown>;
     if (typeof record.updated !== "boolean") {
-      throw new Error("Local Core Desktop UI state sync response did not include updated.");
+      throw new Error(
+        "Local Core Desktop UI state sync response did not include updated.",
+      );
     }
     return {
       state: parseDesktopUiStateV1(record.state),
@@ -249,7 +362,11 @@ export class LocalCoreClient {
     workspace: WorkspaceRuntimeContext;
   }): Promise<ThreadRecord> {
     const response = await this.put("/v1/desktop/thread-workspace", input);
-    return readObjectField<ThreadRecord>(response, "thread", "Desktop thread workspace");
+    return readObjectField<ThreadRecord>(
+      response,
+      "thread",
+      "Desktop thread workspace",
+    );
   }
 
   async importDesktopAttachment(input: {
@@ -260,24 +377,50 @@ export class LocalCoreClient {
     sha256?: string | undefined;
   }): Promise<DesktopAttachmentMetadata> {
     const response = await this.post("/v1/desktop/attachments", input);
-    return readObjectField<DesktopAttachmentMetadata>(response, "attachment", "Desktop attachment");
+    return readObjectField<DesktopAttachmentMetadata>(
+      response,
+      "attachment",
+      "Desktop attachment",
+    );
   }
 
-  async listDesktopAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]> {
-    const response = await this.get(`/v1/desktop/attachments?threadId=${encodeURIComponent(threadId)}`) as { attachments?: unknown };
-    if (Array.isArray(response.attachments) === false) throw new Error("Local Core Desktop attachment response is invalid.");
+  async listDesktopAttachments(
+    threadId: string,
+  ): Promise<DesktopAttachmentMetadata[]> {
+    const response = (await this.get(
+      `/v1/desktop/attachments?threadId=${encodeURIComponent(threadId)}`,
+    )) as { attachments?: unknown };
+    if (Array.isArray(response.attachments) === false)
+      throw new Error("Local Core Desktop attachment response is invalid.");
     return response.attachments as DesktopAttachmentMetadata[];
   }
 
-  async removeDesktopAttachment(threadId: string, attachmentId: string): Promise<boolean> {
-    const response = await this.delete(`/v1/desktop/attachments/${encodeURIComponent(attachmentId)}?threadId=${encodeURIComponent(threadId)}`) as { removed?: unknown };
-    if (typeof response.removed !== "boolean") throw new Error("Local Core Desktop attachment removal response is invalid.");
+  async removeDesktopAttachment(
+    threadId: string,
+    attachmentId: string,
+  ): Promise<boolean> {
+    const response = (await this.delete(
+      `/v1/desktop/attachments/${encodeURIComponent(attachmentId)}?threadId=${encodeURIComponent(threadId)}`,
+    )) as { removed?: unknown };
+    if (typeof response.removed !== "boolean")
+      throw new Error(
+        "Local Core Desktop attachment removal response is invalid.",
+      );
     return response.removed;
   }
 
-  async resolveDesktopAttachments(threadId: string, attachmentIds: string[]): Promise<RunTurnAttachment[]> {
-    const response = await this.post("/v1/desktop/attachments/resolve", { threadId, attachmentIds }) as { attachments?: unknown };
-    if (Array.isArray(response.attachments) === false) throw new Error("Local Core Desktop attachment resolution response is invalid.");
+  async resolveDesktopAttachments(
+    threadId: string,
+    attachmentIds: string[],
+  ): Promise<RunTurnAttachment[]> {
+    const response = (await this.post("/v1/desktop/attachments/resolve", {
+      threadId,
+      attachmentIds,
+    })) as { attachments?: unknown };
+    if (Array.isArray(response.attachments) === false)
+      throw new Error(
+        "Local Core Desktop attachment resolution response is invalid.",
+      );
     return response.attachments as RunTurnAttachment[];
   }
 
@@ -289,14 +432,16 @@ export class LocalCoreClient {
     if (input.packageManagerOverride !== undefined) {
       params.set("packageManagerOverride", input.packageManagerOverride);
     }
-    const response = await this.get(`/v1/desktop/project-launcher?${params.toString()}`) as {
+    const response = (await this.get(
+      `/v1/desktop/project-launcher?${params.toString()}`,
+    )) as {
       launcher?: DesktopProjectLauncherDescriptor | null | undefined;
     };
     return response.launcher ?? undefined;
   }
 
   async listDesktopProjectRuns(): Promise<DesktopManagedProjectRun[]> {
-    const response = await this.get("/v1/desktop/project-runs") as {
+    const response = (await this.get("/v1/desktop/project-runs")) as {
       runs?: DesktopManagedProjectRun[] | undefined;
     };
     return response.runs ?? [];
@@ -307,28 +452,42 @@ export class LocalCoreClient {
     scriptName: string;
     packageManagerOverride?: DesktopPackageManager | undefined;
   }): Promise<DesktopManagedProjectRun> {
-    const response = await this.post("/v1/desktop/project-runs", input) as {
+    const response = (await this.post("/v1/desktop/project-runs", input)) as {
       run?: DesktopManagedProjectRun | undefined;
     };
     if (response.run === undefined) {
-      throw new Error("Local Core Desktop project run response did not include run.");
+      throw new Error(
+        "Local Core Desktop project run response did not include run.",
+      );
     }
     return response.run;
   }
 
-  async stopDesktopProjectRun(runId: string): Promise<DesktopManagedProjectRun | undefined> {
-    const response = await this.post(`/v1/desktop/project-runs/${encodeURIComponent(runId)}/stop`, {}) as {
+  async stopDesktopProjectRun(
+    runId: string,
+  ): Promise<DesktopManagedProjectRun | undefined> {
+    const response = (await this.post(
+      `/v1/desktop/project-runs/${encodeURIComponent(runId)}/stop`,
+      {},
+    )) as {
       run?: DesktopManagedProjectRun | null | undefined;
     };
     return response.run ?? undefined;
   }
 
-  async restartDesktopProjectRun(runId: string): Promise<DesktopManagedProjectRun> {
-    const response = await this.post(`/v1/desktop/project-runs/${encodeURIComponent(runId)}/restart`, {}) as {
+  async restartDesktopProjectRun(
+    runId: string,
+  ): Promise<DesktopManagedProjectRun> {
+    const response = (await this.post(
+      `/v1/desktop/project-runs/${encodeURIComponent(runId)}/restart`,
+      {},
+    )) as {
       run?: DesktopManagedProjectRun | undefined;
     };
     if (response.run === undefined) {
-      throw new Error("Local Core Desktop project run restart response did not include run.");
+      throw new Error(
+        "Local Core Desktop project run restart response did not include run.",
+      );
     }
     return response.run;
   }
@@ -347,45 +506,54 @@ export class LocalCoreClient {
       disconnectReported = true;
       input.onError?.(error);
     };
-    const req = request({
-      socketPath: this.socketPath,
-      path: "/v1/desktop/project-runs/events",
-      method: "GET",
-      headers: {
-        authorization: `Bearer ${this.token}`,
-        accept: "text/event-stream",
+    const req = request(
+      {
+        socketPath: this.socketPath,
+        path: "/v1/desktop/project-runs/events",
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          accept: "text/event-stream",
+        },
       },
-    }, (response) => {
-      response.setEncoding("utf8");
-      response.on("data", (chunk: string) => {
-        buffer += chunk;
-        let eventEnd = buffer.indexOf("\n\n");
-        while (eventEnd !== -1) {
-          const rawEvent = buffer.slice(0, eventEnd);
-          buffer = buffer.slice(eventEnd + 2);
-          eventEnd = buffer.indexOf("\n\n");
-          const dataLine = rawEvent.split("\n").find((line) => line.startsWith("data: "));
-          if (dataLine === undefined) {
-            continue;
+      (response) => {
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          buffer += chunk;
+          let eventEnd = buffer.indexOf("\n\n");
+          while (eventEnd !== -1) {
+            const rawEvent = buffer.slice(0, eventEnd);
+            buffer = buffer.slice(eventEnd + 2);
+            eventEnd = buffer.indexOf("\n\n");
+            const dataLine = rawEvent
+              .split("\n")
+              .find((line) => line.startsWith("data: "));
+            if (dataLine === undefined) {
+              continue;
+            }
+            try {
+              const parsed = JSON.parse(dataLine.slice("data: ".length)) as {
+                runs?: DesktopManagedProjectRun[];
+              };
+              input.onRuns(parsed.runs ?? []);
+            } catch (error) {
+              input.onError?.(
+                error instanceof Error ? error : new Error(String(error)),
+              );
+            }
           }
-          try {
-            const parsed = JSON.parse(dataLine.slice("data: ".length)) as { runs?: DesktopManagedProjectRun[] };
-            input.onRuns(parsed.runs ?? []);
-          } catch (error) {
-            input.onError?.(error instanceof Error ? error : new Error(String(error)));
-          }
-        }
-      });
-      response.on("error", (error) => {
-        reportDisconnect(error);
-      });
-      response.on("end", () => {
-        reportDisconnect(createLocalCoreStreamClosedError());
-      });
-      response.on("close", () => {
-        reportDisconnect(createLocalCoreStreamClosedError());
-      });
-    });
+        });
+        response.on("error", (error) => {
+          reportDisconnect(error);
+        });
+        response.on("end", () => {
+          reportDisconnect(createLocalCoreStreamClosedError());
+        });
+        response.on("close", () => {
+          reportDisconnect(createLocalCoreStreamClosedError());
+        });
+      },
+    );
     req.on("error", (error) => {
       reportDisconnect(error);
     });
@@ -409,7 +577,9 @@ export class LocalCoreClient {
   }
 
   async deleteWorkspace(workspaceId: string): Promise<unknown> {
-    return await this.delete(`/v1/workspaces/${encodeURIComponent(workspaceId)}`);
+    return await this.delete(
+      `/v1/workspaces/${encodeURIComponent(workspaceId)}`,
+    );
   }
 
   async sessions(): Promise<unknown> {
@@ -431,12 +601,20 @@ export class LocalCoreClient {
 
   async runtimeDoctor(query: ReplayQuery): Promise<ReplayDoctorReport> {
     const response = await this.post("/v1/runtime/doctor", { query });
-    return readObjectField<ReplayDoctorReport>(response, "doctor", "runtime doctor");
+    return readObjectField<ReplayDoctorReport>(
+      response,
+      "doctor",
+      "runtime doctor",
+    );
   }
 
   async runtimeBundle(query: ReplayQuery): Promise<RuntimeReplayBundleV1> {
     const response = await this.post("/v1/runtime/bundle", { query });
-    return readObjectField<RuntimeReplayBundleV1>(response, "bundle", "runtime bundle");
+    return readObjectField<RuntimeReplayBundleV1>(
+      response,
+      "bundle",
+      "runtime bundle",
+    );
   }
 
   async sendRunnerCommand(
@@ -447,55 +625,67 @@ export class LocalCoreClient {
     },
   ): Promise<void> {
     const command = parseRunnerCommandEnvelope(line);
-    const stream = command.type === "run.start"
-      || command.type === "job.run"
-      || (command.type === "operator.control" && command.payload.completionMode === "accepted");
+    const stream =
+      command.type === "run.start" ||
+      command.type === "job.run" ||
+      (command.type === "operator.control" &&
+        command.payload.completionMode === "accepted");
     await new Promise<void>((resolve, reject) => {
-      const req = request({
-        socketPath: this.socketPath,
-        path: `/runtime/v2/commands${stream ? "/stream" : ""}`,
-        method: "POST",
-        signal: input.signal,
-        headers: {
-          authorization: `Bearer ${this.token}`,
-          accept: stream ? "text/event-stream, application/json" : "application/json",
-          "content-type": "application/json",
-          "content-length": Buffer.byteLength(line),
+      const req = request(
+        {
+          socketPath: this.socketPath,
+          path: `/runtime/v2/commands${stream ? "/stream" : ""}`,
+          method: "POST",
+          signal: input.signal,
+          headers: {
+            authorization: `Bearer ${this.token}`,
+            accept: stream
+              ? "text/event-stream, application/json"
+              : "application/json",
+            "content-type": "application/json",
+            "content-length": Buffer.byteLength(line),
+          },
         },
-      }, (response) => {
-        const contentType = response.headers["content-type"] ?? "";
-        let raw = "";
-        response.setEncoding("utf8");
-        response.on("data", (chunk: string) => {
-          raw += chunk;
-          if (contentType.includes("text/event-stream")) {
-            raw = consumeRunnerSseBuffer(raw, input.onLine);
-          }
-        });
-        response.on("end", () => {
-          const trailing = raw.trim();
-          if ((response.statusCode ?? 500) >= 400) {
-            const runnerErrorLine = parseCorrelatedRunnerErrorLine(trailing, command.id);
-            if (runnerErrorLine !== undefined) {
-              input.onLine(runnerErrorLine);
-              resolve();
+        (response) => {
+          const contentType = response.headers["content-type"] ?? "";
+          let raw = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk: string) => {
+            raw += chunk;
+            if (contentType.includes("text/event-stream")) {
+              raw = consumeRunnerSseBuffer(raw, input.onLine);
+            }
+          });
+          response.on("end", () => {
+            const trailing = raw.trim();
+            if ((response.statusCode ?? 500) >= 400) {
+              const runnerErrorLine = parseCorrelatedRunnerErrorLine(
+                trailing,
+                command.id,
+              );
+              if (runnerErrorLine !== undefined) {
+                input.onLine(runnerErrorLine);
+                resolve();
+                return;
+              }
+              reject(
+                new LocalCoreApiError(
+                  response.statusCode ?? 500,
+                  parseJsonOrText(trailing),
+                ),
+              );
               return;
             }
-            reject(new LocalCoreApiError(
-              response.statusCode ?? 500,
-              parseJsonOrText(trailing),
-            ));
-            return;
-          }
-          if (contentType.includes("text/event-stream")) {
-            consumeRunnerSseBuffer(`${raw}\n\n`, input.onLine);
-          } else if (trailing.length > 0) {
-            input.onLine(trailing);
-          }
-          resolve();
-        });
-        response.on("error", reject);
-      });
+            if (contentType.includes("text/event-stream")) {
+              consumeRunnerSseBuffer(`${raw}\n\n`, input.onLine);
+            } else if (trailing.length > 0) {
+              input.onLine(trailing);
+            }
+            resolve();
+          });
+          response.on("error", reject);
+        },
+      );
       req.on("error", reject);
       req.write(line);
       req.end();
@@ -546,7 +736,10 @@ export class LocalCoreClient {
     return await this.get("/v1/legacy-state");
   }
 
-  async getJson(path: string, options: { auth?: boolean | undefined } = {}): Promise<unknown> {
+  async getJson(
+    path: string,
+    options: { auth?: boolean | undefined } = {},
+  ): Promise<unknown> {
     return await this.get(path, options);
   }
 
@@ -566,7 +759,10 @@ export class LocalCoreClient {
     return await this.delete(path);
   }
 
-  private async get(path: string, options: { auth?: boolean | undefined } = {}): Promise<unknown> {
+  private async get(
+    path: string,
+    options: { auth?: boolean | undefined } = {},
+  ): Promise<unknown> {
     return await this.request("GET", path, undefined, options.auth ?? true);
   }
 
@@ -595,37 +791,43 @@ export class LocalCoreClient {
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body);
-      const req = request({
-        socketPath: this.socketPath,
-        path,
-        method,
-        ...(options.timeout === "none" ? {} : { timeout: this.timeoutMs }),
-        headers: {
-          ...(auth ? { authorization: `Bearer ${this.token}` } : {}),
-          ...(payload !== undefined
-            ? {
-                "content-type": "application/json",
-                "content-length": Buffer.byteLength(payload),
-              }
-            : {}),
+      const req = request(
+        {
+          socketPath: this.socketPath,
+          path,
+          method,
+          ...(options.timeout === "none" ? {} : { timeout: this.timeoutMs }),
+          headers: {
+            ...(auth ? { authorization: `Bearer ${this.token}` } : {}),
+            ...(payload !== undefined
+              ? {
+                  "content-type": "application/json",
+                  "content-length": Buffer.byteLength(payload),
+                }
+              : {}),
+          },
         },
-      }, (response) => {
-        let raw = "";
-        response.setEncoding("utf8");
-        response.on("data", (chunk) => {
-          raw += chunk;
-        });
-        response.on("end", () => {
-          const parsed = raw.trim().length > 0 ? JSON.parse(raw) as unknown : {};
-          if ((response.statusCode ?? 500) >= 400) {
-            reject(new LocalCoreApiError(response.statusCode ?? 500, parsed));
-            return;
-          }
-          resolve(parsed);
-        });
-      });
+        (response) => {
+          let raw = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk) => {
+            raw += chunk;
+          });
+          response.on("end", () => {
+            const parsed =
+              raw.trim().length > 0 ? (JSON.parse(raw) as unknown) : {};
+            if ((response.statusCode ?? 500) >= 400) {
+              reject(new LocalCoreApiError(response.statusCode ?? 500, parsed));
+              return;
+            }
+            resolve(parsed);
+          });
+        },
+      );
       req.on("timeout", () => {
-        req.destroy(new Error(`Local Core API request timed out: ${method} ${path}`));
+        req.destroy(
+          new Error(`Local Core API request timed out: ${method} ${path}`),
+        );
       });
       req.on("error", reject);
       if (payload !== undefined) {
@@ -661,29 +863,50 @@ function createLocalCoreStreamClosedError(): NodeJS.ErrnoException {
   );
 }
 
-function parseRunnerCommandEnvelope(line: string): { id: string; type: string; payload: Record<string, unknown> } {
+function parseRunnerCommandEnvelope(line: string): {
+  id: string;
+  type: string;
+  payload: Record<string, unknown>;
+} {
   let decoded: unknown;
   try {
     decoded = JSON.parse(line);
   } catch {
     throw new Error("Local Core runner command must be valid JSON.");
   }
-  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+  if (
+    typeof decoded !== "object" ||
+    decoded === null ||
+    Array.isArray(decoded)
+  ) {
     throw new Error("Local Core runner command must be an object.");
   }
   const id = (decoded as Record<string, unknown>).id;
   const type = (decoded as Record<string, unknown>).type;
   const payloadValue = (decoded as Record<string, unknown>).payload;
-  if (typeof id !== "string" || id.length === 0 || typeof type !== "string" || type.length === 0) {
-    throw new Error("Local Core runner command must include string id and type fields.");
+  if (
+    typeof id !== "string" ||
+    id.length === 0 ||
+    typeof type !== "string" ||
+    type.length === 0
+  ) {
+    throw new Error(
+      "Local Core runner command must include string id and type fields.",
+    );
   }
-  const payload = typeof payloadValue === "object" && payloadValue !== null && !Array.isArray(payloadValue)
-    ? payloadValue as Record<string, unknown>
-    : {};
+  const payload =
+    typeof payloadValue === "object" &&
+    payloadValue !== null &&
+    !Array.isArray(payloadValue)
+      ? (payloadValue as Record<string, unknown>)
+      : {};
   return { id, type, payload };
 }
 
-function consumeRunnerSseBuffer(buffer: string, onLine: (line: string) => void): string {
+function consumeRunnerSseBuffer(
+  buffer: string,
+  onLine: (line: string) => void,
+): string {
   let remaining = buffer;
   let boundary = remaining.indexOf("\n\n");
   while (boundary !== -1) {
@@ -713,24 +936,40 @@ function parseJsonOrText(value: string): unknown {
   }
 }
 
-function readObjectField<T extends object>(value: unknown, field: string, label: string): T {
+function readObjectField<T extends object>(
+  value: unknown,
+  field: string,
+  label: string,
+): T {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Local Core ${label} response must be an object.`);
   }
   const candidate = (value as Record<string, unknown>)[field];
-  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-    throw new Error(`Local Core ${label} response did not include object field '${field}'.`);
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate)
+  ) {
+    throw new Error(
+      `Local Core ${label} response did not include object field '${field}'.`,
+    );
   }
   return candidate as T;
 }
 
-function readBooleanField(value: unknown, field: string, label: string): boolean {
+function readBooleanField(
+  value: unknown,
+  field: string,
+  label: string,
+): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Local Core ${label} response must be an object.`);
   }
   const candidate = (value as Record<string, unknown>)[field];
   if (typeof candidate !== "boolean") {
-    throw new Error(`Local Core ${label} response did not include boolean field '${field}'.`);
+    throw new Error(
+      `Local Core ${label} response did not include boolean field '${field}'.`,
+    );
   }
   return candidate;
 }
@@ -743,7 +982,10 @@ export class LocalCoreApiError extends Error {
 
   constructor(statusCode: number, body: unknown) {
     const serviceError = readServiceError(body);
-    super(serviceError?.message ?? `Local Core API request failed with HTTP ${statusCode}.`);
+    super(
+      serviceError?.message ??
+        `Local Core API request failed with HTTP ${statusCode}.`,
+    );
     this.statusCode = statusCode;
     this.body = body;
     this.code = serviceError?.code;
@@ -751,23 +993,25 @@ export class LocalCoreApiError extends Error {
   }
 }
 
-function readServiceError(body: unknown): { code: string; message: string } | undefined {
+function readServiceError(
+  body: unknown,
+): { code: string; message: string } | undefined {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return ;
+    return;
   }
   const error = (body as Record<string, unknown>).error;
   if (typeof error !== "object" || error === null || Array.isArray(error)) {
-    return ;
+    return;
   }
   const code = (error as Record<string, unknown>).code;
   const message = (error as Record<string, unknown>).message;
   if (
-    typeof code !== "string"
-    || code.trim().length === 0
-    || typeof message !== "string"
-    || message.trim().length === 0
+    typeof code !== "string" ||
+    code.trim().length === 0 ||
+    typeof message !== "string" ||
+    message.trim().length === 0
   ) {
-    return ;
+    return;
   }
   return { code: code.trim(), message: message.trim() };
 }

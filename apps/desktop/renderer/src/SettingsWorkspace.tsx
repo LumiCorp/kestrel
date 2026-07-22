@@ -447,7 +447,23 @@ export function SettingsWorkspace({
       <section className="settings-section" aria-labelledby="desktop-preferences-title">
         <div className="settings-section-heading"><h2 id="desktop-preferences-title">Desktop preferences</h2></div>
         <div className="settings-content settings-card">
-          <label className="settings-check"><input type="checkbox" checked={settings.defaultEnabledAppIds.includes("weather")} onChange={(event) => void onSettings({ defaultEnabledAppIds: event.target.checked ? ["weather"] : [] })} />Enable Weather by default for new conversations</label>
+          <div className="settings-form">
+            <strong>Default Apps for new conversations</strong>
+            {settings.apps.map((app) => (
+              <label className="settings-check" key={app.id}>
+                <input
+                  type="checkbox"
+                  checked={settings.defaultEnabledAppIds.includes(app.id)}
+                  onChange={(event) => void onSettings({
+                    defaultEnabledAppIds: event.target.checked
+                      ? [...new Set([...settings.defaultEnabledAppIds, app.id])]
+                      : settings.defaultEnabledAppIds.filter((id) => id !== app.id),
+                  })}
+                />
+                Enable {app.label}
+              </label>
+            ))}
+          </div>
           <div className="appearance-options">
             {(["system", "light", "dark"] as const).map((theme) => <label key={theme}><input type="radio" name="theme" checked={settings.appearanceTheme === theme} onChange={() => void onSettings({ appearanceTheme: theme })} />{theme[0]!.toUpperCase() + theme.slice(1)}</label>)}
           </div>
@@ -575,7 +591,7 @@ function readinessIcon(readiness: DesktopCapability["readiness"]): typeof CheckC
 }
 
 function actionLabel(capability: DesktopCapability): string {
-  if (capability.id === "connections.mcp") return "Manage MCP";
+  if (capability.id === "connections.mcp") return "Manage Apps";
   if (capability.id === "data.workspace") return "Add project";
   if (capability.id === "permission.microphone") return "Request access";
   if (capability.readiness === "setup_required" || capability.readiness === "verification_failed") return "Set up";

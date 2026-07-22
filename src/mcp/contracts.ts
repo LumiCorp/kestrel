@@ -30,6 +30,7 @@ export interface McpRemoteServerConfig extends McpServerCommonConfig {
   url: string;
   authTokenEnv?: string | undefined;
   headerEnvs?: Record<string, string> | undefined;
+  oauthCredentialPrefix?: `mcp.${string}` | undefined;
 }
 
 export type McpHttpServerConfig = McpRemoteServerConfig & {
@@ -40,7 +41,10 @@ export type McpSseServerConfig = McpRemoteServerConfig & {
   transport: "sse";
 };
 
-export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig | McpSseServerConfig;
+export type McpServerConfig =
+  | McpStdioServerConfig
+  | McpHttpServerConfig
+  | McpSseServerConfig;
 
 export interface McpDiscoveredTool {
   serverId: string;
@@ -50,7 +54,12 @@ export interface McpDiscoveredTool {
   inputSchema: Record<string, unknown>;
   presentation?: McpToolPresentationMetadata | undefined;
   allowlisted?: boolean | undefined;
-  protocolKind?: "tool" | "resource" | "resource_template" | "prompt" | undefined;
+  protocolKind?:
+    | "tool"
+    | "resource"
+    | "resource_template"
+    | "prompt"
+    | undefined;
   protocolTarget?: string | undefined;
 }
 
