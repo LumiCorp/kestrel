@@ -164,8 +164,8 @@ export default function SignIn() {
       </CardContent>
       <CardFooter>
         <div className="flex w-full justify-center border-t pt-4">
-          <p className="text-center text-neutral-500 text-xs">
-            Kestrel One by Lumi Corp
+          <p className="text-center text-muted-foreground text-xs">
+            by Lumi Corp
           </p>
         </div>
       </CardFooter>

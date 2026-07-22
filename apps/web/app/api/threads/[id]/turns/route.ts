@@ -3,6 +3,7 @@ import { z } from "zod";
 import { resolveThreadEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
+import { organizationSetupRequiredTurnResponse } from "@/lib/organizations/turn-readiness";
 import { routeIdSchema, uiMessagePartSchema } from "@/lib/knowledge/validation";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
@@ -61,6 +62,9 @@ export async function POST(
     if (!thread || thread.mode !== "chat") {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
+    const setupRequired =
+      await organizationSetupRequiredTurnResponse(organizationId);
+    if (setupRequired) return setupRequired;
 
     const [projectContext, environment] = await Promise.all([
       resolveProjectRuntimeContext({

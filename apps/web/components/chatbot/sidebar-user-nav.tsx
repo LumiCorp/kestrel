@@ -1,9 +1,8 @@
 "use client";
 
-import { ChevronUp } from "lucide-react";
+import { ChevronUp, Palette } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useTheme } from "next-themes";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,7 +23,6 @@ import { toast } from "./toast";
 export function SidebarUserNav({ session }: { session: Session }) {
   const router = useRouter();
   const { data } = useSession();
-  const { setTheme, resolvedTheme } = useTheme();
   const currentSession = data || session;
 
   const isGuest = guestRegex.test(currentSession?.user?.email ?? "");
@@ -78,11 +76,10 @@ export function SidebarUserNav({ session }: { session: Session }) {
             <DropdownMenuItem
               className="cursor-pointer"
               data-testid="user-nav-item-theme"
-              onSelect={() =>
-                setTheme(resolvedTheme === "dark" ? "light" : "dark")
-              }
+              onSelect={() => router.push("/settings/appearance")}
             >
-              {`Toggle ${resolvedTheme === "light" ? "dark" : "light"} mode`}
+              <Palette className="size-4" />
+              Appearance
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

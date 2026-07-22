@@ -165,7 +165,7 @@ export function SidebarHistory({ session }: { session: Session | null }) {
     return (
       <SidebarGroup>
         <SidebarGroupContent>
-          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
+          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-muted-foreground text-sm">
             Sign in to save and revisit Threads.
           </div>
         </SidebarGroupContent>
@@ -206,7 +206,7 @@ export function SidebarHistory({ session }: { session: Session | null }) {
     return (
       <SidebarGroup>
         <SidebarGroupContent>
-          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
+          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-muted-foreground text-sm">
             Your Threads will appear here once you start a conversation.
           </div>
         </SidebarGroupContent>
@@ -342,11 +342,11 @@ export function SidebarHistory({ session }: { session: Session | null }) {
           />
 
           {hasReachedEnd ? (
-            <div className="mt-8 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
+            <div className="mt-8 flex w-full flex-row items-center justify-center gap-2 px-2 text-muted-foreground text-sm">
               You have reached the end of your Thread history.
             </div>
           ) : (
-            <div className="mt-8 flex flex-row items-center gap-2 p-2 text-zinc-500 dark:text-zinc-400">
+            <div className="mt-8 flex flex-row items-center gap-2 p-2 text-muted-foreground">
               <div className="animate-spin">
                 <LoaderIcon />
               </div>

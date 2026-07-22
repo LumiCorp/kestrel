@@ -46,7 +46,7 @@ function Toast(props: ToastProps) {
     <div className="flex toast-mobile:w-[356px] w-full justify-center">
       <div
         className={cn(
-          "flex toast-mobile:w-fit w-full flex-row gap-3 rounded-lg bg-zinc-100 p-3",
+          "flex toast-mobile:w-fit w-full flex-row gap-3 rounded-lg border bg-popover p-3 text-popover-foreground",
           multiLine ? "items-start" : "items-center"
         )}
         data-testid="toast"
@@ -61,7 +61,7 @@ function Toast(props: ToastProps) {
         >
           {iconsByType[type]}
         </div>
-        <div className="text-sm text-zinc-950" ref={descriptionRef}>
+        <div className="text-sm" ref={descriptionRef}>
           {description}
         </div>
       </div>

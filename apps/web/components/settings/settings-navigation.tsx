@@ -9,9 +9,11 @@ import {
   HardDrive,
   KeyRound,
   Mail,
+  Palette,
   PlugZap,
   ScrollText,
   Server,
+  Sparkles,
   ShieldCheck,
   User,
   Users,
@@ -34,11 +36,17 @@ type SettingsGroup = {
 
 const personalItems: SettingsItem[] = [
   { href: "/settings/profile", icon: User, label: "Profile" },
+  { href: "/settings/appearance", icon: Palette, label: "Appearance" },
   { href: "/settings/api-keys", icon: KeyRound, label: "API keys" },
   { href: "/apps?view=connections", icon: PlugZap, label: "Connections" },
 ];
 
 const organizationItems: SettingsItem[] = [
+  {
+    href: "/settings/organization/setup",
+    icon: Sparkles,
+    label: "Setup",
+  },
   {
     href: "/settings/organization/members",
     icon: Building2,
@@ -114,16 +122,27 @@ function isItemActive(pathname: string, href: string) {
 export function SettingsNavigation({
   canManageOrganization,
   isAppAdmin,
+  showOrganizationSetup,
 }: {
   canManageOrganization: boolean;
   isAppAdmin: boolean;
+  showOrganizationSetup: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const groups: SettingsGroup[] = [
     { label: "Personal", items: personalItems },
     ...(canManageOrganization
-      ? [{ label: "Organization", items: organizationItems }]
+      ? [
+          {
+            label: "Organization",
+            items: showOrganizationSetup
+              ? organizationItems
+              : organizationItems.filter(
+                  (item) => item.href !== "/settings/organization/setup"
+                ),
+          },
+        ]
       : []),
     ...(isAppAdmin ? [{ label: "Platform", items: platformItems }] : []),
   ];

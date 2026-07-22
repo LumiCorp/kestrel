@@ -40,7 +40,7 @@ export const Suggestion = ({
               <div className="font-medium">Assistant</div>
             </div>
             <button
-              className="cursor-pointer text-gray-500 text-xs"
+              className="cursor-pointer text-muted-foreground text-xs"
               onClick={() => {
                 setIsExpanded(false);
               }}

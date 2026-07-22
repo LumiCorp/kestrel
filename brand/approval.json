@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "approvedAt": "2026-07-22",
+  "reviewSha256": "457f9731d8223eacbd7f98594ed3d4455b311abe427ebbd284dcbfd60baf0069",
+  "files": {
+    "masters/kestrel-mark-black.svg": "842297a1f3a452871ef7ee19462e24a1e3a861f28d2d3713dc75e91bd7442e47",
+    "masters/kestrel-mark-white.svg": "f68dbbf1d09aaf75946cd683a24a82923cf9530eacb0ef48f9ecf2df2b9806e9",
+    "masters/kestrel-one-lockup-black.svg": "f1773bbd8bdea2f58c7608ec0ba88395da091e71f11a23ed57bffb6aa01e0715",
+    "masters/kestrel-one-lockup-white.svg": "394d236a042846ce3e7acfbcb93503de6bce88877550e12a4f4549b2917911c1",
+    "masters/kestrel-one-social-card.svg": "1a14c5dda45feb02cd62c2c08a094f24fb54500138518bd77ebaa26686be7c40"
+  }
+}

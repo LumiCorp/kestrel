@@ -130,7 +130,7 @@ function PureDocumentToolCall({
       type="button"
     >
       <div className="flex flex-row items-start gap-3">
-        <div className="mt-1 text-zinc-500">
+        <div className="mt-1 text-muted-foreground">
           {type === "create" ? (
             <FileIcon />
           ) : type === "update" ? (
