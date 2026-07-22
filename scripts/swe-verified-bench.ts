@@ -654,8 +654,12 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     deps.stderr.write(`[bench:swe] ${warning}\n`);
   }
   const benchmarkEnv = benchmarkProviderEnv(deps.env);
-  const { modelName, runtimeModelName } = modelSelection;
   const benchmarkProfile = loadBenchmarkProfileOverride(deps.env);
+  const profileModel = typeof benchmarkProfile?.model === "string" && benchmarkProfile.model.trim().length > 0
+    ? benchmarkProfile.model.trim()
+    : undefined;
+  const modelName = profileModel ?? modelSelection.modelName;
+  const runtimeModelName = profileModel ?? modelSelection.runtimeModelName;
   const jobInput = buildSweVerifiedJobInput({
     instance,
     dataset: options.dataset,
@@ -2163,6 +2167,12 @@ export function writeSweVerifiedEfficiencyResult(input: {
     }
   }
   const profile = asRecord(input.jobInput.profile);
+  const frozenModelProvider = typeof profile?.modelProvider === "string" && profile.modelProvider.trim().length > 0
+    ? profile.modelProvider.trim()
+    : "openrouter";
+  const frozenModel = typeof profile?.model === "string" && profile.model.trim().length > 0
+    ? profile.model.trim()
+    : input.modelName;
   const trial = readPositiveTrial(input.env.KESTREL_BENCHMARK_TRIAL);
   const result = createHarnessEfficiencyResultV2({
     pairId: input.env.KESTREL_BENCHMARK_PAIR_ID?.trim() || `swe_verified:${input.dataset}:${input.instance.instance_id}:trial:${trial}`,
@@ -2186,8 +2196,8 @@ export function writeSweVerifiedEfficiencyResult(input: {
         split: input.split,
         maxWorkers: input.options.maxWorkers,
         timeout: input.options.timeout,
-        modelProvider: "openrouter",
-        model: input.modelName,
+        modelProvider: frozenModelProvider,
+        model: frozenModel,
         guardrails: profile?.guardrails,
         toolAllowlist: profile?.toolAllowlist,
         defaultInteractionMode: profile?.defaultInteractionMode,
@@ -2198,8 +2208,8 @@ export function writeSweVerifiedEfficiencyResult(input: {
         harnessEconomics: profile?.harnessEconomics,
       }),
       harnessRevision: input.sourceHash,
-      modelProvider: "openrouter",
-      model: input.modelName,
+      modelProvider: frozenModelProvider,
+      model: frozenModel,
     },
     runtime: {
       ...(input.kestrelJobSummary?.runId !== undefined ? { runId: input.kestrelJobSummary.runId } : {}),

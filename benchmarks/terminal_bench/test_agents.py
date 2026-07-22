@@ -137,7 +137,7 @@ class AgentHelpersTest(unittest.TestCase):
         self.assertIn("CI=true pnpm install --frozen-lockfile --prod=false", setup_script)
         self.assertIn("pnpm --filter @kestrel-agents/protocol run build:self", setup_script)
         self.assertIn('node -e \'require.resolve("tsx")\'', setup_script)
-        self.assertIn('node -e \'require.resolve("@kestrel-agents/protocol")\'', setup_script)
+        self.assertIn('node --input-type=module -e \'await import("@kestrel-agents/protocol")\'', setup_script)
 
     def test_setup_script_provides_pytest_uv_fallback_for_task_verifiers(self) -> None:
         setup_script = (Path(__file__).parent / "setup.sh").read_text(encoding="utf-8")

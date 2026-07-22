@@ -35,7 +35,14 @@ contractTest("runtime.hermetic", "SWE efficiency result joins runtime calls and 
     const jobInputPath = path.join(tmp, "job-input.json");
     const jobOutputPath = path.join(tmp, "job-output.json");
     const evaluatorReportPath = path.join(tmp, "evaluator-report.json");
-    const jobInput = { profile: { defaultInteractionMode: "build", defaultActSubmode: "full_auto" } };
+    const jobInput = {
+      profile: {
+        modelProvider: "openrouter",
+        model: "z-ai/glm-5.2",
+        defaultInteractionMode: "build",
+        defaultActSubmode: "full_auto",
+      },
+    };
     writeFileSync(replayBundlePath, JSON.stringify(economicsReplayBundleFixture("run-swe-ledger", "session-swe-ledger")), "utf8");
     writeFileSync(jobInputPath, JSON.stringify(jobInput), "utf8");
     writeFileSync(jobOutputPath, JSON.stringify({ version: "job_output_v1" }), "utf8");
@@ -76,6 +83,8 @@ contractTest("runtime.hermetic", "SWE efficiency result joins runtime calls and 
     const ledger = parseHarnessEfficiencyLedgerV2(JSON.parse(readFileSync(ledgerPath, "utf8")));
     assert.equal(result.economics.status, "complete");
     assert.equal(result.economics.tokensPerAcceptedSuccess, 12);
+    assert.equal(result.frozen.modelProvider, "openrouter");
+    assert.equal(result.frozen.model, "z-ai/glm-5.2");
     assert.equal(ledger.entries.at(-1)?.event.type, "economics.run_outcome.evaluated");
     assert.equal(result.artifacts.some((artifact) => artifact.kind === "efficiency_ledger"), true);
   } finally {
