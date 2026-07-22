@@ -219,6 +219,12 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
     action,
     activePlan: input.activePlan,
   });
+  validateModeScopedTaskPublication({
+    phase: input.phase,
+    interactionMode: input.interactionMode,
+    action,
+    activePlan: input.activePlan,
+  });
   const policyMissingRequiredCapabilities = computeMissingRequiredCapabilities(
     policyRequiredCapabilities,
     input.capabilityManifest,
@@ -443,6 +449,33 @@ function validateModeScopedTerminalAction(input: {
       interactionMode,
       actionKind: input.action.kind,
       requiredAction: "choose_valid_build_mode_action",
+    },
+  );
+}
+
+function validateModeScopedTaskPublication(input: {
+  phase: DecisionPhase;
+  interactionMode?: InteractionMode | undefined;
+  action: ReactAction;
+  activePlan?: RuntimePlanState | undefined;
+}): void {
+  if (
+    input.phase !== "deliberator" ||
+    input.interactionMode !== "plan" ||
+    readActionToolNames(input.action).includes("task.propose") === false ||
+    input.activePlan !== undefined
+  ) {
+    return;
+  }
+  throw new DecisionCompileError(
+    "DECISION_POLICY_FAILED",
+    "task.propose in Plan mode requires an active session plan document.",
+    "policy",
+    {
+      phase: input.phase,
+      interactionMode: input.interactionMode,
+      actionKind: input.action.kind,
+      requiredAction: "write_session_plan_before_task_publication",
     },
   );
 }

@@ -35,6 +35,28 @@ contractTest("runtime.hermetic", "parseTaskAction validates and preserves canoni
   });
 });
 
+contractTest("runtime.hermetic", "parseTaskAction preserves proposal revision and order fields", () => {
+  assert.deepEqual(parseTaskAction({
+    type: "task.propose",
+    sessionId: "session-1",
+    actionId: "action-2",
+    actionTs: "2026-07-10T12:00:00.000Z",
+    taskId: "T-2",
+    title: "Revise Mission Control",
+    instructions: "Update the existing proposal without approving it.",
+    order: 1,
+  }), {
+    type: "task.propose",
+    sessionId: "session-1",
+    actionId: "action-2",
+    actionTs: "2026-07-10T12:00:00.000Z",
+    taskId: "T-2",
+    title: "Revise Mission Control",
+    instructions: "Update the existing proposal without approving it.",
+    order: 1,
+  });
+});
+
 contractTest("runtime.hermetic", "parseTaskAction rejects malformed task action boundaries", () => {
   assert.throws(
     () => parseTaskAction({ type: "task.approve", sessionId: "session-1" }),
@@ -69,6 +91,18 @@ contractTest("runtime.hermetic", "parseTaskAction rejects malformed task action 
       review: { submittedAt: "2026-07-10T12:00:00.000Z" },
     }),
     /review\.summary must be a non-empty string/u,
+  );
+  assert.throws(
+    () => parseTaskAction({
+      type: "task.propose",
+      sessionId: "session-1",
+      actionId: "action-2",
+      actionTs: "2026-07-10T12:00:00.000Z",
+      title: "Invalid order",
+      instructions: "Reject non-positive proposal positions.",
+      order: 0,
+    }),
+    /order must be a positive integer/u,
   );
 });
 
@@ -121,6 +155,103 @@ contractTest("runtime.hermetic", "agent-proposed mission control tasks cannot be
 
   assert.equal(queue.tasks[taskId ?? ""]?.status, "running");
   assert.equal(queue.tasks[taskId ?? ""]?.assignedAgentId, "agent-1");
+});
+
+contractTest("runtime.hermetic", "task.propose revises and reorders only agent-created proposed tasks", () => {
+  let queue = apply(createEmptyTaskQueue(), {
+    type: "task.propose",
+    title: "Implement the runtime gate",
+    instructions: "Allow the proposal tool in Plan mode.",
+    acceptanceCriteria: "Plan mode exposes only explicitly enabled proposal mutations.",
+    priority: "high",
+  }, 1);
+  queue = apply(queue, {
+    type: "task.propose",
+    title: "Add regression coverage",
+    instructions: "Cover the Plan-mode proposal workflow.",
+  }, 2);
+  const original = queue.tasks["T-2"];
+
+  queue = apply(queue, {
+    type: "task.propose",
+    taskId: "T-2",
+    title: "Add Plan publication regression coverage",
+    instructions: "Cover create, revise, order, and approval boundaries.",
+    order: 1,
+    summary: "Reconciled with the latest PLAN.md.",
+  }, 3);
+
+  const revised = queue.tasks["T-2"];
+  assert.equal(revised?.id, original?.id);
+  assert.equal(revised?.createdAt, original?.createdAt);
+  assert.equal(revised?.createdBy, "agent");
+  assert.equal(revised?.status, "proposed");
+  assert.equal(revised?.priority, "medium");
+  assert.equal(revised?.order, 1);
+  assert.equal(queue.tasks["T-1"]?.order, 2);
+  assert.equal(revised?.evidence.at(-1)?.source, "agent");
+  assert.equal(revised?.evidence.at(-1)?.summary, "Reconciled with the latest PLAN.md.");
+});
+
+contractTest("runtime.hermetic", "task.propose preserves omitted revision fields", () => {
+  let queue = apply(createEmptyTaskQueue(), {
+    type: "task.propose",
+    title: "Document the workflow",
+    instructions: "Document the initial workflow.",
+    acceptanceCriteria: "The workflow is reviewable.",
+    priority: "high",
+  }, 1);
+  queue = apply(queue, {
+    type: "task.propose",
+    taskId: "T-1",
+    title: "Document the Plan publication workflow",
+    instructions: "Document the revised workflow.",
+  }, 2);
+
+  assert.equal(queue.tasks["T-1"]?.acceptanceCriteria, "The workflow is reviewable.");
+  assert.equal(queue.tasks["T-1"]?.priority, "high");
+});
+
+contractTest("runtime.hermetic", "task.propose rejects revisions outside the agent proposal boundary", () => {
+  const userQueue = apply(createEmptyTaskQueue(), {
+    type: "task.create",
+    title: "Operator task",
+    instructions: "Keep this operator-authored task unchanged.",
+  });
+  assert.throws(
+    () => apply(userQueue, {
+      type: "task.propose",
+      taskId: "T-1",
+      title: "Rewrite operator task",
+      instructions: "This must be rejected.",
+    }, 2),
+    /Only agent-created proposed tasks can be revised/u,
+  );
+
+  let approvedQueue = apply(createEmptyTaskQueue(), {
+    type: "task.propose",
+    title: "Approved proposal",
+    instructions: "Approve this before testing revision rejection.",
+  });
+  approvedQueue = apply(approvedQueue, { type: "task.approve", taskId: "T-1" }, 2);
+  assert.throws(
+    () => apply(approvedQueue, {
+      type: "task.propose",
+      taskId: "T-1",
+      title: "Rewrite approved task",
+      instructions: "This must be rejected.",
+    }, 3),
+    /Only agent-created proposed tasks can be revised/u,
+  );
+  assert.throws(
+    () => apply(createEmptyTaskQueue(), {
+      type: "task.propose",
+      taskId: "T-404",
+      title: "Missing proposal",
+      instructions: "This must not create a fallback task.",
+    }, 4),
+    /Task was not found/u,
+  );
 });
 
 contractTest("runtime.hermetic", "running mission control tasks move to attention or human review", () => {

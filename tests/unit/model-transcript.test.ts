@@ -970,11 +970,50 @@ contractTest("runtime.hermetic", "context request includes compact mission contr
   const rendered = JSON.stringify(request.messages);
   assert.match(rendered, /Mission Control task queue/u);
   assert.match(rendered, /sessionId: project-session-1/u);
-  assert.match(rendered, /T-1 Fix auth callback/u);
+  assert.match(rendered, /T-1 \[order 1\] Fix auth callback/u);
   assert.match(rendered, /agent agent-1/u);
   assert.match(rendered, /avoid duplicates/u);
   assert.match(rendered, /task\.propose/u);
-  assert.match(JSON.stringify(request.modelInput.projectTaskQueueContext), /T-2 Add auth regression test/u);
+  assert.match(JSON.stringify(request.modelInput.projectTaskQueueContext), /T-2 \[order 2\] Add auth regression test/u);
+});
+
+contractTest("runtime.hermetic", "context request includes every proposed task for Plan reconciliation", () => {
+  const tasks = Object.fromEntries(
+    Array.from({ length: 9 }, (_, index) => {
+      const taskNumber = index + 1;
+      return [`T-${taskNumber}`, {
+        id: `T-${taskNumber}`,
+        title: `Proposal ${taskNumber}`,
+        instructions: `Implement proposal ${taskNumber}.`,
+        status: "proposed",
+        createdBy: "agent",
+        priority: "medium",
+        order: taskNumber,
+        evidence: [],
+      }];
+    }),
+  );
+  const request = buildContextRequest({
+    reactState: {},
+    eventPayload: { message: "Republish the plan." },
+    eventType: "user.message",
+    goal: "Republish the plan.",
+    interactionMode: "plan",
+    projectSnapshot: {
+      sessionId: "project-session-1",
+      taskQueue: {
+        version: 1,
+        queueVersion: 1,
+        nextTaskNumber: 10,
+        tasks,
+      },
+    },
+  });
+
+  const rendered = JSON.stringify(request.modelInput.projectTaskQueueContext);
+  assert.match(rendered, /T-1 \[order 1\] Proposal 1/u);
+  assert.match(rendered, /T-9 \[order 9\] Proposal 9/u);
+  assert.match(rendered, /taskId/u);
 });
 
 contractTest("runtime.hermetic", "context request omits mission control task queue context for non-project turns", () => {

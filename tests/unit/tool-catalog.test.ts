@@ -314,7 +314,17 @@ contractTest("runtime.hermetic", "mission control task proposal tool is the mode
   assert.equal(manifest?.executionClass, "external_side_effect");
   assert.deepEqual(manifest?.capabilityClasses, ["runtime.project.task_queue"]);
   assert.deepEqual(manifest?.approvalCapabilities, ["project.task_queue.write"]);
-  assert.deepEqual(manifest?.allowedInteractionModes, ["chat", "build"]);
+  assert.deepEqual(manifest?.allowedInteractionModes, ["chat", "plan", "build"]);
+  assert.deepEqual(Object.keys(tool?.inputSchema.properties ?? {}), [
+    "sessionId",
+    "taskId",
+    "title",
+    "instructions",
+    "acceptanceCriteria",
+    "priority",
+    "order",
+    "summary",
+  ]);
 });
 
 contractTest("runtime.hermetic", "authorized app mutations opt into Chat while agent branch push remains Build-only", () => {

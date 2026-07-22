@@ -176,7 +176,8 @@ export function resolveToolAllowedInteractionModes(input: {
 /**
  * Shared model-surface and execution eligibility contract. Mode availability is
  * a hard ceiling: policy overrides may narrow it, but cannot widen it. The only
- * class-level exception is an external app action that explicitly opts into Chat.
+ * class-level exception is an external app action that explicitly opts into the
+ * active conversational mode (Chat or Plan).
  */
 export function isToolEligibleForInteractionMode(input: {
   interactionMode: InteractionMode;
@@ -204,9 +205,9 @@ export function isToolEligibleForInteractionMode(input: {
   if (isToolClassAllowed(input)) {
     return true;
   }
-  return input.interactionMode === "chat" &&
+  return (input.interactionMode === "chat" || input.interactionMode === "plan") &&
     input.toolClass === "external_side_effect" &&
-    input.allowedInteractionModes?.includes("chat") === true;
+    input.allowedInteractionModes?.includes(input.interactionMode) === true;
 }
 
 export function isToolClassAllowed(input: {

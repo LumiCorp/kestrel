@@ -322,8 +322,10 @@ const PROJECT_TASK_PROPOSE_TOOL: ModelToolSpec = {
     additionalProperties: false,
     properties: {
       sessionId: { type: "string" },
+      taskId: { type: "string" },
       title: { type: "string" },
       instructions: { type: "string" },
+      order: { type: "integer", minimum: 1 },
       summary: { type: "string" },
     },
     required: ["sessionId", "title", "instructions"],
@@ -338,7 +340,7 @@ function projectTaskQueueCapabilityManifest() {
       capabilityClasses: ["runtime.project.task_queue"],
       approvalCapabilities: ["project.task_queue.write"],
       executionClass: "external_side_effect" as const,
-      allowedInteractionModes: ["chat", "build"] as Array<"chat" | "build">,
+      allowedInteractionModes: ["chat", "plan", "build"] as Array<"chat" | "plan" | "build">,
     },
   ];
 }
@@ -2061,6 +2063,152 @@ contractTest("runtime.hermetic", "agent loop accepts split task capture as multi
   assert.match(JSON.stringify(aggregateItems?.[1]?.input), /Add auth regression tests/u);
 });
 
+contractTest("runtime.hermetic", "agent loop exposes ordered task proposal reconciliation in Plan mode", async () => {
+  const ctx = context();
+  const executionPolicy = taskQueueWriteAllowedPolicy();
+  ctx.event.payload = {
+    message: "Publish the agreed plan as Mission Control tasks.",
+    interactionMode: "plan",
+    modeSystemV2Enabled: true,
+    executionPolicy,
+  };
+  ctx.session.state.agent = {
+    interactionMode: "plan",
+    modeSystemV2Enabled: true,
+    executionPolicy,
+    plan: {
+      path: "~/.kestrel/sessions/session-1/PLAN.md",
+      status: "draft",
+    },
+    planDocument: {
+      path: "~/.kestrel/sessions/session-1/PLAN.md",
+      exists: true,
+      content: "# Plan\n\nPublish the runtime gate and its regression coverage.",
+    },
+  };
+  ctx.session.state.product = {
+    projectSnapshot: projectSnapshotFixture({
+      cards: {
+        "T-1": {
+          id: "T-1",
+          title: "Implement the runtime gate",
+          instructions: "Allow task proposals in Plan mode.",
+          status: "proposed",
+          createdBy: "agent",
+          priority: "medium",
+          order: 1,
+          evidence: [],
+        },
+      },
+    }),
+  };
+  let requestToolNames: string[] = [];
+  let systemPrompt = "";
+
+  const transition = await buildStep({
+    tools: [PROJECT_TASK_PROPOSE_TOOL],
+    capabilityManifest: projectTaskQueueCapabilityManifest(),
+  })(ctx, {
+    useModel: async (request) => {
+      requestToolNames = (request.tools ?? []).map((tool) => tool.name);
+      systemPrompt = (request.messages ?? [])
+        .filter((message) => message.role === "system" && typeof message.content === "string")
+        .map((message) => String(message.content))
+        .join("\n");
+      return modelResponse({
+        version: "v1",
+        reason: "Reconcile the current plan with the proposed queue without starting implementation.",
+        nextAction: {
+          kind: "tool_batch",
+          items: [
+            {
+              name: "task.propose",
+              input: {
+                sessionId: "project-session-1",
+                taskId: "T-1",
+                title: "Implement the Plan-mode runtime gate",
+                instructions: "Allow only explicitly Plan-enabled external tools.",
+                order: 1,
+              },
+            },
+            {
+              name: "task.propose",
+              input: {
+                sessionId: "project-session-1",
+                title: "Add Plan publication regression coverage",
+                instructions: "Cover proposal creation, revision, ordering, and approval boundaries.",
+                order: 2,
+              },
+            },
+          ],
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  const commandBatch = agent.commandBatch as Record<string, unknown>;
+  const commands = commandBatch.commands as Array<Record<string, unknown>>;
+  assert.equal(requestToolNames.includes("task_propose"), true);
+  assert.match(systemPrompt, /Publish Mission Control tasks only when the user explicitly asks/u);
+  assert.match(systemPrompt, /After task publication, finalize in Plan mode/u);
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  assert.equal(commands[0]?.name, "tool_batch");
+  assert.doesNotMatch(JSON.stringify(agent.nextAction), /handoff_to_build/u);
+});
+
+contractTest("runtime.hermetic", "agent loop requires PLAN.md before Plan-mode task publication", async () => {
+  const ctx = context();
+  const executionPolicy = taskQueueWriteAllowedPolicy();
+  ctx.event.payload = {
+    message: "Publish the agreed plan as Mission Control tasks.",
+    interactionMode: "plan",
+    modeSystemV2Enabled: true,
+    executionPolicy,
+  };
+  ctx.session.state.agent = {
+    interactionMode: "plan",
+    modeSystemV2Enabled: true,
+    executionPolicy,
+  };
+
+  const transition = await buildStep({
+    tools: [PROJECT_TASK_PROPOSE_TOOL],
+    capabilityManifest: projectTaskQueueCapabilityManifest(),
+  })(ctx, {
+    useModel: async () => modelResponse({
+      version: "v1",
+      reason: "Publish the requested implementation task.",
+      nextAction: {
+        kind: "tool",
+        name: "task.propose",
+        input: {
+          sessionId: "project-session-1",
+          title: "Implement the Plan-mode runtime gate",
+          instructions: "Allow only explicitly Plan-enabled external tools.",
+          order: 1,
+        },
+      },
+    }),
+  } satisfies StepIO);
+
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  const retryContext = agent.retryContext as Record<string, unknown>;
+  const failure = retryContext.failure as Record<string, unknown>;
+  const details = failure.details as Record<string, unknown>;
+  const requiredCorrection = retryContext.requiredCorrection as Record<string, unknown>;
+  const planCorrection = requiredCorrection.planDocumentBeforeTaskPublication as Record<string, unknown>;
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transition.nextStepAgent, "agent.loop");
+  assert.equal(agent.nextAction, undefined);
+  assert.equal(failure.code, "DECISION_POLICY_FAILED");
+  assert.equal(details.requiredAction, "write_session_plan_before_task_publication");
+  assert.equal(planCorrection.requiredTool, "planning.write_document");
+  assert.equal(planCorrection.forbiddenActionUntilPlanExists, "task.propose");
+});
+
 contractTest("runtime.hermetic", "agent loop supplies existing matching tasks so duplicate proposal can be skipped", async () => {
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
@@ -2119,7 +2267,7 @@ contractTest("runtime.hermetic", "agent loop supplies existing matching tasks so
 
   assert.ok(capturedRequest);
   const renderedMessages = JSON.stringify(capturedRequest.messages);
-  assert.match(renderedMessages, /T-7 Add auth regression tests/u);
+  assert.match(renderedMessages, /T-7 \[order 1\] Add auth regression tests/u);
   assert.match(renderedMessages, /Captured from prior conversation/u);
   assert.match(renderedMessages, /avoid duplicates/u);
 
@@ -3426,7 +3574,7 @@ contractTest("runtime.hermetic", "agent loop assembles execution-ready fresh-app
   );
   assert.match(
     systemPrompt,
-    /Reserve finalize status goal_satisfied for true conversational or current task status answers, not execution-ready build requests\./u,
+    /Reserve finalize status goal_satisfied for true conversational, current task status, or explicitly requested task-publication outcomes, not execution-ready build requests\./u,
   );
   assert.match(
     systemPrompt,
