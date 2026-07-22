@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { Response } from "@/components/chatbot/elements/response";
+import { BrandLockup } from "@/components/brand";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -125,6 +126,13 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 px-4 py-8">
+      <Link
+        aria-label="Kestrel One home"
+        className="inline-flex w-fit rounded-sm outline-none ring-ring focus-visible:ring-2 focus-visible:ring-offset-2"
+        href="/"
+      >
+        <BrandLockup decorative height={20} />
+      </Link>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-2">
           <Badge variant="outline">Shared Thread</Badge>

@@ -185,7 +185,7 @@ export function SignUp() {
       <CardFooter>
         <div className="flex w-full justify-center border-t pt-4">
           <p className="text-center text-muted-foreground text-xs">
-            Kestrel One by Lumi Corp
+            by Lumi Corp
           </p>
         </div>
       </CardFooter>
