@@ -19,11 +19,27 @@ import {
 const startSchema = z.object({
   credentialName: z.string().trim().min(1).max(120),
   resource: z.string().url(),
-  clientId: z.string().trim().min(1).max(4096),
+  clientId: z.string().trim().min(1).max(4096).optional(),
   clientSecret: z.string().min(1).max(16_384).optional(),
   tokenEndpointAuthMethod: z
     .enum(["none", "client_secret_basic", "client_secret_post"])
     .default("none"),
+  scopes: z.array(z.string().trim().min(1).max(240)).max(100).optional(),
+}).superRefine((value, context) => {
+  if (value.clientSecret && !value.clientId) {
+    context.addIssue({
+      code: "custom",
+      path: ["clientSecret"],
+      message: "A configured OAuth client secret requires a client ID.",
+    });
+  }
+  if (!value.clientId && value.tokenEndpointAuthMethod !== "none") {
+    context.addIssue({
+      code: "custom",
+      path: ["tokenEndpointAuthMethod"],
+      message: "Dynamic OAuth clients must use public-client authentication.",
+    });
+  }
 });
 export type McpOauthStartInput = z.input<typeof startSchema>;
 
@@ -32,6 +48,7 @@ export async function startEnvironmentMcpOauth(input: {
   environmentId: string;
   actorUserId: string;
   redirectUri: string;
+  clientName?: string;
   oauth: McpOauthStartInput;
 }) {
   if (!(await getOrganizationEnvironment(input)))
@@ -42,9 +59,6 @@ export async function startEnvironmentMcpOauth(input: {
   });
   const authorizationEndpoint = discovered.authorizationEndpoint;
   const tokenEndpoint = discovered.tokenEndpoint;
-  if (oauth.tokenEndpointAuthMethod !== "none" && !oauth.clientSecret) {
-    throw new Error("OAuth client authentication requires a client secret.");
-  }
   const redirectUri = new URL(input.redirectUri);
   const isLoopback =
     redirectUri.hostname === "localhost" ||
@@ -55,6 +69,30 @@ export async function startEnvironmentMcpOauth(input: {
     !(redirectUri.protocol === "http:" && isLoopback)
   )
     throw new Error("Invalid OAuth callback URL.");
+  const registeredClient = oauth.clientId
+    ? null
+    : await registerMcpOauthClient({
+        registrationEndpoint: discovered.registrationEndpoint,
+        redirectUri: redirectUri.toString(),
+        clientName: input.clientName ?? "Kestrel",
+        scopes: oauth.scopes ?? discovered.scopes,
+      });
+  const clientId = oauth.clientId ?? registeredClient?.clientId;
+  const clientSecret = oauth.clientSecret ?? registeredClient?.clientSecret;
+  const tokenEndpointAuthMethod =
+    registeredClient?.tokenEndpointAuthMethod ?? oauth.tokenEndpointAuthMethod;
+  if (!clientId) throw new Error("MCP OAuth client registration failed.");
+  if (tokenEndpointAuthMethod !== "none" && !clientSecret) {
+    throw new Error("OAuth client authentication requires a client secret.");
+  }
+  const scopes = [...new Set(oauth.scopes ?? discovered.scopes)];
+  if (
+    oauth.scopes &&
+    discovered.supportedScopes.length > 0 &&
+    scopes.some((scope) => !discovered.supportedScopes.includes(scope))
+  ) {
+    throw new Error("OAuth capability selection requested an unsupported permission.");
+  }
   const state = randomBytes(32).toString("base64url");
   const verifier = randomBytes(32).toString("base64url");
   const credentialId = crypto.randomUUID();
@@ -67,8 +105,8 @@ export async function startEnvironmentMcpOauth(input: {
       kind: "secret_headers",
       headers: {
         "x-kestrel-pkce-verifier": verifier,
-        ...(oauth.clientSecret
-          ? { "x-kestrel-oauth-client-secret": oauth.clientSecret }
+        ...(clientSecret
+          ? { "x-kestrel-oauth-client-secret": clientSecret }
           : {}),
       },
     },
@@ -84,9 +122,9 @@ export async function startEnvironmentMcpOauth(input: {
     encryptedSession,
     authorizationEndpoint: authorizationEndpoint.toString(),
     tokenEndpoint: tokenEndpoint.toString(),
-    clientId: oauth.clientId,
-    tokenEndpointAuthMethod: oauth.tokenEndpointAuthMethod,
-    scopes: discovered.scopes,
+    clientId,
+    tokenEndpointAuthMethod,
+    scopes,
     resource: discovered.resource.toString(),
     redirectUri: redirectUri.toString(),
     expiresAt: new Date(Date.now() + 10 * 60_000),
@@ -94,15 +132,14 @@ export async function startEnvironmentMcpOauth(input: {
   const url = new URL(authorizationEndpoint);
   for (const [key, value] of Object.entries({
     response_type: "code",
-    client_id: oauth.clientId,
+    client_id: clientId,
     redirect_uri: redirectUri.toString(),
     state,
     code_challenge: sha(verifier, "base64url"),
     code_challenge_method: "S256",
   }))
     url.searchParams.set(key, value);
-  if (discovered.scopes.length)
-    url.searchParams.set("scope", discovered.scopes.join(" "));
+  if (scopes.length) url.searchParams.set("scope", scopes.join(" "));
   url.searchParams.set("resource", discovered.resource.toString());
   return { authorizationId, authorizationUrl: url.toString() };
 }
@@ -113,6 +150,8 @@ export async function completeEnvironmentMcpOauth(input: {
   actorUserId: string;
   state: string;
   code: string;
+  expectedResource?: string;
+  acceptedTokenTypes?: string[];
 }) {
   const row = await knowledgeDb.query.mcpOauthAuthorizations.findFirst({
     where: (table, { and, eq }) =>
@@ -126,6 +165,14 @@ export async function completeEnvironmentMcpOauth(input: {
   });
   if (!row || row.expiresAt.getTime() <= Date.now())
     throw new Error("MCP OAuth authorization is missing or expired.");
+  if (
+    input.expectedResource &&
+    (!row.resource ||
+      new URL(row.resource).toString() !==
+        new URL(input.expectedResource).toString())
+  ) {
+    throw new Error("MCP OAuth authorization belongs to another App.");
+  }
   const session = decryptMcpCredential({
     organizationId: row.organizationId,
     environmentId: row.environmentId,
@@ -168,21 +215,53 @@ export async function completeEnvironmentMcpOauth(input: {
       await response.body?.cancel().catch(() => {});
       throw new Error("MCP OAuth token exchange failed.");
     }
-    const token = z
-      .object({
-        access_token: z.string().min(1),
-        refresh_token: z.string().min(1).optional(),
-        token_type: z.string(),
-        expires_in: z.number().int().positive().optional(),
-        scope: z.string().optional(),
-      })
-      .parse(await response.json());
-    if (token.token_type.toLowerCase() !== "bearer")
-      throw new Error("MCP OAuth requires Bearer tokens.");
-    return await persistCompletedOauth({ row, token, clientSecret, endpoint });
+    const token = parseMcpOauthTokenResponse(
+      await response.json(),
+      input.acceptedTokenTypes
+    );
+    const credential = await persistCompletedOauth({
+      row,
+      token,
+      clientSecret,
+      endpoint,
+      acceptedProviderTokenTypes: input.acceptedTokenTypes ?? ["bearer"],
+    });
+    return {
+      credential,
+      scopes: parseOauthScopes(token.scope, row.scopes),
+      tokenEndpoint: endpoint.toString(),
+    };
   } finally {
     await transport.close();
   }
+}
+
+export function parseMcpOauthTokenResponse(
+  value: unknown,
+  acceptedTokenTypes: string[] = ["bearer"]
+) {
+  const token = z
+    .object({
+      access_token: z.string().min(1),
+      refresh_token: z.string().min(1).optional(),
+      token_type: z.string().min(1),
+      expires_in: z.number().int().positive().optional(),
+      scope: z.string().optional(),
+    })
+    .parse(value);
+  const accepted = new Set(
+    acceptedTokenTypes.map((type) => type.trim().toLowerCase()).filter(Boolean)
+  );
+  if (!accepted.has(token.token_type.toLowerCase())) {
+    throw new Error("MCP OAuth returned an unsupported token type.");
+  }
+  return token;
+}
+
+function parseOauthScopes(value: string | undefined, fallback: string[]) {
+  return value
+    ? [...new Set(value.split(/[,\s]+/u).filter(Boolean))]
+    : fallback;
 }
 
 async function persistCompletedOauth(input: {
@@ -196,8 +275,15 @@ async function persistCompletedOauth(input: {
   };
   clientSecret: string | undefined;
   endpoint: URL;
+  acceptedProviderTokenTypes: string[];
 }) {
-  const { row, token, clientSecret, endpoint } = input;
+  const {
+    row,
+    token,
+    clientSecret,
+    endpoint,
+    acceptedProviderTokenTypes,
+  } = input;
   const expiresAt = token.expires_in
     ? new Date(Date.now() + token.expires_in * 1000).toISOString()
     : undefined;
@@ -210,13 +296,14 @@ async function persistCompletedOauth(input: {
       accessToken: token.access_token,
       ...(token.refresh_token ? { refreshToken: token.refresh_token } : {}),
       tokenType: "Bearer",
-      scopes: token.scope?.split(/\s+/u).filter(Boolean) ?? row.scopes,
+      scopes: parseOauthScopes(token.scope, row.scopes),
       ...(expiresAt ? { expiresAt } : {}),
       tokenEndpoint: endpoint.toString(),
       resource: row.resource ?? undefined,
       clientId: row.clientId,
       ...(clientSecret ? { clientSecret } : {}),
       tokenEndpointAuthMethod: row.tokenEndpointAuthMethod,
+      acceptedProviderTokenTypes,
     },
   });
   const now = new Date();
@@ -279,8 +366,58 @@ const authorizationServerMetadataSchema = z.object({
   issuer: z.string().url(),
   authorization_endpoint: z.string().url(),
   token_endpoint: z.string().url(),
+  registration_endpoint: z.string().url().optional(),
   code_challenge_methods_supported: z.array(z.string()).default([]),
 });
+
+const dynamicClientRegistrationSchema = z.object({
+  client_id: z.string().min(1).max(4096),
+  client_secret: z.string().min(1).max(16_384).optional(),
+  token_endpoint_auth_method: z
+    .enum(["none", "client_secret_basic", "client_secret_post"])
+    .default("none"),
+});
+
+export async function registerMcpOauthClient(input: {
+  registrationEndpoint: URL | null;
+  redirectUri: string;
+  clientName: string;
+  scopes?: string[];
+  request?: DiscoveryRequest;
+}) {
+  if (!input.registrationEndpoint) {
+    throw new Error("MCP authorization server does not support client registration.");
+  }
+  const endpoint = assertPublicHttpsEndpoint(input.registrationEndpoint.toString());
+  const request = input.request ?? secureDiscoveryRequest;
+  const response = await request(endpoint, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: input.clientName,
+      redirect_uris: [input.redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+      ...(input.scopes?.length ? { scope: input.scopes.join(" ") } : {}),
+    }),
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error("MCP OAuth client registration failed.");
+  }
+  const registered = dynamicClientRegistrationSchema.parse(response.body);
+  if (
+    registered.token_endpoint_auth_method !== "none" &&
+    !registered.client_secret
+  ) {
+    throw new Error("MCP OAuth client registration omitted its client secret.");
+  }
+  return {
+    clientId: registered.client_id,
+    clientSecret: registered.client_secret,
+    tokenEndpointAuthMethod: registered.token_endpoint_auth_method,
+  };
+}
 
 export async function discoverMcpOauthConfiguration(input: {
   resource: string;
@@ -341,10 +478,14 @@ export async function discoverMcpOauthConfiguration(input: {
     tokenEndpoint: assertPublicHttpsEndpoint(
       authorizationMetadata.token_endpoint,
     ),
+    registrationEndpoint: authorizationMetadata.registration_endpoint
+      ? assertPublicHttpsEndpoint(authorizationMetadata.registration_endpoint)
+      : null,
     scopes:
       challengedScope?.split(/\s+/u).filter(Boolean) ??
       protectedMetadata.scopes_supported ??
       [],
+    supportedScopes: protectedMetadata.scopes_supported ?? [],
   };
 }
 

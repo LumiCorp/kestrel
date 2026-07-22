@@ -17,6 +17,7 @@ export type ToolProviderAppContract = {
     | "communication"
     | "productivity"
     | "engineering"
+    | "workflow"
     | "search_research"
     | "knowledge_sources"
     | "custom";

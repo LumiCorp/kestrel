@@ -510,6 +510,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
+    "app/api/runtime/microsoft-365/action/route.ts",
+    "/api/runtime/microsoft-365/action",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
     "app/api/runtime/environments/idle/route.ts",
     "/api/runtime/environments/idle",
     "credential-boundary",
@@ -846,6 +853,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   api(
+    "app/api/apps/microsoft-365/route.ts",
+    "/api/apps/microsoft-365",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
     "app/api/environments/[environmentId]/apps/[appKey]/route.ts",
     "/api/environments/:environmentId/apps/:appKey",
     "apps",
@@ -862,6 +876,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/connections/[connectionId]/route.ts",
     "/api/environments/:environmentId/apps/:appKey/connections/:connectionId",
+    "apps",
+    "admin",
+    "admin-denied"
+  ),
+  api(
+    "app/api/environments/[environmentId]/apps/[appKey]/oauth/start/route.ts",
+    "/api/environments/:environmentId/apps/:appKey/oauth/start",
+    "apps",
+    "admin",
+    "admin-denied"
+  ),
+  api(
+    "app/api/environments/[environmentId]/apps/[appKey]/oauth/callback/route.ts",
+    "/api/environments/:environmentId/apps/:appKey/oauth/callback",
     "apps",
     "admin",
     "admin-denied"

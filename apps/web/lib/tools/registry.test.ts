@@ -21,27 +21,22 @@ contractTest("web.hermetic", "tool registry includes seeded built-in and externa
     providers.some((provider) => provider.key === "built_in.exchange_rates")
   );
   assert.ok(
-    providers.some((provider) => provider.key === "built_in.hacker_news")
-  );
-  assert.ok(
     providers.some((provider) => provider.key === "built_in.knowledge_search")
   );
   assert.ok(providers.some((provider) => provider.key === "github"));
-  assert.ok(providers.some((provider) => provider.key === "discord"));
-  assert.ok(providers.some((provider) => provider.key === "source.github"));
-  assert.ok(providers.some((provider) => provider.key === "source.youtube"));
+  assert.ok(providers.some((provider) => provider.key === "google_workspace"));
+  assert.ok(providers.some((provider) => provider.key === "tavily"));
+  assert.ok(providers.some((provider) => provider.key === "linear"));
+  assert.equal(getToolProviderDefinition("built_in.hacker_news"), undefined);
+  assert.equal(getToolProviderDefinition("discord"), undefined);
+  assert.equal(getToolProviderDefinition("source.github"), undefined);
+  assert.equal(getToolProviderDefinition("source.youtube"), undefined);
 });
 
-contractTest("web.hermetic", "GitHub exposes governed capabilities while source adapters stay connection-only", () => {
+contractTest("web.hermetic", "GitHub exposes governed repository capabilities", () => {
   const github = getToolProviderDefinition("github");
-  const discord = getToolProviderDefinition("discord");
-  const githubSources = getToolProviderDefinition("source.github");
-  const youtubeSources = getToolProviderDefinition("source.youtube");
 
   assert.ok(github);
-  assert.ok(discord);
-  assert.ok(githubSources);
-  assert.ok(youtubeSources);
   assert.deepEqual(
     github?.capabilities.map((capability) => [
       capability.key,
@@ -57,9 +52,6 @@ contractTest("web.hermetic", "GitHub exposes governed capabilities while source 
       ["workflow.dispatch", "ask"],
     ]
   );
-  assert.equal(discord?.capabilities.length, 0);
-  assert.equal(githubSources?.capabilities.length, 0);
-  assert.equal(youtubeSources?.capabilities.length, 0);
 });
 
 contractTest("web.hermetic", "weather provider defaults weather capability to auto approval", () => {
@@ -86,7 +78,6 @@ contractTest("web.hermetic", "runtime names expose current chat tools", () => {
   assert.ok(runtimeNames.includes("free.time.current"));
   assert.ok(runtimeNames.includes("free.geocode.lookup"));
   assert.ok(runtimeNames.includes("free.exchange.rate"));
-  assert.ok(runtimeNames.includes("free.hn.top"));
   assert.ok(runtimeNames.includes("searchKnowledgeDocuments"));
   assert.ok(runtimeNames.includes("createDocument"));
 });

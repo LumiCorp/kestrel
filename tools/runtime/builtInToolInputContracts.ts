@@ -16,10 +16,16 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "free.geocode.lookup": { mode: "schema-only" },
   "free.exchange.rate": { mode: "schema-only" },
   "internet.search": { mode: "schema-only" },
-  "internet.search_advanced": { mode: "validated", validate: validateAdvancedSearchInput },
+  "internet.search_advanced": {
+    mode: "validated",
+    validate: validateAdvancedSearchInput,
+  },
   "internet.news": { mode: "schema-only" },
   "internet.images": { mode: "schema-only" },
-  "internet.extract": { mode: "validated", validate: validateInternetExtractInput },
+  "internet.extract": {
+    mode: "validated",
+    validate: validateInternetExtractInput,
+  },
   "internet.crawl": { mode: "validated", validate: validateInternetUrlInput },
   "internet.map": { mode: "validated", validate: validateInternetUrlInput },
   "internet.research": { mode: "schema-only" },
@@ -37,10 +43,16 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "repo.trace": { mode: "schema-only" },
   "fs.write_text": { mode: "schema-only" },
   "fs.replace_text": { mode: "schema-only" },
-  "fs.mkdir": { mode: "validated", validate: validateFilesystemMutationPathInput },
+  "fs.mkdir": {
+    mode: "validated",
+    validate: validateFilesystemMutationPathInput,
+  },
   "fs.copy": { mode: "schema-only" },
   "fs.move": { mode: "schema-only" },
-  "fs.delete": { mode: "validated", validate: validateFilesystemMutationPathInput },
+  "fs.delete": {
+    mode: "validated",
+    validate: validateFilesystemMutationPathInput,
+  },
   "planning.write_document": { mode: "schema-only" },
   "code.execute": { mode: "schema-only" },
   "dev.shell.run": { mode: "schema-only" },
@@ -77,7 +89,9 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "kestrel_one.google_calendar_create_event": { mode: "schema-only" },
   "kestrel_one.google_calendar_update_event": { mode: "schema-only" },
   "kestrel_one.google_calendar_delete_event": { mode: "schema-only" },
-  "kestrel_one.google_calendar_list_availability_subjects": { mode: "schema-only" },
+  "kestrel_one.google_calendar_list_availability_subjects": {
+    mode: "schema-only",
+  },
   "kestrel_one.google_calendar_check_availability": { mode: "schema-only" },
   "kestrel_one.email_send": { mode: "schema-only" },
   "kestrel_one.microsoft_365_list_mail": { mode: "schema-only" },
@@ -101,7 +115,10 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "kestrel_one.vercel_deployment_events": { mode: "schema-only" },
 } satisfies Record<string, BuiltInToolInputContract>;
 
-export function validateBuiltInToolInputContract(name: string, input: unknown): void {
+export function validateBuiltInToolInputContract(
+  name: string,
+  input: unknown,
+): void {
   const contract = readBuiltInToolInputContract(name);
   if (contract?.mode !== "validated") {
     return;
@@ -110,9 +127,13 @@ export function validateBuiltInToolInputContract(name: string, input: unknown): 
   contract.validate(name, input);
 }
 
-function readBuiltInToolInputContract(name: string): BuiltInToolInputContract | undefined {
-  return  Object.hasOwn(BUILT_IN_TOOL_INPUT_CONTRACTS, name)
-    ? BUILT_IN_TOOL_INPUT_CONTRACTS[name as keyof typeof BUILT_IN_TOOL_INPUT_CONTRACTS]
+function readBuiltInToolInputContract(
+  name: string,
+): BuiltInToolInputContract | undefined {
+  return Object.hasOwn(BUILT_IN_TOOL_INPUT_CONTRACTS, name)
+    ? BUILT_IN_TOOL_INPUT_CONTRACTS[
+        name as keyof typeof BUILT_IN_TOOL_INPUT_CONTRACTS
+      ]
     : undefined;
 }
 
@@ -126,7 +147,12 @@ function validateInternetUrlInput(toolName: string, input: unknown): void {
     return;
   }
 
-  throw createContractError(toolName, "url", "a public absolute http or https URL", [record.url]);
+  throw createContractError(
+    toolName,
+    "url",
+    "a public absolute http or https URL",
+    [record.url],
+  );
 }
 
 function validateInternetExtractInput(toolName: string, input: unknown): void {
@@ -139,24 +165,40 @@ function validateInternetExtractInput(toolName: string, input: unknown): void {
     : typeof record.url === "string"
       ? [record.url]
       : [];
-  const invalidValues = urls.filter((url) => isPublicInternetHttpUrl(url) === false);
+  const invalidValues = urls.filter(
+    (url) => isPublicInternetHttpUrl(url) === false,
+  );
   if (invalidValues.length > 0) {
-    throw createContractError(toolName, Array.isArray(record.urls) ? "urls" : "url", "public absolute http or https URLs", invalidValues);
+    throw createContractError(
+      toolName,
+      Array.isArray(record.urls) ? "urls" : "url",
+      "public absolute http or https URLs",
+      invalidValues,
+    );
   }
 }
 
-function validateFilesystemMutationPathInput(toolName: string, input: unknown): void {
+function validateFilesystemMutationPathInput(
+  toolName: string,
+  input: unknown,
+): void {
   const record = asRecord(input);
-  const path = typeof record?.path === "string" ? normalizeFilesystemMutationPath(record.path) : undefined;
+  const path =
+    typeof record?.path === "string"
+      ? normalizeFilesystemMutationPath(record.path)
+      : undefined;
   if (path === undefined) {
     return;
   }
   if (path !== ".") {
     return;
   }
-  throw createContractError(toolName, "path", "an explicit path other than the workspace root '.'", [
-    typeof record?.path === "string" ? record.path : ".",
-  ]);
+  throw createContractError(
+    toolName,
+    "path",
+    "an explicit path other than the workspace root '.'",
+    [typeof record?.path === "string" ? record.path : "."],
+  );
 }
 
 function validateAdvancedSearchInput(toolName: string, input: unknown): void {
@@ -166,23 +208,45 @@ function validateAdvancedSearchInput(toolName: string, input: unknown): void {
   }
   for (const field of ["domainAllow", "domainDeny"] as const) {
     const values = Array.isArray(record[field])
-      ? record[field].filter((value): value is string => typeof value === "string")
+      ? record[field].filter(
+          (value): value is string => typeof value === "string",
+        )
       : [];
     const invalidValues = values.filter((value) => isHostname(value) === false);
     if (invalidValues.length > 0) {
-      throw createContractError(toolName, field, "hostnames only, without schemes, paths, or content categories", invalidValues);
+      throw createContractError(
+        toolName,
+        field,
+        "hostnames only, without schemes, paths, or content categories",
+        invalidValues,
+      );
     }
   }
-  const country = typeof record.country === "string" ? record.country.trim() : undefined;
+  const country =
+    typeof record.country === "string" ? record.country.trim() : undefined;
   if (country !== undefined && country.length > 0) {
-    const topic = typeof record.topic === "string" ? record.topic.trim() : undefined;
-    if ((topic === undefined || topic === "general") && isTavilySearchCountry(country) === false) {
-      throw createContractError(toolName, "country", "one of Tavily's supported lowercase country names", [country]);
+    const topic =
+      typeof record.topic === "string" ? record.topic.trim() : undefined;
+    if (
+      (topic === undefined || topic === "general") &&
+      isTavilySearchCountry(country) === false
+    ) {
+      throw createContractError(
+        toolName,
+        "country",
+        "one of Tavily's supported lowercase country names",
+        [country],
+      );
     }
   }
   for (const field of ["startDate", "endDate"] as const) {
-    const value = typeof record[field] === "string" ? record[field].trim() : undefined;
-    if (value !== undefined && value.length > 0 && isTavilyDateString(value) === false) {
+    const value =
+      typeof record[field] === "string" ? record[field].trim() : undefined;
+    if (
+      value !== undefined &&
+      value.length > 0 &&
+      isTavilyDateString(value) === false
+    ) {
       throw createContractError(toolName, field, "a YYYY-MM-DD date", [value]);
     }
   }
@@ -208,11 +272,18 @@ function createContractError(
 export function isPublicInternetHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.hostname.trim().length === 0) {
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.hostname.trim().length === 0
+    ) {
       return false;
     }
     const hostname = normalizeUrlHostname(url.hostname);
-    if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local")) {
+    if (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local")
+    ) {
       return false;
     }
     if (hostname === "host.docker.internal") {
@@ -232,7 +303,9 @@ export function isPublicInternetHttpUrl(value: string): boolean {
 
 function normalizeUrlHostname(value: string): string {
   const trimmed = value.trim().toLowerCase();
-  return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  return trimmed.startsWith("[") && trimmed.endsWith("]")
+    ? trimmed.slice(1, -1)
+    : trimmed;
 }
 
 function isPrivateIpv4Hostname(hostname: string): boolean {
@@ -240,7 +313,12 @@ function isPrivateIpv4Hostname(hostname: string): boolean {
     return false;
   }
   const parts = hostname.split(".").map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => Number.isInteger(part) === false || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some(
+      (part) => Number.isInteger(part) === false || part < 0 || part > 255,
+    )
+  ) {
     return true;
   }
   const [a = 0, b = 0] = parts;
@@ -290,7 +368,7 @@ function isHostname(value: string): boolean {
 function normalizeFilesystemMutationPath(value: string): string | undefined {
   const trimmed = value.trim().replace(/\\/gu, "/");
   if (trimmed.length === 0) {
-    return ;
+    return;
   }
   const withoutPrefix = trimmed.replace(/^(?:\.\/)+/u, "");
   const collapsed = withoutPrefix.replace(/\/+/gu, "/").replace(/\/$/u, "");
@@ -298,7 +376,9 @@ function normalizeFilesystemMutationPath(value: string): string | undefined {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && Array.isArray(value) === false
-    ? value as Record<string, unknown>
+  return typeof value === "object" &&
+    value !== null &&
+    Array.isArray(value) === false
+    ? (value as Record<string, unknown>)
     : undefined;
 }

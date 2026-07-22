@@ -79,7 +79,7 @@ export function InteractionPanel({
   ) {
     const checkpointId = interaction.sourceCheckpointId;
     if (!checkpointId) {
-      setError("The MCP interaction checkpoint is missing.");
+      setError("The App interaction checkpoint is missing.");
       return;
     }
     setBusy(interaction.requestId);
@@ -108,7 +108,7 @@ export function InteractionPanel({
       };
       if (!response.ok) {
         throw new Error(
-          payload.error ?? "The MCP request could not be resolved."
+          payload.error ?? "The App request could not be resolved."
         );
       }
       await onResolved();
@@ -116,7 +116,7 @@ export function InteractionPanel({
       setError(
         caught instanceof Error
           ? caught.message
-          : "The MCP request could not be resolved."
+          : "The App request could not be resolved."
       );
     } finally {
       setBusy(null);

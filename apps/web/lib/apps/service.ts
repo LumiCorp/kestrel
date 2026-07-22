@@ -32,6 +32,13 @@ const APP_AUTH_METHODS = new Set<AppAuthMethod>([
   "deployment_managed",
 ]);
 
+const RETIRED_CORE_APP_KEYS = [
+  "built_in.hacker_news",
+  "discord",
+  "source.github",
+  "source.youtube",
+] as const;
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -45,6 +52,25 @@ function authMethods(value: unknown): AppAuthMethod[] {
     (method): method is AppAuthMethod =>
       typeof method === "string" && APP_AUTH_METHODS.has(method as AppAuthMethod)
   );
+}
+
+function connectionCapabilityPacks(value: unknown) {
+  const packs = record(value).connectionCapabilityPacks;
+  if (!Array.isArray(packs)) return [];
+  return packs.flatMap((value) => {
+    const pack = record(value);
+    return typeof pack.key === "string" &&
+      typeof pack.name === "string" &&
+      typeof pack.description === "string"
+      ? [
+          {
+            key: pack.key,
+            name: pack.name,
+            description: pack.description,
+          },
+        ]
+      : [];
+  });
 }
 
 export class AppServiceError extends Error {
@@ -67,6 +93,11 @@ export class AppServiceError extends Error {
 
 export async function ensureCoreAppCatalog() {
   const now = new Date();
+  await knowledgeDb
+    .update(schema.appDefinitions)
+    .set({ published: false, updatedAt: now })
+    .where(inArray(schema.appDefinitions.key, RETIRED_CORE_APP_KEYS));
+
   for (const app of listCoreAppDefinitions()) {
     await knowledgeDb
       .insert(schema.appDefinitions)
@@ -604,6 +635,30 @@ export async function getEnvironmentAppConfiguration(input: {
   const connections = connectionRows.map((connection) =>
     connectionSummary(connection, "")
   );
+  const connectionNameById = new Map(
+    connectionRows.map((connection) => [connection.id, connection.name])
+  );
+  const pendingSnapshots = connectionRows.length
+    ? await knowledgeDb.query.mcpCapabilitySnapshots.findMany({
+        where: (table, { and: all, eq: equals, inArray: includedIn }) =>
+          all(
+            includedIn(
+              table.serverId,
+              connectionRows.map((connection) => connection.id)
+            ),
+            equals(table.status, "pending_review")
+          ),
+      })
+    : [];
+  const pendingCapabilities = pendingSnapshots.length
+    ? await knowledgeDb.query.mcpCapabilities.findMany({
+        where: (table, { inArray: includedIn }) =>
+          includedIn(
+            table.snapshotId,
+            pendingSnapshots.map((snapshot) => snapshot.id)
+          ),
+      })
+    : [];
   const installationStatus: AppInstallationStatus =
     definition.installMode === "inherited" ? "installed" : "installed";
   return {
@@ -627,8 +682,37 @@ export async function getEnvironmentAppConfiguration(input: {
         connectionRequirement: definition.connectionRequirement,
         connections,
       }),
+      connectionCapabilityPacks: connectionCapabilityPacks(
+        definition.metadata
+      ),
     },
     connections,
+    capabilityReviews: pendingSnapshots
+      .sort(
+        (left, right) =>
+          right.discoveredAt.getTime() - left.discoveredAt.getTime()
+      )
+      .map((snapshot) => ({
+        connectionId: snapshot.serverId,
+        connectionName:
+          connectionNameById.get(snapshot.serverId) ?? definition.displayName,
+        snapshotId: snapshot.id,
+        capabilities: pendingCapabilities
+          .filter((capability) => capability.snapshotId === snapshot.id)
+          .sort((left, right) =>
+            (left.displayName ?? left.capabilityKey).localeCompare(
+              right.displayName ?? right.capabilityKey
+            )
+          )
+          .map((capability) => ({
+            key: `${capability.kind}:${capability.capabilityKey}`,
+            displayName: capability.displayName ?? capability.capabilityKey,
+            description:
+              capability.description ??
+              `Capability provided by ${definition.displayName}.`,
+            group: capability.kind,
+          })),
+      })),
     capabilities: capabilityRows.map((capability) => {
       const grant = grants.get(capability.key);
       return {

@@ -33,7 +33,7 @@ contractTest("web.hermetic", "Better Auth encrypts linked GitHub OAuth tokens at
   assert.match(authSource, /github:[\s\S]*disableImplicitSignUp:\s*true/u);
 });
 
-contractTest("web.hermetic", "broad GitHub OAuth tokens remain inside Kestrel One broker routes", () => {
+contractTest("web.hermetic", "linked App OAuth tokens remain inside Kestrel One broker routes", () => {
   const accessTokenConsumers = listTypeScriptFiles(webRoot)
     .filter((file) => !file.endsWith(".test.ts"))
     .filter((file) =>
@@ -47,6 +47,7 @@ contractTest("web.hermetic", "broad GitHub OAuth tokens remain inside Kestrel On
     "app/api/runtime/github/git/[resourceId]/[...gitPath]/route.ts",
     "app/api/runtime/github/push/route.ts",
     "app/api/runtime/google-calendar/action/route.ts",
+    "app/api/runtime/microsoft-365/action/route.ts",
   ]);
 
   const workspaceRuntimeSource = listTypeScriptFiles(workspaceRuntimeRoot)

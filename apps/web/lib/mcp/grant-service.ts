@@ -24,7 +24,7 @@ export async function issueHostedMcpRunContext(input: {
       id: schema.mcpCapabilities.id,
       kind: schema.mcpCapabilities.kind,
       capabilityKey: schema.mcpCapabilities.capabilityKey,
-      providerKey: schema.mcpCapabilities.providerKey,
+      appKey: schema.appConnections.appKey,
       serverId: schema.mcpServers.id,
       snapshotId: schema.mcpCapabilitySnapshots.id,
       snapshotDigest: schema.mcpCapabilitySnapshots.capabilityDigest,
@@ -38,6 +38,10 @@ export async function issueHostedMcpRunContext(input: {
       schema.mcpServers,
       eq(schema.mcpServers.id, schema.mcpCapabilitySnapshots.serverId)
     )
+    .innerJoin(
+      schema.appConnections,
+      eq(schema.appConnections.id, schema.mcpServers.id)
+    )
     .where(
       and(
         eq(schema.mcpServers.organizationId, input.organizationId),
@@ -46,24 +50,24 @@ export async function issueHostedMcpRunContext(input: {
         eq(schema.mcpCapabilitySnapshots.status, "approved")
       )
     );
-  const accessByProvider = new Map<
+  const accessByApp = new Map<
     string,
     Awaited<ReturnType<typeof resolveEffectiveProjectAppAccess>>
   >();
   for (const row of rows) {
-    if (accessByProvider.has(row.providerKey)) continue;
-    accessByProvider.set(
-      row.providerKey,
+    if (accessByApp.has(row.appKey)) continue;
+    accessByApp.set(
+      row.appKey,
       await resolveEffectiveProjectAppAccess({
         organizationId: input.organizationId,
         projectId: input.projectId,
-        appKey: row.providerKey,
+        appKey: row.appKey,
         userId: "runtime-shared-app",
       })
     );
   }
   const effectiveCapabilities = rows.flatMap((row) => {
-    const access = accessByProvider.get(row.providerKey);
+    const access = accessByApp.get(row.appKey);
     if (!access || access.connectionId !== row.serverId) return [];
     const capability = access.capabilities.find(
       (candidate) =>

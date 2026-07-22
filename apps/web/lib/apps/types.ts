@@ -12,6 +12,7 @@ export type AppCategory =
   | "engineering"
   | "knowledge_sources"
   | "communication"
+  | "workflow"
   | "custom";
 
 export type AppKind = "built_in" | "external" | "custom";
@@ -119,6 +120,18 @@ export type EnvironmentAppCapability = AppCapability & {
   inheritedDefault: boolean;
 };
 
+export type EnvironmentAppCapabilityReview = {
+  connectionId: string;
+  connectionName: string;
+  snapshotId: string;
+  capabilities: Array<{
+    key: string;
+    displayName: string;
+    description: string;
+    group: string;
+  }>;
+};
+
 export type EnvironmentAppConfiguration = {
   environmentId: string;
   app: Pick<
@@ -135,7 +148,14 @@ export type EnvironmentAppConfiguration = {
     | "icon"
     | "installationStatus"
     | "readiness"
-  >;
+  > & {
+    connectionCapabilityPacks: Array<{
+      key: string;
+      name: string;
+      description: string;
+    }>;
+  };
   connections: AppConnectionSummary[];
   capabilities: EnvironmentAppCapability[];
+  capabilityReviews: EnvironmentAppCapabilityReview[];
 };

@@ -14,6 +14,8 @@ const profile = {
     "kestrel_one.google_calendar_list_events",
     "kestrel_one.google_calendar_create_event",
     "kestrel_one.google_calendar_check_availability",
+    "kestrel_one.microsoft_365_list_mail",
+    "kestrel_one.microsoft_365_send_mail",
   ],
 } as RunnerProfile;
 
@@ -35,6 +37,24 @@ contractTest("web.hermetic", "calendar tools are exposed only for effective Proj
     "kestrel_one.search_knowledge_documents": "auto",
     "kestrel_one.google_calendar_list_events": "auto",
     "kestrel_one.google_calendar_check_availability": "ask",
+  });
+});
+
+contractTest("web.hermetic", "Microsoft 365 tools follow effective capability packs", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile,
+    effectiveCapabilities: [
+      "app:microsoft_365.outlook.mail.read:auto",
+      "app:microsoft_365.outlook.mail.send:ask",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "kestrel_one.microsoft_365_list_mail",
+    "kestrel_one.microsoft_365_send_mail",
+  ]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "kestrel_one.microsoft_365_list_mail": "auto",
+    "kestrel_one.microsoft_365_send_mail": "ask",
   });
 });
 
@@ -129,6 +149,31 @@ contractTest("web.hermetic", "Tavily tools and approval modes come only from eff
   });
 });
 
+contractTest("web.hermetic", "Vercel tools follow effective Project App capabilities", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: {
+      ...profile,
+      toolAllowlist: [
+        "kestrel_one.vercel_list_projects",
+        "kestrel_one.vercel_list_deployments",
+        "kestrel_one.vercel_deployment_events",
+      ],
+    },
+    effectiveCapabilities: [
+      "app:vercel.projects.read:auto",
+      "app:vercel.operations.read:ask",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "kestrel_one.vercel_list_projects",
+    "kestrel_one.vercel_deployment_events",
+  ]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "kestrel_one.vercel_list_projects": "auto",
+    "kestrel_one.vercel_deployment_events": "ask",
+  });
+});
+
 contractTest("web.hermetic", "built-in agent tools are governed by their effective App capabilities", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile: {
@@ -139,7 +184,6 @@ contractTest("web.hermetic", "built-in agent tools are governed by their effecti
         "free.time.current",
         "free.geocode.lookup",
         "free.exchange.rate",
-        "free.hn.top",
         "kestrel_one.search_knowledge_documents",
         "bash",
         "bash_batch",
@@ -154,7 +198,6 @@ contractTest("web.hermetic", "built-in agent tools are governed by their effecti
       "app:built_in.time.current:auto",
       "app:built_in.geocoding.lookup:auto",
       "app:built_in.exchange_rates.rate:auto",
-      "app:built_in.hacker_news.topStories:auto",
       "app:built_in.knowledge_search.searchKnowledgeDocuments:ask",
       "app:built_in.sandbox.bash_batch:auto",
       "app:built_in.artifacts.createDocument:ask",
@@ -168,7 +211,6 @@ contractTest("web.hermetic", "built-in agent tools are governed by their effecti
     "free.time.current",
     "free.geocode.lookup",
     "free.exchange.rate",
-    "free.hn.top",
     "kestrel_one.search_knowledge_documents",
     "bash_batch",
     "createDocument",
@@ -180,7 +222,6 @@ contractTest("web.hermetic", "built-in agent tools are governed by their effecti
     "free.time.current": "auto",
     "free.geocode.lookup": "auto",
     "free.exchange.rate": "auto",
-    "free.hn.top": "auto",
     "kestrel_one.search_knowledge_documents": "ask",
     bash_batch: "auto",
     createDocument: "ask",

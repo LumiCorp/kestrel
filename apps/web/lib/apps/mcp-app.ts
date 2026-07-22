@@ -7,8 +7,8 @@ export function mcpAppCapabilityKey(
   return `${kind}:${capabilityKey}`;
 }
 
-export function mcpAppRuntimeName(capabilityId: string) {
-  return `mcp.capability.${capabilityId}`;
+export function mcpAppRuntimeName(appKey: string, capabilityKey: string) {
+  return `mcp.app.${encodeURIComponent(appKey)}.${encodeURIComponent(capabilityKey)}`;
 }
 
 export function mcpAppAccessMode(

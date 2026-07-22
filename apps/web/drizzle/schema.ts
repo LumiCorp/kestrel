@@ -2004,6 +2004,7 @@ export const appDefinitions = pgTable(
         "engineering",
         "knowledge_sources",
         "communication",
+        "workflow",
         "custom",
       ],
     }).notNull(),

@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppSettingsHeader } from "@/components/apps/app-settings-layout";
@@ -55,9 +55,10 @@ function ConnectionDialog({
 }) {
   const isWeather = app.key === "built_in.weather";
   const isNgrok = app.key === "ngrok";
+  const isDiscoveredApp = app.delivery === "mcp";
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(
-    isWeather ? "Visual Crossing fallback" : "Primary"
+    isWeather ? "Visual Crossing fallback" : "Primary",
   );
   const [apiKey, setApiKey] = useState("");
   const [projectId, setProjectId] = useState("");
@@ -82,7 +83,7 @@ function ConnectionDialog({
                   ...(projectId.trim() ? { projectId } : {}),
                 }),
           }),
-        }
+        },
       );
       const body = await readJson<{
         connection?: AppConnectionSummary;
@@ -101,11 +102,14 @@ function ConnectionDialog({
           ? "Visual Crossing fallback is ready for this Environment."
           : isNgrok
             ? "ngrok validation has been sent to the Environment gateway."
-          : `${app.displayName} is connected to this Environment.`,
+            : isDiscoveredApp
+              ? `${app.displayName} connection saved. Kestrel is checking its capabilities.`
+              : `${app.displayName} is connected to this Environment.`,
         {
-          description:
-            "Projects can now attach this connection from Project → Apps.",
-        }
+          description: isDiscoveredApp
+            ? "The App will become available after its capabilities are reviewed."
+            : "Projects can now attach this connection from Project → Apps.",
+        },
       );
     } catch (error) {
       toast.error(message(error, "Connection could not be saved."));
@@ -162,7 +166,13 @@ function ConnectionDialog({
                 ? "Visual Crossing API key"
                 : isNgrok
                   ? "ngrok agent authtoken"
-                  : "Connection key"}
+                  : app.key === "linear"
+                    ? "Linear API key"
+                    : app.key === "atlassian"
+                      ? "Atlassian service account API key"
+                      : app.key === "vercel"
+                        ? "Vercel access token"
+                        : "Connection key"}
             </Label>
             <Input
               autoComplete="off"
@@ -173,7 +183,7 @@ function ConnectionDialog({
                   ? "Paste your Visual Crossing API key"
                   : isNgrok
                     ? "Paste a wildcard-scoped ngrok authtoken"
-                  : `Paste the key from ${app.displayName}`
+                    : `Paste the key from ${app.displayName}`
               }
               type="password"
               value={apiKey}
@@ -195,14 +205,16 @@ function ConnectionDialog({
               />
             </div>
           ) : null}
-          {app.key === "tavily" ? (
+          {app.key === "tavily" || app.key === "vercel" ? (
             <details className="rounded-lg border px-4 py-3">
               <summary className="cursor-pointer font-medium text-sm">
                 Advanced
               </summary>
               <div className="mt-4 space-y-2">
                 <Label htmlFor={`${app.key}-project-id`}>
-                  Tavily Project ID
+                  {app.key === "vercel"
+                    ? "Vercel Team ID"
+                    : "Tavily Project ID"}
                 </Label>
                 <Input
                   id={`${app.key}-project-id`}
@@ -241,6 +253,120 @@ function ConnectionDialog({
   );
 }
 
+function OauthConnectionButton({
+  environmentId,
+  app,
+}: {
+  environmentId: string;
+  app: EnvironmentAppConfiguration["app"];
+}) {
+  const [connecting, setConnecting] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [selectedPacks, setSelectedPacks] = useState<string[]>([]);
+  if (
+    !app.authMethods.includes("oauth_environment") ||
+    (app.connectionModel !== "environment" && app.connectionModel !== "hybrid")
+  ) {
+    return null;
+  }
+
+  async function connect() {
+    setConnecting(true);
+    try {
+      const response = await fetch(
+        `/api/environments/${environmentId}/apps/${encodeURIComponent(app.key)}/oauth/start`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...(app.connectionCapabilityPacks.length
+              ? { capabilityPacks: selectedPacks }
+              : {}),
+          }),
+        },
+      );
+      const body = await readJson<{
+        authorizationUrl?: string;
+        error?: string;
+      }>(response);
+      if (!(response.ok && body.authorizationUrl)) {
+        throw new Error(
+          body.error ?? `${app.displayName} could not be connected.`,
+        );
+      }
+      window.location.assign(body.authorizationUrl);
+    } catch (error) {
+      toast.error(message(error, `${app.displayName} could not be connected.`));
+      setConnecting(false);
+    }
+  }
+
+  if (app.connectionCapabilityPacks.length) {
+    return (
+      <Dialog onOpenChange={setOpen} open={open}>
+        <DialogTrigger asChild>
+          <Button size="sm">
+            <Plus className="size-4" /> Connect {app.displayName}
+          </Button>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Choose {app.displayName} capabilities</DialogTitle>
+            <DialogDescription>
+              Kestrel requests only the permissions needed for the capabilities
+              you select. You can add more later by reconnecting this App.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="divide-y border-y">
+            {app.connectionCapabilityPacks.map((pack) => (
+              <div
+                className="flex items-center justify-between gap-4 py-4"
+                key={pack.key}
+              >
+                <div>
+                  <Label htmlFor={`${app.key}-${pack.key}`}>{pack.name}</Label>
+                  <p className="mt-1 text-muted-foreground text-sm">
+                    {pack.description}
+                  </p>
+                </div>
+                <Switch
+                  checked={selectedPacks.includes(pack.key)}
+                  id={`${app.key}-${pack.key}`}
+                  onCheckedChange={(checked) =>
+                    setSelectedPacks((current) =>
+                      checked
+                        ? [...new Set([...current, pack.key])]
+                        : current.filter((key) => key !== pack.key),
+                    )
+                  }
+                />
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setOpen(false)} variant="outline">
+              Cancel
+            </Button>
+            <Button
+              disabled={connecting || selectedPacks.length === 0}
+              onClick={() => void connect()}
+            >
+              {connecting ? "Opening…" : `Continue to ${app.displayName}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Button disabled={connecting} onClick={() => void connect()} size="sm">
+      <Plus className="size-4" />
+      {connecting ? "Opening…" : `Connect ${app.displayName}`}
+    </Button>
+  );
+}
+
 function CapabilityRow({
   environmentId,
   appKey,
@@ -255,7 +381,7 @@ function CapabilityRow({
   const [saving, setSaving] = useState(false);
 
   async function save(
-    patch: Partial<Pick<EnvironmentAppCapability, "enabled" | "approvalMode">>
+    patch: Partial<Pick<EnvironmentAppCapability, "enabled" | "approvalMode">>,
   ) {
     const next = { ...capability, ...patch };
     setSaving(true);
@@ -271,7 +397,7 @@ function CapabilityRow({
             loggingMode: next.loggingMode,
             rateLimitMode: next.rateLimitMode,
           }),
-        }
+        },
       );
       const body = await readJson<{
         grant?: {
@@ -349,11 +475,68 @@ export function EnvironmentAppSettings({
 }: Props) {
   const [configuration, setConfiguration] = useState(initialConfiguration);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   function updateConfiguration(
-    update: (current: EnvironmentAppConfiguration) => EnvironmentAppConfiguration
+    update: (
+      current: EnvironmentAppConfiguration,
+    ) => EnvironmentAppConfiguration,
   ) {
     setConfiguration(update);
+  }
+
+  async function refreshConfiguration() {
+    setRefreshing(true);
+    try {
+      const response = await fetch(
+        `/api/environments/${environmentId}/apps/${encodeURIComponent(configuration.app.key)}`,
+      );
+      const body = await readJson<{
+        configuration?: EnvironmentAppConfiguration;
+        error?: string;
+      }>(response);
+      if (!(response.ok && body.configuration)) {
+        throw new Error(body.error ?? "App status could not be refreshed.");
+      }
+      setConfiguration(body.configuration);
+    } catch (error) {
+      toast.error(message(error, "App status could not be refreshed."));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function reviewCapabilities(
+    connectionId: string,
+    snapshotId: string,
+    decision: "approve" | "reject",
+  ) {
+    setReviewing(snapshotId);
+    try {
+      const response = await fetch(
+        `/api/admin/environments/${environmentId}/mcp/servers/${connectionId}/snapshots/${snapshotId}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ decision }),
+        },
+      );
+      const body = await readJson<{ error?: string }>(response);
+      if (!response.ok) {
+        throw new Error(body.error ?? "Capabilities could not be reviewed.");
+      }
+      await refreshConfiguration();
+      toast.success(
+        decision === "approve"
+          ? "Capabilities approved. Choose which ones Projects may use."
+          : "Capabilities rejected. This connection remains unavailable to Projects.",
+      );
+    } catch (error) {
+      toast.error(message(error, "Capabilities could not be reviewed."));
+    } finally {
+      setReviewing(null);
+    }
   }
 
   async function disconnect(appKey: string, connectionId: string) {
@@ -361,7 +544,7 @@ export function EnvironmentAppSettings({
     try {
       const response = await fetch(
         `/api/environments/${environmentId}/apps/${encodeURIComponent(appKey)}/connections/${connectionId}`,
-        { method: "DELETE" }
+        { method: "DELETE" },
       );
       const body = await readJson<{
         connection?: AppConnectionSummary;
@@ -373,11 +556,11 @@ export function EnvironmentAppSettings({
       updateConfiguration((current) => ({
         ...current,
         connections: current.connections.map((connection) =>
-          connection.id === body.connection!.id ? body.connection! : connection
+          connection.id === body.connection!.id ? body.connection! : connection,
         ),
       }));
       toast.success(
-        "Connection disconnected. Encrypted configuration was retained for recovery."
+        "Connection disconnected. Encrypted configuration was retained for recovery.",
       );
     } catch (error) {
       toast.error(message(error, "Connection could not be disconnected."));
@@ -389,19 +572,29 @@ export function EnvironmentAppSettings({
   return (
     <div className="space-y-8">
       <AppSettingsHeader
-        action={<ConnectionDialog
-          app={configuration.app}
-          environmentId={environmentId}
-          onSaved={(connection) =>
-            updateConfiguration((current) => ({
-              ...current,
-              connections: [
-                ...current.connections.filter((item) => item.id !== connection.id),
-                connection,
-              ].sort((left, right) => left.name.localeCompare(right.name)),
-            }))
-          }
-        />}
+        action={
+          <div className="flex gap-2">
+            <ConnectionDialog
+              app={configuration.app}
+              environmentId={environmentId}
+              onSaved={(connection) =>
+                updateConfiguration((current) => ({
+                  ...current,
+                  connections: [
+                    ...current.connections.filter(
+                      (item) => item.id !== connection.id,
+                    ),
+                    connection,
+                  ].sort((left, right) => left.name.localeCompare(right.name)),
+                }))
+              }
+            />
+            <OauthConnectionButton
+              app={configuration.app}
+              environmentId={environmentId}
+            />
+          </div>
+        }
         appKey={configuration.app.key}
         backHref={`/settings/organization/environments/${environmentId}/apps`}
         backLabel="Environment Apps"
@@ -437,13 +630,100 @@ export function EnvironmentAppSettings({
               </div>
               <Badge variant="outline">
                 {configuration.connections.some(
-                  (connection) => connection.status === "connected"
+                  (connection) => connection.status === "connected",
                 )
                   ? "Fallback · ready"
                   : "Fallback · optional"}
               </Badge>
             </div>
           </div>
+        </section>
+      ) : null}
+
+      {configuration.capabilityReviews.map((review) => (
+        <section className="rounded-lg border p-4" key={review.snapshotId}>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h3 className="font-medium text-sm">Review App capabilities</h3>
+              <p className="mt-1 text-muted-foreground text-xs">
+                {review.connectionName} found {review.capabilities.length}{" "}
+                capabilities. Approving adds them to this App; they remain
+                blocked until you enable them below.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                disabled={reviewing === review.snapshotId}
+                onClick={() =>
+                  void reviewCapabilities(
+                    review.connectionId,
+                    review.snapshotId,
+                    "reject",
+                  )
+                }
+                size="sm"
+                variant="outline"
+              >
+                Reject
+              </Button>
+              <Button
+                disabled={reviewing === review.snapshotId}
+                onClick={() =>
+                  void reviewCapabilities(
+                    review.connectionId,
+                    review.snapshotId,
+                    "approve",
+                  )
+                }
+                size="sm"
+              >
+                Approve
+              </Button>
+            </div>
+          </div>
+          <div className="mt-4 divide-y border-y">
+            {review.capabilities.map((capability) => (
+              <div className="py-3" key={capability.key}>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-sm">
+                    {capability.displayName}
+                  </p>
+                  <Badge variant="outline">{capability.group}</Badge>
+                </div>
+                <p className="mt-1 text-muted-foreground text-xs">
+                  {capability.description}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+
+      {configuration.app.delivery === "mcp" &&
+      configuration.connections.some(
+        (connection) => connection.status === "connected",
+      ) &&
+      configuration.capabilityReviews.length === 0 &&
+      configuration.capabilities.length === 0 ? (
+        <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border p-4">
+          <div>
+            <h3 className="font-medium text-sm">Checking capabilities</h3>
+            <p className="mt-1 text-muted-foreground text-xs">
+              Kestrel is asking {configuration.app.displayName} which actions
+              are available to review.
+            </p>
+          </div>
+          <Button
+            disabled={refreshing}
+            onClick={() => void refreshConfiguration()}
+            size="sm"
+            variant="outline"
+          >
+            <RefreshCw
+              className={refreshing ? "size-4 animate-spin" : "size-4"}
+            />
+            Refresh status
+          </Button>
         </section>
       ) : null}
 
@@ -477,14 +757,18 @@ export function EnvironmentAppSettings({
                 key={connection.id}
               >
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-sm">{connection.name}</p>
+                  <p className="truncate font-medium text-sm">
+                    {connection.name}
+                  </p>
                   <p className="mt-1 text-muted-foreground text-xs">
                     Shared with Projects in this Environment
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge
-                    variant={connection.status === "connected" ? "default" : "outline"}
+                    variant={
+                      connection.status === "connected" ? "default" : "outline"
+                    }
                   >
                     {connection.status}
                   </Badge>
@@ -528,6 +812,11 @@ export function EnvironmentAppSettings({
           </div>
         </div>
         <div className="mt-3 divide-y border-y">
+          {configuration.capabilities.length === 0 ? (
+            <p className="py-3 text-muted-foreground text-sm">
+              No capabilities are available yet.
+            </p>
+          ) : null}
           {configuration.capabilities.map((capability) => (
             <CapabilityRow
               appKey={configuration.app.key}
@@ -538,7 +827,7 @@ export function EnvironmentAppSettings({
                 updateConfiguration((current) => ({
                   ...current,
                   capabilities: current.capabilities.map((item) =>
-                    item.key === saved.key ? saved : item
+                    item.key === saved.key ? saved : item,
                   ),
                 }))
               }

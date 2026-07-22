@@ -15,6 +15,15 @@ const GOOGLE_CALENDAR_TOOL_CAPABILITIES = new Map<string, string>([
   ],
 ] as const);
 
+const MICROSOFT_365_TOOL_CAPABILITIES = new Map<string, string>([
+  ["kestrel_one.microsoft_365_list_mail", "outlook.mail.read"],
+  ["kestrel_one.microsoft_365_send_mail", "outlook.mail.send"],
+  ["kestrel_one.microsoft_365_list_events", "outlook.calendar.read"],
+  ["kestrel_one.microsoft_365_list_chats", "teams.chat.read"],
+  ["kestrel_one.microsoft_365_send_chat_message", "teams.chat.send"],
+  ["kestrel_one.microsoft_365_search_sites", "sharepoint.sites.search"],
+] as const);
+
 const GITHUB_TOOL_CAPABILITIES = new Map<string, string>([
   ["kestrel_one.github_repository_read", "repository.read"],
   ["kestrel_one.github_push_agent_branch", "repository.push_agent_branch"],
@@ -42,6 +51,12 @@ const TAVILY_TOOL_CAPABILITIES = new Map<string, string>([
   ["internet.usage", "usage"],
 ] as const);
 
+const VERCEL_TOOL_CAPABILITIES = new Map<string, string>([
+  ["kestrel_one.vercel_list_projects", "projects.read"],
+  ["kestrel_one.vercel_list_deployments", "deployments.read"],
+  ["kestrel_one.vercel_deployment_events", "operations.read"],
+] as const);
+
 const BUILT_IN_TOOL_CAPABILITIES = new Map<
   string,
   { appKey: string; capabilityKey: string }
@@ -64,32 +79,16 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
     { appKey: "built_in.exchange_rates", capabilityKey: "rate" },
   ],
   [
-    "free.hn.top",
-    { appKey: "built_in.hacker_news", capabilityKey: "topStories" },
-  ],
-  [
     "kestrel_one.search_knowledge_documents",
     {
       appKey: "built_in.knowledge_search",
       capabilityKey: "searchKnowledgeDocuments",
     },
   ],
-  [
-    "workspace.preview.publish",
-    { appKey: "ngrok", capabilityKey: "publish" },
-  ],
-  [
-    "workspace.preview.list",
-    { appKey: "ngrok", capabilityKey: "list" },
-  ],
-  [
-    "workspace.preview.renew",
-    { appKey: "ngrok", capabilityKey: "renew" },
-  ],
-  [
-    "workspace.preview.close",
-    { appKey: "ngrok", capabilityKey: "close" },
-  ],
+  ["workspace.preview.publish", { appKey: "ngrok", capabilityKey: "publish" }],
+  ["workspace.preview.list", { appKey: "ngrok", capabilityKey: "list" }],
+  ["workspace.preview.renew", { appKey: "ngrok", capabilityKey: "renew" }],
+  ["workspace.preview.close", { appKey: "ngrok", capabilityKey: "close" }],
   ["bash", { appKey: "built_in.sandbox", capabilityKey: "bash" }],
   ["bash_batch", { appKey: "built_in.sandbox", capabilityKey: "bash_batch" }],
   [
@@ -119,7 +118,7 @@ function appApprovalModes(effectiveCapabilities: string[], appKey: string) {
       return approvalMode === "auto" || approvalMode === "ask"
         ? [[capabilityKey, approvalMode]]
         : [];
-    })
+    }),
   );
 }
 
@@ -129,36 +128,44 @@ export function restrictKestrelOneProfileTools(input: {
 }): RunnerProfile {
   const googleApprovalByCapability = appApprovalModes(
     input.effectiveCapabilities,
-    "google_workspace"
+    "google_workspace",
   );
   const tavilyApprovalByCapability = appApprovalModes(
     input.effectiveCapabilities,
-    "tavily"
+    "tavily",
   );
   const githubApprovalByCapability = appApprovalModes(
     input.effectiveCapabilities,
-    "github"
+    "github",
   );
   const emailApprovalByCapability = appApprovalModes(
     input.effectiveCapabilities,
-    "email"
+    "email",
+  );
+  const microsoftApprovalByCapability = appApprovalModes(
+    input.effectiveCapabilities,
+    "microsoft_365",
+  );
+  const vercelApprovalByCapability = appApprovalModes(
+    input.effectiveCapabilities,
+    "vercel",
   );
   const builtInApprovalByApp = new Map(
     [
       ...new Set(
-        [...BUILT_IN_TOOL_CAPABILITIES.values()].map((item) => item.appKey)
+        [...BUILT_IN_TOOL_CAPABILITIES.values()].map((item) => item.appKey),
       ),
     ].map((appKey) => [
       appKey,
       appApprovalModes(input.effectiveCapabilities, appKey),
-    ])
+    ]),
   );
   const kestrelOneAppApprovalModes = Object.fromEntries([
     ...[...GOOGLE_CALENDAR_TOOL_CAPABILITIES].flatMap(
       ([toolName, capability]) => {
         const approvalMode = googleApprovalByCapability.get(capability);
         return approvalMode ? [[toolName, approvalMode] as const] : [];
-      }
+      },
     ),
     ...[...TAVILY_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
       const approvalMode = tavilyApprovalByCapability.get(capability);
@@ -172,13 +179,23 @@ export function restrictKestrelOneProfileTools(input: {
       const approvalMode = emailApprovalByCapability.get(capability);
       return approvalMode ? [[toolName, "ask"] as const] : [];
     }),
+    ...[...MICROSOFT_365_TOOL_CAPABILITIES].flatMap(
+      ([toolName, capability]) => {
+        const approvalMode = microsoftApprovalByCapability.get(capability);
+        return approvalMode ? [[toolName, approvalMode] as const] : [];
+      },
+    ),
+    ...[...VERCEL_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
+      const approvalMode = vercelApprovalByCapability.get(capability);
+      return approvalMode ? [[toolName, approvalMode] as const] : [];
+    }),
     ...[...BUILT_IN_TOOL_CAPABILITIES].flatMap(
       ([toolName, { appKey, capabilityKey }]) => {
         const approvalMode = builtInApprovalByApp
           .get(appKey)
           ?.get(capabilityKey);
         return approvalMode ? [[toolName, approvalMode] as const] : [];
-      }
+      },
     ),
   ]);
   return {
@@ -211,6 +228,20 @@ export function restrictKestrelOneProfileTools(input: {
       if (
         emailCapability !== undefined &&
         !emailApprovalByCapability.has(emailCapability)
+      ) {
+        return false;
+      }
+      const microsoftCapability = MICROSOFT_365_TOOL_CAPABILITIES.get(toolName);
+      if (
+        microsoftCapability !== undefined &&
+        !microsoftApprovalByCapability.has(microsoftCapability)
+      ) {
+        return false;
+      }
+      const vercelCapability = VERCEL_TOOL_CAPABILITIES.get(toolName);
+      if (
+        vercelCapability !== undefined &&
+        !vercelApprovalByCapability.has(vercelCapability)
       ) {
         return false;
       }

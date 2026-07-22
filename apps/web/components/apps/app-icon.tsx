@@ -1,4 +1,9 @@
-import { SiDiscord, SiGithub, SiYoutube } from "@icons-pack/react-simple-icons";
+import {
+  SiAtlassian,
+  SiGithub,
+  SiLinear,
+  SiNotion,
+} from "@icons-pack/react-simple-icons";
 import {
   ArrowLeftRight,
   BookOpen,
@@ -7,7 +12,7 @@ import {
   CloudSun,
   FileText,
   MapPin,
-  Newspaper,
+  MessageSquare,
   Terminal,
 } from "lucide-react";
 import Image from "next/image";
@@ -42,14 +47,20 @@ export function AppIcon({
   }
   const iconClass = "size-6";
   const glyph = (() => {
-    if (appKey === "github" || appKey === "source.github") {
+    if (appKey === "github") {
       return <SiGithub aria-hidden className={iconClass} />;
     }
-    if (appKey === "discord") {
-      return <SiDiscord aria-hidden className={iconClass} />;
+    if (appKey === "linear") {
+      return <SiLinear aria-hidden className={iconClass} />;
     }
-    if (appKey === "source.youtube") {
-      return <SiYoutube aria-hidden className={iconClass} />;
+    if (appKey === "atlassian") {
+      return <SiAtlassian aria-hidden className={iconClass} />;
+    }
+    if (appKey === "notion") {
+      return <SiNotion aria-hidden className={iconClass} />;
+    }
+    if (appKey === "slack") {
+      return <MessageSquare aria-hidden className={iconClass} />;
     }
     if (appKey === "built_in.weather") {
       return <CloudSun aria-hidden className={iconClass} />;
@@ -62,9 +73,6 @@ export function AppIcon({
     }
     if (appKey === "built_in.exchange_rates") {
       return <ArrowLeftRight aria-hidden className={iconClass} />;
-    }
-    if (appKey === "built_in.hacker_news") {
-      return <Newspaper aria-hidden className={iconClass} />;
     }
     if (appKey === "built_in.knowledge_search") {
       return <BookOpen aria-hidden className={iconClass} />;

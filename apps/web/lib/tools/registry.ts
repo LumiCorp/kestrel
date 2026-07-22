@@ -1,3 +1,7 @@
+import {
+  getKestrelStandardAppManifest,
+  KESTREL_APP_IDS,
+} from "@kestrel-agents/protocol";
 import type {
   ToolCapabilityDefinition,
   ToolCapabilityPolicy,
@@ -6,7 +10,7 @@ import type {
 } from "./types";
 
 function createDefaultPolicy(
-  overrides: Partial<ToolCapabilityPolicy>
+  overrides: Partial<ToolCapabilityPolicy>,
 ): ToolCapabilityPolicy {
   return {
     enabled: true,
@@ -22,13 +26,59 @@ function createDefaultPolicy(
 function createCapability(
   definition: Omit<ToolCapabilityDefinition, "defaultPolicy"> & {
     defaultPolicy?: Partial<ToolCapabilityPolicy>;
-  }
+  },
 ): ToolCapabilityDefinition {
   return {
     ...definition,
     defaultPolicy: createDefaultPolicy(definition.defaultPolicy ?? {}),
   };
 }
+
+const LINEAR_APP_MANIFEST = getKestrelStandardAppManifest(
+  KESTREL_APP_IDS.LINEAR,
+);
+if (!LINEAR_APP_MANIFEST) {
+  throw new Error("Linear App manifest is unavailable.");
+}
+const ATLASSIAN_APP_MANIFEST = getKestrelStandardAppManifest(
+  KESTREL_APP_IDS.ATLASSIAN,
+);
+if (!ATLASSIAN_APP_MANIFEST) {
+  throw new Error("Atlassian App manifest is unavailable.");
+}
+const NOTION_APP_MANIFEST = getKestrelStandardAppManifest(
+  KESTREL_APP_IDS.NOTION,
+);
+if (!NOTION_APP_MANIFEST) {
+  throw new Error("Notion App manifest is unavailable.");
+}
+const SLACK_APP_MANIFEST = getKestrelStandardAppManifest(KESTREL_APP_IDS.SLACK);
+if (!SLACK_APP_MANIFEST) {
+  throw new Error("Slack App manifest is unavailable.");
+}
+const VERCEL_APP_MANIFEST = getKestrelStandardAppManifest(
+  KESTREL_APP_IDS.VERCEL,
+);
+if (!VERCEL_APP_MANIFEST) {
+  throw new Error("Vercel App manifest is unavailable.");
+}
+const MICROSOFT_365_APP_MANIFEST = getKestrelStandardAppManifest(
+  KESTREL_APP_IDS.MICROSOFT_365,
+);
+if (!MICROSOFT_365_APP_MANIFEST) {
+  throw new Error("Microsoft 365 App manifest is unavailable.");
+}
+
+const WORKFLOW_APP_MANIFESTS = [
+  KESTREL_APP_IDS.SOFTWARE_DELIVERY,
+  KESTREL_APP_IDS.MEETING_FOLLOW_THROUGH,
+  KESTREL_APP_IDS.INCIDENT_RESPONSE,
+  KESTREL_APP_IDS.CUSTOMER_ESCALATION,
+].map((appId) => {
+  const manifest = getKestrelStandardAppManifest(appId);
+  if (!manifest) throw new Error(`${appId} App manifest is unavailable.`);
+  return manifest;
+});
 
 export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
   {
@@ -57,7 +107,8 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
         key: "publish",
         runtimeName: "workspace.preview.publish",
         displayName: "Publish preview",
-        description: "Expose a listening local HTTP port at a temporary public URL.",
+        description:
+          "Expose a listening local HTTP port at a temporary public URL.",
         accessMode: "write",
         defaultPolicy: {
           loggingMode: "metadata_only",
@@ -100,7 +151,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "built_in.weather",
+    key: KESTREL_APP_IDS.WEATHER,
     displayName: "Weather",
     description:
       "Get current conditions and multi-day forecasts for a location.",
@@ -140,7 +191,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "built_in.time",
+    key: KESTREL_APP_IDS.TIME,
     displayName: "Time",
     description: "Get the current time in an IANA timezone.",
     type: "built_in",
@@ -167,7 +218,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "built_in.geocoding",
+    key: KESTREL_APP_IDS.GEOCODING,
     displayName: "Geocoding",
     description: "Resolve place names to geographic coordinates.",
     type: "built_in",
@@ -194,7 +245,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "built_in.exchange_rates",
+    key: KESTREL_APP_IDS.EXCHANGE_RATES,
     displayName: "Exchange Rates",
     description: "Get current reference exchange rates for world currencies.",
     type: "built_in",
@@ -222,34 +273,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "built_in.hacker_news",
-    displayName: "Hacker News",
-    description: "Get the current top stories from Hacker News.",
-    type: "built_in",
-    authType: "system",
-    app: {
-      category: "kestrel",
-      connectionModel: "none",
-      connectionRequirement: "none",
-      authMethods: ["none"],
-      delivery: "native",
-      installMode: "inherited",
-      icon: "newspaper",
-    },
-    metadata: { icon: "newspaper", category: "built_in" },
-    capabilities: [
-      createCapability({
-        key: "topStories",
-        runtimeName: "free.hn.top",
-        displayName: "Top stories",
-        description: "Get the current top Hacker News stories.",
-        accessMode: "read",
-        metadata: { group: "news" },
-      }),
-    ],
-  },
-  {
-    key: "built_in.knowledge_search",
+    key: KESTREL_APP_IDS.KNOWLEDGE_SEARCH,
     displayName: "Knowledge Search",
     description: "Search uploaded knowledge documents.",
     type: "built_in",
@@ -283,7 +307,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "built_in.sandbox",
+    key: KESTREL_APP_IDS.SANDBOX,
     displayName: "Sandbox",
     description: "Inspect synced source content with read-only shell commands.",
     type: "built_in",
@@ -328,7 +352,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "built_in.artifacts",
+    key: KESTREL_APP_IDS.ARTIFACTS,
     displayName: "Artifacts",
     description: "Create and update chat artifacts.",
     type: "built_in",
@@ -371,7 +395,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "github",
+    key: KESTREL_APP_IDS.GITHUB,
     displayName: "GitHub",
     description:
       "GitHub bot connection status, webhook readiness, and snapshot-backed runtime health.",
@@ -455,7 +479,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "google_workspace",
+    key: KESTREL_APP_IDS.GOOGLE_WORKSPACE,
     displayName: "Google Workspace",
     description:
       "User-owned Google Workspace services connected to shared Projects.",
@@ -591,7 +615,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "tavily",
+    key: KESTREL_APP_IDS.TAVILY,
     displayName: "Tavily",
     description:
       "Search, extract, crawl, map, and research the web with source-aware results.",
@@ -724,71 +748,263 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: "discord",
-    displayName: "Discord",
-    description:
-      "Discord bot connection status, guild binding, and gateway runtime health.",
-    type: "inbound_adapter",
-    authType: "env",
+    key: KESTREL_APP_IDS.MICROSOFT_365,
+    displayName: MICROSOFT_365_APP_MANIFEST.name,
+    description: MICROSOFT_365_APP_MANIFEST.description,
+    type: "oauth",
+    authType: "oauth",
+    app: {
+      category: "productivity",
+      connectionModel: "personal",
+      connectionRequirement: "required",
+      authMethods: ["oauth_personal"],
+      delivery: "oauth",
+      installMode: "explicit",
+      icon: "microsoft",
+    },
+    metadata: {
+      icon: "microsoft",
+      category: "productivity",
+      capabilityPacks: MICROSOFT_365_APP_MANIFEST.capabilityPacks,
+    },
+    capabilities: [
+      createCapability({
+        key: "outlook.mail.read",
+        runtimeName: "microsoft365ListMail",
+        displayName: "Read mail",
+        description: "Find and read messages in the connected mailbox.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { group: "outlook", audience: "self", pack: "outlook" },
+      }),
+      createCapability({
+        key: "outlook.mail.send",
+        runtimeName: "microsoft365SendMail",
+        displayName: "Send mail",
+        description: "Send mail from the connected mailbox with approval.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask", loggingMode: "metadata_only" },
+        metadata: { group: "outlook", audience: "self", pack: "outlook" },
+      }),
+      createCapability({
+        key: "outlook.calendar.read",
+        runtimeName: "microsoft365ListEvents",
+        displayName: "Read calendar",
+        description: "List events from the connected user's calendar.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { group: "outlook", audience: "self", pack: "outlook" },
+      }),
+      createCapability({
+        key: "teams.chat.read",
+        runtimeName: "microsoft365ListChats",
+        displayName: "Read chats",
+        description: "List and read the connected user's Teams chats.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { group: "teams", audience: "self", pack: "teams" },
+      }),
+      createCapability({
+        key: "teams.chat.send",
+        runtimeName: "microsoft365SendChatMessage",
+        displayName: "Send chat messages",
+        description: "Send a Teams chat message with approval.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask", loggingMode: "metadata_only" },
+        metadata: { group: "teams", audience: "self", pack: "teams" },
+      }),
+      createCapability({
+        key: "sharepoint.sites.search",
+        runtimeName: "microsoft365SearchSites",
+        displayName: "Find sites",
+        description: "Find SharePoint sites available to the connected user.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: {
+          group: "sharepoint",
+          audience: "self",
+          pack: "sharepoint",
+        },
+      }),
+    ],
+  },
+  {
+    key: KESTREL_APP_IDS.LINEAR,
+    displayName: LINEAR_APP_MANIFEST.name,
+    description: LINEAR_APP_MANIFEST.description,
+    type: "api_key",
+    authType: "api_key",
+    app: {
+      category: "engineering",
+      connectionModel: "environment",
+      connectionRequirement: "required",
+      authMethods: ["api_key"],
+      delivery: "mcp",
+      installMode: "explicit",
+      icon: "linear",
+    },
+    metadata: {
+      icon: "linear",
+      category: "engineering",
+      official: true,
+    },
+    capabilities: [],
+  },
+  {
+    key: KESTREL_APP_IDS.ATLASSIAN,
+    displayName: ATLASSIAN_APP_MANIFEST.name,
+    description: ATLASSIAN_APP_MANIFEST.description,
+    type: "api_key",
+    authType: "api_key",
+    app: {
+      category: "engineering",
+      connectionModel: "environment",
+      connectionRequirement: "required",
+      authMethods: ["api_key"],
+      delivery: "mcp",
+      installMode: "explicit",
+      icon: "atlassian",
+    },
+    metadata: {
+      icon: "atlassian",
+      category: "engineering",
+      capabilityPacks: ATLASSIAN_APP_MANIFEST.capabilityPacks,
+      official: true,
+    },
+    capabilities: [],
+  },
+  {
+    key: KESTREL_APP_IDS.NOTION,
+    displayName: NOTION_APP_MANIFEST.name,
+    description: NOTION_APP_MANIFEST.description,
+    type: "oauth",
+    authType: "oauth",
+    app: {
+      category: "productivity",
+      connectionModel: "environment",
+      connectionRequirement: "required",
+      authMethods: ["oauth_environment"],
+      delivery: "mcp",
+      installMode: "explicit",
+      icon: "notion",
+    },
+    metadata: {
+      icon: "notion",
+      category: "productivity",
+      capabilityPacks: NOTION_APP_MANIFEST.capabilityPacks,
+      official: true,
+    },
+    capabilities: [],
+  },
+  {
+    key: KESTREL_APP_IDS.SLACK,
+    displayName: SLACK_APP_MANIFEST.name,
+    description: SLACK_APP_MANIFEST.description,
+    type: "oauth",
+    authType: "oauth",
     app: {
       category: "communication",
       connectionModel: "environment",
       connectionRequirement: "required",
-      authMethods: ["api_key"],
-      delivery: "webhook",
+      authMethods: ["oauth_environment"],
+      delivery: "mcp",
       installMode: "explicit",
-      icon: "message-square",
+      icon: "slack",
     },
     metadata: {
-      icon: "message-square",
-      category: "integration",
+      icon: "slack",
+      category: "communication",
+      capabilityPacks: SLACK_APP_MANIFEST.capabilityPacks,
+      connectionCapabilityPacks: SLACK_APP_MANIFEST.capabilityPacks,
+      official: true,
     },
     capabilities: [],
   },
   {
-    key: "source.github",
-    displayName: "GitHub Sources",
-    description:
-      "Manage GitHub repository source ingestion and snapshot readiness for the knowledge sandbox.",
-    type: "source_connector",
-    authType: "system",
-    app: {
-      category: "knowledge_sources",
-      connectionModel: "environment",
-      connectionRequirement: "required",
-      authMethods: ["deployment_managed"],
-      delivery: "source",
-      installMode: "explicit",
-      icon: "github",
-    },
-    metadata: {
-      icon: "github",
-      category: "sources",
-    },
-    capabilities: [],
-  },
-  {
-    key: "source.youtube",
-    displayName: "YouTube Sources",
-    description:
-      "Manage YouTube transcript source ingestion and snapshot readiness for the knowledge sandbox.",
-    type: "source_connector",
+    key: KESTREL_APP_IDS.VERCEL,
+    displayName: VERCEL_APP_MANIFEST.name,
+    description: VERCEL_APP_MANIFEST.description,
+    type: "api_key",
     authType: "api_key",
     app: {
-      category: "knowledge_sources",
+      category: "engineering",
       connectionModel: "environment",
       connectionRequirement: "required",
       authMethods: ["api_key"],
-      delivery: "source",
+      delivery: "api_key",
       installMode: "explicit",
-      icon: "video",
+      icon: "vercel",
     },
     metadata: {
-      icon: "video",
-      category: "sources",
+      icon: "vercel",
+      category: "engineering",
+      capabilityPacks: VERCEL_APP_MANIFEST.capabilityPacks,
+      official: true,
     },
-    capabilities: [],
+    capabilities: [
+      createCapability({
+        key: "projects.read",
+        runtimeName: "vercelProjectsList",
+        displayName: "List projects",
+        description:
+          "Inspect projects available to the connected account or team.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { group: "projects" },
+      }),
+      createCapability({
+        key: "deployments.read",
+        runtimeName: "vercelDeploymentsList",
+        displayName: "List deployments",
+        description: "Inspect recent deployments and their delivery state.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { group: "deployments" },
+      }),
+      createCapability({
+        key: "operations.read",
+        runtimeName: "vercelDeploymentEvents",
+        displayName: "Read deployment events",
+        description:
+          "Inspect bounded build and runtime events for one deployment.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { group: "operations" },
+      }),
+    ],
   },
+  ...WORKFLOW_APP_MANIFESTS.map<ToolProviderDefinition>((manifest) => ({
+    key: manifest.id,
+    displayName: manifest.name,
+    description: manifest.description,
+    type: "built_in",
+    authType: "none",
+    app: {
+      category: "workflow",
+      connectionModel: "none",
+      connectionRequirement: "none",
+      authMethods: ["none"],
+      delivery: "native",
+      installMode: "explicit",
+      icon: "workflow",
+    },
+    metadata: {
+      icon: "workflow",
+      category: "workflow",
+      capabilityPacks: manifest.capabilityPacks,
+      dependencies: manifest.dependencies ?? [],
+    },
+    capabilities: manifest.capabilityPacks.map((pack) =>
+      createCapability({
+        key: pack.key,
+        runtimeName: null,
+        displayName: pack.name,
+        description: pack.description,
+        accessMode: "internal",
+        metadata: { group: "workflow" },
+      }),
+    ),
+  })),
 ];
 
 export function listToolProviders() {
@@ -797,16 +1013,16 @@ export function listToolProviders() {
 
 export function getToolProviderDefinition(providerKey: ToolProviderKey) {
   return TOOL_PROVIDER_REGISTRY.find(
-    (provider) => provider.key === providerKey
+    (provider) => provider.key === providerKey,
   );
 }
 
 export function getToolCapabilityDefinition(
   providerKey: ToolProviderKey,
-  capabilityKey: string
+  capabilityKey: string,
 ) {
   return getToolProviderDefinition(providerKey)?.capabilities.find(
-    (capability) => capability.key === capabilityKey
+    (capability) => capability.key === capabilityKey,
   );
 }
 
@@ -814,6 +1030,6 @@ export function listToolRuntimeNames() {
   return TOOL_PROVIDER_REGISTRY.flatMap((provider) =>
     provider.capabilities
       .map((capability) => capability.runtimeName)
-      .filter((runtimeName): runtimeName is string => Boolean(runtimeName))
+      .filter((runtimeName): runtimeName is string => Boolean(runtimeName)),
   );
 }

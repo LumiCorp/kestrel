@@ -63,7 +63,12 @@ import {
   type OperatorSteeringSummary,
   WorkspaceSkillInstaller,
 } from "../../src/index.js";
-import type { OperatorCompactionState, OperatorAffordancePayload, WorkspaceRuntimeContext, TuiProfile } from "../contracts.js";
+import type {
+  OperatorCompactionState,
+  OperatorAffordancePayload,
+  WorkspaceRuntimeContext,
+  TuiProfile,
+} from "../contracts.js";
 import { createGatewayManagedModelGateway } from "./gateway-credential-broker.js";
 import type {
   ModelGateway,
@@ -135,7 +140,10 @@ import type {
 } from "../../src/git/contracts.js";
 export type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
 
-export type RunTurnInput = Omit<RuntimeTurnInput, "workspace" | "autoCompaction"> & {
+export type RunTurnInput = Omit<
+  RuntimeTurnInput,
+  "workspace" | "autoCompaction"
+> & {
   autoCompaction?:
     | {
         enabled?: boolean | undefined;
@@ -438,7 +446,9 @@ export class KestrelChatRuntime {
   ): Promise<RunTurnResult> {
     await this.reasoningPolicyReady;
     this.finalizedPayload = undefined;
-    const workspaceSkills = input.workspaceSkills ?? await readInstalledWorkspaceSkills(input.workspace);
+    const workspaceSkills =
+      input.workspaceSkills ??
+      (await readInstalledWorkspaceSkills(input.workspace));
     const normalizedInput: RunTurnInput = {
       ...input,
       message: requireRunTurnMessage(input.message),
@@ -2098,7 +2108,9 @@ export class KestrelChatRuntime {
           : {}),
         ...(input.provider !== undefined ? { provider: input.provider } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
-        ...(input.maxTurns !== undefined || input.maxRuntimeMs !== undefined || input.allowApprovalInheritance !== undefined
+        ...(input.maxTurns !== undefined ||
+        input.maxRuntimeMs !== undefined ||
+        input.allowApprovalInheritance !== undefined
           ? {
               budget: {
                 ...(input.maxTurns !== undefined
@@ -2508,11 +2520,15 @@ export class KestrelChatRuntime {
 
 async function readInstalledWorkspaceSkills(
   workspace: WorkspaceRuntimeContext | undefined,
-): Promise<import("../../src/skills/contracts.js").WorkspaceSkillCatalogEntry[]> {
+): Promise<
+  import("../../src/skills/contracts.js").WorkspaceSkillCatalogEntry[]
+> {
   const workspaceRoot = workspace?.workspaceRoot?.trim();
   if (!workspaceRoot) return [];
   try {
-    return await new WorkspaceSkillInstaller().readWorkspaceCatalog(workspaceRoot);
+    return await new WorkspaceSkillInstaller().readWorkspaceCatalog(
+      workspaceRoot,
+    );
   } catch {
     // Installation/sync owns readiness errors. A corrupt local catalog must not
     // prevent unrelated workspace runs from starting.
@@ -2689,7 +2705,7 @@ function createRuntimeWithStore(
       appUrl: parseEnvString("KESTREL_ONE_APP_URL", runtimeEnv),
       workspaceRuntimeUrl: parseEnvString(
         "KESTREL_WORKSPACE_RUNTIME_URL",
-        runtimeEnv
+        runtimeEnv,
       ),
       toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN", runtimeEnv),
       appApprovalModes: profile.kestrelOneAppApprovalModes,

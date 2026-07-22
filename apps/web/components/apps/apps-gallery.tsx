@@ -20,6 +20,7 @@ const CATEGORY_LABELS: Record<AppCategory, string> = {
   engineering: "Engineering",
   knowledge_sources: "Knowledge & Sources",
   communication: "Communication",
+  workflow: "Workflows",
   custom: "Custom",
 };
 

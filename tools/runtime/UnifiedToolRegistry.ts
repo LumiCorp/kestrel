@@ -106,7 +106,11 @@ const MCP_DEFAULT_CAPABILITY: ToolCapabilityMetadata = {
   approvalCapabilities: ["mcp.invoke"],
 };
 
-const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set(["dialog.open", "dialog.send", "dialog.close"]);
+const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set([
+  "dialog.open",
+  "dialog.send",
+  "dialog.close",
+]);
 const INTERNAL_ONLY_RUNTIME_TOOL_NAMES = new Set([
   "agent.spawn",
   "delegate.spawn_child",
@@ -130,7 +134,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   // internal run ID for tool calls. Do not assume those IDs are equal or
   // replace the session index with a single run-ID lookup.
   private readonly executionTicketsByRun = new Map<string, string>();
-  private readonly workspaceSkillReadProgress = new Map<string, WorkspaceSkillReadProgress>();
+  private readonly workspaceSkillReadProgress = new Map<
+    string,
+    WorkspaceSkillReadProgress
+  >();
   private readonly executionTicketsBySession = new Map<
     string,
     Map<string, string>
@@ -260,7 +267,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     // authorize a later internal engine run with a completed turn's ticket.
     this.executionTicketsByRun.delete(runId);
     for (const key of this.workspaceSkillReadProgress.keys()) {
-      if (key.startsWith(`${runId}\0`)) this.workspaceSkillReadProgress.delete(key);
+      if (key.startsWith(`${runId}\0`))
+        this.workspaceSkillReadProgress.delete(key);
     }
     const sessionIds =
       sessionId === undefined
@@ -903,7 +911,11 @@ async function annotateWorkspaceSkillRead(input: {
 }): Promise<AgentToolResult> {
   const wrapped = isAgentToolResult(input.output)
     ? input.output
-    : buildAgentToolSuccessResult({ toolName: input.toolName, input: input.input, output: input.output });
+    : buildAgentToolSuccessResult({
+        toolName: input.toolName,
+        input: input.input,
+        output: input.output,
+      });
   if (input.toolName !== "fs.read_text") return wrapped;
   const request = asRecord(input.input);
   const result = asRecord(wrapped.auditRecord.output);
@@ -914,29 +926,51 @@ async function annotateWorkspaceSkillRead(input: {
   const catalog = asRecord(input.runContext?.payload)?.workspaceSkills;
   if (!Array.isArray(catalog)) return wrapped;
   const match = catalog.find((candidate) => {
-    const skillFile = normalizeSkillEvidencePath(asRecord(candidate)?.skillFile);
-    return skillFile !== undefined && (skillFile === requestedPath || skillFile === resultPath);
+    const skillFile = normalizeSkillEvidencePath(
+      asRecord(candidate)?.skillFile,
+    );
+    return (
+      skillFile !== undefined &&
+      (skillFile === requestedPath || skillFile === resultPath)
+    );
   });
   const skill = asRecord(match);
-  const installationId = typeof skill?.installationId === "string" ? skill.installationId : undefined;
+  const installationId =
+    typeof skill?.installationId === "string"
+      ? skill.installationId
+      : undefined;
   const name = typeof skill?.name === "string" ? skill.name : undefined;
-  const commitSha = typeof skill?.commitSha === "string" ? skill.commitSha : undefined;
-  const contentDigest = typeof skill?.contentDigest === "string" ? skill.contentDigest : undefined;
-  const skillFile = typeof skill?.skillFile === "string" ? skill.skillFile : undefined;
-  if (!installationId || !name || !commitSha || !contentDigest || !skillFile) return wrapped;
+  const commitSha =
+    typeof skill?.commitSha === "string" ? skill.commitSha : undefined;
+  const contentDigest =
+    typeof skill?.contentDigest === "string" ? skill.contentDigest : undefined;
+  const skillFile =
+    typeof skill?.skillFile === "string" ? skill.skillFile : undefined;
+  if (!installationId || !name || !commitSha || !contentDigest || !skillFile)
+    return wrapped;
   const runId = input.runContext?.runId;
   const sessionId = input.runContext?.sessionId;
-  const revision = typeof result.revision === "string" ? result.revision : undefined;
-  const startByte = typeof range?.startByte === "number" ? range.startByte : undefined;
-  const endByte = typeof range?.endByte === "number" ? range.endByte : undefined;
-  if (!runId || !sessionId || !revision || startByte === undefined || endByte === undefined) return wrapped;
+  const revision =
+    typeof result.revision === "string" ? result.revision : undefined;
+  const startByte =
+    typeof range?.startByte === "number" ? range.startByte : undefined;
+  const endByte =
+    typeof range?.endByte === "number" ? range.endByte : undefined;
+  if (
+    !runId ||
+    !sessionId ||
+    !revision ||
+    startByte === undefined ||
+    endByte === undefined
+  )
+    return wrapped;
   const progressKey = `${runId}\0${sessionId}\0${installationId}\0${skillFile}`;
   const previous = input.progress.get(progressKey);
-  const isContiguous = startByte === 0 || (
-    previous !== undefined &&
-    previous.revision === revision &&
-    previous.nextOffsetBytes === startByte
-  );
+  const isContiguous =
+    startByte === 0 ||
+    (previous !== undefined &&
+      previous.revision === revision &&
+      previous.nextOffsetBytes === startByte);
   if (!isContiguous) {
     input.progress.delete(progressKey);
     return wrapped;
@@ -947,10 +981,18 @@ async function annotateWorkspaceSkillRead(input: {
   }
   input.progress.delete(progressKey);
   const workspace = asRecord(asRecord(input.runContext?.payload)?.workspace);
-  const workspaceRoot = typeof workspace?.workspaceRoot === "string" ? workspace.workspaceRoot : undefined;
+  const workspaceRoot =
+    typeof workspace?.workspaceRoot === "string"
+      ? workspace.workspaceRoot
+      : undefined;
   if (!workspaceRoot) return wrapped;
-  const validated = await validateWorkspaceSkillPackage(path.dirname(path.join(workspaceRoot, ...skillFile.split("/"))));
-  if (validated.contentDigest !== contentDigest || validated.manifest.name !== name) {
+  const validated = await validateWorkspaceSkillPackage(
+    path.dirname(path.join(workspaceRoot, ...skillFile.split("/"))),
+  );
+  if (
+    validated.contentDigest !== contentDigest ||
+    validated.manifest.name !== name
+  ) {
     throw createRuntimeFailure(
       "WORKSPACE_SKILL_INTEGRITY_FAILED",
       `Installed workspace skill '${name}' changed after the run snapshot was recorded.`,
