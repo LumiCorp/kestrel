@@ -2,7 +2,7 @@ import {
   ENVIRONMENT_ROUTER_AUDIENCE,
   signEnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
 import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -62,6 +62,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
   agentId?: string | undefined;
   recordExecution?: {
     projectContextRevisionId?: string | undefined;
+    durableTurnId?: string | undefined;
   };
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
@@ -86,7 +87,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     resolved.binding.environmentId !== input.expectedEnvironmentId
   ) {
     throw new Error(
-      "Thread Environment changed after this turn was queued. Submit a new turn in the active Environment."
+      "Thread Environment changed after this turn was queued. Submit a new turn in the active Environment.",
     );
   }
   if (resolved.created && resolved.operation?.status === "queued") {
@@ -141,6 +142,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
       effectiveCapabilities,
       reasoningPolicy,
       projectContextRevisionId: input.recordExecution.projectContextRevisionId,
+      durableTurnId: input.recordExecution.durableTurnId,
     });
     mcpContext = await issueHostedMcpRunContext({
       runExecutionId: runId,
@@ -197,6 +199,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
   agentId?: string | undefined;
   recordExecution?: {
     projectContextRevisionId?: string | undefined;
+    durableTurnId?: string | undefined;
   };
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
@@ -215,7 +218,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     resolved.binding.environmentId !== input.expectedEnvironmentId
   ) {
     throw new Error(
-      "Thread Environment changed after this turn was queued. Submit a new turn in the active Environment."
+      "Thread Environment changed after this turn was queued. Submit a new turn in the active Environment.",
     );
   }
   const runId = crypto.randomUUID();
@@ -244,6 +247,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
       effectiveCapabilities,
       reasoningPolicy,
       projectContextRevisionId: input.recordExecution.projectContextRevisionId,
+      durableTurnId: input.recordExecution.durableTurnId,
     });
     mcpContext = await issueHostedMcpRunContext({
       runExecutionId: runId,
@@ -287,7 +291,7 @@ async function waitForExecutionResources(input: {
         where: (table, { and, eq }) =>
           and(
             eq(table.id, input.environmentId),
-            eq(table.organizationId, input.organizationId)
+            eq(table.organizationId, input.organizationId),
           ),
       }),
       knowledgeDb.query.environmentWorkspaces.findFirst({
@@ -295,7 +299,7 @@ async function waitForExecutionResources(input: {
           and(
             eq(table.id, input.workspaceId),
             eq(table.organizationId, input.organizationId),
-            eq(table.environmentId, input.environmentId)
+            eq(table.environmentId, input.environmentId),
           ),
       }),
     ]);
@@ -381,8 +385,11 @@ export async function updateEnvironmentExecutionStatus(input: {
       .where(
         and(
           eq(schema.environmentRunExecutions.id, input.executionId),
-          eq(schema.environmentRunExecutions.organizationId, input.organizationId)
-        )
+          eq(
+            schema.environmentRunExecutions.organizationId,
+            input.organizationId,
+          ),
+        ),
       );
     if (input.status !== "running") {
       await transaction
@@ -393,9 +400,19 @@ export async function updateEnvironmentExecutionStatus(input: {
             eq(schema.environmentModelGrants.runId, input.executionId),
             eq(
               schema.environmentModelGrants.organizationId,
-              input.organizationId
-            )
-          )
+              input.organizationId,
+            ),
+          ),
+        );
+      await transaction
+        .update(schema.mcpRunGrants)
+        .set({ status: "revoked", revokedAt: now })
+        .where(
+          and(
+            eq(schema.mcpRunGrants.runExecutionId, input.executionId),
+            eq(schema.mcpRunGrants.organizationId, input.organizationId),
+            inArray(schema.mcpRunGrants.status, ["issued", "active"]),
+          ),
         );
     }
   });
@@ -432,17 +449,102 @@ export async function updateEnvironmentExecutionRuntimeIdentity(input: {
   runtimeRunId: string;
   reasoningKeyReady?: boolean | undefined;
 }) {
-  await knowledgeDb
+  const [updated] = await knowledgeDb
     .update(schema.environmentRunExecutions)
     .set({
       runtimeRunId: input.runtimeRunId,
-      ...(input.reasoningKeyReady !== undefined ? { reasoningKeyReady: input.reasoningKeyReady } : {}),
+      ...(input.reasoningKeyReady !== undefined
+        ? { reasoningKeyReady: input.reasoningKeyReady }
+        : {}),
       updatedAt: new Date(),
     })
-    .where(and(
-      eq(schema.environmentRunExecutions.id, input.executionId),
-      eq(schema.environmentRunExecutions.organizationId, input.organizationId),
-    ));
+    .where(
+      and(
+        eq(schema.environmentRunExecutions.id, input.executionId),
+        eq(
+          schema.environmentRunExecutions.organizationId,
+          input.organizationId,
+        ),
+      ),
+    )
+    .returning({ id: schema.environmentRunExecutions.id });
+  if (!updated) {
+    throw new Error(
+      "Environment execution runtime identity was not persisted.",
+    );
+  }
+}
+
+export async function resolveEnvironmentExecutionCancellationRoute(input: {
+  organizationId: string;
+  executionId: string;
+}) {
+  const [route] = await knowledgeDb
+    .select({
+      environmentId: schema.environmentRunExecutions.environmentId,
+      workspaceId: schema.environmentRunExecutions.workspaceId,
+      threadId: schema.environmentRunExecutions.threadId,
+      actorId: schema.environmentRunExecutions.actorId,
+      runtimeRunId: schema.environmentRunExecutions.runtimeRunId,
+      flyAppName: schema.environments.flyAppName,
+      routerUrl: schema.environments.routerUrl,
+      flyMachineId: schema.environmentWorkspaces.flyMachineId,
+    })
+    .from(schema.environmentRunExecutions)
+    .innerJoin(
+      schema.environments,
+      eq(schema.environments.id, schema.environmentRunExecutions.environmentId),
+    )
+    .innerJoin(
+      schema.environmentWorkspaces,
+      eq(
+        schema.environmentWorkspaces.id,
+        schema.environmentRunExecutions.workspaceId,
+      ),
+    )
+    .where(
+      and(
+        eq(schema.environmentRunExecutions.id, input.executionId),
+        eq(
+          schema.environmentRunExecutions.organizationId,
+          input.organizationId,
+        ),
+        inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
+      ),
+    )
+    .limit(1);
+  if (!route?.runtimeRunId) return null;
+  if (!(route.flyAppName && route.flyMachineId && route.routerUrl)) {
+    throw new Error("Environment execution cancellation route is incomplete.");
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const authToken = signEnvironmentExecutionTicket({
+    privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
+    ticket: {
+      version: 1,
+      audience: ENVIRONMENT_ROUTER_AUDIENCE,
+      organizationId: input.organizationId,
+      environmentId: route.environmentId,
+      workspaceId: route.workspaceId,
+      threadId: route.threadId,
+      runId: input.executionId,
+      actorId: route.actorId,
+      agentId: "kestrel-one-turn-worker",
+      flyAppName: route.flyAppName,
+      flyMachineId: route.flyMachineId,
+      capabilities: [...ROUTE_CAPABILITIES],
+      issuedAt: now,
+      expiresAt: now + 300,
+      nonce: crypto.randomUUID(),
+    },
+  });
+  return {
+    baseUrl: route.routerUrl,
+    authToken,
+    runtimeRunId: route.runtimeRunId,
+    sessionId: route.threadId,
+    actorId: route.actorId,
+  };
 }
 
 export function createEnvironmentMachineRoute(input: {
@@ -493,53 +595,81 @@ async function recordEnvironmentExecution(input: {
   routeCapabilities: string[];
   effectiveCapabilities: string[];
   projectContextRevisionId?: string | undefined;
+  durableTurnId?: string | undefined;
   reasoningPolicy: {
-    request: { mode: "off" | "summary" | "provider_visible"; effort?: "low" | "medium" | "high" | undefined };
+    request: {
+      mode: "off" | "summary" | "provider_visible";
+      effort?: "low" | "medium" | "high" | undefined;
+    };
     retention: { mode: "live_only" | "provider_visible"; days: number };
   };
 }) {
-  const thread = await knowledgeDb.query.threads.findFirst({
+  return knowledgeDb.transaction(async (transaction) => {
+    const thread = await transaction.query.threads.findFirst({
       where: (table, { and, eq }) =>
         and(
           eq(table.id, input.threadId),
-          eq(table.organizationId, input.organizationId)
+          eq(table.organizationId, input.organizationId),
         ),
       columns: { projectId: true },
     });
-  if (!thread) throw new Error("Environment execution Thread is unavailable.");
-  if (input.projectContextRevisionId) {
-    const revision = thread.projectId
-      ? await knowledgeDb.query.projectContextRevisions.findFirst({
-          where: (table, { and, eq }) =>
-            and(
-              eq(table.id, input.projectContextRevisionId!),
-              eq(table.projectId, thread.projectId!)
-            ),
-          columns: { id: true },
-        })
-      : null;
-    if (!revision) {
-      throw new Error("Environment execution Project context is unavailable.");
+    if (!thread)
+      throw new Error("Environment execution Thread is unavailable.");
+    if (input.projectContextRevisionId) {
+      const revision = thread.projectId
+        ? await transaction.query.projectContextRevisions.findFirst({
+            where: (table, { and, eq }) =>
+              and(
+                eq(table.id, input.projectContextRevisionId!),
+                eq(table.projectId, thread.projectId!),
+              ),
+            columns: { id: true },
+          })
+        : null;
+      if (!revision) {
+        throw new Error(
+          "Environment execution Project context is unavailable.",
+        );
+      }
     }
-  }
-  await knowledgeDb.insert(schema.environmentRunExecutions).values({
-    id: input.id,
-    organizationId: input.organizationId,
-    environmentId: input.environmentId,
-    workspaceId: input.workspaceId,
-    threadId: input.threadId,
-    projectId: thread.projectId,
-    projectContextRevisionId: input.projectContextRevisionId ?? null,
-    actorId: input.actorId,
-    runtimeImage: input.runtimeImage,
-    effectiveCapabilities: [
-      ...input.routeCapabilities.map((capability) => `route:${capability}`),
-      ...input.effectiveCapabilities,
-    ].sort(),
-    reasoningPolicySnapshot: input.reasoningPolicy,
-    reasoningKeyReady: false,
+    await transaction.insert(schema.environmentRunExecutions).values({
+      id: input.id,
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      workspaceId: input.workspaceId,
+      threadId: input.threadId,
+      projectId: thread.projectId,
+      projectContextRevisionId: input.projectContextRevisionId ?? null,
+      actorId: input.actorId,
+      runtimeImage: input.runtimeImage,
+      effectiveCapabilities: [
+        ...input.routeCapabilities.map((capability) => `route:${capability}`),
+        ...input.effectiveCapabilities,
+      ].sort(),
+      reasoningPolicySnapshot: input.reasoningPolicy,
+      reasoningKeyReady: false,
+    });
+    if (input.durableTurnId) {
+      const [bound] = await transaction
+        .update(schema.threadTurns)
+        .set({ environmentExecutionId: input.id, updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.threadTurns.id, input.durableTurnId),
+            eq(schema.threadTurns.organizationId, input.organizationId),
+            eq(schema.threadTurns.threadId, input.threadId),
+            eq(schema.threadTurns.status, "running"),
+          ),
+        )
+        .returning({ id: schema.threadTurns.id });
+      if (!bound) {
+        throw new Error(
+          "Durable turn could not be bound to its Environment execution.",
+        );
+      }
+    }
+    return thread.projectId;
   });
-  return thread.projectId;
 }
 
 async function readEnvironmentReasoningPolicy(input: {
@@ -547,10 +677,11 @@ async function readEnvironmentReasoningPolicy(input: {
   environmentId: string;
 }) {
   const environment = await knowledgeDb.query.environments.findFirst({
-    where: (table, { and, eq }) => and(
-      eq(table.id, input.environmentId),
-      eq(table.organizationId, input.organizationId),
-    ),
+    where: (table, { and, eq }) =>
+      and(
+        eq(table.id, input.environmentId),
+        eq(table.organizationId, input.organizationId),
+      ),
     columns: {
       reasoningRequestMode: true,
       reasoningEffort: true,
@@ -558,11 +689,14 @@ async function readEnvironmentReasoningPolicy(input: {
       reasoningRetentionDays: true,
     },
   });
-  if (!environment) throw new Error("Environment reasoning policy is unavailable.");
+  if (!environment)
+    throw new Error("Environment reasoning policy is unavailable.");
   return {
     request: {
       mode: environment.reasoningRequestMode,
-      ...(environment.reasoningEffort ? { effort: environment.reasoningEffort } : {}),
+      ...(environment.reasoningEffort
+        ? { effort: environment.reasoningEffort }
+        : {}),
     },
     retention: {
       mode: environment.reasoningRetentionMode,
@@ -588,7 +722,7 @@ async function snapshotEffectiveCapabilities(input: {
         where: (table, { and, eq }) =>
           and(
             eq(table.id, input.threadId),
-            eq(table.organizationId, input.organizationId)
+            eq(table.organizationId, input.organizationId),
           ),
         columns: { projectId: true },
       }),
@@ -607,24 +741,24 @@ async function snapshotEffectiveCapabilities(input: {
             or(
               and(
                 eq(table.subjectType, "actor"),
-                eq(table.subjectId, input.actorId)
+                eq(table.subjectId, input.actorId),
               ),
               and(
                 eq(table.subjectType, "agent"),
-                eq(table.subjectId, input.agentId)
-              )
-            )
+                eq(table.subjectId, input.agentId),
+              ),
+            ),
           ),
       }),
     ]);
   if (!thread) throw new Error("Environment execution Thread is unavailable.");
   const installationByApp = new Map(
-    installations.map((installation) => [installation.appKey, installation])
+    installations.map((installation) => [installation.appKey, installation]),
   );
   const availableDefinitions = definitions.filter(
     (definition) =>
       definition.installMode === "inherited" ||
-      installationByApp.get(definition.key)?.status === "installed"
+      installationByApp.get(definition.key)?.status === "installed",
   );
 
   function restrictApprovalMode(inputApproval: {
@@ -636,18 +770,18 @@ async function snapshotEffectiveCapabilities(input: {
       (restriction) =>
         restriction.providerKey === inputApproval.appKey &&
         restriction.capabilityKey === inputApproval.capabilityKey &&
-        restriction.resourceId === null
+        restriction.resourceId === null,
     );
     if (
       matchingRestrictions.some(
         (restriction) =>
-          !restriction.enabled || restriction.approvalMode === "deny"
+          !restriction.enabled || restriction.approvalMode === "deny",
       )
     ) {
       return null;
     }
     return matchingRestrictions.some(
-      (restriction) => restriction.approvalMode === "ask"
+      (restriction) => restriction.approvalMode === "ask",
     )
       ? "ask"
       : inputApproval.approvalMode;
@@ -661,18 +795,18 @@ async function snapshotEffectiveCapabilities(input: {
       knowledgeDb.query.appCapabilities.findMany(),
     ]);
     const definitionByKey = new Map(
-      availableDefinitions.map((definition) => [definition.key, definition])
+      availableDefinitions.map((definition) => [definition.key, definition]),
     );
     const capabilityByKey = new Map(
       capabilities.map((capability) => [
         `${capability.appKey}:${capability.key}`,
         capability,
-      ])
+      ]),
     );
     return grants.flatMap((grant) => {
       const definition = definitionByKey.get(grant.appKey);
       const capability = capabilityByKey.get(
-        `${grant.appKey}:${grant.capabilityKey}`
+        `${grant.appKey}:${grant.capabilityKey}`,
       );
       if (
         definition?.connectionModel !== "none" ||
@@ -710,7 +844,7 @@ async function snapshotEffectiveCapabilities(input: {
             ? [`app:${access.appKey}.${capability.key}:${approvalMode}`]
             : [];
         })
-      : []
+      : [],
   );
   return appCapabilities;
 }

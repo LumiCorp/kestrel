@@ -15,12 +15,6 @@ type Connection = {
   hasApiKey: boolean;
 } | null;
 
-type FlyConnection = {
-  status: string;
-  hasApiToken: boolean;
-  organizationSlug: string;
-} | null;
-
 type Profile = {
   id: string;
   profileKey: string;
@@ -55,9 +49,6 @@ const initialProfileForm = {
 
 export function ManagedRunPodAdminClient() {
   const [connection, setConnection] = useState<Connection>(null);
-  const [flyConnection, setFlyConnection] = useState<FlyConnection>(null);
-  const [flyApiToken, setFlyApiToken] = useState("");
-  const [flyOrganizationSlug, setFlyOrganizationSlug] = useState("");
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [fleet, setFleet] = useState<FleetRow[]>([]);
   const [apiKey, setApiKey] = useState("");
@@ -66,20 +57,18 @@ export function ManagedRunPodAdminClient() {
   const [quota, setQuota] = useState("1");
 
   const refresh = useCallback(async () => {
-    const [connectionResponse, flyResponse, profilesResponse, fleetResponse, policyResponse] =
+    const [connectionResponse, profilesResponse, fleetResponse, policyResponse] =
       await Promise.all([
         fetch("/api/organization/infrastructure/connections/runpod", { cache: "no-store" }),
-        fetch("/api/organization/infrastructure/connections/fly", { cache: "no-store" }),
         fetch("/api/organization/infrastructure/deployment-profiles", { cache: "no-store" }),
         fetch("/api/organization/infrastructure/deployments", { cache: "no-store" }),
         fetch("/api/organization/infrastructure/runpod-policy", { cache: "no-store" }),
       ]);
-    if (!(connectionResponse.ok && flyResponse.ok && profilesResponse.ok && fleetResponse.ok && policyResponse.ok)) {
+    if (!(connectionResponse.ok && profilesResponse.ok && fleetResponse.ok && policyResponse.ok)) {
       throw new Error("Managed RunPod administration is unavailable.");
     }
-    const [connectionJson, flyJson, profilesJson, fleetJson, policyJson] = await Promise.all([
+    const [connectionJson, profilesJson, fleetJson, policyJson] = await Promise.all([
       connectionResponse.json(),
-      flyResponse.json(),
       profilesResponse.json(),
       fleetResponse.json(),
       policyResponse.json(),
@@ -87,8 +76,6 @@ export function ManagedRunPodAdminClient() {
     setConnection(connectionJson.connection ?? null);
     setProfiles(profilesJson.profiles ?? []);
     setFleet(fleetJson.fleet ?? []);
-    setFlyConnection(flyJson.connection ?? null);
-    setFlyOrganizationSlug(flyJson.connection?.organizationSlug ?? "");
     setQuota(String(policyJson.policy?.maxActiveDeployments ?? 1));
   }, []);
 
@@ -175,66 +162,6 @@ export function ManagedRunPodAdminClient() {
                 onClick={() =>
                   run("test", () =>
                     post("/api/organization/infrastructure/connections/runpod", { action: "test" })
-                  )
-                }
-                variant="outline"
-              >
-                <ShieldCheck className="size-4" /> Test
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Fly.io connection</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Badge variant={flyConnection?.status === "ready" ? "default" : "secondary"}>
-                {flyConnection?.status ?? "not configured"}
-              </Badge>
-              <span className="text-muted-foreground text-sm">
-                {flyConnection?.hasApiToken ? "encrypted token" : "no credential"}
-              </span>
-            </div>
-            <Label htmlFor="fly-organization-slug">Fly organization slug</Label>
-            <Input
-              id="fly-organization-slug"
-              onChange={(event) => setFlyOrganizationSlug(event.target.value)}
-              value={flyOrganizationSlug}
-            />
-            <Label htmlFor="fly-api-token">Fly API token</Label>
-            <Input
-              id="fly-api-token"
-              onChange={(event) => setFlyApiToken(event.target.value)}
-              placeholder="Leave empty to keep the stored token"
-              type="password"
-              value={flyApiToken}
-            />
-            <div className="flex gap-2">
-              <Button
-                disabled={Boolean(busy) || !flyOrganizationSlug.trim()}
-                onClick={() =>
-                  run("fly", () =>
-                    post("/api/organization/infrastructure/connections/fly", {
-                      action: "configure",
-                      organizationSlug: flyOrganizationSlug,
-                      apiToken: flyApiToken || null,
-                      enabled: true,
-                    })
-                  )
-                }
-              >
-                Save connection
-              </Button>
-              <Button
-                disabled={Boolean(busy)}
-                onClick={() =>
-                  run("fly-test", () =>
-                    post("/api/organization/infrastructure/connections/fly", {
-                      action: "test",
-                    })
                   )
                 }
                 variant="outline"

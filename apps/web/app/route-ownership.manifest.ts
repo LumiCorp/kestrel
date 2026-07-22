@@ -1594,7 +1594,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page("app/(workspace)/settings/platform/email/page.tsx", "/settings/platform/email", "email-delivery", "admin", "admin-denied"),
   api("app/api/organization/email/route.ts", "/api/organization/email", "email-delivery", "admin", "admin-denied"),
   api("app/api/organization/email/test/route.ts", "/api/organization/email/test", "email-delivery", "admin", "admin-denied"),
-  api("app/api/organization/infrastructure/connections/fly/route.ts", "/api/organization/infrastructure/connections/fly", "environments", "admin", "admin-denied"),
   api("app/api/organization/infrastructure/runpod-policy/route.ts", "/api/organization/infrastructure/runpod-policy", "environments", "admin", "admin-denied"),
   api("app/api/organization/infrastructure/settings/route.ts", "/api/organization/infrastructure/settings", "environments", "admin", "admin-denied"),
   api("app/api/runtime/email/action/route.ts", "/api/runtime/email/action", "email-delivery", "service-boundary", "service-bearer"),

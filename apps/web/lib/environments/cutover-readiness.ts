@@ -7,6 +7,20 @@ const REQUIRED_HOSTED_ENVIRONMENT_RELATIONS = [
   "user_tool_connections",
   "user_tool_connection_resources",
   "github_action_approvals",
+  "workspace_preview_leases",
+  "environment_model_grants",
+] as const;
+
+const REQUIRED_HOSTED_ENVIRONMENT_COLUMNS = [
+  ["environments", "gateway_service_token_hash"],
+  ["environment_workspaces", "service_token_hash"],
+] as const;
+
+const REQUIRED_PREVIEW_CAPABILITIES = [
+  "publish",
+  "list",
+  "renew",
+  "close",
 ] as const;
 
 export type HostedEnvironmentSchemaReadiness = {
@@ -45,7 +59,7 @@ type SnapshotRow = {
 };
 
 export function evaluateHostedEnvironmentSchemaReadiness(
-  missingRelations: string[]
+  missingRelations: string[],
 ): HostedEnvironmentSchemaReadiness {
   return {
     ready: missingRelations.length === 0,
@@ -59,19 +73,53 @@ export async function inspectHostedEnvironmentSchemaReadiness(input: {
   const sql = postgres(input.databaseUrl, { max: 1 });
   try {
     const requiredRelations = REQUIRED_HOSTED_ENVIRONMENT_RELATIONS.map(
-      (relation) => [relation] as const
+      (relation) => [relation] as const,
     );
-    const rows = await sql<Array<{ relation: string }>>`
+    const requiredColumns = REQUIRED_HOSTED_ENVIRONMENT_COLUMNS.map(
+      ([relation, column]) => [relation, column] as const,
+    );
+    const requiredCapabilities = REQUIRED_PREVIEW_CAPABILITIES.map(
+      (capability) => [capability] as const,
+    );
+    const rows = await sql<Array<{ requirement: string }>>`
       WITH required("relation") AS (
         VALUES ${sql(requiredRelations)}
+      ), required_columns("relation", "column") AS (
+        VALUES ${sql(requiredColumns)}
+      ), required_capabilities("capability") AS (
+        VALUES ${sql(requiredCapabilities)}
       )
-      SELECT required."relation"
+      SELECT required."relation" AS "requirement"
       FROM required
       WHERE to_regclass(format('public.%I', required."relation")) IS NULL
-      ORDER BY required."relation"
+      UNION ALL
+      SELECT required_columns."relation" || '.' || required_columns."column"
+      FROM required_columns
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = required_columns."relation"
+          AND column_name = required_columns."column"
+      )
+      UNION ALL
+      SELECT 'app_definitions.ngrok'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "app_definitions" WHERE "key" = 'ngrok' AND "published" = true
+      )
+      UNION ALL
+      SELECT 'app_capabilities.ngrok.' || required_capabilities."capability"
+      FROM required_capabilities
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM "app_capabilities"
+        WHERE "app_key" = 'ngrok'
+          AND "key" = required_capabilities."capability"
+      )
+      ORDER BY "requirement"
     `;
     return evaluateHostedEnvironmentSchemaReadiness(
-      rows.map((row) => row.relation)
+      rows.map((row) => row.requirement),
     );
   } finally {
     await sql.end({ timeout: 0 });
@@ -79,37 +127,37 @@ export async function inspectHostedEnvironmentSchemaReadiness(input: {
 }
 
 export function evaluateHostedEnvironmentCutoverReadiness(
-  snapshot: HostedEnvironmentCutoverSnapshot
+  snapshot: HostedEnvironmentCutoverSnapshot,
 ): HostedEnvironmentCutoverReadiness {
   const blockers: string[] = [];
   if (snapshot.enabledOrganizationCount === 0) {
     blockers.push(
-      "No organization has the hosted Environments feature enabled."
+      "No organization has the hosted Environments feature enabled.",
     );
   }
   if (snapshot.enabledOrganizationWithoutReadyDefaultCount > 0) {
     blockers.push(
-      `${snapshot.enabledOrganizationWithoutReadyDefaultCount} enabled organization(s) do not have a fully provisioned default Environment.`
+      `${snapshot.enabledOrganizationWithoutReadyDefaultCount} enabled organization(s) do not have a fully provisioned default Environment.`,
     );
   }
   if (snapshot.invalidProjectBindingCount > 0) {
     blockers.push(
-      `${snapshot.invalidProjectBindingCount} Project Environment binding(s) violate tenant or availability invariants.`
+      `${snapshot.invalidProjectBindingCount} Project Environment binding(s) violate tenant or availability invariants.`,
     );
   }
   if (snapshot.invalidThreadBindingCount > 0) {
     blockers.push(
-      `${snapshot.invalidThreadBindingCount} Thread execution binding(s) violate tenant, Environment, or Workspace ownership invariants.`
+      `${snapshot.invalidThreadBindingCount} Thread execution binding(s) violate tenant, Environment, or Workspace ownership invariants.`,
     );
   }
   if (snapshot.invalidExecutionCount > 0) {
     blockers.push(
-      `${snapshot.invalidExecutionCount} Environment execution record(s) violate tenant or route identity invariants.`
+      `${snapshot.invalidExecutionCount} Environment execution record(s) violate tenant or route identity invariants.`,
     );
   }
   if (snapshot.activeExecutionCount > 0) {
     blockers.push(
-      `${snapshot.activeExecutionCount} Environment execution(s) are still routed or running.`
+      `${snapshot.activeExecutionCount} Environment execution(s) are still routed or running.`,
     );
   }
   return { ready: blockers.length === 0, blockers, snapshot };

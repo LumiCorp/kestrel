@@ -41,6 +41,7 @@ import {
 import {
   activateEnvironmentModelGrant,
   resolveEnvironmentExecutionRoute,
+  resolveEnvironmentExecutionCancellationRoute,
   updateEnvironmentExecutionRuntimeIdentity,
   updateEnvironmentExecutionStatus,
 } from "@/lib/environments/execution-route";
@@ -56,31 +57,32 @@ class KestrelOneRunnerClient extends KestrelClient {
     runId: string,
     sessionId: string,
     action: "read" | "delete",
-    context: KestrelRequestContext
+    context: KestrelRequestContext,
   ) {
     return this.sendCommand(
       "operator.run.reasoning",
       { runId, sessionId, action },
-      context
+      context,
     );
   }
   runWithProfile(
     input: { profile: RunnerProfile; turn: RunnerTurnInput },
-    context: KestrelRequestContext
+    context: KestrelRequestContext,
   ): Promise<RunnerRunTerminalEvent> {
     return this.sendCommand(
       "run.start",
       { profile: input.profile, turn: input.turn },
-      context
+      context,
     );
   }
 
   async runWithProfileObservingRuntimeIdentity(
     input: { profile: RunnerProfile; turn: RunnerTurnInput },
     context: KestrelRequestContext,
-    onRuntimeIdentity: (
-      identity: { runId: string; reasoningKeyReady?: boolean | undefined }
-    ) => void | Promise<void>
+    onRuntimeIdentity: (identity: {
+      runId: string;
+      reasoningKeyReady?: boolean | undefined;
+    }) => void | Promise<void>,
   ): Promise<RunnerRunTerminalEvent> {
     const stream = this.streamRunWithProfile(input, context);
     let observedRuntimeIdentity = false;
@@ -106,7 +108,7 @@ class KestrelOneRunnerClient extends KestrelClient {
       turn: RunnerTurnInput;
       signal?: AbortSignal | undefined;
     },
-    context: KestrelRequestContext
+    context: KestrelRequestContext,
   ): RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent> {
     return this.createStream(
       "run.start",
@@ -126,11 +128,59 @@ class KestrelOneRunnerClient extends KestrelClient {
               ...(runId !== undefined ? { runId } : {}),
               commandId,
             },
-            context
+            context,
           );
         },
-      }
+      },
     );
+  }
+}
+
+const INTERRUPTED_RUN_CANCEL_TIMEOUT_MS = 5_000;
+
+export async function cancelInterruptedKestrelOneExecution(input: {
+  organizationId: string;
+  executionId: string;
+}) {
+  const route = await resolveEnvironmentExecutionCancellationRoute(input);
+  if (!route) return false;
+  const client = new KestrelOneRunnerClient({
+    target: {
+      kind: "remote",
+      baseUrl: route.baseUrl,
+      authToken: route.authToken,
+    },
+  });
+  try {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        client.cancelRun(
+          { sessionId: route.sessionId, runId: route.runtimeRunId },
+          {
+            tenantId: input.organizationId,
+            actor: {
+              actorId: route.actorId,
+              actorType: "operator",
+              tenantId: input.organizationId,
+              orgRole: "org_admin",
+            },
+          },
+        ),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () =>
+              reject(new Error("Interrupted runtime cancellation timed out.")),
+            INTERRUPTED_RUN_CANCEL_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+    return true;
+  } finally {
+    await client.close();
   }
 }
 
@@ -163,7 +213,7 @@ export async function readKestrelOneRetainedReasoning(input: {
     };
     const baseProfile = await client.getProfile(
       getKestrelOneProfileId(),
-      baseContext
+      baseContext,
     );
     const event = await client.readRetainedReasoning(
       input.runtimeRunId,
@@ -175,7 +225,7 @@ export async function readKestrelOneRetainedReasoning(input: {
           ...baseProfile,
           reasoning: input.reasoningPolicy,
         },
-      }
+      },
     );
     return event.payload;
   } finally {
@@ -228,7 +278,7 @@ export type KestrelOneAgentResponseInput = {
   onRuntimeEvent?: (event: RunnerRunStreamEvent) => void;
   onFinishPersist?: (
     messages: UIMessage[],
-    meta: KestrelOneAgentResponsePersistMeta
+    meta: KestrelOneAgentResponsePersistMeta,
   ) => Promise<void>;
 };
 
@@ -237,6 +287,7 @@ function createModelAwareKestrelOneAgent(input: {
   environmentId: string;
   threadId: string;
   actorUserId: string;
+  durableTurnId?: string | undefined;
   projectContextRevisionId?: string | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
 }): KestrelOneAgent {
@@ -253,12 +304,18 @@ function createModelAwareKestrelOneAgent(input: {
         let dialogDrain: Promise<void> | null = null;
         let mainTerminal = false;
         let retainClientForDialog = false;
-        const handleDialogEvent = async (event: Parameters<typeof readRuntimeDialogMessage>[0]) => {
+        const handleDialogEvent = async (
+          event: Parameters<typeof readRuntimeDialogMessage>[0],
+        ) => {
           const message = readRuntimeDialogMessage(event);
           if (message === null) return;
-          if (message.sender === "kestrel" && message.status === undefined) pendingDialogs.add(message.dialogId);
+          if (message.sender === "kestrel" && message.status === undefined)
+            pendingDialogs.add(message.dialogId);
           else pendingDialogs.delete(message.dialogId);
-          await persistRuntimeDialogMessage({ threadId: input.threadId, message });
+          await persistRuntimeDialogMessage({
+            threadId: input.threadId,
+            message,
+          });
           if (mainTerminal && pendingDialogs.size === 0) dialogAbort.abort();
         };
         try {
@@ -270,6 +327,7 @@ function createModelAwareKestrelOneAgent(input: {
             agentId: getKestrelOneProfileId(),
             recordExecution: {
               projectContextRevisionId: input.projectContextRevisionId,
+              durableTurnId: input.durableTurnId,
             },
             onProgress: (progress) =>
               routed.push({
@@ -325,7 +383,8 @@ function createModelAwareKestrelOneAgent(input: {
           );
           dialogDrain = (async () => {
             try {
-              for await (const event of dialogEvents) await handleDialogEvent(event);
+              for await (const event of dialogEvents)
+                await handleDialogEvent(event);
             } catch (error) {
               if (!dialogAbort.signal.aborted) {
                 console.error("Collaborator dialog subscription failed", error);
@@ -354,13 +413,13 @@ function createModelAwareKestrelOneAgent(input: {
           };
           const baseProfile = await client.getProfile(
             getKestrelOneProfileId(),
-            context
+            context,
           );
           const selectedProfile = runtimeModel
             ? applyKestrelOneModelToProfile(
                 baseProfile,
                 runtimeModel,
-                route.runId
+                route.runId,
               )
             : baseProfile;
           const downstream = client.streamRunWithProfile(
@@ -375,7 +434,7 @@ function createModelAwareKestrelOneAgent(input: {
               turn: normalizedTurn,
               ...(signal ? { signal } : {}),
             },
-            context
+            context,
           );
           routed.attachCancel(() => downstream.cancel());
           let observedRuntimeIdentity = false;
@@ -519,7 +578,7 @@ class EnvironmentRoutedRunnerStream
     if (event) return Promise.resolve({ value: event, done: false });
     if (this.finished) return Promise.resolve({ value: undefined, done: true });
     return new Promise((resolve, reject) =>
-      this.waiters.push({ resolve, reject })
+      this.waiters.push({ resolve, reject }),
     );
   }
 
@@ -575,7 +634,7 @@ export async function generateKestrelOneExternalReply(input: {
       throw new Error(
         getGatewayResolutionFailureMessage({
           surface: "chat",
-        })
+        }),
       );
     }
     const runtimeModel = toKestrelOneRuntimeModelSelection({
@@ -594,13 +653,13 @@ export async function generateKestrelOneExternalReply(input: {
     });
     const baseProfile = await client.getProfile(
       getKestrelOneProfileId(),
-      context
+      context,
     );
     const profile = restrictKestrelOneProfileTools({
       profile: applyKestrelOneModelToProfile(
         { ...baseProfile, reasoning: route.reasoningPolicy },
         runtimeModel,
-        route.runId
+        route.runId,
       ),
       effectiveCapabilities: route.effectiveCapabilities,
     });
@@ -620,7 +679,7 @@ export async function generateKestrelOneExternalReply(input: {
                   ? { reasoningKeyReady: identity.reasoningKeyReady }
                   : {}),
               });
-            }
+            },
           ),
       }),
       sessionId: input.sessionId,
@@ -666,7 +725,7 @@ export async function generateKestrelOneExternalReply(input: {
 }
 
 export async function createKestrelOneAgentResponse(
-  input: KestrelOneAgentResponseInput
+  input: KestrelOneAgentResponseInput,
 ) {
   const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
     selection: input.modelId,
@@ -678,7 +737,7 @@ export async function createKestrelOneAgentResponse(
       getGatewayResolutionFailureMessage({
         surface: "chat",
         modelId: input.modelId,
-      })
+      }),
     );
   }
 
@@ -695,6 +754,7 @@ export async function createKestrelOneAgentResponse(
         environmentId: input.environmentId,
         threadId: input.threadId,
         actorUserId: input.session.user.id,
+        durableTurnId: input.durableTurnId,
         projectContextRevisionId: input.projectContext?.contextRevisionId,
         onExecutionRouted: input.onExecutionRouted,
       });
@@ -724,7 +784,7 @@ export async function createKestrelOneAgentResponse(
 }
 
 function terminalExecutionStatus(
-  terminal: RunnerRunTerminalEvent
+  terminal: RunnerRunTerminalEvent,
 ): "completed" | "failed" | "cancelled" {
   if (terminal.type === "run.cancelled") return "cancelled";
   if (terminal.type === "run.failed") return "failed";
@@ -732,7 +792,7 @@ function terminalExecutionStatus(
 }
 
 function externalFailureExecutionStatus(
-  error: unknown
+  error: unknown,
 ): "failed" | "cancelled" {
   return error instanceof Error &&
     "code" in error &&

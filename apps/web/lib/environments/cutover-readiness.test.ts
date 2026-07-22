@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
   evaluateHostedEnvironmentCutoverReadiness,
   evaluateHostedEnvironmentSchemaReadiness,
@@ -25,6 +26,22 @@ contractTest("web.hermetic", "hosted preparation requires every Environment and 
       ],
     }
   );
+});
+contractTest("web.hermetic", "hosted preparation requires the trusted preview gateway schema", async () => {
+  const source = await readFile(
+    new URL("./cutover-readiness.ts", import.meta.url),
+    "utf8"
+  );
+  for (const requirement of [
+    "workspace_preview_leases",
+    "environment_model_grants",
+    "gateway_service_token_hash",
+    "service_token_hash",
+    "app_definitions.ngrok",
+    "app_capabilities.ngrok.",
+  ]) {
+    assert.match(source, new RegExp(requirement, "u"));
+  }
 });
 
 function validSnapshot(
