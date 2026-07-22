@@ -13,6 +13,7 @@ import {
 
 type VariantName = "baseline" | "candidate";
 type LaneName = "swe_verified" | "terminal_bench";
+type ExperimentKind = "efficiency_ab" | "measurement_aa";
 
 interface VariantSpec {
   sourceRoot: string;
@@ -28,6 +29,7 @@ interface LaneSpec {
 
 export interface HarnessEfficiencyExperimentSpecV1 {
   version: 1;
+  experiment: ExperimentKind;
   baseline: VariantSpec;
   candidate: VariantSpec;
   lanes: LaneSpec[];
@@ -46,6 +48,7 @@ export interface HarnessEfficiencyPlanV1 {
   schema: "kestrel.harness-efficiency-plan/v1";
   specHash: string;
   outputDirectory: string;
+  experiment: ExperimentKind;
   pairCount: number;
   attemptCount: number;
   variants: Record<VariantName, PlannedVariant>;
@@ -108,14 +111,18 @@ export function validatePlanLaneProfiles(
 
 export function parseExperimentSpec(value: unknown, baseDirectory = process.cwd()): HarnessEfficiencyExperimentSpecV1 {
   const record = requireRecord(value, "spec");
-  rejectUnknown(record, new Set(["version", "baseline", "candidate", "lanes", "trialCount", "outputDirectory"]), "spec");
+  rejectUnknown(record, new Set(["version", "experiment", "baseline", "candidate", "lanes", "trialCount", "outputDirectory"]), "spec");
   if (record.version !== 1) throw new Error("Efficiency experiment spec version must be 1.");
+  if (record.experiment !== "efficiency_ab" && record.experiment !== "measurement_aa") {
+    throw new Error("Efficiency experiment spec experiment must be 'efficiency_ab' or 'measurement_aa'.");
+  }
   const lanesValue = record.lanes;
   if (!Array.isArray(lanesValue) || lanesValue.length === 0) throw new Error("Efficiency experiment spec lanes must be non-empty.");
   const lanes = lanesValue.map((value, index) => parseLane(value, index));
   const trialCount = requirePositiveInteger(record.trialCount, "spec.trialCount");
   return {
     version: 1,
+    experiment: record.experiment,
     baseline: parseVariant(record.baseline, "baseline", baseDirectory),
     candidate: parseVariant(record.candidate, "candidate", baseDirectory),
     lanes,
@@ -128,6 +135,14 @@ export function createPlan(spec: HarnessEfficiencyExperimentSpecV1): HarnessEffi
   const baseline = planVariant(spec.baseline, "baseline");
   const candidate = planVariant(spec.candidate, "candidate");
   assertFrozenProfileFields(baseline.profile, candidate.profile);
+  if (spec.experiment === "measurement_aa") {
+    if (baseline.sourceRevision !== candidate.sourceRevision) {
+      throw new Error("Measurement A/A requires identical baseline and candidate source revisions.");
+    }
+    if (baseline.profileHash !== candidate.profileHash) {
+      throw new Error("Measurement A/A requires identical normalized baseline and candidate profiles.");
+    }
+  }
   const attempts: HarnessEfficiencyPlanV1["attempts"] = [];
   let pairIndex = 0;
   for (const lane of spec.lanes) {
@@ -163,6 +178,7 @@ export function createPlan(spec: HarnessEfficiencyExperimentSpecV1): HarnessEffi
     schema: "kestrel.harness-efficiency-plan/v1",
     specHash: hashHarnessEfficiencyValue(spec),
     outputDirectory: spec.outputDirectory,
+    experiment: spec.experiment,
     pairCount: attempts.length,
     attemptCount: attempts.length * 2,
     variants: { baseline, candidate },
@@ -217,11 +233,15 @@ function executePlan(plan: HarnessEfficiencyPlanV1, output: Pick<NodeJS.WriteStr
 function comparePlan(plan: HarnessEfficiencyPlanV1, output: Pick<NodeJS.WriteStream, "write">): number {
   const baseline = loadResults(path.join(plan.outputDirectory, "baseline"));
   const candidate = loadResults(path.join(plan.outputDirectory, "candidate"));
-  const comparison = compareHarnessEfficiencyPairsV2({ baseline, candidate });
+  const comparison = compareHarnessEfficiencyPairsV2({
+    baseline,
+    candidate,
+    mode: plan.experiment === "measurement_aa" ? "measurement_aa" : "efficiency",
+  });
   mkdirSync(plan.outputDirectory, { recursive: true });
   writeFileSync(path.join(plan.outputDirectory, "comparison.v2.json"), `${JSON.stringify(comparison, null, 2)}\n`, "utf8");
   const summary = [
-    `Harness efficiency comparison: ${comparison.passed ? "PASSED" : "FAILED"}`,
+    `${plan.experiment === "measurement_aa" ? "Harness measurement A/A qualification" : "Harness efficiency comparison"}: ${comparison.passed ? "PASSED" : "FAILED"}`,
     `Pairs: ${comparison.pairIds.length}`,
     `Acceptance: ${comparison.metrics.baseline.accepted}/${comparison.metrics.baseline.attempts} baseline; ${comparison.metrics.candidate.accepted}/${comparison.metrics.candidate.attempts} candidate`,
     `Tokens per accepted success: ${formatMetric(comparison.metrics.baseline.tokensPerAcceptedSuccess)} baseline; ${formatMetric(comparison.metrics.candidate.tokensPerAcceptedSuccess)} candidate`,

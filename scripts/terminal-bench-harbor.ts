@@ -15,6 +15,7 @@ import {
   emptyHarnessEfficiencyEconomics,
   hashHarnessEfficiencyValue,
   readHarnessEfficiencyEconomicsFromLedger,
+  reconcileHarnessEfficiencyRuntimeTelemetry,
 } from "../src/economics/index.js";
 
 type HarborMode = "run";
@@ -287,6 +288,11 @@ function writeHarborEfficiencyResult(input: {
   const adapter = adapterPath === undefined ? undefined : readJsonRecord(adapterPath);
   const replayValue = readReferencedJson(input.cwd, adapter?.runtime_replay_bundle_path);
   const replayPath = resolveReferencedPath(input.cwd, adapter?.runtime_replay_bundle_path);
+  const jobOutput = readReferencedJson(input.cwd, adapter?.job_output_path);
+  const jobOutputRecord = isRecord(jobOutput) ? jobOutput : undefined;
+  const job = isRecord(jobOutputRecord?.job) ? jobOutputRecord.job : undefined;
+  const jobResult = isRecord(job?.result) ? job.result : undefined;
+  const runtimeOutput = isRecord(jobResult?.output) ? jobResult.output : undefined;
   const recordedAt = new Date().toISOString();
   const acceptance = input.summary.status === "PASS" ? "accepted" as const : "rejected" as const;
   const failureClass = acceptance === "accepted"
@@ -317,6 +323,7 @@ function writeHarborEfficiencyResult(input: {
       ledgerPath = path.join(outputDirectory, "ledger.v2.json");
       writeFileSync(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
       economics = readHarnessEfficiencyEconomicsFromLedger(ledger);
+      economics = reconcileHarnessEfficiencyRuntimeTelemetry(economics, runtimeOutput?.telemetry);
     } catch {
       economics = emptyHarnessEfficiencyEconomics(["efficiencyLedger"]);
     }

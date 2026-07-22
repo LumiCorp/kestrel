@@ -14,6 +14,7 @@ import {
   parseHarnessEfficiencyLedgerV2,
   parseHarnessEfficiencyPairedComparisonV2,
   readHarnessEfficiencyEconomicsFromLedger,
+  reconcileHarnessEfficiencyRuntimeTelemetry,
   type EconomicsLedgerProjectionV1,
   type HarnessEfficiencyResultV2,
 } from "../../src/economics/index.js";
@@ -267,6 +268,42 @@ contractTest("runtime.hermetic", "paired efficiency comparison does not interpre
     assert.ok(comparison.reasons.some((reason) => /each have at least one accepted outcome/u.test(reason)));
     assert.equal(comparison.reasons.some((reason) => /does not improve tokens or priced cost/u.test(reason)), false);
   }
+});
+
+contractTest("runtime.hermetic", "measurement A/A qualifies identical accepted evidence without demanding an efficiency delta", () => {
+  const baseline = efficiencyResult({ lane: "swe_verified", resultId: "aa-baseline", inputTokens: 1_000, durationMs: 1_000 });
+  const candidate = efficiencyResult({ lane: "swe_verified", resultId: "aa-candidate", inputTokens: 1_100, durationMs: 1_100, candidate: true });
+
+  const comparison = compareHarnessEfficiencyPairsV2({
+    baseline: [baseline],
+    candidate: [candidate],
+    mode: "measurement_aa",
+  });
+
+  assert.equal(comparison.passed, true);
+  assert.deepEqual(comparison.reasons, []);
+});
+
+contractTest("runtime.hermetic", "measurement A/A rejects runtime-ledger disagreement", () => {
+  const baseline = efficiencyResult({ lane: "swe_verified", resultId: "aa-baseline", inputTokens: 1_000, durationMs: 1_000 });
+  const candidate = efficiencyResult({
+    lane: "swe_verified",
+    resultId: "aa-candidate",
+    inputTokens: 1_000,
+    durationMs: 1_000,
+    candidate: true,
+  });
+  const comparison = compareHarnessEfficiencyPairsV2({ baseline: [baseline], candidate: [candidate], mode: "measurement_aa" });
+  assert.equal(comparison.passed, true);
+
+  const reconciled = reconcileHarnessEfficiencyRuntimeTelemetry(baseline.economics, {
+    modelCalls: baseline.economics.totals.calls + 1,
+    inputTokens: baseline.economics.totals.inputTokens,
+    outputTokens: baseline.economics.totals.outputTokens,
+    totalTokens: baseline.economics.totals.inputTokens + baseline.economics.totals.outputTokens,
+  });
+  assert.equal(reconciled.status, "incomplete");
+  assert.ok(reconciled.missingFields.some((field) => field.startsWith("runtimeTelemetry.modelCalls:")));
 });
 
 contractTest("runtime.hermetic", "paired comparison command reads lane artifacts and writes a pass decision", () => {

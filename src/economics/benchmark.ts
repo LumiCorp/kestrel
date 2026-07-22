@@ -199,7 +199,9 @@ export function parseHarnessEfficiencyLedgerV2(value: unknown): HarnessEfficienc
 export function compareHarnessEfficiencyPairsV2(input: {
   baseline: HarnessEfficiencyResultV2[];
   candidate: HarnessEfficiencyResultV2[];
+  mode?: "efficiency" | "measurement_aa" | undefined;
 }): HarnessEfficiencyPairedComparisonV2 {
+  const mode = input.mode ?? "efficiency";
   const baselineByPair = uniqueByPair(input.baseline, "baseline");
   const candidateByPair = uniqueByPair(input.candidate, "candidate");
   const pairIds = [...new Set([...baselineByPair.keys(), ...candidateByPair.keys()])].sort();
@@ -227,23 +229,25 @@ export function compareHarnessEfficiencyPairsV2(input: {
   if ([...pairedBaseline, ...pairedCandidate].some((result) => result.outcome.independentlyEvaluated !== true || result.outcome.acceptance === "not_evaluated")) {
     reasons.push("Every paired result must have an independent terminal evaluation.");
   }
-  if (regressedPairIds.length > 0) reasons.push("At least one baseline-accepted pair regressed.");
+  if (mode === "efficiency" && regressedPairIds.length > 0) reasons.push("At least one baseline-accepted pair regressed.");
   const baselineMetrics = aggregate(pairedBaseline);
   const candidateMetrics = aggregate(pairedCandidate);
   const hasAcceptedOutcomes = baselineMetrics.accepted > 0 && candidateMetrics.accepted > 0;
   if (hasAcceptedOutcomes === false) {
-    reasons.push("Baseline and candidate must each have at least one accepted outcome before per-success efficiency can be interpreted.");
+    reasons.push(mode === "measurement_aa"
+      ? "Measurement A/A requires at least one independently accepted outcome on each side."
+      : "Baseline and candidate must each have at least one accepted outcome before per-success efficiency can be interpreted.");
   }
-  if (candidateMetrics.acceptanceRate < baselineMetrics.acceptanceRate) reasons.push("Candidate acceptance rate is lower than baseline.");
-  if ((candidateMetrics.latencyP95Ms ?? Infinity) > (baselineMetrics.latencyP95Ms ?? -Infinity)) reasons.push("Candidate p95 latency is higher than baseline.");
+  if (mode === "efficiency" && candidateMetrics.acceptanceRate < baselineMetrics.acceptanceRate) reasons.push("Candidate acceptance rate is lower than baseline.");
+  if (mode === "efficiency" && (candidateMetrics.latencyP95Ms ?? Infinity) > (baselineMetrics.latencyP95Ms ?? -Infinity)) reasons.push("Candidate p95 latency is higher than baseline.");
   const baselineFailures = new Set(pairedBaseline.filter((result) => result.outcome.acceptance !== "accepted").map((result) => result.outcome.failureClass));
   const newFailureClasses = [...new Set(pairedCandidate
     .filter((result) => result.outcome.acceptance !== "accepted" && baselineFailures.has(result.outcome.failureClass) === false)
     .map((result) => result.outcome.failureClass))].sort();
-  if (newFailureClasses.length > 0) reasons.push("Candidate introduces a new failure class.");
+  if (mode === "efficiency" && newFailureClasses.length > 0) reasons.push("Candidate introduces a new failure class.");
   const tokenImproved = hasAcceptedOutcomes && baselineMetrics.tokensPerAcceptedSuccess !== null && candidateMetrics.tokensPerAcceptedSuccess !== null && candidateMetrics.tokensPerAcceptedSuccess < baselineMetrics.tokensPerAcceptedSuccess;
   const costImproved = hasAcceptedOutcomes && baselineMetrics.costPerAcceptedSuccessUsd !== null && candidateMetrics.costPerAcceptedSuccessUsd !== null && candidateMetrics.costPerAcceptedSuccessUsd < baselineMetrics.costPerAcceptedSuccessUsd;
-  if (hasAcceptedOutcomes && tokenImproved === false && costImproved === false) reasons.push("Candidate does not improve tokens or priced cost per accepted success.");
+  if (mode === "efficiency" && hasAcceptedOutcomes && tokenImproved === false && costImproved === false) reasons.push("Candidate does not improve tokens or priced cost per accepted success.");
   const unhashed = {
     version: 2 as const,
     schema: "kestrel.harness-efficiency-paired-comparison/v2" as const,
@@ -260,6 +264,39 @@ export function compareHarnessEfficiencyPairsV2(input: {
   };
   validateComparison(unhashed);
   return { ...unhashed, payloadHash: hashCanonical(unhashed) };
+}
+
+export function reconcileHarnessEfficiencyRuntimeTelemetry(
+  economics: HarnessEfficiencyResultV2["economics"],
+  telemetry: unknown,
+): HarnessEfficiencyResultV2["economics"] {
+  const record = optionalRecord(telemetry);
+  const expected = {
+    modelCalls: economics.totals.calls,
+    inputTokens: economics.totals.inputTokens,
+    outputTokens: economics.totals.outputTokens,
+    totalTokens: economics.totals.inputTokens + economics.totals.outputTokens,
+  };
+  const missingFields = [...economics.missingFields];
+  for (const field of ["modelCalls", "inputTokens", "outputTokens", "totalTokens"] as const) {
+    const actual = record?.[field];
+    if (typeof actual !== "number" || Number.isSafeInteger(actual) === false || actual < 0) {
+      missingFields.push(`runtimeTelemetry.${field}`);
+      continue;
+    }
+    if (actual !== expected[field]) {
+      missingFields.push(`runtimeTelemetry.${field}:expected=${expected[field]}:actual=${actual}`);
+    }
+  }
+  const reconciledMissingFields = [...new Set(missingFields)];
+  if (reconciledMissingFields.length === 0 && economics.invalidLedgerEvents === 0) return economics;
+  return {
+    ...economics,
+    status: "incomplete",
+    missingFields: reconciledMissingFields,
+    tokensPerAcceptedSuccess: null,
+    costPerAcceptedSuccessUsd: null,
+  };
 }
 
 export function parseHarnessEfficiencyPairedComparisonV2(value: unknown): HarnessEfficiencyPairedComparisonV2 {

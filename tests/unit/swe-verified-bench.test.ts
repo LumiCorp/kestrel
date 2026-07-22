@@ -45,7 +45,16 @@ contractTest("runtime.hermetic", "SWE efficiency result joins runtime calls and 
     };
     writeFileSync(replayBundlePath, JSON.stringify(economicsReplayBundleFixture("run-swe-ledger", "session-swe-ledger")), "utf8");
     writeFileSync(jobInputPath, JSON.stringify(jobInput), "utf8");
-    writeFileSync(jobOutputPath, JSON.stringify({ version: "job_output_v1" }), "utf8");
+    writeFileSync(jobOutputPath, JSON.stringify({
+      version: "job_output_v1",
+      job: {
+        result: {
+          output: {
+            telemetry: { modelCalls: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12 },
+          },
+        },
+      },
+    }), "utf8");
     writeFileSync(evaluatorReportPath, JSON.stringify({ resolved_instances: 1, unresolved_instances: 0 }), "utf8");
 
     writeSweVerifiedEfficiencyResult({
@@ -73,7 +82,12 @@ contractTest("runtime.hermetic", "SWE efficiency result joins runtime calls and 
         reportPath: evaluatorReportPath,
         report: { status: 0, resolved_instances: 1, unresolved_instances: 0 },
       },
-      kestrelJobSummary: { runId: "run-swe-ledger", sessionId: "session-swe-ledger", threadId: "thread-swe-ledger" },
+      kestrelJobSummary: {
+        runId: "run-swe-ledger",
+        sessionId: "session-swe-ledger",
+        threadId: "thread-swe-ledger",
+        telemetry: { modelCalls: 1, inputTokens: 10, outputTokens: 2, totalTokens: 12 },
+      },
       options: { maxWorkers: 1, timeout: 1_800 },
       env: {},
     });

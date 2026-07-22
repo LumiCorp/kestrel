@@ -34,6 +34,7 @@ import {
   hashHarnessEfficiencyValue,
   readHarnessEfficiencyEconomicsFromLedger,
   readHarnessEfficiencyEconomicsFromReplayBundle,
+  reconcileHarnessEfficiencyRuntimeTelemetry,
 } from "../src/economics/index.js";
 
 type CommandMode = "preflight" | "validate-profile" | "run" | "evaluate" | "list";
@@ -114,6 +115,7 @@ interface KestrelJobStatusSummary {
   status?: string | undefined;
   waitEventType?: string | undefined;
   waitReason?: string | undefined;
+  telemetry?: unknown;
 }
 
 interface RuntimeDeps {
@@ -1970,6 +1972,8 @@ function readKestrelJobStatus(jobOutputPath: string): KestrelJobStatusSummary {
   const job = asRecord(output?.job);
   const waitFor = asRecord(job?.waitFor);
   const waitMetadata = asRecord(waitFor?.metadata);
+  const result = asRecord(job?.result);
+  const resultOutput = asRecord(result?.output);
   return {
     runId: typeof job?.runId === "string" ? job.runId : undefined,
     sessionId: typeof job?.sessionId === "string" ? job.sessionId : undefined,
@@ -1978,6 +1982,7 @@ function readKestrelJobStatus(jobOutputPath: string): KestrelJobStatusSummary {
     status: typeof job?.status === "string" ? job.status : undefined,
     waitEventType: typeof waitFor?.eventType === "string" ? waitFor.eventType : undefined,
     waitReason: typeof waitMetadata?.reason === "string" ? waitMetadata.reason : undefined,
+    telemetry: resultOutput?.telemetry,
   };
 }
 
@@ -2155,6 +2160,7 @@ export function writeSweVerifiedEfficiencyResult(input: {
       });
       writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2) + "\n", "utf8");
       economics = readHarnessEfficiencyEconomicsFromLedger(ledger);
+      economics = reconcileHarnessEfficiencyRuntimeTelemetry(economics, input.kestrelJobSummary?.telemetry);
       ledgerWritten = true;
     } catch {
       economics = {

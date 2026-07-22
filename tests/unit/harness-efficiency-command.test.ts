@@ -23,6 +23,7 @@ contractTest("runtime.hermetic", "efficiency plan validates strict profiles and 
     writeFileSync(candidateFile, JSON.stringify({ profiles: [profile("enforce")] }), "utf8");
     const spec = parseExperimentSpec({
       version: 1,
+      experiment: "efficiency_ab",
       baseline: { sourceRoot: process.cwd(), profileFile: baselineFile, profileId: "economics-test" },
       candidate: { sourceRoot: process.cwd(), profileFile: candidateFile, profileId: "economics-test" },
       lanes: [{ lane: "swe_verified", dataset: "SWE-bench_Verified", taskIds: ["task-a", "task-b"] }],
@@ -52,6 +53,7 @@ contractTest("runtime.hermetic", "efficiency comparison reads only collector-own
 contractTest("runtime.hermetic", "efficiency spec rejects unknown fields", () => {
   assert.throws(() => parseExperimentSpec({
     version: 1,
+    experiment: "efficiency_ab",
     baseline: {},
     candidate: {},
     lanes: [],
@@ -76,6 +78,7 @@ contractTest("runtime.hermetic", "efficiency plan validates every variant with e
     writeFileSync(candidateFile, JSON.stringify({ profiles: [profile("enforce")] }), "utf8");
     const plan = createPlan(parseExperimentSpec({
       version: 1,
+      experiment: "efficiency_ab",
       baseline: { sourceRoot: process.cwd(), profileFile: baselineFile, profileId: "economics-test" },
       candidate: { sourceRoot: process.cwd(), profileFile: candidateFile, profileId: "economics-test" },
       lanes: [
@@ -112,6 +115,31 @@ contractTest("runtime.hermetic", "efficiency plan validates every variant with e
       () => validatePlanLaneProfiles(plan, failingSpawn),
       /failed swe_verified contract validation/u,
     );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+contractTest("runtime.hermetic", "measurement A/A requires identical source and normalized profiles", () => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-measurement-aa-"));
+  try {
+    const baselineFile = path.join(temporary, "baseline.json");
+    const candidateFile = path.join(temporary, "candidate.json");
+    writeFileSync(baselineFile, JSON.stringify({ profiles: [profile("observe")] }), "utf8");
+    writeFileSync(candidateFile, JSON.stringify({ profiles: [profile("enforce")] }), "utf8");
+    const create = () => createPlan(parseExperimentSpec({
+      version: 1,
+      experiment: "measurement_aa",
+      baseline: { sourceRoot: process.cwd(), profileFile: baselineFile, profileId: "economics-test" },
+      candidate: { sourceRoot: process.cwd(), profileFile: candidateFile, profileId: "economics-test" },
+      lanes: [{ lane: "swe_verified", dataset: "SWE-bench_Verified", taskIds: ["task-a"] }],
+      trialCount: 1,
+      outputDirectory: path.join(temporary, "results"),
+    }));
+
+    assert.throws(create, /identical normalized baseline and candidate profiles/u);
+    writeFileSync(candidateFile, JSON.stringify({ profiles: [profile("observe")] }), "utf8");
+    assert.equal(create().experiment, "measurement_aa");
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
