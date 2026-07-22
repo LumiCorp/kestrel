@@ -1565,10 +1565,12 @@ contractTest("packages.hermetic", "KestrelClient preserves structured HTTP and s
     fetchImpl: async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       if (body.type === "profile.get" && (body.payload as { profileId?: string }).profileId === "reference") {
-        return new Response("forbidden", {
+        return new Response(JSON.stringify({
+          error: { code: "ENVIRONMENT_COMMAND_FORBIDDEN" },
+        }), {
           status: 403,
           headers: {
-            "content-type": "text/plain",
+            "content-type": "application/json",
           },
         });
       }
@@ -1594,7 +1596,9 @@ contractTest("packages.hermetic", "KestrelClient preserves structured HTTP and s
   await assert.rejects(() => client.getProfile("reference", context), (error: unknown) => {
     assert.ok(error instanceof KestrelHttpError);
     assert.equal(error.status, 403);
-    assert.equal(error.body, "forbidden");
+    assert.equal(error.body, JSON.stringify({
+      error: { code: "ENVIRONMENT_COMMAND_FORBIDDEN" },
+    }));
     return true;
   });
 
