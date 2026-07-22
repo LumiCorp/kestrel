@@ -5,6 +5,7 @@ import type { SharedToolModule } from "../contracts.js";
 import { createToolInputError, parseObjectInput, readString } from "../helpers.js";
 import {
   MAX_FILE_READ_BYTES,
+  assertWorkspaceSkillStateMutationAllowed,
   buildUtf8TextStats,
   createFileSystemCapability,
   createFileSystemPresentation,
@@ -57,6 +58,7 @@ export const fsWriteTextTool: SharedToolModule = {
 
       const createParents = readBoolean(body, "createParents") ?? false;
       const resolved = await resolveTargetFileSystemPath(targetPath, context.fileSystem);
+      assertWorkspaceSkillStateMutationAllowed({ absolutePath: resolved.absolutePath, config: context.fileSystem, toolName: "fs.write_text" });
 
       if (createParents) {
         await mkdir(path.dirname(resolved.absolutePath), { recursive: true });

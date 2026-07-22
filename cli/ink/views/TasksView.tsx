@@ -83,9 +83,6 @@ export function TasksView(props: TasksViewProps): React.JSX.Element {
               launchedBy={selected.delegation.launchedBy ?? "operator"}
             </Text>
             <Text color={theme.muted}>
-              skill={selected.delegation.skillPackId ?? "none"}
-            </Text>
-            <Text color={theme.muted}>
               result={selected.delegation.resultSummary ?? "pending"}
             </Text>
             <Text color={theme.muted}>

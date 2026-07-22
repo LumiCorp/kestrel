@@ -3,6 +3,10 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { chmod, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  materializeWorkspaceSkillSnapshot,
+  WorkspaceSkillInstaller,
+} from "@kestrel-agents/workspace-skills";
 
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { resolveKestrelHomePath } from "../runtime/kestrelHome.js";
@@ -1607,6 +1611,7 @@ export class ManagedTaskWorktreeService {
         scope: proposal.scope,
       });
     }
+    await this.materializeWorkspaceSkills(proposal);
     return {
       status: "bound",
       sessionId: proposal.sessionId,
@@ -1630,6 +1635,20 @@ export class ManagedTaskWorktreeService {
       ...(input.approvalId !== undefined ? { approvalId: input.approvalId } : {}),
       boundAt: new Date().toISOString(),
     };
+  }
+
+  private async materializeWorkspaceSkills(proposal: ManagedTaskWorktreeProposal): Promise<void> {
+    try {
+      const catalog = await new WorkspaceSkillInstaller().readWorkspaceCatalog(proposal.sourceWorkspaceRoot);
+      await materializeWorkspaceSkillSnapshot({
+        sourceWorkspaceRoot: proposal.sourceWorkspaceRoot,
+        targetWorkspaceRoot: proposal.worktreeRoot,
+        catalog,
+      });
+    } catch {
+      // Skill synchronization owns degraded-state reporting. An unavailable or
+      // invalid optional skill must not block managed-worktree provisioning.
+    }
   }
 
   private metadataPath(proposal: Pick<ManagedTaskWorktreeProposal, "worktreeRoot">): string {

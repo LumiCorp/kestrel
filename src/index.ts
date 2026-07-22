@@ -79,6 +79,7 @@ export * from "./profile/modelCatalogPresentation.js";
 export * from "./profile/runtimeProfile.js";
 export * from "./workspace/threadWorkspaceBinding.js";
 export * from "./workspace/WorkspaceAuthority.js";
+export * from "./skills/index.js";
 export * from "./workspace/ManagedTaskWorktreeService.js";
 export * from "./workspace/RuntimeWorkspaceServices.js";
 export * from "./runtime/ProviderReasoningVault.js";

@@ -128,7 +128,7 @@ contractTest("runtime.hermetic", "buildRuntimeOperatorAffordance treats acter-bl
   assert.match(String(affordance.recommendedAction?.summary), /Reply naturally to approve the switch/u);
 });
 
-contractTest("runtime.hermetic", "decorateOperatorAffordance enriches provider, skill pack, and manual compaction state", () => {
+contractTest("runtime.hermetic", "decorateOperatorAffordance enriches provider and manual compaction state", () => {
   const decorated = decorateOperatorAffordance({
     base: {
       interactionMode: "build",
@@ -144,21 +144,13 @@ contractTest("runtime.hermetic", "decorateOperatorAffordance enriches provider, 
       ...baseSession,
       interactionMode: "build",
       actSubmode: "safe",
-      activeSkillPackId: "research",
       pendingManualCompaction: true,
       started: true,
-    },
-    skillPack: {
-      id: "research",
-      label: "Research",
-      instructions: ["Prefer current evidence."],
-      allowedTools: ["internet.search"],
     },
   });
 
   assert.equal(decorated.provider?.id, "openai");
   assert.equal(decorated.provider?.model, "gpt-5.4-2026-03-05");
-  assert.equal(decorated.activeSkillPack?.id, "research");
   assert.equal(decorated.context?.manualCompactionArmed, true);
   assert.doesNotMatch(formatOperatorAffordance(decorated).join("\n"), /MCP profile/u);
 });

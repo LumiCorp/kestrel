@@ -48,7 +48,6 @@ contractTest("runtime.process", "Local Core platform parsing accepts exact Node 
 
 async function createAppHarness(input: {
   activeProfileId?: string;
-  activeSkillPackId?: string;
   sessionName?: string;
   scripted?: boolean;
   freshSessionName?: string;
@@ -88,7 +87,6 @@ async function createAppHarness(input: {
     createdAt: now,
     updatedAt: now,
     started: true,
-    ...(input.activeSkillPackId !== undefined ? { activeSkillPackId: input.activeSkillPackId } : {}),
   };
   sessionsFile = sessionStore.upsert(sessionsFile, activeSession);
   await sessionStore.save(sessionsFile);
@@ -2229,24 +2227,6 @@ contractTest("runtime.process", "SessionsView and TasksView surface stalled atte
 
   assert.match(sessionsRendered, /\[WAITING:stalled\]/u);
   assert.match(tasksRendered, /\[WAITING:stalled\]/u);
-});
-
-contractTest("runtime.process", "skill status output remains tool and instruction focused", async () => {
-  const { app, historyPath } = await createAppHarness({
-    activeSkillPackId: "research",
-  });
-  const appState = app as unknown as Record<string, unknown>;
-
-  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
-    kind: "command",
-    command: "skill",
-    args: ["status"],
-  });
-
-  const rawHistory = await readFile(historyPath, "utf8");
-  assert.match(rawHistory, /Skill pack: research/u);
-  assert.match(rawHistory, /Allowed tools:/u);
-  assert.doesNotMatch(rawHistory, /MCP profile/u);
 });
 
 contractTest("runtime.process", "palette draft actions seed the composer instead of executing immediately", async () => {

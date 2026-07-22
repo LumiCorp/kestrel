@@ -14,6 +14,7 @@ import type {
   ExecutionPolicyOverride,
   InteractionMode,
 } from "../mode/contracts.js";
+import type { WorkspaceSkillCatalogEntry } from "../skills/contracts.js";
 import {
   alignExecutionPolicyWithMode,
   normalizeInteractionMode,
@@ -26,13 +27,6 @@ export interface RuntimeTurnActor {
   actorId: string;
   displayName?: string | undefined;
   tenantId?: string | undefined;
-}
-
-export interface RuntimeTurnSkillPack {
-  id: string;
-  label: string;
-  instructions: string | string[];
-  allowedTools?: string[] | undefined;
 }
 
 export interface RuntimeTurnHistoryLine {
@@ -82,7 +76,7 @@ export interface RuntimeTurnInput {
       }
     | undefined;
   workspace?: unknown | undefined;
-  skillPack?: RuntimeTurnSkillPack | undefined;
+  workspaceSkills?: WorkspaceSkillCatalogEntry[] | undefined;
 }
 
 export interface RuntimeTurnResult extends RunnerResultV2<NormalizedOutput> {}
@@ -269,15 +263,8 @@ export function materializeCompiledRuntimeTurn(
     ...(prepared.input.workspace !== undefined
       ? { workspace: prepared.input.workspace }
       : {}),
-    ...(prepared.input.skillPack !== undefined
-      ? {
-          skillPack: {
-            id: prepared.input.skillPack.id,
-            label: prepared.input.skillPack.label,
-            instructions: prepared.input.skillPack.instructions,
-            allowedTools: prepared.input.skillPack.allowedTools,
-          },
-        }
+    ...(prepared.input.workspaceSkills !== undefined
+      ? { workspaceSkills: prepared.input.workspaceSkills }
       : {}),
   };
 
@@ -394,8 +381,8 @@ function buildRuntimeTurnMetadata(input: {
     ...(input.input.workspace !== undefined
       ? { workspace: input.input.workspace }
       : {}),
-    ...(input.input.skillPack !== undefined
-      ? { skillPackId: input.input.skillPack.id }
+    ...(input.input.workspaceSkills !== undefined
+      ? { workspaceSkills: input.input.workspaceSkills }
       : {}),
     ...(input.input.actor !== undefined ? { actor: input.input.actor } : {}),
   };

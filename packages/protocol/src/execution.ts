@@ -437,7 +437,6 @@ export interface RunnerTurnInput {
   manualCompaction?: boolean | undefined;
   autoCompaction?: RunnerAutoCompaction | undefined;
   workspace?: Record<string, unknown> | undefined;
-  skillPack?: Record<string, unknown> | undefined;
 }
 
 export interface RunnerRunError {
@@ -761,7 +760,6 @@ export interface OperatorControlCommandPayload {
   profileId?: string | undefined;
   provider?: RunnerModelProvider | undefined;
   model?: string | undefined;
-  skillPackId?: string | undefined;
   maxTurns?: number | undefined;
   maxRuntimeMs?: number | undefined;
   allowApprovalInheritance?: boolean | undefined;
@@ -1960,7 +1958,6 @@ function parseRunnerCommandPayloadV2(
         "goal",
         "profileId",
         "model",
-        "skillPackId",
       ] as const) {
         validateOptionalNonEmptyString(payload[field], `${label}.${field}`);
       }
@@ -2557,7 +2554,6 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalBoolean(turn.manualCompaction, `${label}.manualCompaction`);
   validateOptionalAutoCompaction(turn.autoCompaction, `${label}.autoCompaction`);
   validateOptionalRecord(turn.workspace, `${label}.workspace`);
-  validateOptionalRecord(turn.skillPack, `${label}.skillPack`);
 }
 
 function parseJobInput(value: unknown, label: string): RunnerJobInputV1 {

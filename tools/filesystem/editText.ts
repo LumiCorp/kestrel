@@ -4,6 +4,7 @@ import type { SharedToolModule } from "../contracts.js";
 import { createToolInputError, parseObjectInput, readString } from "../helpers.js";
 import {
   MAX_TEXT_EDIT_BYTES,
+  assertWorkspaceSkillStateMutationAllowed,
   buildUtf8TextStats,
   createFileSystemCapability,
   createFileSystemPresentation,
@@ -68,6 +69,7 @@ export const fsEditTextTool: SharedToolModule = {
       }
       const edits = parseEdits(body.edits);
       const resolved = await resolveExistingFileSystemPath(targetPath, context.fileSystem);
+      assertWorkspaceSkillStateMutationAllowed({ absolutePath: resolved.absolutePath, config: context.fileSystem, toolName: "fs.edit_text" });
       if (resolved.stat.isFile() === false || resolved.stat.size > MAX_TEXT_EDIT_BYTES) {
         throw createToolInputError("fs.edit_text", `File is not an editable UTF-8 file: ${resolved.displayPath}`, {
           path: resolved.displayPath,

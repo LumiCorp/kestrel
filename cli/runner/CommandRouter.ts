@@ -2143,14 +2143,6 @@ function validateOperatorControlPayload(
     );
   }
   if (
-    record.skillPackId !== undefined &&
-    typeof record.skillPackId !== "string"
-  ) {
-    throw new Error(
-      "operator.control payload.skillPackId must be a string when present"
-    );
-  }
-  if (
     record.maxTurns !== undefined &&
     (typeof record.maxTurns !== "number" ||
       !Number.isInteger(record.maxTurns) ||

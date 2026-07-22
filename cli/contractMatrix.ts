@@ -47,7 +47,6 @@ export const SLASH_COMMANDS = [
   "status",
   "mcp",
   "code",
-  "skill",
   "compact",
   "snapshot",
   "restore",

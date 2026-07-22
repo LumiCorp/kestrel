@@ -1,7 +1,10 @@
 import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
+import path from "node:path";
+import { validateWorkspaceSkillPackage } from "@kestrel-agents/workspace-skills";
 
 import type {
   ModelToolSpec,
+  AgentToolResult,
   ToolGateway,
   ToolGatewayCallOptions,
   ToolGatewayPreRunContext,
@@ -36,6 +39,8 @@ import { createToolInputError } from "../helpers.js";
 import {
   buildAgentToolFailureResult,
   buildAgentToolSuccessResult,
+  isAgentToolResult,
+  replaceAgentToolResultOutput,
 } from "../toolResult.js";
 import { validateBuiltInToolInputContract } from "./builtInToolInputContracts.js";
 import {
@@ -83,6 +88,11 @@ type HostedMcpScope = {
   lastUsedAt: number;
 };
 
+interface WorkspaceSkillReadProgress {
+  revision: string;
+  nextOffsetBytes: number;
+}
+
 const MCP_DEFAULT_CAPABILITY: ToolCapabilityMetadata = {
   freshnessClass: "volatile",
   latencyClass: "medium",
@@ -111,6 +121,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   private readonly mcpManager: McpToolProvider;
   private readonly hostedMcpScopes = new Map<string, HostedMcpScope>();
   private readonly executionTicketsByRun = new Map<string, string>();
+  private readonly workspaceSkillReadProgress = new Map<string, WorkspaceSkillReadProgress>();
 
   private defaultAllowlist: Set<string>;
   private mcpStatus: McpStatusSnapshot = {
@@ -224,6 +235,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
 
   clearRuntimeTurnAuthorization(runId: string): void {
     this.executionTicketsByRun.delete(runId);
+    for (const key of this.workspaceSkillReadProgress.keys()) {
+      if (key.startsWith(`${runId}\0`)) this.workspaceSkillReadProgress.delete(key);
+    }
   }
 
   resolveAvailableAllowlistForRuntimeTurn(
@@ -551,7 +565,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
 
       const output = await builtIn(validatedInput);
       this.throwIfAborted(options.signal);
-      return output;
+      return await annotateWorkspaceSkillRead({
+        toolName: name,
+        input: validatedInput,
+        output,
+        runContext: options.runContext,
+        progress: this.workspaceSkillReadProgress,
+      });
     }
 
     const mcpTool = this.resolveExposedMcpTool(name, options.runContext);
@@ -608,6 +628,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       ),
     ]);
     this.hostedMcpScopes.clear();
+    this.workspaceSkillReadProgress.clear();
   }
 
   private resolveInputSchema(
@@ -817,6 +838,97 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           ?.executionTicket
     );
   }
+
+}
+
+async function annotateWorkspaceSkillRead(input: {
+  toolName: string;
+  input: unknown;
+  output: unknown;
+  runContext?: ToolRunContext | undefined;
+  progress: Map<string, WorkspaceSkillReadProgress>;
+}): Promise<AgentToolResult> {
+  const wrapped = isAgentToolResult(input.output)
+    ? input.output
+    : buildAgentToolSuccessResult({ toolName: input.toolName, input: input.input, output: input.output });
+  if (input.toolName !== "fs.read_text") return wrapped;
+  const request = asRecord(input.input);
+  const result = asRecord(wrapped.auditRecord.output);
+  if (result?.range === undefined) return wrapped;
+  const range = asRecord(result.range);
+  const requestedPath = normalizeSkillEvidencePath(request?.path);
+  const resultPath = normalizeSkillEvidencePath(result.path);
+  const catalog = asRecord(input.runContext?.payload)?.workspaceSkills;
+  if (!Array.isArray(catalog)) return wrapped;
+  const match = catalog.find((candidate) => {
+    const skillFile = normalizeSkillEvidencePath(asRecord(candidate)?.skillFile);
+    return skillFile !== undefined && (skillFile === requestedPath || skillFile === resultPath);
+  });
+  const skill = asRecord(match);
+  const installationId = typeof skill?.installationId === "string" ? skill.installationId : undefined;
+  const name = typeof skill?.name === "string" ? skill.name : undefined;
+  const commitSha = typeof skill?.commitSha === "string" ? skill.commitSha : undefined;
+  const contentDigest = typeof skill?.contentDigest === "string" ? skill.contentDigest : undefined;
+  const skillFile = typeof skill?.skillFile === "string" ? skill.skillFile : undefined;
+  if (!installationId || !name || !commitSha || !contentDigest || !skillFile) return wrapped;
+  const runId = input.runContext?.runId;
+  const sessionId = input.runContext?.sessionId;
+  const revision = typeof result.revision === "string" ? result.revision : undefined;
+  const startByte = typeof range?.startByte === "number" ? range.startByte : undefined;
+  const endByte = typeof range?.endByte === "number" ? range.endByte : undefined;
+  if (!runId || !sessionId || !revision || startByte === undefined || endByte === undefined) return wrapped;
+  const progressKey = `${runId}\0${sessionId}\0${installationId}\0${skillFile}`;
+  const previous = input.progress.get(progressKey);
+  const isContiguous = startByte === 0 || (
+    previous !== undefined &&
+    previous.revision === revision &&
+    previous.nextOffsetBytes === startByte
+  );
+  if (!isContiguous) {
+    input.progress.delete(progressKey);
+    return wrapped;
+  }
+  if (result.complete !== true) {
+    input.progress.set(progressKey, { revision, nextOffsetBytes: endByte });
+    return wrapped;
+  }
+  input.progress.delete(progressKey);
+  const workspace = asRecord(asRecord(input.runContext?.payload)?.workspace);
+  const workspaceRoot = typeof workspace?.workspaceRoot === "string" ? workspace.workspaceRoot : undefined;
+  if (!workspaceRoot) return wrapped;
+  const validated = await validateWorkspaceSkillPackage(path.dirname(path.join(workspaceRoot, ...skillFile.split("/"))));
+  if (validated.contentDigest !== contentDigest || validated.manifest.name !== name) {
+    throw createRuntimeFailure(
+      "WORKSPACE_SKILL_INTEGRITY_FAILED",
+      `Installed workspace skill '${name}' changed after the run snapshot was recorded.`,
+      {
+        subsystem: "workspace",
+        classification: "security",
+        recoverable: false,
+        installationId,
+        commitSha,
+        expectedContentDigest: contentDigest,
+        actualContentDigest: validated.contentDigest,
+      },
+    );
+  }
+  const annotated = {
+    ...result,
+    workspaceSkillProvenance: {
+      installationId,
+      name,
+      commitSha,
+      contentDigest,
+      skillFile,
+      loaded: true,
+    },
+  };
+  return replaceAgentToolResultOutput(wrapped, annotated);
+}
+
+function normalizeSkillEvidencePath(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) return;
+  return value.trim().replaceAll("\\", "/").replace(/^\.\//u, "");
 }
 
 function createBuiltInSchemaValidationError(

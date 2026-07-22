@@ -6,11 +6,13 @@ COPY apps/workspace-runtime/package.json apps/workspace-runtime/package.json
 COPY packages/environment-auth/package.json packages/environment-auth/package.json
 COPY packages/sdk/package.json packages/sdk/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
+COPY packages/workspace-skills/package.json packages/workspace-skills/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/workspace-runtime apps/workspace-runtime
 COPY packages/environment-auth packages/environment-auth
 COPY packages/sdk packages/sdk
 COPY packages/protocol packages/protocol
+COPY packages/workspace-skills packages/workspace-skills
 COPY agents agents
 COPY cli cli
 COPY models models
@@ -33,6 +35,7 @@ COPY --from=build /app/apps/workspace-runtime ./apps/workspace-runtime
 COPY --from=build /app/packages/environment-auth ./packages/environment-auth
 COPY --from=build /app/packages/protocol ./packages/protocol
 COPY --from=build /app/packages/sdk ./packages/sdk
+COPY --from=build /app/packages/workspace-skills ./packages/workspace-skills
 RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \
     && test -f /app/dist/cli/runner/service.js \
     && test -f /app/dist/cli/dev-shell/service.js \

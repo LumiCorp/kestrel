@@ -26,6 +26,10 @@ import { buildWorkspaceProxyHeaders } from "./proxy.js";
 import { resolveRunnerServiceEntrypoint } from "./runner-entrypoint.js";
 import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
 import { WorkspaceTerminalRegistry } from "./terminals.js";
+import {
+  WorkspaceSkillManager,
+  type WorkspaceSkillSource,
+} from "@kestrel-agents/workspace-skills";
 
 const config = readConfig();
 await mkdir(config.workspaceRoot, { recursive: true });
@@ -34,19 +38,32 @@ const applications = new WorkspaceApplicationRegistry(config.workspaceRoot);
 await applications.restore();
 const backupImports = new WorkspaceBackupImportRegistry(config.workspaceRoot);
 const terminals = new WorkspaceTerminalRegistry();
-const runnerToken = randomBytes(32).toString("base64url");
-let runner: ChildProcess | null = null;
-let runnerReady: Promise<void> | null = null;
-let sourceInitialization: Promise<void> | null = null;
 let lastActivityAt = Date.now();
 let activeRequests = 0;
 let idleNotificationInFlight = false;
 let idleStopAccepted = false;
 let drainingForIdleStop = false;
+const workspaceIsIdle = () => Promise.resolve(activeRequests <= 1 && terminals.activeCount === 0);
+const workspaceSkills = new WorkspaceSkillManager({
+  workspaceId: config.workspaceId,
+  workspaceRoot: config.workspaceRoot,
+}, {
+  isWorkspaceIdle: workspaceIsIdle,
+});
+const workspaceSkillsActivation = workspaceSkills.syncAll();
+const runnerToken = randomBytes(32).toString("base64url");
+let runner: ChildProcess | null = null;
+let runnerReady: Promise<void> | null = null;
+let sourceInitialization: Promise<void> | null = null;
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
-    writeJson(response, 200, { ok: true, workspaceId: config.workspaceId });
+    try {
+      await workspaceSkillsActivation;
+      writeJson(response, 200, { ok: true, workspaceId: config.workspaceId });
+    } catch {
+      writeJson(response, 503, { ok: false, workspaceId: config.workspaceId, error: { code: "WORKSPACE_SKILLS_ACTIVATION_FAILED" } });
+    }
     return;
   }
   if (drainingForIdleStop) {
@@ -78,6 +95,42 @@ const server = createServer(async (request, response) => {
         authorization: `Bearer ${runnerToken}`,
       });
       return;
+    }
+    if (request.method === "GET" && url.pathname === "/v1/skills") {
+      requireCapability(ticket.capabilities, "workspace.skills.read");
+      writeJson(response, 200, { skills: await workspaceSkills.list() });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/skills") {
+      requireCapability(ticket.capabilities, "workspace.skills.write");
+      const skill = await workspaceSkills.install(parseWorkspaceSkillSource(parseJson(await readBody(request, 100_000))));
+      writeJson(response, 201, { skill });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/skills/sync") {
+      requireCapability(ticket.capabilities, "workspace.skills.write");
+      if (!(await workspaceIsIdle())) throw new WorkspaceRequestError(409, "WORKSPACE_SKILLS_ACTIVE_RUN");
+      writeJson(response, 200, { skills: await workspaceSkills.syncAll() });
+      return;
+    }
+    const workspaceSkillPath = url.pathname.match(/^\/v1\/skills\/([^/]+)$/u);
+    if (workspaceSkillPath?.[1]) {
+      const installationId = decodeURIComponent(workspaceSkillPath[1]);
+      if (request.method === "PATCH") {
+        requireCapability(ticket.capabilities, "workspace.skills.write");
+        const skill = await workspaceSkills.updateSource(
+          installationId,
+          parseWorkspaceSkillSource(parseJson(await readBody(request, 100_000))),
+        );
+        writeJson(response, 200, { skill });
+        return;
+      }
+      if (request.method === "DELETE") {
+        requireCapability(ticket.capabilities, "workspace.skills.write");
+        await workspaceSkills.remove(installationId);
+        writeJson(response, 200, { skills: await workspaceSkills.list() });
+        return;
+      }
     }
     if (
       request.method === "POST" &&
@@ -876,6 +929,17 @@ function readConfig() {
 function parseJson(value: Buffer) {
   try { return JSON.parse(value.toString("utf8")) as unknown; }
   catch { throw new WorkspaceRequestError(400, "REQUEST_JSON_INVALID"); }
+}
+
+function parseWorkspaceSkillSource(value: unknown): WorkspaceSkillSource {
+  if (!isRecord(value) || typeof value.gitUrl !== "string" || typeof value.branch !== "string") {
+    throw new WorkspaceRequestError(400, "WORKSPACE_SKILL_SOURCE_INVALID");
+  }
+  return {
+    gitUrl: value.gitUrl,
+    branch: value.branch,
+    ...(typeof value.path === "string" && value.path.trim().length > 0 ? { path: value.path } : {}),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -10,7 +10,6 @@ import {
   pickResumeTarget,
   rankOperatorJourneys,
 } from "../../src/operatorShell.js";
-import { listSkillPacks } from "../runtime/skillPacks.js";
 import { describeResolvedWorkspace } from "../workspace/WorkspaceResolver.js";
 
 const SESSION_PALETTE_ACTION_LIMIT = 12;
@@ -310,13 +309,6 @@ export function buildPaletteActions(
       detail: `${session.modeLabel} · ${session.detail}`,
       command: `/switch ${session.title}`,
     }));
-  const skillActions = listSkillPacks().map((skill) => ({
-    id: `cmd.skill.use.${skill.id}`,
-    label: `Use skill pack: ${skill.id}`,
-    detail: skill.label,
-    command: `/skill use ${skill.id}`,
-  }));
-
   return [
     { id: "view.chat", label: "Go to Chat", detail: "Open chat screen" },
     { id: "view.history", label: "Go to History Home", detail: "Browse resumable work, launch summaries, and restart points" },
@@ -326,7 +318,6 @@ export function buildPaletteActions(
     ...journeyActions,
     ...chatActions,
     ...recentJourneyActions,
-    ...skillActions,
     ...taskActions,
     ...mcpServerActions,
     ...listThemeModes().map((mode) => ({

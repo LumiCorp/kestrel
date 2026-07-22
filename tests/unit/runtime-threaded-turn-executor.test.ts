@@ -31,14 +31,6 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor compiles threaded 
     },
     refreshToolRuntime: async () => {},
     resolveAvailableToolAllowlist: (names) => names.filter((name) => name !== "fs.write_text"),
-    resolveSkillPackById: (skillPackId) => skillPackId === "skill-pack:review"
-      ? {
-          id: "skill-pack:review",
-          label: "Review",
-          instructions: "Review carefully.",
-          allowedTools: ["fs.read_text"],
-        }
-      : undefined,
   });
 
   const result = await executor.executeTurn({
@@ -77,7 +69,14 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor compiles threaded 
       workspace: {
         workspaceRoot: "/tmp/project",
       },
-      skillPackId: "skill-pack:review",
+      workspaceSkills: [{
+        installationId: "skill-review",
+        name: "review",
+        description: "Review carefully.",
+        commitSha: "a".repeat(40),
+        contentDigest: `sha256:${"b".repeat(64)}`,
+        skillFile: `.kestrel/skills/skill-review/revisions/${"a".repeat(40)}/SKILL.md`,
+      }],
       executionPolicy: {
         toolClassPolicy: {
           filesystem_read: true,
@@ -118,12 +117,16 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor compiles threaded 
     contextRevision: 7,
     content: "Project: Atlas\n\nProject instructions:\nPrefer verified sources.",
   });
-  assert.deepEqual(event?.payload.skillPack, {
-    id: "skill-pack:review",
-    label: "Review",
-    instructions: "Review carefully.",
-    allowedTools: ["fs.read_text"],
-  });
+  assert.deepEqual(event?.payload.workspaceSkills, [
+    {
+      installationId: "skill-review",
+      name: "review",
+      description: "Review carefully.",
+      commitSha: "a".repeat(40),
+      contentDigest: `sha256:${"b".repeat(64)}`,
+      skillFile: `.kestrel/skills/skill-review/revisions/${"a".repeat(40)}/SKILL.md`,
+    },
+  ]);
   assert.deepEqual(asRecord(event?.payload.metadata)?.runtimeAssembly, {
     bundleId: "bundle:thread",
     toolAllowlist: ["fs.read_text"],

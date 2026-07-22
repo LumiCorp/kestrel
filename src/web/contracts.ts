@@ -155,7 +155,6 @@ export type WebControlCommand =
       profileId?: string | undefined;
       provider?: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio" | undefined;
       model?: string | undefined;
-      skillPackId?: string | undefined;
       maxTurns?: number | undefined;
       maxRuntimeMs?: number | undefined;
       allowApprovalInheritance?: boolean | undefined;

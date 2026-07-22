@@ -58,15 +58,6 @@ contractTest("runtime.hermetic", "parseInput parses code command with subcommand
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses skill command with subcommand args", () => {
-  const parsed = parseInput("/skill use research");
-  assert.deepEqual(parsed, {
-    kind: "command",
-    command: "skill",
-    args: ["use", "research"],
-  });
-});
-
 contractTest("runtime.hermetic", "parseInput parses workspace command with subcommand args", () => {
   const parsed = parseInput("/workspace status");
   assert.deepEqual(parsed, {

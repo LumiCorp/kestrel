@@ -4,6 +4,7 @@ import type { SharedToolModule } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
 import {
   createFileSystemCapability,
+  assertWorkspaceSkillStateMutationAllowed,
   createFileSystemPresentation,
   readBoolean,
   readRequiredPath,
@@ -37,6 +38,7 @@ export const fsMkdirTool: SharedToolModule = {
       const targetPath = readRequiredPath(body, "path", "fs.mkdir");
       const recursive = readBoolean(body, "recursive") ?? true;
       const resolved = await resolveTargetFileSystemPath(targetPath, context.fileSystem);
+      assertWorkspaceSkillStateMutationAllowed({ absolutePath: resolved.absolutePath, config: context.fileSystem, toolName: "fs.mkdir" });
 
       await mkdir(resolved.absolutePath, { recursive });
 

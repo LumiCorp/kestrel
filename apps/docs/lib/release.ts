@@ -9,6 +9,7 @@ export const DOCS_RELEASE = {
     "@kestrel-agents/next",
     "@kestrel-agents/ai-sdk",
     "@kestrel-agents/observability",
+    "@kestrel-agents/workspace-skills",
   ],
   releaseNotesUrl: "/reference/releases",
   productAccess: {
@@ -32,6 +33,7 @@ export const DOCS_RELEASE = {
     ["Next.js", "Adapts SDK results to server routes"],
     ["AI SDK", "Adapts runner streams to AI SDK presentation events"],
     ["Observability", "Wraps compatible SDK operations"],
+    ["Workspace skills", "Installs and verifies portable workspace guidance"],
     ["CLI", "Operates the matching runtime line"],
     ["Desktop", "Bundles compatible Local Core resources"],
     ["Kestrel One", "Consumes exact released public packages"],

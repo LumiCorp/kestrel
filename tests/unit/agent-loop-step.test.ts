@@ -1797,7 +1797,7 @@ contractTest("runtime.hermetic", "agent loop persists compiled decision verifica
   });
 });
 
-contractTest("runtime.hermetic", "agent loop sends workspace, Project, and skill pack context in the user prompt, not system messages", async () => {
+contractTest("runtime.hermetic", "agent loop sends workspace, Project, and installed skill context in the user prompt, not system messages", async () => {
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   ctx.event.payload.workspace = {
@@ -1807,12 +1807,14 @@ contractTest("runtime.hermetic", "agent loop sends workspace, Project, and skill
     commands: {},
     label: "Project",
   };
-  ctx.event.payload.skillPack = {
-    id: "research",
-    label: "Research",
-    instructions: ["Prefer grounded sources."],
-    allowedTools: ["internet.search"],
-  };
+  ctx.event.payload.workspaceSkills = [{
+    installationId: "research-skill",
+    name: "research",
+    description: "Prefer grounded sources.",
+    commitSha: "a".repeat(40),
+    contentDigest: `sha256:${"b".repeat(64)}`,
+    skillFile: `.kestrel/skills/research-skill/revisions/${"a".repeat(40)}/SKILL.md`,
+  }];
   ctx.event.payload.projectContext = {
     projectId: "project-atlas",
     contextRevisionId: "revision-7",
@@ -1849,7 +1851,8 @@ contractTest("runtime.hermetic", "agent loop sends workspace, Project, and skill
   assert.match(userMessage as string, /- projectId: project-atlas/u);
   assert.match(userMessage as string, /- contextRevision: 7/u);
   assert.match(userMessage as string, /Prefer verified sources\./u);
-  assert.match(userMessage as string, /Skill pack: research \(Research\)\./u);
+  assert.match(userMessage as string, /Installed workspace skills:/u);
+  assert.match(userMessage as string, /research: Prefer grounded sources\./u);
   assert.match(userMessage as string, /Prefer grounded sources\./u);
 });
 

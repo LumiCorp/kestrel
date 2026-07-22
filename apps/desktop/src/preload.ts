@@ -205,6 +205,21 @@ const desktopBridge: DesktopBridge = {
   readProjectLauncher(projectPath, packageManagerOverride, threadId?: string) {
     return ipcRenderer.invoke("desktop:read-project-launcher", projectPath, packageManagerOverride, threadId);
   },
+  listWorkspaceSkills(projectPath) {
+    return ipcRenderer.invoke("desktop:list-workspace-skills", projectPath);
+  },
+  installWorkspaceSkill(projectPath, source) {
+    return ipcRenderer.invoke("desktop:install-workspace-skill", projectPath, source);
+  },
+  updateWorkspaceSkill(projectPath, installationId, source) {
+    return ipcRenderer.invoke("desktop:update-workspace-skill", projectPath, installationId, source);
+  },
+  syncWorkspaceSkills(projectPath) {
+    return ipcRenderer.invoke("desktop:sync-workspace-skills", projectPath);
+  },
+  removeWorkspaceSkill(projectPath, installationId) {
+    return ipcRenderer.invoke("desktop:remove-workspace-skill", projectPath, installationId);
+  },
   listProjectRuns() {
     return ipcRenderer.invoke("desktop:list-project-runs");
   },

@@ -255,13 +255,23 @@ export function normalizeToolActionInput(
   }
 
   if (name === "fs.read_text") {
-    const { maxBytes: _maxBytes } = input;
+    const {
+      maxBytes: _maxBytes,
+      offsetBytes: _offsetBytes,
+      expectedRevision: _expectedRevision,
+    } = input;
     return {
       path: normalizeFilesystemPathField(input, {
         aliases: ["filePath", "targetPath"],
       }),
       ...(normalizeOptionalInteger(_maxBytes) !== undefined
         ? { maxBytes: normalizeOptionalInteger(_maxBytes) }
+        : {}),
+      ...(normalizeOptionalInteger(_offsetBytes) !== undefined
+        ? { offsetBytes: normalizeOptionalInteger(_offsetBytes) }
+        : {}),
+      ...(normalizeOptionalString(_expectedRevision) !== undefined
+        ? { expectedRevision: normalizeOptionalString(_expectedRevision) }
         : {}),
     };
   }
