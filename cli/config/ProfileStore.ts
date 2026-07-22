@@ -53,14 +53,19 @@ const DEFAULT_DELEGATION_POLICY = {
   maxConcurrentChildSessions: 2,
   maxDepth: 2,
 };
+// This legacy policy field now gates Kestrel's model-visible collaborator
+// dialogs. Legacy spawn/delegate tools remain internal-only runtime surfaces.
 const DELEGATION_TOOL_NAMES = [
   "dialog.open",
   "dialog.send",
   "dialog.close",
+] as const;
+const INTERNAL_DELEGATION_TOOL_NAMES = new Set([
+  "agent.spawn",
   "delegate.spawn_child",
   "delegate.list_children",
   "delegate.get_child_result",
-] as const;
+]);
 const KESTREL_ONE_PROFILE_ID = "kestrel-one";
 const KESTREL_ONE_TOOL_NAMES = [
   "kestrel_one.search_knowledge_documents",
@@ -106,6 +111,9 @@ function createDefaultCliProfile(input: {
     ...new Set([
       ...resolved.toolAllowlist,
       ...(input.extraToolAllowlist ?? []),
+      ...(input.id === KESTREL_ONE_PROFILE_ID
+        ? DELEGATION_TOOL_NAMES
+        : []),
     ]),
   ];
   return {
@@ -127,7 +135,12 @@ function createDefaultCliProfile(input: {
     guardrails: { ...DEFAULT_PROFILE_GUARDRAILS },
     codeMode: resolved.codeMode,
     devShell: resolved.devShell,
-    delegation: { ...DEFAULT_DELEGATION_POLICY },
+    delegation: {
+      ...DEFAULT_DELEGATION_POLICY,
+      ...(input.id === KESTREL_ONE_PROFILE_ID
+        ? { allowAgentSpawn: true }
+        : {}),
+    },
     default: input.default,
   };
 }
@@ -228,7 +241,9 @@ export class ProfileStore {
     }
 
     const hydrated = parsed.profiles.map((profile) => {
-      const normalized = applyProfileDefaults(profile);
+      const normalized = applyProfileDefaults(
+        applyManagedProfileInvariants(profile),
+      );
       if (
         profile.agent === "reference-react" &&
         profile.modeSystemV2Enabled !== true
@@ -390,6 +405,28 @@ function ensureKestrelOneProfile(profiles: TuiProfile[]): TuiProfile[] {
     (item) => item.id === KESTREL_ONE_PROFILE_ID,
   );
   return profile === undefined ? profiles : [...profiles, { ...profile }];
+}
+
+function applyManagedProfileInvariants(profile: TuiProfile): TuiProfile {
+  if (profile.id !== KESTREL_ONE_PROFILE_ID) {
+    return profile;
+  }
+  return {
+    ...profile,
+    ...(profile.toolAllowlist !== undefined
+      ? {
+          toolAllowlist: profile.toolAllowlist.filter(
+            (toolName) => !INTERNAL_DELEGATION_TOOL_NAMES.has(toolName),
+          ),
+        }
+      : {}),
+    delegation: {
+      ...(profile.delegation ?? {}),
+      // Kestrel One is a managed product profile. Collaborator dialogs must be
+      // available before the profile is returned to a hosted runtime turn.
+      allowAgentSpawn: true,
+    },
+  };
 }
 
 class ProfileSchemaVersionError extends Error {}

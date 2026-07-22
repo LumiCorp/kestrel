@@ -3,6 +3,7 @@ import { mkdir as fsMkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { ProfileStore } from "../../cli/config/ProfileStore.js";
 import type { McpStatusSnapshot, ToolRunContext } from "../../src/index.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { validateWorkspaceSkillPackage } from "../../src/skills/index.js";
@@ -2198,6 +2199,36 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry exposes persistent dialog 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
     ["dialog.open", "dialog.send", "dialog.close"]
+  );
+});
+
+contractTest("runtime.hermetic", "Kestrel-One profile exposes only model-visible collaborator dialogs", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dialog-profile-registry-"));
+  const profile = (await new ProfileStore(tempDir).load()).find(
+    (candidate) => candidate.id === "kestrel-one",
+  );
+  assert.ok(profile);
+  const registry = new UnifiedToolRegistry({
+    allowlist: profile.toolAllowlist ?? [],
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  await registry.refresh();
+
+  assert.deepEqual(
+    registry.getModelTools()
+      .map((tool) => tool.name)
+      .filter(
+        (toolName) =>
+          toolName.startsWith("dialog.") ||
+          toolName.startsWith("delegate.") ||
+          toolName === "agent.spawn",
+      ),
+    ["dialog.open", "dialog.send", "dialog.close"],
   );
 });
 
