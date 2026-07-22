@@ -71,7 +71,7 @@ def main() -> int:
     home = Path(tempfile.mkdtemp(prefix="kestrel-tbench-cli-home-"))
     job_in = home / "job-input.json"
     job_out = home / "job-output.json"
-    replay_bundle = home / "runtime-replay-bundle.json"
+    replay_bundle = Path("/installed-agent/kestrel-cli-runtime-replay-bundle.json")
     event_log = Path("/installed-agent/kestrel-cli-events.jsonl")
     bridge_log = Path("/installed-agent/kestrel-cli-bridge.jsonl")
     task_id = args.task_id
@@ -150,8 +150,8 @@ def main() -> int:
             "duration_ms": round((time.monotonic() - started_at) * 1000),
             "failure_kind": failure_kind,
             "notes": notes,
-            "job_input_path": str(job_in),
-            "job_output_path": str(job_out),
+            "job_input_path": "/installed-agent/kestrel-cli-job-input.json",
+            "job_output_path": "/installed-agent/kestrel-cli-job-output.json",
             "event_log_path": str(event_log),
             "bridge_log_path": str(bridge_log),
             "job_input_sha256": job_input_hash,
@@ -184,8 +184,8 @@ def main() -> int:
                 "duration_ms": round((time.monotonic() - started_at) * 1000),
                 "failure_kind": failure_kind if failure_kind != "none" else "timeout",
                 "notes": str(error),
-                "job_input_path": str(job_in),
-                "job_output_path": str(job_out),
+                "job_input_path": "/installed-agent/kestrel-cli-job-input.json",
+                "job_output_path": "/installed-agent/kestrel-cli-job-output.json",
                 "event_log_path": str(event_log),
                 "bridge_log_path": str(bridge_log),
                 "job_input_sha256": job_input_hash,

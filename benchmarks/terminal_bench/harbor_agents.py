@@ -88,14 +88,15 @@ class KestrelHarborCliInstalledAgent(BaseInstalledAgent):
 
     async def run(self, instruction: str, environment: Any, context: Any) -> None:
         started_at = time.monotonic()
-        task_id = harbor_task_id(context, getattr(self, "logs_dir", None))
+        logs_dir = harbor_artifact_dir(context, getattr(self, "logs_dir", None))
+        task_id = harbor_task_id(context, logs_dir)
         timeout_sec = resolve_agent_timeout_sec(task_id)
         external_deadline_ms = compute_external_deadline_ms(started_at, timeout_sec)
         encoded = base64.b64encode(instruction.encode("utf-8")).decode("ascii")
         env_prefix = build_run_env_prefix(timeout_sec, external_deadline_ms)
         required_artifact_args = " ".join(
             f"--required-artifact {shlex.quote(path)}"
-            for path in harbor_required_artifacts(context, getattr(self, "logs_dir", None))
+            for path in harbor_required_artifacts(context, logs_dir)
         )
         command = (
             f"{env_prefix}python3 /installed-agent/cli_task_runner.py "
@@ -109,6 +110,7 @@ class KestrelHarborCliInstalledAgent(BaseInstalledAgent):
             "printf '\\nKESTREL_TBENCH_AGENT_EXIT_CODE:%s\\n' \"$__kestrel_agent_status\"; "
             "exit 0"
         )
+        debug_artifacts: list[Path] = []
         try:
             result = await self._exec_as_root(
                 environment,
@@ -116,8 +118,11 @@ class KestrelHarborCliInstalledAgent(BaseInstalledAgent):
                 timeout_sec=timeout_sec,
             )
         finally:
-            await persist_kestrel_debug_artifacts(environment, getattr(self, "logs_dir", None))
-        write_command_result_artifact(context, result, getattr(self, "logs_dir", None))
+            debug_artifacts = await persist_kestrel_debug_artifacts(
+                environment,
+                logs_dir,
+            )
+        write_command_result_artifact(context, result, logs_dir)
         stdout = command_output_text(result)
         parsed = parse_cli_result(stdout) or await read_harbor_cli_result(self, environment)
         if parsed is None:
@@ -131,7 +136,7 @@ class KestrelHarborCliInstalledAgent(BaseInstalledAgent):
                 notes="Harbor run did not emit a Kestrel result marker.",
                 **benchmark_provider_artifact_payload(),
             )
-            write_harbor_result_artifact(context, result, getattr(self, "logs_dir", None))
+            write_harbor_result_artifact(context, result, logs_dir)
             raise RuntimeError(result.notes)
 
         normalized = BenchmarkResult(
@@ -149,13 +154,23 @@ class KestrelHarborCliInstalledAgent(BaseInstalledAgent):
             model=string_or_none(parsed.get("model")),
             credential_env=string_or_none(parsed.get("credential_env")),
             credential_fingerprint=string_or_none(parsed.get("credential_fingerprint")),
+            job_input_path=persisted_artifact_path(debug_artifacts, "kestrel-cli-job-input.json"),
+            job_output_path=persisted_artifact_path(debug_artifacts, "kestrel-cli-job-output.json"),
+            event_log_path=persisted_artifact_path(debug_artifacts, "kestrel-cli-events.jsonl"),
+            bridge_log_path=persisted_artifact_path(debug_artifacts, "kestrel-cli-bridge.jsonl"),
+            job_input_sha256=string_or_none(parsed.get("job_input_sha256")),
+            runtime_replay_bundle_path=persisted_artifact_path(
+                debug_artifacts,
+                "kestrel-cli-runtime-replay-bundle.json",
+            ),
+            harness_revision=string_or_none(parsed.get("harness_revision")),
             failure_details=(
                 parsed.get("failure_details")
                 if isinstance(parsed.get("failure_details"), dict)
                 else None
             ),
         )
-        write_harbor_result_artifact(context, normalized, getattr(self, "logs_dir", None))
+        write_harbor_result_artifact(context, normalized, logs_dir)
 
     async def _exec_as_root(self, environment: Any, command: str, **kwargs: Any) -> Any:
         return await maybe_await(self.exec_as_root(environment, command=command, **without_none_values(kwargs)))
@@ -230,6 +245,11 @@ async def persist_kestrel_debug_artifacts(environment: Any, logs_dir: Any) -> li
     copied: list[Path] = []
     for source, name in (
         ("/installed-agent/kestrel-cli-job-input.json", "kestrel-cli-job-input.json"),
+        ("/installed-agent/kestrel-cli-job-output.json", "kestrel-cli-job-output.json"),
+        (
+            "/installed-agent/kestrel-cli-runtime-replay-bundle.json",
+            "kestrel-cli-runtime-replay-bundle.json",
+        ),
         ("/installed-agent/kestrel-cli-result.json", "kestrel-cli-result.json"),
         ("/installed-agent/kestrel-cli-events.jsonl", "kestrel-cli-events.jsonl"),
         ("/installed-agent/kestrel-cli-bridge.jsonl", "kestrel-cli-bridge.jsonl"),
@@ -241,6 +261,10 @@ async def persist_kestrel_debug_artifacts(environment: Any, logs_dir: Any) -> li
             continue
         copied.append(destination)
     return copied
+
+
+def persisted_artifact_path(artifacts: Iterable[Path], name: str) -> str | None:
+    return next((str(path) for path in artifacts if path.name == name), None)
 
 
 def write_harbor_result_artifact(
