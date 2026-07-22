@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -224,14 +224,14 @@ export function GatewayAdminClient() {
     gateways.find((bundle) => bundle.gateway.id === selectedGatewayId) ?? null;
 
   return (
-    <div className="space-y-6">
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         description="Add providers, sync their live model catalogs, and govern which models the app is allowed to use."
         eyebrow="AI Runtime"
-        title="Gateways"
+        title="AI providers"
       />
 
-      <div className="overflow-hidden border border-border/70 bg-card">
+      <div className="overflow-hidden border-border/70 border-y">
         <div className="border-border/70 border-b px-6 py-5">
           <div
             className={cn(
@@ -474,7 +474,7 @@ export function GatewayAdminClient() {
           </section>
         </div>
       </div>
-    </div>
+    </SettingsPage>
   );
 }
 
@@ -667,9 +667,9 @@ function GatewayDetailPane({
         <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">
-              <h2 className="font-semibold text-2xl">
+              <h3 className="font-semibold text-2xl">
                 {providerLabels[bundle.gateway.provider]}
-              </h2>
+              </h3>
               <Badge
                 className="rounded-full px-2.5 py-1"
                 variant={bundle.gateway.hasApiKey ? "default" : "outline"}

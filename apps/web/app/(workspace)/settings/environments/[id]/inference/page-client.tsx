@@ -3,9 +3,14 @@
 import { CheckCircle2, Circle, Loader2, Server, Unplug } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+  SettingsPanel,
+  SettingsPanelContent,
+  SettingsPanelHeader,
+  SettingsPanelTitle,
+} from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -181,15 +186,15 @@ export function EnvironmentInferenceClient({
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Private inference</CardTitle>
+      <SettingsPanel>
+        <SettingsPanelHeader>
+          <SettingsPanelTitle>Private inference</SettingsPanelTitle>
           <p className="text-muted-foreground text-sm">
             Models configured here are inherited by every Project and standalone
             Thread in this Environment.
           </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        </SettingsPanelHeader>
+        <SettingsPanelContent className="space-y-4">
           <div className="flex gap-2">
             <Button
               onClick={() => setMode("managed")}
@@ -319,21 +324,21 @@ export function EnvironmentInferenceClient({
               </Button>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </SettingsPanelContent>
+      </SettingsPanel>
 
       {state.managed.deployments.map(({ deployment, profile }) => (
-        <Card key={deployment.id}>
-          <CardHeader className="flex-row items-start justify-between space-y-0">
+        <SettingsPanel key={deployment.id}>
+          <SettingsPanelHeader className="flex flex-row items-start justify-between space-y-0">
             <div>
-              <CardTitle>{deployment.displayName}</CardTitle>
+              <SettingsPanelTitle>{deployment.displayName}</SettingsPanelTitle>
               <p className="text-muted-foreground text-sm">
                 Managed · {profile.displayName}
               </p>
             </div>
             <Badge variant="outline">{deployment.status}</Badge>
-          </CardHeader>
-          <CardContent className="space-y-4">
+          </SettingsPanelHeader>
+          <SettingsPanelContent className="space-y-4">
             <div className="grid gap-2 text-sm sm:grid-cols-4">
               {["Requested", "Capacity", "Validation", "Ready"].map(
                 (label, index) => {
@@ -395,8 +400,8 @@ export function EnvironmentInferenceClient({
                 Delete
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </SettingsPanelContent>
+        </SettingsPanel>
       ))}
 
       {state.connected.map((gateway) => {
@@ -410,10 +415,10 @@ export function EnvironmentInferenceClient({
             : null;
         const manualModelId = gatewayModelIds[gateway.id] ?? "";
         return (
-          <Card key={gateway.id}>
-            <CardHeader className="flex-row items-start justify-between space-y-0">
+          <SettingsPanel key={gateway.id}>
+            <SettingsPanelHeader className="flex flex-row items-start justify-between space-y-0">
               <div>
-                <CardTitle>{gateway.displayName}</CardTitle>
+                <SettingsPanelTitle>{gateway.displayName}</SettingsPanelTitle>
                 <p className="text-muted-foreground text-sm">
                   Connected RunPod endpoint
                 </p>
@@ -421,8 +426,8 @@ export function EnvironmentInferenceClient({
               <Badge variant={gateway.enabled ? "default" : "outline"}>
                 {gateway.enabled ? "Ready" : "Validation required"}
               </Badge>
-            </CardHeader>
-            <CardContent className="space-y-3">
+            </SettingsPanelHeader>
+            <SettingsPanelContent className="space-y-3">
               {gateway.metadata?.validationStatus === "model_id_required" ? (
                 <p className="text-destructive text-sm">
                   {validationMessage ??
@@ -534,17 +539,17 @@ export function EnvironmentInferenceClient({
               >
                 Remove endpoint
               </Button>
-            </CardContent>
-          </Card>
+            </SettingsPanelContent>
+          </SettingsPanel>
         );
       })}
 
       {availableModels.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Environment default</CardTitle>
-          </CardHeader>
-          <CardContent className="flex gap-2">
+        <SettingsPanel>
+          <SettingsPanelHeader>
+            <SettingsPanelTitle>Environment default</SettingsPanelTitle>
+          </SettingsPanelHeader>
+          <SettingsPanelContent className="flex gap-2">
             <select
               className="h-9 flex-1 rounded-md border bg-background px-3 text-sm"
               onChange={(event) =>
@@ -564,8 +569,8 @@ export function EnvironmentInferenceClient({
                 </option>
               ))}
             </select>
-          </CardContent>
-        </Card>
+          </SettingsPanelContent>
+        </SettingsPanel>
       ) : null}
     </div>
   );

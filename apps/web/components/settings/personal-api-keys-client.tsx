@@ -3,10 +3,15 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AppPage } from "@/components/app-page";
+import {
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsPanel,
+  SettingsPanelContent,
+  SettingsPanelHeader,
+  SettingsPanelTitle,
+} from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TimeText } from "@/components/ui/time-text";
@@ -79,8 +84,8 @@ export function UserApiKeysClient() {
   }
 
   return (
-    <AppPage>
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         actions={
           <Button asChild size="sm" variant="outline">
             <Link href="/settings/profile">Back to Profile</Link>
@@ -92,11 +97,11 @@ export function UserApiKeysClient() {
       />
 
       {revealedKey ? (
-        <Card data-testid="personal-api-key-reveal">
-          <CardHeader>
-            <CardTitle>Save your API key now</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
+        <SettingsPanel data-testid="personal-api-key-reveal">
+          <SettingsPanelHeader>
+            <SettingsPanelTitle>Save your API key now</SettingsPanelTitle>
+          </SettingsPanelHeader>
+          <SettingsPanelContent className="space-y-3">
             <p className="text-muted-foreground text-sm">
               This key is only shown once. Copy it now and store it securely.
             </p>
@@ -115,15 +120,15 @@ export function UserApiKeysClient() {
                 Done
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </SettingsPanelContent>
+        </SettingsPanel>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Create a new key</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 md:flex-row">
+      <SettingsPanel>
+        <SettingsPanelHeader>
+          <SettingsPanelTitle>Create a new key</SettingsPanelTitle>
+        </SettingsPanelHeader>
+        <SettingsPanelContent className="flex flex-col gap-3 md:flex-row">
           <div className="flex-1 space-y-2">
             <Label htmlFor="personal-api-key-name">Key name</Label>
             <Input
@@ -143,14 +148,14 @@ export function UserApiKeysClient() {
               Create Key
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </SettingsPanelContent>
+      </SettingsPanel>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Your keys</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      <SettingsPanel>
+        <SettingsPanelHeader>
+          <SettingsPanelTitle>Your keys</SettingsPanelTitle>
+        </SettingsPanelHeader>
+        <SettingsPanelContent className="divide-y">
           {status ? (
             <div className="text-muted-foreground text-sm">{status}</div>
           ) : null}
@@ -161,7 +166,7 @@ export function UserApiKeysClient() {
           ) : (
             keys.map((key) => (
               <div
-                className="flex flex-col justify-between gap-3 rounded-lg border p-4 md:flex-row md:items-center"
+                className="flex flex-col justify-between gap-3 py-4 md:flex-row md:items-center"
                 key={key.id}
               >
                 <div>
@@ -189,8 +194,8 @@ export function UserApiKeysClient() {
               </div>
             ))
           )}
-        </CardContent>
-      </Card>
-    </AppPage>
+        </SettingsPanelContent>
+      </SettingsPanel>
+    </SettingsPage>
   );
 }

@@ -25,7 +25,7 @@ export default async function EnvironmentAppsPage({
       <section>
         <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 className="font-semibold text-xl">Environment Apps</h2>
+            <h3 className="font-semibold text-xl">Environment Apps</h3>
             <p className="mt-1 text-muted-foreground text-sm">
               {readyCount} of {configurations.length} ready for Projects. Select
               an App to manage its connections and access ceiling.

@@ -6,15 +6,12 @@ contractTest(
   "web.hermetic",
   "hosted Fly infrastructure uses only platform-managed authority",
   async () => {
-    const [connectionSource, reconcileSource, adminSource, routeManifest] =
+    const [connectionSource, reconcileSource, environmentsSource, routeManifest] =
       await Promise.all([
         readFile(new URL("./fly-connection.ts", import.meta.url), "utf8"),
         readFile(new URL("./reconcile.ts", import.meta.url), "utf8"),
         readFile(
-          new URL(
-            "../../app/admin/deployments/page-client.tsx",
-            import.meta.url,
-          ),
+          new URL("../../components/settings/environments-client.tsx", import.meta.url),
           "utf8",
         ),
         readFile(
@@ -28,7 +25,7 @@ contractTest(
     assert.doesNotMatch(connectionSource, /aiProviderConnections/u);
     assert.match(reconcileSource, /selectDistinct/u);
     assert.match(reconcileSource, /await createFlyProviderClient\(\)/u);
-    assert.doesNotMatch(adminSource, /connections\/fly/u);
+    assert.doesNotMatch(environmentsSource, /FlyWorkspaceProviderClient/u);
     assert.doesNotMatch(routeManifest, /connections\/fly/u);
   },
 );

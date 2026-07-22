@@ -1,13 +1,12 @@
 import { headers } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AppPage } from "@/components/app-page";
+import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
 import type { SerializedSessionRecord, Session } from "@/lib/auth-types";
 import { dbClient } from "@/lib/db-client";
-import UserCard from "@/app/dashboard/user-card";
+import UserCard from "@/components/settings/profile-client";
 
 export default async function ProfileSettingsPage() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -22,8 +21,8 @@ export default async function ProfileSettingsPage() {
     .execute();
 
   return (
-    <AppPage>
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         actions={
           <Button asChild size="sm" variant="outline">
             <Link href="/settings/api-keys">Personal API keys</Link>
@@ -54,6 +53,6 @@ export default async function ProfileSettingsPage() {
         )}
         session={session as Session}
       />
-    </AppPage>
+    </SettingsPage>
   );
 }

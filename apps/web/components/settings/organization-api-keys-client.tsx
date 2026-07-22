@@ -5,9 +5,8 @@ import { toast } from "sonner";
 import { readJson } from "@/components/admin/admin-client-utils";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
-import { AppPage } from "@/components/app-page";
+import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TimeText } from "@/components/ui/time-text";
@@ -91,8 +90,8 @@ export function ApiKeysAdminClient() {
   }
 
   return (
-    <AppPage>
-      <AdminPageHeader
+    <SettingsPage>
+      <SettingsPageHeader
         description="Create app-owned admin keys for integrations and revoke them when they are no longer needed."
         eyebrow="Credentials"
         title="API Keys"
@@ -106,7 +105,7 @@ export function ApiKeysAdminClient() {
         />
       ) : null}
 
-      <div className="grid gap-3 border border-border/70 bg-card p-4 md:grid-cols-[1fr_240px_auto]">
+      <div className="grid gap-3 border-border/70 border-y py-4 md:grid-cols-[1fr_240px_auto]">
         <Input
           onChange={(event) => setName(event.target.value)}
           placeholder="Key name"
@@ -168,6 +167,6 @@ export function ApiKeysAdminClient() {
           ),
         }))}
       />
-    </AppPage>
+    </SettingsPage>
   );
 }

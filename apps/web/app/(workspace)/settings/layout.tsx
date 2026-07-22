@@ -25,7 +25,9 @@ export default async function SettingsLayout({
           canManageOrganization={canManageActiveOrganization}
           isAppAdmin={isAdmin}
         />
-        <div className="min-w-0 flex-1">{children}</div>
+        <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
+          <div className="mx-auto w-full max-w-7xl">{children}</div>
+        </main>
       </div>
     </div>
   );

@@ -5,16 +5,16 @@ import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { CreditCard, Loader2 } from "lucide-react";
 import { ChangePlanDialog } from "@/app/dashboard/change-plan";
+import {
+  SettingsPanel,
+  SettingsPanelContent,
+  SettingsPanelDescription,
+  SettingsPanelHeader,
+  SettingsPanelTitle,
+} from "@/components/settings/settings-section";
 import { SubscriptionTierLabel } from "@/components/tier-labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { billingEnabled, client } from "@/lib/auth-client";
 import type { ActiveOrganization } from "@/lib/auth-types";
 import { canManageOrganizationBillingRole } from "@/lib/billing/access-shared";
@@ -71,14 +71,14 @@ export function OrganizationBillingCard(props: {
   });
 
   return (
-    <Card>
-      <CardHeader>
+    <SettingsPanel>
+      <SettingsPanelHeader>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <CardTitle>Organization Billing</CardTitle>
-            <CardDescription>
+            <SettingsPanelTitle>Organization billing</SettingsPanelTitle>
+            <SettingsPanelDescription>
               Manage the active organization&apos;s plan and renewal state.
-            </CardDescription>
+            </SettingsPanelDescription>
           </div>
           <div className="flex items-center gap-2">
             <CreditCard className="text-muted-foreground" size={16} />
@@ -92,8 +92,8 @@ export function OrganizationBillingCard(props: {
             />
           </div>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      </SettingsPanelHeader>
+      <SettingsPanelContent className="space-y-4">
         {activeIsPersonal ? (
           <>
             <div className="flex flex-wrap items-center gap-2">
@@ -188,7 +188,7 @@ export function OrganizationBillingCard(props: {
             ) : null}
           </>
         )}
-      </CardContent>
-    </Card>
+      </SettingsPanelContent>
+    </SettingsPanel>
   );
 }

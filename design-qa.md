@@ -125,3 +125,44 @@ The Projects comparison removes the permanently visible creation card from the g
 - Kestrel One TypeScript and focused Ultracite checks passed.
 
 final result: passed
+
+---
+
+# Settings design QA
+
+- Source: `$TMPDIR/kestrel-settings-qa/settings-source.png`
+- Implementation: `$TMPDIR/kestrel-settings-qa/settings-environments-desktop.png`
+- Comparison: `$TMPDIR/kestrel-settings-qa/design-qa-comparison.png`
+- Route: `http://localhost:43103/settings/organization/environments`
+- State: authenticated organization administrator, provider credentials collapsed, no environments configured
+
+## Capture details
+
+- Source image: 1690 x 931 pixels.
+- Implementation image: 1920 x 1080 pixels at a 1920 x 1080 CSS viewport and device pixel ratio 1.
+- Full comparison: the implementation capture was normalized to 1690 x 931 and opened beside the source in one comparison image.
+- Focused comparison: no crop was required because headings, row labels, actions, dividers, and navigation states were legible in the full comparison. DOM inspection supplied exact heading and control text.
+
+## Findings
+
+- The implementation preserves the warm neutral palette, compact typography, settings navigation hierarchy, divided section-ledger structure, and operational density established by the approved source.
+- The source combined Fly and RunPod under Infrastructure. The implementation intentionally separates workspace compute into Environments and GPU serving into Inference, matching the approved information architecture.
+- Credential fields are collapsed until Configure is selected, and runtime policy editing is consolidated at the section level. These intentional changes reduce persistent form chrome while retaining the source's information hierarchy.
+- No settings-owned Card backgrounds, shadows, double outer padding, or secondary `h1` headings were found.
+- The source is slightly denser horizontally. The implementation gives section descriptions more room and keeps edit controls hidden until requested; this is an intentional P3-level difference, not a fidelity defect.
+
+## Responsive and interaction checks
+
+- Desktop: verified one `h1`, route title as `h2`, cardless sections, active Environments navigation, collapsed Fly configuration, Test behavior, and section edit controls.
+- Tablet at 1024 CSS pixels: verified no horizontal overflow and one `h1`.
+- Mobile at 390 CSS pixels: verified no horizontal overflow, one `h1`, and the mobile settings selector with Environments selected.
+- Inference: verified no Fly copy, collapsed RunPod configuration, New profile dialog, all preserved profile fields, and disabled creation with missing required values.
+- Browser console: zero error entries after the final settings checks.
+
+## Comparison history
+
+1. Compared the approved Infrastructure concept against the implemented Environments page at desktop size.
+2. Inspected responsive geometry and navigation state at tablet and mobile sizes.
+3. Exercised expandable connection forms and the deployment-profile dialog.
+
+final result: passed

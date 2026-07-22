@@ -22,16 +22,16 @@ import QRCode from "react-qr-code";
 import { toast } from "sonner";
 import { UAParser } from "ua-parser-js";
 import { PasswordInput } from "@/components/password-input";
+import {
+  SettingsPanel,
+  SettingsPanelContent,
+  SettingsPanelFooter,
+  SettingsPanelHeader,
+  SettingsPanelTitle,
+} from "@/components/settings/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import CopyButton from "@/components/ui/copy-button";
 import {
@@ -345,11 +345,11 @@ export default function UserCard(props: {
   const removeActiveSession = (sessionId: string) =>
     setActiveSessions(activeSessions.filter((s) => s.id !== sessionId));
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>User</CardTitle>
-      </CardHeader>
-      <CardContent className="grid grid-cols-1 gap-8">
+    <SettingsPanel>
+      <SettingsPanelHeader>
+        <SettingsPanelTitle>Account</SettingsPanelTitle>
+      </SettingsPanelHeader>
+      <SettingsPanelContent className="grid grid-cols-1 gap-8">
         <div className="flex flex-col gap-2">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
@@ -429,8 +429,8 @@ export default function UserCard(props: {
           </div>
           <TwoFactorSection session={session as Session | null} />
         </div>
-      </CardContent>
-      <CardFooter className="items-center justify-between gap-2">
+      </SettingsPanelContent>
+      <SettingsPanelFooter className="items-center justify-between gap-2">
         <ChangePassword />
         {(session?.session as { impersonatedBy?: string | null })
           ?.impersonatedBy ? (
@@ -486,8 +486,8 @@ export default function UserCard(props: {
             </span>
           </Button>
         )}
-      </CardFooter>
-    </Card>
+      </SettingsPanelFooter>
+    </SettingsPanel>
   );
 }
 
