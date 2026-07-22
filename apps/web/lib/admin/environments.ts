@@ -9,6 +9,7 @@ import {
   createOrganizationEnvironment,
   getOrganizationEnvironment,
   listOrganizationEnvironments,
+  recoverDefaultEnvironmentProvisioning,
   setDefaultOrganizationEnvironment,
 } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -55,6 +56,36 @@ export async function listAdminEnvironments(organizationId: string) {
 
 export async function getAdminEnvironmentRollout(organizationId: string) {
   return getHostedEnvironmentsRollout({ organizationId });
+}
+
+export async function recoverAdminDefaultEnvironment(input: {
+  organizationId: string;
+  actorUserId: string;
+}) {
+  const recovered = await recoverDefaultEnvironmentProvisioning({
+    organizationId: input.organizationId,
+    userId: input.actorUserId,
+  });
+  if (
+    recovered.operation.status === "queued" ||
+    recovered.operation.status === "running"
+  ) {
+    await enqueueEnvironmentOperation(recovered.operation.id);
+  }
+  await logAdminEvent({
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    category: "environments",
+    action: "environment.default.recovery_requested",
+    targetType: "environment",
+    targetId: recovered.environment.id,
+    message: "Requested recovery of the default Environment.",
+    metadata: {
+      operationId: recovered.operation.id,
+      recoveryAction: recovered.action,
+    },
+  });
+  return recovered;
 }
 
 export async function setAdminEnvironmentRollout(input: {

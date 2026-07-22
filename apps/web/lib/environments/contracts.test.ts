@@ -5,6 +5,7 @@ import {
   createEnvironmentInputSchema,
   EnvironmentContractError,
   environmentActivationEventSchema,
+  selectDefaultEnvironmentRecoveryAction,
   toEnvironmentSlug,
   workspaceSourceSchema,
 } from "./contracts";
@@ -98,4 +99,39 @@ contractTest("web.hermetic", "activation events carry the exact execution identi
 contractTest("web.hermetic", "environment slugs are deterministic and reject non-letter names", () => {
   assert.equal(toEnvironmentSlug("Product Development"), "product-development");
   assert.throws(() => toEnvironmentSlug("1234"), EnvironmentContractError);
+});
+
+contractTest("web.hermetic", "default Environment recovery is idempotent by lifecycle state", () => {
+  assert.equal(
+    selectDefaultEnvironmentRecoveryAction({
+      environmentStatus: "ready",
+      operationStatus: "completed",
+    }),
+    "ready"
+  );
+  for (const operationStatus of ["queued", "running"] as const) {
+    assert.equal(
+      selectDefaultEnvironmentRecoveryAction({
+        environmentStatus: "provisioning",
+        operationStatus,
+      }),
+      "existing"
+    );
+  }
+  for (const operationStatus of ["failed", "cancelled"] as const) {
+    assert.equal(
+      selectDefaultEnvironmentRecoveryAction({
+        environmentStatus: "failed",
+        operationStatus,
+      }),
+      "requeue"
+    );
+  }
+  assert.equal(
+    selectDefaultEnvironmentRecoveryAction({
+      environmentStatus: "degraded",
+      operationStatus: "failed",
+    }),
+    "unsupported"
+  );
 });

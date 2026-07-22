@@ -5,6 +5,7 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileErrorResponse } from "@/lib/mobile/http";
 import { getMobileV2ThreadSnapshot } from "@/lib/mobile/v2/snapshot";
+import { mobileOrganizationSetupRequiredTurnResponse } from "@/lib/organizations/turn-readiness";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
@@ -48,6 +49,9 @@ export async function POST(
     if (!thread || thread.mode !== "chat") {
       return mobileErrorResponse(new Error("Thread not found."), 404);
     }
+    const setupRequired =
+      await mobileOrganizationSetupRequiredTurnResponse(organizationId);
+    if (setupRequired) return setupRequired;
     const [projectContext, environment] = await Promise.all([
       resolveProjectRuntimeContext({
         projectId: thread.projectId,

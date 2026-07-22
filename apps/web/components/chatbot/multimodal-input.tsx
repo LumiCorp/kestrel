@@ -54,6 +54,7 @@ import type { ChatSuggestion } from "@/lib/chat/suggestion-catalog";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
 import {
   type ComposerPresentation,
+  isComposerPrimaryActionBlockedBySetup,
   resolveComposerPresentation,
 } from "@/lib/turns/composer-presentation";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
@@ -185,6 +186,7 @@ function PureMultimodalInput({
   onInteractionModeChange,
   activeEnvironmentName,
   modelScopeQuery,
+  newTurnDisabledReason,
 }: {
   threadId: string;
   input: string;
@@ -213,6 +215,7 @@ function PureMultimodalInput({
   onInteractionModeChange: (mode: KestrelOneInteractionMode) => void;
   activeEnvironmentName?: string;
   modelScopeQuery?: string;
+  newTurnDisabledReason?: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
@@ -457,6 +460,14 @@ function PureMultimodalInput({
       : null;
   const composerBlockedByInteraction =
     composerPolicy.mode === "blocked_interaction";
+  const composerBlockedBySetup = Boolean(
+    newTurnDisabledReason && !composerRuntimeQuestion
+  );
+  const primaryActionBlockedBySetup =
+    isComposerPrimaryActionBlockedBySetup(
+      composerPresentation.action.kind,
+      composerBlockedBySetup
+    );
   const shouldQueueSubmission = composerPolicy.mode === "queue_turn";
   const pendingInteraction =
     composerPolicy.mode === "answer_interaction" ||
@@ -482,7 +493,7 @@ function PureMultimodalInput({
       return;
     }
 
-    if (composerBlockedByInteraction) {
+    if (composerBlockedByInteraction || composerBlockedBySetup) {
       return;
     }
 
@@ -562,6 +573,7 @@ function PureMultimodalInput({
     resetHeight,
     clearError,
     composerBlockedByInteraction,
+    composerBlockedBySetup,
     composerRuntimeQuestion,
     onRuntimeInteractionResponse,
     shouldQueueSubmission,
@@ -786,7 +798,8 @@ function PureMultimodalInput({
 
   return (
     <div className={cn("relative flex w-full flex-col gap-4", className)}>
-      {messages.length === 0 &&
+      {!composerBlockedBySetup &&
+        messages.length === 0 &&
         attachments.length === 0 &&
         uploadQueue.length === 0 &&
         mediaModelsResolved &&
@@ -859,7 +872,7 @@ function PureMultimodalInput({
           <PromptInputTextarea
             className="grow resize-none overflow-y-auto border-0! border-none! bg-transparent p-2 text-base outline-none ring-0 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-scrollbar]:hidden"
             data-testid="multimodal-input"
-            disabled={composerBlockedByInteraction}
+            disabled={composerBlockedByInteraction || composerBlockedBySetup}
             maxHeight={200}
             minHeight={44}
             onChange={handleInput}
@@ -869,6 +882,8 @@ function PureMultimodalInput({
                 ? "Reply to the agent..."
                 : composerBlockedByInteraction
                   ? "Respond to the request above..."
+                  : composerBlockedBySetup
+                    ? newTurnDisabledReason
                   : "Send a message..."
             }
             ref={textareaRef}
@@ -884,7 +899,7 @@ function PureMultimodalInput({
                 aria-label="Generate an image"
                 className="size-10 rounded-lg p-0 transition-colors hover:bg-accent"
                 data-testid="media-image-button"
-                disabled={imageModels.length === 0}
+                disabled={imageModels.length === 0 || composerBlockedBySetup}
                 onClick={() => {
                   setMediaKind("image");
                   setMediaDialogOpen(true);
@@ -899,7 +914,7 @@ function PureMultimodalInput({
               <Button
                 aria-label="Generate a video"
                 className="size-10 rounded-lg p-0 transition-colors hover:bg-accent"
-                disabled={videoModels.length === 0}
+                disabled={videoModels.length === 0 || composerBlockedBySetup}
                 onClick={() => {
                   setMediaKind("video");
                   setMediaDialogOpen(true);
@@ -935,20 +950,20 @@ function PureMultimodalInput({
                 )}
               </Button>
               <AttachmentsButton
-                disabled={composerBlockedByInteraction}
+                disabled={composerBlockedByInteraction || composerBlockedBySetup}
                 fileInputRef={fileInputRef}
                 selectedModelId={selectedModelId}
               />
               <PromptInputSpeechButton
                 className="size-10 rounded-lg p-0 transition-colors hover:bg-accent"
-                disabled={composerBlockedByInteraction}
+                disabled={composerBlockedByInteraction || composerBlockedBySetup}
                 onTranscriptionChange={setInput}
                 textareaRef={textareaRef}
               />
             </>
           }
           interactionMode={interactionMode}
-          modeDisabled={Boolean(pendingInteraction)}
+          modeDisabled={Boolean(pendingInteraction) || composerBlockedBySetup}
           modelControl={
             <ModelSelectorCompact
               availableModels={availableModels}
@@ -961,6 +976,7 @@ function PureMultimodalInput({
           primaryAction={
             <ComposerActionButton
               clearError={clearError}
+              disabled={primaryActionBlockedBySetup}
               onInterrupt={onInterrupt}
               onSubmit={submitForm}
               presentation={composerPresentation}
@@ -1169,6 +1185,7 @@ export const MultimodalInput = memo(
     if (
       prevProps.activeEnvironmentName !== nextProps.activeEnvironmentName ||
       prevProps.modelScopeQuery !== nextProps.modelScopeQuery ||
+      prevProps.newTurnDisabledReason !== nextProps.newTurnDisabledReason ||
       prevProps.threadId !== nextProps.threadId
     ) {
       return false;
@@ -1332,12 +1349,14 @@ const ModelSelectorCompact = memo(PureModelSelectorCompact);
 
 function PureComposerActionButton({
   clearError,
+  disabled,
   onInterrupt,
   onSubmit,
   presentation,
   setMessages,
 }: {
   clearError: () => void;
+  disabled?: boolean;
   onInterrupt?: () => Promise<void>;
   onSubmit: () => Promise<void>;
   presentation: ComposerPresentation;
@@ -1374,7 +1393,7 @@ function PureComposerActionButton({
             ? "reset-button"
             : "send-button"
       }
-      disabled={action.disabled}
+      disabled={action.disabled || disabled}
       onClick={(event) => {
         event.preventDefault();
         if (isResetAction) {

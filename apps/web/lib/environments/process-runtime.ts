@@ -28,7 +28,7 @@ export async function processEnvironmentOperation(
       }
       const provisioner = new EnvironmentProvisioner({
         repository: databaseEnvironmentProvisioningRepository,
-        provider: await createFlyProviderClient(),
+        provider: await createFlyProviderClient(operation.organizationId),
         runtimeImage: process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ?? "",
         routerImage: process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ?? "",
         ticketPublicKey:

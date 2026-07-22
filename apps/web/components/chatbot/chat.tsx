@@ -377,6 +377,7 @@ function ChatShell({
   projects,
   threadTitle,
   threadExists,
+  newTurnDisabledReason,
 }: {
   addToolApprovalResponse: ChatController["addToolApprovalResponse"];
   archived: boolean;
@@ -421,6 +422,7 @@ function ChatShell({
   projects: Array<{ id: string; name: string }>;
   threadTitle?: string;
   threadExists: boolean;
+  newTurnDisabledReason?: string;
 }) {
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
 
@@ -482,6 +484,7 @@ function ChatShell({
               interactionMode={interactionMode}
               messages={messages}
               modelScopeQuery={modelScopeQuery}
+              newTurnDisabledReason={newTurnDisabledReason}
               onInterrupt={onInterrupt}
               onModelChange={onModelChange}
               onInteractionModeChange={onInteractionModeChange}
@@ -560,12 +563,14 @@ export function BootstrapChat({
   projectId,
   projectName,
   activeEnvironment,
+  newTurnDisabledReason,
 }: {
   id: string;
   initialChatModel: string;
   projectId?: string;
   projectName?: string;
   activeEnvironment?: { id: string; name: string };
+  newTurnDisabledReason?: string;
 }) {
   const router = useRouter();
   const { resetArtifact, setMetadata } = useArtifact();
@@ -588,6 +593,7 @@ export function BootstrapChat({
     _options
   ) => {
     if (
+      newTurnDisabledReason ||
       !message ||
       hasStartedHandoffRef.current ||
       !isUserPartsMessage(message)
@@ -651,6 +657,7 @@ export function BootstrapChat({
         modelScopeQuery={
           projectId ? `&projectId=${encodeURIComponent(projectId)}` : undefined
         }
+        newTurnDisabledReason={newTurnDisabledReason}
         onFeedbackChange={() => {}}
         onModelChange={shared.setCurrentModelId}
         onInteractionModeChange={shared.setInteractionMode}
@@ -696,6 +703,7 @@ export function Chat({
   project,
   projects = [],
   threadTitle,
+  newTurnDisabledReason,
 }: {
   id: string;
   initialMessages: ChatMessage[];
@@ -712,6 +720,7 @@ export function Chat({
   project?: { id: string; name: string } | null;
   projects?: Array<{ id: string; name: string }>;
   threadTitle?: string;
+  newTurnDisabledReason?: string;
 }) {
   const { resetArtifact, setMetadata } = useArtifact();
   const { setDataStream } = useDataStream(id);
@@ -1172,6 +1181,7 @@ export function Chat({
         isReadonly={isReadonly}
         messages={displayMessages}
         modelScopeQuery={`&threadId=${encodeURIComponent(id)}`}
+        newTurnDisabledReason={newTurnDisabledReason}
         onFeedbackChange={(messageId, feedback) => {
           shared.setFeedbackOverrides((current) => ({
             ...current,
