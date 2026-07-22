@@ -35,6 +35,7 @@ export async function createWorkspaceBackup(input: {
   idempotencyKey?: string;
   signal?: AbortSignal | undefined;
   executionOwnership?: BackupExecutionOwnership | undefined;
+  preDestructiveSnapshot?: { id: string; state: string } | undefined;
 }) {
   const [environment, workspace, binding] = await Promise.all([
     knowledgeDb.query.environments.findFirst({
@@ -136,6 +137,14 @@ export async function createWorkspaceBackup(input: {
           manifest: {
             flySnapshotId: snapshot.id,
             flySnapshotState: snapshot.state,
+            ...(input.preDestructiveSnapshot
+              ? {
+                  preDestructiveFlySnapshotId:
+                    input.preDestructiveSnapshot.id,
+                  preDestructiveFlySnapshotState:
+                    input.preDestructiveSnapshot.state,
+                }
+              : {}),
             ...(snapshot.errorMessage
               ? { flySnapshotError: snapshot.errorMessage }
               : {}),

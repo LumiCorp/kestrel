@@ -162,6 +162,7 @@ export class EnvironmentProvisioner {
     actorUserId: string;
     reason: "pre_destructive";
     idempotencyKey: string;
+    preDestructiveSnapshot?: { id: string; state: string } | undefined;
   }) => Promise<unknown>;
 
   constructor(input: {
@@ -179,6 +180,7 @@ export class EnvironmentProvisioner {
           actorUserId: string;
           reason: "pre_destructive";
           idempotencyKey: string;
+          preDestructiveSnapshot?: { id: string; state: string } | undefined;
         }) => Promise<unknown>)
       | undefined;
   }) {
@@ -421,14 +423,33 @@ export class EnvironmentProvisioner {
     });
     for (const workspace of workspaces) {
       if (!(workspace.flyMachineId && workspace.flyVolumeId)) continue;
-      await this.backupWorkspace({
+      const backupInput = {
         organizationId: operation.organizationId,
         environmentId: environment.id,
         workspaceId: workspace.id,
         actorUserId: operation.requestedByUserId,
         reason: "pre_destructive",
         idempotencyKey: `environment.update:${operation.id}:backup:${workspace.id}`,
-      });
+      } as const;
+      try {
+        await this.backupWorkspace(backupInput);
+      } catch (error) {
+        if (!hasErrorCode(error, "ENVIRONMENT_ACTIVATION_TIMEOUT")) throw error;
+        const preDestructiveSnapshot = await this.provider.createVolumeSnapshot({
+          appName: environment.flyAppName,
+          volumeId: workspace.flyVolumeId,
+        });
+        await this.updateWorkspaceRuntime({
+          appName: environment.flyAppName,
+          workspaceId: workspace.id,
+          machineId: workspace.flyMachineId,
+          runtimeImage,
+        });
+        await this.backupWorkspace({
+          ...backupInput,
+          preDestructiveSnapshot,
+        });
+      }
     }
     await this.repository.updateOperationStage({
       operationId: operation.id,
@@ -520,54 +541,12 @@ export class EnvironmentProvisioner {
     });
     for (const workspace of workspaces) {
       if (!workspace.flyMachineId) continue;
-      await this.repository.setWorkspaceStarting(workspace.id);
-      const workspaceServiceToken = createEnvironmentServiceToken();
-      try {
-        const machine = await this.provider.updateMachineImage({
-          appName: environment.flyAppName,
-          machineId: workspace.flyMachineId,
-          runtimeImage,
-          envPatch: workspaceRuntimeIdentityPatch({
-            appName: environment.flyAppName,
-            serviceToken: workspaceServiceToken,
-          }),
-        });
-        if (machine.state === "stopped") {
-          await this.provider.startMachine({
-            appName: environment.flyAppName,
-            machineId: workspace.flyMachineId,
-          });
-        }
-        if (machine.state !== "started") {
-          await this.provider.waitForMachine({
-            appName: environment.flyAppName,
-            machineId: workspace.flyMachineId,
-            state: "started",
-            timeoutSeconds: 90,
-          });
-        }
-        await this.provider.waitForMachineHealth({
-          appName: environment.flyAppName,
-          machineId: workspace.flyMachineId,
-          checkName: "workspace",
-          timeoutSeconds: 90,
-        });
-        await this.repository.completeWorkspaceRebuild({
-          workspaceId: workspace.id,
-          runtimeImage,
-          serviceTokenHash: hashEnvironmentServiceToken(
-            workspaceServiceToken
-          ),
-        });
-      } catch (error) {
-        const failure = safeFailure(error);
-        await this.repository.failWorkspace({
-          workspaceId: workspace.id,
-          code: failure.code,
-          message: failure.message,
-        });
-        throw error;
-      }
+      await this.updateWorkspaceRuntime({
+        appName: environment.flyAppName,
+        workspaceId: workspace.id,
+        machineId: workspace.flyMachineId,
+        runtimeImage,
+      });
     }
     await this.repository.updateOperationStage({
       operationId: operation.id,
@@ -587,6 +566,60 @@ export class EnvironmentProvisioner {
         workspaceCount: workspaces.length,
       },
     });
+  }
+
+  private async updateWorkspaceRuntime(input: {
+    appName: string;
+    workspaceId: string;
+    machineId: string;
+    runtimeImage: string;
+  }) {
+    await this.repository.setWorkspaceStarting(input.workspaceId);
+    const workspaceServiceToken = createEnvironmentServiceToken();
+    try {
+      const machine = await this.provider.updateMachineImage({
+        appName: input.appName,
+        machineId: input.machineId,
+        runtimeImage: input.runtimeImage,
+        envPatch: workspaceRuntimeIdentityPatch({
+          appName: input.appName,
+          serviceToken: workspaceServiceToken,
+        }),
+      });
+      if (machine.state === "stopped") {
+        await this.provider.startMachine({
+          appName: input.appName,
+          machineId: input.machineId,
+        });
+      }
+      if (machine.state !== "started") {
+        await this.provider.waitForMachine({
+          appName: input.appName,
+          machineId: input.machineId,
+          state: "started",
+          timeoutSeconds: 90,
+        });
+      }
+      await this.provider.waitForMachineHealth({
+        appName: input.appName,
+        machineId: input.machineId,
+        checkName: "workspace",
+        timeoutSeconds: 90,
+      });
+      await this.repository.completeWorkspaceRebuild({
+        workspaceId: input.workspaceId,
+        runtimeImage: input.runtimeImage,
+        serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
+      });
+    } catch (error) {
+      const failure = safeFailure(error);
+      await this.repository.failWorkspace({
+        workspaceId: input.workspaceId,
+        code: failure.code,
+        message: failure.message,
+      });
+      throw error;
+    }
   }
 
   private async provisionWorkspace(operation: ProvisioningOperation) {
@@ -1530,4 +1563,12 @@ function safeFailure(error: unknown): {
     message: "Environment provisioning failed.",
     retryable: false,
   };
+}
+
+function hasErrorCode(error: unknown, code: string) {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as Error & { code?: unknown }).code === code
+  );
 }
