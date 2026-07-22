@@ -7,7 +7,6 @@ import type {
   RunnerTelemetry,
   RunnerTurnInput,
 } from "@kestrel-agents/sdk";
-import type { WorkspaceSkillCatalogEntry } from "@kestrel-agents/workspace-skills";
 import type { UIMessage } from "ai";
 
 export type KestrelOneExternalReplyUsage = {
@@ -52,7 +51,7 @@ export async function generateKestrelOneExternalReplyFromAgent(input: {
   prompt: string;
   context: KestrelRequestContext;
   clientCapabilities: KestrelAgentTurnInput["clientCapabilities"];
-  workspaceSkills?: WorkspaceSkillCatalogEntry[] | undefined;
+  workspaceSkills?: RunnerTurnInput["workspaceSkills"] | undefined;
   mcpContext?: RunnerTurnInput["mcpContext"] | undefined;
   mcpAuthorization?: RunnerTurnInput["mcpAuthorization"] | undefined;
 }): Promise<KestrelOneExternalReply> {
