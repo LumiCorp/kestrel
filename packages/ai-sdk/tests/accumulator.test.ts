@@ -51,6 +51,7 @@ contractTest("packages.hermetic", "task dialog updates become durable presentati
         sender: "collaborator",
         text: "I found the boundary.",
         createdAt: "2026-07-21T12:00:00.000Z",
+        dialogStatus: "open",
       },
     },
   });
@@ -64,6 +65,7 @@ contractTest("packages.hermetic", "task dialog updates become durable presentati
     sender: "collaborator",
     text: "I found the boundary.",
     createdAt: "2026-07-21T12:00:00.000Z",
+    dialogStatus: "open",
   });
 });
 

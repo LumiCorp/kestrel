@@ -1346,6 +1346,7 @@ export interface TaskUpdatedEventPayload {
     sender: "kestrel" | "collaborator" | "system";
     text: string;
     createdAt: string;
+    dialogStatus: "open" | "closed";
     status?: "failed" | "cancelled" | undefined;
   } | undefined;
 }

@@ -57,6 +57,7 @@ export interface DialogMessageRecord {
   sender: "kestrel" | "collaborator" | "system";
   text: string;
   createdAt: string;
+  dialogStatus: "open" | "closed";
   status?: "failed" | "cancelled" | undefined;
 }
 
@@ -682,7 +683,7 @@ function readDialogState(record: DelegationRecord): StoredDialogState | undefine
     ? dialog.messages.filter((message): message is DialogMessageRecord => {
         if (typeof message !== "object" || message === null || Array.isArray(message)) return false;
         const item = message as Record<string, unknown>;
-        return typeof item.messageId === "string" && typeof item.dialogId === "string" && typeof item.name === "string" && typeof item.childSessionId === "string" && (item.sender === "kestrel" || item.sender === "collaborator" || item.sender === "system") && typeof item.text === "string" && typeof item.createdAt === "string";
+        return typeof item.messageId === "string" && typeof item.dialogId === "string" && typeof item.name === "string" && typeof item.childSessionId === "string" && (item.sender === "kestrel" || item.sender === "collaborator" || item.sender === "system") && typeof item.text === "string" && typeof item.createdAt === "string" && (item.dialogStatus === "open" || item.dialogStatus === "closed");
       })
     : [];
   return { version: "v1", name: dialog.name, status: dialog.status === "closed" ? "closed" : "open", messages };
@@ -705,14 +706,16 @@ function writeDialogState(record: DelegationRecord, dialog: StoredDialogState): 
 }
 
 function createDialogMessage(record: DelegationRecord, sender: DialogMessageRecord["sender"], text: string): DialogMessageRecord {
+  const dialog = readDialogState(record);
   return {
     messageId: `dialog-message-${randomUUID()}`,
     dialogId: record.delegationId,
-    name: readDialogState(record)?.name ?? record.title,
+    name: dialog?.name ?? record.title,
     childSessionId: record.childThreadId,
     sender,
     text,
     createdAt: new Date().toISOString(),
+    dialogStatus: dialog?.status ?? "open",
   };
 }
 

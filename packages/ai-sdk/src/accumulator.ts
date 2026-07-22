@@ -335,6 +335,9 @@ function decodeDialogMessage(value: unknown): KestrelDialogMessagePresentation {
     throw new KestrelPresentationContractError("task.updated.payload.dialogMessage.sender is invalid.");
   }
   const status = record.status === "failed" || record.status === "cancelled" ? record.status : undefined;
+  if (record.dialogStatus !== "open" && record.dialogStatus !== "closed") {
+    throw new KestrelPresentationContractError("task.updated.payload.dialogMessage.dialogStatus is invalid.");
+  }
   return {
     version: "v1",
     messageId: requireNonEmptyString(record.messageId, "task.updated.payload.dialogMessage.messageId"),
@@ -344,6 +347,7 @@ function decodeDialogMessage(value: unknown): KestrelDialogMessagePresentation {
     sender,
     text: requireNonEmptyString(record.text, "task.updated.payload.dialogMessage.text"),
     createdAt: requireNonEmptyString(record.createdAt, "task.updated.payload.dialogMessage.createdAt"),
+    dialogStatus: record.dialogStatus,
     ...(status !== undefined ? { status } : {}),
   };
 }
