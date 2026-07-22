@@ -1,4 +1,6 @@
 import type { SqlExecutor } from "../store/PostgresSessionStore.js";
+import { parseHarnessEconomicsPolicyV1 } from "../economics/policy.js";
+import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
 import { normalizeOptionalTimestampString, normalizeTimestampString } from "../runtime/timestamps.js";
 import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionRecord, AssemblyChangeProposalRecord, ContextCheckpointRecord, ContextPolicyDefinitionRecord, ContextSummaryArtifactRecord, DelegationRecord, InteractionRequestRecord, OperatorAttentionRecord, OperatorFocusRecord, SpecialistDefinitionRecord, ThreadAssemblyRecord, ThreadCompactionEventRecord, ThreadRecord } from "../kestrel/contracts/orchestration.js";
@@ -858,35 +860,63 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
 
   async upsertContextPolicyDefinition(record: ContextPolicyDefinitionRecord): Promise<void> {
     await this.ensureSchema();
-    await this.db.query(
+    const economicsPolicy = record.economicsPolicy === undefined
+      ? undefined
+      : parseHarnessEconomicsPolicyV1(record.economicsPolicy);
+    const result = await this.db.query(
       `INSERT INTO orchestration_context_policy_definitions
-        (context_policy_id, label, default_action, metadata_json, created_at, updated_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6::timestamptz)
+        (context_policy_id, label, default_action, economics_policy_json, metadata_json, created_at, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::timestamptz, $7::timestamptz)
        ON CONFLICT (context_policy_id) DO UPDATE
          SET label = EXCLUDED.label,
              default_action = EXCLUDED.default_action,
+             economics_policy_json = COALESCE(orchestration_context_policy_definitions.economics_policy_json, EXCLUDED.economics_policy_json),
              metadata_json = EXCLUDED.metadata_json,
-             updated_at = EXCLUDED.updated_at`,
+             updated_at = EXCLUDED.updated_at
+       WHERE EXCLUDED.economics_policy_json IS NULL
+          OR orchestration_context_policy_definitions.economics_policy_json IS NULL
+          OR orchestration_context_policy_definitions.economics_policy_json = EXCLUDED.economics_policy_json
+       RETURNING context_policy_id`,
       [
         record.contextPolicyId,
         record.label,
         record.defaultAction,
+        stringifySanitizedJson(economicsPolicy ?? null),
         stringifySanitizedJson(record.metadata ?? null),
         normalizeTimestampString(record.createdAt),
         normalizeTimestampString(record.updatedAt),
       ],
     );
+    if ((result.rowCount ?? result.rows.length) === 0) {
+      throw createRuntimeFailure(
+        "HARNESS_ECONOMICS_POLICY_IMMUTABLE",
+        `Context policy '${record.contextPolicyId}' already has a different economics policy. Create a new policy id instead.`,
+        { contextPolicyId: record.contextPolicyId },
+      );
+    }
   }
 
   async listContextPolicyDefinitions(): Promise<ContextPolicyDefinitionRecord[]> {
     await this.ensureSchema();
     const result = await this.db.query<Record<string, unknown>>(
-      `SELECT context_policy_id, label, default_action, metadata_json, created_at, updated_at
+      `SELECT context_policy_id, label, default_action, economics_policy_json, metadata_json, created_at, updated_at
          FROM orchestration_context_policy_definitions
         ORDER BY context_policy_id ASC`,
       [],
     );
     return result.rows.map((row) => mapContextPolicyRow(row));
+  }
+
+  async getContextPolicyDefinition(contextPolicyId: string): Promise<ContextPolicyDefinitionRecord | null> {
+    await this.ensureSchema();
+    const result = await this.db.query<Record<string, unknown>>(
+      `SELECT context_policy_id, label, default_action, economics_policy_json, metadata_json, created_at, updated_at
+         FROM orchestration_context_policy_definitions
+        WHERE context_policy_id = $1`,
+      [contextPolicyId],
+    );
+    const row = result.rows[0];
+    return row === undefined ? null : mapContextPolicyRow(row);
   }
 
   private async ensureSchema(): Promise<void> {
@@ -1216,10 +1246,14 @@ function mapSpecialistRow(row: Record<string, unknown>): SpecialistDefinitionRec
 }
 
 function mapContextPolicyRow(row: Record<string, unknown>): ContextPolicyDefinitionRecord {
+  const economicsPolicy = isRecord(row.economics_policy_json)
+    ? parseHarnessEconomicsPolicyV1(row.economics_policy_json)
+    : undefined;
   return {
     contextPolicyId: String(row.context_policy_id),
     label: String(row.label),
     defaultAction: row.default_action as ContextPolicyDefinitionRecord["defaultAction"],
+    ...(economicsPolicy !== undefined ? { economicsPolicy } : {}),
     ...(isRecord(row.metadata_json) ? { metadata: row.metadata_json } : {}),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),

@@ -5,6 +5,7 @@ import type { ModelRequest, ToolGateway, ToolGatewayCallOptions } from "../../sr
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -339,15 +340,19 @@ contractTest("runtime.hermetic", "Kestrel runtime IO streams dev-shell console u
           processId: "proc-1",
           truncated: false,
         });
-        return {
-          status: "COMPLETED",
-          text: "hello\n",
-          truncated: false,
-          cursor: 1,
-          nextCursor: 2,
-          processId: "proc-1",
-          exitCode: 0,
-        } as T;
+        return buildAgentToolSuccessResult({
+          toolName: _name,
+          input: _input,
+          output: {
+            status: "COMPLETED",
+            text: "hello\n",
+            truncated: false,
+            cursor: 1,
+            nextCursor: 2,
+            processId: "proc-1",
+            exitCode: 0,
+          },
+        }) as T;
       },
     },
     modelGateway: new RetryingModelGateway(async <T>(_request: ModelRequest) => ({ ok: true } as T)),

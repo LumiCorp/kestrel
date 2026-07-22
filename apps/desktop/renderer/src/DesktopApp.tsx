@@ -44,9 +44,7 @@ import type {
   DesktopRendererSettings,
   DesktopRunnerEvent,
   DesktopRuntimeHealth,
-  DesktopThreadWorkspaceContext,
-  RunTurnAttachment,
-  DesktopRuntimeThreadInspection,
+  DesktopThreadAuthorityResult,
 } from "../../src/contracts";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
 import { DiffWorkspace } from "./DiffWorkspace";
@@ -68,21 +66,39 @@ import {
   type DesktopRunStreamItem,
 } from "./runStream";
 import { ContextSidebar } from "./ContextSidebar";
+import { ConversationExplorer } from "./ConversationExplorer";
+import { withoutDesktopActiveRun } from "./cancellationState";
+import {
+  clearDesktopThreadError,
+  updateDesktopThreadFeedback,
+  type DesktopThreadFeedback,
+} from "./feedbackState";
+import {
+  reconcileDesktopThreadAuthority,
+  type DesktopAuthorityCaches,
+} from "./threadAuthorityState";
 import { extractTerminalFailure } from "./runtimeCapabilityRecovery";
 import {
   addRendererThread,
+  addRendererDraftAttachment,
+  archiveRendererThread,
   appendRendererTranscript,
   acceptRendererPrompt,
   getRendererTurnContinuation,
+  getRendererThreadArchiveBlockReason,
   getTerminalWaitEventType,
   getTerminalWaitingPrompt,
+  isRendererThreadProjectLocked,
   readDesktopRendererState,
+  renameRendererThread,
   resolveRendererThreadProjectPath,
+  restoreRendererThread,
   selectRendererThread,
   serializeDesktopRendererState,
   setRendererTheme,
   toDesktopExecutionSelection,
   toDesktopRunHistory,
+  undoArchiveRendererThread,
   updateRendererThread,
   updateRendererDraft,
   updateRendererDraftAttachments,
@@ -131,33 +147,31 @@ export function DesktopApp() {
   const [settings, setSettings] = useState<DesktopRendererSettings>();
   const [runtimeHealth, setRuntimeHealth] = useState<DesktopRuntimeHealth>();
   const [bridgeInfo, setBridgeInfo] = useState<DesktopBridgeInfo>();
-  const [draft, setDraft] = useState("");
-  const [composerAttachments, setComposerAttachments] = useState<
-    RunTurnAttachment[]
-  >([]);
   const [capabilities, setCapabilities] = useState<DesktopCapabilityView>();
-  const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRun>>({});
-  const [threadViews, setThreadViews] = useState<Record<string, DesktopRuntimeThreadInspection>>({});
+  const [authorityCaches, setAuthorityCaches] = useState<DesktopAuthorityCaches>({
+    activeRuns: {},
+    threadViews: {},
+    threadWorkspaces: {},
+    authorityStatuses: {},
+  });
   const [runStreams, setRunStreams] = useState<Record<string, DesktopRunStreamItem[]>>({});
   const [attachments, setAttachments] = useState<Record<string, DesktopAttachmentMetadata>>({});
   const [operatorActionPending, setOperatorActionPending] = useState<Record<string, boolean>>({});
   const [historyNavigation, setHistoryNavigation] = useState<Record<string, { index: number; scratch: string }>>({});
-  const [activity, setActivity] = useState("Ready");
-  const [error, setError] = useState<string>();
-  const [errorCapability, setErrorCapability] = useState<DesktopCapabilityId>();
+  const [threadFeedback, setThreadFeedback] = useState<Record<string, DesktopThreadFeedback>>({});
+  const [surfaceErrors, setSurfaceErrors] = useState<Partial<Record<DesktopSurface, string>>>({});
+  const [systemError, setSystemError] = useState<string>();
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(288);
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
   const [missionControlRevision, setMissionControlRevision] = useState(0);
-  const [activeProjectPath, setActiveProjectPath] = useState<string>();
-  const [threadWorkspaces, setThreadWorkspaces] = useState<
-    Record<string, DesktopThreadWorkspaceContext>
-  >({});
+  const [selectedProjectPath, setSelectedProjectPath] = useState<string>();
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const threadsRef = useRef<DesktopRendererState["threads"]>([]);
   const pendingTurnSubmissionsRef = useRef<Record<string, PendingTurnSubmission>>({});
   const acceptedTurnSessionsRef = useRef(new Set<string>());
+  const { activeRuns, threadViews, threadWorkspaces, authorityStatuses } = authorityCaches;
 
   const activeThread = useMemo(
     () => state?.threads.find((thread) => thread.id === state.activeThreadId),
@@ -167,10 +181,13 @@ export function DesktopApp() {
     activeThread === undefined
       ? undefined
       : threadWorkspaces[activeThread.sessionId];
+  const activeThreadAuthorityStatus = activeThread === undefined
+    ? undefined
+    : authorityStatuses[activeThread.id];
 
   useEffect(() => {
-    setComposerAttachments([]);
-  }, [activeThread?.id]);
+    if (activeThread?.archivedAt !== undefined) setSurface("chat");
+  }, [activeThread?.archivedAt]);
   const activeRun = activeThread === undefined
     ? undefined
     : activeRuns[activeThread.id] ?? (threadViews[activeThread.id]?.activeRun?.status === "RUNNING"
@@ -189,7 +206,13 @@ export function DesktopApp() {
     inboxItems: operatorInboxItems,
     runActive: activeRun !== undefined,
   });
+  const operatorActionCardItems = operatorInboxItems.filter(
+    (item) => item.kind !== "user_input_request",
+  );
   const activeRunStream = activeThread === undefined ? [] : runStreams[activeThread.id] ?? [];
+  const activeThreadFeedback = activeThread === undefined
+    ? { activity: "Ready" }
+    : threadFeedback[activeThread.id] ?? { activity: "Ready" };
   const conversationTimeline = activeThread === undefined
     ? []
     : projectDesktopConversationTimeline(activeThread.transcript, activeRunStream);
@@ -197,6 +220,44 @@ export function DesktopApp() {
   useEffect(() => {
     threadsRef.current = state?.threads ?? [];
   }, [state?.threads]);
+
+  function setActiveRuns(update: (current: Record<string, ActiveRun>) => Record<string, ActiveRun>): void {
+    setAuthorityCaches((current) => ({ ...current, activeRuns: update(current.activeRuns) }));
+  }
+
+  function setThreadViews(update: (current: DesktopAuthorityCaches["threadViews"]) => DesktopAuthorityCaches["threadViews"]): void {
+    setAuthorityCaches((current) => ({ ...current, threadViews: update(current.threadViews) }));
+  }
+
+  function setThreadActivity(threadId: string, activity: string): void {
+    setThreadFeedback((current) => updateDesktopThreadFeedback(current, threadId, { activity }));
+  }
+
+  function clearThreadError(threadId: string): void {
+    setThreadFeedback((current) => clearDesktopThreadError(current, threadId));
+  }
+
+  function setThreadFailure(
+    threadId: string,
+    activity: string,
+    error: string,
+    errorCapability?: DesktopCapabilityId | undefined,
+  ): void {
+    setThreadFeedback((current) => updateDesktopThreadFeedback(current, threadId, {
+      activity,
+      error,
+      ...(errorCapability !== undefined ? { errorCapability } : { errorCapability: undefined }),
+    }));
+  }
+
+  function setSurfaceError(owner: DesktopSurface, error: string | undefined): void {
+    setSurfaceErrors((current) => {
+      const next = { ...current };
+      if (error === undefined) delete next[owner];
+      else next[owner] = error;
+      return next;
+    });
+  }
 
   useEffect(() => {
     let disposed = false;
@@ -220,16 +281,25 @@ export function DesktopApp() {
         theme: nextSettings.appearanceTheme,
       });
       setState(rendererState);
-      void Promise.all(rendererState.threads.map(async (thread) => await refreshThreadAuthority(thread)))
-        .catch(() => {});
+      void (async () => {
+        for (const thread of rendererState.threads) {
+          if (disposed) return;
+          if (thread.id === rendererState.activeThreadId) continue;
+          try {
+            await refreshThreadAuthority(thread);
+          } catch (cause) {
+            setThreadFailure(thread.id, "Thread status unavailable", errorMessage(cause));
+          }
+        }
+      })();
       setSettings(nextSettings);
-      setActiveProjectPath((current) => current ?? nextSettings.projects[0]?.path);
+      setSelectedProjectPath((current) => current ?? nextSettings.projects[0]?.path);
       setRuntimeHealth(health);
       setBridgeInfo(info);
       setCapabilities(nextCapabilities);
     }).catch((cause) => {
       if (disposed === false) {
-        setError(errorMessage(cause));
+        setSystemError(errorMessage(cause));
       }
     });
     return () => {
@@ -238,10 +308,12 @@ export function DesktopApp() {
   }, []);
 
   useEffect(() => window.kestrelDesktop.onRunnerEvent((event) => {
-      setActivity(describeRunnerActivity(event));
       const rendererThread = event.sessionId === undefined
         ? undefined
         : threadsRef.current.find((thread) => thread.sessionId === event.sessionId);
+      if (rendererThread !== undefined) {
+        setThreadActivity(rendererThread.id, describeRunnerActivity(event));
+      }
       if (event.type === "run.started" && rendererThread !== undefined) {
         const pendingSubmission = pendingTurnSubmissionsRef.current[rendererThread.sessionId];
         if (pendingSubmission !== undefined) {
@@ -311,49 +383,14 @@ export function DesktopApp() {
             delete next[rendererThread.id];
             return next;
           });
-          void refreshThreadAuthority(rendererThread).catch(() => {});
+          void refreshThreadAuthority(rendererThread).catch((cause) => {
+            setThreadFailure(rendererThread.id, "Thread status unavailable", errorMessage(cause));
+          });
         }
       }
     }), []);
 
   useEffect(() => window.kestrelDesktop.onRuntimeHealth(setRuntimeHealth), []);
-
-  useEffect(() => {
-    const projectPath =
-      activeThreadWorkspace?.sourceWorkspaceRoot ?? activeThread?.projectPath;
-    if (projectPath !== undefined) {
-      setActiveProjectPath(projectPath);
-    }
-  }, [
-    activeThread?.id,
-    activeThread?.projectPath,
-    activeThreadWorkspace?.sourceWorkspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (activeThread === undefined) {
-      return;
-    }
-    let disposed = false;
-    void window.kestrelDesktop
-      .getOperatorThread(activeThread.sessionId)
-      .then((inspection) => {
-        const workspace = inspection.workspace;
-        if (disposed || workspace === undefined) {
-          return;
-        }
-        setThreadWorkspaces((current) => ({
-          ...current,
-          [activeThread.sessionId]: workspace,
-        }));
-      })
-      .catch(() => {
-        // A newly created Desktop conversation has no runtime thread until its first turn.
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [activeThread?.sessionId, missionControlRevision]);
 
   useEffect(() => {
     if (state === undefined) {
@@ -367,7 +404,7 @@ export function DesktopApp() {
     void window.kestrelDesktop
       .saveUiState(serializeDesktopRendererState(state))
       .catch((cause) => {
-        setError(`Desktop state could not be saved: ${errorMessage(cause)}`);
+        setSystemError(`Desktop state could not be saved: ${errorMessage(cause)}`);
       });
   }, [state]);
 
@@ -387,51 +424,79 @@ export function DesktopApp() {
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ block: "end" });
-  }, [activeThread?.transcript.length, activeRunStream, activity]);
+  }, [activeThread?.transcript.length, activeRunStream, activeThreadFeedback.activity]);
 
   useEffect(() => {
     if (activeThread === undefined) return;
-    void refreshThreadAuthority(activeThread).catch(() => {});
-    void window.kestrelDesktop.listAttachments(localCoreThreadId(activeThread.sessionId))
-      .then((listed) => setAttachments((current) => ({
-        ...current,
-        ...Object.fromEntries(listed.map((attachment) => [attachment.attachmentId, attachment])),
-      })))
-      .catch((cause) => setError(errorMessage(cause)));
-  }, [activeThread?.id]);
+    void refreshThreadAuthority(activeThread).catch((cause) => {
+      setThreadFailure(activeThread.id, "Thread status unavailable", errorMessage(cause));
+    });
+  }, [activeThread?.id, missionControlRevision]);
 
-  async function refreshThreadAuthority(thread: DesktopRendererState["threads"][number]): Promise<void> {
-    try {
-      const view = await window.kestrelDesktop.getOperatorThread(localCoreThreadId(thread.sessionId));
-      setThreadViews((current) => ({ ...current, [thread.id]: view }));
-      const dialogMessages = (view.dialogs ?? []).flatMap((dialog) => dialog.messages).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-      if (dialogMessages.length > 0) {
-        setState((current) => dialogMessages.reduce((next, message) => next === undefined ? next : appendRendererTranscript(next, thread.id, {
-          role: message.sender === "system" ? "system" : "assistant",
-          text: message.text,
-          timestamp: message.createdAt,
-          dialog: {
-            messageId: message.messageId,
-            dialogId: message.dialogId,
-            name: message.name,
-            childSessionId: message.childSessionId,
-            sender: message.sender,
-            ...(message.status !== undefined ? { status: message.status } : {}),
-          },
-        }), current));
-      }
-      setActiveRuns((current) => {
-        const next = { ...current };
-        if (view.activeRun?.status === "RUNNING") {
-          next[thread.id] = { threadId: thread.id, sessionId: thread.sessionId, runId: view.activeRun.runId };
-        } else {
-          delete next[thread.id];
-        }
-        return next;
+  useEffect(() => {
+    if (
+      activeThread === undefined
+      || runtimeHealth?.state !== "healthy"
+      || activeThreadAuthorityStatus !== "available"
+    ) return;
+    let disposed = false;
+    void window.kestrelDesktop.listAttachments(localCoreThreadId(activeThread.sessionId))
+      .then((listed) => {
+        if (disposed) return;
+        setAttachments((current) => ({
+          ...current,
+          ...Object.fromEntries(listed.map((attachment) => [attachment.attachmentId, attachment])),
+        }));
+      })
+      .catch(() => {
+        // Background attachment hydration is optional. Explicit attachment
+        // actions still surface failures when the user invokes them.
       });
-    } catch {
-      // New renderer conversations do not have a Local Core thread until first submission.
+    return () => {
+      disposed = true;
+    };
+  }, [activeThread?.id, activeThreadAuthorityStatus, runtimeHealth?.state]);
+
+  async function refreshThreadAuthority(thread: DesktopRendererState["threads"][number]): Promise<DesktopThreadAuthorityResult> {
+    const result = await window.kestrelDesktop.inspectThreadAuthority(localCoreThreadId(thread.sessionId));
+    setAuthorityCaches((current) => reconcileDesktopThreadAuthority({
+      caches: current,
+      rendererThreadId: thread.id,
+      sessionId: thread.sessionId,
+      result,
+    }));
+    if (result.status === "available") {
+      const dialogMessages = (result.view.dialogs ?? [])
+        .flatMap((dialog) => dialog.messages)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      if (dialogMessages.length > 0) {
+        setState((current) =>
+          dialogMessages.reduce(
+            (next, message) =>
+              next === undefined
+                ? next
+                : appendRendererTranscript(next, thread.id, {
+                    role:
+                      message.sender === "system" ? "system" : "assistant",
+                    text: message.text,
+                    timestamp: message.createdAt,
+                    dialog: {
+                      messageId: message.messageId,
+                      dialogId: message.dialogId,
+                      name: message.name,
+                      childSessionId: message.childSessionId,
+                      sender: message.sender,
+                      ...(message.status !== undefined
+                        ? { status: message.status }
+                        : {}),
+                    },
+                  }),
+            current,
+          ),
+        );
+      }
     }
+    return result;
   }
 
   async function submitTurn(event: FormEvent): Promise<void> {
@@ -456,21 +521,15 @@ export function DesktopApp() {
             authoritativeProjectPath: activeThreadWorkspace.sourceWorkspaceRoot,
           }
         : {}),
-      ...(activeProjectPath !== undefined ? { activeProjectPath } : {}),
-      projects: settings?.projects ?? [],
     });
     const submittedPendingWaitEventType = activeThread.pendingWaitEventType;
     const workspaceSetup = buildManagedWorkspaceSetup(activeThread);
-    const submittedAttachments = composerAttachments;
-    setDraft("");
-    setComposerAttachments([]);
-    setError(undefined);
-    setErrorCapability(undefined);
+    clearThreadError(threadId);
     if (composerPolicy.mode === "reply_to_request") {
       const { item } = composerPolicy;
       pendingTurnSubmissionsRef.current[activeThread.sessionId] = { threadId, message, submittedAt, projectPath };
       setOperatorActionPending((current) => ({ ...current, [item.itemId]: true }));
-      setActivity("Sending reply");
+      setThreadActivity(threadId, "Sending reply");
       try {
         const view = await window.kestrelDesktop.submitOperatorControl({
           action: "reply",
@@ -513,13 +572,10 @@ export function DesktopApp() {
           });
         }
         setHistoryNavigation((current) => { const next = { ...current }; delete next[threadId]; return next; });
-        setActivity(view.activeRun?.status === "RUNNING" ? "Reply sent; run resumed" : "Reply sent");
+        setThreadActivity(threadId, view.activeRun?.status === "RUNNING" ? "Reply sent; run resumed" : "Reply sent");
       } catch (cause) {
         delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
-        setDraft((current) => current.trim().length > 0 ? current : message);
-        setComposerAttachments((current) => current.length > 0 ? current : submittedAttachments);
-        setError(errorMessage(cause));
-        setActivity("Reply not sent");
+        setThreadFailure(threadId, "Reply not sent", errorMessage(cause));
       } finally {
         acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
         setOperatorActionPending((current) => ({ ...current, [item.itemId]: false }));
@@ -527,7 +583,7 @@ export function DesktopApp() {
       return;
     }
     if (composerPolicy.mode === "queue_follow_up") {
-      setActivity("Queueing follow-up");
+      setThreadActivity(threadId, "Queueing follow-up");
       try {
         const view = await window.kestrelDesktop.submitOperatorControl({
           action: "enqueue_follow_up",
@@ -541,15 +597,14 @@ export function DesktopApp() {
         setThreadViews((current) => ({ ...current, [threadId]: view }));
         setState((current) => current === undefined ? current : acceptRendererPrompt(current, threadId, message));
         setHistoryNavigation((current) => { const next = { ...current }; delete next[threadId]; return next; });
-        setActivity("Follow-up queued");
+        setThreadActivity(threadId, "Follow-up queued");
       } catch (cause) {
-        setError(errorMessage(cause));
-        setActivity("Follow-up not queued");
+        setThreadFailure(threadId, "Follow-up not queued", errorMessage(cause));
       }
       return;
     }
 
-    setActivity("Starting run");
+    setThreadActivity(threadId, "Starting run");
     pendingTurnSubmissionsRef.current[activeThread.sessionId] = { threadId, message, submittedAt, projectPath };
     setActiveRuns((current) => ({ ...current, [threadId]: { threadId, sessionId: activeThread.sessionId } }));
 
@@ -566,9 +621,6 @@ export function DesktopApp() {
           ? { resumeBlockedRun: true }
           : {}),
         history,
-        ...(submittedAttachments.length > 0
-          ? { attachments: submittedAttachments }
-          : {}),
         interactionMode: activeThread.mode,
         workspaceMode: activeThread.workspaceMode,
         ...(activeThread.workspaceMode === "managed"
@@ -582,7 +634,6 @@ export function DesktopApp() {
         workspaceSetup !== undefined
           ? { workspaceSetup }
           : {}),
-        ...(projectPath !== undefined ? { projectPath } : {}),
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
         executionSelection: toDesktopExecutionSelection(activeThread, settings.apps),
       });
@@ -618,10 +669,10 @@ export function DesktopApp() {
       });
       setHistoryNavigation((current) => { const next = { ...current }; delete next[threadId]; return next; });
       if (terminalError !== undefined) {
-        setError(terminalError);
-        setErrorCapability(terminalFailure?.capabilityId);
+        setThreadFailure(threadId, "Run failed", terminalError, terminalFailure?.capabilityId);
       }
-      setActivity(
+      setThreadActivity(
+        threadId,
         terminal.type === "run.failed"
           ? "Run failed"
           : pendingWaitEventType !== undefined
@@ -643,27 +694,63 @@ export function DesktopApp() {
       }
       delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
       acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
-      setError(errorMessage(cause));
-      setActivity("Run failed");
+      setThreadFailure(threadId, "Run failed", errorMessage(cause));
     } finally {
       delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
       setActiveRuns((current) => { const next = { ...current }; delete next[threadId]; return next; });
-      void refreshThreadAuthority(activeThread).catch(() => {});
+      void refreshThreadAuthority(activeThread).catch((cause) => {
+        setThreadFailure(activeThread.id, "Thread status unavailable", errorMessage(cause));
+      });
     }
   }
 
   async function cancelActiveRun(): Promise<void> {
-    if (activeRun === undefined) {
+    if (activeRun === undefined || activeThread === undefined) {
       return;
     }
-    setActivity("Cancelling");
+    const cancelledThread = activeThread;
+    clearThreadError(cancelledThread.id);
+    setThreadActivity(cancelledThread.id, "Cancelling");
     try {
-      await window.kestrelDesktop.cancelRun({
+      const result = await window.kestrelDesktop.cancelRun({
         sessionId: activeRun.sessionId,
         ...(activeRun.runId !== undefined ? { runId: activeRun.runId } : {}),
       });
+      if (result.status === "run_changed") {
+        setActiveRuns((current) => ({
+          ...current,
+          [cancelledThread.id]: {
+            threadId: cancelledThread.id,
+            sessionId: cancelledThread.sessionId,
+            ...(result.activeRunId !== undefined
+              ? { runId: result.activeRunId }
+              : {}),
+          },
+        }));
+        clearThreadError(cancelledThread.id);
+        setThreadActivity(cancelledThread.id, "Run changed; stop again");
+        await refreshThreadAuthority(cancelledThread);
+        return;
+      }
+      setActiveRuns((current) => {
+        const next = { ...current };
+        delete next[cancelledThread.id];
+        return next;
+      });
+      setThreadViews((current) => {
+        const view = current[cancelledThread.id];
+        return view === undefined
+          ? current
+          : {
+              ...current,
+              [cancelledThread.id]: withoutDesktopActiveRun(view),
+            };
+      });
+      clearThreadError(cancelledThread.id);
+      setThreadActivity(cancelledThread.id, result.status === "already_stopped" ? "Ready" : "Cancelled");
+      await refreshThreadAuthority(cancelledThread);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setThreadFailure(cancelledThread.id, "Cancel failed", errorMessage(cause));
     }
   }
 
@@ -676,6 +763,11 @@ export function DesktopApp() {
     if (activeThread === undefined) {
       return;
     }
+    const ownerThread = activeThread;
+    if (ownerThread.draftAttachmentIds.length >= 8) {
+      setThreadFailure(ownerThread.id, "Attachment not added", "A message can include at most 8 attachments.");
+      return;
+    }
     try {
       const file = await window.kestrelDesktop.readFile({
         rootPath,
@@ -683,38 +775,20 @@ export function DesktopApp() {
         ...(threadId !== undefined ? { threadId } : {}),
       });
       const attachmentBytes = new TextEncoder().encode(file.content);
-      const attachment: RunTurnAttachment = {
-        attachmentId: crypto.randomUUID(),
-        threadId: activeThread.sessionId,
+      const attachment = await importGeneratedAttachment(ownerThread, {
         filename: fileName(file.path),
         mimeType: desktopTextMimeType(file.language, file.viewKind),
-        sizeBytes: attachmentBytes.byteLength,
         sha256: await sha256Hex(attachmentBytes),
-        kind: "text",
-        createdAt: new Date().toISOString(),
-        text: file.content,
-      };
-      setComposerAttachments((current) =>
-        [
-          ...current.filter(
-            (candidate) =>
-              candidate.filename !== attachment.filename ||
-              candidate.sha256 !== attachment.sha256,
-          ),
-          attachment,
-        ].slice(-8),
-      );
-      if (intent === "ask") {
-        setDraft((current) =>
-          current.trim().length > 0
-            ? current
-            : `Please review the attached ${attachment.filename} in the context of this workspace.`,
-        );
-      }
+        bytes: attachmentBytes,
+      });
+      setState((current) => current === undefined ? current : addRendererDraftAttachment(current, ownerThread.id, {
+        attachmentId: attachment.attachmentId,
+        ...(intent === "ask" ? { generatedDraft: `Please review the attached ${attachment.filename} in the context of this workspace.` } : {}),
+      }));
       setSurface("chat");
-      setError(undefined);
+      clearThreadError(ownerThread.id);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setThreadFailure(ownerThread.id, "Attachment not added", errorMessage(cause));
     }
   }
 
@@ -725,25 +799,28 @@ export function DesktopApp() {
     if (activeThread === undefined || text.length === 0) {
       return;
     }
-    const bytes = new TextEncoder().encode(text);
-    const attachment: RunTurnAttachment = {
-      attachmentId: crypto.randomUUID(),
-      threadId: activeThread.sessionId,
-      filename: `terminal-${terminal.terminalId.slice(0, 8)}.txt`,
-      mimeType: "text/plain",
-      sizeBytes: bytes.byteLength,
-      sha256: await sha256Hex(bytes),
-      kind: "text",
-      createdAt: new Date().toISOString(),
-      text,
-    };
-    setComposerAttachments((current) => [...current, attachment].slice(-8));
-    setDraft((current) =>
-      current.trim().length > 0
-        ? current
-        : "Please review the attached terminal output.",
-    );
-    setSurface("chat");
+    const ownerThread = activeThread;
+    if (ownerThread.draftAttachmentIds.length >= 8) {
+      setThreadFailure(ownerThread.id, "Attachment not added", "A message can include at most 8 attachments.");
+      return;
+    }
+    try {
+      const bytes = new TextEncoder().encode(text);
+      const attachment = await importGeneratedAttachment(ownerThread, {
+        filename: `terminal-${terminal.terminalId.slice(0, 8)}.txt`,
+        mimeType: "text/plain",
+        sha256: await sha256Hex(bytes),
+        bytes,
+      });
+      setState((current) => current === undefined ? current : addRendererDraftAttachment(current, ownerThread.id, {
+        attachmentId: attachment.attachmentId,
+        generatedDraft: "Please review the attached terminal output.",
+      }));
+      setSurface("chat");
+      clearThreadError(ownerThread.id);
+    } catch (cause) {
+      setThreadFailure(ownerThread.id, "Attachment not added", errorMessage(cause));
+    }
   }
 
   async function attachVisualFeedback(input: {
@@ -757,111 +834,133 @@ export function DesktopApp() {
       | undefined;
   }): Promise<void> {
     if (activeThread === undefined) return;
-    const match = /^data:image\/png;base64,(.+)$/u.exec(input.dataUrl);
-    if (!match) throw new Error("Preview screenshot is not a PNG attachment.");
-    const binary = atob(match[1]!);
-    const bytes = Uint8Array.from(binary, (character) =>
-      character.charCodeAt(0),
-    );
-    if (bytes.byteLength > 5 * 1024 * 1024)
-      throw new Error("Preview screenshot exceeds the 5 MB attachment limit.");
-    const attachment: RunTurnAttachment = {
-      attachmentId: crypto.randomUUID(),
-      threadId: activeThread.sessionId,
-      filename: input.filename,
-      mimeType: "image/png",
-      sizeBytes: bytes.byteLength,
-      sha256: await sha256Hex(bytes),
-      kind: "image",
-      createdAt: new Date().toISOString(),
-      data: match[1],
-    };
-    setComposerAttachments((current) => [...current, attachment].slice(-8));
-    setDraft(
-      [
+    const ownerThread = activeThread;
+    if (ownerThread.draftAttachmentIds.length >= 8) {
+      setThreadFailure(ownerThread.id, "Attachment not added", "A message can include at most 8 attachments.");
+      return;
+    }
+    try {
+      const match = /^data:image\/png;base64,(.+)$/u.exec(input.dataUrl);
+      if (!match) throw new Error("Preview screenshot is not a PNG attachment.");
+      const binary = atob(match[1]!);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("Preview screenshot exceeds the 5 MB attachment limit.");
+      const attachment = await importGeneratedAttachment(ownerThread, {
+        filename: input.filename,
+        mimeType: "image/png",
+        sha256: await sha256Hex(bytes),
+        bytes,
+      });
+      const prompt = [
         input.comment,
         "",
         `Preview evidence: run ${input.runId}`,
         `URL: ${input.url}`,
         ...(input.region
-          ? [
-              `Annotated region: x=${input.region.x.toFixed(3)}, y=${input.region.y.toFixed(3)}, width=${input.region.width.toFixed(3)}, height=${input.region.height.toFixed(3)}`,
-            ]
+          ? [`Annotated region: x=${input.region.x.toFixed(3)}, y=${input.region.y.toFixed(3)}, width=${input.region.width.toFixed(3)}, height=${input.region.height.toFixed(3)}`]
           : []),
-      ].join("\n"),
-    );
-    setSurface("chat");
-    setError(undefined);
+      ].join("\n");
+      setState((current) => current === undefined ? current : addRendererDraftAttachment(current, ownerThread.id, {
+        attachmentId: attachment.attachmentId,
+        generatedDraft: prompt,
+        replaceDraft: true,
+      }));
+      setSurface("chat");
+      clearThreadError(ownerThread.id);
+    } catch (cause) {
+      setThreadFailure(ownerThread.id, "Attachment not added", errorMessage(cause));
+    }
+  }
+
+  async function importGeneratedAttachment(
+    thread: RendererThread,
+    input: { filename: string; mimeType: string; bytes: Uint8Array; sha256: string },
+  ): Promise<DesktopAttachmentMetadata> {
+    const attachment = await window.kestrelDesktop.importAttachment({
+      threadId: localCoreThreadId(thread.sessionId),
+      filename: input.filename,
+      mimeType: input.mimeType,
+      data: bytesToBase64(input.bytes),
+      sha256: input.sha256,
+    });
+    setAttachments((current) => ({ ...current, [attachment.attachmentId]: attachment }));
+    return attachment;
   }
 
   async function steerActiveRun(): Promise<void> {
     if (activeThread === undefined || activeRun === undefined || activeThread.draft.trim().length === 0) return;
-    const message = activeThread.draft;
-    setActivity("Applying steering");
+    const ownerThread = activeThread;
+    const message = ownerThread.draft;
+    clearThreadError(ownerThread.id);
+    setThreadActivity(ownerThread.id, "Applying steering");
     try {
       const view = await window.kestrelDesktop.submitOperatorControl({
         action: "steer",
-        threadId: localCoreThreadId(activeThread.sessionId),
+        threadId: localCoreThreadId(ownerThread.sessionId),
         message,
-        attachmentIds: activeThread.draftAttachmentIds,
+        attachmentIds: ownerThread.draftAttachmentIds,
       });
-      setThreadViews((current) => ({ ...current, [activeThread.id]: view }));
-      setState((current) => current === undefined ? current : acceptRendererPrompt(current, activeThread.id, message));
-      setActivity(view.latestSteering === undefined ? "Steering queued" : "Steering applied");
+      setThreadViews((current) => ({ ...current, [ownerThread.id]: view }));
+      setState((current) => current === undefined ? current : acceptRendererPrompt(current, ownerThread.id, message));
+      setThreadActivity(ownerThread.id, view.latestSteering === undefined ? "Steering queued" : "Steering applied");
     } catch (cause) {
-      setError(errorMessage(cause));
-      setActivity("Steering not applied");
+      setThreadFailure(ownerThread.id, "Steering not applied", errorMessage(cause));
     }
   }
 
   async function selectAttachments(): Promise<void> {
     if (activeThread === undefined) return;
+    const ownerThread = activeThread;
     try {
-      const selected = await window.kestrelDesktop.selectAttachments(localCoreThreadId(activeThread.sessionId));
+      const selected = await window.kestrelDesktop.selectAttachments(localCoreThreadId(ownerThread.sessionId));
       if (selected.length === 0) return;
       setAttachments((current) => ({ ...current, ...Object.fromEntries(selected.map((entry) => [entry.attachmentId, entry])) }));
       setState((current) => current === undefined ? current : updateRendererDraftAttachments(
         current,
-        activeThread.id,
-        [...activeThread.draftAttachmentIds, ...selected.map((entry) => entry.attachmentId)].slice(0, 8),
+        ownerThread.id,
+        [...ownerThread.draftAttachmentIds, ...selected.map((entry) => entry.attachmentId)].slice(0, 8),
       ));
+      clearThreadError(ownerThread.id);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setThreadFailure(ownerThread.id, "Attachment not added", errorMessage(cause));
     }
   }
 
   async function removeDraftAttachment(attachmentId: string): Promise<void> {
     if (activeThread === undefined) return;
+    const ownerThread = activeThread;
     try {
-      await window.kestrelDesktop.removeAttachment(localCoreThreadId(activeThread.sessionId), attachmentId);
+      await window.kestrelDesktop.removeAttachment(localCoreThreadId(ownerThread.sessionId), attachmentId);
       setState((current) => current === undefined ? current : updateRendererDraftAttachments(
         current,
-        activeThread.id,
-        activeThread.draftAttachmentIds.filter((id) => id !== attachmentId),
+        ownerThread.id,
+        ownerThread.draftAttachmentIds.filter((id) => id !== attachmentId),
       ));
+      clearThreadError(ownerThread.id);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setThreadFailure(ownerThread.id, "Attachment not removed", errorMessage(cause));
     }
   }
 
   async function submitOperatorAction(itemId: string, request: DesktopOperatorControlRequest): Promise<void> {
     if (activeThread === undefined || operatorActionPending[itemId] === true) return;
+    const ownerThread = activeThread;
     setOperatorActionPending((current) => ({ ...current, [itemId]: true }));
     try {
       const view = await window.kestrelDesktop.submitOperatorControl(request);
-      if (view.thread.threadId === localCoreThreadId(activeThread.sessionId)) {
-        setThreadViews((current) => ({ ...current, [activeThread.id]: view }));
+      if (view.thread.threadId === localCoreThreadId(ownerThread.sessionId)) {
+        setThreadViews((current) => ({ ...current, [ownerThread.id]: view }));
       } else {
-        await refreshThreadAuthority(activeThread);
+        await refreshThreadAuthority(ownerThread);
       }
       if (request.attachmentIds !== undefined && request.attachmentIds.length > 0) {
         setState((current) => current === undefined
           ? current
-          : updateRendererDraftAttachments(current, activeThread.id, []));
+          : updateRendererDraftAttachments(current, ownerThread.id, []));
       }
-      setError(undefined);
+      clearThreadError(ownerThread.id);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setThreadFailure(ownerThread.id, "Action failed", errorMessage(cause));
     } finally {
       setOperatorActionPending((current) => ({ ...current, [itemId]: false }));
     }
@@ -886,14 +985,16 @@ export function DesktopApp() {
   }
 
   async function restartRuntime(): Promise<void> {
-    setActivity("Restarting runtime");
+    const ownerThreadId = activeThread?.id;
+    if (ownerThreadId !== undefined) setThreadActivity(ownerThreadId, "Restarting runtime");
+    setSystemError(undefined);
     try {
       await window.kestrelDesktop.restartRuntime();
       setRuntimeHealth(await window.kestrelDesktop.getRuntimeHealth());
-      setActivity("Ready");
+      if (ownerThreadId !== undefined) setThreadActivity(ownerThreadId, "Ready");
     } catch (cause) {
-      setError(errorMessage(cause));
-      setActivity("Runtime restart failed");
+      setSystemError(errorMessage(cause));
+      if (ownerThreadId !== undefined) setThreadActivity(ownerThreadId, "Runtime restart failed");
     }
   }
 
@@ -911,22 +1012,24 @@ export function DesktopApp() {
     ];
     const saved = await window.kestrelDesktop.saveSettings({ projects });
     setSettings(saved);
-    setActiveProjectPath(project.path);
+    setSelectedProjectPath(project.path);
   }
 
-  function startProjectConversation(projectPath: string): void {
+  function newConversation(projectPath: string | null = activeThreadWorkspace?.sourceWorkspaceRoot ?? activeThread?.projectPath ?? null): void {
     const defaultConfiguration = settings?.modelConfigurations.find(
       (configuration) => configuration.id === settings.defaultModelConfigurationId,
     );
-    setState((current) => current === undefined
-      ? current
-      : addRendererThread(current, {
-          projectPath,
-          modelConfigurationId: defaultConfiguration?.id,
-          modelConfigurationRevision: defaultConfiguration?.currentRevision,
-          enabledAppIds: settings?.defaultEnabledAppIds,
-        }));
+    setState((current) => current === undefined ? current : addRendererThread(current, {
+      ...(projectPath !== null ? { projectPath } : {}),
+      modelConfigurationId: defaultConfiguration?.id,
+      modelConfigurationRevision: defaultConfiguration?.currentRevision,
+      enabledAppIds: settings?.defaultEnabledAppIds,
+    }));
     setSurface("chat");
+  }
+
+  function startProjectConversation(projectPath: string): void {
+    newConversation(projectPath);
   }
 
   function openCapabilitySettings(target?: DesktopCapabilityId): void {
@@ -946,29 +1049,31 @@ export function DesktopApp() {
         <span className="brand-mark" aria-hidden="true">
           <img src={kestrelMarkUrl} alt="" />
         </span>
-        <p>{error ?? "Opening Kestrel"}</p>
+        <p>{systemError ?? "Opening Kestrel"}</p>
       </main>
     );
   }
 
   const healthState = runtimeHealth?.state ?? "degraded";
   const selectedProject =
-    settings?.projects.find((project) => project.path === activeProjectPath) ??
+    settings?.projects.find((project) => project.path === selectedProjectPath) ??
     settings?.projects[0];
   const threadProjectPath =
     activeThreadWorkspace?.sourceWorkspaceRoot ?? activeThread.projectPath;
   const threadProject = settings?.projects.find(
     (project) => project.path === threadProjectPath,
   );
-  const activeProject =
-    surface === "projects"
-      ? selectedProject
-      : (threadProject ?? selectedProject);
   const projectWorkspace =
-    activeProject !== undefined &&
-    activeThreadWorkspace?.sourceWorkspaceRoot === activeProject.path
+    selectedProject !== undefined &&
+    activeThreadWorkspace?.sourceWorkspaceRoot === selectedProject.path
       ? activeThreadWorkspace
       : undefined;
+  const conversationProjectLabel = threadProject?.label
+    ?? (threadProjectPath === undefined ? "No project" : "Unavailable project");
+  const archivedThreadSelected = activeThread.archivedAt !== undefined;
+  const projectLocked = archivedThreadSelected
+    || activeRun !== undefined
+    || isRendererThreadProjectLocked(activeThread, activeThreadWorkspace !== undefined);
   const showInspector = surface === "chat" && inspectorOpen;
   return (
     <div className="desktop-app">
@@ -981,11 +1086,12 @@ export function DesktopApp() {
         </div>
         <div
           className="titlebar-context"
-          title={`${activeThread.title} · ${surfacePageTitle(surface)}`}
+          title={`${activeThread.title} · ${conversationProjectLabel} · ${surfacePageTitle(surface)}`}
         >
-          <strong className="titlebar-thread-title">
-            {activeThread.title}
-          </strong>
+          <span className="titlebar-thread-context">
+            <strong className="titlebar-thread-title">{activeThread.title}</strong>
+            <small>{conversationProjectLabel}</small>
+          </span>
           <span className="titlebar-page-title">
             {surfacePageTitle(surface)}
           </span>
@@ -1046,6 +1152,7 @@ export function DesktopApp() {
             <button
               className={surface === "mission-control" ? "active" : ""}
               type="button"
+              disabled={archivedThreadSelected}
               title="Mission control"
               aria-label="Mission control"
               onClick={() => setSurface("mission-control")}
@@ -1064,6 +1171,7 @@ export function DesktopApp() {
             <button
               className={surface === "diff" ? "active" : ""}
               type="button"
+              disabled={archivedThreadSelected}
               title="Diff"
               aria-label="Diff"
               onClick={() => setSurface("diff")}
@@ -1073,6 +1181,7 @@ export function DesktopApp() {
             <button
               className={surface === "review" ? "active" : ""}
               type="button"
+              disabled={archivedThreadSelected}
               title="Review"
               aria-label="Review"
               onClick={() => setSurface("review")}
@@ -1082,6 +1191,7 @@ export function DesktopApp() {
             <button
               className={surface === "validation" ? "active" : ""}
               type="button"
+              disabled={archivedThreadSelected}
               title="Validation"
               aria-label="Validation"
               onClick={() => setSurface("validation")}
@@ -1091,6 +1201,7 @@ export function DesktopApp() {
             <button
               className={surface === "git" ? "active" : ""}
               type="button"
+              disabled={archivedThreadSelected}
               title="Git and pull requests"
               aria-label="Git and pull requests"
               onClick={() => setSurface("git")}
@@ -1100,6 +1211,7 @@ export function DesktopApp() {
             <button
               className={surface === "preview" ? "active" : ""}
               type="button"
+              disabled={archivedThreadSelected}
               title="Preview"
               aria-label="Preview"
               onClick={() => setSurface("preview")}
@@ -1109,6 +1221,7 @@ export function DesktopApp() {
             <button
               className={surface === "terminal" ? "active" : ""}
               type="button"
+              disabled={archivedThreadSelected}
               title="Terminal"
               aria-label="Terminal"
               onClick={() => setSurface("terminal")}
@@ -1133,53 +1246,57 @@ export function DesktopApp() {
           </nav>
 
           {surface === "chat" ? (
-            <>
-              <div className="rail-heading">
-                <span>Conversations</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="New conversation"
-                  aria-label="New conversation"
-                  onClick={() => setState((current) => current === undefined
-                    ? current
-                    : addRendererThread(current, {
-                        ...(activeProject?.path !== undefined
-                          ? { projectPath: activeProject.path }
-                          : {}),
-                        modelConfigurationId: settings?.defaultModelConfigurationId,
-                        modelConfigurationRevision: settings?.modelConfigurations.find(
-                          (configuration) => configuration.id === settings.defaultModelConfigurationId,
-                        )?.currentRevision,
-                        enabledAppIds: settings?.defaultEnabledAppIds,
-                      }))}
-                >
-                  <Plus size={17} />
-                </button>
-              </div>
-              <nav className="thread-list">
-                {state.threads.map((thread) => (
-                  <button
-                    className={`thread-row ${thread.id === state.activeThreadId ? "active" : ""}`}
-                    key={thread.id}
-                    type="button"
-                    onClick={() => {
-                      setState((current) =>
-                        current === undefined
-                          ? current
-                          : selectRendererThread(current, thread.id),
-                      );
-                      if (thread.projectPath !== undefined) {
-                        setActiveProjectPath(thread.projectPath);
-                      }
-                    }}
-                  >
-                    <span>{thread.title}</span>
-                    <time>{formatThreadTime(thread.updatedAt)}</time>
-                  </button>
-                ))}
-              </nav>
-            </>
+            <ConversationExplorer
+              threads={state.threads}
+              activeThreadId={state.activeThreadId}
+              projects={settings?.projects ?? []}
+              onSelect={(threadId) => {
+                setState((current) => current === undefined ? current : selectRendererThread(current, threadId));
+                setSurface("chat");
+              }}
+              onNewConversation={() => newConversation()}
+              onRename={(threadId, title) => setState((current) => current === undefined ? current : renameRendererThread(current, threadId, title))}
+              onArchive={async (threadId) => {
+                const thread = threadsRef.current.find((candidate) => candidate.id === threadId);
+                if (thread === undefined) return { status: "blocked", message: "This conversation is no longer available." };
+                const cachedView = threadViews[thread.id];
+                const immediateReason = getRendererThreadArchiveBlockReason(thread, {
+                  runActive: activeRuns[thread.id] !== undefined || cachedView?.activeRun?.status === "RUNNING",
+                  runtimeWaiting: cachedView?.activeRun?.status === "WAITING" || cachedView?.thread.status === "WAITING",
+                  actionableOperatorRequest: cachedView?.inboxItems.some((item) => item.actionable !== false) === true,
+                });
+                if (immediateReason !== undefined) return { status: "blocked", message: immediateReason };
+                try {
+                  const authority = await refreshThreadAuthority(thread);
+                  if (authority.status === "available") {
+                    const reason = getRendererThreadArchiveBlockReason(thread, {
+                      runActive: authority.view.activeRun?.status === "RUNNING",
+                      runtimeWaiting: authority.view.activeRun?.status === "WAITING" || authority.view.thread.status === "WAITING",
+                      actionableOperatorRequest: authority.view.inboxItems.some((item) => item.actionable !== false),
+                    });
+                    if (reason !== undefined) return { status: "blocked", message: reason };
+                  }
+                  const defaultConfiguration = settings?.modelConfigurations.find((configuration) => configuration.id === settings.defaultModelConfigurationId);
+                  setState((current) => current === undefined ? current : archiveRendererThread(current, threadId, {
+                    modelConfigurationId: defaultConfiguration?.id,
+                    modelConfigurationRevision: defaultConfiguration?.currentRevision,
+                    enabledAppIds: settings?.defaultEnabledAppIds,
+                  }));
+                  setSurface("chat");
+                  return { status: "archived" };
+                } catch {
+                  return { status: "blocked", message: "Kestrel could not confirm that this conversation is idle. Try again when Local Core is available." };
+                }
+              }}
+              onUndoArchive={(threadId, removeReplacement) => {
+                setState((current) => current === undefined ? current : undoArchiveRendererThread(current, threadId, removeReplacement));
+                setSurface("chat");
+              }}
+              onRestore={(threadId) => {
+                setState((current) => current === undefined ? current : restoreRendererThread(current, threadId));
+                setSurface("chat");
+              }}
+            />
           ) : surface === "projects" ? (
             <>
               <div className="rail-heading">
@@ -1191,7 +1308,7 @@ export function DesktopApp() {
                   aria-label="Add project"
                   onClick={() =>
                     void addProject().catch((cause) =>
-                      setError(errorMessage(cause)),
+                      setSurfaceError("projects", errorMessage(cause)),
                     )
                   }
                 >
@@ -1201,11 +1318,11 @@ export function DesktopApp() {
               <nav className="thread-list project-rail-list">
                 {settings?.projects.map((project) => (
                   <button
-                    className={`thread-row ${project.path === activeProject?.path ? "active" : ""}`}
+                    className={`thread-row ${project.path === selectedProject?.path ? "active" : ""}`}
                     key={project.path}
                     type="button"
                     title={project.path}
-                    onClick={() => setActiveProjectPath(project.path)}
+                    onClick={() => setSelectedProjectPath(project.path)}
                   >
                     <span>{project.label}</span>
                   </button>
@@ -1284,13 +1401,14 @@ export function DesktopApp() {
           <div className="activity-shell">
             <div className="activity-line" aria-live="polite" aria-atomic="true">
               <Activity size={14} aria-hidden="true" />
-              <span>{activity}</span>
-              {error !== undefined ? <span className="activity-error">{error}</span> : null}
-              {errorCapability !== undefined ? <button className="secondary-button" type="button" onClick={() => openCapabilitySettings(errorCapability)}>Open capability settings</button> : null}
+              <span>{activeThreadFeedback.activity}</span>
+              {activeThreadFeedback.error !== undefined ? <span className="activity-error">{activeThreadFeedback.error}</span> : null}
+              {systemError !== undefined ? <span className="activity-error">{systemError}</span> : null}
+              {activeThreadFeedback.errorCapability !== undefined ? <button className="secondary-button" type="button" onClick={() => openCapabilitySettings(activeThreadFeedback.errorCapability)}>Open capability settings</button> : null}
             </div>
           </div>
 
-          {threadViews[activeThread.id]?.followUpQueue.items.length ? (
+          {!archivedThreadSelected && threadViews[activeThread.id]?.followUpQueue.items.length ? (
             <section className="follow-up-queue" aria-label="Queued follow-ups">
               <div className="queue-heading">
                 <strong>Queued follow-ups</strong>
@@ -1314,16 +1432,23 @@ export function DesktopApp() {
             </section>
           ) : null}
 
-          {operatorInboxItems.map((item) => (
+          {!archivedThreadSelected ? operatorActionCardItems.map((item) => (
             <OperatorActionCard
               key={item.itemId}
               item={item}
               pending={operatorActionPending[item.itemId] === true}
               onAction={(request) => void submitOperatorAction(item.itemId, request)}
             />
-          ))}
+          )) : null}
 
-          <form className="composer" onSubmit={(event) => void submitTurn(event)}>
+          {archivedThreadSelected ? (
+            <section className="archived-conversation-banner" aria-label="Archived conversation">
+              <div><strong>Archived conversation</strong><span>This transcript is read-only.</span></div>
+              <button className="primary-button" type="button" onClick={() => {
+                setState((current) => current === undefined ? current : restoreRendererThread(current, activeThread.id));
+              }}>Restore conversation</button>
+            </section>
+          ) : <form className="composer" onSubmit={(event) => void submitTurn(event)}>
             <div className="mode-segment" aria-label="Interaction mode">
               {(["chat", "plan", "build"] as const).map((mode) => (
                 <button
@@ -1407,15 +1532,16 @@ export function DesktopApp() {
                 )}
               </div>
             </div>
-            </form>
+            </form>}
           </main>
         ) : (
           <div className="surface-host">
-            {error !== undefined ? <div className="surface-error" role="alert"><span>{error}</span>{errorCapability !== undefined ? <button type="button" onClick={() => openCapabilitySettings(errorCapability)}>Open capability settings</button> : null}</div> : null}
+            {systemError !== undefined ? <div className="surface-error" role="alert"><span>{systemError}</span></div> : null}
+            {surfaceErrors[surface] !== undefined ? <div className="surface-error" role="alert"><span>{surfaceErrors[surface]}</span></div> : null}
             {surface === "projects" ? (
               <ProjectWorkspace
-                project={activeProject}
-                threadId={activeThread.sessionId}
+                project={selectedProject}
+                threadId={localCoreThreadId(activeThread.sessionId)}
                 workspace={projectWorkspace}
                 openFiles={activeThread.openFiles}
                 onChat={(project) => startProjectConversation(project.path)}
@@ -1441,14 +1567,14 @@ export function DesktopApp() {
                         ),
                   )
                 }
-                onError={setError}
+                onError={(error) => setSurfaceError("projects", error)}
               />
             ) : surface === "mission-control" ? (
               <MissionControlWorkspace
                 sessionId={activeThread.sessionId}
-                project={activeProject}
+                project={threadProject}
                 refreshVersion={missionControlRevision}
-                onError={setError}
+                onError={(error) => setSurfaceError("mission-control", error)}
               />
             ) : surface === "diff" ? (
               <DiffWorkspace
@@ -1480,83 +1606,83 @@ export function DesktopApp() {
                   const workspaceRoot =
                     activeThreadWorkspace?.workspaceRoot ??
                     activeThread.projectPath;
-                  const project = activeProject;
+                  const project = threadProject;
                   if (workspaceRoot && project)
                     void window.kestrelDesktop.openFileEditor({
                       projectPath: workspaceRoot,
                       filePath,
                       projectLabel: project.label,
-                      threadId: activeThread.sessionId,
+                      threadId: localCoreThreadId(activeThread.sessionId),
                       ...(lineNumber ? { lineNumber } : {}),
                     });
                 }}
-                onError={setError}
+                onError={(error) => setSurfaceError("diff", error)}
               />
             ) : surface === "terminal" ? (
               <TerminalWorkspace
                 sessionId={activeThread.sessionId}
-                threadId={activeThread.sessionId}
+                threadId={localCoreThreadId(activeThread.sessionId)}
                 onAttachOutput={attachTerminalOutput}
-                onError={setError}
+                onError={(error) => setSurfaceError("terminal", error)}
               />
             ) : surface === "review" ? (
               <ReviewWorkspace
                 sessionId={activeThread.sessionId}
-                threadId={activeThread.sessionId}
+                threadId={localCoreThreadId(activeThread.sessionId)}
                 defaultBaseRef={activeThread.workspaceBaseRef}
                 onOpenFile={(filePath, lineNumber) => {
                   const workspaceRoot =
                     activeThreadWorkspace?.workspaceRoot ??
                     activeThread.projectPath;
-                  const project = activeProject;
+                  const project = threadProject;
                   if (workspaceRoot && project)
                     void window.kestrelDesktop.openFileEditor({
                       projectPath: workspaceRoot,
                       filePath,
                       projectLabel: project.label,
-                      threadId: activeThread.sessionId,
+                      threadId: localCoreThreadId(activeThread.sessionId),
                       ...(lineNumber ? { lineNumber } : {}),
                     });
                 }}
-                onError={setError}
+                onError={(error) => setSurfaceError("review", error)}
               />
             ) : surface === "validation" ? (
               <ValidationWorkspace
                 sessionId={activeThread.sessionId}
-                threadId={activeThread.sessionId}
+                threadId={localCoreThreadId(activeThread.sessionId)}
                 onOpenFile={(filePath, lineNumber) => {
                   const workspaceRoot =
                     activeThreadWorkspace?.workspaceRoot ??
                     activeThread.projectPath;
-                  const project = activeProject;
+                  const project = threadProject;
                   if (workspaceRoot && project)
                     void window.kestrelDesktop.openFileEditor({
                       projectPath: workspaceRoot,
                       filePath,
                       projectLabel: project.label,
-                      threadId: activeThread.sessionId,
+                      threadId: localCoreThreadId(activeThread.sessionId),
                       ...(lineNumber ? { lineNumber } : {}),
                     });
                 }}
-                onError={setError}
+                onError={(error) => setSurfaceError("validation", error)}
               />
             ) : surface === "git" ? (
               <GitWorkspace
                 sessionId={activeThread.sessionId}
-                threadId={activeThread.sessionId}
+                threadId={localCoreThreadId(activeThread.sessionId)}
                 defaultBaseRef={activeThread.workspaceBaseRef}
                 executionSelection={toDesktopExecutionSelection(activeThread, settings?.apps ?? [])}
-                onError={setError}
+                onError={(error) => setSurfaceError("git", error)}
               />
             ) : surface === "preview" ? (
               <PreviewWorkspace
-                projectPath={activeThread.projectPath ?? activeProject?.path}
-                threadId={activeThread.sessionId}
+                projectPath={threadProjectPath}
+                threadId={localCoreThreadId(activeThread.sessionId)}
                 onAttachVisualFeedback={attachVisualFeedback}
-                onError={setError}
+                onError={(error) => setSurfaceError("preview", error)}
               />
             ) : surface === "mcp" ? (
-              <McpWorkspace onError={setError} />
+              <McpWorkspace onError={(error) => setSurfaceError("mcp", error)} />
             ) : surface === "settings" ? (
               <SettingsWorkspace
                 settings={settings!}
@@ -1571,13 +1697,13 @@ export function DesktopApp() {
                 onOpenMcp={() => setSurface("mcp")}
                 onAddProject={async () => { await addProject(); }}
                 onRequestMicrophone={async () => { await window.kestrelDesktop.requestMicrophoneAccess(); }}
-                onError={setError}
+                onError={(error) => setSurfaceError("settings", error)}
               />
             ) : (
               <DiagnosticsWorkspace
                 runtimeHealth={runtimeHealth}
                 onRuntimeHealth={setRuntimeHealth}
-                onError={setError}
+                onError={(error) => setSurfaceError("diagnostics", error)}
                 onOpenReadinessSettings={openReadinessSettings}
               />
             )}
@@ -1592,8 +1718,10 @@ export function DesktopApp() {
             runtimeHealth={runtimeHealth}
             bridgeInfo={bridgeInfo}
             capabilities={capabilities}
-            locked={activeRun !== undefined || activeThread.pendingWaitEventType !== undefined}
-            activeProjectPath={activeProject?.path}
+            locked={archivedThreadSelected || activeRun !== undefined || activeThread.pendingWaitEventType !== undefined}
+            projectPath={threadProjectPath}
+            projectLabel={conversationProjectLabel}
+            projectLocked={projectLocked}
             onModelConfigurationChange={(id, revision) => setState((current) => current === undefined
               ? current
               : updateRendererThread(current, activeThread.id, (thread) => ({
@@ -1610,12 +1738,19 @@ export function DesktopApp() {
                     : thread.enabledAppIds.filter((entry) => entry !== id),
                 })))}
             onProjectChange={(path) => {
-              setActiveProjectPath(path);
+              if (path === "__add_project__") {
+                void addProject().catch((cause) => setThreadFailure(activeThread.id, "Project not added", errorMessage(cause)));
+                return;
+              }
               setState((current) => current === undefined
                 ? current
-                : updateRendererThread(current, activeThread.id, (thread) => ({ ...thread, projectPath: path })));
+                : updateRendererThread(current, activeThread.id, (thread) => ({
+                    ...thread,
+                    projectPath: path,
+                  })));
             }}
-            onAddProject={() => void addProject().catch((cause) => setError(errorMessage(cause)))}
+            onNewConversationForProject={() => newConversation(null)}
+            onAddProject={() => void addProject().catch((cause) => setThreadFailure(activeThread.id, "Project not added", errorMessage(cause)))}
             onRestartRuntime={() => void restartRuntime()}
             onResizeStart={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId);
@@ -1876,14 +2011,6 @@ function providerLabel(
   return provider === "ollama" ? "Ollama" : "LM Studio";
 }
 
-function formatThreadTime(value: string): string {
-  const date = new Date(value);
-  const today = new Date();
-  return date.toDateString() === today.toDateString()
-    ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-    : date.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
 function formatMessageTime(value: string): string {
   return new Date(value).toLocaleTimeString([], {
     hour: "numeric",
@@ -1925,6 +2052,15 @@ async function sha256Hex(value: Uint8Array<ArrayBuffer>): Promise<string> {
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
 }
 
 function buildManagedWorkspaceSetup(thread: RendererThread) {

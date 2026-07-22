@@ -8,6 +8,7 @@ import type {
   NormalizedOutput,
   WaitForMatcher,
 } from "./execution.js";
+import type { HarnessEconomicsPolicyV1 } from "../../economics/contracts.js";
 
 export type ThreadStatus = "IDLE" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
 export type DelegationStatus = "PENDING" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -103,6 +104,7 @@ export interface ContextPolicyDefinitionRecord {
   contextPolicyId: string;
   label: string;
   defaultAction: ContextCheckpointAction;
+  economicsPolicy?: HarnessEconomicsPolicyV1 | undefined;
   metadata?: Record<string, unknown> | undefined;
   createdAt: string;
   updatedAt: string;

@@ -1,6 +1,6 @@
 import { Folder, Plus, RefreshCw } from "lucide-react";
 import { getKestrelStandardAppManifest } from "@kestrel-agents/protocol";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import React, { type PointerEvent as ReactPointerEvent } from "react";
 
 import type {
   DesktopBridgeInfo,
@@ -22,10 +22,13 @@ export function ContextSidebar(props: {
   bridgeInfo?: DesktopBridgeInfo | undefined;
   capabilities?: DesktopCapabilityView | undefined;
   locked: boolean;
-  activeProjectPath?: string | undefined;
+  projectPath?: string | undefined;
+  projectLabel: string;
+  projectLocked: boolean;
   onModelConfigurationChange: (id: string, revision: number) => void;
   onAppToggle: (id: string, enabled: boolean) => void;
-  onProjectChange: (path: string) => void;
+  onProjectChange: (path: string | undefined) => void;
+  onNewConversationForProject: () => void;
   onAddProject: () => void;
   onRestartRuntime: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -220,25 +223,29 @@ export function ContextSidebar(props: {
               <Plus size={15} />
             </button>
           </div>
-          {props.settings.projects.length > 0 ? (
+          {props.projectLocked ? (
+            <div className="project-binding-readonly">
+              <span className="project-binding-badge" title={props.projectPath}><Folder size={14} />{props.projectLabel}</span>
+              <button type="button" onClick={props.onNewConversationForProject}>New conversation in another project</button>
+            </div>
+          ) : (
             <label className="compact-select-row">
               <Folder size={14} />
               <select
-                aria-label="Active project"
-                value={
-                  props.activeProjectPath ?? props.settings.projects[0]?.path
-                }
-                onChange={(event) => props.onProjectChange(event.target.value)}
+                aria-label="Conversation project"
+                disabled={props.locked}
+                value={props.projectPath ?? ""}
+                onChange={(event) => props.onProjectChange(event.target.value.length > 0 ? event.target.value : undefined)}
               >
+                <option value="">No project</option>
                 {props.settings.projects.map((project) => (
                   <option key={project.path} value={project.path}>
                     {project.label}
                   </option>
                 ))}
+                <option value="__add_project__">Add Project…</option>
               </select>
             </label>
-          ) : (
-            <p className="compact-note">No project registered.</p>
           )}
         </section>
       </div>

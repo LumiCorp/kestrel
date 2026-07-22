@@ -132,6 +132,7 @@
     "bench:terminal:codex": "node --import tsx scripts/terminal-bench-codex.ts",
     "bench:terminal:sentinel": "node --import tsx scripts/terminal-bench-sentinel.ts",
     "bench:swe": "bash scripts/bench-swe.sh",
+    "bench:efficiency:compare": "node --import tsx scripts/compare-harness-efficiency.ts",
     "tb": "bash scripts/tb.sh",
     "tb2": "bash scripts/tb2.sh",
     "tb2-codex": "bash scripts/tb2-codex.sh",

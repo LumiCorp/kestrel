@@ -14,7 +14,8 @@ contractTest("desktop.hermetic", "Desktop replies request accepted completion in
   assert.match(source, /completionMode:\s*"accepted"/u);
   assert.match(source, /interactionMode:\s*activeThread\.mode/u);
   assert.match(source, /activeThread\.mode === "build" \? \{ actSubmode: "safe" \}/u);
-  assert.match(source, /setDraft\(\(current\) => current\.trim\(\)\.length > 0 \? current : message\)/u);
+  assert.doesNotMatch(source, /setDraft\(/u);
+  assert.match(source, /setThreadFailure\(threadId, "Reply not sent"/u);
 });
 
 contractTest("desktop.hermetic", "Desktop forwards runner events from one centralized transport observer", async () => {

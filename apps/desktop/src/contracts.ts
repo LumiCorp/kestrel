@@ -254,6 +254,27 @@ export type DesktopShellCommand =
   | "toggle-right-sidebar"
   | "restart-runtime";
 
+export type DesktopRunCancellationResult =
+  | { status: "cancelled"; event: DesktopRunnerEvent }
+  | { status: "already_stopped" }
+  | {
+      status: "run_changed";
+      activeRunId?: string | undefined;
+      activeCommandId?: string | undefined;
+    };
+
+export type DesktopThreadAuthorityResult =
+  | { status: "available"; view: DesktopRuntimeThreadInspection }
+  | { status: "missing" };
+
+export interface DesktopAttachmentImportInput {
+  threadId: string;
+  filename: string;
+  mimeType?: string | undefined;
+  data: string;
+  sha256?: string | undefined;
+}
+
 export interface DesktopBridge {
   getBridgeInfo(): Promise<DesktopBridgeInfo>;
   getAppInfo(): Promise<DesktopAppInfo>;
@@ -275,12 +296,13 @@ export interface DesktopBridge {
   ): Promise<DesktopUiStateSyncResult>;
   runTurn(request: DesktopRunTurnRequest): Promise<DesktopRunnerEvent>;
   selectAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
+  importAttachment(input: DesktopAttachmentImportInput): Promise<DesktopAttachmentMetadata>;
   listAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
   removeAttachment(threadId: string, attachmentId: string): Promise<boolean>;
   submitOperatorControl(
     request: DesktopOperatorControlRequest,
   ): Promise<DesktopRuntimeThreadInspection>;
-  cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunnerEvent>;
+  cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunCancellationResult>;
   onRunnerEvent(listener: (event: DesktopRunnerEvent) => void): () => void;
   getModelPolicy(): Promise<ModelPolicyV1>;
   getModelCatalog(
@@ -386,6 +408,9 @@ export interface DesktopBridge {
     action: DesktopProjectAction,
   ): Promise<DesktopProjectSnapshotResponse>;
   getOperatorThread(threadId: string): Promise<DesktopRuntimeThreadInspection>;
+  inspectThreadAuthority(
+    threadId: string,
+  ): Promise<DesktopThreadAuthorityResult>;
   listOperatorRuns(
     query?: DesktopRuntimeRunIndexQuery,
   ): Promise<DesktopRuntimeRunIndex>;

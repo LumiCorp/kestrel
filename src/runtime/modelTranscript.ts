@@ -42,6 +42,11 @@ export interface ModelTranscriptCompactionRecord {
   retainedItemIds: string[];
 }
 
+export interface ModelTranscriptCompactionPlan {
+  retainedItems: ModelTranscriptItem[];
+  replacedItems: ModelTranscriptItem[];
+}
+
 export interface ModelTranscriptValidationResult {
   ok: boolean;
   value?: ModelTranscript | undefined;
@@ -89,16 +94,15 @@ export function readActiveTaskGoalFromTranscript(value: unknown): string | undef
   if (transcript === undefined) {
     return ;
   }
-  for (const item of transcript.items) {
-    if (item.kind !== "user") {
-      continue;
-    }
-    const content = item.content?.trim();
-    if (content !== undefined && content.length > 0) {
-      return content;
-    }
+  return readActiveTaskItemFromTranscript(transcript)?.content?.trim();
+}
+
+export function readActiveTaskItemIdFromTranscript(value: unknown): string | undefined {
+  const transcript = normalizeModelTranscript(value);
+  if (transcript === undefined) {
+    return ;
   }
-  return ;
+  return readActiveTaskItemFromTranscript(transcript)?.id;
 }
 
 export function appendModelTranscriptItems(
@@ -234,15 +238,12 @@ export function compactModelTranscript(input: {
   retainedTailItems?: number | undefined;
 }): ModelTranscript {
   const transcript = normalizeModelTranscript(input.transcript) ?? { version: 1, windowId: 1, items: [] };
-  const retainedTailItems = Math.max(0, Math.trunc(input.retainedTailItems ?? 24));
-  const tail = retainedTailItems > 0 ? selectProviderValidTail(transcript.items, retainedTailItems) : [];
-  const activeTaskItem = readActiveTaskItemFromTranscript(transcript);
-  const retainedItems = dedupeTranscriptItemsById([
-    ...(activeTaskItem !== undefined ? [activeTaskItem] : []),
-    ...tail,
-  ]);
-  const retainedIds = new Set(retainedItems.map((item) => item.id));
-  const replacedItems = transcript.items.filter((item) => retainedIds.has(item.id) === false);
+  const plan = planModelTranscriptCompaction({
+    transcript,
+    retainedTailItems: input.retainedTailItems,
+  });
+  const retainedItems = plan.retainedItems;
+  const replacedItems = plan.replacedItems;
   const nextWindowId = transcript.windowId + 1;
   const summaryItem = assignTranscriptItemIdentity(
     makeModelTranscriptItem("compaction_summary", {
@@ -271,6 +272,25 @@ export function compactModelTranscript(input: {
       ...(transcript.compactions ?? []),
       compactionRecord,
     ].slice(-20),
+  };
+}
+
+export function planModelTranscriptCompaction(input: {
+  transcript: unknown;
+  retainedTailItems?: number | undefined;
+}): ModelTranscriptCompactionPlan {
+  const transcript = normalizeModelTranscript(input.transcript) ?? { version: 1, windowId: 1, items: [] };
+  const retainedTailItems = Math.max(0, Math.trunc(input.retainedTailItems ?? 24));
+  const tail = retainedTailItems > 0 ? selectProviderValidTail(transcript.items, retainedTailItems) : [];
+  const activeTaskItem = readActiveTaskItemFromTranscript(transcript);
+  const retainedItems = dedupeTranscriptItemsById([
+    ...(activeTaskItem !== undefined ? [activeTaskItem] : []),
+    ...tail,
+  ]);
+  const retainedIds = new Set(retainedItems.map((item) => item.id));
+  return {
+    retainedItems,
+    replacedItems: transcript.items.filter((item) => retainedIds.has(item.id) === false),
   };
 }
 

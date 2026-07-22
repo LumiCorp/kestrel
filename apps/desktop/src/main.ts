@@ -199,6 +199,12 @@ import { runDesktopWorkspaceReview } from "./workspaceReview.js";
 import { runDesktopWorkspaceValidation } from "./workspaceValidation.js";
 import { runDesktopWorkspaceGit } from "./workspaceGit.js";
 import { isAllowedEmbeddedPreviewUrl } from "./previewSecurity.js";
+import {
+  parseDesktopAttachmentImportInput,
+  parseDesktopAttachmentThreadId,
+} from "./attachmentInput.js";
+import { cancelDesktopRun } from "./runCancellation.js";
+import { inspectDesktopThreadAuthority } from "./threadAuthority.js";
 
 declare global {
   var __kestrelDesktopRunnerTransportFactory:
@@ -1174,7 +1180,7 @@ function registerIpcHandlers(
   ipcMain.handle(
     "desktop:select-attachments",
     async (_event, threadId: unknown): Promise<DesktopAttachmentMetadata[]> => {
-      const normalizedThreadId = parseDesktopThreadId(threadId);
+      const normalizedThreadId = parseDesktopAttachmentThreadId(threadId);
       const dialogOptions: Electron.OpenDialogOptions = {
         title: "Attach files",
         properties: ["openFile", "multiSelections"],
@@ -1258,11 +1264,25 @@ function registerIpcHandlers(
     },
   );
   ipcMain.handle(
+    "desktop:import-attachment",
+    async (
+      _event,
+      input: unknown,
+    ): Promise<DesktopAttachmentMetadata> => {
+      const attachment = parseDesktopAttachmentImportInput(input);
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.importDesktopAttachment(attachment),
+      );
+    },
+  );
+  ipcMain.handle(
     "desktop:list-attachments",
     async (_event, threadId: unknown) =>
       await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) =>
-          await client.listDesktopAttachments(parseDesktopThreadId(threadId)),
+          await client.listDesktopAttachments(
+            parseDesktopAttachmentThreadId(threadId),
+          ),
       ),
   );
   ipcMain.handle(
@@ -1271,7 +1291,7 @@ function registerIpcHandlers(
       await requireLocalCoreConnectionManager().executeOnce(
         async (client) =>
           await client.removeDesktopAttachment(
-            parseDesktopThreadId(threadId),
+            parseDesktopAttachmentThreadId(threadId),
             parseDesktopAttachmentId(attachmentId),
           ),
       ),
@@ -1346,13 +1366,11 @@ function registerIpcHandlers(
         details: error instanceof Error ? error.message : String(error),
       });
     }
-    return await requireDesktopRunnerAdapter(runnerTransport).sendControl(
-      {
-        type: "run.cancel",
-        ...request,
-      },
-      DESKTOP_RUNNER_REQUEST_CONTEXT,
-    );
+    return await cancelDesktopRun({
+      adapter: requireDesktopRunnerAdapter(runnerTransport),
+      request,
+      context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+    });
   });
   ipcMain.handle("desktop:get-model-policy", async () => desktopModelPolicy);
   ipcMain.handle(
@@ -2534,6 +2552,18 @@ function registerIpcHandlers(
         adapter: requireDesktopRunnerAdapter(runnerTransport),
         threadId,
         context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:inspect-thread-authority",
+    async (_event, threadId: unknown) =>
+      inspectDesktopThreadAuthority({
+        inspect: async () =>
+          await getDesktopOperatorThread({
+            adapter: requireDesktopRunnerAdapter(runnerTransport),
+            threadId,
+            context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+          }),
       }),
   );
   ipcMain.handle(

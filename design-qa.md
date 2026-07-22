@@ -166,3 +166,39 @@ final result: passed
 3. Exercised expandable connection forms and the deployment-profile dialog.
 
 final result: passed
+
+---
+
+# Design QA: Settings tools and services
+
+## Target and implementation
+
+- Visual target: selected Option 2 source image (`exec-e1320907-7123-4d60-92a0-8f0dc00f1fc5.png`)
+- Implementation capture: `settings-tools-services-implementation.jpg`
+- Viewport: 1488 x 1058 CSS pixels
+- Target pixels: 1487 x 1058
+- Implementation pixels: 1488 x 1058
+- State: light theme, Settings, Tools & services, Exa selected, not connected
+
+## Comparison evidence
+
+- Full-screen side by side: temporary artifact `settings-tools-services-comparison-final.png`
+- Focused tools surface side by side: temporary artifact `settings-tools-services-focused-comparison-final.png`
+
+## Findings and repairs
+
+- P2 density: the first implementation was too compressed relative to the selected visual. Increased connector-row height, setup-step spacing, heading scale, and the split-view minimum height.
+- P1 semantics: connector rows initially placed `role="listitem"` on buttons. Wrapped each named button in a semantic list item so assistive technology retains both list structure and button names.
+- P2 responsive behavior: verified the split view stacks at 740 px with no horizontal overflow (`scrollWidth === clientWidth`).
+- P1 runtime diagnostics: verified the selected Exa and Tavily flows produce no renderer console errors.
+- Intentional product-truth difference: the selected visual showed an Exa API-key field. Exa's official hosted MCP endpoint does not require an API key, so the implementation replaces that field with endpoint verification and a clear no-key security note.
+
+## Comparison history
+
+1. Initial implementation comparison identified excess density and weak type hierarchy.
+2. Refined spacing and typography, then repeated the combined visual comparison.
+3. Final interaction and accessibility pass verified connector selection, Tavily credential rendering, responsive stacking, and clean console output.
+
+## Result
+
+Passed. No open P0 or P1 visual, interaction, accessibility, or responsive defects were found in the verified state.

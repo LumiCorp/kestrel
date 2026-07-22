@@ -172,6 +172,9 @@ importers:
       electron-packager:
         specifier: ^17.1.2
         version: 17.1.2
+      happy-dom:
+        specifier: 20.9.0
+        version: 20.9.0
       typescript:
         specifier: ^5.8.2
         version: 5.9.3
@@ -13927,8 +13930,7 @@ snapshots:
   '@types/webidl-conversions@7.0.3':
     optional: true
 
-  '@types/whatwg-mimetype@3.0.2':
-    optional: true
+  '@types/whatwg-mimetype@3.0.2': {}
 
   '@types/whatwg-url@13.0.0':
     dependencies:
@@ -15250,7 +15252,6 @@ snapshots:
   entities@6.0.1: {}
 
   entities@7.0.1: {}
-
   entities@8.0.0: {}
 
   env-paths@2.2.1: {}
@@ -15875,7 +15876,6 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
-    optional: true
 
   has-flag@4.0.0: {}
 
@@ -19426,8 +19426,7 @@ snapshots:
       iconv-lite: 0.6.3
     optional: true
 
-  whatwg-mimetype@3.0.0:
-    optional: true
+  whatwg-mimetype@3.0.0: {}
 
   whatwg-mimetype@4.0.0:
     optional: true

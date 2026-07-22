@@ -620,8 +620,12 @@ function mapUsage(
     const inputTokens = asNumber(usage.input_tokens);
     const outputTokens = asNumber(usage.output_tokens);
     const totalTokens = asNumber(usage.total_tokens);
+    const inputDetails = asRecord(usage.input_tokens_details);
+    const outputDetails = asRecord(usage.output_tokens_details);
+    const cachedInputTokens = asNumber(inputDetails?.cached_tokens);
+    const reasoningTokens = asNumber(outputDetails?.reasoning_tokens);
 
-    if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
+    if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined && cachedInputTokens === undefined && reasoningTokens === undefined) {
       return ;
     }
 
@@ -629,14 +633,20 @@ function mapUsage(
       ...(inputTokens !== undefined ? { inputTokens } : {}),
       ...(outputTokens !== undefined ? { outputTokens } : {}),
       ...(totalTokens !== undefined ? { totalTokens } : {}),
+      ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+      ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     };
   }
 
   const inputTokens = asNumber(usage.prompt_tokens);
   const outputTokens = asNumber(usage.completion_tokens);
   const totalTokens = asNumber(usage.total_tokens);
+  const inputDetails = asRecord(usage.prompt_tokens_details);
+  const outputDetails = asRecord(usage.completion_tokens_details);
+  const cachedInputTokens = asNumber(inputDetails?.cached_tokens);
+  const reasoningTokens = asNumber(outputDetails?.reasoning_tokens);
 
-  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined && cachedInputTokens === undefined && reasoningTokens === undefined) {
     return ;
   }
 
@@ -644,6 +654,8 @@ function mapUsage(
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
   };
 }
 

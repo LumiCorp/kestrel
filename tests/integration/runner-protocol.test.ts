@@ -2708,7 +2708,7 @@ contractTest("runtime.process", "operator commands emit inbox, thread, run, and 
         compatibilityAlerts: 0,
       },
     }),
-    getOperatorThreadView: async () => ({
+    getOperatorThreadView: async (threadId) => threadId === "thread-main" ? ({
       thread: {
         threadId: "thread-main",
         sessionId: "session-main",
@@ -2730,7 +2730,7 @@ contractTest("runtime.process", "operator commands emit inbox, thread, run, and 
         summary: "Switch to the blocked child thread.",
         threadId: "thread-child",
       },
-    }),
+    }) : null,
     listOperatorRuns: async (input) => ({
       version: "operator-run-index-v1",
       generatedAt: "2026-07-10T12:00:02.000Z",
@@ -2863,6 +2863,13 @@ contractTest("runtime.process", "operator commands emit inbox, thread, run, and 
   );
   await router.acceptLine(
     JSON.stringify({
+      id: "cmd-operator-thread-missing",
+      type: "operator.thread",
+      payload: { threadId: "thread-missing" },
+    })
+  );
+  await router.acceptLine(
+    JSON.stringify({
       id: "cmd-operator-runs",
       type: "operator.runs",
       payload: { sessionId: "session-main", status: "RUNNING", limit: 10 },
@@ -2927,6 +2934,7 @@ contractTest("runtime.process", "operator commands emit inbox, thread, run, and 
     [
       "operator.inbox",
       "operator.thread",
+      "runner.error",
       "operator.runs",
       "operator.run",
       "operator.controlled",
@@ -2945,6 +2953,8 @@ contractTest("runtime.process", "operator commands emit inbox, thread, run, and 
   assert.equal(view?.childBlocker?.childThreadId, "thread-child");
   assert.equal(view?.childBlocker?.delegationId, "delegation-1");
   assert.equal(view?.nextAction?.kind, "switch_thread");
+  const missingThreadEvent = events.find((event) => event.type === "runner.error");
+  assert.equal(missingThreadEvent?.payload.code, "OPERATOR_THREAD_NOT_FOUND");
   const runsEvent = events.find((event) => event.type === "operator.runs");
   const runsView = runsEvent?.payload.view as
     | { version?: string; runs?: Array<{ run?: { runId?: string } }> }

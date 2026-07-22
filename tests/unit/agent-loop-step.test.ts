@@ -393,6 +393,7 @@ function buildStep(input?: {
       approvalCapabilities?: string[];
       executionClass: "read_only" | "sandboxed_only" | "external_side_effect";
       allowedInteractionModes?: Array<"chat" | "plan" | "build">;
+      toolFamily?: string;
   }>;
 }) {
   return createAgentLoopStep({
@@ -410,6 +411,26 @@ function buildStep(input?: {
     loopStepId: "agent.loop",
     execDispatchStepId: "agent.exec.dispatch",
   });
+}
+
+function phaseScopedEconomicsPolicy(mode: "observe" | "enforce") {
+  return {
+    version: 1 as const,
+    policyId: `economics:test:${mode}`,
+    mode,
+    counting: { estimatorVersion: "utf8-byte-upper-bound:v1", allowEstimatedEnforcement: false },
+    context: {
+      outputReserveTokens: 1_000,
+      safetyReserveTokens: 250,
+      sections: [{ id: "active-task", priority: "required" as const }],
+    },
+    compaction: { requireStructuredAnchors: true as const, maxSummaryAttempts: 1 as const },
+    tools: {
+      exposure: "phase_scoped" as const,
+      modelContextMaxTokens: 20_000,
+      allowedFamiliesByPhase: { "agent.loop": ["filesystem"] },
+    },
+  };
 }
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -1858,6 +1879,99 @@ contractTest("runtime.hermetic", "agent loop sends workspace, Project, and insta
   assert.match(userMessage as string, /Prefer grounded sources\./u);
 });
 
+contractTest("runtime.hermetic", "agent loop observes phase-scoped tool exposure without changing the model-visible surface", async () => {
+  let capturedRequest: ModelRequest | undefined;
+  const ctx = context();
+  ctx.event.payload.runtimeAssembly = {
+    economicsPolicy: phaseScopedEconomicsPolicy("observe"),
+  };
+  await buildStep({
+    tools: [READ_TEXT_TOOL, SEARCH_TEXT_TOOL],
+    capabilityManifest: [
+      {
+        name: "fs.read_text",
+        description: "Read a text file",
+        capabilityClasses: ["filesystem.read"],
+        executionClass: "read_only",
+        toolFamily: "filesystem",
+      },
+      {
+        name: "fs.search_text",
+        description: "Search repository text",
+        capabilityClasses: ["filesystem.search"],
+        executionClass: "read_only",
+        toolFamily: "repo",
+      },
+    ],
+  })(ctx, {
+    useModel: async (request) => {
+      capturedRequest = request;
+      return modelResponse({
+        reason: "Read the requested file.",
+        nextAction: { kind: "tool", name: "fs.read_text", input: { path: "README.md" } },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.ok(capturedRequest);
+  assert.equal(capturedRequest.tools?.some((tool) => tool.name === "fs_read_text"), true);
+  assert.equal(capturedRequest.tools?.some((tool) => tool.name === "fs_search_text"), true);
+  const selection = capturedRequest.metadata?.economicsToolExposureSelection as Record<string, unknown>;
+  assert.equal(selection.policyMode, "observe");
+  assert.deepEqual(selection.selectedToolNames, ["fs.read_text", "fs.search_text"]);
+  assert.deepEqual(selection.excludedToolNames, []);
+  assert.deepEqual(
+    (selection.entries as Array<Record<string, unknown>>).map((entry) => [entry.name, entry.policyAdmission, entry.effectiveAdmission]),
+    [
+      ["fs.read_text", "admitted", "admitted"],
+      ["fs.search_text", "blocked", "admitted"],
+    ],
+  );
+});
+
+contractTest("runtime.hermetic", "agent loop enforces phase-scoped tool exposure by exact manifest tool family", async () => {
+  let capturedRequest: ModelRequest | undefined;
+  const ctx = context();
+  ctx.event.payload.runtimeAssembly = {
+    economicsPolicy: phaseScopedEconomicsPolicy("enforce"),
+  };
+  await buildStep({
+    tools: [READ_TEXT_TOOL, SEARCH_TEXT_TOOL],
+    capabilityManifest: [
+      {
+        name: "fs.read_text",
+        description: "Read a text file",
+        capabilityClasses: ["filesystem.read"],
+        executionClass: "read_only",
+        toolFamily: "filesystem",
+      },
+      {
+        name: "fs.search_text",
+        description: "Search repository text",
+        capabilityClasses: ["filesystem.search"],
+        executionClass: "read_only",
+        toolFamily: "repo",
+      },
+    ],
+  })(ctx, {
+    useModel: async (request) => {
+      capturedRequest = request;
+      return modelResponse({
+        reason: "Read the requested file.",
+        nextAction: { kind: "tool", name: "fs.read_text", input: { path: "README.md" } },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.ok(capturedRequest);
+  assert.equal(capturedRequest.tools?.some((tool) => tool.name === "fs_read_text"), true);
+  assert.equal(capturedRequest.tools?.some((tool) => tool.name === "fs_search_text"), false);
+  const selection = capturedRequest.metadata?.economicsToolExposureSelection as Record<string, unknown>;
+  assert.equal(selection.policyMode, "enforce");
+  assert.deepEqual(selection.selectedToolNames, ["fs.read_text"]);
+  assert.deepEqual(selection.excludedToolNames, ["fs.search_text"]);
+});
+
 contractTest("runtime.hermetic", "agent loop compaction prompt preserves constraint-critical tool facts", async () => {
   const requests: ModelRequest[] = [];
   const ctx = context();
@@ -1888,6 +2002,12 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
           kind: "user",
           content: originalTask,
         },
+        {
+          id: "mt_1_0002_user",
+          createdAt: "2026-06-15T12:01:00.000Z",
+          kind: "user",
+          content: "Later follow-up that must not replace the active task identity.",
+        },
       ],
     },
   };
@@ -1899,8 +2019,17 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
       requests.push(request);
       if (request.metadata?.phase === "agent.compaction") {
         return {
-          output: "Summary preserves the zero-result search and current blocker.",
-          text: "Summary preserves the zero-result search and current blocker.",
+          output: {
+            version: 1,
+            activeTaskItemId: "mt_1_0001_user",
+            decisions: [],
+            constraints: [],
+            evidence: [],
+            fileState: [],
+            blockers: [],
+            nextActions: [],
+            coveredItemIds: [],
+          },
         } as ModelResponse<unknown>;
       }
       return modelResponse({
@@ -1923,6 +2052,19 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
   assert.match(
     systemContent as string,
     /Preserve constraint facts, zero-result searches, the chronologically latest successful or failed tool results, exact mutation summaries, open todos, and current blockers/u,
+  );
+  assert.match(systemContent as string, /Do not select a newer follow-up user item/u);
+  const compactionInstruction = compactionRequest.messages?.at(-1)?.content;
+  assert.equal(typeof compactionInstruction, "string");
+  assert.match(compactionInstruction as string, /Retained active task item id: "mt_1_0001_user"/u);
+  assert.match(compactionInstruction as string, /Exact replaced item ids: \[\]/u);
+  assert.deepEqual(
+    (compactionRequest.responseSchema?.properties as Record<string, unknown>).activeTaskItemId,
+    { type: "string", enum: ["mt_1_0001_user"] },
+  );
+  assert.deepEqual(
+    (compactionRequest.responseSchema?.properties as Record<string, unknown>).coveredItemIds,
+    { type: "array", items: { type: "string" }, maxItems: 0 },
   );
   const finalRequest = requests.find((request) => request.metadata?.phase === "agent.loop");
   assert.ok(finalRequest);

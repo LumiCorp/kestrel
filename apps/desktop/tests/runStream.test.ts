@@ -44,6 +44,28 @@ contractTest("desktop.hermetic", "Desktop accumulates live reasoning deltas in o
   assert.equal(projected[0]?.text, "Inspecting the workspace.");
 });
 
+contractTest("desktop.hermetic", "Desktop ignores repeated reasoning starts after an interrupted stream", () => {
+  const events = [
+    event("run.model.reasoning.started", {
+      update: baseUpdate({ event: "started", attempt: 1, format: "provider_reasoning_text", contentState: "live" }),
+    }),
+    event("run.model.reasoning.delta", {
+      update: baseUpdate({ event: "delta", attempt: 1, format: "provider_reasoning_text", contentState: "live", delta: "Inspecting " }),
+    }),
+    event("run.model.reasoning.started", {
+      update: { ...baseUpdate({ event: "started", attempt: 1, format: "provider_reasoning_text", contentState: "live" }), seq: 2 },
+    }),
+    event("run.model.reasoning.delta", {
+      update: { ...baseUpdate({ event: "delta", attempt: 1, format: "provider_reasoning_text", contentState: "live", delta: "the workspace." }), seq: 3 },
+    }),
+  ];
+
+  const projected = events.reduce(projectDesktopRunStream, []);
+  assert.equal(projected.length, 1);
+  assert.equal(projected[0]?.label, "Reasoning");
+  assert.equal(projected[0]?.text, "Inspecting the workspace.");
+});
+
 contractTest("desktop.hermetic", "Desktop starts a new reasoning block after assistant and tool activity", () => {
   const events = [
     event("run.model.reasoning.started", {

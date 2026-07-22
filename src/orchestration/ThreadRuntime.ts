@@ -366,6 +366,10 @@ export class ThreadRuntime implements ThreadRuntimePort {
       thread: activeThread,
       cause: "turn_start",
     });
+    const contextPolicyId = assembly.bundle?.contextPolicyId;
+    const contextPolicy = contextPolicyId === undefined
+      ? undefined
+      : await this.resolveContextPolicyDefinition(contextPolicyId);
     this.emit("thread.turn_submitted", activeThread.threadId, {
       eventType: input.eventType,
     });
@@ -402,6 +406,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
           toolAllowlist: assembly.bundle?.toolAllowlist ?? [],
           specialistIds: assembly.bundle?.specialistIds ?? [],
           contextPolicyId: assembly.bundle?.contextPolicyId,
+          ...(contextPolicy?.economicsPolicy !== undefined
+            ? { economicsPolicy: contextPolicy.economicsPolicy }
+            : {}),
           approvalPolicyId: assembly.bundle?.approvalPolicyId,
           modelProvider: readAssemblyString(assembly.bundle?.metadata, "modelProvider"),
           model: readAssemblyString(assembly.bundle?.metadata, "model"),
@@ -414,6 +421,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
           ),
           downgradeReason: readAssemblyString(assembly.bundle?.metadata, "downgradeReason"),
           capabilityLossReason: readAssemblyString(assembly.bundle?.metadata, "capabilityLossReason"),
+          ...(assembly.bundle?.metadata?.modelEconomicsProfile !== undefined
+            ? { modelEconomicsProfile: assembly.bundle.metadata.modelEconomicsProfile }
+            : {}),
         },
       },
     });
@@ -651,6 +661,14 @@ export class ThreadRuntime implements ThreadRuntimePort {
       ...result,
       thread: threadWithIdentity,
     };
+  }
+
+  private async resolveContextPolicyDefinition(contextPolicyId: string) {
+    if (this.store.getContextPolicyDefinition !== undefined) {
+      return this.store.getContextPolicyDefinition(contextPolicyId);
+    }
+    const policies = await this.store.listContextPolicyDefinitions();
+    return policies.find((policy) => policy.contextPolicyId === contextPolicyId) ?? null;
   }
 
   async enqueueFollowUp(input: EnqueueFollowUpInput) {

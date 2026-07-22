@@ -15,6 +15,7 @@ import {
   createDesktopModelConfiguration,
 } from "../../../../src/desktopShell/configuration";
 import { keepFocusInsideDialog } from "./dialogFocus";
+import { ToolServicesSettings } from "./ToolServicesSettings";
 
 const CATEGORY_ORDER: DesktopCapabilityCategory[] = [
   "models",
@@ -344,6 +345,22 @@ export function SettingsWorkspace({
       <div className="settings-sections" aria-busy={loading}>
         {CATEGORY_ORDER.map((category) => {
           const capabilities = grouped.get(category) ?? [];
+          if (category === "tools_services" && view !== undefined) {
+            return (
+              <ToolServicesSettings
+                capabilities={capabilities}
+                credentialStoreAvailable={view.credentialStore.available}
+                key={category}
+                onCapabilitiesChange={(nextView) => {
+                  setView(nextView);
+                  onCapabilitiesChange?.(nextView);
+                }}
+                onNotice={setNotice}
+                onOpenMcp={onOpenMcp}
+                onError={onError}
+              />
+            );
+          }
           return (
             <section className="settings-section" key={category} aria-labelledby={`settings-${category}-title`} id={`settings-${category}`}>
               <div className="settings-section-heading">
