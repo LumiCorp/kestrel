@@ -17,6 +17,14 @@ contractTest("web.hermetic", "hosted Environment images have distinct revisioned
     assert.match(dockerfile, /ARG KESTREL_GIT_SHA=unknown/u);
     assert.match(dockerfile, /org\.opencontainers\.image\.revision=\$KESTREL_GIT_SHA/u);
   }
+  assert.match(
+    workspaceDockerfile,
+    /pnpm --filter @lumi\/kestrel-environment-auth build/u,
+  );
+  assert.match(
+    workspaceDockerfile,
+    /pnpm --filter @kestrel-agents\/workspace-skills build/u,
+  );
   assert.match(rollout, /--file apps\/workspace-runtime\/Dockerfile/u);
   assert.match(rollout, /--file apps\/environment-router\/Dockerfile/u);
   assert.match(rollout, /apps\/workspace-runtime\/scripts\/image-smoke\.sh/u);

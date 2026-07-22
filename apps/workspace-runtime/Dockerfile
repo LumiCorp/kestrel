@@ -20,7 +20,9 @@ COPY src src
 COPY tools tools
 COPY tests/helpers/contract-test.ts tests/helpers/contract-test.ts
 COPY db db
-RUN pnpm --filter @kestrel-agents/sdk build \
+RUN pnpm --filter @lumi/kestrel-environment-auth build \
+    && pnpm --filter @kestrel-agents/workspace-skills build \
+    && pnpm --filter @kestrel-agents/sdk build \
     && pnpm run clean \
     && pnpm exec tsc -p tsconfig.json \
     && pnpm --filter @kestrel/workspace-runtime build
