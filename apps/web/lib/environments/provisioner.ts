@@ -444,6 +444,7 @@ export class EnvironmentProvisioner {
           workspaceId: workspace.id,
           machineId: workspace.flyMachineId,
           runtimeImage,
+          forceStart: true,
         });
         await this.backupWorkspace({
           ...backupInput,
@@ -573,6 +574,7 @@ export class EnvironmentProvisioner {
     workspaceId: string;
     machineId: string;
     runtimeImage: string;
+    forceStart?: boolean | undefined;
   }) {
     await this.repository.setWorkspaceStarting(input.workspaceId);
     const workspaceServiceToken = createEnvironmentServiceToken();
@@ -586,7 +588,7 @@ export class EnvironmentProvisioner {
           serviceToken: workspaceServiceToken,
         }),
       });
-      if (machine.state === "stopped") {
+      if (input.forceStart || machine.state === "stopped") {
         await this.provider.startMachine({
           appName: input.appName,
           machineId: input.machineId,
