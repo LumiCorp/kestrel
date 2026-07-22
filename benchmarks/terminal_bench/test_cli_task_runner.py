@@ -41,6 +41,7 @@ from .cli_task_runner import (
 from .job_input import (
     TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS,
     assert_terminal_bench_job_input_contract,
+    assert_terminal_bench_profile_contract,
     build_terminal_bench_profile,
     terminal_bench_job_input_contract_hash,
 )
@@ -92,6 +93,18 @@ class CliTaskRunnerTest(unittest.TestCase):
         self.assertEqual(profile["defaultActSubmode"], "full_auto")
         self.assertEqual(profile["guardrails"], benchmark_guardrails())
         self.assertEqual(profile["toolAllowlist"], TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS)
+        assert_terminal_bench_profile_contract(profile)
+        invalid_profile = dict(profile)
+        invalid_profile["devShell"] = {"enabled": True, "envMode": "inherit"}
+        with self.assertRaisesRegex(AssertionError, "enable inherited dev shell"):
+            assert_terminal_bench_profile_contract(invalid_profile)
+        union_profile = dict(profile)
+        union_profile["toolAllowlist"] = [*profile["toolAllowlist"], "artifact.read"]
+        assert_terminal_bench_profile_contract(union_profile)
+        missing_tool_profile = dict(profile)
+        missing_tool_profile["toolAllowlist"] = profile["toolAllowlist"][:-1]
+        with self.assertRaisesRegex(AssertionError, "missing required tools: exec_command"):
+            assert_terminal_bench_profile_contract(missing_tool_profile)
         self.assertEqual(
             profile["toolAllowlist"],
             [

@@ -230,6 +230,10 @@ export function compareHarnessEfficiencyPairsV2(input: {
   if (regressedPairIds.length > 0) reasons.push("At least one baseline-accepted pair regressed.");
   const baselineMetrics = aggregate(pairedBaseline);
   const candidateMetrics = aggregate(pairedCandidate);
+  const hasAcceptedOutcomes = baselineMetrics.accepted > 0 && candidateMetrics.accepted > 0;
+  if (hasAcceptedOutcomes === false) {
+    reasons.push("Baseline and candidate must each have at least one accepted outcome before per-success efficiency can be interpreted.");
+  }
   if (candidateMetrics.acceptanceRate < baselineMetrics.acceptanceRate) reasons.push("Candidate acceptance rate is lower than baseline.");
   if ((candidateMetrics.latencyP95Ms ?? Infinity) > (baselineMetrics.latencyP95Ms ?? -Infinity)) reasons.push("Candidate p95 latency is higher than baseline.");
   const baselineFailures = new Set(pairedBaseline.filter((result) => result.outcome.acceptance !== "accepted").map((result) => result.outcome.failureClass));
@@ -237,9 +241,9 @@ export function compareHarnessEfficiencyPairsV2(input: {
     .filter((result) => result.outcome.acceptance !== "accepted" && baselineFailures.has(result.outcome.failureClass) === false)
     .map((result) => result.outcome.failureClass))].sort();
   if (newFailureClasses.length > 0) reasons.push("Candidate introduces a new failure class.");
-  const tokenImproved = baselineMetrics.tokensPerAcceptedSuccess !== null && candidateMetrics.tokensPerAcceptedSuccess !== null && candidateMetrics.tokensPerAcceptedSuccess < baselineMetrics.tokensPerAcceptedSuccess;
-  const costImproved = baselineMetrics.costPerAcceptedSuccessUsd !== null && candidateMetrics.costPerAcceptedSuccessUsd !== null && candidateMetrics.costPerAcceptedSuccessUsd < baselineMetrics.costPerAcceptedSuccessUsd;
-  if (tokenImproved === false && costImproved === false) reasons.push("Candidate does not improve tokens or priced cost per accepted success.");
+  const tokenImproved = hasAcceptedOutcomes && baselineMetrics.tokensPerAcceptedSuccess !== null && candidateMetrics.tokensPerAcceptedSuccess !== null && candidateMetrics.tokensPerAcceptedSuccess < baselineMetrics.tokensPerAcceptedSuccess;
+  const costImproved = hasAcceptedOutcomes && baselineMetrics.costPerAcceptedSuccessUsd !== null && candidateMetrics.costPerAcceptedSuccessUsd !== null && candidateMetrics.costPerAcceptedSuccessUsd < baselineMetrics.costPerAcceptedSuccessUsd;
+  if (hasAcceptedOutcomes && tokenImproved === false && costImproved === false) reasons.push("Candidate does not improve tokens or priced cost per accepted success.");
   const unhashed = {
     version: 2 as const,
     schema: "kestrel.harness-efficiency-paired-comparison/v2" as const,

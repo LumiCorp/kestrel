@@ -115,6 +115,10 @@ contractTest("runtime.hermetic", "swe verified bench defaults to one verified in
   });
 });
 
+contractTest("runtime.hermetic", "swe verified profile validation mode does not require an instance", () => {
+  assert.equal(parseSweVerifiedBenchArgs(["validate-profile"]).mode, "validate-profile");
+});
+
 contractTest("runtime.hermetic", "swe verified bench accepts an explicit Python interpreter", () => {
   const options = parseSweVerifiedBenchArgs([
     "--instance-id",

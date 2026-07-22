@@ -61,15 +61,49 @@ export interface HarnessEfficiencyPlanV1 {
 }
 
 export function runHarnessEfficiency(argv: string[], output: Pick<NodeJS.WriteStream, "write"> = process.stdout): number {
-  const { command, specPath } = parseCommand(argv);
+  const { command, specPath } = parseHarnessEfficiencyCommand(argv);
   const spec = parseExperimentSpec(JSON.parse(readFileSync(specPath, "utf8")), path.dirname(path.resolve(specPath)));
   const plan = createPlan(spec);
+  if (command !== "compare") validatePlanLaneProfiles(plan);
   if (command === "plan") {
     output.write(`${JSON.stringify(plan, null, 2)}\n`);
     return 0;
   }
   if (command === "compare") return comparePlan(plan, output);
   return executePlan(plan, output);
+}
+
+export function validatePlanLaneProfiles(
+  plan: HarnessEfficiencyPlanV1,
+  spawn: typeof spawnSync = spawnSync,
+): void {
+  const lanes = [...new Set(plan.attempts.map((attempt) => attempt.lane))].sort();
+  for (const variantName of ["baseline", "candidate"] as const) {
+    const variant = plan.variants[variantName];
+    for (const lane of lanes) {
+      const command = lane === "swe_verified"
+        ? ["pnpm", "run", "bench:swe", "--", "validate-profile"]
+        : ["python3", "-m", "benchmarks.terminal_bench.job_input", "--validate-profile"];
+      const result = spawn(command[0] as string, command.slice(1), {
+        cwd: variant.sourceRoot,
+        env: {
+          ...process.env,
+          KESTREL_BENCHMARK_PROFILE_FILE: variant.profileFile,
+          KESTREL_BENCHMARK_PROFILE_ID: variant.profileId,
+        },
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+      if (!spawnPassed(result)) {
+        const detail = [result.error?.message, result.stderr, result.stdout]
+          .find((value) => typeof value === "string" && value.trim().length > 0)
+          ?.trim();
+        throw new Error(
+          `${variantName} profile '${variant.profileId}' failed ${lane} contract validation${detail === undefined ? "." : `: ${detail}`}`,
+        );
+      }
+    }
+  }
 }
 
 export function parseExperimentSpec(value: unknown, baseDirectory = process.cwd()): HarnessEfficiencyExperimentSpecV1 {
@@ -324,11 +358,12 @@ export function findNewEfficiencyResultCandidates(searchRoots: string[], started
   return [...candidates].sort();
 }
 
-function parseCommand(argv: string[]): { command: "plan" | "run" | "compare"; specPath: string } {
-  const command = argv[0];
+export function parseHarnessEfficiencyCommand(argv: string[]): { command: "plan" | "run" | "compare"; specPath: string } {
+  const normalized = argv[0] === "--" ? argv.slice(1) : argv;
+  const command = normalized[0];
   if (command !== "plan" && command !== "run" && command !== "compare") throw new Error("Usage: pnpm bench:efficiency -- <plan|run|compare> --spec <file>");
-  if (argv[1] !== "--spec" || argv[2] === undefined || argv.length !== 3) throw new Error("Usage: pnpm bench:efficiency -- <plan|run|compare> --spec <file>");
-  return { command, specPath: path.resolve(argv[2]) };
+  if (normalized[1] !== "--spec" || normalized[2] === undefined || normalized.length !== 3) throw new Error("Usage: pnpm bench:efficiency -- <plan|run|compare> --spec <file>");
+  return { command, specPath: path.resolve(normalized[2]) };
 }
 
 function parseVariant(value: unknown, label: VariantName, baseDirectory: string): VariantSpec {

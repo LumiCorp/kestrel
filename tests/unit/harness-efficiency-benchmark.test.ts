@@ -228,6 +228,47 @@ contractTest("runtime.hermetic", "paired efficiency comparison rejects incomplet
   assert.ok(comparison.reasons.some((reason) => /baseline-accepted pair regressed/u.test(reason)));
 });
 
+contractTest("runtime.hermetic", "paired efficiency comparison does not interpret efficiency without an accepted outcome on each side", () => {
+  const rejectedBaseline = efficiencyResult({
+    lane: "swe_verified",
+    resultId: "baseline-rejected",
+    inputTokens: 1_000,
+    durationMs: 1_000,
+    acceptance: "rejected",
+  });
+  const acceptedBaseline = efficiencyResult({
+    lane: "swe_verified",
+    resultId: "baseline-accepted",
+    inputTokens: 1_000,
+    durationMs: 1_000,
+  });
+  const rejectedCandidate = efficiencyResult({
+    lane: "swe_verified",
+    resultId: "candidate-rejected",
+    inputTokens: 700,
+    durationMs: 900,
+    candidate: true,
+    acceptance: "rejected",
+  });
+  const acceptedCandidate = efficiencyResult({
+    lane: "swe_verified",
+    resultId: "candidate-accepted",
+    inputTokens: 700,
+    durationMs: 900,
+    candidate: true,
+  });
+
+  for (const comparison of [
+    compareHarnessEfficiencyPairsV2({ baseline: [rejectedBaseline], candidate: [rejectedCandidate] }),
+    compareHarnessEfficiencyPairsV2({ baseline: [rejectedBaseline], candidate: [acceptedCandidate] }),
+    compareHarnessEfficiencyPairsV2({ baseline: [acceptedBaseline], candidate: [rejectedCandidate] }),
+  ]) {
+    assert.equal(comparison.passed, false);
+    assert.ok(comparison.reasons.some((reason) => /each have at least one accepted outcome/u.test(reason)));
+    assert.equal(comparison.reasons.some((reason) => /does not improve tokens or priced cost/u.test(reason)), false);
+  }
+});
+
 contractTest("runtime.hermetic", "paired comparison command reads lane artifacts and writes a pass decision", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-efficiency-compare-"));
   try {

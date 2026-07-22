@@ -36,7 +36,7 @@ import {
   readHarnessEfficiencyEconomicsFromReplayBundle,
 } from "../src/economics/index.js";
 
-type CommandMode = "preflight" | "run" | "evaluate" | "list";
+type CommandMode = "preflight" | "validate-profile" | "run" | "evaluate" | "list";
 
 export interface SweVerifiedBenchOptions {
   mode: CommandMode;
@@ -178,7 +178,7 @@ export function parseSweVerifiedBenchArgs(argv: string[]): SweVerifiedBenchOptio
       continue;
     }
 
-    if (arg === "preflight" || arg === "run" || arg === "evaluate" || arg === "list") {
+    if (arg === "preflight" || arg === "validate-profile" || arg === "run" || arg === "evaluate" || arg === "list") {
       mode = arg;
       continue;
     }
@@ -255,7 +255,7 @@ export function parseSweVerifiedBenchArgs(argv: string[]): SweVerifiedBenchOptio
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  if (mode !== "preflight" && instanceId === undefined) {
+  if (mode !== "preflight" && mode !== "validate-profile" && instanceId === undefined) {
     throw new Error("--instance-id is required for SWE Verified run and evaluate modes");
   }
 
@@ -443,6 +443,10 @@ export function assertSweVerifiedJobInputContract(jobInput: Record<string, unkno
     throw new Error("SWE Verified job input must include an embedded profile.");
   }
 
+  assertSweVerifiedProfileContract(profile);
+}
+
+export function assertSweVerifiedProfileContract(profile: Record<string, unknown>): void {
   if (profile.agent !== "reference-react") {
     throw new Error("SWE Verified job profile must use the reference-react agent.");
   }
@@ -547,6 +551,21 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
 
   if (options.mode === "preflight") {
     return runPreflight(deps, resolvePythonBin(options, deps.env));
+  }
+
+  if (options.mode === "validate-profile") {
+    try {
+      const profile = loadBenchmarkProfileOverride(deps.env);
+      if (profile === undefined) {
+        throw new Error("SWE Verified profile validation requires KESTREL_BENCHMARK_PROFILE_FILE and KESTREL_BENCHMARK_PROFILE_ID.");
+      }
+      assertSweVerifiedProfileContract(profile);
+      deps.stdout.write("[bench:swe] profile validation passed.\n");
+      return 0;
+    } catch (error) {
+      deps.stderr.write(`[bench:swe] ${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
   }
 
   const instanceId = options.instanceId as string;
@@ -2423,6 +2442,7 @@ function helpText(): string {
     "",
     "Modes:",
     "  preflight        Check local SWE-bench evaluator prerequisites.",
+    "  validate-profile Validate the selected profile without starting paid work.",
     "  run              Generate one prediction with Kestrel, then evaluate that one instance.",
     "  evaluate         Evaluate an existing predictions.jsonl for one instance.",
     "  list             List recorded attempts for one instance.",

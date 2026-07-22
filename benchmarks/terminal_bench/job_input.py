@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import sys
 import uuid
 from typing import Mapping
 
@@ -179,17 +180,7 @@ def assert_terminal_bench_job_input_contract(job_input: Mapping[str, object]) ->
     profile = job_input.get("profile")
     if not isinstance(profile, Mapping):
         raise AssertionError("Terminal-Bench job input must include a profile.")
-    assert_benchmark_profile_mode(profile, "Terminal-Bench profile")
-    if profile.get("agent") != "reference-react":
-        raise AssertionError("Terminal-Bench profile must use reference-react.")
-    if profile.get("modelProvider") != BENCHMARK_MODEL_PROVIDER:
-        raise AssertionError("Terminal-Bench profile must use OpenRouter.")
-    if profile.get("devShell") != {"enabled": True, "envMode": "inherit", "maxReadBytes": 131072}:
-        raise AssertionError("Terminal-Bench profile must enable inherited dev shell.")
-    if profile.get("toolAllowlist") != TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS:
-        raise AssertionError("Terminal-Bench profile tool allowlist drifted.")
-    if profile.get("guardrails") != benchmark_guardrails():
-        raise AssertionError("Terminal-Bench profile guardrails drifted.")
+    assert_terminal_bench_profile_contract(profile)
 
     turn = job_input.get("turn")
     if not isinstance(turn, Mapping):
@@ -230,6 +221,24 @@ def assert_terminal_bench_job_input_contract(job_input: Mapping[str, object]) ->
         raise AssertionError("Terminal-Bench must not require a managed worktree.")
 
 
+def assert_terminal_bench_profile_contract(profile: Mapping[str, object]) -> None:
+    assert_benchmark_profile_mode(profile, "Terminal-Bench profile")
+    if profile.get("agent") != "reference-react":
+        raise AssertionError("Terminal-Bench profile must use reference-react.")
+    if profile.get("modelProvider") != BENCHMARK_MODEL_PROVIDER:
+        raise AssertionError("Terminal-Bench profile must use OpenRouter.")
+    if profile.get("devShell") != {"enabled": True, "envMode": "inherit", "maxReadBytes": 131072}:
+        raise AssertionError("Terminal-Bench profile must enable inherited dev shell.")
+    tool_allowlist = profile.get("toolAllowlist")
+    if not isinstance(tool_allowlist, list):
+        raise AssertionError("Terminal-Bench profile must include a tool allowlist.")
+    missing_tools = [tool for tool in TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS if tool not in tool_allowlist]
+    if missing_tools:
+        raise AssertionError(f"Terminal-Bench profile is missing required tools: {', '.join(missing_tools)}")
+    if profile.get("guardrails") != benchmark_guardrails():
+        raise AssertionError("Terminal-Bench profile guardrails drifted.")
+
+
 def terminal_bench_job_input_contract_hash(job_input: Mapping[str, object]) -> str:
     canonical = json.dumps(job_input, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -251,3 +260,16 @@ def react_model_stages() -> list[str]:
     return [
         "agent.loop",
     ]
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args != ["--validate-profile"]:
+        raise SystemExit("Usage: python3 -m benchmarks.terminal_bench.job_input --validate-profile")
+    assert_terminal_bench_profile_contract(build_terminal_bench_profile())
+    print("[terminal-bench] profile validation passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

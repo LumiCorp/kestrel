@@ -183,7 +183,11 @@ contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and v
     },
   });
 
-  await io.model(modelRequest());
+  await io.model({
+    ...modelRequest(),
+    model: "model-a",
+    metadata: { requestedProvider: "provider-a" },
+  });
   const ledger = projectEconomicsLedger(runEvents);
 
   assert.equal(ledger.invalidEvents.length, 0);
@@ -192,7 +196,11 @@ contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and v
   assert.equal(ledger.totals.inputTokens, 100);
   assert.equal(ledger.totals.unpricedCalls, 0);
   assert.equal(ledger.calls[0]?.request?.contextPolicyId, "context-policy:test");
+  assert.equal(ledger.calls[0]?.request?.modelProfileId, "provider-a:model-a:v1");
+  assert.equal(typeof ledger.calls[0]?.request?.economicsControlHash, "string");
+  assert.equal(ledger.calls[0]?.request?.economicsControl?.version, 1);
   assert.equal(ledger.calls[0]?.completion?.pricing.status, "priced");
+  assert.equal(ledger.calls[0]?.completion?.pricing.priceVersion, "price:test:v1");
 });
 
 contractTest("runtime.hermetic", "RuntimeIO records stored and exact model-visible tool result economics", async () => {

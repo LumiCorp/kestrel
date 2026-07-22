@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +8,9 @@ import {
   createPlan,
   findNewEfficiencyResultCandidates,
   isCollectedEfficiencyResultPath,
+  parseHarnessEfficiencyCommand,
   parseExperimentSpec,
+  validatePlanLaneProfiles,
 } from "../../scripts/harness-efficiency.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -56,6 +59,62 @@ contractTest("runtime.hermetic", "efficiency spec rejects unknown fields", () =>
     outputDirectory: "results",
     promotionPolicy: {},
   }), /unknown field 'promotionPolicy'/u);
+});
+
+contractTest("runtime.hermetic", "efficiency command accepts the documented pnpm separator", () => {
+  const direct = parseHarnessEfficiencyCommand(["plan", "--spec", "experiment.json"]);
+  const separated = parseHarnessEfficiencyCommand(["--", "plan", "--spec", "experiment.json"]);
+  assert.deepEqual(separated, direct);
+});
+
+contractTest("runtime.hermetic", "efficiency plan validates every variant with each lane-owned profile contract", () => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-efficiency-validation-"));
+  try {
+    const baselineFile = path.join(temporary, "baseline.json");
+    const candidateFile = path.join(temporary, "candidate.json");
+    writeFileSync(baselineFile, JSON.stringify({ profiles: [profile("observe")] }), "utf8");
+    writeFileSync(candidateFile, JSON.stringify({ profiles: [profile("enforce")] }), "utf8");
+    const plan = createPlan(parseExperimentSpec({
+      version: 1,
+      baseline: { sourceRoot: process.cwd(), profileFile: baselineFile, profileId: "economics-test" },
+      candidate: { sourceRoot: process.cwd(), profileFile: candidateFile, profileId: "economics-test" },
+      lanes: [
+        { lane: "swe_verified", dataset: "SWE-bench_Verified", taskIds: ["task-a"] },
+        { lane: "terminal_bench", dataset: "terminal-bench@2.0", taskIds: ["task-b"] },
+      ],
+      trialCount: 1,
+      outputDirectory: path.join(temporary, "results"),
+    }));
+    const commands: string[] = [];
+    const successfulSpawn = ((command: string, args: readonly string[]) => {
+      commands.push([command, ...args].join(" "));
+      return { pid: 1, output: [], stdout: "", stderr: "", status: 0, signal: null };
+    }) as unknown as typeof spawnSync;
+
+    validatePlanLaneProfiles(plan, successfulSpawn);
+
+    assert.deepEqual(commands, [
+      "pnpm run bench:swe -- validate-profile",
+      "python3 -m benchmarks.terminal_bench.job_input --validate-profile",
+      "pnpm run bench:swe -- validate-profile",
+      "python3 -m benchmarks.terminal_bench.job_input --validate-profile",
+    ]);
+
+    const failingSpawn = (() => ({
+      pid: 1,
+      output: [],
+      stdout: "",
+      stderr: "Terminal-Bench profile must enable inherited dev shell.",
+      status: 1,
+      signal: null,
+    })) as unknown as typeof spawnSync;
+    assert.throws(
+      () => validatePlanLaneProfiles(plan, failingSpawn),
+      /failed swe_verified contract validation/u,
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 contractTest("runtime.hermetic", "efficiency result discovery includes the external variant output root", () => {
