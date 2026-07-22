@@ -1,4 +1,4 @@
-import { LogsAdminClient } from "@/app/admin/logs/page-client";
+import { LogsAdminClient } from "./page-client";
 import { getAdminLogStats, listRecentAdminEvents } from "@/lib/admin/logs";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 
