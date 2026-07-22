@@ -9,6 +9,7 @@ export function BrandHomeLink({ className }: { className?: string }) {
       aria-label="Kestrel One home"
       className={cn("flex items-center overflow-hidden", className)}
       href="/"
+      title="Kestrel One home"
     >
       <BrandLockup
         className="group-data-[collapsible=icon]:hidden"
