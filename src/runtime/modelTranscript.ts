@@ -305,9 +305,7 @@ export function planModelTranscriptCompaction(input: {
 
 function readActiveTaskItemFromTranscript(transcript: ModelTranscript): ModelTranscriptItem | undefined {
   return transcript.items.find((item) => {
-    if (item.kind !== "user") {
-      return false;
-    }
+    if (item.kind !== "user") return false;
     const content = item.content?.trim();
     return content !== undefined && content.length > 0;
   });

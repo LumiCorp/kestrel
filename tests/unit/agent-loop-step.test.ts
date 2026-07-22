@@ -386,6 +386,7 @@ const MKDIR_TOOL: ModelToolSpec = {
 
 function buildStep(input?: {
   tools?: ModelToolSpec[];
+  maintenanceModel?: string;
     capabilityManifest?: Array<{
       name: string;
       description: string;
@@ -398,6 +399,7 @@ function buildStep(input?: {
 }) {
   return createAgentLoopStep({
     agentModel: "test/agent",
+    ...(input?.maintenanceModel !== undefined ? { maintenanceModel: input.maintenanceModel } : {}),
     agentToolsProvider: () => input?.tools ?? [READ_TEXT_TOOL],
     capabilityManifestProvider: () => input?.capabilityManifest ?? [
       {
@@ -1989,6 +1991,7 @@ contractTest("runtime.hermetic", "agent loop enforces phase-scoped tool exposure
   assert.ok(capturedRequest);
   assert.equal(capturedRequest.tools?.some((tool) => tool.name === "fs_read_text"), true);
   assert.equal(capturedRequest.tools?.some((tool) => tool.name === "fs_search_text"), false);
+  assert.equal(capturedRequest.tools?.some((tool) => tool.name === "kestrel_finalize"), true);
   const selection = capturedRequest.metadata?.economicsToolExposureSelection as Record<string, unknown>;
   assert.equal(selection.policyMode, "enforce");
   assert.deepEqual(selection.selectedToolNames, ["fs.read_text"]);
@@ -2087,6 +2090,7 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
   assert.equal(transition.status, "RUNNING");
   const compactionRequest = requests.find((request) => request.metadata?.phase === "agent.compaction");
   assert.ok(compactionRequest);
+  assert.equal(requests.some((request) => request.metadata?.phase === "agent.compaction.verify"), false);
   assert.equal((compactionRequest.input as Record<string, unknown>).taskInstruction, originalTask);
   const systemContent = compactionRequest.messages?.find((message) => message.role === "system")?.content;
   assert.equal(typeof systemContent, "string");
@@ -2112,6 +2116,124 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
   assert.match(JSON.stringify(finalRequest.messages), /Retry guidance: call a concrete tool/u);
   const agentPatch = transition.statePatch?.agent as Record<string, unknown>;
   assert.equal(readActiveTaskGoalFromTranscript(agentPatch.modelTranscript), originalTask);
+});
+
+contractTest("runtime.hermetic", "enforced compaction verifies semantics and avoids an undersized maintenance model", async () => {
+  const requests: ModelRequest[] = [];
+  const ctx = context();
+  const largeSchemaTool: ModelToolSpec = {
+    ...READ_TEXT_TOOL,
+    description: "Read a text file. " + "schema ".repeat(10_000),
+  };
+  ctx.event.payload.runtimeAssembly = {
+    modelProvider: "test-provider",
+    model: "test/agent",
+    harnessEconomics: {
+      version: 1,
+      policy: phaseScopedEconomicsPolicy("enforce"),
+      modelProfiles: [
+        {
+          version: 1,
+          profileId: "test-provider:test-agent:v1",
+          provider: "test-provider",
+          model: "test/agent",
+          contextWindowTokens: 10_000,
+          maxOutputTokens: 1_000,
+          counting: {
+            counter: "tiktoken:o200k_base",
+            counterVersion: "1.0.21",
+            method: "model_tokenizer",
+            confidence: "model_compatible",
+          },
+          cache: { behavior: "none" },
+        },
+        {
+          version: 1,
+          profileId: "test-provider:test-small:v1",
+          provider: "test-provider",
+          model: "test/small",
+          contextWindowTokens: 1_000,
+          maxOutputTokens: 200,
+          counting: {
+            counter: "tiktoken:o200k_base",
+            counterVersion: "1.0.21",
+            method: "model_tokenizer",
+            confidence: "model_compatible",
+          },
+          cache: { behavior: "none" },
+        },
+      ],
+    },
+  };
+  ctx.session.state.agent = {
+    modelTranscript: {
+      version: 1,
+      windowId: 1,
+      items: [{
+        id: "mt_1_0001_user",
+        createdAt: "2026-07-22T12:00:00.000Z",
+        kind: "user",
+        content: "Preserve the active task while reducing context cost.",
+      }],
+    },
+  };
+
+  const transition = await buildStep({
+    tools: [largeSchemaTool],
+    maintenanceModel: "test/small",
+    capabilityManifest: [{
+      name: "fs.read_text",
+      description: "Read a text file",
+      capabilityClasses: ["filesystem.read"],
+      executionClass: "read_only",
+      toolFamily: "filesystem",
+    }],
+  })(ctx, {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        return {
+          output: {
+            version: 1,
+            activeTaskItemId: "mt_1_0001_user",
+            decisions: [],
+            constraints: [],
+            evidence: [],
+            fileState: [],
+            blockers: [],
+            nextActions: [],
+            coveredItemIds: [],
+          },
+        } as ModelResponse<unknown>;
+      }
+      if (request.metadata?.phase === "agent.compaction.verify") {
+        return {
+          output: {
+            version: 1,
+            sufficient: true,
+            categories: {
+              activeTask: true,
+              decisions: true,
+              constraints: true,
+              evidence: true,
+              fileState: true,
+              blockers: true,
+              nextActions: true,
+            },
+            reason: "The active task is preserved.",
+          },
+        } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Read the requested file.",
+        nextAction: { kind: "tool", name: "fs.read_text", input: { path: "README.md" } },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(requests.find((request) => request.metadata?.phase === "agent.compaction")?.model, "test/agent");
+  assert.equal(requests.find((request) => request.metadata?.phase === "agent.compaction.verify")?.model, "test/agent");
 });
 
 contractTest("runtime.hermetic", "agent loop exposes mission control context and accepts proactive task proposal", async () => {

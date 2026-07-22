@@ -16,7 +16,7 @@ const CONTROL_FIELDS = new Set(["version", "policy", "modelProfiles"]);
 const POLICY_FIELDS = new Set(["version", "policyId", "mode", "counting", "context", "compaction", "tools", "cache"]);
 const COUNTING_FIELDS = new Set(["estimatorVersion", "allowEstimatedEnforcement"]);
 const CONTEXT_FIELDS = new Set(["outputReserveTokens", "safetyReserveTokens", "sections"]);
-const SECTION_FIELDS = new Set(["id", "priority", "maxTokens"]);
+const SECTION_FIELDS = new Set(["id", "priority"]);
 const COMPACTION_FIELDS = new Set(["requireStructuredAnchors", "maxSummaryAttempts"]);
 const TOOLS_FIELDS = new Set(["exposure", "modelContextMaxTokens", "allowedFamiliesByPhase"]);
 const CACHE_FIELDS = new Set(["mode"]);
@@ -323,12 +323,9 @@ function parseSectionPolicies(value: unknown): ContextSectionPolicyV1[] {
       id,
       priority: requireEnum(
         record.priority,
-        ["required", "elastic", "optional"] as const,
+        ["required", "optional"] as const,
         `Harness economics policy section ${id} priority`,
       ),
-      ...(record.maxTokens !== undefined
-        ? { maxTokens: requireNonNegativeInteger(record.maxTokens, `Harness economics policy section ${id} maxTokens`) }
-        : {}),
     };
   });
 }

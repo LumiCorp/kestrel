@@ -263,13 +263,33 @@ contractTest("runtime.hermetic", "RuntimeIO joins assembly tool selection to the
   assert.equal(exposure?.wouldBlock, false);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO enforcement fails closed before provider dispatch when tool schema exceeds its assembly budget", async () => {
+contractTest("runtime.hermetic", "phase-scoped exposure preserves tools when the phase has no explicit policy", () => {
+  const tool = {
+    name: "fs.read_text",
+    description: "Read a text file.",
+    inputSchema: { type: "object" },
+  };
+  const selected = selectToolsForEconomicsPolicyV1({
+    tools: [tool],
+    capabilityManifest: [{ name: tool.name, toolFamily: "filesystem" }],
+    policy: economicsPolicy({ mode: "enforce", exposure: "phase_scoped", maxToolTokens: 20_000 }),
+    phase: "agent.maintenance",
+  });
+
+  assert.deepEqual(selected.tools, [tool]);
+  assert.equal(selected.selection?.entries[0]?.reason, "phase_filter_inactive");
+  assert.equal(selected.selection?.entries[0]?.effectiveAdmission, "admitted");
+});
+
+contractTest("runtime.hermetic", "RuntimeIO records tool-schema pressure without failing a viable provider request", async () => {
   const emitted: string[] = [];
+  const runEvents: RunEvent[] = [];
   let providerCalled = false;
   const policy = economicsPolicy({ mode: "enforce", exposure: "assembly_allowlist", maxToolTokens: 0 });
   const io = createRuntimeIO({
     signal: new AbortController().signal,
     emitted,
+    runEvents,
     runtimeMetadata: { runtimeAssembly: { harnessEconomics: economicsControl(policy) } },
     modelCall: async () => {
       providerCalled = true;
@@ -277,23 +297,56 @@ contractTest("runtime.hermetic", "RuntimeIO enforcement fails closed before prov
     },
   });
 
-  await assert.rejects(
-    () => io.model({
-      input: { prompt: "hello" },
-      messages: [{ role: "user", content: "hello" }],
-      tools: [{
-        name: "fs.read_text",
-        description: "Read a text file.",
-        inputSchema: { type: "object", properties: { path: { type: "string" } } },
-      }],
-      metadata: { phase: "agent.loop" },
-    }),
-    (error) => readErrorCode(error) === "HARNESS_ECONOMICS_TOOL_EXPOSURE_BLOCKED",
-  );
+  await io.model({
+    input: { prompt: "hello" },
+    messages: [{ role: "user", content: "hello" }],
+    tools: [{
+      name: "fs.read_text",
+      description: "Read a text file.",
+      inputSchema: { type: "object", properties: { path: { type: "string" } } },
+    }],
+    metadata: { phase: "agent.loop" },
+  });
 
-  assert.equal(providerCalled, false);
+  assert.equal(providerCalled, true);
+  assert.equal(projectEconomicsLedger(runEvents).calls[0]?.request?.requestManifest.toolExposure?.wouldBlock, true);
   assert.ok(emitted.includes("economics.model_call.requested"));
-  assert.ok(emitted.includes("economics.model_call.failed"));
+  assert.equal(emitted.includes("economics.model_call.failed"), false);
+});
+
+contractTest("runtime.hermetic", "RuntimeIO observe mode leaves stable-prefix request order unchanged", async () => {
+  const emitted: string[] = [];
+  const modelRequests: ModelRequest[] = [];
+  const policy = economicsPolicy({
+    mode: "observe",
+    exposure: "assembly_allowlist",
+    maxToolTokens: 10_000,
+    cacheMode: "stable_prefix",
+  });
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted,
+    modelRequests,
+    runtimeMetadata: { runtimeAssembly: { harnessEconomics: economicsControl(policy) } },
+  });
+  const request: ModelRequest = {
+    input: { prompt: "hello" },
+    messages: [
+      { role: "user", content: "hello" },
+      { role: "system", content: "system" },
+    ],
+    tools: [
+      { name: "z.tool", description: "Z", inputSchema: { type: "object" } },
+      { name: "a.tool", description: "A", inputSchema: { type: "object" } },
+    ],
+    metadata: { phase: "agent.loop" },
+  };
+
+  await io.model(request);
+
+  assert.deepEqual(modelRequests[0]?.messages, request.messages);
+  assert.deepEqual(modelRequests[0]?.tools, request.tools);
+  assert.equal(modelRequests[0]?.providerOptions, undefined);
 });
 
 contractTest("runtime.hermetic", "RuntimeIO does not enforce estimated tool-schema pressure without explicit assembly permission", async () => {
@@ -334,6 +387,7 @@ function createRuntimeIO(input: {
   toolCallRetryCount?: number | undefined;
   retryableToolErrors?: boolean | undefined;
   runEvents?: RunEvent[] | undefined;
+  modelRequests?: ModelRequest[] | undefined;
   runtimeMetadata?: Record<string, unknown> | undefined;
 }): RuntimeIO {
   let seq = 0;
@@ -351,7 +405,8 @@ function createRuntimeIO(input: {
     deps: {
       store,
       modelGateway: {
-        call: async <T>(_request: ModelRequest, options?: ModelGatewayCallOptions) => {
+        call: async <T>(request: ModelRequest, options?: ModelGatewayCallOptions) => {
+          input.modelRequests?.push(request);
           const result = input.modelCall === undefined ? { ok: true } : await input.modelCall(options);
           return result as T;
         },
@@ -456,6 +511,7 @@ function economicsPolicy(input: {
   exposure: "assembly_allowlist" | "phase_scoped";
   maxToolTokens: number;
   allowEstimatedEnforcement?: boolean | undefined;
+  cacheMode?: "provider_default" | "stable_prefix" | undefined;
 }): HarnessEconomicsPolicyV1 {
   return {
     version: 1,
@@ -472,7 +528,7 @@ function economicsPolicy(input: {
       modelContextMaxTokens: input.maxToolTokens,
       allowedFamiliesByPhase: { "agent.loop": ["filesystem"] },
     },
-    cache: { mode: "provider_default" },
+    cache: { mode: input.cacheMode ?? "provider_default" },
   };
 }
 

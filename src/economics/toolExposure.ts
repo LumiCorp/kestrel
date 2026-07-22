@@ -76,7 +76,7 @@ export function parseToolExposureSelectionV1(value: unknown): ToolExposureSelect
     const policyAdmission = requireAdmission(entry.policyAdmission, `Tool exposure selection entries[${index}].policyAdmission`);
     const effectiveAdmission = requireAdmission(entry.effectiveAdmission, `Tool exposure selection entries[${index}].effectiveAdmission`);
     const reason = entry.reason;
-    if (reason !== "assembly_allowlisted" && reason !== "family_allowed" && reason !== "family_not_allowed" && reason !== "tool_family_missing") {
+    if (reason !== "assembly_allowlisted" && reason !== "phase_filter_inactive" && reason !== "family_allowed" && reason !== "family_not_allowed" && reason !== "tool_family_missing") {
       throw new Error(`Tool exposure selection entries[${index}].reason is invalid.`);
     }
     const toolFamily = entry.toolFamily === undefined
@@ -114,6 +114,9 @@ function decidePolicyAdmission(
   if (policy.tools.exposure === "assembly_allowlist") {
     return { policyAdmission: "admitted", reason: "assembly_allowlisted" };
   }
+  if (allowedFamilies.length === 0) {
+    return { policyAdmission: "admitted", reason: "phase_filter_inactive" };
+  }
   if (toolFamily === undefined) return { policyAdmission: "blocked", reason: "tool_family_missing" };
   return allowedFamilies.includes(toolFamily)
     ? { policyAdmission: "admitted", reason: "family_allowed" }
@@ -138,6 +141,12 @@ function assertEntrySemantics(input: {
   if (input.exposure === "assembly_allowlist") {
     if (input.policyAdmission !== "admitted" || input.reason !== "assembly_allowlisted") {
       throw new Error("Assembly allowlist exposure must admit assembly-selected tools.");
+    }
+    return;
+  }
+  if (input.reason === "phase_filter_inactive") {
+    if (input.allowedFamilies.length !== 0 || input.policyAdmission !== "admitted") {
+      throw new Error("Inactive phase tool exposure must preserve the assembly-selected tools.");
     }
     return;
   }

@@ -1409,7 +1409,7 @@ function applyCachePolicy(
   policy: HarnessEconomicsPolicyV1 | undefined,
   profile: ModelEconomicsProfileV1 | undefined,
 ): ModelRequest {
-  if (policy?.cache.mode !== "stable_prefix") return request;
+  if (policy?.mode !== "enforce" || policy.cache.mode !== "stable_prefix") return request;
   const messages = [...(request.messages ?? [])].sort((left, right) =>
     left.role === "system" && right.role !== "system" ? -1 : left.role !== "system" && right.role === "system" ? 1 : 0
   );
@@ -1481,7 +1481,6 @@ function applyEconomicsContextPolicy(input: {
     .map((section) => section.id));
   const unsupported = decision.manifest.sections.filter((section) =>
     section.effectiveAdmission === "blocked" ||
-    section.effectiveAdmission === "truncated" ||
     (section.effectiveAdmission === "dropped" && optionalDrops.has(section.id) === false)
   );
   if (unsupported.length > 0 || optionalDrops.size === 0) {
@@ -1534,19 +1533,9 @@ function assertEconomicsRequestAdmission(
   manifest: ReturnType<typeof buildModelRequestEconomicsManifest>,
 ): void {
   if (policy?.mode !== "enforce") return;
-  if (manifest.toolExposure?.wouldBlock === true) {
-    throw createRuntimeFailure(
-      "HARNESS_ECONOMICS_TOOL_EXPOSURE_BLOCKED",
-      "Harness economics enforcement blocked a model request whose tool surface violates the selected assembly policy.",
-      {
-        policyId: policy.policyId,
-        phase: manifest.toolExposure.phase,
-        blockReasons: manifest.toolExposure.blockReasons,
-        modelVisibleSchemaTokens: manifest.toolExposure.modelVisibleSchema.tokens,
-        modelContextMaxTokens: manifest.toolExposure.modelContextMaxTokens,
-      },
-    );
-  }
+  // Tool-schema pressure is an efficiency signal, not a reason to make an
+  // otherwise viable user request fail. Explicit assembly filtering happens
+  // before this boundary; this check only records the final provider surface.
   if (manifest.decision !== undefined) {
     const changed = manifest.decision.manifest.sections.some((section) =>
       section.effectiveAdmission !== "admitted" || section.effectiveTokens !== section.proposed.tokens

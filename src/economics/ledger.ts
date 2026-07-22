@@ -581,7 +581,7 @@ function requireContextManifest(value: unknown): void {
     requireString(section.origin, `${field}.origin`);
     if (section.revision !== undefined) requireString(section.revision, `${field}.revision`);
     requireHash(section.contentHash, `${field}.contentHash`);
-    if (section.priority !== undefined && section.priority !== "required" && section.priority !== "elastic" && section.priority !== "optional") throw new Error(`Economics ${field}.priority is invalid.`);
+    if (section.priority !== undefined && section.priority !== "required" && section.priority !== "optional") throw new Error(`Economics ${field}.priority is invalid.`);
     requireTokenCount(section.proposed, `${field}.proposed`);
     requireAdmission(section.policyAdmission, `${field}.policyAdmission`);
     requireString(section.policyReason, `${field}.policyReason`);
@@ -593,7 +593,7 @@ function requireContextManifest(value: unknown): void {
 }
 
 function requireAdmission(value: unknown, field: string): void {
-  if (value !== "admitted" && value !== "truncated" && value !== "dropped" && value !== "blocked") throw new Error(`Economics ${field} is invalid.`);
+  if (value !== "admitted" && value !== "dropped" && value !== "blocked") throw new Error(`Economics ${field} is invalid.`);
 }
 
 function requireStringArray(value: unknown, field: string): void {

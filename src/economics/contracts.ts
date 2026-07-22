@@ -16,12 +16,11 @@ export interface TokenCountV1 {
   counterVersion: string;
 }
 
-export type ContextSectionPriority = "required" | "elastic" | "optional";
+export type ContextSectionPriority = "required" | "optional";
 
 export interface ContextSectionPolicyV1 {
   id: string;
   priority: ContextSectionPriority;
-  maxTokens?: number | undefined;
 }
 
 export interface HarnessEconomicsPolicyV1 {
@@ -101,15 +100,12 @@ export interface ContextSectionCandidateV1 {
   duplicateOf?: string[] | undefined;
 }
 
-export type ContextAdmission = "admitted" | "truncated" | "dropped" | "blocked";
+export type ContextAdmission = "admitted" | "dropped" | "blocked";
 
 export type ContextAdmissionReason =
   | "within_budget"
-  | "truncated_to_section_cap"
-  | "truncated_to_remaining_budget"
   | "optional_budget_exhausted"
   | "required_budget_exhausted"
-  | "section_policy_missing"
   | "estimated_count_not_enforceable";
 
 export interface ContextSectionManifestV1 {
@@ -185,7 +181,7 @@ export interface ToolExposureSelectionEntryV1 {
   toolFamily?: string | undefined;
   policyAdmission: ToolExposureAdmission;
   effectiveAdmission: ToolExposureAdmission;
-  reason: "assembly_allowlisted" | "family_allowed" | "family_not_allowed" | "tool_family_missing";
+  reason: "assembly_allowlisted" | "phase_filter_inactive" | "family_allowed" | "family_not_allowed" | "tool_family_missing";
 }
 
 /**

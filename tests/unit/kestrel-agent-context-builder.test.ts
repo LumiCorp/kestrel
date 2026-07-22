@@ -823,14 +823,47 @@ contractTest("runtime.hermetic", "repeated compaction preserves the active task 
       coveredItemIds: secondReplacedIds,
     },
   });
+  const thirdSource = {
+    ...second,
+    items: [
+      ...second.items,
+      ...Array.from({ length: 30 }, (_, index) => ({
+        id: `third-${index}`,
+        createdAt: `2026-07-22T02:${String(index).padStart(2, "0")}:00.000Z`,
+        kind: "assistant_text" as const,
+        content: `Third-window evidence ${index}`,
+      })),
+    ],
+  };
+  const thirdRetainedIds = new Set(["first-0", ...thirdSource.items.slice(-24).map((item) => item.id)]);
+  const thirdReplacedIds = thirdSource.items.filter((item) => thirdRetainedIds.has(item.id) === false).map((item) => item.id);
+  const third = buildKestrelAgentCompactedTranscript({
+    transcript: thirdSource,
+    summary: {
+      version: 1,
+      activeTaskItemId: "first-0",
+      decisions: [{ text: "Keep the reviewed harness design.", sourceItemIds: thirdReplacedIds }],
+      constraints: [{ text: "Preserve all three compaction windows.", sourceItemIds: thirdReplacedIds }],
+      evidence: [{ text: "Prior windows contain accepted evidence.", sourceItemIds: thirdReplacedIds }],
+      fileState: [{ text: "Workspace state remains attributable.", sourceItemIds: thirdReplacedIds }],
+      blockers: [{ text: "No unresolved blocker may be hidden.", sourceItemIds: thirdReplacedIds }],
+      nextActions: [{ text: "Continue from the retained state.", sourceItemIds: thirdReplacedIds }],
+      coveredItemIds: thirdReplacedIds,
+    },
+  });
 
-  assert.equal(readActiveTaskGoalFromTranscript(second), activeTask);
-  assert.equal(second.compactions?.length, 2);
-  const latestSummary = JSON.parse(second.items.find((item) => item.kind === "compaction_summary")?.content ?? "null") as Record<string, unknown>;
+  assert.equal(readActiveTaskGoalFromTranscript(third), activeTask);
+  assert.equal(third.compactions?.length, 3);
+  const latestSummary = JSON.parse(third.items.find((item) => item.kind === "compaction_summary")?.content ?? "null") as Record<string, unknown>;
   assert.equal(latestSummary.coveredItemIds, undefined);
-  assert.deepEqual(latestSummary.constraints, ["Preserve both compaction windows."]);
-  assert.deepEqual(second.compactions?.at(-1)?.replacedItemIds, secondReplacedIds);
-  assert.equal(typeof second.compactions?.at(-1)?.sourceWindowHash, "string");
+  assert.deepEqual(latestSummary.decisions, ["Keep the reviewed harness design."]);
+  assert.deepEqual(latestSummary.constraints, ["Preserve all three compaction windows."]);
+  assert.deepEqual(latestSummary.evidence, ["Prior windows contain accepted evidence."]);
+  assert.deepEqual(latestSummary.fileState, ["Workspace state remains attributable."]);
+  assert.deepEqual(latestSummary.blockers, ["No unresolved blocker may be hidden."]);
+  assert.deepEqual(latestSummary.nextActions, ["Continue from the retained state."]);
+  assert.deepEqual(third.compactions?.at(-1)?.replacedItemIds, thirdReplacedIds);
+  assert.equal(typeof third.compactions?.at(-1)?.sourceWindowHash, "string");
 });
 
 contractTest("runtime.hermetic", "Kestrel agent context builder owns the provider-facing tool surface", () => {

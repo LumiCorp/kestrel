@@ -9,20 +9,18 @@ import type {
   TokenCountMethod,
 } from "./contracts.js";
 
-const PRIORITY_ORDER: ContextSectionPolicyV1["priority"][] = ["required", "elastic", "optional"];
+const PROTECTED_SECTION_IDS = new Set([
+  "systemPrompt",
+  "task",
+  "correction",
+  "activeWait",
+]);
 
 export class HarnessEconomicsController {
   decide(input: HarnessEconomicsDecisionInputV1): HarnessEconomicsDecisionV1 {
     const sectionPolicyById = new Map(input.policy.context.sections.map((section) => [section.id, section]));
-    const candidateById = new Map(input.sections.map((section) => [section.id, section]));
-    if (candidateById.size !== input.sections.length) {
+    if (new Set(input.sections.map((section) => section.id)).size !== input.sections.length) {
       throw new Error("Harness economics context contains duplicate section ids.");
-    }
-    const missingRequired = input.policy.context.sections.find((section) =>
-      section.priority === "required" && candidateById.has(section.id) === false
-    );
-    if (missingRequired !== undefined) {
-      throw new Error(`Harness economics required context section '${missingRequired.id}' is missing from the provider-bound request.`);
     }
 
     const availableContextTokens = Math.max(
@@ -38,36 +36,26 @@ export class HarnessEconomicsController {
     const enforceable = estimated === false || input.policy.counting.allowEstimatedEnforcement;
     let remaining = availableContextTokens;
     const manifestsById = new Map<string, ContextSectionManifestV1>();
+    const resolvedSections = input.sections.map((candidate) => ({
+      candidate,
+      policy: resolveSectionPolicy(candidate, sectionPolicyById.get(candidate.id)),
+    }));
 
-    for (const priority of PRIORITY_ORDER) {
-      for (const sectionPolicy of input.policy.context.sections) {
-        if (sectionPolicy.priority !== priority) continue;
-        const candidate = candidateById.get(sectionPolicy.id);
-        if (candidate === undefined) continue;
-        const decision = decideSection(candidate, sectionPolicy, remaining);
+    // Reserve room for every required section before considering optional
+    // context. Generic layers never slice semantic content.
+    for (const optional of [false, true]) {
+      for (const { candidate, policy } of resolvedSections) {
+        if ((policy.priority === "optional") !== optional) continue;
+        const decision = decideSection(candidate, policy, remaining);
         remaining = Math.max(0, remaining - decision.policyTokens);
         manifestsById.set(candidate.id, toManifest({
           candidate,
-          sectionPolicy,
+          sectionPolicy: policy,
           decision,
           policyMode: input.policy.mode,
           enforceable,
         }));
       }
-    }
-
-    for (const candidate of input.sections) {
-      if (manifestsById.has(candidate.id)) continue;
-      manifestsById.set(candidate.id, toManifest({
-        candidate,
-        decision: {
-          admission: "blocked",
-          reason: "section_policy_missing",
-          policyTokens: 0,
-        },
-        policyMode: input.policy.mode,
-        enforceable,
-      }));
     }
 
     const sections = input.sections.map((section) => manifestsById.get(section.id) as ContextSectionManifestV1);
@@ -100,7 +88,7 @@ export class HarnessEconomicsController {
         sections,
       },
       admittedSectionIds: sections
-        .filter((section) => section.effectiveAdmission === "admitted" || section.effectiveAdmission === "truncated")
+        .filter((section) => section.effectiveAdmission === "admitted")
         .map((section) => section.id),
       droppedSectionIds: sections
         .filter((section) => section.effectiveAdmission === "dropped")
@@ -117,38 +105,42 @@ function decideSection(
   policy: ContextSectionPolicyV1,
   remaining: number,
 ): { admission: ContextAdmission; reason: ContextAdmissionReason; policyTokens: number } {
-  const cappedTokens = policy.maxTokens === undefined
-    ? candidate.count.tokens
-    : Math.min(candidate.count.tokens, policy.maxTokens);
-  if (policy.priority === "required" && cappedTokens > remaining) {
+  if (policy.priority !== "optional" && candidate.count.tokens > remaining) {
     return {
       admission: "blocked",
       reason: "required_budget_exhausted",
       policyTokens: 0,
     };
   }
-  if (remaining === 0) {
+  if (policy.priority === "optional" && candidate.count.tokens > remaining) {
     return {
       admission: "dropped",
-      reason: policy.priority === "optional" ? "optional_budget_exhausted" : "truncated_to_remaining_budget",
+      reason: "optional_budget_exhausted",
       policyTokens: 0,
-    };
-  }
-  const policyTokens = Math.min(cappedTokens, remaining);
-  if (policyTokens < candidate.count.tokens) {
-    return {
-      admission: "truncated",
-      reason: policy.maxTokens !== undefined && policy.maxTokens < candidate.count.tokens
-        ? "truncated_to_section_cap"
-        : "truncated_to_remaining_budget",
-      policyTokens,
     };
   }
   return {
     admission: "admitted",
     reason: "within_budget",
-    policyTokens,
+    policyTokens: candidate.count.tokens,
   };
+}
+
+function resolveSectionPolicy(
+  candidate: ContextSectionCandidateV1,
+  configured: ContextSectionPolicyV1 | undefined,
+): ContextSectionPolicyV1 {
+  if (isProtectedSection(candidate) || configured === undefined) {
+    return { id: candidate.id, priority: "required" };
+  }
+  return configured;
+}
+
+function isProtectedSection(candidate: ContextSectionCandidateV1): boolean {
+  return PROTECTED_SECTION_IDS.has(candidate.id) ||
+    candidate.id.startsWith("transcript:") ||
+    candidate.origin === "system-prompt" ||
+    candidate.origin.startsWith("model-transcript:");
 }
 
 function toManifest(input: {

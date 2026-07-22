@@ -25,7 +25,7 @@ contractTest("runtime.hermetic", "harness economics policy parser accepts the st
   const policy = parseHarnessEconomicsPolicyV1(policyFixture());
 
   assert.equal(policy.policyId, "economics:test:observe");
-  assert.equal(policy.context.sections[1]?.priority, "elastic");
+  assert.equal(policy.context.sections[1]?.priority, "required");
   assert.deepEqual(policy.tools.allowedFamiliesByPhase, {
     "agent.loop": ["filesystem", "devshell"],
   });
@@ -45,6 +45,16 @@ contractTest("runtime.hermetic", "harness economics policy parser rejects unknow
       },
     }),
     /structured anchors and exactly one summary attempt/u,
+  );
+  assert.throws(
+    () => parseHarnessEconomicsPolicyV1({
+      ...policyFixture(),
+      context: {
+        ...policyFixture().context,
+        sections: [{ id: "transcript", priority: "elastic", maxTokens: 30 }],
+      },
+    }),
+    /unknown field 'maxTokens'/u,
   );
 });
 
@@ -106,8 +116,8 @@ contractTest("runtime.hermetic", "observation mode reports policy pressure witho
     policy: policyFixture(),
     modelProfile: profileFixture(),
     sections: [
-      section("task", 40),
-      section("transcript", 50),
+      section("task", 30),
+      section("transcript", 30),
       section("background", 20),
     ],
     toolSchema: exactCount(5),
@@ -115,20 +125,20 @@ contractTest("runtime.hermetic", "observation mode reports policy pressure witho
   });
 
   assert.equal(decision.manifest.availableContextTokens, 75);
-  assert.equal(decision.manifest.proposedContextTokens, 110);
-  assert.equal(decision.manifest.policyContextTokens, 75);
-  assert.equal(decision.manifest.effectiveContextTokens, 110);
+  assert.equal(decision.manifest.proposedContextTokens, 80);
+  assert.equal(decision.manifest.policyContextTokens, 60);
+  assert.equal(decision.manifest.effectiveContextTokens, 80);
   assert.deepEqual(
     decision.manifest.sections.map((section) => [section.id, section.policyAdmission, section.effectiveAdmission, section.policyTokens]),
     [
-      ["task", "admitted", "admitted", 40],
-      ["transcript", "truncated", "admitted", 30],
-      ["background", "truncated", "admitted", 5],
+      ["task", "admitted", "admitted", 30],
+      ["transcript", "admitted", "admitted", 30],
+      ["background", "dropped", "admitted", 0],
     ],
   );
 });
 
-contractTest("runtime.hermetic", "enforcement applies deterministic required elastic and optional admission", () => {
+contractTest("runtime.hermetic", "enforcement preserves required context and drops optional sections whole", () => {
   const controller = new HarnessEconomicsController();
   const policy: HarnessEconomicsPolicyV1 = {
     ...policyFixture(),
@@ -138,8 +148,8 @@ contractTest("runtime.hermetic", "enforcement applies deterministic required ela
     policy,
     modelProfile: profileFixture(),
     sections: [
-      section("task", 40),
-      section("transcript", 50),
+      section("task", 30),
+      section("transcript", 30),
       section("background", 20),
     ],
     toolSchema: exactCount(5),
@@ -147,9 +157,38 @@ contractTest("runtime.hermetic", "enforcement applies deterministic required ela
   });
 
   assert.equal(decision.manifest.enforceable, true);
-  assert.equal(decision.manifest.effectiveContextTokens, 75);
-  assert.deepEqual(decision.admittedSectionIds, ["task", "transcript", "background"]);
-  assert.deepEqual(decision.droppedSectionIds, []);
+  assert.equal(decision.manifest.effectiveContextTokens, 60);
+  assert.deepEqual(decision.admittedSectionIds, ["task", "transcript"]);
+  assert.deepEqual(decision.droppedSectionIds, ["background"]);
+});
+
+contractTest("runtime.hermetic", "unlisted transcript sections remain protected in enforce mode", () => {
+  const decision = new HarnessEconomicsController().decide({
+    policy: { ...policyFixture(), mode: "enforce" },
+    modelProfile: profileFixture(),
+    sections: [section("transcript:mt_1_0001_user", 20)],
+    toolSchema: EXACT_ZERO,
+    providerOverhead: EXACT_ZERO,
+  });
+
+  assert.equal(decision.manifest.sections[0]?.priority, "required");
+  assert.equal(decision.manifest.sections[0]?.effectiveAdmission, "admitted");
+  assert.deepEqual(decision.blockedSectionIds, []);
+});
+
+contractTest("runtime.hermetic", "core task context cannot be made optional by profile configuration", () => {
+  const policy = policyFixture();
+  policy.context.sections = [{ id: "task", priority: "optional" }];
+  const decision = new HarnessEconomicsController().decide({
+    policy: { ...policy, mode: "enforce" },
+    modelProfile: profileFixture(),
+    sections: [section("task", 80)],
+    toolSchema: exactCount(5),
+    providerOverhead: exactCount(5),
+  });
+
+  assert.equal(decision.manifest.sections[0]?.priority, "required");
+  assert.equal(decision.manifest.sections[0]?.policyAdmission, "blocked");
 });
 
 contractTest("runtime.hermetic", "estimated counts cannot enforce unless the policy explicitly permits them", () => {
@@ -221,7 +260,7 @@ function policyFixture(): HarnessEconomicsPolicyV1 {
       safetyReserveTokens: 5,
       sections: [
         { id: "task", priority: "required" },
-        { id: "transcript", priority: "elastic", maxTokens: 30 },
+        { id: "transcript", priority: "required" },
         { id: "background", priority: "optional" },
       ],
     },
