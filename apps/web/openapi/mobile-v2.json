@@ -1083,7 +1083,8 @@
                   "NOT_FOUND",
                   "CONFLICT",
                   "SERVICE_UNAVAILABLE",
-                  "INTERNAL_ERROR"
+                  "INTERNAL_ERROR",
+                  "ORGANIZATION_SETUP_REQUIRED"
                 ]
               },
               "message": {
@@ -1091,6 +1092,14 @@
               },
               "retryable": {
                 "type": "boolean"
+              },
+              "nextStep": {
+                "type": "string",
+                "enum": [
+                  "model_access",
+                  "workspace_compute",
+                  "environment_execution"
+                ]
               }
             },
             "additionalProperties": false

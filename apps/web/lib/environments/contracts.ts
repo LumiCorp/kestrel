@@ -219,3 +219,20 @@ export function environmentProvisionIdempotencyKey(
 ): string {
   return `environment.provision:${environmentId}`;
 }
+
+export function selectDefaultEnvironmentRecoveryAction(input: {
+  environmentStatus: EnvironmentStatus;
+  operationStatus: "queued" | "running" | "completed" | "failed" | "cancelled";
+}) {
+  if (input.environmentStatus === "ready") return "ready" as const;
+  if (input.operationStatus === "queued" || input.operationStatus === "running") {
+    return "existing" as const;
+  }
+  if (
+    input.environmentStatus === "failed" &&
+    (input.operationStatus === "failed" || input.operationStatus === "cancelled")
+  ) {
+    return "requeue" as const;
+  }
+  return "unsupported" as const;
+}

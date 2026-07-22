@@ -9,6 +9,7 @@ import { routeIdSchema } from "@/lib/knowledge/validation";
 import { mobileThreadDtos } from "@/lib/mobile/dto";
 import { mobileErrorResponse } from "@/lib/mobile/http";
 import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
+import { mobileOrganizationSetupRequiredTurnResponse } from "@/lib/organizations/turn-readiness";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { listThreadsForUser } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
@@ -72,6 +73,9 @@ export async function POST(request: NextRequest) {
     if (!idempotencyKey) {
       return mobileErrorResponse(new Error("Idempotency key required"), 400);
     }
+    const setupRequired =
+      await mobileOrganizationSetupRequiredTurnResponse(organizationId);
+    if (setupRequired) return setupRequired;
     const projectContext = await resolveProjectRuntimeContext({
       projectId: body.projectId ?? null,
       organizationId,

@@ -12,6 +12,7 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
+import { organizationSetupRequiredTurnResponse } from "@/lib/organizations/turn-readiness";
 import {
   archiveThreadForUser,
   assignStandaloneThreadToProject,
@@ -213,15 +214,30 @@ export async function POST(
     }
 
     const persistedMessages = convertToUIMessages(thread.messages);
+    const persistedMessageIds = new Set(
+      persistedMessages.map((message) => message.id)
+    );
+    const newUserMessage = [...body.messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "user" && !persistedMessageIds.has(message.id)
+      );
     const approvalResponse = findNewToolApprovalResponse({
       submittedMessages: body.messages,
       persistedMessages,
     });
-    if (!(submittedUserMessage || approvalResponse)) {
+    if (!(newUserMessage || approvalResponse)) {
       return NextResponse.json(
         { error: "A new user message or approval response is required." },
         { status: 400 }
       );
+    }
+
+    if (newUserMessage) {
+      const setupRequired =
+        await organizationSetupRequiredTurnResponse(organizationId);
+      if (setupRequired) return setupRequired;
     }
 
     const projectContext = await resolveProjectRuntimeContext({
@@ -269,7 +285,7 @@ export async function POST(
       request.headers.get("idempotency-key")?.trim() ||
       (approvalResponse
         ? `approval:${approvalResponse.approvalId}`
-        : submittedUserMessage?.id);
+        : newUserMessage?.id);
     if (!idempotencyKey) {
       return NextResponse.json(
         { error: "An idempotency key is required." },
@@ -298,7 +314,7 @@ export async function POST(
         source: "web",
       });
     } else {
-      if (!submittedUserMessage) {
+      if (!newUserMessage) {
         return NextResponse.json(
           { error: "A new user message or approval response is required." },
           { status: 400 }
@@ -308,8 +324,8 @@ export async function POST(
         threadId: thread.id,
         organizationId,
         authorUserId: user.id,
-        messageId: submittedUserMessage.id,
-        messageParts: submittedUserMessage.parts,
+        messageId: newUserMessage.id,
+        messageParts: newUserMessage.parts,
         idempotencyKey,
         requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext?.contextRevision.id ?? null,

@@ -1,18 +1,25 @@
 "use client";
 
-import { ChevronDownIcon, PlusIcon } from "@radix-ui/react-icons";
+import { ChevronDownIcon } from "@radix-ui/react-icons";
 import { AnimatePresence, motion } from "framer-motion";
 import { Loader2, MailPlus } from "lucide-react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
+  CreateOrganizationDialog,
+  isValidOrganizationSlug,
+} from "@/components/create-organization-dialog";
+import {
   SettingsPanel,
   SettingsPanelContent,
   SettingsPanelHeader,
   SettingsPanelTitle,
+  SettingsActionGroup,
+  SettingsRow,
+  SettingsRows,
+  SettingsSection,
 } from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import CopyButton from "@/components/ui/copy-button";
@@ -78,8 +85,20 @@ export function OrganizationCard(props: {
     (member) => member.userId === session?.user.id
   );
 
+  const canEditOrganization =
+    !activeIsPersonal &&
+    (currentMember?.role === "owner" || currentMember?.role === "admin");
+
   return (
-    <SettingsPanel>
+    <>
+      {!activeIsPersonal && optimisticOrg ? (
+        <OrganizationIdentity
+          canEdit={canEditOrganization}
+          organizationRecord={optimisticOrg}
+          onUpdated={setOptimisticOrg}
+        />
+      ) : null}
+      <SettingsPanel>
       <SettingsPanelHeader>
         <SettingsPanelTitle>Organization</SettingsPanelTitle>
         <div className="flex justify-between">
@@ -352,132 +371,132 @@ export function OrganizationCard(props: {
           </div>
         </div>
       </SettingsPanelContent>
-    </SettingsPanel>
+      </SettingsPanel>
+    </>
   );
 }
 
-function CreateOrganizationDialog() {
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [isSlugEdited, setIsSlugEdited] = useState(false);
-  const [logo, setLogo] = useState<string | null>(null);
+function OrganizationIdentity({
+  canEdit,
+  organizationRecord,
+  onUpdated,
+}: {
+  canEdit: boolean;
+  organizationRecord: ActiveOrganization;
+  onUpdated: (organizationRecord: ActiveOrganization) => void;
+}) {
+  const [name, setName] = useState(organizationRecord.name);
+  const [slug, setSlug] = useState(organizationRecord.slug ?? "");
+  const [logo, setLogo] = useState(organizationRecord.logo ?? "");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!isSlugEdited) {
-      const generatedSlug = name.trim().toLowerCase().replace(/\s+/g, "-");
-      setSlug(generatedSlug);
-    }
-  }, [name, isSlugEdited]);
+    setName(organizationRecord.name);
+    setSlug(organizationRecord.slug ?? "");
+    setLogo(organizationRecord.logo ?? "");
+  }, [organizationRecord]);
 
-  useEffect(() => {
-    if (open) {
-      setName("");
-      setSlug("");
-      setIsSlugEdited(false);
-      setLogo(null);
+  async function save() {
+    const normalizedName = name.trim();
+    const normalizedSlug = slug.trim().toLowerCase();
+    if (!isValidOrganizationSlug(normalizedSlug)) {
+      toast.error("Organization slug is invalid.");
+      return;
     }
-  }, [open]);
+    setBusy(true);
+    try {
+      if (normalizedSlug !== organizationRecord.slug) {
+        const availability = await organization.checkSlug({
+          slug: normalizedSlug,
+        });
+        if (availability.error) throw new Error(availability.error.message);
+        if (!availability.data?.status) {
+          throw new Error("That organization slug is already in use.");
+        }
+      }
+      const updated = await organization.update({
+        organizationId: organizationRecord.id,
+        data: {
+          name: normalizedName,
+          slug: normalizedSlug,
+          logo: logo.trim() || null,
+        },
+      });
+      if (updated.error) throw new Error(updated.error.message);
+      onUpdated({
+        ...organizationRecord,
+        name: normalizedName,
+        slug: normalizedSlug,
+        logo: logo.trim() || null,
+      });
+      toast.success("Organization identity updated.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Organization update failed."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) {
-      const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setLogo(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
+  function readLogo(file: File | undefined) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => setLogo(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+  }
 
   return (
-    <Dialog onOpenChange={setOpen} open={open}>
-      <DialogTrigger asChild>
-        <Button className="w-full gap-2" size="sm" variant="default">
-          <PlusIcon />
-          <p>New Organization</p>
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="w-11/12 sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle>New Organization</DialogTitle>
-          <DialogDescription>
-            Create a new organization to collaborate with your team.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <Label>Organization Name</Label>
-            <Input
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Name"
-              value={name}
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label>Organization Slug</Label>
-            <Input
-              onChange={(e) => {
-                setSlug(e.target.value);
-                setIsSlugEdited(true);
-              }}
-              placeholder="Slug"
-              value={slug}
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label>Logo</Label>
-            <Input accept="image/*" onChange={handleLogoChange} type="file" />
-            {logo && (
-              <div className="mt-2">
-                <Image
-                  alt="Logo preview"
-                  className="h-16 w-16 object-cover"
-                  height={16}
-                  src={logo}
-                  width={16}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-        <DialogFooter>
+    <SettingsSection
+      description="Update the organization details shown in workspace navigation and invitations."
+      title="Organization identity"
+    >
+      <SettingsRows>
+        <SettingsRow label="Name">
+          <Input
+            disabled={!canEdit}
+            maxLength={120}
+            onChange={(event) => setName(event.target.value)}
+            value={name}
+          />
+        </SettingsRow>
+        <SettingsRow label="Slug">
+          <Input
+            disabled={!canEdit}
+            maxLength={63}
+            onChange={(event) => setSlug(event.target.value.toLowerCase())}
+            value={slug}
+          />
+        </SettingsRow>
+        <SettingsRow
+          description="Optional. Upload a replacement or leave the current logo unchanged."
+          label="Logo"
+        >
+          <Input
+            accept="image/*"
+            disabled={!canEdit}
+            onChange={(event) => readLogo(event.target.files?.[0])}
+            type="file"
+          />
+        </SettingsRow>
+      </SettingsRows>
+      {canEdit ? (
+        <SettingsActionGroup className="mt-4">
           <Button
-            disabled={loading}
-            onClick={async () => {
-              setLoading(true);
-              await organization.create(
-                {
-                  name,
-                  slug,
-                  logo: logo || undefined,
-                },
-                {
-                  onResponse: () => {
-                    setLoading(false);
-                  },
-                  onSuccess: () => {
-                    toast.success("Organization created successfully");
-                    setOpen(false);
-                  },
-                  onError: (error: any) => {
-                    toast.error(error.error.message);
-                    setLoading(false);
-                  },
-                }
-              );
-            }}
+            disabled={busy || !name.trim() || !slug.trim()}
+            onClick={() => void save()}
+            size="sm"
           >
-            {loading ? (
-              <Loader2 className="animate-spin" size={16} />
-            ) : (
-              "Create"
-            )}
+            {busy ? "Saving…" : "Save identity"}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          {logo ? (
+            <Button onClick={() => setLogo("")} size="sm" variant="ghost">
+              Remove logo
+            </Button>
+          ) : null}
+        </SettingsActionGroup>
+      ) : null}
+    </SettingsSection>
   );
 }
 

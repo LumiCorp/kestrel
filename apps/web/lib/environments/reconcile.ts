@@ -56,15 +56,21 @@ export async function reconcileHostedEnvironments() {
     .selectDistinct({ organizationId: schema.environments.organizationId })
     .from(schema.environments)
     .where(isNull(schema.environments.archivedAt));
-  const provider =
-    organizations.length > 0 ? await createFlyProviderClient() : null;
   for (const organization of organizations) {
-    if (!provider) break;
-    const result = await reconcileOrganizationEnvironments({
-      provider,
-      organizationId: organization.organizationId,
-      now,
-    });
+    let result;
+    try {
+      result = await reconcileOrganizationEnvironments({
+        provider: await createFlyProviderClient(organization.organizationId),
+        organizationId: organization.organizationId,
+        now,
+      });
+    } catch (error) {
+      console.error("Organization Environment reconciliation failed.", {
+        organizationId: organization.organizationId,
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+      continue;
+    }
     environmentGatewayCount += result.environmentGatewayCount;
     workspaceCount += result.workspaceCount;
     adoptedVolumeCount += result.adoptedVolumeCount;

@@ -3,6 +3,7 @@ import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
 import {
   type ComposerTransportStatus,
+  isComposerPrimaryActionBlockedBySetup,
   resolveComposerPresentation,
 } from "@/lib/turns/composer-presentation";
 
@@ -69,6 +70,15 @@ contractTest("web.hermetic", "idle empty and populated composers resolve disable
     disabled: false,
     kind: "send",
   });
+});
+
+contractTest("web.hermetic", "setup blocks submissions but preserves safety and response actions", () => {
+  assert.equal(isComposerPrimaryActionBlockedBySetup("send", true), true);
+  assert.equal(isComposerPrimaryActionBlockedBySetup("queue", true), true);
+  assert.equal(isComposerPrimaryActionBlockedBySetup("stop", true), false);
+  assert.equal(isComposerPrimaryActionBlockedBySetup("reset", true), false);
+  assert.equal(isComposerPrimaryActionBlockedBySetup("respond", true), false);
+  assert.equal(isComposerPrimaryActionBlockedBySetup("send", false), false);
 });
 
 contractTest("web.hermetic", "uploads disable an otherwise available send action", () => {

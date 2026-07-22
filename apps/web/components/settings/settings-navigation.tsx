@@ -13,6 +13,7 @@ import {
   PlugZap,
   ScrollText,
   Server,
+  Sparkles,
   ShieldCheck,
   User,
   Users,
@@ -41,6 +42,11 @@ const personalItems: SettingsItem[] = [
 ];
 
 const organizationItems: SettingsItem[] = [
+  {
+    href: "/settings/organization/setup",
+    icon: Sparkles,
+    label: "Setup",
+  },
   {
     href: "/settings/organization/members",
     icon: Building2,
@@ -116,16 +122,27 @@ function isItemActive(pathname: string, href: string) {
 export function SettingsNavigation({
   canManageOrganization,
   isAppAdmin,
+  showOrganizationSetup,
 }: {
   canManageOrganization: boolean;
   isAppAdmin: boolean;
+  showOrganizationSetup: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const groups: SettingsGroup[] = [
     { label: "Personal", items: personalItems },
     ...(canManageOrganization
-      ? [{ label: "Organization", items: organizationItems }]
+      ? [
+          {
+            label: "Organization",
+            items: showOrganizationSetup
+              ? organizationItems
+              : organizationItems.filter(
+                  (item) => item.href !== "/settings/organization/setup"
+                ),
+          },
+        ]
       : []),
     ...(isAppAdmin ? [{ label: "Platform", items: platformItems }] : []),
   ];
