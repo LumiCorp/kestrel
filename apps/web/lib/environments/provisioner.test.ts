@@ -356,6 +356,9 @@ contractTest("web.hermetic", "Environment updates recover an incompatible stoppe
     calls.push(`provider:image:${input.machineId}`);
     return { id: input.machineId, state: "started", region: "iad" };
   };
+  provider.startMachine = async () => {
+    calls.push("provider:start");
+  };
   const backupInputs: Array<{
     preDestructiveSnapshot?: { id: string; state: string } | undefined;
   }> = [];
@@ -378,12 +381,13 @@ contractTest("web.hermetic", "Environment updates recover an incompatible stoppe
     id: "pre-destructive-snapshot",
     state: "created",
   });
-  assert.deepEqual(calls.slice(0, 9), [
+  assert.deepEqual(calls.slice(0, 10), [
     "operation:stage:environment.update.backing_up",
     "backup:workspace-id",
     "provider:snapshot:workspace-volume-id",
     "workspace:starting",
     "provider:image:workspace-machine-id",
+    "provider:start",
     "provider:health",
     "workspace:rebuilt",
     "backup:workspace-id",
