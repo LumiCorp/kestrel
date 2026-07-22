@@ -263,5 +263,6 @@ contractTest("runtime.hermetic", "RetryingModelGateway never starts a hidden ret
     "attempt.started:1",
     "reasoning.delta:1",
     "reasoning.failed:1",
+    "attempt.failed:1",
   ]);
 });

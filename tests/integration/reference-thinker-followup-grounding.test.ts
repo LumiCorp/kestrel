@@ -5,6 +5,7 @@ import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -94,7 +95,7 @@ contractTest("runtime.process", "reference thinker avoids ungrounded fetch actio
     async call<T>(name: string, input: unknown): Promise<T> {
       toolCalls.push({ name, input });
       if (name === "internet.search") {
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           status: "ok",
           provider: "tavily",
           attempts: 1,
@@ -110,14 +111,14 @@ contractTest("runtime.process", "reference thinker avoids ungrounded fetch actio
               snippet: "Baltimore pivoted after the Maxx Crosby trade path collapsed.",
             },
           ],
-        } as T;
+        } }) as T;
       }
       if (name === "FinalizeAnswer") {
         finalized.push(input as Record<string, unknown>);
-        return {
+        return buildAgentToolSuccessResult({ toolName: name, input, output: {
           accepted: true,
           payload: input,
-        } as T;
+        } }) as T;
       }
       throw new Error(`Unexpected tool call '${name}'`);
     },

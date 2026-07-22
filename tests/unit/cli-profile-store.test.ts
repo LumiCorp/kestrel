@@ -485,6 +485,60 @@ contractTest("runtime.hermetic", "parseProfilesFile validates mcpServers schema 
   }, /header 'Authorization'/);
 });
 
+contractTest("runtime.hermetic", "parseProfilesFile strictly validates harness economics configuration", () => {
+  const baseProfile = {
+    id: "reference",
+    label: "Reference React",
+    agent: "reference-react",
+    sessionPrefix: "reference",
+    harnessEconomicsPolicy: {
+      version: 1,
+      policyId: "economics:reference:observe:v1",
+      mode: "observe",
+      counting: { estimatorVersion: "utf8-byte-upper-bound:v1", allowEstimatedEnforcement: false },
+      context: {
+        outputReserveTokens: 8_000,
+        safetyReserveTokens: 2_000,
+        sections: [{ id: "active-task", priority: "required" }],
+      },
+      compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
+      tools: {
+        exposure: "assembly_allowlist",
+        modelContextMaxTokens: 4_000,
+        allowedFamiliesByPhase: { agent: ["filesystem"] },
+      },
+    },
+    modelEconomicsProfile: {
+      version: 1,
+      profileId: "openrouter:model-a:v1",
+      provider: "openrouter",
+      model: "model-a",
+      contextWindowTokens: 100_000,
+      maxOutputTokens: 8_000,
+      counting: {
+        counter: "tokenizer-a",
+        counterVersion: "1",
+        method: "exact",
+        confidence: "exact",
+      },
+    },
+  };
+  const parsed = parseProfilesFile(JSON.stringify({ version: 4, profiles: [baseProfile] }));
+
+  assert.equal(parsed.profiles[0]?.harnessEconomicsPolicy?.policyId, "economics:reference:observe:v1");
+  assert.equal(parsed.profiles[0]?.modelEconomicsProfile?.profileId, "openrouter:model-a:v1");
+  assert.throws(
+    () => parseProfilesFile(JSON.stringify({
+      version: 4,
+      profiles: [{
+        ...baseProfile,
+        harnessEconomicsPolicy: { ...baseProfile.harnessEconomicsPolicy, threshold: 0.8 },
+      }],
+    })),
+    /unknown field 'threshold'/u,
+  );
+});
+
 contractTest("runtime.hermetic", "parseProfilesFile preserves MCP tool approval and interaction-mode metadata", () => {
   const parsed = parseProfilesFile(JSON.stringify({
     version: 3,

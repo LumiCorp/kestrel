@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseHarnessEfficiencyLedgerV1, parseHarnessEfficiencyResultV1 } from "../../src/economics/index.js";
 
 import {
   assertSweVerifiedJobInputContract,
@@ -16,13 +17,71 @@ import {
   sanitizeSweVerifiedIssueText,
   sanitizeSweVerifiedInstance,
   shouldIncludeSweVerifiedRunnerSourceFile,
+  writeSweVerifiedEfficiencyResult,
 } from "../../scripts/swe-verified-bench.js";
 import { contractTest } from "../helpers/contract-test.js";
+import { economicsReplayBundleFixture } from "../helpers/economics-replay-fixture.js";
 
 
 const TEST_SOURCE_BASE_COMMIT = "d16bfe05a744909de4b27f5875fe0d4ed41ce607";
 const TEST_PREPARED_BASELINE_COMMIT = "b".repeat(40);
 const TEST_PREPARED_BASELINE_TREE = "c".repeat(40);
+
+contractTest("runtime.hermetic", "SWE efficiency result joins runtime calls and independent evaluation in one ledger artifact", () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-efficiency-ledger-"));
+  try {
+    const outputPath = path.join(tmp, "harness-efficiency-result.json");
+    const replayBundlePath = path.join(tmp, "runtime-replay-bundle.json");
+    const jobInputPath = path.join(tmp, "job-input.json");
+    const jobOutputPath = path.join(tmp, "job-output.json");
+    const evaluatorReportPath = path.join(tmp, "evaluator-report.json");
+    const jobInput = { profile: { defaultInteractionMode: "build", defaultActSubmode: "full_auto" } };
+    writeFileSync(replayBundlePath, JSON.stringify(economicsReplayBundleFixture("run-swe-ledger", "session-swe-ledger")), "utf8");
+    writeFileSync(jobInputPath, JSON.stringify(jobInput), "utf8");
+    writeFileSync(jobOutputPath, JSON.stringify({ version: "job_output_v1" }), "utf8");
+    writeFileSync(evaluatorReportPath, JSON.stringify({ resolved_instances: 1, unresolved_instances: 0 }), "utf8");
+
+    writeSweVerifiedEfficiencyResult({
+      outputPath,
+      replayBundlePath,
+      jobInputPath,
+      jobOutputPath,
+      evaluatorReportPath,
+      dataset: "SWE-bench/SWE-bench_Verified",
+      split: "test",
+      instance: {
+        instance_id: "astropy__astropy-12907",
+        repo: "astropy/astropy",
+        base_commit: TEST_SOURCE_BASE_COMMIT,
+        problem_statement: "Fix separability.",
+      },
+      attemptId: "attempt-ledger",
+      durationMs: 100,
+      sourceHash: "c".repeat(64),
+      modelName: "model-a",
+      jobInput,
+      evaluation: {
+        status: 0,
+        outputPath: path.join(tmp, "evaluator-output.txt"),
+        reportPath: evaluatorReportPath,
+        report: { status: 0, resolved_instances: 1, unresolved_instances: 0 },
+      },
+      kestrelJobSummary: { runId: "run-swe-ledger", sessionId: "session-swe-ledger", threadId: "thread-swe-ledger" },
+      options: { maxWorkers: 1, timeout: 1_800 },
+      env: {},
+    });
+
+    const result = parseHarnessEfficiencyResultV1(JSON.parse(readFileSync(outputPath, "utf8")));
+    const ledgerPath = path.join(tmp, "harness-efficiency-ledger.json");
+    const ledger = parseHarnessEfficiencyLedgerV1(JSON.parse(readFileSync(ledgerPath, "utf8")));
+    assert.equal(result.economics.status, "complete");
+    assert.equal(result.economics.tokensPerAcceptedSuccess, 12);
+    assert.equal(ledger.events.at(-1)?.type, "economics.run_outcome.evaluated");
+    assert.equal(result.artifacts.some((artifact) => artifact.kind === "efficiency_ledger"), true);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 function isSwePrepareImagesCall(command: string, args: readonly string[]): boolean {
   return command === "python3" && String(args[0]).endsWith("swe-verified-prepare-images.py");
@@ -768,7 +827,9 @@ contractTest("runtime.hermetic", "swe verified bench creates attempt-local artif
     const runnerDockerfile = readFileSync(path.join(attemptRoot, "runner-image", "Dockerfile"), "utf8");
     assert.match(runnerDockerfile, /RUN pnpm --filter @kestrel-agents\/protocol run build:self/u);
     assert.doesNotMatch(runScript, /--store/u);
-    assert.match(runScript, /kestrel_status=\$\?\ncd \/opt\/kestrel\nnode --import tsx/u);
+    assert.match(runScript, /kestrel_status=\$\?/u);
+    assert.match(runScript, /runtime bundle --run-id "\$run_id" --out \/kestrel-attempt\/runtime-replay-bundle\.json/u);
+    assert.match(runScript, /cd \/opt\/kestrel\nnode --import tsx/u);
     assert.match(runScript, /swe-verified-workspace-patch\.ts/u);
     assert.match(runScript, /--baseline-repo \/kestrel-baseline/u);
     assert.match(runScript, /--mode export/u);
@@ -846,6 +907,13 @@ contractTest("runtime.hermetic", "swe verified bench creates attempt-local artif
         unresolved_instances: 1,
       },
     );
+    const efficiency = parseHarnessEfficiencyResultV1(JSON.parse(
+      readFileSync(path.join(attemptRoot, "harness-efficiency-result.json"), "utf8"),
+    ));
+    assert.equal(efficiency.lane, "swe_verified");
+    assert.equal(efficiency.outcome.acceptance, "rejected");
+    assert.equal(efficiency.economics.status, "incomplete");
+    assert.deepEqual(efficiency.economics.missingFields, ["runtimeReplayBundle", "efficiencyLedger"]);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -1173,6 +1241,13 @@ contractTest("runtime.hermetic", "swe verified bench rejects empty patches befor
 
     assert.equal(code, 1);
     assert.match(stderr, /final submission is empty/u);
+    const efficiency = parseHarnessEfficiencyResultV1(JSON.parse(readFileSync(path.join(
+      tmp,
+      "runs/swe-verified/kestrel-swe-astropy__astropy-12907/attempts/20260602T123456789Z/harness-efficiency-result.json",
+    ), "utf8")));
+    assert.equal(efficiency.outcome.acceptance, "not_evaluated");
+    assert.equal(efficiency.outcome.independentlyEvaluated, false);
+    assert.equal(efficiency.outcome.failureClass, "empty_patch");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -1241,6 +1316,12 @@ contractTest("runtime.hermetic", "swe verified bench reports patch harvesting fa
     assert.equal(latest.terminal_status, "patch_harvest_failed");
     assert.equal(latest.workspace_patch_status, "failed");
     assert.equal(latest.evaluator_ran, false);
+    const efficiency = parseHarnessEfficiencyResultV1(JSON.parse(readFileSync(path.join(
+      tmp,
+      "runs/swe-verified/kestrel-swe-astropy__astropy-12907/attempts/20260602T123456789Z/harness-efficiency-result.json",
+    ), "utf8")));
+    assert.equal(efficiency.outcome.acceptance, "not_evaluated");
+    assert.equal(efficiency.outcome.failureClass, "patch_harvest_failed");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

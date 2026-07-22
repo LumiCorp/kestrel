@@ -5,6 +5,21 @@ import type { ProgressPhase, ProgressUpdateV1, RunToolPhase, RunToolUpdateV1 } f
 import type { GuardrailConfig, RuntimeDependencies } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelGatewayStreamEvent, ModelRequest, ModelResponse, ModelUsage, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
 import type { ProviderReasoningRetentionPolicy } from "../runtime/ProviderReasoningVault.js";
+import {
+  attributeModelCallPrice,
+  buildModelRequestEconomicsManifest,
+  buildToolResultEconomicsManifest,
+  createEconomicsLedgerEventMetadata,
+  economicsRunEventType,
+  normalizeEconomicsUsage,
+  parseToolExposureSelectionV1,
+} from "../economics/index.js";
+import {
+  parseContextSectionCandidatesV1,
+  parseHarnessEconomicsPolicyV1,
+  parseModelEconomicsProfileV1,
+} from "../economics/policy.js";
+import type { HarnessEconomicsPolicyV1, ModelEconomicsProfileV1 } from "../economics/contracts.js";
 
 import type { Guardrails } from "./Guardrails.js";
 import { type ToolJobQueue, ToolQueueOverflowError } from "./ToolJobQueue.js";
@@ -24,7 +39,7 @@ import {
   createToolConsoleBridge,
   emitDevShellConsoleStatus,
 } from "./ExecutionEngineConsoleBridge.js";
-import { RunCancelledError } from "../runtime/RuntimeFailure.js";
+import { RunCancelledError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
 interface RuntimeIOProgressContext {
   runId: string;
@@ -212,6 +227,8 @@ export class RuntimeIO {
       },
     };
     const runtimeAssembly = asPlainRecord(this.options.runtimeMetadata?.runtimeAssembly);
+    const economicsModelProfile = readEconomicsModelProfile(runtimeAssembly);
+    const economicsPolicy = readHarnessEconomicsPolicy(runtimeAssembly);
     const turnId = readNonEmptyString(
       this.options.runtimeMetadata?.turnId ?? this.options.runtimeMetadata?.activeTurnId,
     );
@@ -256,6 +273,18 @@ export class RuntimeIO {
       threadId,
     });
     const toolManifestHash = Array.isArray(request.tools) ? hashUnknown(request.tools) : undefined;
+    const requestEconomicsManifest = buildModelRequestEconomicsManifest({
+      request: providerRequest,
+      ...(requestMetadata.contextSections !== undefined
+        ? { contextSections: parseContextSectionCandidatesV1(requestMetadata.contextSections) }
+        : {}),
+      ...(economicsPolicy !== undefined ? { policy: economicsPolicy } : {}),
+      ...(economicsModelProfile !== undefined ? { modelProfile: economicsModelProfile } : {}),
+      phase: requestedPhase,
+      ...(requestMetadata.economicsToolExposureSelection !== undefined
+        ? { toolExposureSelection: parseToolExposureSelectionV1(requestMetadata.economicsToolExposureSelection) }
+        : {}),
+    });
     const modelRequestMetadata: Record<string, unknown> = {
       callId,
       stepAgent:
@@ -345,6 +374,22 @@ export class RuntimeIO {
       },
       progress.stepIndex,
     );
+    await this.appendEconomicsEvent({
+      kind: "model_call.requested",
+      callId,
+      providerPayloadHash,
+      componentHash,
+      ...(toolManifestHash !== undefined ? { toolManifestHash } : {}),
+      ...(requestedProvider !== undefined ? { provider: requestedProvider } : {}),
+      ...(requestedModel !== undefined ? { model: requestedModel } : {}),
+      modelBudgetClass,
+      phase: requestedPhase,
+      ...(assemblyId !== undefined ? { assemblyId } : {}),
+      ...(readNonEmptyString(runtimeAssembly?.contextPolicyId) !== undefined
+        ? { contextPolicyId: readNonEmptyString(runtimeAssembly?.contextPolicyId) }
+        : {}),
+      requestManifest: requestEconomicsManifest,
+    });
     await this.options.appendRunEvent(
       progress.runId,
       progress.sessionId,
@@ -363,6 +408,7 @@ export class RuntimeIO {
     const heartbeatMessage = "Still working on model response...";
     try {
       throwIfRuntimeIOAborted(progress.signal);
+      assertEconomicsRequestAdmission(economicsPolicy, requestEconomicsManifest);
       const result = await this.options.withProgressHeartbeat(
         {
           runId: progress.runId,
@@ -379,7 +425,11 @@ export class RuntimeIO {
           }, {
             ...(progress.signal !== undefined ? { signal: progress.signal } : {}),
             onEvent: async (event) => {
-              await this.emitModelReasoningEvent(event, requestedProvider, requestedModel);
+              await this.emitModelGatewayEvent(event, {
+                callId,
+                provider: requestedProvider,
+                model: requestedModel,
+              });
             },
           }),
       );
@@ -388,22 +438,27 @@ export class RuntimeIO {
         await this.options.deps.providerReasoningVault.captureResponse(result, reasoningContext);
       }
       const modelUsage = this.options.extractModelUsage(result);
+      const economicsUsage = normalizeEconomicsUsage(modelUsage);
       guardrails.onModelUsage(modelUsage);
       const modelMetadata = this.options.extractModelMetadata(result);
+      const actualProvider = readNonEmptyString(modelMetadata?.provider) ?? requestedProvider;
+      const actualModel = readNonEmptyString(modelMetadata?.model) ?? requestedModel;
+      const completedAt = new Date().toISOString();
+      const latencyMs = Date.now() - startedAt;
       await this.options.persistModelResponseDump({
         promptDump,
         callId,
         progress,
         status: "COMPLETED",
-        completedAt: new Date().toISOString(),
-        latencyMs: Date.now() - startedAt,
+        completedAt,
+        latencyMs,
         response: redactModelResponseForDiagnostics(result),
       });
       await this.options.deps.store.updateModelCallProvenance?.({
         callId,
         status: "COMPLETED",
-        completedAt: new Date().toISOString(),
-        latencyMs: Date.now() - startedAt,
+        completedAt,
+        latencyMs,
         metadata: {
           promptRetention: "hash_only",
           modelBudgetClass,
@@ -411,12 +466,27 @@ export class RuntimeIO {
           ...(modelUsage !== undefined ? { usage: modelUsage } : {}),
         },
       });
+      await this.appendEconomicsEvent({
+        kind: "model_call.completed",
+        callId,
+        ...(actualProvider !== undefined ? { provider: actualProvider } : {}),
+        ...(actualModel !== undefined ? { model: actualModel } : {}),
+        latencyMs,
+        usage: economicsUsage,
+        pricing: attributeModelCallPrice({
+          usage: economicsUsage,
+          profile: economicsModelProfile,
+          provider: actualProvider,
+          model: actualModel,
+        }),
+      });
       await this.options.appendRunEvent(
         progress.runId,
         progress.sessionId,
         "model.completed",
         "INFO",
         {
+          callId,
           stepAgent:
             typeof requestMetadata.stepAgent === "string" && requestMetadata.stepAgent.trim().length > 0
               ? requestMetadata.stepAgent
@@ -447,20 +517,22 @@ export class RuntimeIO {
       return result;
     } catch (error) {
       const mappedError = this.options.mapError(error);
+      const completedAt = new Date().toISOString();
+      const latencyMs = Date.now() - startedAt;
       await this.options.persistModelResponseDump({
         promptDump,
         callId,
         progress,
         status: "FAILED",
-        completedAt: new Date().toISOString(),
-        latencyMs: Date.now() - startedAt,
+        completedAt,
+        latencyMs,
         error: mappedError,
       });
       await this.options.deps.store.updateModelCallProvenance?.({
         callId,
         status: "FAILED",
-        completedAt: new Date().toISOString(),
-        latencyMs: Date.now() - startedAt,
+        completedAt,
+        latencyMs,
         metadata: {
           promptRetention: "hash_only",
           modelBudgetClass,
@@ -468,6 +540,13 @@ export class RuntimeIO {
           error: mappedError.code,
         },
       });
+      await this.appendEconomicsEvent({
+        kind: "model_call.failed",
+        callId,
+        latencyMs,
+        failureCode: mappedError.code,
+        failureClass: readNonEmptyString(asPlainRecord(mappedError.details)?.classification) ?? "unclassified",
+      }, "WARN");
       await this.options.emitProgressFromSequence({
         runId: progress.runId,
         sessionId: progress.sessionId,
@@ -482,6 +561,58 @@ export class RuntimeIO {
       });
       throw error;
     }
+  }
+
+  private async appendEconomicsEvent(
+    draft: Parameters<typeof createEconomicsLedgerEventMetadata>[0],
+    level: "INFO" | "WARN" | "ERROR" = "INFO",
+  ): Promise<void> {
+    const metadata = createEconomicsLedgerEventMetadata(draft);
+    await this.options.appendRunEvent(
+      this.options.progress.runId,
+      this.options.progress.sessionId,
+      economicsRunEventType(metadata.kind),
+      level,
+      { ...metadata },
+      this.options.progress.stepIndex,
+    );
+  }
+
+  private async emitModelGatewayEvent(
+    event: ModelGatewayStreamEvent,
+    model: { callId: string; provider?: string | undefined; model?: string | undefined },
+  ): Promise<void> {
+    if (event.type === "attempt.started") {
+      await this.appendEconomicsEvent({
+        kind: "model_attempt.started",
+        callId: model.callId,
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        ...(model.provider !== undefined ? { provider: model.provider } : {}),
+        ...(model.model !== undefined ? { model: model.model } : {}),
+      });
+    } else if (event.type === "attempt.completed") {
+      await this.appendEconomicsEvent({
+        kind: "model_attempt.completed",
+        callId: model.callId,
+        attempt: event.attempt,
+        latencyMs: event.latencyMs,
+      });
+    } else if (event.type === "attempt.failed") {
+      await this.appendEconomicsEvent({
+        kind: "model_attempt.failed",
+        callId: model.callId,
+        attempt: event.attempt,
+        latencyMs: event.latencyMs,
+        ...(event.failureCode !== undefined ? { failureCode: event.failureCode } : {}),
+        failureClass: event.failureClass ?? "unclassified",
+        retryable: event.retryable,
+        willRetry: event.willRetry,
+        visibleOutputStarted: event.visibleOutputStarted,
+        ...(event.retryDelayMs !== undefined ? { retryDelayMs: event.retryDelayMs } : {}),
+      }, "WARN");
+    }
+    await this.emitModelReasoningEvent(event, model.provider, model.model);
   }
 
   private async emitModelReasoningEvent(
@@ -730,6 +861,15 @@ export class RuntimeIO {
         toolInput: effectiveToolInput,
         result,
         sessionState,
+      });
+      await this.appendEconomicsEvent({
+        kind: "tool_result.recorded",
+        callId: toolCallId,
+        toolCallId,
+        toolName: name,
+        status: result.status,
+        latencyMs: Date.now() - startedAt,
+        resultManifest: buildToolResultEconomicsManifest(result),
       });
       const resultRecord = asPlainRecord(result);
       const auditRecord = asPlainRecord(resultRecord?.auditRecord);
@@ -994,6 +1134,8 @@ export function buildRunToolUpdate(input: {
   durationMs?: number | undefined;
 }): RunToolUpdateV1 {
   const outputRecord = asPlainRecord(input.output);
+  const auditRecord = asPlainRecord(outputRecord?.auditRecord);
+  const activityOutput = auditRecord?.output ?? input.output;
   return {
     version: "v1",
     runId: input.runId,
@@ -1009,7 +1151,7 @@ export function buildRunToolUpdate(input: {
     toolFamily: readToolFamily(input.toolName),
     provider: readToolProvider(input.toolName),
     ...(input.input !== undefined ? { input: sanitizeToolActivityValue(input.input) } : {}),
-    ...(input.output !== undefined ? { output: sanitizeToolActivityValue(input.output) } : {}),
+    ...(input.output !== undefined ? { output: sanitizeToolActivityValue(activityOutput) } : {}),
     ...(asPlainRecord(outputRecord?.presentation) !== undefined
       ? { presentation: outputRecord?.presentation as RunToolUpdateV1["presentation"] }
       : {}),
@@ -1221,6 +1363,56 @@ function readProviderReasoningRetention(value: unknown): ProviderReasoningRetent
     throw new Error("Invalid provider reasoning retention policy");
   }
   return { mode, days };
+}
+
+function readEconomicsModelProfile(
+  runtimeAssembly: Record<string, unknown> | undefined,
+): ModelEconomicsProfileV1 | undefined {
+  const value = runtimeAssembly?.modelEconomicsProfile;
+  return value === undefined ? undefined : parseModelEconomicsProfileV1(value);
+}
+
+function readHarnessEconomicsPolicy(
+  runtimeAssembly: Record<string, unknown> | undefined,
+): HarnessEconomicsPolicyV1 | undefined {
+  const value = runtimeAssembly?.economicsPolicy;
+  return value === undefined ? undefined : parseHarnessEconomicsPolicyV1(value);
+}
+
+function assertEconomicsRequestAdmission(
+  policy: HarnessEconomicsPolicyV1 | undefined,
+  manifest: ReturnType<typeof buildModelRequestEconomicsManifest>,
+): void {
+  if (policy?.mode !== "enforce") return;
+  if (manifest.toolExposure?.wouldBlock === true) {
+    throw createRuntimeFailure(
+      "HARNESS_ECONOMICS_TOOL_EXPOSURE_BLOCKED",
+      "Harness economics enforcement blocked a model request whose tool surface violates the selected assembly policy.",
+      {
+        policyId: policy.policyId,
+        phase: manifest.toolExposure.phase,
+        blockReasons: manifest.toolExposure.blockReasons,
+        modelVisibleSchemaTokens: manifest.toolExposure.modelVisibleSchema.tokens,
+        modelContextMaxTokens: manifest.toolExposure.modelContextMaxTokens,
+      },
+    );
+  }
+  if (manifest.decision !== undefined) {
+    const changed = manifest.decision.manifest.sections.some((section) =>
+      section.effectiveAdmission !== "admitted" || section.effectiveTokens !== section.proposed.tokens
+    );
+    if (changed) {
+      throw createRuntimeFailure(
+        "HARNESS_ECONOMICS_CONTEXT_ADMISSION_BLOCKED",
+        "Harness economics enforcement blocked a model request whose context does not fit the selected policy. Truncation requires an explicit section binding before provider dispatch.",
+        {
+          policyId: policy.policyId,
+          blockedSectionIds: manifest.decision.blockedSectionIds,
+          droppedSectionIds: manifest.decision.droppedSectionIds,
+        },
+      );
+    }
+  }
 }
 
 function isModelResponse(value: unknown): value is ModelResponse<unknown> {

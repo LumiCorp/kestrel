@@ -301,10 +301,16 @@ function mapResponsesUsage(value: Record<string, unknown> | undefined) {
   const inputTokens = asNumber(value.input_tokens);
   const outputTokens = asNumber(value.output_tokens);
   const totalTokens = asNumber(value.total_tokens);
+  const inputDetails = asRecord(value.input_tokens_details);
+  const outputDetails = asRecord(value.output_tokens_details);
+  const cachedInputTokens = asNumber(inputDetails?.cached_tokens);
+  const reasoningTokens = asNumber(outputDetails?.reasoning_tokens);
   return {
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
   };
 }
 
@@ -594,13 +600,19 @@ function mapUsage(usage: Record<string, unknown> | undefined): ModelResponse["us
   const inputTokens = asNumber(usage.prompt_tokens);
   const outputTokens = asNumber(usage.completion_tokens);
   const totalTokens = asNumber(usage.total_tokens);
-  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
+  const inputDetails = asRecord(usage.prompt_tokens_details);
+  const outputDetails = asRecord(usage.completion_tokens_details);
+  const cachedInputTokens = asNumber(inputDetails?.cached_tokens);
+  const reasoningTokens = asNumber(outputDetails?.reasoning_tokens);
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined && cachedInputTokens === undefined && reasoningTokens === undefined) {
     return ;
   }
   return {
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
   };
 }
 

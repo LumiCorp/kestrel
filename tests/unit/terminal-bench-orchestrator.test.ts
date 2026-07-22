@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseHarnessEfficiencyLedgerV1, parseHarnessEfficiencyResultV1 } from "../../src/economics/index.js";
 
 import {
   appendRunNote,
@@ -23,8 +24,10 @@ import {
   resolveTerminalBenchBinary,
   runTerminalBench,
   validateTerminalBenchRepairPolicy,
+  writeTerminalBenchEfficiencyResults,
 } from "../../scripts/terminal-bench.js";
 import { contractTest } from "../helpers/contract-test.js";
+import { economicsReplayBundleFixture } from "../helpers/economics-replay-fixture.js";
 
 
 contractTest("runtime.hermetic", "terminal bench appends concise run notes", () => {
@@ -44,6 +47,75 @@ contractTest("runtime.hermetic", "terminal bench appends concise run notes", () 
     assert.match(notes, /Kestrel task unresolved/u);
     assert.match(notes, /Stopped after play-zork was unresolved/u);
     assert.match(notes, /runs\/kestrel-cli-test\/results\.json/u);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+contractTest("runtime.hermetic", "terminal bench emits the shared immutable efficiency result", () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-tbench-efficiency-"));
+  try {
+    const runDir = path.join(tmp, "runs", "run-1");
+    const agentLogs = path.join(runDir, "task-1", "agent-logs");
+    mkdirSync(agentLogs, { recursive: true });
+    const jobInputPath = path.join(agentLogs, "kestrel-terminal-bench-task-1.job-input.json");
+    const jobOutputPath = path.join(agentLogs, "kestrel-terminal-bench-task-1.job-output.json");
+    const replayBundlePath = path.join(agentLogs, "kestrel-terminal-bench-task-1.runtime-replay-bundle.json");
+    writeFileSync(jobInputPath, JSON.stringify({ version: "job_input_v1", profile: { toolAllowlist: ["fs.read_text"] } }), "utf8");
+    writeFileSync(jobOutputPath, JSON.stringify({ version: "job_output_v1" }), "utf8");
+    writeFileSync(replayBundlePath, JSON.stringify(economicsReplayBundleFixture("run-kestrel-1", "session-1")), "utf8");
+    writeFileSync(path.join(agentLogs, "kestrel-terminal-bench-task-1.json"), JSON.stringify({
+      adapter: "kestrel-terminal-bench",
+      dataset: "terminal-bench-core==0.1.1",
+      task_id: "task-1",
+      status: "completed",
+      duration_ms: 125,
+      failure_kind: "none",
+      kestrel_run_id: "run-kestrel-1",
+      kestrel_session_id: "session-1",
+      kestrel_thread_id: "thread-1",
+      model_provider: "openrouter",
+      model: "model-a",
+      job_input_path: jobInputPath,
+      job_output_path: jobOutputPath,
+      runtime_replay_bundle_path: replayBundlePath,
+      job_input_sha256: "a".repeat(64),
+      harness_revision: "b".repeat(64),
+    }), "utf8");
+    writeFileSync(path.join(runDir, "results.json"), JSON.stringify({ n_resolved: 1, n_unresolved: 0 }), "utf8");
+
+    const outputs = writeTerminalBenchEfficiencyResults({
+      run: {
+        adapter: "kestrel",
+        runId: "run-1",
+        args: [],
+        runDir,
+        status: 0,
+        outcome: {
+          nResolved: 1,
+          nUnresolved: 0,
+          accuracy: 1,
+          unresolvedIds: [],
+          adapterFailures: [],
+          artifactPassedButAgentFailed: false,
+          adapterCompletedButBenchmarkFailed: false,
+        },
+      },
+      command: { adapter: "kestrel", args: ["--dataset", "terminal-bench-core==0.1.1", "--task-id", "task-1"] },
+      dataset: "terminal-bench-core==0.1.1",
+      env: {},
+    });
+
+    assert.equal(outputs.length, 1);
+    const result = parseHarnessEfficiencyResultV1(JSON.parse(readFileSync(outputs[0] as string, "utf8")));
+    assert.equal(result.lane, "terminal_bench");
+    assert.equal(result.outcome.acceptance, "accepted");
+    assert.equal(result.economics.status, "complete");
+    assert.equal(result.economics.tokensPerAcceptedSuccess, 12);
+    const ledgerArtifact = result.artifacts.find((artifact) => artifact.kind === "efficiency_ledger");
+    assert.ok(ledgerArtifact);
+    const ledger = parseHarnessEfficiencyLedgerV1(JSON.parse(readFileSync(ledgerArtifact.path, "utf8")));
+    assert.equal(ledger.events.at(-1)?.type, "economics.run_outcome.evaluated");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

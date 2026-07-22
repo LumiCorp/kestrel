@@ -3326,9 +3326,12 @@ export class ExecutionEngine {
 
   private extractModelUsage(value: unknown):
     | {
-        inputTokens?: number | undefined;
-        outputTokens?: number | undefined;
-        totalTokens?: number | undefined;
+      inputTokens?: number | undefined;
+      outputTokens?: number | undefined;
+      totalTokens?: number | undefined;
+      cachedInputTokens?: number | undefined;
+      cacheWriteInputTokens?: number | undefined;
+      reasoningTokens?: number | undefined;
       }
     | undefined {
     const record = this.asRecord(value);
@@ -3340,7 +3343,17 @@ export class ExecutionEngine {
     const inputTokens = readMaybeNumber(usage.inputTokens);
     const outputTokens = readMaybeNumber(usage.outputTokens);
     const totalTokens = readMaybeNumber(usage.totalTokens);
-    if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
+    const cachedInputTokens = readMaybeNumber(usage.cachedInputTokens);
+    const cacheWriteInputTokens = readMaybeNumber(usage.cacheWriteInputTokens);
+    const reasoningTokens = readMaybeNumber(usage.reasoningTokens);
+    if (
+      inputTokens === undefined &&
+      outputTokens === undefined &&
+      totalTokens === undefined &&
+      cachedInputTokens === undefined &&
+      cacheWriteInputTokens === undefined &&
+      reasoningTokens === undefined
+    ) {
       return ;
     }
 
@@ -3348,6 +3361,9 @@ export class ExecutionEngine {
       ...(inputTokens !== undefined ? { inputTokens } : {}),
       ...(outputTokens !== undefined ? { outputTokens } : {}),
       ...(totalTokens !== undefined ? { totalTokens } : {}),
+      ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+      ...(cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens } : {}),
+      ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     };
   }
 

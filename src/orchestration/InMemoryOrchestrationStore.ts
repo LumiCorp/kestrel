@@ -1,4 +1,6 @@
 import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionRecord, AssemblyChangeProposalRecord, ContextCheckpointRecord, ContextPolicyDefinitionRecord, ContextSummaryArtifactRecord, DelegationRecord, InteractionRequestRecord, OperatorAttentionRecord, OperatorFocusRecord, SpecialistDefinitionRecord, ThreadAssemblyRecord, ThreadCompactionEventRecord, ThreadRecord } from "../kestrel/contracts/orchestration.js";
+import { parseHarnessEconomicsPolicyV1 } from "../economics/policy.js";
+import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
 import type { OrchestrationStore } from "./contracts.js";
 
@@ -258,13 +260,39 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
   }
 
   async upsertContextPolicyDefinition(record: ContextPolicyDefinitionRecord): Promise<void> {
-    this.contextPolicies.set(record.contextPolicyId, clone(record));
+    const economicsPolicy = record.economicsPolicy === undefined
+      ? undefined
+      : parseHarnessEconomicsPolicyV1(record.economicsPolicy);
+    const existing = this.contextPolicies.get(record.contextPolicyId);
+    if (
+      economicsPolicy !== undefined &&
+      existing?.economicsPolicy !== undefined &&
+      JSON.stringify(existing.economicsPolicy) !== JSON.stringify(economicsPolicy)
+    ) {
+      throw createRuntimeFailure(
+        "HARNESS_ECONOMICS_POLICY_IMMUTABLE",
+        `Context policy '${record.contextPolicyId}' already has a different economics policy. Create a new policy id instead.`,
+        { contextPolicyId: record.contextPolicyId },
+      );
+    }
+    this.contextPolicies.set(record.contextPolicyId, clone({
+      ...record,
+      ...(economicsPolicy !== undefined
+        ? { economicsPolicy }
+        : existing?.economicsPolicy !== undefined
+          ? { economicsPolicy: existing.economicsPolicy }
+          : {}),
+    }));
   }
 
   async listContextPolicyDefinitions(): Promise<ContextPolicyDefinitionRecord[]> {
     return [...this.contextPolicies.values()]
       .map((record) => clone(record))
       .sort((left, right) => left.contextPolicyId.localeCompare(right.contextPolicyId));
+  }
+
+  async getContextPolicyDefinition(contextPolicyId: string): Promise<ContextPolicyDefinitionRecord | null> {
+    return cloneOrNull(this.contextPolicies.get(contextPolicyId));
   }
 }
 

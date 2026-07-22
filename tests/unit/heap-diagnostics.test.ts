@@ -11,6 +11,7 @@ import type { ToolGateway, ToolGatewayCallOptions } from "../../src/kestrel/cont
 import type { HeapDiagnosticsReporter, HeapPressureSample, HeapSampleInput } from "../../src/runtime/heapDiagnostics.js";
 import { RuntimeHeapDiagnostics } from "../../src/runtime/heapDiagnostics.js";
 import { appendModelTranscriptItems, appendToolResultToTranscript, appendUserTurnToTranscript, makeModelTranscriptItem } from "../../src/runtime/modelTranscript.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -116,7 +117,7 @@ contractTest("runtime.hermetic", "heap guard compact mode compacts transcript an
     : undefined;
   const rendered = JSON.stringify(updatedTranscript);
 
-  assert.equal(output.status, "COMPLETED");
+  assert.equal(output.status, "COMPLETED", JSON.stringify(output.errors));
   assert.equal(modelCalls > 0, true);
   assert.match(rendered, /Runtime compacted earlier model\/tool transcript items/u);
   assert.equal(rendered.includes("app/file-0.tsx"), false);
@@ -179,7 +180,11 @@ contractTest("runtime.hermetic", "heap guard compact mode exposes compacted stat
     },
     async call<T>(_name: string, _input: unknown, options?: ToolGatewayCallOptions): Promise<T> {
       observedStates.push(JSON.stringify(options?.runContext?.sessionState));
-      return { ok: true } as T;
+      return buildAgentToolSuccessResult({
+        toolName: _name,
+        input: _input,
+        output: { ok: true },
+      }) as T;
     },
   };
   const kestrel = new Kestrel({
@@ -198,7 +203,7 @@ contractTest("runtime.hermetic", "heap guard compact mode exposes compacted stat
 
   const output = await kestrel.run(runtimeEvent("heap-tool-state-session"));
 
-  assert.equal(output.status, "COMPLETED");
+  assert.equal(output.status, "COMPLETED", JSON.stringify(output.errors));
   assert.equal(observedStates.length, 2);
   for (const state of observedStates) {
     assert.match(state, /Runtime compacted earlier model\/tool transcript items/u);

@@ -491,6 +491,7 @@ export interface ThreadStore {
   upsertSpecialistDefinition(record: SpecialistDefinitionRecord): Promise<void>;
   listSpecialistDefinitions(): Promise<SpecialistDefinitionRecord[]>;
   upsertContextPolicyDefinition(record: ContextPolicyDefinitionRecord): Promise<void>;
+  getContextPolicyDefinition?(contextPolicyId: string): Promise<ContextPolicyDefinitionRecord | null>;
   listContextPolicyDefinitions(): Promise<ContextPolicyDefinitionRecord[]>;
   upsertOperatorFocus(record: OperatorFocusRecord): Promise<void>;
   getOperatorFocus(sessionId: string): Promise<OperatorFocusRecord | null>;
@@ -524,6 +525,7 @@ export interface AssemblyStore {
   upsertSpecialistDefinition(record: SpecialistDefinitionRecord): Promise<void>;
   listSpecialistDefinitions(): Promise<SpecialistDefinitionRecord[]>;
   upsertContextPolicyDefinition(record: ContextPolicyDefinitionRecord): Promise<void>;
+  getContextPolicyDefinition?(contextPolicyId: string): Promise<ContextPolicyDefinitionRecord | null>;
   listContextPolicyDefinitions(): Promise<ContextPolicyDefinitionRecord[]>;
 }
 
