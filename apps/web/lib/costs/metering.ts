@@ -15,7 +15,10 @@ import {
   sql,
 } from "drizzle-orm";
 import { createFlyProviderClient } from "@/lib/environments/fly-connection";
-import type { EnvironmentProviderMachine } from "@/lib/environments/providers/contracts";
+import type {
+  EnvironmentProviderInventory,
+  EnvironmentProviderMachine,
+} from "@/lib/environments/providers/contracts";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { flyPublicEgressService, queryFlyPublicEgressHour } from "./fly-metrics";
 import { describeFlyMachineUsage } from "./fly-usage";
@@ -299,16 +302,29 @@ export async function meterFlyReconciledHour(now = new Date()) {
   ) {
     return { gateways: 0, workspaces: 0, volumes: 0, snapshots: 0, networkSeries: 0 };
   }
-  const provider = await createFlyProviderClient();
-  const inventoryByApp = new Map<
+  type FlyProvider = Awaited<ReturnType<typeof createFlyProviderClient>>;
+  const providerByOrganization = new Map<string, Promise<FlyProvider>>();
+  const providerForOrganization = (organizationId: string) => {
+    let provider = providerByOrganization.get(organizationId);
+    if (!provider) {
+      provider = createFlyProviderClient(organizationId);
+      providerByOrganization.set(organizationId, provider);
+    }
+    return provider;
+  };
+  const inventoryByOrganizationAndApp = new Map<
     string,
-    Awaited<ReturnType<typeof provider.listEnvironmentResources>>
+    Promise<EnvironmentProviderInventory>
   >();
-  const inventoryFor = async (appName: string) => {
-    const cached = inventoryByApp.get(appName);
-    if (cached) return cached;
-    const inventory = await provider.listEnvironmentResources({ appName });
-    inventoryByApp.set(appName, inventory);
+  const inventoryFor = (organizationId: string, appName: string) => {
+    const key = `${organizationId}:${appName}`;
+    let inventory = inventoryByOrganizationAndApp.get(key);
+    if (!inventory) {
+      inventory = providerForOrganization(organizationId).then((provider) =>
+        provider.listEnvironmentResources({ appName })
+      );
+      inventoryByOrganizationAndApp.set(key, inventory);
+    }
     return inventory;
   };
   let gatewayCount = 0;
@@ -316,6 +332,7 @@ export async function meterFlyReconciledHour(now = new Date()) {
   let volumeCount = 0;
   for (const environment of environments) {
     if (!(environment.flyAppName && environment.flyGatewayMachineId)) continue;
+    const provider = await providerForOrganization(environment.organizationId);
     const machine = await provider.getMachine({
       appName: environment.flyAppName,
       machineId: environment.flyGatewayMachineId,
@@ -333,6 +350,7 @@ export async function meterFlyReconciledHour(now = new Date()) {
   }
   for (const { workspace, environment } of workspaceRows) {
     if (!environment.flyAppName) continue;
+    const provider = await providerForOrganization(workspace.organizationId);
     if (workspace.flyMachineId) {
       const machine = await provider.getMachine({
         appName: environment.flyAppName,
@@ -353,7 +371,10 @@ export async function meterFlyReconciledHour(now = new Date()) {
       }
     }
     if (workspace.flyVolumeId) {
-      const inventory = await inventoryFor(environment.flyAppName);
+      const inventory = await inventoryFor(
+        workspace.organizationId,
+        environment.flyAppName
+      );
       const volume = inventory.volumes.find(
         (candidate) => candidate.id === workspace.flyVolumeId
       );

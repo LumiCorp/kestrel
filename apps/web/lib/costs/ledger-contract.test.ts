@@ -47,3 +47,21 @@ contractTest("web.hermetic", "cost workers stay in the durable environment worke
   assert.match(worker, /backfill: "incremental"/u);
   assert.match(worker, /backfill: "startup"/u);
 });
+
+contractTest(
+  "web.hermetic",
+  "Fly cost metering uses organization-scoped provider authority",
+  () => {
+    const metering = read("lib/costs/metering.ts");
+    assert.match(metering, /createFlyProviderClient\(organizationId\)/u);
+    assert.match(
+      metering,
+      /providerForOrganization\(environment\.organizationId\)/u
+    );
+    assert.match(
+      metering,
+      /providerForOrganization\(workspace\.organizationId\)/u
+    );
+    assert.doesNotMatch(metering, /createFlyProviderClient\(\)/u);
+  }
+);
