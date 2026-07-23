@@ -166,3 +166,20 @@ contractTest("web.hermetic", "Environment deletion refuses owned private inferen
     /Remove private inference before deleting this Environment/u
   );
 });
+
+contractTest("web.hermetic", "private inference creation shares the Environment lifecycle lock", () => {
+  const gateways = read("lib/ai/gateways.ts");
+  const managedStore = read("lib/ai/managed-runpod-store.ts");
+
+  for (const source of [gateways, managedStore]) {
+    assert.match(source, /environmentLifecycleLockKey/u);
+    assert.match(
+      source,
+      /pg_advisory_xact_lock\(hashtextextended\(\$\{environmentLifecycleLockKey\(/u
+    );
+    assert.match(
+      source,
+      /notInArray\([^\n]+status, \["deleting", "deleted"\]\)/u
+    );
+  }
+});

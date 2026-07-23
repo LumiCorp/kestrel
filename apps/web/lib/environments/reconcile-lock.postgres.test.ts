@@ -47,7 +47,7 @@ contractTest(
 );
 
 contractTest(
-  "web.postgres", "Postgres Environment operation locks exclude only the same operation",
+  "web.postgres", "Postgres Environment operation locks exclude all work for the same Environment",
   async () => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
@@ -62,7 +62,7 @@ contractTest(
       releaseFirst = resolve;
     });
     const first = withEnvironmentOperationLock({
-      operationId: "operation-a",
+      environmentId: "environment-a",
       run: async () => {
         enterFirst();
         await firstRelease;
@@ -73,15 +73,15 @@ contractTest(
 
     assert.deepEqual(
       await withEnvironmentOperationLock({
-        operationId: "operation-a",
-        run: async () => "same-operation",
+        environmentId: "environment-a",
+        run: async () => "same-environment",
       }),
       { acquired: false, result: null }
     );
     assert.deepEqual(
       await withEnvironmentOperationLock({
-        operationId: "operation-b",
-        run: async () => "different-operation",
+        environmentId: "environment-b",
+        run: async () => "different-environment",
       }),
       { acquired: true, result: "different-operation" }
     );

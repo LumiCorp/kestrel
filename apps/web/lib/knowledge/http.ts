@@ -56,6 +56,7 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     code === "ENVIRONMENT_UNAVAILABLE" ||
     code === "ENVIRONMENT_IS_DEFAULT" ||
     code === "ENVIRONMENT_HAS_PROJECTS" ||
+    code === "ENVIRONMENT_HAS_PRIVATE_INFERENCE" ||
     code === "APP_NOT_INSTALLED" ||
     code === "APP_CONNECTION_NOT_SUPPORTED" ||
     code === "APP_CONNECTION_SCOPE_INVALID" ||

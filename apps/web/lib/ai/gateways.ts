@@ -3,7 +3,18 @@ import "server-only";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { ProviderV3 } from "@ai-sdk/provider";
-import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
+import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getDefaultAIModel } from "./config";
 import {
@@ -663,38 +674,65 @@ export async function createGateway(input: {
   providerConnectionId?: string | null;
 }) {
   const gatewayId = crypto.randomUUID();
+  const environmentId = input.environmentId;
   const apiKey = normalizeGatewayStoredCredential(input.apiKey);
   const baseUrl =
     input.provider === "runpod"
       ? buildRunPodServerlessBaseUrl(input.endpointId)
       : input.baseUrl || getDefaultBaseUrl(input.provider);
-  const [gateway] = await knowledgeDb
-    .insert(schema.aiGateways)
-    .values({
-      id: gatewayId,
-      organizationId: input.organizationId,
-      environmentId: input.environmentId ?? null,
-      deploymentId: input.deploymentId ?? null,
-      providerConnectionId: input.providerConnectionId ?? null,
-      provider: input.provider,
-      displayName: input.displayName || getProviderDisplayName(input.provider),
-      baseUrl,
-      apiKeyEnvVar: null,
-      apiKey: apiKey
-        ? encryptGatewayCredential({
-            gatewayId,
-            plaintext: apiKey,
-          })
-        : null,
-      enabled: input.enabled ?? true,
-      supportedModalities:
-        input.supportedModalities ||
-        getProviderSupportedModalities(input.provider),
-      metadata: input.metadata ?? getDefaultGatewayMetadata(input.provider),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .returning();
+  const values = {
+    id: gatewayId,
+    organizationId: input.organizationId,
+    environmentId: input.environmentId ?? null,
+    deploymentId: input.deploymentId ?? null,
+    providerConnectionId: input.providerConnectionId ?? null,
+    provider: input.provider,
+    displayName: input.displayName || getProviderDisplayName(input.provider),
+    baseUrl,
+    apiKeyEnvVar: null,
+    apiKey: apiKey
+      ? encryptGatewayCredential({
+          gatewayId,
+          plaintext: apiKey,
+        })
+      : null,
+    enabled: input.enabled ?? true,
+    supportedModalities:
+      input.supportedModalities || getProviderSupportedModalities(input.provider),
+    metadata: input.metadata ?? getDefaultGatewayMetadata(input.provider),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  } as const;
+  const gateway = environmentId
+    ? await knowledgeDb.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environmentId)}, 0))`
+        );
+        const environment = await transaction.query.environments.findFirst({
+          where: (table, { and, eq, isNull, notInArray }) =>
+            and(
+              eq(table.id, environmentId),
+              eq(table.organizationId, input.organizationId),
+              isNull(table.archivedAt),
+              notInArray(table.status, ["deleting", "deleted"])
+            ),
+          columns: { id: true },
+        });
+        if (!environment) {
+          throw new Error("Environment is not available for gateway configuration.");
+        }
+        const [created] = await transaction
+          .insert(schema.aiGateways)
+          .values(values)
+          .returning();
+        return created;
+      })
+    : (
+        await knowledgeDb
+          .insert(schema.aiGateways)
+          .values(values)
+          .returning()
+      )[0];
 
   return sanitizeGateway(gateway);
 }

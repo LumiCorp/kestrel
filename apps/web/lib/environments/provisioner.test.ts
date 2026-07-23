@@ -703,7 +703,10 @@ contractTest("web.hermetic", "Environment deletion removes the owning Fly App id
 });
 
 const assertBlockedEnvironmentDeletion = async (
-  code: "ENVIRONMENT_IS_DEFAULT" | "ENVIRONMENT_HAS_PROJECTS",
+  code:
+    | "ENVIRONMENT_IS_DEFAULT"
+    | "ENVIRONMENT_HAS_PROJECTS"
+    | "ENVIRONMENT_HAS_PRIVATE_INFERENCE",
 ) => {
   const { repository, provider, calls } = fixture("environment.delete");
   repository.setEnvironmentDeleting = async () => {
@@ -720,3 +723,5 @@ contractTest("web.hermetic", "Environment deletion stops before provider teardow
   assertBlockedEnvironmentDeletion("ENVIRONMENT_IS_DEFAULT"));
 contractTest("web.hermetic", "Environment deletion stops before provider teardown for ENVIRONMENT_HAS_PROJECTS", () =>
   assertBlockedEnvironmentDeletion("ENVIRONMENT_HAS_PROJECTS"));
+contractTest("web.hermetic", "Environment deletion stops before provider teardown for ENVIRONMENT_HAS_PRIVATE_INFERENCE", () =>
+  assertBlockedEnvironmentDeletion("ENVIRONMENT_HAS_PRIVATE_INFERENCE"));

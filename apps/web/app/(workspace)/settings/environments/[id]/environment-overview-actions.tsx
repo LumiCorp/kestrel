@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ export function EnvironmentOverviewActions({
   environmentId: string;
   initialIsDefault: boolean;
 }) {
+  const router = useRouter();
   const [isDefault, setIsDefault] = useState(initialIsDefault);
   const [busy, setBusy] = useState(false);
 
@@ -29,6 +31,7 @@ export function EnvironmentOverviewActions({
       }
       setIsDefault(true);
       toast.success("Default Environment updated.");
+      router.refresh();
     } catch (error) {
       toast.error(
         error instanceof Error

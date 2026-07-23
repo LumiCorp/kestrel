@@ -1,6 +1,17 @@
 import "server-only";
 
-import { and, count, desc, eq, inArray, isNull, ne } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  ne,
+  notInArray,
+  sql,
+} from "drizzle-orm";
+import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   hashManagedRunPodProfile,
@@ -363,11 +374,15 @@ export async function createManagedRunPodDeployment(input: {
   displayName: string;
 }) {
   return knowledgeDb.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`
+    );
     const environment = await tx.query.environments.findFirst({
       where: and(
         eq(schema.environments.id, input.environmentId),
         eq(schema.environments.organizationId, input.organizationId),
-        isNull(schema.environments.archivedAt)
+        isNull(schema.environments.archivedAt),
+        notInArray(schema.environments.status, ["deleting", "deleted"])
       ),
       columns: { id: true },
     });

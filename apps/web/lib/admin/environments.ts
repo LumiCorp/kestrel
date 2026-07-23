@@ -9,6 +9,7 @@ import {
   createOrganizationEnvironment,
   getOrganizationEnvironment,
   listOrganizationEnvironments,
+  requestOrganizationEnvironmentDelete,
   recoverDefaultEnvironmentProvisioning,
   setDefaultOrganizationEnvironment,
 } from "@/lib/environments/store";
@@ -129,6 +130,35 @@ export async function setAdminDefaultEnvironment(input: {
     message: `Set Environment ${environment.name} as the organization default.`,
   });
   return environment;
+}
+
+export async function requestAdminEnvironmentDeletion(input: {
+  organizationId: string;
+  actorUserId: string;
+  environmentId: string;
+  confirmationName: string;
+}) {
+  const requested = await requestOrganizationEnvironmentDelete({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+    userId: input.actorUserId,
+    confirmationName: input.confirmationName,
+  });
+  await enqueueEnvironmentOperation(requested.operation.id);
+  await logAdminEvent({
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    category: "environments",
+    action: "environment.delete.requested",
+    targetType: "environment",
+    targetId: input.environmentId,
+    message: `Requested deletion of Environment ${requested.environment.name}.`,
+    metadata: {
+      operationId: requested.operation.id,
+      requestAction: requested.action,
+    },
+  }).catch(() => {});
+  return requested;
 }
 
 export async function updateAdminEnvironmentRuntime(input: {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  requestAdminEnvironmentDeletion,
   setAdminDefaultEnvironment,
   updateAdminEnvironmentRuntime,
   updateAdminEnvironmentReasoningPolicy,
@@ -9,6 +10,7 @@ import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
+import { deleteEnvironmentInputSchema } from "@/lib/environments/contracts";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 const patchSchema = z.union([
@@ -81,6 +83,26 @@ export async function PATCH(
             environmentId: id,
           });
     return NextResponse.json({ environment });
+  } catch (error) {
+    return errorResponse(error, 400);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const { id } = paramsSchema.parse(await context.params);
+    const deletion = deleteEnvironmentInputSchema.parse(await request.json());
+    const requested = await requestAdminEnvironmentDeletion({
+      organizationId,
+      actorUserId: session.user.id,
+      environmentId: id,
+      confirmationName: deletion.confirmationName,
+    });
+    return NextResponse.json(requested, { status: 202 });
   } catch (error) {
     return errorResponse(error, 400);
   }

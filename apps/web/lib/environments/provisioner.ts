@@ -271,7 +271,8 @@ export class EnvironmentProvisioner {
       }
       if (
         failure.code === "ENVIRONMENT_IS_DEFAULT" ||
-        failure.code === "ENVIRONMENT_HAS_PROJECTS"
+        failure.code === "ENVIRONMENT_HAS_PROJECTS" ||
+        failure.code === "ENVIRONMENT_HAS_PRIVATE_INFERENCE"
       ) {
         await this.repository.failOperation({
           operationId: operation.id,

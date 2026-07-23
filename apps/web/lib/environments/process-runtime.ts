@@ -13,11 +13,11 @@ export async function processEnvironmentOperation(
 ) {
   const operation = await knowledgeDb.query.environmentOperations.findFirst({
     where: eq(schema.environmentOperations.id, operationId),
-    columns: { organizationId: true, type: true },
+    columns: { organizationId: true, environmentId: true, type: true },
   });
   if (!operation) throw new Error("Environment operation was not found.");
   const locked = await withEnvironmentOperationLock({
-    operationId,
+    environmentId: operation.environmentId,
     run: async () => {
       if (operation.type === "workspace.backup") {
         const { processQueuedWorkspaceBackup } = await import("./backups");
