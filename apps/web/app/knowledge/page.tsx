@@ -1,30 +1,18 @@
 import type { Session } from "@/lib/auth-types";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import {
-  getKnowledgeDocumentsPayload,
-  getKnowledgeSourcesPayload,
-} from "@/lib/knowledge/page-data";
+import { getKnowledgeDocumentsPayload } from "@/lib/knowledge/page-data";
 import { KnowledgeClient } from "./knowledge-client";
 
 export default async function KnowledgePage() {
   const { organizationId, session } = await requireActiveOrganization();
-  const [initialSources, documentsPayload] = await Promise.all([
-    getKnowledgeSourcesPayload(organizationId),
-    getKnowledgeDocumentsPayload(organizationId),
-  ]);
+  const documentsPayload = await getKnowledgeDocumentsPayload(
+    organizationId,
+    session.user.id
+  );
 
   return (
     <KnowledgeClient
-      initialDocuments={{
-        documents: documentsPayload.documents,
-        failedCount: documentsPayload.failedCount,
-        partialCount: documentsPayload.partialCount,
-        processingCount: documentsPayload.processingCount,
-        readyCount: documentsPayload.readyCount,
-        total: documentsPayload.total,
-      }}
-      initialRuntime={documentsPayload.runtime}
-      initialSources={initialSources}
+      initialDocuments={documentsPayload}
       session={session as Session}
     />
   );

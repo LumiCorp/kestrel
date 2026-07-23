@@ -1,23 +1,45 @@
 import {
+  Activity,
   ArrowLeft,
   ArrowRight,
   Camera,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   Globe2,
+  LoaderCircle,
   MessageSquareText,
+  MoreHorizontal,
   Play,
   RefreshCw,
   RotateCw,
   ShieldCheck,
   Square,
+  TerminalSquare,
 } from "lucide-react";
-import { createElement, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  createElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type {
   DesktopManagedProjectRun,
   DesktopPreviewDiagnostic,
   DesktopProjectLauncherDescriptor,
 } from "../../src/contracts";
+import {
+  defaultPreviewDrawerOpen,
+  formatPreviewElapsed,
+  previewDiagnosticSeverity,
+  previewRunSummary,
+  presentPreviewLifecycle,
+  projectPreviewActivity,
+  resolveActivePreviewRuns,
+  type PreviewLifecycleAction,
+} from "./previewPresentation";
 
 type PreviewWebview = HTMLElement & {
   loadURL(url: string): Promise<void>;
@@ -30,6 +52,7 @@ type PreviewWebview = HTMLElement & {
   capturePage(): Promise<{ toDataURL(): string }>;
 };
 type Region = { x: number; y: number; width: number; height: number };
+type DrawerView = "activity" | "raw";
 
 export function PreviewWorkspace(props: {
   projectPath?: string | undefined;
@@ -53,37 +76,103 @@ export function PreviewWorkspace(props: {
   const [viewport, setViewport] = useState<
     "fill" | "mobile" | "tablet" | "desktop"
   >("fill");
-  const [diagnostics, setDiagnostics] = useState<DesktopPreviewDiagnostic[]>(
-    [],
-  );
+  const [diagnostics, setDiagnostics] = useState<DesktopPreviewDiagnostic[]>([]);
   const [screenshot, setScreenshot] = useState<string>();
   const [region, setRegion] = useState<Region>();
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>();
   const [feedback, setFeedback] = useState("");
   const [agentPermissionAt, setAgentPermissionAt] = useState<string>();
-  const [busy, setBusy] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PreviewLifecycleAction>();
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [drawerView, setDrawerView] = useState<DrawerView>("activity");
+  const [drawerPreference, setDrawerPreference] = useState<{
+    runId: string;
+    open: boolean;
+  }>();
+  const [browserState, setBrowserState] = useState({
+    canGoBack: false,
+    canGoForward: false,
+    loading: false,
+  });
+  const [elapsedNow, setElapsedNow] = useState(() => Date.now());
   const webviewRef = useRef<PreviewWebview | null>(null);
   const screenshotRef = useRef<HTMLImageElement | null>(null);
+  const overflowRef = useRef<HTMLDivElement>(null);
+  const overflowButtonRef = useRef<HTMLButtonElement>(null);
+
   const visibleRuns = useMemo(
     () =>
-      runs.filter(
-        (run) =>
-          launcher !== undefined && run.projectPath === launcher.projectPath,
-      ),
+      runs
+        .filter(
+          (run) =>
+            launcher !== undefined && run.projectPath === launcher.projectPath,
+        )
+        .sort(
+          (left, right) =>
+            new Date(right.startedAt).getTime() -
+            new Date(left.startedAt).getTime(),
+        ),
     [launcher, runs],
   );
+  const { activeRun, otherActiveRuns } = useMemo(
+    () => resolveActivePreviewRuns(visibleRuns),
+    [visibleRuns],
+  );
   const selectedRun = visibleRuns.find((run) => run.runId === selectedRunId);
-  const recordedUrls = useMemo(() => {
-    if (!selectedRun) return [];
-    return [
-      ...new Set(
-        [
-          selectedRun.primaryPreviewUrl,
-          ...(selectedRun.previewUrls ?? []).map((entry) => entry.url),
-        ].filter((url): url is string => Boolean(url)),
-      ),
-    ];
-  }, [selectedRun]);
+  const recordedUrls = useMemo(
+    () =>
+      selectedRun === undefined
+        ? []
+        : [
+            ...new Set(
+              [
+                ...(selectedRun.previewUrls ?? []).map((entry) => entry.url),
+                selectedRun.primaryPreviewUrl,
+              ].filter((url): url is string => Boolean(url)),
+            ),
+          ],
+    [selectedRun],
+  );
+  const lifecycleRun =
+    activeRun ??
+    (selectedRun?.scriptName === scriptName ? selectedRun : undefined);
+  const lifecycle = presentPreviewLifecycle({
+    run: lifecycleRun,
+    scriptName,
+    pendingAction,
+  });
+  const activityEntries = useMemo(
+    () => projectPreviewActivity(selectedRun, diagnostics),
+    [diagnostics, selectedRun],
+  );
+  const drawerRunId = selectedRun?.runId ?? "idle";
+  const automaticDrawerOpen = defaultPreviewDrawerOpen({
+    run: selectedRun,
+    diagnostics,
+    pendingAction,
+  });
+  const drawerOpen =
+    drawerPreference?.runId === drawerRunId
+      ? drawerPreference.open
+      : automaticDrawerOpen;
+  const statusSummary = previewRunSummary(
+    activeRun ?? selectedRun,
+    pendingAction,
+    selectedUrl || undefined,
+    scriptName,
+  );
+  const issueCount = diagnostics.filter(
+    (entry) => previewDiagnosticSeverity(entry) !== "info",
+  ).length;
+  const previewWidth =
+    viewport === "mobile"
+      ? 390
+      : viewport === "tablet"
+        ? 768
+        : viewport === "desktop"
+          ? 1280
+          : undefined;
 
   const refresh = async () => {
     if (!props.projectPath) return;
@@ -98,66 +187,215 @@ export function PreviewWorkspace(props: {
       ]);
       setLauncher(nextLauncher);
       setRuns(nextRuns);
-      if (nextLauncher && !scriptName)
+      if (nextLauncher && !scriptName) {
         setScriptName(nextLauncher.scripts[0]?.name ?? "");
-      if (!selectedRunId) {
-        const first = nextRuns.find(
-          (run) =>
-            run.projectPath === nextLauncher?.projectPath &&
-            (run.primaryPreviewUrl || run.previewUrls?.length),
-        );
-        if (first) {
-          setSelectedRunId(first.runId);
-          const url =
-            first.primaryPreviewUrl ?? first.previewUrls?.[0]?.url ?? "";
-          setSelectedUrl(url);
-          setAddress(url);
-        }
       }
       props.onError(undefined);
     } catch (cause) {
       props.onError(message(cause));
     }
   };
+
   useEffect(() => {
     void refresh();
-    const unsubscribe = window.kestrelDesktop.onProjectRuns((next) =>
-      setRuns(next),
-    );
+    const unsubscribe = window.kestrelDesktop.onProjectRuns(setRuns);
     return unsubscribe;
   }, [props.projectPath, props.threadId]);
+
+  useEffect(() => {
+    if (activeRun !== undefined && selectedRunId !== activeRun.runId) {
+      setSelectedRunId(activeRun.runId);
+      return;
+    }
+    if (
+      activeRun === undefined &&
+      (selectedRunId === undefined ||
+        !visibleRuns.some((run) => run.runId === selectedRunId))
+    ) {
+      setSelectedRunId(visibleRuns[0]?.runId);
+    }
+  }, [activeRun, selectedRunId, visibleRuns]);
+
+  useEffect(() => {
+    if (selectedRun === undefined) {
+      setSelectedUrl("");
+      setAddress("");
+      return;
+    }
+    const urls = [
+      ...new Set(
+        [
+          ...(selectedRun.previewUrls ?? []).map((entry) => entry.url),
+          selectedRun.primaryPreviewUrl,
+        ].filter((url): url is string => Boolean(url)),
+      ),
+    ];
+    if (urls.length === 0) {
+      setSelectedUrl("");
+      setAddress("");
+    } else if (!urls.includes(selectedUrl)) {
+      setSelectedUrl(urls[0]!);
+      setAddress(urls[0]!);
+    }
+  }, [selectedRun, selectedUrl]);
+
+  useEffect(() => {
+    setAgentPermissionAt(undefined);
+    setDiagnostics([]);
+    setDrawerPreference(undefined);
+    setDrawerView("activity");
+  }, [selectedRunId]);
+
   useEffect(
     () =>
       window.kestrelDesktop.onPreviewDiagnostic((diagnostic) => {
         const id = safeWebContentsId(webviewRef.current);
-        if (id !== undefined && diagnostic.webContentsId === id)
+        if (id !== undefined && diagnostic.webContentsId === id) {
           setDiagnostics((current) => [...current, diagnostic].slice(-200));
+        }
       }),
     [],
   );
-  useEffect(() => {
-    const run = visibleRuns.find(
-      (candidate) => candidate.runId === selectedRunId,
-    );
-    if (!run) return;
-    const available = [
-      ...new Set(
-        [
-          run.primaryPreviewUrl,
-          ...(run.previewUrls ?? []).map((entry) => entry.url),
-        ].filter((url): url is string => Boolean(url)),
-      ),
-    ];
-    if (available.length > 0 && !available.includes(selectedUrl)) {
-      setSelectedUrl(available[0]!);
-      setAddress(available[0]!);
-    }
-  }, [visibleRuns, selectedRunId]);
-  useEffect(() => setAgentPermissionAt(undefined), [selectedRunId]);
 
-  const start = async () => {
+  useEffect(() => {
+    if (selectedRun?.status !== "running") return;
+    const timer = window.setInterval(() => setElapsedNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [selectedRun?.runId, selectedRun?.status]);
+
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (
+      !webview ||
+      !selectedUrl ||
+      (selectedRun?.status !== "running" &&
+        selectedRun?.status !== "stopping")
+    ) {
+      setBrowserState({
+        canGoBack: false,
+        canGoForward: false,
+        loading: false,
+      });
+      return;
+    }
+
+    let loaded = false;
+    let loadAttempt: Promise<void> | undefined;
+    const updateNavigation = () => {
+      setBrowserState((current) => ({
+        ...current,
+        canGoBack: canPreviewGoBack(webview),
+        canGoForward: canPreviewGoForward(webview),
+      }));
+    };
+    const load = async (reportError: boolean) => {
+      if (loaded || selectedRun.status !== "running") return;
+      if (loadAttempt !== undefined) {
+        try {
+          await loadAttempt;
+        } catch {
+          /* The dom-ready attempt below owns the actionable result. */
+        }
+        if (loaded) return;
+      }
+      setBrowserState((current) => ({ ...current, loading: true }));
+      loadAttempt = loadPreviewUrl(webview, selectedUrl);
+      try {
+        await loadAttempt;
+        loaded = true;
+      } catch (cause) {
+        setBrowserState((current) => ({ ...current, loading: false }));
+        if (reportError && !isCancelledPreviewLoad(cause)) {
+          props.onError(message(cause));
+        }
+      } finally {
+        loadAttempt = undefined;
+      }
+    };
+    const onDomReady = () => {
+      updateNavigation();
+      void load(true);
+    };
+    const onStartLoading = () =>
+      setBrowserState((current) => ({ ...current, loading: true }));
+    const onStopLoading = () => {
+      setBrowserState((current) => ({ ...current, loading: false }));
+      updateNavigation();
+    };
+    const onNavigate = (event: Event) => {
+      const url = (event as Event & { url?: string }).url;
+      if (url && isLocalPreviewUrl(url)) {
+        setSelectedUrl(url);
+        setAddress(url);
+      }
+      updateNavigation();
+    };
+
+    webview.addEventListener("dom-ready", onDomReady, { once: true });
+    webview.addEventListener("did-start-loading", onStartLoading);
+    webview.addEventListener("did-stop-loading", onStopLoading);
+    webview.addEventListener("did-navigate", onNavigate);
+    webview.addEventListener("did-navigate-in-page", onNavigate);
+    const fallback = window.setTimeout(() => void load(false), 0);
+    return () => {
+      window.clearTimeout(fallback);
+      webview.removeEventListener("dom-ready", onDomReady);
+      webview.removeEventListener("did-start-loading", onStartLoading);
+      webview.removeEventListener("did-stop-loading", onStopLoading);
+      webview.removeEventListener("did-navigate", onNavigate);
+      webview.removeEventListener("did-navigate-in-page", onNavigate);
+    };
+  }, [props.onError, selectedRun?.runId, selectedRun?.status, selectedUrl]);
+
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const close = (event: PointerEvent) => {
+      if (
+        overflowRef.current?.contains(event.target as Node) !== true &&
+        overflowButtonRef.current?.contains(event.target as Node) !== true
+      ) {
+        closeOverflow();
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeOverflow();
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        const items = [
+          ...(overflowRef.current?.querySelectorAll<HTMLButtonElement>(
+            '[role="menuitem"]:not(:disabled)',
+          ) ?? []),
+        ];
+        const index = items.indexOf(
+          document.activeElement as HTMLButtonElement,
+        );
+        if (items.length > 0 && index >= 0) {
+          event.preventDefault();
+          items[
+            (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) %
+              items.length
+          ]?.focus();
+        }
+      }
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", onKeyDown);
+    overflowRef.current
+      ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+      ?.focus();
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [overflowOpen]);
+
+  function closeOverflow(): void {
+    setOverflowOpen(false);
+    requestAnimationFrame(() => overflowButtonRef.current?.focus());
+  }
+
+  async function start(): Promise<void> {
     if (!(props.projectPath && scriptName)) return;
-    setBusy(true);
+    setPendingAction("start");
     try {
       const run = await window.kestrelDesktop.startProjectRun({
         projectPath: props.projectPath,
@@ -165,44 +403,53 @@ export function PreviewWorkspace(props: {
         threadId: props.threadId,
       });
       setSelectedRunId(run.runId);
-      setDiagnostics([]);
       setScreenshot(undefined);
       await refresh();
     } catch (cause) {
       props.onError(message(cause));
     } finally {
-      setBusy(false);
+      setPendingAction(undefined);
     }
-  };
-  const stop = async () => {
-    if (!selectedRun) return;
-    setBusy(true);
+  }
+
+  async function stop(run = activeRun ?? selectedRun): Promise<void> {
+    if (run === undefined) return;
+    if (run.runId === (activeRun ?? selectedRun)?.runId) {
+      setPendingAction("stop");
+    }
     try {
-      await window.kestrelDesktop.stopProjectRun(selectedRun.runId);
+      await window.kestrelDesktop.stopProjectRun(run.runId);
       await refresh();
     } catch (cause) {
       props.onError(message(cause));
     } finally {
-      setBusy(false);
+      setPendingAction(undefined);
     }
-  };
-  const restart = async () => {
-    if (!selectedRun) return;
-    setBusy(true);
+  }
+
+  async function restart(): Promise<void> {
+    const run = activeRun ?? selectedRun;
+    if (run === undefined) return;
+    setPendingAction("restart");
+    if (overflowOpen) closeOverflow();
     try {
-      const run = await window.kestrelDesktop.restartProjectRun(
-        selectedRun.runId,
-      );
-      setSelectedRunId(run.runId);
-      setDiagnostics([]);
+      const next = await window.kestrelDesktop.restartProjectRun(run.runId);
+      setSelectedRunId(next.runId);
       await refresh();
     } catch (cause) {
       props.onError(message(cause));
     } finally {
-      setBusy(false);
+      setPendingAction(undefined);
     }
-  };
-  const navigate = async () => {
+  }
+
+  async function invokeLifecycle(): Promise<void> {
+    if (lifecycle.action === "start") return start();
+    if (lifecycle.action === "stop") return stop();
+    return restart();
+  }
+
+  async function navigate(): Promise<void> {
     if (!isLocalPreviewUrl(address)) {
       props.onError("Preview navigation is limited to local http(s) URLs.");
       return;
@@ -210,8 +457,9 @@ export function PreviewWorkspace(props: {
     setSelectedUrl(address);
     setDiagnostics([]);
     await loadPreviewUrl(webviewRef.current, address);
-  };
-  const capture = async () => {
+  }
+
+  async function capture(): Promise<void> {
     try {
       const image = await capturePreviewPage(webviewRef.current);
       if (!image) return;
@@ -221,10 +469,11 @@ export function PreviewWorkspace(props: {
     } catch (cause) {
       props.onError(message(cause));
     }
-  };
-  const submitFeedback = async () => {
-    if (!(((screenshot && selectedRun ) && selectedUrl ) && feedback.trim())) return;
-    setBusy(true);
+  }
+
+  async function submitFeedback(): Promise<void> {
+    if (!(screenshot && selectedRun && selectedUrl && feedback.trim())) return;
+    setFeedbackBusy(true);
     try {
       const annotated = await annotateScreenshot(
         screenshot,
@@ -245,24 +494,20 @@ export function PreviewWorkspace(props: {
     } catch (cause) {
       props.onError(message(cause));
     } finally {
-      setBusy(false);
+      setFeedbackBusy(false);
     }
-  };
-  const previewWidth =
-    viewport === "mobile"
-      ? 390
-      : viewport === "tablet"
-        ? 768
-        : viewport === "desktop"
-          ? 1280
-          : undefined;
+  }
+
   const webview =
-    selectedUrl && selectedRun?.status === "running"
+    selectedUrl &&
+    (selectedRun?.status === "running" ||
+      selectedRun?.status === "stopping")
       ? createElement("webview", {
+          key: `${selectedRunId}:${selectedUrl}`,
           ref: (node: HTMLElement | null) => {
             webviewRef.current = node as PreviewWebview | null;
           },
-          src: selectedUrl,
+          src: "about:blank",
           partition: "persist:kestrel-preview",
           className: "preview-webview",
         })
@@ -270,10 +515,11 @@ export function PreviewWorkspace(props: {
 
   return (
     <section className="preview-workspace">
-      <header className="diff-toolbar">
+      <header className="preview-runbar">
         <select
           aria-label="Preview configuration"
           value={scriptName}
+          disabled={activeRun !== undefined}
           onChange={(event) => setScriptName(event.target.value)}
         >
           {launcher?.scripts.map((script) => (
@@ -283,47 +529,180 @@ export function PreviewWorkspace(props: {
           ))}
         </select>
         <button
-          disabled={busy || !scriptName}
+          className="preview-lifecycle"
+          disabled={lifecycle.disabled || pendingAction !== undefined}
           type="button"
-          onClick={() => void start()}
+          onClick={() => void invokeLifecycle()}
         >
-          <Play size={14} /> Start
+          {pendingAction !== undefined || selectedRun?.status === "stopping" ? (
+            <LoaderCircle className="preview-spin" size={14} />
+          ) : lifecycle.action === "start" ? (
+            <Play size={14} />
+          ) : lifecycle.action === "stop" ? (
+            <Square size={13} />
+          ) : (
+            <RotateCw size={14} />
+          )}
+          <span>{lifecycle.label}</span>
         </button>
-        <select
-          aria-label="Preview run"
-          value={selectedRunId ?? ""}
-          onChange={(event) => {
-            const id = event.target.value;
-            const run = visibleRuns.find((candidate) => candidate.runId === id);
-            setSelectedRunId(id);
-            const url =
-              run?.primaryPreviewUrl ?? run?.previewUrls?.[0]?.url ?? "";
-            setSelectedUrl(url);
-            setAddress(url);
-            setDiagnostics([]);
-          }}
-        >
-          <option value="">Select run</option>
-          {visibleRuns.map((run) => (
-            <option value={run.runId} key={run.runId}>
-              {run.scriptName} · {run.status}
-            </option>
-          ))}
-        </select>
-        {selectedRun?.status === "running" ||
-        selectedRun?.status === "stopping" ? (
+        <div className="preview-live-status" aria-live="polite">
+          <span
+            className={`preview-status-dot preview-status-${selectedRun?.status ?? "idle"}`}
+          />
+          <span>{statusSummary}</span>
+          {selectedRun ? (
+            <time dateTime={selectedRun.startedAt}>
+              {formatPreviewElapsed(
+                selectedRun.startedAt,
+                selectedRun.completedAt ?? elapsedNow,
+              )}
+            </time>
+          ) : null}
+        </div>
+        <div className="preview-overflow-wrap">
           <button
-            disabled={busy || selectedRun.status === "stopping"}
+            ref={overflowButtonRef}
+            aria-label="Preview options"
+            aria-haspopup="menu"
+            aria-expanded={overflowOpen}
+            title="Preview options"
             type="button"
-            onClick={() => void stop()}
+            onClick={() => setOverflowOpen((current) => !current)}
           >
-            <Square size={13} /> Stop
+            <MoreHorizontal size={15} />
           </button>
-        ) : selectedRun ? (
-          <button disabled={busy} type="button" onClick={() => void restart()}>
-            <RotateCw size={13} /> Restart
+          {overflowOpen ? (
+            <div
+              className="preview-overflow"
+              ref={overflowRef}
+              role="menu"
+              aria-label="Preview options"
+            >
+              {activeRun?.status === "running" ? (
+                <button role="menuitem" type="button" onClick={() => void restart()}>
+                  <RotateCw size={14} /> Restart {activeRun.scriptName}
+                </button>
+              ) : null}
+              <button
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  if (
+                    agentPermissionAt ||
+                    window.confirm(
+                      "Grant agent-controlled browser interaction for this preview run? This does not authorize external publication or deployment.",
+                    )
+                  ) {
+                    setAgentPermissionAt(
+                      agentPermissionAt ? undefined : new Date().toISOString(),
+                    );
+                    closeOverflow();
+                  }
+                }}
+              >
+                <ShieldCheck size={14} />
+                {agentPermissionAt
+                  ? "Revoke agent interaction"
+                  : "Grant agent interaction"}
+              </button>
+              {otherActiveRuns.length > 0 ? (
+                <>
+                  <span className="preview-menu-label">Other active runs</span>
+                  {otherActiveRuns.map((run) => (
+                    <button
+                      role="menuitem"
+                      type="button"
+                      key={run.runId}
+                      onClick={() => {
+                        closeOverflow();
+                        void stop(run);
+                      }}
+                    >
+                      <Square size={13} />
+                      Stop {run.scriptName}
+                    </button>
+                  ))}
+                </>
+              ) : null}
+              {visibleRuns.length > 0 ? (
+                <>
+                  <span className="preview-menu-label">Recent runs</span>
+                  {visibleRuns.slice(0, 6).map((run) => (
+                    <button
+                      role="menuitem"
+                      type="button"
+                      key={run.runId}
+                      disabled={activeRun !== undefined}
+                      onClick={() => {
+                        setSelectedRunId(run.runId);
+                        closeOverflow();
+                      }}
+                    >
+                      <span>{run.scriptName}</span>
+                      <small>{run.status}</small>
+                    </button>
+                  ))}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="preview-navigation">
+        <div className="preview-nav-actions">
+          <button
+            aria-label="Go back"
+            title="Go back"
+            type="button"
+            disabled={!browserState.canGoBack}
+            onClick={() => navigatePreviewHistory(webviewRef.current, "back")}
+          >
+            <ArrowLeft size={14} />
           </button>
-        ) : null}
+          <button
+            aria-label="Go forward"
+            title="Go forward"
+            type="button"
+            disabled={!browserState.canGoForward}
+            onClick={() => navigatePreviewHistory(webviewRef.current, "forward")}
+          >
+            <ArrowRight size={14} />
+          </button>
+          <button
+            aria-label={browserState.loading ? "Preview is loading" : "Reload preview"}
+            title={browserState.loading ? "Preview is loading" : "Reload preview"}
+            type="button"
+            disabled={!selectedUrl || browserState.loading}
+            onClick={() => reloadPreview(webviewRef.current)}
+          >
+            <RefreshCw
+              className={browserState.loading ? "preview-spin" : undefined}
+              size={14}
+            />
+          </button>
+        </div>
+        <div className="preview-address">
+          <Globe2 aria-hidden="true" size={14} />
+          <input
+            aria-label="Preview address"
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void navigate();
+            }}
+          />
+        </div>
+        <button
+          aria-label="Open preview in browser"
+          title="Open preview in browser"
+          type="button"
+          disabled={!selectedUrl}
+          onClick={() => void window.kestrelDesktop.openExternal(selectedUrl)}
+        >
+          <ExternalLink size={14} />
+          <span className="preview-control-label">Open</span>
+        </button>
         <select
           aria-label="Preview viewport"
           value={viewport}
@@ -337,143 +716,128 @@ export function PreviewWorkspace(props: {
           <option value="desktop">Desktop 1280px</option>
         </select>
         <button
-          type="button"
-          onClick={() => {
-            if (
-              !agentPermissionAt &&
-              window.confirm(
-                "Grant agent-controlled browser interaction for this preview run? This does not authorize external publication or deployment.",
-              )
-            )
-              setAgentPermissionAt(new Date().toISOString());
-          }}
-        >
-          <ShieldCheck size={14} />{" "}
-          {agentPermissionAt
-            ? "Agent interaction granted"
-            : "Grant agent interaction"}
-        </button>
-      </header>
-      <div className="preview-navigation">
-        <button
-          aria-label="Go back"
-          title="Go back"
-          type="button"
-          disabled={!canPreviewGoBack(webviewRef.current)}
-          onClick={() => navigatePreviewHistory(webviewRef.current, "back")}
-        >
-          <ArrowLeft size={14} />
-        </button>
-        <button
-          aria-label="Go forward"
-          title="Go forward"
-          type="button"
-          disabled={!canPreviewGoForward(webviewRef.current)}
-          onClick={() => navigatePreviewHistory(webviewRef.current, "forward")}
-        >
-          <ArrowRight size={14} />
-        </button>
-        <button
-          aria-label="Reload preview"
-          title="Reload preview"
-          type="button"
-          disabled={!selectedUrl}
-          onClick={() => reloadPreview(webviewRef.current)}
-        >
-          <RefreshCw size={14} />
-        </button>
-        <Globe2 aria-hidden="true" size={14} />
-        <input
-          aria-label="Preview address"
-          value={address}
-          onChange={(event) => setAddress(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") void navigate();
-          }}
-        />
-        <button
-          type="button"
-          disabled={!address}
-          onClick={() => void navigate()}
-        >
-          Go
-        </button>
-        <button
-          type="button"
-          disabled={!selectedUrl}
-          onClick={() => void window.kestrelDesktop.openExternal(selectedUrl)}
-        >
-          <ExternalLink size={14} /> Browser
-        </button>
-        <button
+          aria-label="Capture preview"
+          title="Capture preview"
           type="button"
           disabled={!selectedUrl || selectedRun?.status !== "running"}
           onClick={() => void capture()}
         >
-          <Camera size={14} /> Screenshot
+          <Camera size={14} />
+          <span className="preview-control-label">Capture</span>
         </button>
       </div>
-      <div className="preview-layout">
-        <main className="preview-canvas">
-          <div
-            className="preview-device"
-            style={previewWidth ? { width: previewWidth } : undefined}
-          >
-            {webview ?? (
-              <div className="preview-empty">
+
+      <main className="preview-canvas">
+        <div
+          className="preview-device"
+          style={previewWidth ? { width: previewWidth } : undefined}
+        >
+          {webview ?? (
+            <div className="preview-empty">
+              <Globe2 size={22} aria-hidden="true" />
+              <strong>
                 {selectedRun && selectedRun.status !== "running"
-                  ? `Server is ${selectedRun.status}; restart it before previewing.`
-                  : "Start a project script and select a detected local URL."}
+                  ? `Preview ${selectedRun.status}`
+                  : "No active preview"}
+              </strong>
+              <span>
+                {selectedRun && selectedRun.status !== "running"
+                  ? `Restart ${selectedRun.scriptName} to open its preview.`
+                  : "Start a project script to open a detected local URL."}
+              </span>
+            </div>
+          )}
+        </div>
+      </main>
+
+      <section
+        className={`preview-output ${drawerOpen ? "open" : ""}`}
+        aria-label="Preview output"
+      >
+        <button
+          className="preview-output-summary"
+          type="button"
+          aria-expanded={drawerOpen}
+          aria-controls="preview-output-panel"
+          onClick={() =>
+            setDrawerPreference({ runId: drawerRunId, open: !drawerOpen })
+          }
+        >
+          <span>
+            <TerminalSquare size={14} />
+            <strong>Output</strong>
+            <span>{statusSummary}</span>
+            {issueCount > 0 ? (
+              <small>
+                {issueCount} browser {issueCount === 1 ? "issue" : "issues"}
+              </small>
+            ) : null}
+          </span>
+          {drawerOpen ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+        </button>
+        {drawerOpen ? (
+          <div id="preview-output-panel" className="preview-output-panel">
+            <div className="preview-output-tabs" role="tablist">
+              <button
+                className={drawerView === "activity" ? "active" : ""}
+                role="tab"
+                aria-selected={drawerView === "activity"}
+                type="button"
+                onClick={() => setDrawerView("activity")}
+              >
+                <Activity size={13} /> Activity
+              </button>
+              <button
+                className={drawerView === "raw" ? "active" : ""}
+                role="tab"
+                aria-selected={drawerView === "raw"}
+                type="button"
+                onClick={() => setDrawerView("raw")}
+              >
+                <TerminalSquare size={13} /> Raw output
+              </button>
+              {recordedUrls.length > 1 ? (
+                <select
+                  aria-label="Detected preview URL"
+                  value={selectedUrl}
+                  onChange={(event) => {
+                    setSelectedUrl(event.target.value);
+                    setAddress(event.target.value);
+                  }}
+                >
+                  {recordedUrls.map((url) => (
+                    <option key={url} value={url}>
+                      {url}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
+            {drawerView === "activity" ? (
+              <div className="preview-activity" role="tabpanel">
+                {activityEntries.length > 0 ? (
+                  activityEntries.map((entry, index) => (
+                    <article
+                      className={`preview-activity-${entry.severity}`}
+                      key={`${entry.at}:${entry.kind}:${index}`}
+                    >
+                      <time dateTime={entry.at}>{formatOutputTime(entry.at)}</time>
+                      <span className="preview-activity-mark" />
+                      <strong>{entry.label}</strong>
+                      {entry.detail ? <code>{entry.detail}</code> : null}
+                    </article>
+                  ))
+                ) : (
+                  <p>No activity yet. Start the preview to see lifecycle events.</p>
+                )}
               </div>
+            ) : (
+              <RawPreviewOutput run={selectedRun} />
             )}
           </div>
-        </main>
-        <aside className="preview-inspector">
-          <section>
-            <strong>Server</strong>
-            <span>{selectedRun?.status ?? "not started"}</span>
-            <code>{selectedRun?.command ?? "—"}</code>
-            {recordedUrls.map((url) => (
-              <button
-                type="button"
-                key={url}
-                onClick={() => {
-                  setSelectedUrl(url);
-                  setAddress(url);
-                }}
-              >
-                {url}
-              </button>
-            ))}
-            {selectedRun?.stderrTail.length ? (
-              <pre>{selectedRun.stderrTail.join("\n")}</pre>
-            ) : selectedRun?.stdoutTail.length ? (
-              <pre>{selectedRun.stdoutTail.join("\n")}</pre>
-            ) : null}
-          </section>
-          <section>
-            <strong>Browser diagnostics</strong>
-            {diagnostics.map((entry, index) => (
-              <article key={`${entry.at}:${index}`}>
-                <span>{entry.kind}</span>
-                <p>{entry.message}</p>
-                {entry.url ? <code>{entry.url}</code> : null}
-              </article>
-            ))}
-            {diagnostics.length === 0 ? (
-              <p>No console or failed-network diagnostics.</p>
-            ) : null}
-          </section>
-          <section>
-            <strong>Agent interaction</strong>
-            <p>
-              {agentPermissionAt
-                ? `Explicitly granted for this pane at ${new Date(agentPermissionAt).toLocaleTimeString()}.`
-                : "Off. Browser control is never granted implicitly."}
-            </p>
-          </section>
-        </aside>
-      </div>
+        ) : null}
+      </section>
+
       {screenshot ? (
         <div className="preview-annotation">
           <div
@@ -518,12 +882,13 @@ export function PreviewWorkspace(props: {
             <strong>Visual feedback</strong>
             <p>Drag over the screenshot to annotate a region.</p>
             <textarea
+              aria-label="Visual feedback"
               value={feedback}
               onChange={(event) => setFeedback(event.target.value)}
               placeholder="What should the coding agent repair?"
             />
             <button
-              disabled={busy || !feedback.trim()}
+              disabled={feedbackBusy || !feedback.trim()}
               type="button"
               onClick={() => void submitFeedback()}
             >
@@ -539,13 +904,59 @@ export function PreviewWorkspace(props: {
   );
 }
 
+function RawPreviewOutput(props: {
+  run?: DesktopManagedProjectRun | undefined;
+}) {
+  if (props.run?.outputTail !== undefined) {
+    return (
+      <div className="preview-raw-output" role="tabpanel">
+        {props.run.outputTail.length > 0 ? (
+          props.run.outputTail.map((entry, index) => (
+            <div key={`${entry.observedAt}:${index}`}>
+              <time dateTime={entry.observedAt}>
+                {formatOutputTime(entry.observedAt)}
+              </time>
+              <span className={`preview-source preview-source-${entry.source}`}>
+                {entry.source}
+              </span>
+              <code>{entry.line}</code>
+            </div>
+          ))
+        ) : (
+          <p>No process output yet.</p>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="preview-raw-output preview-raw-legacy" role="tabpanel">
+      <LegacyOutputSection label="stdout" lines={props.run?.stdoutTail ?? []} />
+      <LegacyOutputSection label="stderr" lines={props.run?.stderrTail ?? []} />
+    </div>
+  );
+}
+
+function LegacyOutputSection(props: { label: string; lines: string[] }) {
+  return (
+    <section>
+      <strong>{props.label}</strong>
+      {props.lines.length > 0 ? (
+        <pre>{props.lines.join("\n")}</pre>
+      ) : (
+        <p>No {props.label} captured.</p>
+      )}
+    </section>
+  );
+}
+
 function safeWebContentsId(webview: PreviewWebview | null): number | undefined {
   try {
     return webview?.getWebContentsId();
   } catch {
-    return ;
+    return;
   }
 }
+
 function canPreviewGoBack(webview: PreviewWebview | null): boolean {
   try {
     return typeof webview?.canGoBack === "function" && webview.canGoBack();
@@ -553,6 +964,7 @@ function canPreviewGoBack(webview: PreviewWebview | null): boolean {
     return false;
   }
 }
+
 function canPreviewGoForward(webview: PreviewWebview | null): boolean {
   try {
     return (
@@ -562,6 +974,7 @@ function canPreviewGoForward(webview: PreviewWebview | null): boolean {
     return false;
   }
 }
+
 function navigatePreviewHistory(
   webview: PreviewWebview | null,
   direction: "back" | "forward",
@@ -573,6 +986,7 @@ function navigatePreviewHistory(
     /* Navigation readiness is reflected by the disabled controls. */
   }
 }
+
 function reloadPreview(webview: PreviewWebview | null): void {
   try {
     if (typeof webview?.reload === "function") webview.reload();
@@ -580,12 +994,14 @@ function reloadPreview(webview: PreviewWebview | null): void {
     /* A detached webview cannot be reloaded. */
   }
 }
+
 async function loadPreviewUrl(
   webview: PreviewWebview | null,
   url: string,
 ): Promise<void> {
   if (typeof webview?.loadURL === "function") await webview.loadURL(url);
 }
+
 async function capturePreviewPage(
   webview: PreviewWebview | null,
 ): Promise<{ toDataURL(): string } | undefined> {
@@ -593,6 +1009,7 @@ async function capturePreviewPage(
     ? webview.capturePage()
     : undefined;
 }
+
 function isLocalPreviewUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -609,6 +1026,18 @@ function isLocalPreviewUrl(value: string): boolean {
     return false;
   }
 }
+
+function formatOutputTime(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
+    : "—";
+}
+
 async function annotateScreenshot(
   dataUrl: string,
   region: Region | undefined,
@@ -646,6 +1075,7 @@ async function annotateScreenshot(
   context.fillText(label, 18, Math.max(28, canvas.width / 55));
   return canvas.toDataURL("image/png");
 }
+
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -655,6 +1085,19 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
     image.src = dataUrl;
   });
 }
+
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function isCancelledPreviewLoad(cause: unknown): boolean {
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    (cause as { code?: unknown }).code === -3
+  ) {
+    return true;
+  }
+  return cause instanceof Error && cause.message.includes("ERR_ABORTED (-3)");
 }

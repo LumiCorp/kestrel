@@ -3,96 +3,10 @@
 import type { ActionResult } from "@/lib/actions";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import {
-  createKnowledgeSource,
-  createSourceSchema,
   deleteKnowledgeDocumentForUser,
-  deleteKnowledgeSource,
   reindexKnowledgeDocumentForUser,
-  updateKnowledgeSource,
-  updateSourceSchema,
   uploadKnowledgeDocumentForUser,
 } from "@/lib/knowledge/mutations";
-
-export async function createKnowledgeSourceAction(input: {
-  branch?: string;
-  channelId?: string;
-  handle?: string;
-  label: string;
-  repo?: string;
-  type: "github" | "youtube";
-}): Promise<ActionResult> {
-  try {
-    const { organizationId, session } = await requireActiveOrganization();
-    const body = createSourceSchema.parse(input);
-
-    await createKnowledgeSource({
-      actorUserId: session.user.id,
-      body,
-      organizationId,
-    });
-
-    return {
-      ok: true,
-      message: `Added ${body.label}.`,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Failed to add source",
-    };
-  }
-}
-
-export async function updateKnowledgeSourceAction(input: {
-  body: Record<string, unknown>;
-  sourceId: string;
-}): Promise<ActionResult> {
-  try {
-    const { organizationId, session } = await requireActiveOrganization();
-    const body = updateSourceSchema.parse(input.body);
-
-    await updateKnowledgeSource({
-      actorUserId: session.user.id,
-      body,
-      organizationId,
-      sourceId: input.sourceId,
-    });
-
-    return {
-      ok: true,
-      message: "Source updated.",
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Failed to save source",
-    };
-  }
-}
-
-export async function deleteKnowledgeSourceAction(input: {
-  sourceId: string;
-}): Promise<ActionResult> {
-  try {
-    const { organizationId, session } = await requireActiveOrganization();
-
-    await deleteKnowledgeSource({
-      actorUserId: session.user.id,
-      organizationId,
-      sourceId: input.sourceId,
-    });
-
-    return {
-      ok: true,
-      message: "Source deleted.",
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Failed to delete source",
-    };
-  }
-}
 
 export async function uploadKnowledgeDocumentsAction(
   formData: FormData

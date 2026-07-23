@@ -6,7 +6,6 @@ export type ToolProviderType =
   | "oauth"
   | "api_key"
   | "inbound_adapter"
-  | "source_connector"
   | "custom_imported";
 
 export type ToolAuthType = "system" | "oauth" | "api_key" | "env" | "none";
@@ -19,7 +18,6 @@ export type ToolProviderAppContract = {
     | "engineering"
     | "workflow"
     | "search_research"
-    | "knowledge_sources"
     | "custom";
   connectionModel:
     | "none"
@@ -36,9 +34,10 @@ export type ToolProviderAppContract = {
     | "oauth_environment"
     | "deployment_managed"
   >;
-  delivery: "native" | "lifecycle" | "oauth" | "api_key" | "mcp" | "webhook" | "source";
+  delivery: "native" | "lifecycle" | "oauth" | "api_key" | "mcp" | "webhook";
   installMode: "inherited" | "explicit";
   icon: string | null;
+  configurationPath?: string | null;
 };
 
 export type ToolApprovalMode = "auto" | "ask" | "deny";

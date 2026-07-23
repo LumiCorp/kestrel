@@ -202,3 +202,62 @@ final result: passed
 ## Result
 
 Passed. No open P0 or P1 visual, interaction, accessibility, or responsive defects were found in the verified state.
+
+---
+
+# Preview Workspace Design QA
+
+## Evidence
+
+- Source visual: `~/.codex/generated_images/019f8f36-5d0a-76f1-9417-7a2185235d8d/exec-5f092782-20ef-49ac-9c54-40c4710b24a6.png`
+- Implementation capture: `~/.codex/visualizations/2026/07/23/019f8f36-5d0a-76f1-9417-7a2185235d8d/preview-final-running.png`
+- Side-by-side comparison: `~/.codex/visualizations/2026/07/23/019f8f36-5d0a-76f1-9417-7a2185235d8d/preview-comparison.png`
+- Source dimensions: 1642 x 958
+- Implementation dimensions: 1440 x 952 at device pixel ratio 1
+- Captured state: running Next development server at `http://localhost:3000/`, Activity open because Electron emitted one typed development-mode CSP warning
+
+The native-resolution comparison keeps the run header, browser controls, canvas, and Output drawer legible, so no separate focused crop was required.
+
+## Fidelity review
+
+### Typography
+
+The implementation preserves Kestrel's existing type family and uses the source visual's compact hierarchy: small control labels, a concise live-status line, and restrained Output metadata. The previewed application's typography is intentionally dynamic and is not part of the Preview chrome comparison.
+
+### Spacing and layout
+
+The source hierarchy is preserved: compact run controls, slim browser controls, dominant webview canvas, and a shallow bottom Output drawer. In the final 1440 x 952 capture, the canvas is 640 px high and the open Output region is 170 px high. The former right inspector is absent. Labels collapse responsively before the primary controls wrap.
+
+### Color
+
+The structure and semantic status treatment follow the source, while the implementation intentionally uses Kestrel's established neutral and green tokens rather than copying the concept visual's blue accent.
+
+### Images and icons
+
+There are no source image assets to reproduce. The implementation uses the existing Lucide icon system and renders the real application inside the webview rather than substituting a mock image.
+
+### Copy and controls
+
+The lifecycle button has visible state-specific text and the nearby summary answers the current state directly. Differences from the concept are intentional product constraints from the approved plan:
+
+- `Stop` is the primary running action; restart-while-running is in the overflow menu.
+- No fullscreen control was added.
+- Agent interaction permission and recent/legacy active runs live in the overflow menu.
+- Dynamic project and application content is not expected to match the concept visual.
+
+### Accessibility and interaction
+
+The lifecycle status uses a polite live region. Output exposes expanded state and a controlled region. Icon controls have labels and tooltips. The overflow menu supports first-item focus, arrow-key navigation, Escape, outside-click close, and trigger-focus restoration. Interaction tests cover lifecycle actions, script locking, drawer override behavior, overflow keyboard behavior, and browser navigation state.
+
+## Iteration history
+
+1. The initial live capture exposed a blank preview and a global "WebView must be attached to the DOM" failure. A restarted run was inheriting a stale URL, and an early fallback failure suppressed the later `dom-ready` load. Severity: P0. Fixed by resetting URL selection per run, preferring first-seen preview URL order, and allowing the `dom-ready` attempt after fallback failure.
+2. The first composed layout gave Output too much height relative to the visual target. Severity: P2. Reduced the drawer maximum from 248 px to 170 px and the open panel from 210 px to 132 px.
+3. A later capture exposed expected Electron navigation cancellation (`ERR_ABORTED`, code -3) as a user-facing issue. Severity: P1. Added exact cancellation filtering in both renderer load handling and the main-process typed network diagnostic path.
+4. The final capture shows the Chirp application at `http://localhost:3000/`, no global error banner, accurate running status, a dominant canvas, and only the typed Electron development-mode CSP warning.
+
+## Remaining findings
+
+No actionable P0, P1, or P2 visual fidelity defects remain. The typed CSP warning is expected in the Electron development environment and correctly exercises the approved automatic Output-opening behavior.
+
+final result: passed

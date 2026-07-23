@@ -88,10 +88,10 @@ if [[ "${HTTP_CODE}" != "200" ]]; then
 fi
 
 echo "==> Checking auth guard behavior on protected endpoints"
-SOURCES_CODE="$(curl -sS -o /tmp/unified-sources.json -w "%{http_code}" "${APP_URL}/api/sources")"
-if [[ "${SOURCES_CODE}" != "401" ]]; then
-  echo "Expected 401 for unauthenticated /api/sources, got ${SOURCES_CODE}"
-  cat /tmp/unified-sources.json || true
+DOCUMENTS_CODE="$(curl -sS -o /tmp/unified-knowledge-documents.json -w "%{http_code}" "${APP_URL}/api/knowledge/documents")"
+if [[ "${DOCUMENTS_CODE}" != "401" ]]; then
+  echo "Expected 401 for unauthenticated /api/knowledge/documents, got ${DOCUMENTS_CODE}"
+  cat /tmp/unified-knowledge-documents.json || true
   exit 1
 fi
 

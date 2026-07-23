@@ -10,8 +10,6 @@ import type {
   knowledgeDocumentChunks,
   knowledgeDocuments,
   knowledgeIngestionRuns,
-  knowledgeSnapshots,
-  knowledgeSyncRuns,
   mediaGenerationJobs,
   messageSpeechAssets,
   organizationToolCapabilities,
@@ -20,7 +18,6 @@ import type {
   projectContextRevisions,
   projectMembers,
   projects,
-  sources,
   threadMessages,
   threadInteractions,
   threadTurnEvents,
@@ -75,15 +72,6 @@ export type DbKnowledgeDocumentChunk = InferSelectModel<
 export type NewDbKnowledgeDocumentChunk = InferInsertModel<
   typeof knowledgeDocumentChunks
 >;
-
-export type DbSnapshot = InferSelectModel<typeof knowledgeSnapshots>;
-export type NewDbSnapshot = InferInsertModel<typeof knowledgeSnapshots>;
-
-export type DbSyncRun = InferSelectModel<typeof knowledgeSyncRuns>;
-export type NewDbSyncRun = InferInsertModel<typeof knowledgeSyncRuns>;
-
-export type DbSource = InferSelectModel<typeof sources>;
-export type NewDbSource = InferInsertModel<typeof sources>;
 
 export type DbToolProvider = InferSelectModel<typeof toolProviders>;
 export type NewDbToolProvider = InferInsertModel<typeof toolProviders>;

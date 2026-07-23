@@ -1,6 +1,6 @@
 # Knowledge Library
 
-The Knowledge Library adds org-shared document upload and retrieval on top of the existing GitHub and YouTube snapshot system.
+The Knowledge Library is the organization’s shared, document-backed retrieval system. GitHub is an App/workspace integration, not a Knowledge source.
 
 ## Local infra
 
@@ -55,9 +55,7 @@ That script starts Compose, waits for Postgres, Redis, and MinIO, verifies `pgve
 
 If uploads succeed but indexing does not:
 
-- Check `/knowledge` for the latest run stage and diagnostics.
-- Confirm `runtime.queue.workerRegistered` is true in the Knowledge page response.
-- Confirm `runtime.embeddingMode` and `runtime.ocrMode` are what you expect.
+- Check `/knowledge` for the latest document status and reindex if needed.
 - Verify Postgres has `pgvector` available and migrations have been applied.
 - Verify MinIO is healthy and the `unified-app-storage` bucket exists.
 
@@ -65,5 +63,5 @@ If search returns weak results:
 
 - Confirm the document reached `ready` or `partial`.
 - Inspect extraction warnings for sparse or empty text.
-- Reindex after changing embedding or OCR configuration.
+- Reindex after correcting a source document.
 - Use the fixture suite in `tests/fixtures/knowledge-rag` to validate retrieval behavior before debugging live data.

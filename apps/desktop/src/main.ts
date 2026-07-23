@@ -579,7 +579,8 @@ function configureEmbeddedPreviewSecurity(): void {
   previewSession.webRequest.onErrorOccurred((details) => {
     if (
       details.webContentsId === undefined ||
-      !embeddedPreviewWebContentsIds.has(details.webContentsId)
+      !embeddedPreviewWebContentsIds.has(details.webContentsId) ||
+      details.error === "net::ERR_ABORTED"
     )
       return;
     sendPreviewDiagnostic({

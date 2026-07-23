@@ -1,6 +1,6 @@
 # Knowledge Library User Guide
 
-The Knowledge Library lets your organization upload shared files and use them in chat alongside the existing GitHub and YouTube knowledge sources.
+The Knowledge Library lets your organization upload shared files and use them in grounded answers. Project-only material belongs in the relevant Project’s context.
 
 ## What you can upload
 
@@ -13,7 +13,7 @@ The Knowledge Library lets your organization upload shared files and use them in
 
 1. Open `/knowledge`.
 2. Click **Upload** in the header and select one or more files.
-3. Wait for each file to appear in the **Knowledge Explorer**.
+3. Wait for each file to appear in **Documents**.
 4. Watch the document status until it becomes `ready` or `partial`.
 
 Status meanings:
@@ -29,7 +29,7 @@ Status meanings:
 When you attach a supported file in chat, the UI can offer **Chat + Knowledge**.
 
 - `Chat only` keeps the file private to the current conversation.
-- `Chat + Knowledge` adds the attachment to the shared Knowledge Library for the active organization.
+- `Chat + Knowledge` adds the attachment to Organization Knowledge for the active organization.
 
 Only the person who uploaded the chat attachment can promote it into shared knowledge.
 
