@@ -1014,6 +1014,7 @@ contractTest("web.hermetic", "replacement resources are idempotently namespaced 
         id: "replacement-machine-id",
         state: "started",
         region: "iad",
+        instance_id: null,
         config: {
           mounts: null,
           services: null,
