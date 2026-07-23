@@ -154,7 +154,7 @@ contractTest("web.hermetic", "Kestrel-One API route classes have matching app-bo
         /\bparamsSchema\b/,
         `${entry.file} must validate platform`
       );
-      assert.match(source, /\bhandle(?:Discord|GitHub)Webhook\b/);
+      assert.match(source, /\bhandleDiscordWebhook\b/);
     }
   }
 });

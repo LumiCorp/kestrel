@@ -10,7 +10,6 @@ export type AppCategory =
   | "search_research"
   | "productivity"
   | "engineering"
-  | "knowledge_sources"
   | "communication"
   | "workflow"
   | "custom";

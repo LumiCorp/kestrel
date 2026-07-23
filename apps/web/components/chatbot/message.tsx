@@ -489,7 +489,7 @@ const PurePreviewMessage = ({
                   className="rounded-lg border bg-muted/20 px-3 py-2 text-sm"
                   key={key}
                 >
-                  <span className="font-medium">Knowledge source</span>{" "}
+                  <span className="font-medium">Knowledge document</span>{" "}
                   {part.data.url ? (
                     <a
                       className="underline underline-offset-2"

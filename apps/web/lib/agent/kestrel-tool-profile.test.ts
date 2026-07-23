@@ -185,8 +185,6 @@ contractTest("web.hermetic", "built-in agent tools are governed by their effecti
         "free.geocode.lookup",
         "free.exchange.rate",
         "kestrel_one.search_knowledge_documents",
-        "bash",
-        "bash_batch",
         "createDocument",
         "updateDocument",
         "requestSuggestions",
@@ -199,7 +197,6 @@ contractTest("web.hermetic", "built-in agent tools are governed by their effecti
       "app:built_in.geocoding.lookup:auto",
       "app:built_in.exchange_rates.rate:auto",
       "app:built_in.knowledge_search.searchKnowledgeDocuments:ask",
-      "app:built_in.sandbox.bash_batch:auto",
       "app:built_in.artifacts.createDocument:ask",
       "app:built_in.artifacts.requestSuggestions:auto",
     ],
@@ -212,7 +209,6 @@ contractTest("web.hermetic", "built-in agent tools are governed by their effecti
     "free.geocode.lookup",
     "free.exchange.rate",
     "kestrel_one.search_knowledge_documents",
-    "bash_batch",
     "createDocument",
     "requestSuggestions",
   ]);
@@ -223,7 +219,6 @@ contractTest("web.hermetic", "built-in agent tools are governed by their effecti
     "free.geocode.lookup": "auto",
     "free.exchange.rate": "auto",
     "kestrel_one.search_knowledge_documents": "ask",
-    bash_batch: "auto",
     createDocument: "ask",
     requestSuggestions: "auto",
   });

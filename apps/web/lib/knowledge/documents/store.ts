@@ -194,6 +194,67 @@ export async function getLatestKnowledgeIngestionRunsForDocuments(
   return latestRuns;
 }
 
+export async function getVisibleProjectUsageForKnowledgeDocuments(input: {
+  organizationId: string;
+  userId: string;
+  documentIds: string[];
+}) {
+  if (input.documentIds.length === 0) {
+    return new Map<string, Array<{ id: string; name: string }>>();
+  }
+
+  const rows = await knowledgeDb
+    .select({
+      documentId: schema.projectContextDocuments.documentId,
+      projectId: schema.projects.id,
+      projectName: schema.projects.name,
+    })
+    .from(schema.projectContextDocuments)
+    .innerJoin(
+      schema.projectContextRevisions,
+      eq(
+        schema.projectContextRevisions.id,
+        schema.projectContextDocuments.contextRevisionId
+      )
+    )
+    .innerJoin(
+      schema.projects,
+      and(
+        eq(schema.projects.id, schema.projectContextRevisions.projectId),
+        eq(
+          schema.projects.currentContextRevision,
+          schema.projectContextRevisions.revision
+        ),
+        isNull(schema.projects.archivedAt)
+      )
+    )
+    .innerJoin(
+      schema.projectMembers,
+      eq(schema.projectMembers.projectId, schema.projects.id)
+    )
+    .innerJoin(
+      schema.members,
+      and(
+        eq(schema.members.id, schema.projectMembers.organizationMemberId),
+        eq(schema.members.organizationId, input.organizationId),
+        eq(schema.members.userId, input.userId)
+      )
+    )
+    .where(
+      inArray(schema.projectContextDocuments.documentId, input.documentIds)
+    );
+
+  const usage = new Map<string, Array<{ id: string; name: string }>>();
+  for (const row of rows) {
+    const projects = usage.get(row.documentId) ?? [];
+    if (!projects.some((project) => project.id === row.projectId)) {
+      projects.push({ id: row.projectId, name: row.projectName });
+    }
+    usage.set(row.documentId, projects);
+  }
+  return usage;
+}
+
 export async function updateKnowledgeIngestionRun(
   runId: string,
   values: Partial<typeof schema.knowledgeIngestionRuns.$inferInsert>
@@ -272,6 +333,12 @@ export function canManageKnowledgeDocument(
 }
 
 export async function deleteKnowledgeDocumentGraph(documentId: string) {
+  // Deletion is immediate: remove every context reference before deleting the
+  // document itself, so a formerly curated organization document cannot remain
+  // retrievable through an existing Project revision.
+  await knowledgeDb
+    .delete(schema.projectContextDocuments)
+    .where(eq(schema.projectContextDocuments.documentId, documentId));
   await knowledgeDb
     .delete(schema.knowledgeIngestionRuns)
     .where(eq(schema.knowledgeIngestionRuns.documentId, documentId));

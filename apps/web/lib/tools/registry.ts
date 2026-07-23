@@ -307,51 +307,6 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     ],
   },
   {
-    key: KESTREL_APP_IDS.SANDBOX,
-    displayName: "Sandbox",
-    description: "Inspect synced source content with read-only shell commands.",
-    type: "built_in",
-    authType: "system",
-    app: {
-      category: "kestrel",
-      connectionModel: "none",
-      connectionRequirement: "none",
-      authMethods: ["none"],
-      delivery: "native",
-      installMode: "inherited",
-      icon: "terminal",
-    },
-    metadata: {
-      icon: "terminal",
-      category: "built_in",
-    },
-    capabilities: [
-      createCapability({
-        key: "bash",
-        runtimeName: "bash",
-        displayName: "Sandbox Bash",
-        description: "Run one read-only shell command in the synced sandbox.",
-        accessMode: "internal",
-        defaultPolicy: {
-          rateLimitMode: "strict",
-          loggingMode: "metadata_only",
-        },
-      }),
-      createCapability({
-        key: "bash_batch",
-        runtimeName: "bash_batch",
-        displayName: "Sandbox Bash Batch",
-        description:
-          "Run multiple read-only shell commands in the synced sandbox.",
-        accessMode: "internal",
-        defaultPolicy: {
-          rateLimitMode: "strict",
-          loggingMode: "metadata_only",
-        },
-      }),
-    ],
-  },
-  {
     key: KESTREL_APP_IDS.ARTIFACTS,
     displayName: "Artifacts",
     description: "Create and update chat artifacts.",
@@ -398,7 +353,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     key: KESTREL_APP_IDS.GITHUB,
     displayName: "GitHub",
     description:
-      "GitHub bot connection status, webhook readiness, and snapshot-backed runtime health.",
+      "Connect explicitly granted GitHub repositories to Projects and workspaces.",
     type: "oauth",
     authType: "oauth",
     app: {

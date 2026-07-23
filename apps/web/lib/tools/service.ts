@@ -1,9 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { getBotUserName } from "@/lib/bots/github-config";
-import { getUnifiedBotRuntime } from "@/lib/bots/runtime";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { getKnowledgeOcrMode } from "@/lib/knowledge/documents/ocr-config";
-import { getActiveKnowledgeSnapshot } from "@/lib/knowledge/snapshot-store";
 import { mapWithConcurrencyLimit } from "./concurrency";
 import { buildToolsOverview } from "./overview";
 import { getToolProviderDefinition, listToolProviders } from "./registry";
@@ -136,7 +132,6 @@ const knowledgeSearchAdapter: ToolProviderAdapter = {
           readyDocumentCount: readyCount,
           processingDocumentCount: processingCount,
           failedDocumentCount: failedCount,
-          ocrMode: getKnowledgeOcrMode(),
         },
       });
     }
@@ -155,106 +150,32 @@ const knowledgeSearchAdapter: ToolProviderAdapter = {
         readyDocumentCount: readyCount,
         processingDocumentCount: processingCount,
         failedDocumentCount: failedCount,
-        ocrMode: getKnowledgeOcrMode(),
-      },
-    });
-  },
-};
-
-const sandboxAdapter: ToolProviderAdapter = {
-  async getConnectionStatus({ organizationId }) {
-    const [sourceRows, activeSnapshot] = await Promise.all([
-      knowledgeDb
-        .select({ id: schema.sources.id })
-        .from(schema.sources)
-        .where(eq(schema.sources.organizationId, organizationId)),
-      getActiveKnowledgeSnapshot(organizationId),
-    ]);
-
-    if (activeSnapshot) {
-      return createSystemConnection({
-        label: "Snapshot ready",
-        metadata: {
-          manageUrl: "/knowledge",
-          sourceCount: sourceRows.length,
-          activeSnapshotId: activeSnapshot.id,
-        },
-      });
-    }
-
-    return createSystemConnection({
-      status: sourceRows.length > 0 ? "degraded" : "not_configured",
-      isReady: false,
-      label: sourceRows.length > 0 ? "Run source sync" : "Add sources",
-      lastError:
-        sourceRows.length > 0
-          ? "No active knowledge snapshot is available."
-          : null,
-      metadata: {
-        manageUrl: "/knowledge",
-        sourceCount: sourceRows.length,
-        activeSnapshotId: null,
       },
     });
   },
 };
 
 const githubAdapter: ToolProviderAdapter = {
-  async getConnectionStatus({ organizationId, origin }) {
-    const hasPat = Boolean(process.env.GITHUB_TOKEN);
-    const hasApp = Boolean(
-      process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY,
-    );
-    const hasWebhookSecret = Boolean(process.env.GITHUB_WEBHOOK_SECRET);
-    const [sourceRows, activeSnapshot] = await Promise.all([
-      knowledgeDb
-        .select({ id: schema.sources.id })
-        .from(schema.sources)
-        .where(
-          and(
-            eq(schema.sources.organizationId, organizationId),
-            eq(schema.sources.type, "github"),
-          ),
+  async getConnectionStatus({ organizationId }) {
+    const connections = await knowledgeDb.query.appConnections.findMany({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, organizationId),
+          eq(table.appKey, "github"),
+          eq(table.status, "connected")
         ),
-      getActiveKnowledgeSnapshot(organizationId),
-    ]);
-
-    const configured = (hasPat || hasApp) && hasWebhookSecret;
-    const adapterAvailable = getUnifiedBotRuntime().hasGitHubAdapter();
-    const snapshotReady = Boolean(activeSnapshot);
-    const status = configured
-      ? adapterAvailable && snapshotReady
-        ? "env_backed"
-        : "degraded"
-      : "not_configured";
-
+      columns: { id: true },
+    });
+    const configured = connections.length > 0;
     return {
-      authSource: "env",
-      status,
-      isReady: configured && adapterAvailable && snapshotReady,
-      label: configured
-        ? adapterAvailable && snapshotReady
-          ? "Env-backed"
-          : "Action required"
-        : "Missing credentials",
-      lastError:
-        configured && !snapshotReady
-          ? "No active knowledge snapshot is available."
-          : configured && !adapterAvailable
-            ? "GitHub adapter is not initialized."
-            : null,
+      authSource: "oauth",
+      status: configured ? "connected" : "not_configured",
+      isReady: configured,
+      label: configured ? "Connected through Apps" : "Connect GitHub in Apps",
+      lastError: null,
       metadata: {
-        configured,
-        authMode: hasPat ? "pat" : hasApp ? "app" : null,
-        hasWebhookSecret,
-        botUserName: getBotUserName(),
-        replyToNewIssues: process.env.GITHUB_REPLY_TO_NEW_ISSUES === "true",
-        webhookUrl: origin ? `${origin}/api/webhooks/github` : null,
-        sourceCount: sourceRows.length,
-        activeSnapshotId: activeSnapshot?.id ?? null,
-        snapshotReady,
-        adapterAvailable,
-        stateBackend: getUnifiedBotRuntime().getStateBackend(),
+        manageUrl: "/apps",
+        connectionCount: connections.length,
       },
     };
   },
@@ -346,7 +267,6 @@ const providerAdapters = new Map<ToolProviderKey, ToolProviderAdapter>([
   ["built_in.geocoding", builtInSystemAdapter],
   ["built_in.exchange_rates", builtInSystemAdapter],
   ["built_in.knowledge_search", knowledgeSearchAdapter],
-  ["built_in.sandbox", sandboxAdapter],
   ["built_in.artifacts", artifactsAdapter],
   ["github", githubAdapter],
   ["google_workspace", googleWorkspaceAdapter],

@@ -20,12 +20,6 @@ export const ADMIN_DOCS = [
     description: "Manage app-owned admin API keys and rotation expectations.",
   },
   {
-    slug: "github-bot",
-    title: "GitHub Bot",
-    description:
-      "Configure the GitHub webhook runtime and understand repo-backed retrieval prerequisites.",
-  },
-  {
     slug: "discord-bot",
     title: "Discord Bot",
     description:
