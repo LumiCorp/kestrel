@@ -1,6 +1,7 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth as betterAuth } from "@/lib/auth";
+import { resolveKestrelAppUrl } from "@/lib/app-url";
 import type { Session } from "@/lib/auth-types";
 
 export type AuthSession = Session;
@@ -8,12 +9,7 @@ export type UserType = Session["user"] extends { type: infer T }
   ? T
   : "guest" | "regular";
 
-const BASE_URL =
-  process.env.NEXT_PUBLIC_APP_URL ??
-  (process.env.VERCEL && process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : undefined) ??
-  "http://localhost:43103";
+const BASE_URL = resolveKestrelAppUrl(process.env);
 
 async function buildCookieHeader() {
   const cookieStore = await cookies();

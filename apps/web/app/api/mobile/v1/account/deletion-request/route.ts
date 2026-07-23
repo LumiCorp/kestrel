@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { resolveKestrelAppUrl } from "@/lib/app-url";
 import { deliverTransactionalEmail } from "@/lib/email/service";
 import { requireSession } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -83,10 +84,7 @@ export async function POST(request: Request) {
         updatedAt: now,
       });
     });
-    const baseUrl =
-      process.env.NEXT_PUBLIC_APP_URL ??
-      process.env.BETTER_AUTH_URL ??
-      "http://localhost:43103";
+    const baseUrl = resolveKestrelAppUrl(process.env);
     const confirmUrl = `${baseUrl.replace(/\/$/, "")}/account/deletion/confirm?token=${encodeURIComponent(token)}`;
     await deliverTransactionalEmail({
       kind: "account_deletion_confirmation",

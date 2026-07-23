@@ -16,6 +16,7 @@ import {
   type WebhookOptions,
 } from "chat";
 import type { BotThreadContext } from "@/lib/bots/context";
+import { resolveKestrelAppUrl } from "@/lib/app-url";
 import {
   createDiscordThreadFromMessage,
   getDiscordConfig,
@@ -290,8 +291,7 @@ class UnifiedBotRuntime {
         organizationId: resolved.organizationId,
         apiUrl:
           this.requestOrigin.getStore() ??
-          process.env.BETTER_AUTH_URL ??
-          "http://localhost:43103",
+          resolveKestrelAppUrl(process.env),
         threadId: resolved.threadId,
         prompt: message.text,
         context: resolved.context,

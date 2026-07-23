@@ -1,14 +1,18 @@
+import { resolveKestrelAppUrl } from "./app-url";
+
 export type InvitationOriginEnvironment = {
   BETTER_AUTH_URL?: string;
   NEXT_PUBLIC_APP_URL?: string;
   NODE_ENV?: string;
+  VERCEL?: string;
+  VERCEL_ENV?: string;
+  VERCEL_URL?: string;
 };
 
 export function invitationOrigin(
   env: InvitationOriginEnvironment = process.env,
 ) {
   const configured = env.BETTER_AUTH_URL?.trim();
-  const fallback = env.NEXT_PUBLIC_APP_URL?.trim() || "http://localhost:43103";
 
   if (!configured && env.NODE_ENV === "production") {
     throw new Error(
@@ -17,7 +21,7 @@ export function invitationOrigin(
   }
 
   try {
-    const url = new URL(configured || fallback);
+    const url = new URL(resolveKestrelAppUrl(env));
     if (url.protocol !== "https:" && url.protocol !== "http:") {
       throw new Error("Invitation URLs must use HTTP or HTTPS.");
     }
