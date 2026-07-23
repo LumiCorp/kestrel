@@ -75,7 +75,7 @@ const machineSchema = z.object({
   id: z.string().min(1),
   state: z.string().min(1),
   region: z.string().min(1),
-  instance_id: z.string().min(1).optional(),
+  instance_id: z.string().min(1).nullable().optional(),
   checks: z
     .array(
       z.object({
@@ -119,7 +119,7 @@ const machineCreateResponseSchema = z
     id: z.string().min(1),
     state: z.string().min(1),
     region: z.string().min(1),
-    instance_id: z.string().min(1).optional(),
+    instance_id: z.string().min(1).nullable().optional(),
   })
   .passthrough();
 
