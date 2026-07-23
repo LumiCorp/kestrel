@@ -14,14 +14,14 @@ export default async function SettingsLayout({
   return (
     <div className="min-h-full border-t">
       <div className="border-b px-4 py-5 sm:px-6 lg:px-8">
-        <div className="mx-auto w-full max-w-[100rem]">
+        <div className="mx-auto w-full max-w-[100rem] lg:mr-0 lg:ml-8 lg:w-auto">
           <h1 className="font-semibold text-2xl tracking-tight">Settings</h1>
           <p className="mt-1 text-muted-foreground text-sm">
             Personal, organization, and platform configuration in one place.
           </p>
         </div>
       </div>
-      <div className="mx-auto flex w-full max-w-[100rem] flex-col lg:flex-row">
+      <div className="mx-auto flex w-full max-w-[100rem] flex-col lg:mr-0 lg:ml-8 lg:w-auto lg:flex-row">
         <SettingsNavigation
           canManageOrganization={canManageActiveOrganization}
           isAppAdmin={isAdmin}
