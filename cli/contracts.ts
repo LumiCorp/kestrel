@@ -270,10 +270,39 @@ export interface TuiProfile {
   default?: boolean | undefined;
 }
 
-export interface ProfilesFile {
+export interface KestrelOneManagedProfileOverlay {
+  approvalPolicyPackId?: ApprovalPolicyPackId | undefined;
+  additionalToolNames?: string[] | undefined;
+  mcpServers?: McpServerConfig[] | undefined;
+  toolQueue?: ToolQueueProfileConfig | undefined;
+  codeMode?: CodeModeProfileConfig | undefined;
+  devShell?: DevShellProfileConfig | undefined;
+  delegationLimits?:
+    | Pick<
+        DelegationPolicyConfig,
+        "maxConcurrentChildSessions" | "maxDepth"
+      >
+    | undefined;
+  reasoning?: TuiProfile["reasoning"] | undefined;
+  theme?: ThemeOverrides | undefined;
+  default?: boolean | undefined;
+}
+
+export interface ProfilesFileV4 {
   version: 4;
   profiles: TuiProfile[];
 }
+
+export interface ProfilesFileV5 {
+  version: 5;
+  profiles: TuiProfile[];
+  managedProfileOverlays: {
+    "kestrel-one@cli_dev_local"?: KestrelOneManagedProfileOverlay | undefined;
+    "kestrel-one@workspace_hosted"?: KestrelOneManagedProfileOverlay | undefined;
+  };
+}
+
+export type ProfilesFile = ProfilesFileV4 | ProfilesFileV5;
 
 export interface TuiSessionMeta {
   name: string;
