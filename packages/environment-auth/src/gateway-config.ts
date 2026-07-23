@@ -5,6 +5,7 @@ export type EnvironmentGatewayPreviewRoute = {
   workspaceId: string;
   machineId: string;
   hostname: string;
+  ingress: "ngrok" | "kestrel_edge";
   port: number;
   expiresAt: string;
   relayTicket: string;

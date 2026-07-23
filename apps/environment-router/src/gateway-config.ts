@@ -205,12 +205,19 @@ function parsePreview(value: unknown): EnvironmentGatewayConfig["previews"][numb
   const port = integerField(value, "port");
   const expiresAt = dateField(value, "expiresAt");
   const hostname = stringField(value, "hostname").toLowerCase();
-  if (port < 1024 || port > 65_535 || !/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/u.test(hostname)) throw invalid();
+  const ingress = value.ingress ?? "ngrok";
+  if (
+    port < 1024 ||
+    port > 65_535 ||
+    !/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/u.test(hostname) ||
+    (ingress !== "ngrok" && ingress !== "kestrel_edge")
+  ) throw invalid();
   return {
     id: stringField(value, "id"),
     workspaceId: stringField(value, "workspaceId"),
     machineId: stringField(value, "machineId"),
     hostname,
+    ingress,
     port,
     expiresAt,
     relayTicket: stringField(value, "relayTicket"),

@@ -33,10 +33,15 @@ export async function reportEnvironmentGatewayNgrokStatus(input: {
   const environment = await knowledgeDb.query.environments.findFirst({
     where: (table, { eq: equals }) => equals(table.id, input.environmentId),
   });
-  if (!environment?.gatewayServiceTokenHash || !verifyEnvironmentServiceToken({
-    token: readBearer(input.authorization),
-    expectedHash: environment.gatewayServiceTokenHash,
-  })) {
+  if (
+    !(
+      environment?.gatewayServiceTokenHash &&
+      verifyEnvironmentServiceToken({
+        token: readBearer(input.authorization),
+        expectedHash: environment.gatewayServiceTokenHash,
+      })
+    )
+  ) {
     throw new EnvironmentGatewayConfigError("ENVIRONMENT_GATEWAY_UNAUTHORIZED", 401);
   }
   const connection = await knowledgeDb.query.appConnections.findFirst({
@@ -196,7 +201,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
         appKey: "ngrok",
         connectionId: ngrokConnection.id,
         failureCode: "NGROK_CREDENTIAL_UNAVAILABLE",
-      }).catch(() => undefined);
+      }).catch(() => {});
     }
   }
 
@@ -263,6 +268,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
               workspaceId: preview.workspaceId,
               machineId: workspace.flyMachineId,
               hostname: preview.hostname,
+              ingress: "ngrok" as const,
               port: preview.port,
               expiresAt: preview.expiresAt.toISOString(),
               relayTicket: signPreviewRelayTicket({

@@ -1,6 +1,7 @@
 import { sign, verify } from "node:crypto";
 
 export * from "./gateway-config.js";
+export * from "./preview-edge.js";
 export * from "./preview-relay.js";
 export * from "./workspace-readiness.js";
 

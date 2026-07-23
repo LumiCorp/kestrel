@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect as connectTcp } from "node:net";
 import type { Duplex } from "node:stream";
-import type { EnvironmentGatewayConfig, EnvironmentGatewayPreviewRoute } from "@lumi/kestrel-environment-auth";
+import {
+  type EnvironmentGatewayConfig,
+  type EnvironmentGatewayPreviewRoute,
+  PREVIEW_EDGE_AUTHORIZATION_HEADER,
+  verifyPreviewEdgeRouteTicket,
+} from "@lumi/kestrel-environment-auth";
 import { type Session, SessionBuilder } from "@ngrok/ngrok";
 
 const MAX_CONNECTIONS_PER_PREVIEW = 100;
@@ -22,6 +27,7 @@ export class PreviewGateway {
       port: number;
       expectedAppName: string;
       environmentId: string;
+      ticketPublicKey?: string | undefined;
       workspaceAddress?: ((route: EnvironmentGatewayPreviewRoute) => { host: string; port: number }) | undefined;
       openEndpoint?: ((input: { authtoken: string; wildcardDomain: string; targetUrl: string; environmentId: string }) => Promise<{ close(): Promise<void> }>) | undefined;
       reportStatus?: ((input: {
@@ -53,6 +59,18 @@ export class PreviewGateway {
   async handleHttp(request: IncomingMessage, response: ServerResponse) {
     const route = this.routeFor(request.headers.host);
     if (!route) return false;
+    if (!this.authorizeIngress(route, request.headers)) {
+      response.writeHead(403, {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error: { code: "PREVIEW_EDGE_AUTHORIZATION_DENIED" },
+        })
+      );
+      return true;
+    }
     if (!this.acquire(route.id)) {
       response.writeHead(503, { "content-type": "application/json", "retry-after": "1" });
       response.end(JSON.stringify({ error: { code: "PREVIEW_CONNECTION_LIMIT" } }));
@@ -71,6 +89,12 @@ export class PreviewGateway {
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
     const route = this.routeFor(request.headers.host);
     if (!route) return false;
+    if (!this.authorizeIngress(route, request.headers)) {
+      socket.end(
+        "HTTP/1.1 403 Forbidden\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+      );
+      return true;
+    }
     if (!this.acquire(route.id)) {
       socket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       return true;
@@ -157,6 +181,34 @@ export class PreviewGateway {
       host: `${route.machineId}.vm.${this.input.expectedAppName}.internal`,
       port: 43_104,
     };
+  }
+
+  private authorizeIngress(
+    route: EnvironmentGatewayPreviewRoute,
+    headers: IncomingHttpHeaders
+  ) {
+    if (route.ingress === "ngrok") return true;
+    const rawAuthorization = headers[PREVIEW_EDGE_AUTHORIZATION_HEADER];
+    const authorization = Array.isArray(rawAuthorization)
+      ? rawAuthorization[0]
+      : rawAuthorization;
+    const token = authorization?.match(/^Bearer ([^\s]+)$/u)?.[1];
+    if (!(token && this.input.ticketPublicKey)) return false;
+    try {
+      const ticket = verifyPreviewEdgeRouteTicket({
+        token,
+        publicKey: this.input.ticketPublicKey,
+      });
+      return (
+        ticket.environmentId === this.input.environmentId &&
+        ticket.workspaceId === route.workspaceId &&
+        ticket.flyAppName === this.input.expectedAppName &&
+        ticket.previewId === route.id &&
+        ticket.hostname === route.hostname
+      );
+    } catch {
+      return false;
+    }
   }
 
   private acquire(previewId: string) {
@@ -275,6 +327,7 @@ function sanitizedHeaders(headers: IncomingHttpHeaders) {
   for (const name of [
     "connection", "proxy-authorization", "proxy-authenticate", "forwarded",
     "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+    PREVIEW_EDGE_AUTHORIZATION_HEADER,
   ]) delete result[name];
   return result;
 }
