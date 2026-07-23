@@ -1,4 +1,4 @@
-app = "kestrel-one-runner"
+app = "kestrel-preview-edge"
 primary_region = "iad"
 
 [build]
