@@ -76,7 +76,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     projectContextRevisionId?: string | undefined;
     durableTurnId?: string | undefined;
   };
-  owningLifecycleOperationId?: string | undefined;
+  owningLifecycleOperationIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
   await requireHostedEnvironmentsEnabled({
@@ -137,7 +137,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     environmentId: resolved.binding.environmentId,
     workspaceId: resolved.binding.workspaceId,
     actorUserId: input.actorUserId,
-    owningLifecycleOperationId: input.owningLifecycleOperationId,
+    owningLifecycleOperationIds: input.owningLifecycleOperationIds,
     onProgress: input.onProgress,
   });
   const now = Math.floor(Date.now() / 1000);
@@ -309,7 +309,7 @@ async function waitForExecutionResources(input: {
   environmentId: string;
   workspaceId: string;
   actorUserId: string;
-  owningLifecycleOperationId?: string | undefined;
+  owningLifecycleOperationIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
   const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
@@ -336,7 +336,7 @@ async function waitForExecutionResources(input: {
         organizationId: input.organizationId,
         environmentId: input.environmentId,
         workspaceId: input.workspaceId,
-        excludedOperationId: input.owningLifecycleOperationId,
+        excludedOperationIds: input.owningLifecycleOperationIds,
       }),
     ]);
     if (!(environment && workspace)) {

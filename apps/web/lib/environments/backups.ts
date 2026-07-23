@@ -36,6 +36,7 @@ export async function createWorkspaceBackup(input: {
   idempotencyKey?: string;
   signal?: AbortSignal | undefined;
   executionOwnership?: BackupExecutionOwnership | undefined;
+  parentLifecycleOperationId?: string | undefined;
   preDestructiveSnapshot?: { id: string; state: string } | undefined;
 }) {
   const [environment, workspace, binding] = await Promise.all([
@@ -90,7 +91,12 @@ export async function createWorkspaceBackup(input: {
       organizationId: input.organizationId,
       threadId: binding.threadId,
       actorUserId: input.actorUserId,
-      owningLifecycleOperationId: operationId,
+      owningLifecycleOperationIds: [
+        operationId,
+        ...(input.parentLifecycleOperationId
+          ? [input.parentLifecycleOperationId]
+          : []),
+      ],
     });
     const archive = await fetchBackupArchive(
       route.baseUrl,
