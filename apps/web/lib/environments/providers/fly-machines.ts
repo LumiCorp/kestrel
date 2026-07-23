@@ -99,6 +99,7 @@ const machineSchema = z.object({
           timeout: z.number().int().nonnegative(),
         })
         .passthrough()
+        .nullable()
         .optional(),
       guest: z
         .object({
@@ -1209,6 +1210,7 @@ function environmentsEqual(
 function stopConfigsEqual(
   current:
     | { signal: string; timeout: number }
+    | null
     | undefined,
   requested: EnvironmentProviderMachineStopConfig | undefined
 ) {
