@@ -57,6 +57,22 @@ export async function resolveWorkspaceBackupRecoverySource(input: {
   });
 }
 
+export function resolveWorkspaceBackupSnapshotSourceVolumeId(input: {
+  manifest: unknown;
+  currentVolumeId: string;
+}) {
+  const manifest =
+    typeof input.manifest === "object" &&
+    input.manifest !== null &&
+    !Array.isArray(input.manifest)
+      ? (input.manifest as Record<string, unknown>)
+      : {};
+  const recorded = manifest.flySnapshotSourceVolumeId;
+  return typeof recorded === "string" && recorded.trim().length > 0
+    ? recorded.trim()
+    : input.currentVolumeId;
+}
+
 export async function performGuardedWorkspaceRestoreCutover<Validation>(input: {
   validateReplacement: () => Promise<Validation>;
   casRebind: (validation: Validation) => Promise<boolean>;

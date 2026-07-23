@@ -25,6 +25,7 @@ import {
 import {
   performGuardedWorkspaceRestoreCutover,
   resolveWorkspaceBackupRecoverySource,
+  resolveWorkspaceBackupSnapshotSourceVolumeId,
 } from "./restore-cutover";
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
@@ -149,6 +150,7 @@ export async function createWorkspaceBackup(input: {
           manifest: {
             flySnapshotId: snapshot.id,
             flySnapshotState: snapshot.state,
+            flySnapshotSourceVolumeId: workspace.flyVolumeId,
             ...(input.preDestructiveSnapshot
               ? {
                   preDestructiveFlySnapshotId:
@@ -588,6 +590,11 @@ export async function restoreWorkspaceBackup(input: {
   const routerUrl = environment.routerUrl;
   const oldMachineId = workspace.flyMachineId;
   const oldVolumeId = workspace.flyVolumeId;
+  const snapshotSourceVolumeId =
+    resolveWorkspaceBackupSnapshotSourceVolumeId({
+      manifest: backup.manifest,
+      currentVolumeId: oldVolumeId,
+    });
   const provider = await createFlyProviderClient(input.organizationId);
   const recoverySource = await resolveWorkspaceBackupRecoverySource({
     manifest: backup.manifest,
@@ -596,7 +603,7 @@ export async function restoreWorkspaceBackup(input: {
     isSnapshotUsable: (snapshotId) =>
       provider.isWorkspaceSnapshotUsable({
         appName: flyAppName,
-        sourceVolumeId: oldVolumeId,
+        sourceVolumeId: snapshotSourceVolumeId,
         snapshotId,
       }),
   });
@@ -681,7 +688,7 @@ export async function restoreWorkspaceBackup(input: {
       region: environment.region,
       replacementId: operationId,
       ...(snapshotId
-        ? { snapshotId, sourceVolumeId: oldVolumeId }
+        ? { snapshotId, sourceVolumeId: snapshotSourceVolumeId }
         : {}),
     });
     replacementVolumeId = replacementVolume.id;
@@ -718,7 +725,9 @@ export async function restoreWorkspaceBackup(input: {
         stage: "workspace.restore.importing",
         result: {
           backupId: backup.id,
-          ...(snapshotId ? { snapshotId } : {}),
+          ...(snapshotId
+            ? { snapshotId, snapshotSourceVolumeId }
+            : {}),
           replacementMachineId: replacementMachine.id,
           replacementVolumeId: replacementVolume.id,
         },
@@ -851,7 +860,9 @@ export async function restoreWorkspaceBackup(input: {
             stage: "workspace.restore.rebound",
             result: {
               backupId: backup.id,
-              ...(snapshotId ? { snapshotId } : {}),
+              ...(snapshotId
+                ? { snapshotId, snapshotSourceVolumeId }
+                : {}),
               validationThreadId,
               restoredSessionVersion: description.version,
               oldMachineId,
@@ -912,7 +923,9 @@ export async function restoreWorkspaceBackup(input: {
           stage: "workspace.restore.rebound_cleanup_pending",
           result: {
             backupId: backup.id,
-            ...(snapshotId ? { snapshotId } : {}),
+            ...(snapshotId
+              ? { snapshotId, snapshotSourceVolumeId }
+              : {}),
             validationThreadId,
             restoredSessionVersion: validation.version,
             oldMachineId,
@@ -988,6 +1001,7 @@ async function readStoredSessionDescription(input: {
   );
   const payload = (await response.json().catch(() => null)) as {
     description?: { sessionId?: unknown; version?: unknown };
+    error?: { code?: unknown };
   } | null;
   if (
     !(
@@ -996,7 +1010,13 @@ async function readStoredSessionDescription(input: {
       typeof payload.description.version === "number"
     )
   ) {
-    throw new Error("Replacement Workspace store validation failed.");
+    const errorCode =
+      typeof payload?.error?.code === "string"
+        ? `, ${payload.error.code}`
+        : "";
+    throw new Error(
+      `Replacement Workspace store validation failed (HTTP ${response.status}${errorCode}).`
+    );
   }
   return {
     sessionId: payload.description.sessionId,
