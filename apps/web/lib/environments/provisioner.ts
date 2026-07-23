@@ -13,6 +13,7 @@ import { PROVISIONER_OPERATION_TYPES } from "./operation-routing";
 import {
   type EnvironmentInfrastructureProvider,
   EnvironmentProviderError,
+  KESTREL_WORKSPACE_STOP_CONFIG,
 } from "./providers/contracts";
 import {
   flyEnvironmentAppName,
@@ -604,6 +605,7 @@ export class EnvironmentProvisioner {
           appName: input.appName,
           serviceToken: workspaceServiceToken,
         }),
+        stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
       });
       if (input.forceStart && machine.state !== "stopped") {
         await this.provider.waitForMachine({
@@ -1009,6 +1011,7 @@ export class EnvironmentProvisioner {
         appName: environment.flyAppName,
         serviceToken: workspaceServiceToken,
       }),
+      stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
     });
     if (machine.state !== "started") {
       await this.provider.waitForMachine({

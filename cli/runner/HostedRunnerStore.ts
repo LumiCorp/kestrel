@@ -18,6 +18,8 @@ type RunnerRuntimeFactory = NonNullable<
 export interface HostedRunnerStore {
   store: SessionStore;
   sqlitePath: string;
+  ready(): Promise<void>;
+  probe(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -118,6 +120,8 @@ async function initializeHostedRunnerStore(
         enforceSchemaV3: true,
       }),
       sqlitePath,
+      ready: handle.ready,
+      probe: handle.probe,
       close: handle.close,
     };
   } catch (error) {
