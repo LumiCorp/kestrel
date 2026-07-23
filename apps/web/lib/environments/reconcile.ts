@@ -22,6 +22,7 @@ import {
 import {
   assessWorkspaceMachineReadiness,
   assessWorkspaceVolumeBinding,
+  retainedFailedRestoreResourceIds,
   selectOrphanVolumeIds,
 } from "./reconcile-contract";
 import { selectDueDailyBackupCandidate } from "./reconcile-selection";
@@ -559,18 +560,39 @@ async function cleanupOrphanedEnvironmentResources(
         and(eq(table.environmentId, environment.id), isNull(table.deletedAt)),
       columns: { flyMachineId: true, flyVolumeId: true },
     });
+    const retainedRestores =
+      await knowledgeDb.query.environmentOperations.findMany({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.environmentId, environment.id),
+            eq(table.type, "workspace.restore"),
+            eq(table.status, "failed"),
+            eq(
+              table.stage,
+              "workspace.restore.post_cutover_validation_failed",
+            ),
+          ),
+        columns: { result: true },
+      });
+    const retainedResources = retainedFailedRestoreResourceIds(
+      retainedRestores.map((operation) => operation.result),
+    );
     const activeMachineIds = new Set([
       ...(environment.flyGatewayMachineId
         ? [environment.flyGatewayMachineId]
         : []),
+      ...retainedResources.machineIds,
       ...workspaces.flatMap((workspace) =>
         workspace.flyMachineId ? [workspace.flyMachineId] : [],
       ),
     ]);
     const activeVolumeIds = new Set(
-      workspaces.flatMap((workspace) =>
-        workspace.flyVolumeId ? [workspace.flyVolumeId] : [],
-      ),
+      [
+        ...retainedResources.volumeIds,
+        ...workspaces.flatMap((workspace) =>
+          workspace.flyVolumeId ? [workspace.flyVolumeId] : [],
+        ),
+      ],
     );
     const inventory = await provider.listEnvironmentResources({
       appName: environment.flyAppName,
