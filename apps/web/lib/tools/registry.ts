@@ -538,6 +538,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       delivery: "native",
       installMode: "explicit",
       icon: "mail",
+      configurationPath: "/settings/organization/email",
     },
     metadata: {
       icon: "mail",

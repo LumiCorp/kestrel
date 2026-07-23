@@ -37,6 +37,7 @@ export type ToolProviderAppContract = {
   delivery: "native" | "lifecycle" | "oauth" | "api_key" | "mcp" | "webhook";
   installMode: "inherited" | "explicit";
   icon: string | null;
+  configurationPath?: string | null;
 };
 
 export type ToolApprovalMode = "auto" | "ask" | "deny";

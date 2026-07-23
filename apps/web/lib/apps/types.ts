@@ -89,6 +89,7 @@ export type AppCatalogItem = {
   delivery: AppDelivery;
   installMode: AppInstallMode;
   icon: string | null;
+  configurationPath: string | null;
   installationStatus: AppInstallationStatus;
   readiness: AppReadiness;
   capabilityCount: number;
@@ -145,6 +146,7 @@ export type EnvironmentAppConfiguration = {
     | "authMethods"
     | "delivery"
     | "icon"
+    | "configurationPath"
     | "installationStatus"
     | "readiness"
   > & {

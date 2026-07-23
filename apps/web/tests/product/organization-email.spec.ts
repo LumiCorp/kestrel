@@ -20,6 +20,28 @@ contractTest(
   "web.organization-email",
   "organization email saves and reloads an encrypted credential without exposing it",
   async ({ page }) => {
+    const environments = await page.evaluate(async () => {
+      const result = await fetch("/api/organization/environments");
+      return result.json();
+    });
+    const environmentId = environments.environments?.[0]?.id;
+    expect(environmentId).toBeTruthy();
+
+    await page.goto(
+      `/settings/organization/environments/${environmentId}/apps/email`,
+    );
+    await expect(
+      page.getByRole("link", { name: "Configure Email" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("This App is configured once in Organization settings"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Add a connection to make this App available to Projects."),
+    ).toHaveCount(0);
+    await page.getByRole("link", { name: "Configure Email" }).click();
+    await expect(page).toHaveURL(/\/settings\/organization\/email$/u);
+
     const response = await page.evaluate(async () => {
       const result = await fetch("/api/organization/email", {
         method: "PUT",
@@ -60,7 +82,10 @@ contractTest(
     const emailApp = apps.apps?.find(
       (app: { key?: string }) => app.key === "email",
     );
-    expect(emailApp).toMatchObject({ connectionCount: 1 });
+    expect(emailApp).toMatchObject({
+      connectionCount: 1,
+      configurationPath: "/settings/organization/email",
+    });
 
     await page.reload();
     await expect(
