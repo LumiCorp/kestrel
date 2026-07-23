@@ -122,6 +122,11 @@ export interface EnvironmentInfrastructureProvider {
     snapshotId?: string | undefined;
     sourceVolumeId?: string | undefined;
   }): Promise<EnvironmentProviderVolume>;
+  isWorkspaceSnapshotUsable(input: {
+    appName: string;
+    sourceVolumeId: string;
+    snapshotId: string;
+  }): Promise<boolean>;
   createReplacementWorkspaceMachine(
     input: WorkspaceMachineProvisioningInput & { replacementId: string }
   ): Promise<EnvironmentProviderMachine>;

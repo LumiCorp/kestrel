@@ -405,26 +405,15 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           "A source Fly Volume is required for snapshot restoration."
         );
       }
-      const snapshots = parseResponse(
-        volumeSnapshotsSchema,
-        await this.request(
-          `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.sourceVolumeId)}/snapshots`,
-          { method: "GET" }
-        )
-      );
-      const snapshot = snapshots.find(
-        (candidate) => candidate.id === input.snapshotId
-      );
-      if (!snapshot) {
+      const usable = await this.isWorkspaceSnapshotUsable({
+        appName: input.appName,
+        sourceVolumeId: input.sourceVolumeId,
+        snapshotId: input.snapshotId,
+      });
+      if (!usable) {
         throw new EnvironmentProviderError(
           "FLY_RESOURCE_CONFLICT",
-          "The requested Fly snapshot does not belong to the source Volume."
-        );
-      }
-      if ((snapshot.status ?? snapshot.state) !== "created") {
-        throw new EnvironmentProviderError(
-          "FLY_RESOURCE_CONFLICT",
-          "The requested Fly snapshot is not ready for restoration."
+          "The requested Fly snapshot does not belong to the source Volume or is not ready for restoration."
         );
       }
     }
@@ -465,6 +454,24 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         ? await this.waitForVolumeCreated(input.appName, volume.id)
         : volume;
     return checkedVolume(createdVolume, input.region);
+  }
+
+  async isWorkspaceSnapshotUsable(input: {
+    appName: string;
+    sourceVolumeId: string;
+    snapshotId: string;
+  }): Promise<boolean> {
+    const snapshots = parseResponse(
+      volumeSnapshotsSchema,
+      await this.request(
+        `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.sourceVolumeId)}/snapshots`,
+        { method: "GET" }
+      )
+    );
+    const snapshot = snapshots.find(
+      (candidate) => candidate.id === input.snapshotId
+    );
+    return (snapshot?.status ?? snapshot?.state) === "created";
   }
 
   private async waitForVolumeCreated(appName: string, volumeId: string) {

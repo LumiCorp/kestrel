@@ -24,7 +24,7 @@ import {
 } from "./service-tokens";
 import {
   performGuardedWorkspaceRestoreCutover,
-  selectWorkspaceBackupRecoverySource,
+  resolveWorkspaceBackupRecoverySource,
 } from "./restore-cutover";
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
@@ -572,16 +572,6 @@ export async function restoreWorkspaceBackup(input: {
   if (!backup) {
     throw new Error("Workspace backup is unavailable.");
   }
-  const recoverySource = selectWorkspaceBackupRecoverySource({
-    manifest: backup.manifest,
-    objectKey: backup.objectKey,
-    checksumSha256: backup.checksumSha256,
-  });
-  if (!recoverySource) {
-    throw new Error("Workspace backup has no usable recovery source.");
-  }
-  const snapshotId =
-    recoverySource.kind === "snapshot" ? recoverySource.snapshotId : null;
   if (
     !(
       environment?.flyAppName &&
@@ -596,11 +586,28 @@ export async function restoreWorkspaceBackup(input: {
   }
   const flyAppName = environment.flyAppName;
   const routerUrl = environment.routerUrl;
+  const oldMachineId = workspace.flyMachineId;
+  const oldVolumeId = workspace.flyVolumeId;
+  const provider = await createFlyProviderClient(input.organizationId);
+  const recoverySource = await resolveWorkspaceBackupRecoverySource({
+    manifest: backup.manifest,
+    objectKey: backup.objectKey,
+    checksumSha256: backup.checksumSha256,
+    isSnapshotUsable: (snapshotId) =>
+      provider.isWorkspaceSnapshotUsable({
+        appName: flyAppName,
+        sourceVolumeId: oldVolumeId,
+        snapshotId,
+      }),
+  });
+  if (!recoverySource) {
+    throw new Error("Workspace backup has no usable recovery source.");
+  }
+  const snapshotId =
+    recoverySource.kind === "snapshot" ? recoverySource.snapshotId : null;
   const runtimeImage = snapshotId
     ? requireImmutableWorkspaceRuntimeImage()
     : environment.runtimeImage;
-  const oldMachineId = workspace.flyMachineId;
-  const oldVolumeId = workspace.flyVolumeId;
   let archive: Buffer | null = null;
   let checksum: string | null = null;
   if (recoverySource.kind === "archive") {
@@ -663,7 +670,6 @@ export async function restoreWorkspaceBackup(input: {
     createdAt: startedAt,
     updatedAt: startedAt,
   });
-  const provider = await createFlyProviderClient(input.organizationId);
   let replacementVolumeId: string | null = null;
   let replacementMachineId: string | null = null;
   let rebound = false;

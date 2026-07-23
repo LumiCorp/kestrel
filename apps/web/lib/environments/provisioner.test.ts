@@ -180,6 +180,9 @@ function fixture(
         encrypted: true,
       };
     },
+    async isWorkspaceSnapshotUsable() {
+      return false;
+    },
     async createReplacementWorkspaceMachine() {
       return { id: "replacement-machine-id", state: "started", region: "iad" };
     },
