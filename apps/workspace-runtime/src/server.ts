@@ -70,7 +70,9 @@ const runnerReadiness = createWorkspaceRunnerReadiness({
   startRunner: () => startRunner(runnerToken),
   waitUntilHealthy: waitForRunnerService,
   probeHealth: probeRunnerService,
-  onFatalExit: shutdown,
+  onFatalExit: (code) => {
+    void shutdown(code);
+  },
   log: (event) => {
     process.stdout.write(
       `${JSON.stringify({
@@ -239,6 +241,19 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/v1/apps") {
       requireCapability(ticket.capabilities, "workspace.apps.read");
       writeJson(response, 200, { applications: applications.list() });
+      return;
+    }
+    const storedSessionPath = url.pathname.match(
+      /^\/v1\/backups\/sessions\/([^/]+)$/u
+    );
+    if (request.method === "GET" && storedSessionPath?.[1]) {
+      requireCapability(ticket.capabilities, "workspace.backups.restore");
+      const sessionId = decodeURIComponent(storedSessionPath[1]);
+      const description = await withRunnerClient(
+        (client, context) => client.describeSession(sessionId, context),
+        ticket
+      );
+      writeJson(response, 200, { description });
       return;
     }
     const previewPort = url.pathname.match(/^\/v1\/preview-ports\/(\d+)$/u);
@@ -577,8 +592,12 @@ const idleTimer = setInterval(() => {
 }, 30_000);
 idleTimer.unref();
 
-process.on("SIGTERM", () => shutdown(0));
-process.on("SIGINT", () => shutdown(0));
+process.on("SIGTERM", () => {
+  void shutdown(0);
+});
+process.on("SIGINT", () => {
+  void shutdown(0);
+});
 
 function startRunner(authToken: string): ChildProcess {
   const entrypoint = resolveRunnerServiceEntrypoint();
@@ -1102,15 +1121,23 @@ function writeJson(response: ServerResponse, status: number, body: unknown) {
   response.end(JSON.stringify(body));
 }
 
-let shutdownStarted = false;
-function shutdown(code: number) {
-  if (shutdownStarted) return;
-  shutdownStarted = true;
-  clearInterval(idleTimer);
-  terminals.closeAll();
-  runnerReadiness.stop();
-  void Promise.allSettled([
-    applications.stopAll(),
-    backupImports.closeAll(),
-  ]).finally(() => server.close(() => process.exit(code)));
+let shutdownPromise: Promise<void> | null = null;
+function shutdown(code: number): Promise<void> {
+  shutdownPromise ??= (async () => {
+    drainingForIdleStop = true;
+    clearInterval(idleTimer);
+    terminals.closeAll();
+    const serverClosed = new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      server.closeIdleConnections();
+    });
+    await Promise.allSettled([
+      runnerReadiness.stop(),
+      applications.stopAll(),
+      backupImports.closeAll(),
+    ]);
+    await serverClosed;
+    process.exit(code);
+  })();
+  return shutdownPromise;
 }

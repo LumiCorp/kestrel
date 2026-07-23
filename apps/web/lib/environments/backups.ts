@@ -22,6 +22,10 @@ import {
   createEnvironmentServiceToken,
   hashEnvironmentServiceToken,
 } from "./service-tokens";
+import {
+  performGuardedWorkspaceRestoreCutover,
+  selectWorkspaceBackupRecoverySource,
+} from "./restore-cutover";
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
 const BACKUP_EXECUTION_OWNERSHIP_KEY = "backupExecutionOwnership";
@@ -529,6 +533,7 @@ export async function restoreWorkspaceBackup(input: {
   workspaceId: string;
   backupId: string;
   actorUserId: string;
+  validationThreadId?: string | undefined;
 }) {
   const [backup, environment, workspace, binding] = await Promise.all([
     knowledgeDb.query.workspaceBackups.findFirst({
@@ -564,9 +569,19 @@ export async function restoreWorkspaceBackup(input: {
         ),
     }),
   ]);
-  if (!(backup?.objectKey && backup.checksumSha256)) {
+  if (!backup) {
     throw new Error("Workspace backup is unavailable.");
   }
+  const recoverySource = selectWorkspaceBackupRecoverySource({
+    manifest: backup.manifest,
+    objectKey: backup.objectKey,
+    checksumSha256: backup.checksumSha256,
+  });
+  if (!recoverySource) {
+    throw new Error("Workspace backup has no usable recovery source.");
+  }
+  const snapshotId =
+    recoverySource.kind === "snapshot" ? recoverySource.snapshotId : null;
   if (
     !(
       environment?.flyAppName &&
@@ -581,22 +596,51 @@ export async function restoreWorkspaceBackup(input: {
   }
   const flyAppName = environment.flyAppName;
   const routerUrl = environment.routerUrl;
-  const runtimeImage = environment.runtimeImage;
+  const runtimeImage = snapshotId
+    ? requireImmutableWorkspaceRuntimeImage()
+    : environment.runtimeImage;
   const oldMachineId = workspace.flyMachineId;
   const oldVolumeId = workspace.flyVolumeId;
-  await createWorkspaceBackup({
-    organizationId: input.organizationId,
-    environmentId: input.environmentId,
-    workspaceId: input.workspaceId,
-    actorUserId: input.actorUserId,
-    reason: "pre_destructive",
-  });
-  const encrypted = await getStorageAdapter().getObjectBuffer(backup.objectKey);
-  const archive = decryptWorkspaceBackup(encrypted, backupKey());
-  const checksum = createHash("sha256").update(archive).digest("hex");
-  if (checksum !== backup.checksumSha256) {
-    throw new Error("Workspace backup checksum verification failed.");
+  let archive: Buffer | null = null;
+  let checksum: string | null = null;
+  if (recoverySource.kind === "archive") {
+    await createWorkspaceBackup({
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      workspaceId: input.workspaceId,
+      actorUserId: input.actorUserId,
+      reason: "pre_destructive",
+    });
+    const encrypted = await getStorageAdapter().getObjectBuffer(
+      recoverySource.objectKey
+    );
+    archive = decryptWorkspaceBackup(encrypted, backupKey());
+    checksum = createHash("sha256").update(archive).digest("hex");
+    if (checksum !== recoverySource.checksumSha256) {
+      throw new Error("Workspace backup checksum verification failed.");
+    }
   }
+  const validationExecution =
+    await knowledgeDb.query.environmentRunExecutions.findFirst({
+      where: (table, { and, eq, lte }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.workspaceId, input.workspaceId),
+          eq(table.status, "completed"),
+          lte(table.createdAt, backup.createdAt),
+          ...(input.validationThreadId
+            ? [eq(table.threadId, input.validationThreadId)]
+            : [])
+        ),
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+    });
+  if (input.validationThreadId && !validationExecution) {
+    throw new Error(
+      "The requested pre-snapshot validation thread has no completed execution in this Workspace."
+    );
+  }
+  const validationThreadId = validationExecution?.threadId ?? binding.threadId;
   const operationId = crypto.randomUUID();
   const startedAt = new Date();
   await knowledgeDb.insert(schema.environmentOperations).values({
@@ -609,7 +653,12 @@ export async function restoreWorkspaceBackup(input: {
     status: "running",
     stage: "workspace.restore.provisioning_replacement",
     idempotencyKey: `workspace.restore:${input.backupId}:${operationId}`,
-    input: { backupId: input.backupId },
+    input: {
+      backupId: input.backupId,
+      ...(input.validationThreadId
+        ? { validationThreadId: input.validationThreadId }
+        : {}),
+    },
     startedAt,
     createdAt: startedAt,
     updatedAt: startedAt,
@@ -625,6 +674,9 @@ export async function restoreWorkspaceBackup(input: {
       workspaceId: workspace.id,
       region: environment.region,
       replacementId: operationId,
+      ...(snapshotId
+        ? { snapshotId, sourceVolumeId: oldVolumeId }
+        : {}),
     });
     replacementVolumeId = replacementVolume.id;
     const replacementMachine = await provider.createReplacementWorkspaceMachine(
@@ -660,6 +712,7 @@ export async function restoreWorkspaceBackup(input: {
         stage: "workspace.restore.importing",
         result: {
           backupId: backup.id,
+          ...(snapshotId ? { snapshotId } : {}),
           replacementMachineId: replacementMachine.id,
           replacementVolumeId: replacementVolume.id,
         },
@@ -685,106 +738,167 @@ export async function restoreWorkspaceBackup(input: {
         organizationId: input.organizationId,
         environmentId: environment.id,
         workspaceId: workspace.id,
-        threadId: binding.threadId,
+        threadId: validationThreadId,
         actorId: input.actorUserId,
         flyAppName,
         flyMachineId: replacementMachine.id,
         routerUrl,
         capabilities: ["workspace.backups.restore", "workspace.apps.read"],
       });
-    await uploadBackupArchive({
-      route: replacementRoute,
-      archive,
-      checksumSha256: checksum,
-    });
-    await provider.stopMachine({
-      appName: flyAppName,
-      machineId: replacementMachine.id,
-    });
-    await provider.waitForMachine({
-      appName: flyAppName,
-      machineId: replacementMachine.id,
-      state: "stopped",
-      timeoutSeconds: 60,
-    });
-    await provider.startMachine({
-      appName: flyAppName,
-      machineId: replacementMachine.id,
-    });
-    await provider.waitForMachine({
-      appName: flyAppName,
-      machineId: replacementMachine.id,
-      state: "started",
-      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
-    });
-    await provider.waitForMachineHealth({
-      appName: flyAppName,
-      machineId: replacementMachine.id,
-      checkName: "workspace",
-      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
-    });
+    if (archive && checksum) {
+      await uploadBackupArchive({
+        route: replacementRoute,
+        archive,
+        checksumSha256: checksum,
+      });
+      await provider.stopMachine({
+        appName: flyAppName,
+        machineId: replacementMachine.id,
+      });
+      await provider.waitForMachine({
+        appName: flyAppName,
+        machineId: replacementMachine.id,
+        state: "stopped",
+        timeoutSeconds: 60,
+      });
+      await provider.startMachine({
+        appName: flyAppName,
+        machineId: replacementMachine.id,
+      });
+      await provider.waitForMachine({
+        appName: flyAppName,
+        machineId: replacementMachine.id,
+        state: "started",
+        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+      });
+      await provider.waitForMachineHealth({
+        appName: flyAppName,
+        machineId: replacementMachine.id,
+        checkName: "workspace",
+        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+      });
+    }
     await waitForWorkspaceService(replacementRoute);
     const completedAt = new Date();
-    const reboundRows = await knowledgeDb.transaction(async (transaction) => {
-      const rows = await transaction
-        .update(schema.environmentWorkspaces)
-        .set({
-          flyVolumeId: replacementVolume.id,
-          flyMachineId: replacementMachine.id,
-          runtimeImage,
-          serviceTokenHash: hashEnvironmentServiceToken(
-            workspaceServiceToken
-          ),
-          status: "ready",
-          lastHealthAt: completedAt,
-          updatedAt: completedAt,
-        })
-        .where(
-          and(
-            eq(schema.environmentWorkspaces.id, workspace.id),
-            eq(schema.environmentWorkspaces.flyMachineId, oldMachineId),
-            eq(schema.environmentWorkspaces.flyVolumeId, oldVolumeId)
-          )
-        )
-        .returning({ id: schema.environmentWorkspaces.id });
-      if (rows.length !== 1) return rows;
-      await transaction
-        .update(schema.environmentOperations)
-        .set({
-          status: "completed",
-          stage: "workspace.restore.rebound",
-          result: {
-            backupId: backup.id,
-            oldMachineId,
-            oldVolumeId,
-            replacementMachineId: replacementMachine.id,
-            replacementVolumeId: replacementVolume.id,
-          },
-          completedAt,
-          updatedAt: completedAt,
-        })
-        .where(eq(schema.environmentOperations.id, operationId));
-      return rows;
+    const cutover = await performGuardedWorkspaceRestoreCutover({
+      validateReplacement: async () => {
+        const description = await readStoredSessionDescription({
+          route: replacementRoute,
+          sessionId: validationThreadId,
+        });
+        if (
+          description.sessionId !== validationThreadId ||
+          description.version <= 0
+        ) {
+          throw new Error(
+            "Replacement Workspace did not contain the required persisted session."
+          );
+        }
+        return description;
+      },
+      casRebind: async () => {
+        const rows = await knowledgeDb.transaction(async (transaction) =>
+          transaction
+            .update(schema.environmentWorkspaces)
+            .set({
+              flyVolumeId: replacementVolume.id,
+              flyMachineId: replacementMachine.id,
+              runtimeImage,
+              serviceTokenHash: hashEnvironmentServiceToken(
+                workspaceServiceToken
+              ),
+              status: "ready",
+              lastHealthAt: completedAt,
+              updatedAt: completedAt,
+            })
+            .where(
+              and(
+                eq(schema.environmentWorkspaces.id, workspace.id),
+                eq(schema.environmentWorkspaces.flyMachineId, oldMachineId),
+                eq(schema.environmentWorkspaces.flyVolumeId, oldVolumeId)
+              )
+            )
+            .returning({ id: schema.environmentWorkspaces.id })
+        );
+        return rows.length === 1;
+      },
+      onRebound: () => {
+        rebound = true;
+      },
+      validateBoundRoute: async () => {
+        const boundRoute = await resolveEnvironmentExecutionRoute({
+          organizationId: input.organizationId,
+          threadId: validationThreadId,
+          actorUserId: input.actorUserId,
+          owningLifecycleOperationIds: [operationId],
+        });
+        await waitForWorkspaceService(() => ({
+          baseUrl: boundRoute.baseUrl,
+          authToken: boundRoute.authToken,
+        }));
+      },
+      completeCutover: async (description) => {
+        await knowledgeDb
+          .update(schema.environmentOperations)
+          .set({
+            status: "completed",
+            stage: "workspace.restore.rebound",
+            result: {
+              backupId: backup.id,
+              ...(snapshotId ? { snapshotId } : {}),
+              validationThreadId,
+              restoredSessionVersion: description.version,
+              oldMachineId,
+              oldVolumeId,
+              replacementMachineId: replacementMachine.id,
+              replacementVolumeId: replacementVolume.id,
+            },
+            completedAt,
+            updatedAt: completedAt,
+          })
+          .where(eq(schema.environmentOperations.id, operationId));
+      },
+      markDegraded: async (error) => {
+        const failedAt = new Date();
+        const errorMessage =
+          error instanceof Error
+            ? error.message.slice(0, 500)
+            : "Workspace post-cutover validation failed.";
+        await knowledgeDb.transaction(async (transaction) => {
+          await transaction
+            .update(schema.environmentWorkspaces)
+            .set({
+              status: "degraded",
+              failureCode: "WORKSPACE_RESTORE_POST_CUTOVER_FAILED",
+              failureMessage: errorMessage,
+              updatedAt: failedAt,
+            })
+            .where(eq(schema.environmentWorkspaces.id, workspace.id));
+          await transaction
+            .update(schema.environmentOperations)
+            .set({
+              status: "failed",
+              stage: "workspace.restore.post_cutover_validation_failed",
+              errorCode: "WORKSPACE_RESTORE_POST_CUTOVER_FAILED",
+              errorMessage,
+              completedAt: failedAt,
+              updatedAt: failedAt,
+            })
+            .where(eq(schema.environmentOperations.id, operationId));
+        });
+      },
+      deleteOldMachine: () =>
+        provider.deleteMachine({
+          appName: flyAppName,
+          machineId: oldMachineId,
+        }),
+      deleteOldVolume: () =>
+        provider.deleteVolume({
+          appName: flyAppName,
+          volumeId: oldVolumeId,
+        }),
     });
-    if (reboundRows.length !== 1) {
-      throw new Error(
-        "Workspace changed while replacement restore was running."
-      );
-    }
-    rebound = true;
-    const cleanup = await Promise.allSettled([
-      provider.deleteMachine({
-        appName: flyAppName,
-        machineId: oldMachineId,
-      }),
-      provider.deleteVolume({
-        appName: flyAppName,
-        volumeId: oldVolumeId,
-      }),
-    ]);
-    const cleanupPending = cleanup.some(
-      (result) => result.status === "rejected"
-    );
+    const { cleanupPending, validation } = cutover;
     if (cleanupPending) {
       await knowledgeDb
         .update(schema.environmentOperations)
@@ -792,6 +906,9 @@ export async function restoreWorkspaceBackup(input: {
           stage: "workspace.restore.rebound_cleanup_pending",
           result: {
             backupId: backup.id,
+            ...(snapshotId ? { snapshotId } : {}),
+            validationThreadId,
+            restoredSessionVersion: validation.version,
             oldMachineId,
             oldVolumeId,
             replacementMachineId: replacementMachine.id,
@@ -846,6 +963,49 @@ export async function restoreWorkspaceBackup(input: {
     }
     throw error;
   }
+}
+
+async function readStoredSessionDescription(input: {
+  route: () => { baseUrl: string; authToken: string };
+  sessionId: string;
+}) {
+  const route = input.route();
+  const response = await fetch(
+    new URL(
+      `/v1/backups/sessions/${encodeURIComponent(input.sessionId)}`,
+      route.baseUrl
+    ),
+    {
+      headers: { authorization: `Bearer ${route.authToken}` },
+      cache: "no-store",
+    }
+  );
+  const payload = (await response.json().catch(() => null)) as {
+    description?: { sessionId?: unknown; version?: unknown };
+  } | null;
+  if (
+    !(
+      response.ok &&
+      typeof payload?.description?.sessionId === "string" &&
+      typeof payload.description.version === "number"
+    )
+  ) {
+    throw new Error("Replacement Workspace store validation failed.");
+  }
+  return {
+    sessionId: payload.description.sessionId,
+    version: payload.description.version,
+  };
+}
+
+function requireImmutableWorkspaceRuntimeImage() {
+  const image = process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ?? "";
+  if (!/@sha256:[a-f0-9]{64}$/u.test(image)) {
+    throw new Error(
+      "KESTREL_WORKSPACE_RUNTIME_IMAGE must identify an immutable image digest for snapshot recovery."
+    );
+  }
+  return image;
 }
 
 async function fetchBackupArchive(

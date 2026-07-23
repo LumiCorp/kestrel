@@ -5,6 +5,7 @@ import path from "node:path";
 
 import type { RunnerEventType, RunnerEventPayloadByType } from "../../cli/protocol/contracts.js";
 import { RunnerHost } from "../../cli/runner/RunnerHost.js";
+import { createRunnerServiceServer } from "../../cli/runner/RunnerService.js";
 import type { TuiProfile } from "../../cli/contracts.js";
 import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
 import { createSessionStoreFromEnv } from "../../src/store/createSessionStore.js";
@@ -50,6 +51,40 @@ contractTest("runtime.hermetic", "sqlite store init failures are normalized and 
     process.off("unhandledRejection", onUnhandledRejection);
     restoreEnvVar("KESTREL_HOME", priorHome);
     restoreEnvVar("KESTREL_SQLITE_PATH", priorSqlitePath);
+  }
+});
+
+contractTest("runtime.process", "runner health never reports ready for invalid PGlite state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-invalid-runner-store-"));
+  const sqlitePath = path.join(root, "runtime.db");
+  await writeFile(sqlitePath, "not-a-directory", "utf8");
+  const handle = createSessionStoreFromEnv({
+    driver: "sqlite",
+    sqlitePath,
+  });
+  const server = await createRunnerServiceServer({
+    runtimeStore: {
+      ready: handle.ready,
+      probe: handle.probe,
+      close: handle.close,
+    },
+  });
+
+  try {
+    let code = "";
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const response = await fetch(`${server.url}/health`);
+      assert.equal(response.status, 503);
+      const payload = (await response.json()) as {
+        error?: { code?: string };
+      };
+      code = payload.error?.code ?? "";
+      if (code === "RUNNER_STORE_UNAVAILABLE") break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(code, "RUNNER_STORE_UNAVAILABLE");
+  } finally {
+    await server.close();
   }
 });
 

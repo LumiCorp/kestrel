@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
 import {
   type EnvironmentInfrastructureProvider,
   type EnvironmentProviderApp,
@@ -12,7 +13,9 @@ import {
   KESTREL_WORKSPACE_CPUS,
   KESTREL_WORKSPACE_MEMORY_MB,
   KESTREL_WORKSPACE_SERVICE_PORT,
+  KESTREL_WORKSPACE_STOP_CONFIG,
   KESTREL_WORKSPACE_VOLUME_GB,
+  type EnvironmentProviderMachineStopConfig,
   type WorkspaceMachineProvisioningInput,
 } from "./contracts";
 
@@ -43,8 +46,22 @@ const volumeSchema = z.object({
   region: z.string().min(1),
   size_gb: z.number().int().positive(),
   encrypted: z.boolean(),
+  state: z.string().min(1).optional(),
   attached_machine_id: z.string().min(1).nullable().optional(),
 });
+
+const volumeSnapshotSchema = z.object({
+  id: z.string().min(1),
+  status: z.string().min(1).optional(),
+  state: z.string().min(1).optional(),
+});
+
+const volumeSnapshotsSchema = z
+  .union([
+    z.array(volumeSnapshotSchema),
+    z.object({ snapshots: z.array(volumeSnapshotSchema) }),
+  ])
+  .transform((value) => (Array.isArray(value) ? value : value.snapshots));
 
 const machineMountSchema = z
   .object({
@@ -76,6 +93,13 @@ const machineSchema = z.object({
       metadata: z.record(z.string(), z.string()).optional(),
       mounts: z.array(machineMountSchema).optional(),
       services: z.array(z.unknown()).optional(),
+      stop_config: z
+        .object({
+          signal: z.string().min(1),
+          timeout: z.number().int().nonnegative(),
+        })
+        .passthrough()
+        .optional(),
       guest: z
         .object({
           cpu_kind: z.string().min(1).optional(),
@@ -371,7 +395,39 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     workspaceId: string;
     region: string;
     replacementId: string;
+    snapshotId?: string | undefined;
+    sourceVolumeId?: string | undefined;
   }): Promise<EnvironmentProviderVolume> {
+    if (input.snapshotId) {
+      if (!input.sourceVolumeId) {
+        throw new EnvironmentProviderError(
+          "FLY_RESPONSE_INVALID",
+          "A source Fly Volume is required for snapshot restoration."
+        );
+      }
+      const snapshots = parseResponse(
+        volumeSnapshotsSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.sourceVolumeId)}/snapshots`,
+          { method: "GET" }
+        )
+      );
+      const snapshot = snapshots.find(
+        (candidate) => candidate.id === input.snapshotId
+      );
+      if (!snapshot) {
+        throw new EnvironmentProviderError(
+          "FLY_RESOURCE_CONFLICT",
+          "The requested Fly snapshot does not belong to the source Volume."
+        );
+      }
+      if ((snapshot.status ?? snapshot.state) !== "created") {
+        throw new EnvironmentProviderError(
+          "FLY_RESOURCE_CONFLICT",
+          "The requested Fly snapshot is not ready for restoration."
+        );
+      }
+    }
     const name = replacementWorkspaceVolumeName(
       input.workspaceId,
       input.replacementId
@@ -399,11 +455,37 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               snapshot_retention: 30,
               auto_backup_enabled: true,
               require_unique_zone: false,
+              ...(input.snapshotId ? { snapshot_id: input.snapshotId } : {}),
             }),
           }
         )
       );
-    return checkedVolume(volume, input.region);
+    const createdVolume =
+      volume.state && volume.state !== "created"
+        ? await this.waitForVolumeCreated(input.appName, volume.id)
+        : volume;
+    return checkedVolume(createdVolume, input.region);
+  }
+
+  private async waitForVolumeCreated(appName: string, volumeId: string) {
+    const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
+    while (true) {
+      const volume = parseResponse(
+        volumeSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(appName)}/volumes/${encodeURIComponent(volumeId)}`,
+          { method: "GET" }
+        )
+      );
+      if (!volume.state || volume.state === "created") return volume;
+      if (Date.now() >= deadline) {
+        throw new EnvironmentProviderError(
+          "FLY_PROVIDER_UNAVAILABLE",
+          "Fly replacement Volume was not created before the readiness deadline."
+        );
+      }
+      await this.sleepImpl(this.healthPollIntervalMs);
+    }
   }
 
   async ensureWorkspaceMachine(
@@ -771,6 +853,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     machineId: string;
     runtimeImage: string;
     envPatch?: Record<string, string | undefined> | undefined;
+    stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
   }) {
     const current = parseResponse(
       machineSchema,
@@ -791,7 +874,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     );
     if (
       sameImageDigest(current.config.image, input.runtimeImage) &&
-      environmentsEqual(current.config.env ?? {}, nextEnvironment)
+      environmentsEqual(current.config.env ?? {}, nextEnvironment) &&
+      stopConfigsEqual(current.config.stop_config, input.stopConfig)
     ) {
       return toMachine(current);
     }
@@ -806,6 +890,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               ...current.config,
               image: input.runtimeImage,
               env: nextEnvironment,
+              ...(input.stopConfig ? { stop_config: input.stopConfig } : {}),
             },
             current_version: current.instance_id,
             skip_launch: current.state !== "started",
@@ -926,6 +1011,7 @@ function workspaceMachineConfig(
     },
     mounts: [{ volume: input.volumeId, path: "/workspace" }],
     restart: { policy: "on-failure", max_retries: 3 },
+    stop_config: KESTREL_WORKSPACE_STOP_CONFIG,
     checks: {
       workspace: {
         type: "http",
@@ -1111,6 +1197,19 @@ function environmentsEqual(
   const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
   const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
   return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
+}
+
+function stopConfigsEqual(
+  current:
+    | { signal: string; timeout: number }
+    | undefined,
+  requested: EnvironmentProviderMachineStopConfig | undefined
+) {
+  return (
+    !requested ||
+    (current?.signal === requested.signal &&
+      current.timeout === requested.timeout)
+  );
 }
 
 function parseResponse<T>(schema: z.ZodType<T>, value: unknown): T {

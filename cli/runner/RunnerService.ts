@@ -82,6 +82,19 @@ interface RunnerServiceRuntimeOptions {
   profileProvider?: RunnerProfileProvider | undefined;
   serviceVersion?: string | undefined;
   eventJournal?: RunnerServiceEventJournal | undefined;
+  runtimeStore?: RunnerRuntimeStoreLifecycle | undefined;
+  onRuntimeStoreEvent?: ((event: RunnerRuntimeStoreEvent) => void) | undefined;
+}
+
+export type RunnerRuntimeStoreEvent =
+  | { type: "runner.store.starting" }
+  | { type: "runner.store.ready" }
+  | { type: "runner.store.failed" };
+
+export interface RunnerRuntimeStoreLifecycle {
+  ready(): Promise<void>;
+  probe(): Promise<void>;
+  close(): Promise<void>;
 }
 
 export interface RunnerServiceOptions extends RunnerServiceRuntimeOptions {
@@ -136,6 +149,94 @@ export interface InMemoryRunnerService {
   close(): Promise<void>;
 }
 
+type RunnerRuntimeStoreState = "starting" | "ready" | "failed";
+
+class RunnerRuntimeStoreUnavailableError extends Error {
+  readonly code: "RUNNER_STORE_STARTING" | "RUNNER_STORE_UNAVAILABLE";
+
+  constructor(code: "RUNNER_STORE_STARTING" | "RUNNER_STORE_UNAVAILABLE") {
+    super(
+      code === "RUNNER_STORE_STARTING"
+        ? "Runner runtime store is starting."
+        : "Runner runtime store is unavailable.",
+    );
+    this.name = "RunnerRuntimeStoreUnavailableError";
+    this.code = code;
+  }
+}
+
+function createRunnerRuntimeStoreReadiness(
+  lifecycle: RunnerRuntimeStoreLifecycle | undefined,
+  emit: (event: RunnerRuntimeStoreEvent) => void,
+) {
+  let state: RunnerRuntimeStoreState = lifecycle ? "starting" : "ready";
+  let probePromise: Promise<void> | null = null;
+  let closePromise: Promise<void> | null = null;
+  let failureEmitted = false;
+
+  const fail = () => {
+    state = "failed";
+    if (!failureEmitted) {
+      failureEmitted = true;
+      emit({ type: "runner.store.failed" });
+    }
+  };
+
+  if (lifecycle) emit({ type: "runner.store.starting" });
+  const initialization = lifecycle
+    ? Promise.resolve()
+        .then(() => lifecycle.ready())
+        .then(
+          () => {
+            state = "ready";
+            emit({ type: "runner.store.ready" });
+          },
+          () => {
+            fail();
+          },
+        )
+    : Promise.resolve();
+
+  const ready = async () => {
+    await initialization;
+    if (state !== "ready") {
+      throw new RunnerRuntimeStoreUnavailableError("RUNNER_STORE_UNAVAILABLE");
+    }
+  };
+
+  const probe = async () => {
+    if (state === "starting") {
+      throw new RunnerRuntimeStoreUnavailableError("RUNNER_STORE_STARTING");
+    }
+    if (state === "failed") {
+      throw new RunnerRuntimeStoreUnavailableError("RUNNER_STORE_UNAVAILABLE");
+    }
+    if (!lifecycle) return;
+    if (!probePromise) {
+      const current = lifecycle.probe().catch(() => {
+        fail();
+        throw new RunnerRuntimeStoreUnavailableError(
+          "RUNNER_STORE_UNAVAILABLE",
+        );
+      });
+      const tracked = current.finally(() => {
+        if (probePromise === tracked) probePromise = null;
+      });
+      probePromise = tracked;
+    }
+    await probePromise;
+  };
+
+  return {
+    ready,
+    probe,
+    close() {
+      closePromise ??= lifecycle?.close() ?? Promise.resolve();
+      return closePromise;
+    },
+  };
+}
+
 export function createRunnerServiceHttpHandler(
   options: RunnerServiceHttpHandlerOptions = {},
 ): RunnerServiceHttpHandler {
@@ -147,9 +248,17 @@ export function createRunnerServiceHttpHandler(
     serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
     eventJournal: options.eventJournal,
   });
+  const runtimeStore = createRunnerRuntimeStoreReadiness(
+    options.runtimeStore,
+    options.onRuntimeStoreEvent ?? (() => {}),
+  );
 
   return {
     handle(request, response) {
+      const requestPath = resolveRunnerServiceRequestPath(
+        request.url,
+        pathPrefix,
+      );
       const releaseRequest = isMaintenanceBlockingRunnerRequest(
         request.method,
         request.url,
@@ -161,18 +270,44 @@ export function createRunnerServiceHttpHandler(
             activeRequests -= 1;
           })
         : undefined;
-      void serviceHost.ready()
-        .then(() => handleRunnerServiceRequest(
-          request,
-          response,
-          serviceHost.router,
-          options.authToken,
-          serviceHost.events,
-          serviceHost.health,
-          pathPrefix,
-        ))
+      const operation =
+        request.method === "GET" && requestPath === "/health"
+          ? serviceHost.ready().then(async () => {
+              try {
+                await runtimeStore.probe();
+                writeJson(response, 200, serviceHost.health);
+              } catch (error) {
+                if (error instanceof RunnerRuntimeStoreUnavailableError) {
+                  writeJson(response, 503, {
+                    ok: false,
+                    error: { code: error.code },
+                  });
+                  return;
+                }
+                throw error;
+              }
+            })
+          : Promise.all([serviceHost.ready(), runtimeStore.ready()]).then(() =>
+              handleRunnerServiceRequest(
+                request,
+                response,
+                serviceHost.router,
+                options.authToken,
+                serviceHost.events,
+                serviceHost.health,
+                pathPrefix,
+              ),
+            );
+      void operation
         .catch((error) => {
-          writeUnhandledServiceError(response, error);
+          if (error instanceof RunnerRuntimeStoreUnavailableError) {
+            writeJson(response, 503, {
+              ok: false,
+              error: { code: error.code },
+            });
+          } else {
+            writeUnhandledServiceError(response, error);
+          }
         })
         .finally(() => {
           if (response.writableEnded || response.destroyed) {
@@ -190,8 +325,12 @@ export function createRunnerServiceHttpHandler(
     hasActiveRequests() {
       return activeRequests > 0;
     },
-    close(closeOptions = { abortActiveRuns: true }) {
-      return serviceHost.close(closeOptions);
+    async close(closeOptions = { abortActiveRuns: true }) {
+      try {
+        await serviceHost.close(closeOptions);
+      } finally {
+        await runtimeStore.close();
+      }
     },
   };
 }
@@ -238,6 +377,8 @@ export async function createRunnerServiceServer(options: RunnerServiceOptions = 
     profileProvider: options.profileProvider,
     serviceVersion: options.serviceVersion,
     eventJournal: options.eventJournal,
+    runtimeStore: options.runtimeStore,
+    onRuntimeStoreEvent: options.onRuntimeStoreEvent,
   });
   await handler.ready();
   const server = http.createServer(handler.handle);

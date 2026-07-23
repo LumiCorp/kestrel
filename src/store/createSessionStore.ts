@@ -24,6 +24,8 @@ export interface SessionStoreHandle {
   store: SessionStore;
   driver: Exclude<StoreDriver, "auto">;
   requestedDriver: StoreDriver;
+  ready: () => Promise<void>;
+  probe: () => Promise<void>;
   close: () => Promise<void>;
   databaseUrl?: string | undefined;
   sqlitePath?: string | undefined;
@@ -33,6 +35,8 @@ export interface SqlExecutorStoreHandle {
   executor: SqlExecutor;
   driver: Exclude<StoreDriver, "auto">;
   requestedDriver: StoreDriver;
+  ready: () => Promise<void>;
+  probe: () => Promise<void>;
   close: () => Promise<void>;
   databaseUrl?: string | undefined;
   sqlitePath?: string | undefined;
@@ -56,6 +60,8 @@ export function createSessionStoreFromEnv(options: CreateSessionStoreOptions = {
     }),
     driver: handle.driver,
     requestedDriver: handle.requestedDriver,
+    ready: handle.ready,
+    probe: handle.probe,
     close: handle.close,
     ...(handle.databaseUrl !== undefined ? { databaseUrl: handle.databaseUrl } : {}),
     ...(handle.sqlitePath !== undefined ? { sqlitePath: handle.sqlitePath } : {}),
@@ -87,10 +93,16 @@ export function createSqlExecutorFromEnv(options: CreateSessionStoreOptions = {}
       );
     }
     const pool = createPostgresPool(databaseUrl);
+    const executor = new PgSqlExecutor(pool);
+    const probe = async () => {
+      await executor.query("SELECT 1");
+    };
     return {
-      executor: new PgSqlExecutor(pool),
+      executor,
       driver: "postgres",
       requestedDriver,
+      ready: probe,
+      probe,
       close: () => pool.end(),
       databaseUrl,
     };
@@ -112,14 +124,24 @@ export function createSqlExecutorFromEnv(options: CreateSessionStoreOptions = {}
   const ready = createSqliteReadyPromise(
     db,
     sqlitePath,
-    options.migrationsDir ?? DEFAULT_MIGRATIONS_DIR,
+    options.migrationsDir ??
+      readOptionalString(process.env.KESTREL_STORE_MIGRATIONS_DIR) ??
+      DEFAULT_MIGRATIONS_DIR,
   );
   const executor = new LazyReadySqlExecutor(new PGliteSqlExecutor(db), ready);
+  const awaitReady = async () => {
+    await ready;
+  };
+  const probe = async () => {
+    await executor.query("SELECT 1");
+  };
 
   return {
     executor,
     driver: "sqlite",
     requestedDriver,
+    ready: awaitReady,
+    probe,
     sqlitePath,
     close: async () => {
       let initializationFailed = false;

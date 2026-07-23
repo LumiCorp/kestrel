@@ -176,3 +176,83 @@ contractTest(
     });
   },
 );
+
+contractTest(
+  "services.hermetic",
+  "Workspace shutdown is shared and waits for the runner to exit",
+  async () => {
+    const runner = new EventEmitter() as WorkspaceRunnerProcess;
+    const signals: string[] = [];
+    runner.kill = (signal) => {
+      signals.push(signal);
+      return true;
+    };
+    const readiness = createWorkspaceRunnerReadiness({
+      startRunner: () => runner,
+      waitUntilHealthy: async () => {},
+      probeHealth: async () => {},
+      onFatalExit() {
+        assert.fail("shutdown exit must not be treated as fatal");
+      },
+      log() {},
+      shutdownTimeoutMs: 100,
+    });
+
+    await readiness.ensureReady();
+    const firstStop = readiness.stop();
+    const secondStop = readiness.stop();
+    assert.equal(firstStop, secondStop);
+    assert.deepEqual(signals, ["SIGTERM"]);
+
+    let stopped = false;
+    void firstStop.then(() => {
+      stopped = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(stopped, false);
+
+    runner.emit("exit", 0);
+    await firstStop;
+    assert.equal(stopped, true);
+  },
+);
+
+contractTest(
+  "services.hermetic",
+  "Workspace shutdown escalates once after the graceful timeout and still awaits exit",
+  async () => {
+    const runner = new EventEmitter() as WorkspaceRunnerProcess;
+    const signals: string[] = [];
+    const events: WorkspaceRunnerReadinessEvent[] = [];
+    runner.kill = (signal) => {
+      signals.push(signal);
+      return true;
+    };
+    const readiness = createWorkspaceRunnerReadiness({
+      startRunner: () => runner,
+      waitUntilHealthy: async () => {},
+      probeHealth: async () => {},
+      onFatalExit() {},
+      log: (event) => events.push(event),
+      shutdownTimeoutMs: 5,
+    });
+
+    await readiness.ensureReady();
+    const stopping = readiness.stop();
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+    assert.deepEqual(events.at(-1), {
+      type: "workspace.runner.failed",
+      reason: "shutdown_timeout",
+    });
+
+    let stopped = false;
+    void stopping.then(() => {
+      stopped = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(stopped, false);
+    runner.emit("exit", null);
+    await stopping;
+  },
+);

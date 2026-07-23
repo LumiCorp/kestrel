@@ -21,6 +21,16 @@ const profile: TuiProfile = {
   sessionPrefix: "reference",
 };
 
+function createDeferred() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 async function readStreamBodyChunk(
   reader: ReadableStreamDefaultReader<Uint8Array> | undefined,
   timeoutMessage: string,
@@ -94,6 +104,147 @@ class MemoryRunnerServiceEventJournal implements RunnerServiceEventJournal {
     this.events.push(event);
   }
 }
+
+contractTest("runtime.process", "runner health is store-backed and startup is shared", async () => {
+  const initialized = createDeferred();
+  const probed = createDeferred();
+  let initializationCalls = 0;
+  let probeCalls = 0;
+  let closeCalls = 0;
+  const events: string[] = [];
+  const server = await createRunnerServiceServer({
+    runtimeStore: {
+      ready: () => {
+        initializationCalls += 1;
+        return initialized.promise;
+      },
+      probe: async () => {
+        probeCalls += 1;
+        await probed.promise;
+      },
+      close: async () => {
+        closeCalls += 1;
+      },
+    },
+    onRuntimeStoreEvent: (event) => events.push(event.type),
+  });
+
+  try {
+    const starting = await Promise.all([
+      fetch(`${server.url}/health`),
+      fetch(`${server.url}/health`),
+    ]);
+    assert.deepEqual(
+      await Promise.all(starting.map((response) => response.status)),
+      [503, 503],
+    );
+    assert.equal(initializationCalls, 1);
+    assert.deepEqual(events, ["runner.store.starting"]);
+
+    initialized.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const healthRequests = [
+      fetch(`${server.url}/health`),
+      fetch(`${server.url}/health`),
+    ];
+    await withTestTimeout(
+      (async () => {
+        while (probeCalls === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+      })(),
+      "timed out waiting for the shared store probe",
+    );
+    assert.equal(probeCalls, 1);
+    probed.resolve();
+    const healthy = await Promise.all(healthRequests);
+    assert.deepEqual(
+      healthy.map((response) => response.status),
+      [200, 200],
+    );
+    const payload = (await healthy[0]!.json()) as { ok: boolean };
+    assert.equal(payload.ok, true);
+    assert.equal(probeCalls, 1);
+    assert.deepEqual(events, [
+      "runner.store.starting",
+      "runner.store.ready",
+    ]);
+  } finally {
+    await server.close();
+  }
+  assert.equal(closeCalls, 1);
+});
+
+contractTest("runtime.process", "runner commands await the shared store initialization", async () => {
+  const initialized = createDeferred();
+  const server = await createRunnerServiceServer({
+    runtimeStore: {
+      ready: () => initialized.promise,
+      probe: async () => {},
+      close: async () => {},
+    },
+  });
+
+  try {
+    let completed = false;
+    const command = fetch(`${server.url}/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "cmd-store-ready-ping",
+        type: "runner.ping",
+        metadata: {
+          actor: {
+            actorId: "store-ready-test",
+            actorType: "service",
+          },
+        },
+        payload: {},
+      }),
+    }).then((response) => {
+      completed = true;
+      return response;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(completed, false);
+
+    initialized.resolve();
+    const response = await command;
+    assert.equal(response.status, 200);
+  } finally {
+    initialized.resolve();
+    await server.close();
+  }
+});
+
+contractTest("runtime.process", "runner health downgrades after a live store probe fails", async () => {
+  let healthy = true;
+  const events: string[] = [];
+  const server = await createRunnerServiceServer({
+    runtimeStore: {
+      ready: async () => {},
+      probe: async () => {
+        if (!healthy) throw new Error("store unavailable");
+      },
+      close: async () => {},
+    },
+    onRuntimeStoreEvent: (event) => events.push(event.type),
+  });
+
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal((await fetch(`${server.url}/health`)).status, 200);
+    healthy = false;
+    assert.equal((await fetch(`${server.url}/health`)).status, 503);
+    assert.equal((await fetch(`${server.url}/health`)).status, 503);
+    assert.equal(
+      events.filter((event) => event === "runner.store.failed").length,
+      1,
+    );
+  } finally {
+    await server.close();
+  }
+});
 
 contractTest("runtime.process", "live reasoning reconnects in-process but restarts with redacted metadata", async () => {
   const journal = new MemoryRunnerServiceEventJournal();
