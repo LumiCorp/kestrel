@@ -28,11 +28,11 @@ contractTest("web.hermetic", "knowledge queue status does not eagerly load worke
 
   assert.doesNotMatch(
     queueSource,
-    /^import .*knowledge\/(?:documents\/runtime|sync-runtime)/mu
+    /^import .*knowledge\/documents\/runtime/mu
   );
   assert.match(queueSource, /await import\([\s\S]*documents\/process-runtime/u);
   assert.doesNotMatch(queueSource, /documents\/runtime["']/u);
-  assert.match(queueSource, /await import\([\s\S]*sync-runtime/u);
+  assert.doesNotMatch(queueSource, /sync-runtime/u);
   assert.match(queueSource, /ENVIRONMENT_OPERATION_EXPIRE_SECONDS = 12 \* 60 \* 60/u);
   assert.match(queueSource, /ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS = 60/u);
   assert.match(queueSource, /heartbeatRefreshSeconds:\s*ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS/u);
@@ -47,9 +47,9 @@ contractTest("web.hermetic", "knowledge queue status does not eagerly load worke
   assert.doesNotMatch(documentRuntimeSource, /documents\/process-runtime/u);
   assert.doesNotMatch(documentRuntimeSource, /from ["']\.\/extract["']/u);
   assert.match(processRuntimeSource, /from ["']\.\/extract["']/u);
-  assert.match(pageDataSource, /knowledge\/queue-state/u);
+  assert.doesNotMatch(pageDataSource, /knowledge\/queue-state/u);
   assert.doesNotMatch(pageDataSource, /knowledge\/queue["']/u);
-  assert.match(documentsRouteSource, /knowledge\/queue-state/u);
+  assert.doesNotMatch(documentsRouteSource, /knowledge\/queue-state/u);
   assert.doesNotMatch(documentsRouteSource, /knowledge\/queue["']/u);
 });
 

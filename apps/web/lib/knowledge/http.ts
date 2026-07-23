@@ -86,14 +86,6 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     status = 403;
   } else if (message === "Active organization required") {
     status = 400;
-  } else if (message === "Source not found") {
-    status = 404;
-  } else if (
-    message === "Snapshot unavailable" ||
-    message === "No active knowledge snapshot is available" ||
-    message === "No active snapshot is available"
-  ) {
-    status = 409;
   } else if (
     message === "Discord guild already bound to another organization"
   ) {

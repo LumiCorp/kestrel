@@ -10,7 +10,7 @@ The Kestrel One runtime uses:
 - one Discord guild binding per organization
 - the shared adapter runtime with Redis-backed state when `REDIS_URL` is present
 
-Discord replies reuse the same active knowledge snapshot and chat persistence model as web chat.
+Discord replies use organization document retrieval and the same durable chat persistence model as web chat.
 
 ## Required configuration
 

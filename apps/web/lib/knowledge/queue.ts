@@ -5,7 +5,6 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
 import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
 
-const KNOWLEDGE_SYNC_QUEUE = "knowledge.sync";
 const ENVIRONMENT_OPERATION_QUEUE = "environment.operation";
 const ENVIRONMENT_RECONCILE_QUEUE = "environment.reconcile";
 export const ENVIRONMENT_OPERATION_EXPIRE_SECONDS = 12 * 60 * 60;
@@ -52,7 +51,6 @@ async function createBoss() {
   });
 
   await boss.start();
-  await boss.createQueue(KNOWLEDGE_SYNC_QUEUE);
   await boss.createQueue(KNOWLEDGE_DOCUMENT_QUEUE);
   await boss.createQueue(ENVIRONMENT_OPERATION_QUEUE, {
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
@@ -82,20 +80,6 @@ export async function getKnowledgeBoss() {
   const boss = await knowledgeQueueState.bossPromise;
   if (!knowledgeQueueState.workersRegistered) {
     knowledgeQueueState.workersRegistered = true;
-    await boss.work(
-      KNOWLEDGE_SYNC_QUEUE,
-      async (jobs: Array<{ data?: unknown }>) => {
-        const { processKnowledgeSyncRun } = await import(
-          "@/lib/knowledge/sync-runtime"
-        );
-        for (const job of jobs) {
-          const payload = job.data as { runId?: string } | null;
-          if (payload?.runId) {
-            await processKnowledgeSyncRun(payload.runId);
-          }
-        }
-      }
-    );
     await boss.work(
       KNOWLEDGE_DOCUMENT_QUEUE,
       async (jobs: Array<{ data?: unknown }>) => {
@@ -160,11 +144,6 @@ export async function startManagedRunPodWorker() {
   }
   await recoverQueuedManagedRunPodRuns(boss);
   return boss;
-}
-
-export async function enqueueKnowledgeSyncRun(runId: string) {
-  const boss = await getKnowledgeBoss();
-  await boss.send(KNOWLEDGE_SYNC_QUEUE, { runId });
 }
 
 export async function enqueueKnowledgeDocumentRun(runId: string) {
@@ -313,7 +292,6 @@ export async function enqueueManagedRunPodUsageIngestion() {
 export {
   ENVIRONMENT_OPERATION_QUEUE,
   ENVIRONMENT_RECONCILE_QUEUE,
-  KNOWLEDGE_SYNC_QUEUE,
   MANAGED_RUNPOD_RECONCILE_QUEUE,
   MANAGED_RUNPOD_RUN_QUEUE,
   MANAGED_RUNPOD_USAGE_QUEUE,

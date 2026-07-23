@@ -1035,35 +1035,6 @@ export const mobilePushDeliveries = pgTable(
   ]
 );
 
-export const sources = pgTable(
-  "sources",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    type: text("type", { enum: ["github", "youtube"] }).notNull(),
-    label: text("label").notNull(),
-    basePath: text("base_path").default("/docs"),
-    repo: text("repo"),
-    branch: text("branch"),
-    contentPath: text("content_path"),
-    outputPath: text("output_path"),
-    readmeOnly: boolean("readme_only").default(false),
-    channelId: text("channel_id"),
-    handle: text("handle"),
-    maxVideos: integer("max_videos").default(50),
-    ...knowledgeTimestamps,
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    index("knowledge_sources_type_idx").on(table.type),
-    index("knowledge_sources_org_id_idx").on(table.organizationId),
-  ]
-);
-
 export const discordGuildBindings = pgTable(
   "discord_guild_bindings",
   {
@@ -1101,7 +1072,6 @@ export const toolProviders = pgTable(
         "oauth",
         "api_key",
         "inbound_adapter",
-        "source_connector",
         "custom_imported",
       ],
     }).notNull(),
@@ -2075,7 +2045,6 @@ export const appDefinitions = pgTable(
         "search_research",
         "productivity",
         "engineering",
-        "knowledge_sources",
         "communication",
         "workflow",
         "custom",
@@ -4231,83 +4200,6 @@ export const knowledgeKv = pgTable(
   ]
 );
 
-export const knowledgeSnapshots = pgTable(
-  "knowledge_snapshots",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    status: text("status", {
-      enum: ["building", "ready", "failed", "stale"],
-    })
-      .notNull()
-      .default("building"),
-    filesystemPath: text("filesystem_path").notNull(),
-    sourceCount: integer("source_count").notNull().default(0),
-    fileCount: integer("file_count").notNull().default(0),
-    isActive: boolean("is_active").notNull().default(false),
-    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
-    error: text("error"),
-    metadata: jsonb("metadata"),
-    ...knowledgeTimestamps,
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    index("knowledge_snapshots_org_id_idx").on(table.organizationId),
-    index("knowledge_snapshots_status_idx").on(table.status),
-    index("knowledge_snapshots_active_idx").on(table.isActive),
-    index("knowledge_snapshots_updated_at_idx").on(table.updatedAt),
-  ]
-);
-
-export const knowledgeSyncRuns = pgTable(
-  "knowledge_sync_runs",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    sourceFilter: text("source_filter"),
-    status: text("status", {
-      enum: ["queued", "running", "completed", "failed"],
-    })
-      .notNull()
-      .default("queued"),
-    snapshotId: text("snapshot_id").references(() => knowledgeSnapshots.id, {
-      onDelete: "set null",
-    }),
-    sourceCount: integer("source_count").notNull().default(0),
-    fileCount: integer("file_count").notNull().default(0),
-    startedAt: timestamp("started_at", { withTimezone: true }),
-    finishedAt: timestamp("finished_at", { withTimezone: true }),
-    error: text("error"),
-    metadata: jsonb("metadata"),
-    ...knowledgeTimestamps,
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    index("knowledge_sync_runs_org_id_idx").on(table.organizationId),
-    index("knowledge_sync_runs_status_idx").on(table.status),
-    index("knowledge_sync_runs_snapshot_id_idx").on(table.snapshotId),
-    index("knowledge_sync_runs_requested_by_user_id_idx").on(
-      table.requestedByUserId
-    ),
-    index("knowledge_sync_runs_updated_at_idx").on(table.updatedAt),
-  ]
-);
-
 export const knowledgeDocuments = pgTable(
   "knowledge_documents",
   {
@@ -4839,7 +4731,6 @@ export type MobileDeviceRegistration = InferSelectModel<
   typeof mobileDeviceRegistrations
 >;
 export type MobilePushDelivery = InferSelectModel<typeof mobilePushDeliveries>;
-export type Source = InferSelectModel<typeof sources>;
 export type ToolProvider = InferSelectModel<typeof toolProviders>;
 export type ToolCapability = InferSelectModel<typeof toolCapabilities>;
 export type OrganizationToolProvider = InferSelectModel<
@@ -4933,8 +4824,6 @@ export type ArtifactSuggestion = InferSelectModel<typeof artifactSuggestions>;
 export type AdminEventLog = InferSelectModel<typeof adminEventLogs>;
 export type PlatformEmailConfig = InferSelectModel<typeof platformEmailConfig>;
 export type AdminApiKey = InferSelectModel<typeof adminApiKeys>;
-export type KnowledgeSnapshot = InferSelectModel<typeof knowledgeSnapshots>;
-export type KnowledgeSyncRun = InferSelectModel<typeof knowledgeSyncRuns>;
 export type KnowledgeDocument = InferSelectModel<typeof knowledgeDocuments>;
 export type KnowledgeIngestionRun = InferSelectModel<
   typeof knowledgeIngestionRuns

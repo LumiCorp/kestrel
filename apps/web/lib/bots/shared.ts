@@ -2,16 +2,12 @@ import type { RunnerActorMetadata } from "@kestrel-agents/sdk";
 import { generateKestrelOneExternalReply } from "@/lib/agent/kestrel-runtime";
 import type { BotThreadContext } from "@/lib/bots/context";
 import { knowledgeDb } from "@/lib/knowledge/db";
-import { getActiveKnowledgeSnapshot } from "@/lib/knowledge/snapshot-store";
 import {
   createThreadForUser,
   getThreadByExternalThreadId,
   getThreadMessageByExternalMessageId,
   saveThreadMessages,
 } from "@/lib/threads/store";
-
-export const NO_SNAPSHOT_MESSAGE =
-  "No active knowledge snapshot is available for this organization yet. Run a sync and activate a snapshot from the admin workspace before using bot integrations.";
 
 function buildContextualPrompt(prompt: string, context?: BotThreadContext) {
   if (!context) {
@@ -89,7 +85,7 @@ export async function getBotActorUserId(organizationId: string) {
 
 export async function getOrCreateExternalThreadChat(input: {
   organizationId: string;
-  origin: "github" | "discord";
+  origin: "discord";
   externalThreadId: string;
   title: string;
   legacyExternalThreadIds?: string[];
@@ -139,20 +135,6 @@ export async function generateExternalReply(input: {
   context?: BotThreadContext;
   actor: RunnerActorMetadata;
 }) {
-  const snapshot = await getActiveKnowledgeSnapshot(input.organizationId);
-  if (!snapshot) {
-    return {
-      userMessage: {
-        id: crypto.randomUUID(),
-        role: "user" as const,
-        parts: [{ type: "text" as const, text: input.prompt }],
-      },
-      text: NO_SNAPSHOT_MESSAGE,
-      usage: undefined,
-      usedSnapshot: false,
-    };
-  }
-
   const generated = await generateKestrelOneExternalReply({
     organizationId: input.organizationId,
     apiUrl: input.apiUrl,
@@ -162,13 +144,12 @@ export async function generateExternalReply(input: {
   });
   return {
     ...generated,
-    usedSnapshot: true,
   };
 }
 
 export async function saveExternalConversationTurn(input: {
   threadId: string;
-  origin: "github" | "discord";
+  origin: "discord";
   inboundText: string;
   inboundExternalMessageId: string;
   replyText: string;

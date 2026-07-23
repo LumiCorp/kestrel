@@ -89,8 +89,6 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
   ["workspace.preview.list", { appKey: "ngrok", capabilityKey: "list" }],
   ["workspace.preview.renew", { appKey: "ngrok", capabilityKey: "renew" }],
   ["workspace.preview.close", { appKey: "ngrok", capabilityKey: "close" }],
-  ["bash", { appKey: "built_in.sandbox", capabilityKey: "bash" }],
-  ["bash_batch", { appKey: "built_in.sandbox", capabilityKey: "bash_batch" }],
   [
     "createDocument",
     { appKey: "built_in.artifacts", capabilityKey: "createDocument" },

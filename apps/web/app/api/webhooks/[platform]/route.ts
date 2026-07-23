@@ -1,8 +1,6 @@
-import { waitUntil } from "@vercel/functions";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { handleDiscordWebhook } from "@/lib/bots/discord";
-import { handleGitHubWebhook } from "@/lib/bots/github";
 import { errorResponse } from "@/lib/knowledge/http";
 
 const paramsSchema = z.object({
@@ -17,10 +15,16 @@ export async function POST(
     const { platform } = paramsSchema.parse(await context.params);
 
     if (platform === "github") {
-      return handleGitHubWebhook(request, request.nextUrl.origin, waitUntil);
+      return Response.json(
+        {
+          error:
+            "The GitHub bot has been retired. GitHub remains available through Apps and Project workspaces.",
+        },
+        { status: 410 }
+      );
     }
 
-    return handleDiscordWebhook(request, request.nextUrl.origin, waitUntil);
+    return handleDiscordWebhook(request, request.nextUrl.origin);
   } catch (error) {
     return errorResponse(error, 400);
   }

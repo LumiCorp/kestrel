@@ -1,24 +1,16 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
-import { getKnowledgeEmbeddingRuntime } from "@/lib/knowledge/documents/embed";
-import { getKnowledgeDocumentRetrievalMode } from "@/lib/knowledge/documents/embedding-provenance";
-import { getKnowledgeOcrMode } from "@/lib/knowledge/documents/ocr-config";
 import {
   isKnowledgeDocumentMediaTypeSupported,
   normalizeMediaType,
 } from "@/lib/knowledge/documents/shared";
-import {
-  getKnowledgeDocumentsForOrganization,
-  getLatestKnowledgeIngestionRunsForDocuments,
-} from "@/lib/knowledge/documents/store";
+import { getKnowledgeDocumentsPayload } from "@/lib/knowledge/page-data";
 import { errorResponse } from "@/lib/knowledge/http";
 import {
   MAX_KNOWLEDGE_FILE_BYTES,
   uploadKnowledgeDocumentForUser,
 } from "@/lib/knowledge/mutations";
-import { getKnowledgeQueueStatus } from "@/lib/knowledge/queue-state";
-import { getStorageConfig } from "@/lib/storage";
 
 const listQuerySchema = z.object({
   status: z.string().optional(),
@@ -26,62 +18,18 @@ const listQuerySchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const { organizationId } = await requireActiveOrganization();
+    const { organizationId, session } = await requireActiveOrganization();
     const query = listQuerySchema.parse(
       Object.fromEntries(request.nextUrl.searchParams.entries())
     );
 
-    const documents =
-      await getKnowledgeDocumentsForOrganization(organizationId);
-    const latestRuns = await getLatestKnowledgeIngestionRunsForDocuments(
-      documents.map((document) => document.id)
+    return NextResponse.json(
+      await getKnowledgeDocumentsPayload(
+        organizationId,
+        session.user.id,
+        query.status
+      )
     );
-    const embeddingRuntime = getKnowledgeEmbeddingRuntime();
-    const runtime = {
-      storage: {
-        provider: getStorageConfig().provider,
-        configured: true,
-      },
-      embeddingMode: embeddingRuntime.mode,
-      embeddingModel: embeddingRuntime.provenance?.model ?? null,
-      retrievalStrategy: embeddingRuntime.retrievalStrategy,
-      ocrMode: getKnowledgeOcrMode(),
-      queue: await getKnowledgeQueueStatus(),
-    };
-    const filtered = query.status
-      ? documents.filter((document) => document.status === query.status)
-      : documents;
-
-    return NextResponse.json({
-      total: filtered.length,
-      readyCount: filtered.filter((document) => document.status === "ready")
-        .length,
-      partialCount: filtered.filter((document) => document.status === "partial")
-        .length,
-      failedCount: filtered.filter((document) => document.status === "failed")
-        .length,
-      processingCount: filtered.filter(
-        (document) =>
-          document.status === "uploaded" || document.status === "processing"
-      ).length,
-      documents: filtered.map((document) => {
-        const normalizedMediaType = normalizeMediaType(
-          document.mediaType,
-          document.originalFilename
-        );
-
-        return {
-          ...document,
-          retrievalMode: getKnowledgeDocumentRetrievalMode(
-            document.extractionMetadata,
-            embeddingRuntime.provenance
-          ),
-          mediaType: normalizedMediaType,
-          latestRun: latestRuns.get(document.id) ?? null,
-        };
-      }),
-      runtime,
-    });
   } catch (error) {
     return errorResponse(error);
   }

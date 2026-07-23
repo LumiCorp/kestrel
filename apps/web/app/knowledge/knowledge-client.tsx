@@ -1,11 +1,21 @@
 "use client";
 
-import { XIcon } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,13 +36,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -40,468 +43,185 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { TimeText } from "@/components/ui/time-text";
 import type { Session } from "@/lib/auth-types";
 import {
-  createKnowledgeSourceAction,
   deleteKnowledgeDocumentAction,
-  deleteKnowledgeSourceAction,
   reindexKnowledgeDocumentAction,
-  updateKnowledgeSourceAction,
+  uploadKnowledgeDocumentsAction,
 } from "./actions";
-import {
-  buildKnowledgeExplorerItems,
-  type DocumentRecord,
-  type DocumentsResponse,
-  type ExtractedSource,
-  emptySourceForm,
-  filterKnowledgeExplorerItems,
-  getKnowledgeExplorerItemDetails,
-  getKnowledgeExplorerItemName,
-  getSourceForm,
-  type KnowledgeExplorerFilters,
-  type SourceForm,
-  type SourceRecord,
-  type SourcesResponse,
-} from "./knowledge-explorer";
 
-const defaultExplorerFilters: KnowledgeExplorerFilters = {
-  type: "all",
-  name: "",
-  details: "",
-  status: "all",
+type ProjectUsage = { id: string; name: string };
+
+type KnowledgeDocument = {
+  id: string;
+  uploaderUserId: string;
+  uploaderName: string | null;
+  uploaderEmail: string | null;
+  title: string | null;
+  filename: string;
+  originalFilename: string;
+  mediaType: string;
+  sizeBytes: number;
+  status: "uploaded" | "processing" | "ready" | "partial" | "failed";
+  chunkCount: number;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  latestRun: {
+    id: string;
+    stage: string;
+    status: string;
+    error: string | null;
+    updatedAt: string;
+  } | null;
+  visibleProjectUsage: ProjectUsage[];
 };
 
-function formatFileSize(sizeBytes: number) {
-  return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
-}
-
-type InitialDocumentsPayload = Omit<DocumentsResponse, "runtime">;
+type DocumentsPayload = {
+  total: number;
+  readyCount: number;
+  partialCount: number;
+  failedCount: number;
+  processingCount: number;
+  documents: KnowledgeDocument[];
+};
 
 type KnowledgeAnswer = {
   answer: string;
   grounded: boolean;
-  model: string | null;
   sources: Array<{
     citationNumber: number;
     documentId: string;
     label: string;
     url: string;
     locations: string[];
-    excerpts: Array<{
-      text: string;
-      pageNumber: number | null;
-      sectionTitle: string | null;
-    }>;
+    excerpts: Array<{ text: string }>;
   }>;
 };
 
+function formatFileSize(sizeBytes: number) {
+  if (sizeBytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
+  }
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function statusLabel(status: KnowledgeDocument["status"]) {
+  switch (status) {
+    case "uploaded":
+      return "Queued";
+    case "processing":
+      return "Processing";
+    case "partial":
+      return "Partially ready";
+    case "failed":
+      return "Needs attention";
+    default:
+      return "Ready";
+  }
+}
+
 export function KnowledgeClient({
   session,
-  initialSources,
   initialDocuments,
-  initialRuntime,
 }: {
   session: Session | null;
-  initialSources: SourcesResponse;
-  initialDocuments: InitialDocumentsPayload;
-  initialRuntime: DocumentsResponse["runtime"];
+  initialDocuments: DocumentsPayload;
 }) {
-  const [data, setData] = useState<SourcesResponse | null>(initialSources);
-  const [documentsData, setDocumentsData] = useState<DocumentsResponse | null>({
-    ...initialDocuments,
-    runtime: initialRuntime,
-  });
+  const [documentsData, setDocumentsData] =
+    useState<DocumentsPayload>(initialDocuments);
   const [status, setStatus] = useState("");
   const [statusVariant, setStatusVariant] = useState<
     "info" | "success" | "warning" | "error"
   >("info");
-  const [form, setForm] = useState<SourceForm>(emptySourceForm);
-  const [busy, setBusy] = useState(false);
+  const [busyDocumentId, setBusyDocumentId] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [filePickerKey, setFilePickerKey] = useState(0);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
-  const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
-  const [sourceDialogTab, setSourceDialogTab] = useState("manual");
-  const [importInput, setImportInput] = useState("");
-  const [extractedSources, setExtractedSources] = useState<ExtractedSource[]>(
-    []
-  );
-  const [importStatus, setImportStatus] = useState("");
-  const [importStatusVariant, setImportStatusVariant] = useState<
-    "info" | "success" | "warning" | "error"
-  >("info");
-  const [explorerFilters, setExplorerFilters] =
-    useState<KnowledgeExplorerFilters>(defaultExplorerFilters);
+  const [deleteDocument, setDeleteDocument] =
+    useState<KnowledgeDocument | null>(null);
   const [knowledgeQuestion, setKnowledgeQuestion] = useState("");
   const [knowledgeAnswer, setKnowledgeAnswer] =
     useState<KnowledgeAnswer | null>(null);
   const [askingKnowledge, setAskingKnowledge] = useState(false);
   const uploadInputId = useId();
-
-  const isAdmin =
-    (session?.user as { role?: string | null } | undefined)?.role === "admin";
   const currentUserId =
     (session?.user as { id?: string | null } | undefined)?.id ?? null;
-  const initialDocumentsData = useMemo<DocumentsResponse>(
-    () => ({
-      ...initialDocuments,
-      runtime: initialRuntime,
-    }),
-    [initialDocuments, initialRuntime]
-  );
+  const isAdmin =
+    (session?.user as { role?: string | null } | undefined)?.role === "admin";
 
-  function runAsync(action: Promise<unknown>) {
-    action.catch((error) => {
-      console.error(error);
+  useEffect(() => {
+    setDocumentsData(initialDocuments);
+  }, [initialDocuments]);
+
+  const reloadDocuments = useCallback(async () => {
+    const response = await fetch("/api/knowledge/documents", {
+      cache: "no-store",
     });
-  }
-
-  const loadKnowledgeData = useCallback(async () => {
-    setStatus("Loading knowledge...");
-    setStatusVariant("info");
-
-    const [sourcesResponse, documentsResponse] = await Promise.all([
-      fetch("/api/sources", { cache: "no-store" }),
-      fetch("/api/knowledge/documents", { cache: "no-store" }),
-    ]);
-
-    const [sourcesJson, documentsJson] = await Promise.all([
-      sourcesResponse.json().catch(() => ({})),
-      documentsResponse.json().catch(() => ({})),
-    ]);
-
-    if (!sourcesResponse.ok) {
-      setStatus(sourcesJson.error || "Failed to load sources");
-      setStatusVariant("error");
-      return;
+    const body = (await response.json().catch(() => ({}))) as DocumentsPayload & {
+      error?: string;
+    };
+    if (!response.ok) {
+      throw new Error(body.error || "Failed to refresh organization knowledge");
     }
-
-    if (!documentsResponse.ok) {
-      setStatus(documentsJson.error || "Failed to load knowledge documents");
-      setStatusVariant("error");
-      return;
-    }
-
-    setData(sourcesJson);
-    setDocumentsData(documentsJson);
-    setStatus("");
+    setDocumentsData(body);
   }, []);
 
-  useEffect(() => {
-    setData(initialSources);
-  }, [initialSources]);
-
-  useEffect(() => {
-    setDocumentsData(initialDocumentsData);
-  }, [initialDocumentsData]);
-
-  const sources = useMemo(
-    () => [...(data?.github.sources ?? []), ...(data?.youtube.sources ?? [])],
-    [data]
-  );
-
-  const explorerItems = useMemo(
-    () =>
-      buildKnowledgeExplorerItems({
-        sources,
-        documents: documentsData?.documents ?? [],
-      }),
-    [documentsData?.documents, sources]
-  );
-
-  const filteredExplorerItems = useMemo(
-    () => filterKnowledgeExplorerItems(explorerItems, explorerFilters),
-    [explorerFilters, explorerItems]
-  );
-
-  function resetUploadDialog() {
-    setPendingFiles([]);
-    setFilePickerKey((value) => value + 1);
-  }
-
-  function removePendingFile(index: number) {
-    setPendingFiles((current) =>
-      current.filter((_, itemIndex) => itemIndex !== index)
-    );
-    setFilePickerKey((value) => value + 1);
-  }
-
-  function resetExplorerFilters() {
-    setExplorerFilters(defaultExplorerFilters);
-  }
-
-  function resetSourceDialog() {
-    setForm(emptySourceForm);
-    setSourceDialogTab("manual");
-    setImportInput("");
-    setExtractedSources([]);
-    setImportStatus("");
-    setImportStatusVariant("info");
-  }
-
-  function handleUploadDialogChange(open: boolean) {
-    setUploadDialogOpen(open);
-    if (!open) {
-      resetUploadDialog();
-    }
-  }
-
-  function handleSourceDialogChange(open: boolean) {
-    setSourceDialogOpen(open);
-    if (!open) {
-      resetSourceDialog();
-    }
-  }
-
-  function openCreateSourceDialog() {
-    resetSourceDialog();
-    setSourceDialogOpen(true);
-  }
-
-  function openEditSourceDialog(source: SourceRecord) {
-    resetSourceDialog();
-    setForm(getSourceForm(source));
-    setSourceDialogOpen(true);
-  }
-
-  async function submitSource() {
-    setBusy(true);
-
-    const body: Parameters<typeof createKnowledgeSourceAction>[0] =
-      form.type === "github"
-        ? {
-            type: "github",
-            label: form.label,
-            repo: form.repo,
-            branch: form.branch,
-          }
-        : {
-            type: "youtube",
-            label: form.label,
-            channelId: form.channelId,
-            handle: form.handle,
-          };
-
-    const result = form.id
-      ? await updateKnowledgeSourceAction({
-          body,
-          sourceId: form.id,
-        })
-      : await createKnowledgeSourceAction(body);
-    setBusy(false);
-
-    if (!result.ok) {
-      setStatus(result.error || "Failed to save source");
-      setStatusVariant("error");
-      toast.error(result.error || "Failed to save source");
-      return;
-    }
-
-    const nextStatus =
-      result.message || (form.id ? "Source updated." : "Source created.");
-    handleSourceDialogChange(false);
-    await loadKnowledgeData();
-    setStatus(nextStatus);
-    setStatusVariant("success");
-    toast.success(nextStatus);
-  }
-
-  async function deleteSource(id: string) {
-    setBusy(true);
-    const result = await deleteKnowledgeSourceAction({ sourceId: id });
-    setBusy(false);
-
-    if (!result.ok) {
-      setStatus(result.error || "Failed to delete source");
-      setStatusVariant("error");
-      toast.error(result.error || "Failed to delete source");
-      return;
-    }
-
-    await loadKnowledgeData();
-    setStatus(result.message || "Source deleted.");
-    setStatusVariant("success");
-    toast.success(result.message || "Source deleted.");
-  }
-
-  async function syncSources(sourceId?: string) {
-    setBusy(true);
-    const response = await fetch(
-      sourceId ? `/api/sync/${sourceId}` : "/api/sync",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      }
-    );
-    const json = await response.json().catch(() => ({}));
-    setBusy(false);
-
-    const nextStatus = response.ok
-      ? json.message || "Sync started."
-      : json.error || "Sync failed";
-
-    setStatus(nextStatus);
-    setStatusVariant(response.ok ? "success" : "error");
-
-    if (response.ok) {
-      toast.success(nextStatus);
-      await loadKnowledgeData();
-      return;
-    }
-
-    toast.error(nextStatus);
+  function canManage(document: KnowledgeDocument) {
+    return isAdmin || document.uploaderUserId === currentUserId;
   }
 
   async function uploadDocuments() {
-    if (pendingFiles.length === 0) {
-      return;
-    }
-
-    setBusy(true);
-
-    try {
-      const uploadMessages: string[] = [];
-
-      for (const file of pendingFiles) {
-        const formData = new FormData();
-        formData.append("file", file);
-        const response = await fetch("/api/knowledge/documents", {
-          method: "POST",
-          body: formData,
-        });
-        const json = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          throw new Error(json.error || `Failed to upload ${file.name}`);
-        }
-
-        if (json.message) {
-          uploadMessages.push(String(json.message));
-        }
-      }
-
-      handleUploadDialogChange(false);
-      await loadKnowledgeData();
-      setStatus(uploadMessages.at(-1) || "Document upload started.");
-      setStatusVariant("success");
-      toast.success(uploadMessages.at(-1) || "Document upload started.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Upload failed";
-      setStatus(message);
-      setStatusVariant("error");
-      toast.error(message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function reindexDocument(id: string) {
-    setBusy(true);
-    const result = await reindexKnowledgeDocumentAction({ documentId: id });
-    setBusy(false);
-
+    if (pendingFiles.length === 0) return;
+    setBusyDocumentId("upload");
+    const formData = new FormData();
+    for (const file of pendingFiles) formData.append("files", file);
+    const result = await uploadKnowledgeDocumentsAction(formData);
+    setBusyDocumentId(null);
     if (!result.ok) {
-      setStatus(result.error || "Failed to reindex document");
-      setStatusVariant("error");
-      toast.error(result.error || "Failed to reindex document");
+      toast.error(result.error || "Upload failed");
       return;
     }
-
-    await loadKnowledgeData();
-    setStatus(result.message || "Reindex started.");
+    await reloadDocuments();
+    setPendingFiles([]);
+    setUploadDialogOpen(false);
+    setStatus(result.message || "Indexing has started.");
     setStatusVariant("success");
-    toast.success(result.message || "Reindex started.");
+    toast.success(result.message || "Indexing has started.");
   }
 
-  async function deleteDocument(id: string) {
-    setBusy(true);
-    const result = await deleteKnowledgeDocumentAction({ documentId: id });
-    setBusy(false);
-
+  async function reindexDocument(documentId: string) {
+    setBusyDocumentId(documentId);
+    const result = await reindexKnowledgeDocumentAction({ documentId });
+    setBusyDocumentId(null);
     if (!result.ok) {
-      setStatus(result.error || "Failed to delete document");
-      setStatusVariant("error");
-      toast.error(result.error || "Failed to delete document");
+      toast.error(result.error || "Could not reindex document");
       return;
     }
-
-    await loadKnowledgeData();
-    setStatus(result.message || "Document deleted.");
-    setStatusVariant("success");
-    toast.success(result.message || "Document deleted.");
+    await reloadDocuments();
+    toast.success(result.message || "Reindexing has started.");
   }
 
-  async function extractSources() {
-    setBusy(true);
-    const response = await fetch("/api/sources/ocr", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        configs: [{ filename: "pasted-config.txt", content: importInput }],
-      }),
+  async function confirmDelete() {
+    if (!deleteDocument) return;
+    setBusyDocumentId(deleteDocument.id);
+    const result = await deleteKnowledgeDocumentAction({
+      documentId: deleteDocument.id,
     });
-    const json = await response.json().catch(() => ({}));
-    setBusy(false);
-
-    if (!response.ok) {
-      const message = json.error || "Failed to extract sources";
-      setImportStatus(message);
-      setImportStatusVariant("error");
-      toast.error(message);
-      return;
-    }
-
-    const nextSources = (json.sources || []) as ExtractedSource[];
-    setExtractedSources(nextSources);
-    setImportStatus(`Found ${nextSources.length} possible source(s).`);
-    setImportStatusVariant(nextSources.length > 0 ? "success" : "warning");
-  }
-
-  async function addExtractedSource(source: ExtractedSource) {
-    setBusy(true);
-    const actionInput: Parameters<typeof createKnowledgeSourceAction>[0] =
-      source.type === "github"
-        ? {
-            type: "github",
-            label: source.label,
-            repo: source.repo,
-            branch: source.branch,
-          }
-        : {
-            type: "youtube",
-            label: source.label,
-            channelId: source.channelId,
-            handle: source.handle,
-          };
-    const result = await createKnowledgeSourceAction(actionInput);
-    setBusy(false);
-
+    setBusyDocumentId(null);
     if (!result.ok) {
-      const message = result.error || "Failed to add source";
-      setImportStatus(message);
-      setImportStatusVariant("error");
-      toast.error(message);
+      toast.error(result.error || "Could not delete document");
       return;
     }
-
-    await loadKnowledgeData();
-    setImportStatus(`Added ${source.label}.`);
-    setImportStatusVariant("success");
-    setStatus(`Added ${source.label}.`);
-    setStatusVariant("success");
-    toast.success(`Added ${source.label}.`);
+    setDeleteDocument(null);
+    await reloadDocuments();
+    toast.success("Document deleted permanently.");
   }
 
   async function askKnowledge() {
     const question = knowledgeQuestion.trim();
-    if (question.length < 3) {
-      return;
-    }
-
+    if (question.length < 3) return;
     setAskingKnowledge(true);
     setKnowledgeAnswer(null);
     try {
@@ -510,72 +230,39 @@ export function KnowledgeClient({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      const json = (await response.json().catch(() => ({}))) as Partial<
-        KnowledgeAnswer & { error: string }
-      >;
-
-      if (!response.ok) {
-        throw new Error(json.error || "Knowledge answer failed");
-      }
-
-      setKnowledgeAnswer(json as KnowledgeAnswer);
+      const body = (await response.json().catch(() => ({}))) as KnowledgeAnswer & {
+        error?: string;
+      };
+      if (!response.ok) throw new Error(body.error || "Knowledge answer failed");
+      setKnowledgeAnswer(body);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Knowledge answer failed";
-      setStatus(message);
-      setStatusVariant("error");
-      toast.error(message);
+      toast.error(
+        error instanceof Error ? error.message : "Knowledge answer failed"
+      );
     } finally {
       setAskingKnowledge(false);
     }
   }
 
-  function canManageDocument(document: DocumentRecord) {
-    return (
-      isAdmin || (currentUserId && document.uploaderUserId === currentUserId)
-    );
-  }
-
-  const sourceCount = data?.total ?? 0;
-  const documentCount = documentsData?.total ?? 0;
-
   return (
     <div className="space-y-6">
       <AdminPageHeader
         actions={
-          <>
-            <Button disabled={busy} onClick={() => setUploadDialogOpen(true)}>
-              Upload
-            </Button>
-            {isAdmin ? (
-              <Button
-                disabled={busy}
-                onClick={openCreateSourceDialog}
-                variant="outline"
-              >
-                Add Source
-              </Button>
-            ) : null}
-            {isAdmin ? (
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  runAsync(syncSources());
-                }}
-                variant="outline"
-              >
-                Sync All
-              </Button>
-            ) : null}
-          </>
+          <Button
+            disabled={busyDocumentId === "upload"}
+            onClick={() => setUploadDialogOpen(true)}
+          >
+            Upload document
+          </Button>
         }
+        description="Shared material available across your organization. Add Project-only material from that Project’s context."
         eyebrow="Workspace"
-        title="Knowledge"
+        title="Organization Knowledge"
       />
 
       {status ? (
         <AdminStatusBanner
-          description={`${sourceCount} source(s), ${documentCount} uploaded document(s), and ${explorerItems.length} total explorer item(s) are available for the active organization.`}
+          description="Changes appear here as document ingestion progresses."
           title={status}
           variant={statusVariant}
         />
@@ -587,22 +274,13 @@ export function KnowledgeClient({
             <div className="space-y-1.5">
               <CardTitle>Ask your knowledge</CardTitle>
               <CardDescription>
-                Get an answer grounded only in indexed organization documents.
+                Search organization documents only. Project Threads use their own approved context.
               </CardDescription>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">
-                {documentsData?.readyCount ?? 0} ready
-              </Badge>
-              <Badge variant="outline">
-                {documentsData?.runtime.retrievalStrategy === "semantic-first"
-                  ? "Semantic + lexical"
-                  : "Lexical"}
-              </Badge>
-              {documentsData?.runtime.embeddingModel ? (
-                <Badge className="font-mono" variant="outline">
-                  {documentsData.runtime.embeddingModel}
-                </Badge>
+            <div className="flex gap-2">
+              <Badge variant="outline">{documentsData.readyCount} ready</Badge>
+              {documentsData.processingCount > 0 ? (
+                <Badge variant="outline">{documentsData.processingCount} processing</Badge>
               ) : null}
             </div>
           </div>
@@ -612,12 +290,12 @@ export function KnowledgeClient({
             className="space-y-3"
             onSubmit={(event) => {
               event.preventDefault();
-              runAsync(askKnowledge());
+              void askKnowledge();
             }}
           >
             <Textarea
               aria-label="Ask a question about organization knowledge"
-              disabled={askingKnowledge}
+              disabled={askingKnowledge || documentsData.readyCount === 0}
               onChange={(event) => setKnowledgeQuestion(event.target.value)}
               placeholder="What does our incident playbook require before escalation?"
               rows={3}
@@ -625,25 +303,24 @@ export function KnowledgeClient({
             />
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-muted-foreground text-xs">
-                Retrieved document text is treated as evidence, not as
-                instructions.
+                Answers cite the documents used as evidence.
               </p>
               <Button
                 disabled={
                   askingKnowledge ||
                   knowledgeQuestion.trim().length < 3 ||
-                  (documentsData?.readyCount ?? 0) === 0
+                  documentsData.readyCount === 0
                 }
                 type="submit"
               >
-                {askingKnowledge ? "Searching and answering..." : "Ask"}
+                {askingKnowledge ? "Searching…" : "Ask"}
               </Button>
             </div>
           </form>
 
-          {(documentsData?.readyCount ?? 0) === 0 ? (
+          {documentsData.readyCount === 0 ? (
             <AdminStatusBanner
-              description="Upload a document and wait for ingestion to finish before asking grounded questions."
+              description="Upload a document and wait for indexing before asking grounded questions."
               title="No indexed documents are ready"
               variant="info"
             />
@@ -651,27 +328,15 @@ export function KnowledgeClient({
 
           {knowledgeAnswer ? (
             <div className="space-y-4 border-t pt-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge
-                  variant={knowledgeAnswer.grounded ? "default" : "outline"}
-                >
-                  {knowledgeAnswer.grounded
-                    ? "Grounded answer"
-                    : "Evidence insufficient"}
-                </Badge>
-                {knowledgeAnswer.model ? (
-                  <span className="font-mono text-muted-foreground text-xs">
-                    {knowledgeAnswer.model}
-                  </span>
-                ) : null}
-              </div>
+              <Badge variant={knowledgeAnswer.grounded ? "default" : "outline"}>
+                {knowledgeAnswer.grounded ? "Grounded answer" : "Evidence insufficient"}
+              </Badge>
               <p className="whitespace-pre-wrap text-sm leading-6">
                 {knowledgeAnswer.answer}
               </p>
-
               {knowledgeAnswer.sources.length > 0 ? (
                 <div className="space-y-2">
-                  <h3 className="font-medium text-sm">Sources used</h3>
+                  <h3 className="font-medium text-sm">Citations</h3>
                   <div className="grid gap-2 md:grid-cols-2">
                     {knowledgeAnswer.sources.map((source) => (
                       <a
@@ -701,730 +366,157 @@ export function KnowledgeClient({
       </Card>
 
       <Card>
+        <CardHeader>
+          <CardTitle>Documents</CardTitle>
+          <CardDescription>
+            {documentsData.total} shared document{documentsData.total === 1 ? "" : "s"} in this organization.
+          </CardDescription>
+        </CardHeader>
         <CardContent className="p-0">
-          {explorerItems.length === 0 ? (
+          {documentsData.documents.length === 0 ? (
             <div className="p-6">
               <AdminEmptyState
-                action={
-                  <div className="flex flex-wrap justify-center gap-2">
-                    <Button onClick={() => setUploadDialogOpen(true)}>
-                      Upload
-                    </Button>
-                    {isAdmin ? (
-                      <Button
-                        onClick={openCreateSourceDialog}
-                        variant="outline"
-                      >
-                        Add Source
-                      </Button>
-                    ) : null}
-                  </div>
-                }
-                description="Bring in a GitHub or YouTube source, upload shared files, and everything will appear in this consolidated explorer."
-                title="No knowledge items yet"
+                action={<Button onClick={() => setUploadDialogOpen(true)}>Upload document</Button>}
+                description="Upload a shared file here, or add private material from a Project’s context."
+                title="No organization documents yet"
               />
             </div>
           ) : (
-            <div className="overflow-hidden">
-              <div className="border-b px-4 py-3">
-                <div className="grid gap-2 md:grid-cols-[160px_minmax(180px,1fr)_minmax(220px,1.3fr)_160px_auto]">
-                  <Select
-                    onValueChange={(
-                      value:
-                        | "all"
-                        | "source"
-                        | "document"
-                        | "github"
-                        | "youtube"
-                    ) =>
-                      setExplorerFilters((current) => ({
-                        ...current,
-                        type: value,
-                      }))
-                    }
-                    value={explorerFilters.type}
-                  >
-                    <SelectTrigger aria-label="Filter by type" className="h-8">
-                      <SelectValue placeholder="All types" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All types</SelectItem>
-                      <SelectItem value="source">Sources</SelectItem>
-                      <SelectItem value="document">Documents</SelectItem>
-                      <SelectItem value="github">GitHub</SelectItem>
-                      <SelectItem value="youtube">YouTube</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  <Input
-                    aria-label="Filter by name"
-                    className="h-8"
-                    onChange={(event) =>
-                      setExplorerFilters((current) => ({
-                        ...current,
-                        name: event.target.value,
-                      }))
-                    }
-                    placeholder="Filter name"
-                    value={explorerFilters.name}
-                  />
-
-                  <Input
-                    aria-label="Filter by source or file"
-                    className="h-8"
-                    onChange={(event) =>
-                      setExplorerFilters((current) => ({
-                        ...current,
-                        details: event.target.value,
-                      }))
-                    }
-                    placeholder="Filter source or file"
-                    value={explorerFilters.details}
-                  />
-
-                  <Select
-                    onValueChange={(
-                      value:
-                        | "all"
-                        | "uploaded"
-                        | "processing"
-                        | "ready"
-                        | "partial"
-                        | "failed"
-                    ) =>
-                      setExplorerFilters((current) => ({
-                        ...current,
-                        status: value,
-                      }))
-                    }
-                    value={explorerFilters.status}
-                  >
-                    <SelectTrigger
-                      aria-label="Filter by status"
-                      className="h-8"
-                    >
-                      <SelectValue placeholder="All statuses" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All statuses</SelectItem>
-                      <SelectItem value="uploaded">Uploaded</SelectItem>
-                      <SelectItem value="processing">Processing</SelectItem>
-                      <SelectItem value="ready">Ready</SelectItem>
-                      <SelectItem value="partial">Partial</SelectItem>
-                      <SelectItem value="failed">Failed</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  <div className="flex items-center justify-end gap-2">
-                    <div className="text-muted-foreground text-xs">
-                      {filteredExplorerItems.length} rows
-                    </div>
-                    <Button
-                      onClick={resetExplorerFilters}
-                      size="sm"
-                      type="button"
-                      variant="ghost"
-                    >
-                      Reset
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {filteredExplorerItems.length === 0 ? (
-                <div className="p-6">
-                  <AdminEmptyState
-                    action={
-                      <Button onClick={resetExplorerFilters} variant="outline">
-                        Clear filters
-                      </Button>
-                    }
-                    description="No knowledge items match the current column filters."
-                    title="No matching rows"
-                  />
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="w-[160px]">Type</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Source / File</TableHead>
-                      <TableHead className="w-[140px]">Status</TableHead>
-                      <TableHead className="w-[170px]">Updated</TableHead>
-                      <TableHead className="w-[220px] text-right">
-                        Actions
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredExplorerItems.map((entry) => (
-                      <TableRow key={`${entry.kind}-${entry.item.id}`}>
-                        <TableCell>
-                          <div className="flex flex-wrap gap-2">
-                            <Badge variant="outline">
-                              {entry.kind === "source"
-                                ? `${entry.item.type} source`
-                                : "document"}
-                            </Badge>
-                            {entry.kind === "document" ? (
-                              <Badge variant="outline">
-                                {entry.item.retrievalMode === "semantic"
-                                  ? "Semantic"
-                                  : "Lexical"}
-                              </Badge>
-                            ) : null}
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Document</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Used in your Projects</TableHead>
+                    <TableHead>Updated</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {documentsData.documents.map((document) => (
+                    <TableRow key={document.id}>
+                      <TableCell>
+                        <div className="max-w-sm space-y-1">
+                          <a
+                            className="font-medium text-sm hover:underline"
+                            href={`/api/knowledge/documents/${document.id}/download`}
+                          >
+                            {document.title || document.filename}
+                          </a>
+                          <div className="text-muted-foreground text-xs">
+                            {formatFileSize(document.sizeBytes)} · uploaded by {document.uploaderName || document.uploaderEmail || "a member"}
                           </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="max-w-[240px] truncate font-medium">
-                            {getKnowledgeExplorerItemName(entry)}
+                          {document.status === "failed" && document.error ? (
+                            <div className="text-destructive text-xs">{document.error}</div>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={document.status === "failed" ? "destructive" : "outline"}>
+                          {statusLabel(document.status)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {document.visibleProjectUsage.length > 0 ? (
+                          <div className="flex max-w-xs flex-wrap gap-x-2 gap-y-1 text-sm">
+                            {document.visibleProjectUsage.map((project) => (
+                              <Link className="underline-offset-4 hover:underline" href={`/projects/${project.id}`} key={project.id}>
+                                {project.name}
+                              </Link>
+                            ))}
                           </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="max-w-[360px] truncate text-muted-foreground text-sm">
-                            {getKnowledgeExplorerItemDetails(entry)}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {entry.kind === "document" ? (
-                            <Badge variant="outline">{entry.item.status}</Badge>
-                          ) : (
-                            <span className="text-muted-foreground text-sm">
-                              -
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          <TimeText
-                            mode="datetime"
-                            value={
-                              entry.kind === "source"
-                                ? entry.item.updatedAt
-                                : entry.item.latestRun?.updatedAt ||
-                                  entry.item.updatedAt
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">Not in your current Project context</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        <TimeText mode="datetime" value={document.latestRun?.updatedAt || document.updatedAt} />
+                      </TableCell>
+                      <TableCell>
+                        {canManage(document) ? (
                           <div className="flex justify-end gap-2">
-                            {entry.kind === "source" ? (
-                              isAdmin ? (
-                                <>
-                                  <Button
-                                    disabled={busy}
-                                    onClick={() =>
-                                      openEditSourceDialog(entry.item)
-                                    }
-                                    size="sm"
-                                    variant="outline"
-                                  >
-                                    Edit
-                                  </Button>
-                                  <Button
-                                    disabled={busy}
-                                    onClick={() => {
-                                      runAsync(syncSources(entry.item.id));
-                                    }}
-                                    size="sm"
-                                    variant="outline"
-                                  >
-                                    Sync
-                                  </Button>
-                                  <Button
-                                    disabled={busy}
-                                    onClick={() => {
-                                      runAsync(deleteSource(entry.item.id));
-                                    }}
-                                    size="sm"
-                                    variant="destructive"
-                                  >
-                                    Delete
-                                  </Button>
-                                </>
-                              ) : null
-                            ) : (
-                              <>
-                                <Button asChild size="sm" variant="outline">
-                                  <a
-                                    href={`/api/knowledge/documents/${entry.item.id}/download`}
-                                  >
-                                    Open
-                                  </a>
-                                </Button>
-                                {canManageDocument(entry.item) ? (
-                                  <>
-                                    <Button
-                                      disabled={busy}
-                                      onClick={() => {
-                                        runAsync(
-                                          reindexDocument(entry.item.id)
-                                        );
-                                      }}
-                                      size="sm"
-                                      variant="outline"
-                                    >
-                                      Reindex
-                                    </Button>
-                                    <Button
-                                      disabled={busy}
-                                      onClick={() => {
-                                        runAsync(deleteDocument(entry.item.id));
-                                      }}
-                                      size="sm"
-                                      variant="destructive"
-                                    >
-                                      Delete
-                                    </Button>
-                                  </>
-                                ) : null}
-                              </>
-                            )}
+                            <Button
+                              disabled={busyDocumentId === document.id}
+                              onClick={() => void reindexDocument(document.id)}
+                              size="sm"
+                              variant="outline"
+                            >
+                              Reindex
+                            </Button>
+                            <Button
+                              disabled={busyDocumentId === document.id}
+                              onClick={() => setDeleteDocument(document)}
+                              size="sm"
+                              variant="destructive"
+                            >
+                              Delete
+                            </Button>
                           </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
       </Card>
 
-      <Dialog onOpenChange={handleUploadDialogChange} open={uploadDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader className="pr-8">
-            <DialogTitle>Upload Documents</DialogTitle>
+      <Dialog onOpenChange={setUploadDialogOpen} open={uploadDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upload organization knowledge</DialogTitle>
+            <DialogDescription>
+              Uploaded files become shared organization Knowledge when indexing completes.
+            </DialogDescription>
           </DialogHeader>
-
           <div className="space-y-3">
-            <input
-              accept=".pdf,.txt,.md,.csv,.json,.yaml,.yml,.html,.htm,.docx,.xlsx,.pptx,image/*"
-              className="sr-only"
+            <Label htmlFor={uploadInputId}>Files</Label>
+            <Input
+              accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.pptx"
               id={uploadInputId}
-              key={filePickerKey}
               multiple
-              onChange={(event) =>
-                setPendingFiles(Array.from(event.target.files ?? []))
-              }
+              onChange={(event) => setPendingFiles(Array.from(event.target.files || []))}
               type="file"
             />
-
-            <div className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3">
-              <div className="min-w-0 text-muted-foreground text-sm">
-                {pendingFiles.length > 0
-                  ? `${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"} selected`
-                  : "No files selected"}
-              </div>
-              <Button asChild size="sm" variant="outline">
-                <label
-                  className="cursor-pointer whitespace-nowrap"
-                  htmlFor={uploadInputId}
-                >
-                  Choose Files
-                </label>
-              </Button>
-            </div>
-
             {pendingFiles.length > 0 ? (
-              <div className="grid max-h-52 gap-2 overflow-y-auto">
-                {pendingFiles.map((file, index) => (
-                  <div
-                    className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
-                    key={`${file.name}-${file.size}-${index}`}
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-sm">
-                        {file.name}
-                      </div>
-                      <div className="text-muted-foreground text-xs">
-                        {formatFileSize(file.size)}
-                      </div>
-                    </div>
-                    <Button
-                      aria-label={`Remove ${file.name}`}
-                      onClick={() => removePendingFile(index)}
-                      size="icon-sm"
-                      type="button"
-                      variant="ghost"
-                    >
-                      <XIcon className="size-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
+              <p className="text-muted-foreground text-sm">
+                {pendingFiles.map((file) => file.name).join(", ")}
+              </p>
             ) : null}
           </div>
-
           <DialogFooter>
-            {pendingFiles.length > 0 ? (
-              <Button onClick={resetUploadDialog} variant="outline">
-                Clear
-              </Button>
-            ) : null}
-            <Button
-              disabled={busy || pendingFiles.length === 0}
-              onClick={() => {
-                runAsync(uploadDocuments());
-              }}
-            >
-              {busy ? "Uploading..." : "Upload To Knowledge"}
+            <Button onClick={() => void uploadDocuments()} disabled={pendingFiles.length === 0 || busyDocumentId === "upload"}>
+              {busyDocumentId === "upload" ? "Uploading…" : "Upload and index"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog onOpenChange={handleSourceDialogChange} open={sourceDialogOpen}>
-        <DialogContent className="sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>{form.id ? "Edit Source" : "Add Source"}</DialogTitle>
-            <DialogDescription>
-              {form.id
-                ? "Update a source definition, then save the change back into the shared knowledge set."
-                : "Create a source manually or paste copied config text to extract candidate GitHub and YouTube imports."}
-            </DialogDescription>
-          </DialogHeader>
-
-          {form.id ? (
-            <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="knowledge-source-type">Type</Label>
-                  <Select
-                    onValueChange={(value: "github" | "youtube") =>
-                      setForm((current) => ({ ...current, type: value }))
-                    }
-                    value={form.type}
-                  >
-                    <SelectTrigger id="knowledge-source-type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="github">GitHub</SelectItem>
-                      <SelectItem value="youtube">YouTube</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="knowledge-source-label">Label</Label>
-                  <Input
-                    id="knowledge-source-label"
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        label: event.target.value,
-                      }))
-                    }
-                    value={form.label}
-                  />
-                </div>
-              </div>
-
-              {form.type === "github" ? (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="knowledge-source-repo">Repository</Label>
-                    <Input
-                      id="knowledge-source-repo"
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          repo: event.target.value,
-                        }))
-                      }
-                      placeholder="owner/repo"
-                      value={form.repo}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="knowledge-source-branch">Branch</Label>
-                    <Input
-                      id="knowledge-source-branch"
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          branch: event.target.value,
-                        }))
-                      }
-                      value={form.branch}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="knowledge-source-channel-id">
-                      Channel ID
-                    </Label>
-                    <Input
-                      id="knowledge-source-channel-id"
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          channelId: event.target.value,
-                        }))
-                      }
-                      value={form.channelId}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="knowledge-source-handle">Handle</Label>
-                    <Input
-                      id="knowledge-source-handle"
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          handle: event.target.value,
-                        }))
-                      }
-                      value={form.handle}
-                    />
-                  </div>
-                </div>
-              )}
-
-              <DialogFooter>
-                <Button
-                  onClick={() => handleSourceDialogChange(false)}
-                  variant="outline"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  disabled={!isAdmin || busy || !form.label}
-                  onClick={() => {
-                    runAsync(submitSource());
-                  }}
-                >
-                  Save Source
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <Tabs onValueChange={setSourceDialogTab} value={sourceDialogTab}>
-              <TabsList>
-                <TabsTrigger value="manual">Manual</TabsTrigger>
-                <TabsTrigger value="import">Import / OCR</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="manual">
-                <div className="space-y-4 pt-4">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="knowledge-source-type">Type</Label>
-                      <Select
-                        onValueChange={(value: "github" | "youtube") =>
-                          setForm((current) => ({ ...current, type: value }))
-                        }
-                        value={form.type}
-                      >
-                        <SelectTrigger id="knowledge-source-type">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="github">GitHub</SelectItem>
-                          <SelectItem value="youtube">YouTube</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="knowledge-source-label">Label</Label>
-                      <Input
-                        id="knowledge-source-label"
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            label: event.target.value,
-                          }))
-                        }
-                        value={form.label}
-                      />
-                    </div>
-                  </div>
-
-                  {form.type === "github" ? (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="knowledge-source-repo">
-                          Repository
-                        </Label>
-                        <Input
-                          id="knowledge-source-repo"
-                          onChange={(event) =>
-                            setForm((current) => ({
-                              ...current,
-                              repo: event.target.value,
-                            }))
-                          }
-                          placeholder="owner/repo"
-                          value={form.repo}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="knowledge-source-branch">Branch</Label>
-                        <Input
-                          id="knowledge-source-branch"
-                          onChange={(event) =>
-                            setForm((current) => ({
-                              ...current,
-                              branch: event.target.value,
-                            }))
-                          }
-                          value={form.branch}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="knowledge-source-channel-id">
-                          Channel ID
-                        </Label>
-                        <Input
-                          id="knowledge-source-channel-id"
-                          onChange={(event) =>
-                            setForm((current) => ({
-                              ...current,
-                              channelId: event.target.value,
-                            }))
-                          }
-                          value={form.channelId}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="knowledge-source-handle">Handle</Label>
-                        <Input
-                          id="knowledge-source-handle"
-                          onChange={(event) =>
-                            setForm((current) => ({
-                              ...current,
-                              handle: event.target.value,
-                            }))
-                          }
-                          value={form.handle}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <DialogFooter>
-                    <Button
-                      onClick={() => handleSourceDialogChange(false)}
-                      variant="outline"
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      disabled={!isAdmin || busy || !form.label}
-                      onClick={() => {
-                        runAsync(submitSource());
-                      }}
-                    >
-                      Create Source
-                    </Button>
-                  </DialogFooter>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="import">
-                <div className="space-y-4 pt-4">
-                  {importStatus ? (
-                    <AdminStatusBanner
-                      title={importStatus}
-                      variant={importStatusVariant}
-                    />
-                  ) : null}
-
-                  <div className="space-y-2">
-                    <Label htmlFor="knowledge-import-input">
-                      Paste configuration or source text
-                    </Label>
-                    <Textarea
-                      className="min-h-56"
-                      id="knowledge-import-input"
-                      onChange={(event) => setImportInput(event.target.value)}
-                      placeholder="Paste README content, config files, or raw source references..."
-                      value={importInput}
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      disabled={busy || !importInput.trim()}
-                      onClick={() => {
-                        runAsync(extractSources());
-                      }}
-                    >
-                      Extract Sources
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setImportInput("");
-                        setExtractedSources([]);
-                        setImportStatus("");
-                        setImportStatusVariant("info");
-                      }}
-                      variant="outline"
-                    >
-                      Clear
-                    </Button>
-                  </div>
-
-                  {extractedSources.length === 0 ? (
-                    <AdminEmptyState
-                      description="Paste source material and run extraction to preview candidate imports here."
-                      title="No extracted sources yet"
-                    />
-                  ) : (
-                    <div className="grid gap-3">
-                      {extractedSources.map((source, index) => (
-                        <div
-                          className="rounded-xl border p-4"
-                          key={`${source.label}-${index}`}
-                        >
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="font-medium">{source.label}</div>
-                            <Badge variant="outline">{source.type}</Badge>
-                          </div>
-                          <div className="mt-2 text-muted-foreground text-sm">
-                            {source.type === "github"
-                              ? source.repo || "GitHub source"
-                              : source.channelId ||
-                                source.handle ||
-                                "YouTube source"}
-                          </div>
-                          {source.unsupportedReason ? (
-                            <div className="mt-2 text-amber-700 text-sm">
-                              Unsupported: {source.unsupportedReason}
-                            </div>
-                          ) : null}
-                          <div className="mt-3">
-                            <Button
-                              disabled={
-                                busy || Boolean(source.unsupportedReason)
-                              }
-                              onClick={() => {
-                                runAsync(addExtractedSource(source));
-                              }}
-                              size="sm"
-                              variant="outline"
-                            >
-                              Add Source
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </TabsContent>
-            </Tabs>
-          )}
-        </DialogContent>
-      </Dialog>
+      <AlertDialog onOpenChange={(open) => !open && setDeleteDocument(null)} open={Boolean(deleteDocument)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this document permanently?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the stored file, extracted chunks, and ingestion history. Project contexts that reference it will no longer retrieve it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busyDocumentId === deleteDocument?.id}
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDelete();
+              }}
+            >
+              Delete permanently
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

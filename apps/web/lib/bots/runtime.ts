@@ -15,9 +15,7 @@ import {
   ThreadImpl,
   type WebhookOptions,
 } from "chat";
-import { UnifiedGitHubAdapter } from "@/lib/bots/adapters/github";
 import type { BotThreadContext } from "@/lib/bots/context";
-import { hasContextProvider } from "@/lib/bots/context";
 import {
   createDiscordThreadFromMessage,
   getDiscordConfig,
@@ -26,7 +24,6 @@ import {
   getDiscordGuildBindingForGuild,
   touchDiscordGuildBinding,
 } from "@/lib/bots/discord-store";
-import { getBotUserName, getWebhookSecret } from "@/lib/bots/github-config";
 import {
   generateExternalReply,
   getOrCreateExternalThreadChat,
@@ -35,23 +32,13 @@ import {
 } from "@/lib/bots/shared";
 import { knowledgeDb } from "@/lib/knowledge/db";
 
-type BotOrigin = "github" | "discord";
+type BotOrigin = "discord";
 
 type BotThreadState = {
   threadId: string;
   externalThreadId: string;
   organizationId: string;
   origin: BotOrigin;
-};
-
-type GitHubThreadResolution = {
-  threadId: string;
-  context?: BotThreadContext;
-  externalThreadId: string;
-  inboundExternalMessageId: string;
-  organizationId: string;
-  origin: "github";
-  targetThread: Thread<BotThreadState>;
 };
 
 type DiscordThreadResolution = {
@@ -64,7 +51,7 @@ type DiscordThreadResolution = {
   targetThread: Thread<BotThreadState>;
 };
 
-type ResolvedConversation = GitHubThreadResolution | DiscordThreadResolution;
+type ResolvedConversation = DiscordThreadResolution;
 
 type DiscordGatewayStatus = {
   active: boolean;
@@ -86,28 +73,6 @@ function sanitizeDiscordThreadName(input: string) {
   return normalized.slice(0, 90);
 }
 
-function formatGitHubInboundExternalMessageId(message: Message<unknown>) {
-  if (
-    typeof message.raw === "object" &&
-    message.raw !== null &&
-    "type" in message.raw &&
-    (message.raw as { type?: string }).type === "issue"
-  ) {
-    return `github:issue:${message.id.replace(/^issue:/, "")}`;
-  }
-
-  return `github:comment:${message.id}`;
-}
-
-function formatGitHubLegacyExternalThreadId(threadId: string) {
-  const match = threadId.match(/^github:([^/]+)\/([^:]+):issue:(\d+)$/);
-  if (!(match?.[1] && match[2] && match[3])) {
-    return null;
-  }
-
-  return `github:${match[1]}/${match[2]}#${match[3]}`;
-}
-
 function formatDiscordExternalMessageId(messageId: string) {
   return `${LEGACY_DISCORD_MESSAGE_PREFIX}${messageId}`;
 }
@@ -120,7 +85,6 @@ class UnifiedBotRuntime {
   private readonly requestOrigin = new AsyncLocalStorage<string>();
   private bot: Chat<Record<string, Adapter>, BotThreadState> | null = null;
   private discordAdapter: DiscordAdapter | null = null;
-  private githubAdapter: UnifiedGitHubAdapter | null = null;
   private readonly stateBackend: "memory" | "redis" = process.env.REDIS_URL
     ? "redis"
     : "memory";
@@ -130,10 +94,6 @@ class UnifiedBotRuntime {
 
   getStateBackend() {
     return this.stateBackend;
-  }
-
-  hasGitHubAdapter() {
-    return Boolean(this.githubAdapter);
   }
 
   hasDiscordAdapter() {
@@ -161,7 +121,7 @@ class UnifiedBotRuntime {
   }
 
   async handleWebhook(
-    platform: "github" | "discord",
+    platform: "discord",
     request: Request,
     options?: WebhookOptions,
     origin?: string
@@ -250,17 +210,7 @@ class UnifiedBotRuntime {
 
   private createBot() {
     const adapters: Record<string, Adapter> = {};
-    const userName = getBotUserName() || "bot";
-
-    const webhookSecret = getWebhookSecret();
-    if (webhookSecret) {
-      this.githubAdapter = new UnifiedGitHubAdapter({
-        webhookSecret,
-        userName,
-        replyToNewIssues: process.env.GITHUB_REPLY_TO_NEW_ISSUES === "true",
-      });
-      adapters.github = this.githubAdapter;
-    }
+    const userName = process.env.DISCORD_BOT_USERNAME?.trim() || "Kestrel";
 
     const discordConfig = getDiscordConfig();
     if (discordConfig.configured) {
@@ -361,10 +311,7 @@ class UnifiedBotRuntime {
         inboundText: message.text,
         inboundExternalMessageId: resolved.inboundExternalMessageId,
         replyText: generated.text,
-        replyExternalMessageId:
-          resolved.origin === "discord"
-            ? formatDiscordExternalMessageId(reply.id)
-            : reply.id,
+        replyExternalMessageId: formatDiscordExternalMessageId(reply.id),
         inputTokens: generated.usage?.inputTokens,
         outputTokens: generated.usage?.outputTokens,
       });
@@ -393,71 +340,11 @@ class UnifiedBotRuntime {
     thread: Thread<BotThreadState>,
     message: Message
   ): Promise<ResolvedConversation | null> {
-    if (thread.adapter.name === "github") {
-      return this.resolveGitHubConversation(thread, message);
-    }
-
     if (thread.adapter.name === "discord") {
       return this.resolveDiscordConversation(thread, message);
     }
 
     return null;
-  }
-
-  private async resolveGitHubConversation(
-    thread: Thread<BotThreadState>,
-    message: Message
-  ): Promise<GitHubThreadResolution | null> {
-    if (!this.githubAdapter) {
-      return null;
-    }
-
-    const { owner, repo, issueNumber } = this.githubAdapter.decodeThreadId(
-      thread.id
-    );
-    const repoPath = `${owner}/${repo}`;
-    const source = await knowledgeDb.query.sources.findFirst({
-      where: (table, { and, eq }) =>
-        and(eq(table.type, "github"), eq(table.repo, repoPath)),
-      columns: {
-        organizationId: true,
-      },
-    });
-
-    if (!source) {
-      return null;
-    }
-
-    const threadState = await getThreadState(thread);
-    const externalThreadId = thread.id;
-    const chat = threadState?.threadId
-      ? { id: threadState.threadId }
-      : await getOrCreateExternalThreadChat({
-          organizationId: source.organizationId,
-          origin: "github",
-          externalThreadId,
-          legacyExternalThreadIds: [
-            formatGitHubLegacyExternalThreadId(thread.id) ?? "",
-          ].filter(Boolean),
-          title: `${repoPath}#${issueNumber}`,
-        });
-
-    let context: BotThreadContext | undefined;
-    if (hasContextProvider(this.githubAdapter)) {
-      try {
-        context = await this.githubAdapter.fetchThreadContext(thread.id);
-      } catch {}
-    }
-
-    return {
-      threadId: chat.id,
-      context,
-      externalThreadId,
-      inboundExternalMessageId: formatGitHubInboundExternalMessageId(message),
-      organizationId: source.organizationId,
-      origin: "github",
-      targetThread: thread,
-    };
   }
 
   private async resolveDiscordConversation(

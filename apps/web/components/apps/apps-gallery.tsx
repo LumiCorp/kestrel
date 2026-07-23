@@ -18,7 +18,6 @@ const CATEGORY_LABELS: Record<AppCategory, string> = {
   search_research: "Search & Research",
   productivity: "Productivity",
   engineering: "Engineering",
-  knowledge_sources: "Knowledge & Sources",
   communication: "Communication",
   workflow: "Workflows",
   custom: "Custom",

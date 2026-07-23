@@ -13,7 +13,6 @@ import {
   FileText,
   MapPin,
   MessageSquare,
-  Terminal,
 } from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
@@ -76,9 +75,6 @@ export function AppIcon({
     }
     if (appKey === "built_in.knowledge_search") {
       return <BookOpen aria-hidden className={iconClass} />;
-    }
-    if (appKey === "built_in.sandbox") {
-      return <Terminal aria-hidden className={iconClass} />;
     }
     if (appKey === "built_in.artifacts") {
       return <FileText aria-hidden className={iconClass} />;

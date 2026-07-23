@@ -166,7 +166,7 @@ Requirements:
 
 ## Document Knowledge Infra
 
-Uploaded knowledge uses a separate org-scoped document pipeline from the existing GitHub/YouTube snapshot sync.
+Organization Knowledge uses an org-scoped document ingestion and retrieval pipeline.
 
 - Raw binaries are stored through the shared `StorageAdapter`.
 - Local development defaults to MinIO via `STORAGE_PROVIDER=local-s3`.
@@ -239,22 +239,12 @@ Removed from the supported core product surface:
 - `/api/messages/[id]/feedback`
 - `/api/messages/[id]/speech`
 - `/api/shared/[token]`
-- `/api/sources`
-- `/api/sources/[id]`
-- `/api/sources/ocr`
-- `/api/sync`
-- `/api/sync/[source]`
 - `/api/knowledge/documents`
 - `/api/knowledge/documents/[id]`
 - `/api/knowledge/documents/[id]/reindex`
 - `/api/knowledge/documents/[id]/download`
 - `/api/knowledge/documents/promote`
 - `/api/knowledge/documents/search`
-- `/api/sandbox/shell`
-- `/api/sandbox/snapshot`
-- `/api/snapshot/status`
-- `/api/snapshot/config`
-- `/api/snapshot/sync`
 - `/api/stats`
 - `/api/stats/me`
 - `/api/stats/usage`
@@ -293,7 +283,7 @@ lib/
   auth-client.ts       authentication client config
   files/               thread and project upload storage helpers
   storage/             shared object-storage adapter and provider selection
-  knowledge/           knowledge APIs, auth guards, sync, document ingestion, sandbox, snapshot helpers
+  knowledge/           knowledge APIs, auth guards, and document ingestion
 
 scripts/
   dev-all.sh           Compose-first local dev orchestrator
@@ -336,8 +326,7 @@ the PostgreSQL boundary, and API policy is proved by fast route tests. Run
 
 Admin docs describe the remaining deployment-managed bot adapters. Agent-facing
 services and capabilities are discovered and governed through `/apps`, while
-GitHub webhook handling and Discord messaging continue to use the same
-organization-scoped knowledge snapshots as web chat.
+Discord messaging uses the same organization-scoped document retrieval as web chat.
 
 Additional references:
 

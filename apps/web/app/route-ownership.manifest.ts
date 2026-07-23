@@ -19,11 +19,7 @@ export type KestrelOneRouteOwner =
   | "mobile"
   | "models"
   | "public"
-  | "sandbox"
-  | "snapshot"
-  | "sources"
   | "stats"
-  | "sync"
   | "threads"
   | "tool-boundary"
   | "webhook";
@@ -349,14 +345,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     { primaryNavigation: true }
   ),
   page(
-    "app/knowledge/import/page.tsx",
-    "/knowledge/import",
-    "knowledge",
-    "authenticated",
-    "redirect-sign-in"
-  ),
-
-  page(
     "app/admin/page.tsx",
     "/admin",
     ADMIN_PAGE.owner,
@@ -388,13 +376,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_PAGE.unauthorized
   ),
   page("app/debug/page.tsx", "/debug", "debug", "admin", "admin-denied"),
-  page(
-    "app/debug/sandbox/page.tsx",
-    "/debug/sandbox",
-    "debug",
-    "admin",
-    "admin-denied"
-  ),
 
   api("app/api/health/route.ts", "/api/health", "health", "public", "public"),
   api(
@@ -922,43 +903,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),
-  api(
-    "app/api/sandbox/shell/route.ts",
-    "/api/sandbox/shell",
-    "sandbox",
-    "admin",
-    "admin-denied"
-  ),
-  api(
-    "app/api/snapshot/config/route.ts",
-    "/api/snapshot/config",
-    "snapshot",
-    "admin",
-    "admin-denied"
-  ),
-  api(
-    "app/api/snapshot/status/route.ts",
-    "/api/snapshot/status",
-    "snapshot",
-    "admin",
-    "admin-denied"
-  ),
-  api(
-    "app/api/snapshot/sync/route.ts",
-    "/api/snapshot/sync",
-    "snapshot",
-    "admin",
-    "admin-denied"
-  ),
   api("app/api/stats/route.ts", "/api/stats", "stats", "admin", "admin-denied"),
-  api("app/api/sync/route.ts", "/api/sync", "sync", "admin", "admin-denied"),
-  api(
-    "app/api/sync/[source]/route.ts",
-    "/api/sync/:source",
-    "sync",
-    "admin",
-    "admin-denied"
-  ),
 
   api(
     "app/api/organization/agent-config/public/route.ts",
@@ -1391,34 +1336,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/model-deployments/access/route.ts",
     "/api/model-deployments/access",
     "models",
-    AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
-  ),
-  api(
-    "app/api/sandbox/snapshot/route.ts",
-    "/api/sandbox/snapshot",
-    "sandbox",
-    "admin",
-    "admin-denied"
-  ),
-  api(
-    "app/api/sources/route.ts",
-    "/api/sources",
-    "sources",
-    AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
-  ),
-  api(
-    "app/api/sources/[id]/route.ts",
-    "/api/sources/:id",
-    "sources",
-    "admin",
-    "admin-denied"
-  ),
-  api(
-    "app/api/sources/ocr/route.ts",
-    "/api/sources/ocr",
-    "sources",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized
   ),
