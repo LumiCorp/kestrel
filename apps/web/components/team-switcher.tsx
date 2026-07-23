@@ -26,6 +26,7 @@ import {
 } from "@/lib/auth-client";
 import type { OrganizationSnapshot } from "@/lib/auth-types";
 import { isPersonalOrganization } from "@/lib/personal-workspace-shared";
+import { cn } from "@/lib/utils";
 import { CreateOrganizationDialog } from "./create-organization-dialog";
 
 export function TeamSwitcher({
@@ -98,14 +99,11 @@ export function TeamSwitcher({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
-              aria-label="Switch workspace"
+              aria-label="Switch organization"
               className="h-9 gap-1.5 px-2 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-              tooltip="Switch workspace"
+              tooltip="Switch organization"
             >
               <Building2 className="hidden size-4 group-data-[collapsible=icon]:block" />
-              <span className="text-sidebar-foreground/60 text-xs group-data-[collapsible=icon]:hidden">
-                Workspace
-              </span>
               <span className="min-w-0 flex-1 truncate font-medium group-data-[collapsible=icon]:hidden">
                 {activeIsPersonal ? "Personal" : activeOrg?.name || "Personal"}
               </span>
@@ -123,7 +121,10 @@ export function TeamSwitcher({
             </DropdownMenuLabel>
             {personalOrg ? (
               <DropdownMenuItem
-                className={activeIsPersonal ? "bg-accent" : ""}
+                className={cn(
+                  activeIsPersonal &&
+                    "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground focus:bg-sidebar-primary focus:text-sidebar-primary-foreground data-[highlighted]:bg-sidebar-primary data-[highlighted]:text-sidebar-primary-foreground"
+                )}
                 disabled={pendingOrgId !== null}
                 onClick={() => void handleSetActive(personalOrg.id)}
               >
@@ -132,13 +133,18 @@ export function TeamSwitcher({
                 </div>
                 Personal
                 {activeIsPersonal && (
-                  <DropdownMenuShortcut>⌘1</DropdownMenuShortcut>
+                  <DropdownMenuShortcut className="text-sidebar-primary-foreground/80">
+                    ⌘1
+                  </DropdownMenuShortcut>
                 )}
               </DropdownMenuItem>
             ) : null}
             {teamOrganizations.map((org: any, index: number) => (
               <DropdownMenuItem
-                className={org.id === activeOrgId ? "bg-accent" : ""}
+                className={cn(
+                  org.id === activeOrgId &&
+                    "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground focus:bg-sidebar-primary focus:text-sidebar-primary-foreground data-[highlighted]:bg-sidebar-primary data-[highlighted]:text-sidebar-primary-foreground"
+                )}
                 disabled={pendingOrgId !== null}
                 key={org.id}
                 onClick={() => void handleSetActive(org.id)}
@@ -148,7 +154,7 @@ export function TeamSwitcher({
                 </div>
                 {org.name}
                 {org.id === activeOrgId && (
-                  <DropdownMenuShortcut>
+                  <DropdownMenuShortcut className="text-sidebar-primary-foreground/80">
                     ⌘{index + (personalOrg ? 2 : 1)}
                   </DropdownMenuShortcut>
                 )}
