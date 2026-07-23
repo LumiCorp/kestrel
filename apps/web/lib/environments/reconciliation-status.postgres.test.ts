@@ -12,11 +12,17 @@ contractTest(
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
 
-    const [{ resetDbRuntimeForTests }, { recordWorkspaceReconciliationStatus }] =
-      await Promise.all([
-        import("@/lib/db/runtime"),
-        import("./reconciliation-status"),
-      ]);
+    const [
+      { resetDbRuntimeForTests },
+      { knowledgeDb },
+      { findActiveWorkspaceLifecycleOperation },
+      { recordWorkspaceReconciliationStatus },
+    ] = await Promise.all([
+      import("@/lib/db/runtime"),
+      import("@/lib/knowledge/db"),
+      import("./lifecycle-operations"),
+      import("./reconciliation-status"),
+    ]);
     const sql = postgres(databaseUrl, { max: 1 });
     context.after(async () => {
       await resetDbRuntimeForTests();
@@ -169,6 +175,61 @@ contractTest(
         DELETE FROM "environment_operations" WHERE "id" = ${operationId}
       `;
     }
+
+    const parentOperationId = `parent-operation-${suffix}`;
+    const backupOperationId = `backup-operation-${suffix}`;
+    const unrelatedOperationId = `unrelated-operation-${suffix}`;
+    await sql`
+      INSERT INTO "environment_operations" (
+        "id", "organization_id", "environment_id", "workspace_id",
+        "requested_by_user_id", "type", "status", "stage",
+        "idempotency_key", "created_at", "updated_at"
+      ) VALUES
+        (
+          ${parentOperationId}, ${organizationId}, ${environmentId}, NULL,
+          ${userId}, 'environment.update', 'running',
+          'environment.update.backing_up', ${parentOperationId}, ${now}, ${now}
+        ),
+        (
+          ${backupOperationId}, ${organizationId}, ${environmentId},
+          ${workspaceId}, ${userId}, 'workspace.backup', 'running',
+          'workspace.backup.exporting', ${backupOperationId}, ${now}, ${now}
+        )
+    `;
+    assert.equal(
+      await findActiveWorkspaceLifecycleOperation(knowledgeDb, {
+        organizationId,
+        environmentId,
+        workspaceId,
+        excludedOperationIds: [parentOperationId, backupOperationId],
+      }),
+      undefined,
+    );
+    await sql`
+      INSERT INTO "environment_operations" (
+        "id", "organization_id", "environment_id", "workspace_id",
+        "requested_by_user_id", "type", "status", "stage",
+        "idempotency_key", "created_at", "updated_at"
+      ) VALUES (
+        ${unrelatedOperationId}, ${organizationId}, ${environmentId},
+        ${workspaceId}, ${userId}, 'workspace.stop', 'queued',
+        'environment.machine.stopping', ${unrelatedOperationId}, ${now}, ${now}
+      )
+    `;
+    const unrelated =
+      await findActiveWorkspaceLifecycleOperation(knowledgeDb, {
+        organizationId,
+        environmentId,
+        workspaceId,
+        excludedOperationIds: [parentOperationId, backupOperationId],
+      });
+    assert.equal(unrelated?.id, unrelatedOperationId);
+    await sql`
+      DELETE FROM "environment_operations"
+      WHERE "id" IN (
+        ${parentOperationId}, ${backupOperationId}, ${unrelatedOperationId}
+      )
+    `;
 
     const reconciledAt = new Date(now.getTime() + 1000);
     assert.equal(

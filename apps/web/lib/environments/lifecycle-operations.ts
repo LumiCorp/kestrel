@@ -1,3 +1,4 @@
+import { notInArray } from "drizzle-orm";
 import { knowledgeDb } from "@/lib/knowledge/db";
 
 export const ENVIRONMENT_WIDE_WORKSPACE_LIFECYCLE_TYPES = [
@@ -13,17 +14,20 @@ export async function findActiveWorkspaceLifecycleOperation(
     organizationId: string;
     environmentId: string;
     workspaceId: string;
-    excludedOperationId?: string | undefined;
+    excludedOperationIds?: readonly string[] | undefined;
   },
 ) {
+  const excludedOperationIds = [
+    ...new Set(input.excludedOperationIds?.filter(Boolean) ?? []),
+  ];
   return database.query.environmentOperations.findFirst({
-    where: (table, { and, eq, inArray, isNull, ne, or }) =>
+    where: (table, { and, eq, inArray, isNull, or }) =>
       and(
         eq(table.organizationId, input.organizationId),
         eq(table.environmentId, input.environmentId),
         inArray(table.status, ["queued", "running"]),
-        input.excludedOperationId
-          ? ne(table.id, input.excludedOperationId)
+        excludedOperationIds.length > 0
+          ? notInArray(table.id, excludedOperationIds)
           : undefined,
         or(
           eq(table.workspaceId, input.workspaceId),
@@ -43,7 +47,7 @@ export async function hasActiveWorkspaceLifecycleOperation(input: {
   organizationId: string;
   environmentId: string;
   workspaceId: string;
-  excludedOperationId?: string | undefined;
+  excludedOperationIds?: readonly string[] | undefined;
 }) {
   return Boolean(
     await findActiveWorkspaceLifecycleOperation(knowledgeDb, input),

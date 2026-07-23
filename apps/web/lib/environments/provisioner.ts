@@ -163,6 +163,7 @@ export class EnvironmentProvisioner {
     actorUserId: string;
     reason: "pre_destructive";
     idempotencyKey: string;
+    parentLifecycleOperationId?: string | undefined;
     preDestructiveSnapshot?: { id: string; state: string } | undefined;
   }) => Promise<unknown>;
 
@@ -181,6 +182,7 @@ export class EnvironmentProvisioner {
           actorUserId: string;
           reason: "pre_destructive";
           idempotencyKey: string;
+          parentLifecycleOperationId?: string | undefined;
           preDestructiveSnapshot?: { id: string; state: string } | undefined;
         }) => Promise<unknown>)
       | undefined;
@@ -431,6 +433,7 @@ export class EnvironmentProvisioner {
         actorUserId: operation.requestedByUserId,
         reason: "pre_destructive",
         idempotencyKey: `environment.update:${operation.id}:backup:${workspace.id}`,
+        parentLifecycleOperationId: operation.id,
       } as const;
       try {
         await this.backupWorkspace(backupInput);
