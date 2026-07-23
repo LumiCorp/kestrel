@@ -96,7 +96,13 @@ const machineSchema = z.object({
       stop_config: z
         .object({
           signal: z.string().min(1),
-          timeout: z.number().int().nonnegative(),
+          timeout: z.preprocess(
+            (value) =>
+              typeof value === "string"
+                ? parseFlyDurationNanoseconds(value) ?? value
+                : value,
+            z.number().int().nonnegative()
+          ),
         })
         .passthrough()
         .nullable()
@@ -1215,6 +1221,33 @@ function environmentsEqual(
   const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
   const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
   return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
+}
+
+function parseFlyDurationNanoseconds(value: string) {
+  const unitNanoseconds: Record<string, number> = {
+    ns: 1,
+    us: 1_000,
+    "µs": 1_000,
+    "μs": 1_000,
+    ms: 1_000_000,
+    s: 1_000_000_000,
+    m: 60_000_000_000,
+    h: 3_600_000_000_000,
+  };
+  const components = value.matchAll(
+    /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/gu
+  );
+  let cursor = 0;
+  let total = 0;
+  for (const component of components) {
+    if (component.index !== cursor) return null;
+    const amount = Number(component[1]);
+    const multiplier = unitNanoseconds[component[2] ?? ""];
+    if (!Number.isFinite(amount) || multiplier === undefined) return null;
+    total += amount * multiplier;
+    cursor += component[0].length;
+  }
+  return cursor === value.length && Number.isSafeInteger(total) ? total : null;
 }
 
 function stopConfigsEqual(
