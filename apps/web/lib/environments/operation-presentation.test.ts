@@ -111,3 +111,19 @@ contractTest("web.hermetic", "Environment updates expose the durable rollout sta
     }
   );
 });
+
+contractTest("web.hermetic", "Environment updates surface provisioning recovery without a false success tone", () => {
+  assert.deepEqual(
+    describeEnvironmentOperation({
+      type: "environment.update",
+      status: "completed",
+      stage: "environment.update.recovery_required",
+    }),
+    {
+      label: "Environment update",
+      detail:
+        "Environment updated; one or more Workspaces require provisioning retry.",
+      tone: "neutral",
+    }
+  );
+});
