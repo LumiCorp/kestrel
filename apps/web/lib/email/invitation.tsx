@@ -59,6 +59,10 @@ export const InviteUserEmail = ({
               ) has invited you to the <strong>{teamName}</strong> team on{" "}
               <strong>Kestrel One</strong>.
             </Text>
+            <Text className="text-[14px] text-black leading-[24px]">
+              Sign in, or create an account with <strong>{username}</strong>,
+              then review and accept the invitation.
+            </Text>
             <Section>
               {teamImage ? (
                 <Row>

@@ -1544,6 +1544,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   page("app/(workspace)/settings/page.tsx", "/settings", "dashboard", "authenticated", "redirect-sign-in"),
+  page("app/(workspace)/welcome/page.tsx", "/welcome", "dashboard", "authenticated", "redirect-sign-in"),
   page("app/(workspace)/settings/profile/page.tsx", "/settings/profile", "dashboard", "authenticated", "redirect-sign-in"),
   page("app/(workspace)/settings/appearance/page.tsx", "/settings/appearance", "dashboard", "authenticated", "redirect-sign-in"),
   page("app/(workspace)/settings/api-keys/page.tsx", "/settings/api-keys", "dashboard", "authenticated", "redirect-sign-in"),
