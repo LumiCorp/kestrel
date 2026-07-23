@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
+import {
+  KestrelClient,
+  KestrelSdkError,
+  type KestrelRequestContext,
+} from "@kestrel-agents/sdk/runner";
 import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
@@ -26,6 +31,7 @@ import {
   performGuardedWorkspaceRestoreCutover,
   resolveWorkspaceBackupRecoverySource,
   resolveWorkspaceBackupSnapshotSourceVolumeId,
+  WORKSPACE_RESTORE_ROUTE_CAPABILITIES,
 } from "./restore-cutover";
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
@@ -758,7 +764,7 @@ export async function restoreWorkspaceBackup(input: {
         flyAppName,
         flyMachineId: replacementMachine.id,
         routerUrl,
-        capabilities: ["workspace.backups.restore", "workspace.apps.read"],
+        capabilities: [...WORKSPACE_RESTORE_ROUTE_CAPABILITIES],
       });
     if (archive && checksum) {
       await uploadBackupArchive({
@@ -800,6 +806,8 @@ export async function restoreWorkspaceBackup(input: {
         const description = await readStoredSessionDescription({
           route: replacementRoute,
           sessionId: validationThreadId,
+          actorId: input.actorUserId,
+          organizationId: input.organizationId,
         });
         if (
           description.sessionId !== validationThreadId ||
@@ -987,41 +995,42 @@ export async function restoreWorkspaceBackup(input: {
 async function readStoredSessionDescription(input: {
   route: () => { baseUrl: string; authToken: string };
   sessionId: string;
+  actorId: string;
+  organizationId: string;
 }) {
   const route = input.route();
-  const response = await fetch(
-    new URL(
-      `/v1/backups/sessions/${encodeURIComponent(input.sessionId)}`,
-      route.baseUrl
-    ),
-    {
-      headers: { authorization: `Bearer ${route.authToken}` },
-      cache: "no-store",
-    }
-  );
-  const payload = (await response.json().catch(() => null)) as {
-    description?: { sessionId?: unknown; version?: unknown };
-    error?: { code?: unknown };
-  } | null;
-  if (
-    !(
-      response.ok &&
-      typeof payload?.description?.sessionId === "string" &&
-      typeof payload.description.version === "number"
-    )
-  ) {
-    const errorCode =
-      typeof payload?.error?.code === "string"
-        ? `, ${payload.error.code}`
-        : "";
-    throw new Error(
-      `Replacement Workspace store validation failed (HTTP ${response.status}${errorCode}).`
-    );
-  }
-  return {
-    sessionId: payload.description.sessionId,
-    version: payload.description.version,
+  const client = new KestrelClient({
+    target: {
+      kind: "remote",
+      baseUrl: route.baseUrl,
+      authToken: route.authToken,
+    },
+  });
+  const context: KestrelRequestContext = {
+    actor: {
+      actorId: input.actorId,
+      actorType: "end_user",
+      tenantId: input.organizationId,
+    },
+    tenantId: input.organizationId,
   };
+  try {
+    return await client.describeSession(input.sessionId, context);
+  } catch (error) {
+    const status =
+      error instanceof KestrelSdkError && typeof error.status === "number"
+        ? `HTTP ${error.status}, `
+        : "";
+    const code =
+      error instanceof KestrelSdkError
+        ? error.code
+        : "RUNNER_STORE_VALIDATION_FAILED";
+    throw new Error(
+      `Replacement Workspace store validation failed (${status}${code}).`
+    );
+  } finally {
+    await client.close();
+  }
 }
 
 function requireImmutableWorkspaceRuntimeImage() {
