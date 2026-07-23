@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -574,6 +575,14 @@ export function EnvironmentAppSettings({
       <AppSettingsHeader
         action={
           <div className="flex gap-2">
+            {configuration.app.connectionModel === "organization" &&
+            configuration.app.configurationPath ? (
+              <Button asChild size="sm">
+                <Link href={configuration.app.configurationPath}>
+                  Configure {configuration.app.displayName}
+                </Link>
+              </Button>
+            ) : null}
             <ConnectionDialog
               app={configuration.app}
               environmentId={environmentId}
@@ -761,7 +770,9 @@ export function EnvironmentAppSettings({
                     {connection.name}
                   </p>
                   <p className="mt-1 text-muted-foreground text-xs">
-                    Shared with Projects in this Environment
+                    {connection.ownerType === "organization"
+                      ? "Configured for Projects in this Organization"
+                      : "Shared with Projects in this Environment"}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -791,7 +802,10 @@ export function EnvironmentAppSettings({
             ))
           ) : (
             <p className="py-3 text-muted-foreground text-sm">
-              {configuration.app.connectionRequirement === "optional"
+              {configuration.app.connectionModel === "organization" &&
+              configuration.app.configurationPath
+                ? "This App is configured once in Organization settings and shared with Projects."
+                : configuration.app.connectionRequirement === "optional"
                 ? "No shared connection is required. Add one to enable the optional provider path."
                 : configuration.app.connectionModel === "hybrid"
                   ? "Add a shared connection, or let members attach personal connections inside Projects."

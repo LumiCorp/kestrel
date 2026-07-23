@@ -74,6 +74,11 @@ function connectionCapabilityPacks(value: unknown) {
   });
 }
 
+function configurationPath(value: unknown): string | null {
+  const path = record(value).configurationPath;
+  return typeof path === "string" && path.startsWith("/") ? path : null;
+}
+
 export class AppServiceError extends Error {
   readonly code:
     | "APP_NOT_FOUND"
@@ -400,6 +405,7 @@ export async function listAppsForOrganization(input: {
       delivery: definition.delivery,
       installMode: definition.installMode,
       icon: definition.icon,
+      configurationPath: configurationPath(definition.metadata),
       installationStatus,
       readiness: resolveReadiness({
         installMode: definition.installMode,
@@ -721,6 +727,7 @@ export async function getEnvironmentAppConfiguration(input: {
       authMethods: authMethods(definition.metadata),
       delivery: definition.delivery,
       icon: definition.icon,
+      configurationPath: configurationPath(definition.metadata),
       installationStatus,
       readiness: resolveReadiness({
         installMode: definition.installMode,
