@@ -1001,6 +1001,187 @@ contractTest(
       "a deleting Environment must never become the organization default"
     );
 
+    const deletionTarget =
+      await environmentStore.createOrganizationEnvironment({
+        organizationId: organizationA,
+        userId: userA,
+        environment: {
+          name: "Deletion target",
+          region: "iad",
+          isDefault: false,
+        },
+      });
+    await sql.begin(async (transaction) => {
+      await transaction`
+        UPDATE "environments"
+        SET "status" = 'ready'
+        WHERE "id" = ${deletionTarget.environment.id}
+      `;
+      await transaction`
+        UPDATE "environment_operations"
+        SET "status" = 'completed', "stage" = 'environment.activation.ready',
+            "completed_at" = now(), "updated_at" = now()
+        WHERE "id" = ${deletionTarget.operation.id}
+      `;
+    });
+    await assert.rejects(
+      environmentStore.requestOrganizationEnvironmentDelete({
+        organizationId: organizationA,
+        environmentId: deletionTarget.environment.id,
+        userId: userA,
+        confirmationName: "wrong name",
+      }),
+      /Type the Environment name exactly/u
+    );
+    const deletionRequested =
+      await environmentStore.requestOrganizationEnvironmentDelete({
+        organizationId: organizationA,
+        environmentId: deletionTarget.environment.id,
+        userId: userA,
+        confirmationName: "Deletion target",
+      });
+    assert.equal(deletionRequested.action, "requested");
+    assert.equal(deletionRequested.environment.status, "deleting");
+    assert.equal(deletionRequested.operation.type, "environment.delete");
+    assert.equal(deletionRequested.operation.status, "queued");
+    const repeatedDeletionRequest =
+      await environmentStore.requestOrganizationEnvironmentDelete({
+        organizationId: organizationA,
+        environmentId: deletionTarget.environment.id,
+        userId: userA,
+        confirmationName: "Deletion target",
+      });
+    assert.equal(repeatedDeletionRequest.action, "existing");
+    assert.equal(
+      repeatedDeletionRequest.operation.id,
+      deletionRequested.operation.id
+    );
+    await sql`
+      UPDATE "environments"
+      SET "status" = 'failed'
+      WHERE "id" = ${deletionTarget.environment.id}
+    `;
+    await sql`
+      UPDATE "environment_operations"
+      SET "status" = 'failed', "stage" = 'environment.activation.failed',
+          "error_code" = 'FLY_PROVIDER_UNAVAILABLE',
+          "error_message" = 'Fly is temporarily unavailable.',
+          "completed_at" = now(), "updated_at" = now()
+      WHERE "id" = ${deletionRequested.operation.id}
+    `;
+    const retriedDeletion = await environmentStore.requestOrganizationEnvironmentDelete({
+      organizationId: organizationA,
+      environmentId: deletionTarget.environment.id,
+      userId: userA,
+      confirmationName: "Deletion target",
+    });
+    assert.equal(retriedDeletion.action, "requeued");
+    assert.equal(retriedDeletion.environment.status, "deleting");
+    assert.equal(retriedDeletion.operation.status, "queued");
+    assert.equal(retriedDeletion.operation.errorCode, null);
+
+    await environmentStore.setDefaultOrganizationEnvironment({
+      organizationId: organizationA,
+      environmentId: createdEnvironment.environment.id,
+    });
+    await assert.rejects(
+      environmentStore.requestOrganizationEnvironmentDelete({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        userId: userA,
+        confirmationName: "Primary Environment",
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENVIRONMENT_IS_DEFAULT"
+    );
+
+    await assert.rejects(
+      environmentStore.requestOrganizationEnvironmentDelete({
+        organizationId: organizationA,
+        environmentId: projectOwned.environment.id,
+        userId: userA,
+        confirmationName: "Project-owned Environment",
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENVIRONMENT_HAS_PROJECTS"
+    );
+
+    const privateInferenceTarget =
+      await environmentStore.createOrganizationEnvironment({
+        organizationId: organizationA,
+        userId: userA,
+        environment: {
+          name: "Private inference Environment",
+          region: "iad",
+          isDefault: false,
+        },
+      });
+    await sql.begin(async (transaction) => {
+      await transaction`
+        UPDATE "environments"
+        SET "status" = 'ready'
+        WHERE "id" = ${privateInferenceTarget.environment.id}
+      `;
+      await transaction`
+        UPDATE "environment_operations"
+        SET "status" = 'completed', "stage" = 'environment.activation.ready',
+            "completed_at" = now(), "updated_at" = now()
+        WHERE "id" = ${privateInferenceTarget.operation.id}
+      `;
+      await transaction`
+        INSERT INTO "ai_gateways" (
+          "id", "organization_id", "environment_id", "provider", "display_name"
+        ) VALUES (
+          ${`delete-gateway-${suffix}`}, ${organizationA},
+          ${privateInferenceTarget.environment.id}, 'openai', 'Delete guard gateway'
+        )
+      `;
+    });
+    await assert.rejects(
+      environmentStore.requestOrganizationEnvironmentDelete({
+        organizationId: organizationA,
+        environmentId: privateInferenceTarget.environment.id,
+        userId: userA,
+        confirmationName: "Private inference Environment",
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENVIRONMENT_HAS_PRIVATE_INFERENCE"
+    );
+
+    const activeDeletionTarget =
+      await environmentStore.createOrganizationEnvironment({
+        organizationId: organizationA,
+        userId: userA,
+        environment: {
+          name: "Active lifecycle Environment",
+          region: "iad",
+          isDefault: false,
+        },
+      });
+    await sql`
+      UPDATE "environments"
+      SET "status" = 'ready'
+      WHERE "id" = ${activeDeletionTarget.environment.id}
+    `;
+    await assert.rejects(
+      environmentStore.requestOrganizationEnvironmentDelete({
+        organizationId: organizationA,
+        environmentId: activeDeletionTarget.environment.id,
+        userId: userA,
+        confirmationName: "Active lifecycle Environment",
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENVIRONMENT_UNAVAILABLE"
+    );
+
     const automaticTarget =
       await environmentStore.createOrganizationEnvironment({
         organizationId: organizationB,

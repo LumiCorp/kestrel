@@ -42,7 +42,7 @@ contractTest("web.hermetic", "Environment reconciliation closes an unacquired lo
   assert.deepEqual(calls, ["try", "close"]);
 });
 
-contractTest("web.hermetic", "Environment operation locks use a stable operation-specific key", async () => {
+contractTest("web.hermetic", "Environment operation locks use a stable Environment-specific key", async () => {
   const lockKeys: string[] = [];
   const createLock = async (
     lockKey: string
@@ -58,24 +58,24 @@ contractTest("web.hermetic", "Environment operation locks use a stable operation
   };
   assert.deepEqual(
     await withEnvironmentOperationLock({
-      operationId: " operation-123 ",
+      environmentId: " environment-123 ",
       createLock,
       run: async () => "completed",
     }),
     { acquired: true, result: "completed" }
   );
   assert.deepEqual(lockKeys, [
-    "kestrel:hosted-environments:operation:operation-123",
+    "kestrel:hosted-environments:environment:environment-123",
   ]);
 });
 
-contractTest("web.hermetic", "Environment operation locks reject an empty operation ID", async () => {
+contractTest("web.hermetic", "Environment operation locks reject an empty Environment ID", async () => {
   await assert.rejects(
     withEnvironmentOperationLock({
-      operationId: " ",
+      environmentId: " ",
       run: async () => "completed",
     }),
-    /operation ID is required/u
+    /Environment ID is required/u
   );
 });
 

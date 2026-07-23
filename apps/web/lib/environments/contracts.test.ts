@@ -3,7 +3,9 @@ import {
   assertEnvironmentTransition,
   assertWorkspaceTransition,
   createEnvironmentInputSchema,
+  deleteEnvironmentInputSchema,
   EnvironmentContractError,
+  environmentDeleteIdempotencyKey,
   environmentActivationEventSchema,
   selectDefaultEnvironmentRecoveryAction,
   toEnvironmentSlug,
@@ -55,6 +57,21 @@ contractTest("web.hermetic", "environment creation requires an explicit provider
       region: "unknown",
     }).success,
     false
+  );
+});
+
+contractTest("web.hermetic", "environment deletion requires an exact confirmation value", () => {
+  assert.deepEqual(
+    deleteEnvironmentInputSchema.parse({ confirmationName: "Development" }),
+    { confirmationName: "Development" }
+  );
+  assert.equal(
+    deleteEnvironmentInputSchema.safeParse({ confirmationName: "" }).success,
+    false
+  );
+  assert.equal(
+    environmentDeleteIdempotencyKey("environment-id"),
+    "environment.delete:environment-id"
   );
 });
 

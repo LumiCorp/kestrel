@@ -2,7 +2,7 @@ import postgres from "postgres";
 
 const ENVIRONMENT_RECONCILE_LOCK_KEY = "kestrel:hosted-environments:reconcile";
 const ENVIRONMENT_OPERATION_LOCK_PREFIX =
-  "kestrel:hosted-environments:operation";
+  "kestrel:hosted-environments:environment";
 
 export type EnvironmentReconcileLock = {
   tryAcquire(): Promise<boolean>;
@@ -21,15 +21,15 @@ export async function withEnvironmentReconcileLock<T>(input: {
 }
 
 export async function withEnvironmentOperationLock<T>(input: {
-  operationId: string;
+  environmentId: string;
   run: () => Promise<T>;
   createLock?: (lockKey: string) => Promise<EnvironmentReconcileLock>;
 }) {
-  const operationId = input.operationId.trim();
-  if (!operationId) throw new Error("Environment operation ID is required");
+  const environmentId = input.environmentId.trim();
+  if (!environmentId) throw new Error("Environment ID is required");
   return withEnvironmentAdvisoryLock({
     createLock: input.createLock,
-    lockKey: `${ENVIRONMENT_OPERATION_LOCK_PREFIX}:${operationId}`,
+    lockKey: `${ENVIRONMENT_OPERATION_LOCK_PREFIX}:${environmentId}`,
     run: input.run,
   });
 }

@@ -9,11 +9,13 @@ import {
 } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
+  assertEnvironmentTransition,
   assertWorkspaceTransition,
   type CreateEnvironmentInput,
   ENVIRONMENT_IDLE_TIMEOUT_MINUTES,
   ENVIRONMENT_RUNTIME_TEMPLATE,
   EnvironmentContractError,
+  environmentDeleteIdempotencyKey,
   environmentProvisionIdempotencyKey,
   toEnvironmentSlug,
   type WorkspaceSource,
@@ -393,6 +395,191 @@ export async function setDefaultOrganizationEnvironment(input: {
       .where(eq(schema.environments.id, environment.id))
       .returning();
     return updated;
+  });
+}
+
+export async function requestOrganizationEnvironmentDelete(input: {
+  organizationId: string;
+  environmentId: string;
+  userId: string;
+  confirmationName: string;
+}) {
+  const now = new Date();
+  const idempotencyKey = environmentDeleteIdempotencyKey(
+    input.environmentId
+  );
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`
+    );
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`
+    );
+    const environment = await transaction.query.environments.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.id, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+          isNull(table.archivedAt)
+        ),
+    });
+    if (!environment) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_NOT_FOUND",
+        "Environment not found or unavailable."
+      );
+    }
+    if (environment.name !== input.confirmationName) {
+      throw new Error("Type the Environment name exactly to confirm deletion.");
+    }
+
+    const existing = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.idempotencyKey, idempotencyKey)
+        ),
+    });
+    if (existing?.status === "queued" || existing?.status === "running") {
+      return { environment, operation: existing, action: "existing" as const };
+    }
+
+    if (environment.isDefault) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_IS_DEFAULT",
+        "Select another ready Environment as default before deleting this Environment."
+      );
+    }
+    if (environment.status === "deleting") {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_UNAVAILABLE",
+        "Environment deletion is already in progress."
+      );
+    }
+    assertEnvironmentTransition(environment.status, "deleting");
+
+    const [readyDefault, project, deployment, gateway, activeOperation] =
+      await Promise.all([
+        transaction.query.environments.findFirst({
+          where: (table, { and, eq, isNull, ne }) =>
+            and(
+              eq(table.organizationId, input.organizationId),
+              eq(table.isDefault, true),
+              eq(table.status, "ready"),
+              ne(table.id, input.environmentId),
+              isNull(table.archivedAt)
+            ),
+          columns: { id: true },
+        }),
+        transaction.query.projects.findFirst({
+          where: (table, { eq }) => eq(table.environmentId, input.environmentId),
+          columns: { id: true },
+        }),
+        transaction.query.aiDeployments.findFirst({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.environmentId, input.environmentId),
+              isNull(table.deletedAt)
+            ),
+          columns: { id: true },
+        }),
+        transaction.query.aiGateways.findFirst({
+          where: (table, { eq }) => eq(table.environmentId, input.environmentId),
+          columns: { id: true },
+        }),
+        transaction.query.environmentOperations.findFirst({
+          where: (table, { and, eq, inArray }) =>
+            and(
+              eq(table.environmentId, input.environmentId),
+              inArray(table.status, ["queued", "running"])
+            ),
+          columns: { id: true },
+        }),
+      ]);
+    if (!readyDefault) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_UNAVAILABLE",
+        "A different ready Environment must be the organization default before deletion."
+      );
+    }
+    if (project) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_HAS_PROJECTS",
+        "Move every Project to another Environment before deleting this Environment."
+      );
+    }
+    if (deployment || gateway) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_HAS_PRIVATE_INFERENCE",
+        "Remove private inference before deleting this Environment."
+      );
+    }
+    if (activeOperation) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_UNAVAILABLE",
+        "Wait for the Environment's active lifecycle operation before deleting it."
+      );
+    }
+
+    const [updatedEnvironment] = await transaction
+      .update(schema.environments)
+      .set({
+        status: "deleting",
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.environments.id, environment.id))
+      .returning();
+    if (!updatedEnvironment) {
+      throw new Error("Environment deletion state was not persisted.");
+    }
+
+    const operation = existing
+      ? (
+          await transaction
+            .update(schema.environmentOperations)
+            .set({
+              status: "queued",
+              stage: "requested",
+              requestedByUserId: input.userId,
+              providerRequestId: null,
+              result: null,
+              errorCode: null,
+              errorMessage: null,
+              startedAt: null,
+              completedAt: null,
+              updatedAt: now,
+            })
+            .where(eq(schema.environmentOperations.id, existing.id))
+            .returning()
+        )[0]
+      : (
+          await transaction
+            .insert(schema.environmentOperations)
+            .values({
+              id: crypto.randomUUID(),
+              organizationId: input.organizationId,
+              environmentId: input.environmentId,
+              requestedByUserId: input.userId,
+              type: "environment.delete",
+              status: "queued",
+              stage: "requested",
+              idempotencyKey,
+              input: { confirmationName: environment.name },
+              createdAt: now,
+              updatedAt: now,
+            })
+            .returning()
+        )[0];
+    if (!operation) {
+      throw new Error("Environment deletion operation was not created.");
+    }
+    return {
+      environment: updatedEnvironment,
+      operation,
+      action: existing ? ("requeued" as const) : ("requested" as const),
+    };
   });
 }
 

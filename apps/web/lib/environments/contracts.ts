@@ -82,6 +82,13 @@ export type CreateEnvironmentInput = z.infer<
   typeof createEnvironmentInputSchema
 >;
 
+export const deleteEnvironmentInputSchema = z.object({
+  confirmationName: z.string().min(1).max(120),
+});
+export type DeleteEnvironmentInput = z.infer<
+  typeof deleteEnvironmentInputSchema
+>;
+
 const blankWorkspaceSourceSchema = z.object({
   type: z.literal("blank"),
 });
@@ -156,6 +163,9 @@ export class EnvironmentContractError extends Error {
     | "WORKSPACE_INVALID_TRANSITION"
     | "ENVIRONMENT_NOT_FOUND"
     | "ENVIRONMENT_UNAVAILABLE"
+    | "ENVIRONMENT_IS_DEFAULT"
+    | "ENVIRONMENT_HAS_PROJECTS"
+    | "ENVIRONMENT_HAS_PRIVATE_INFERENCE"
     | "ENVIRONMENT_BINDING_NOT_FOUND"
     | "ENVIRONMENT_FORBIDDEN"
     | "WORKSPACE_SOURCE_FORBIDDEN";
@@ -218,6 +228,10 @@ export function environmentProvisionIdempotencyKey(
   environmentId: string
 ): string {
   return `environment.provision:${environmentId}`;
+}
+
+export function environmentDeleteIdempotencyKey(environmentId: string): string {
+  return `environment.delete:${environmentId}`;
 }
 
 export function selectDefaultEnvironmentRecoveryAction(input: {
