@@ -16,6 +16,8 @@ export interface AgentRegistrationOptions {
   decisionModel?: string;
   agentProvider?: string;
   agentModel?: string;
+  maintenanceModel?: string;
+  delegationModel?: string;
   agentToolNames?: string[];
   agentTools?: ModelToolSpec[] | undefined;
   agentToolsProvider?: ((ctx: StepContext) => ModelToolSpec[]) | undefined;
@@ -40,6 +42,8 @@ export interface AgentRegistrationOptions {
 export interface ResolvedAgentOptions {
   agentProvider?: string;
   agentModel: string;
+  maintenanceModel: string;
+  delegationModel: string;
   agentToolsProvider: (ctx: StepContext) => ModelToolSpec[];
   capabilityManifestProvider: (ctx: StepContext) => ToolCapabilityManifestItem[];
   managedWorktreeProposalProvider?: ((request: ManagedTaskWorktreeRequest) => Promise<ManagedTaskWorktreeProposal>) | undefined;

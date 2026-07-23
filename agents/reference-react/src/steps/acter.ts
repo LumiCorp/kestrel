@@ -34,6 +34,7 @@ import {
   buildAgentToolFailureResult,
   buildAgentToolSuccessResult,
   isAgentToolResult,
+  replaceAgentToolResultOutput,
   unwrapAgentToolOutput,
 } from "../../../../tools/toolResult.js";
 import {
@@ -70,6 +71,7 @@ import {
   collectToolArtifacts,
   nextCapabilityEvidence,
   normalizeEffectResultForTool,
+  shapeToolExecutionResult,
   toDuplicateResult,
 } from "./acter/resultShaping.js";
 export {
@@ -682,7 +684,18 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         }
       }
       const rawOutput = unwrapAgentToolOutput(toolResult);
-      const artifacts = collectToolArtifacts(actionForDispatch.name, rawOutput);
+      const shaped = shapeAgentToolResultForRuntime({
+        result: toolResult,
+        runId: ctx.runId,
+        stepIndex: ctx.stepIndex,
+        toolName: actionForDispatch.name,
+        toolInput: actionForDispatch.input,
+        rawOutput,
+      });
+      toolResult = shaped.result;
+      const verificationOutput = shaped.verificationOutput;
+      const storedOutput = shaped.storedOutput;
+      const artifacts = [...collectToolArtifacts(actionForDispatch.name, rawOutput), ...shaped.artifacts];
       const capabilityClasses = toolCapabilityClassesByName[actionForDispatch.name] ?? [actionForDispatch.name];
       const capabilityEvidence = nextCapabilityEvidence(
         capabilityEvidenceFromAgentFeedback(reactState),
@@ -696,7 +709,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       );
       const duplicateResult = toDuplicateResult({
         toolName: actionForDispatch.name,
-        output: rawOutput,
+        output: verificationOutput,
         ledger: readReadOnlyResultDuplicateLedger(ctx.memory),
       });
       const reducerResult = applyReactStateEvent({
@@ -717,7 +730,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       const postToolVerification = buildPostToolVerification({
         reactState,
         nextCapabilities: capabilityEvidence,
-        output: rawOutput,
+        output: verificationOutput,
         toolName: actionForDispatch.name,
         action: actionForDispatch,
         duplicateResult,
@@ -726,7 +739,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         toolName: actionForDispatch.name,
         input: compactToolInputForDecision(actionForDispatch.name, actionForDispatch.input),
         inputHash: actionInputHash,
-        output: rawOutput,
+        output: storedOutput,
         capabilityClasses,
       });
       const latestEvidenceDelta = {
@@ -745,7 +758,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         reactState: reducerResult.reactState,
         toolName: actionForDispatch.name,
         toolInput: actionForDispatch.input,
-        toolOutput: rawOutput,
+        toolOutput: verificationOutput,
         stepIndex: ctx.stepIndex,
         inputHash: actionInputHash,
         executionClass: toolClass,
@@ -753,7 +766,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       const planWritePatch = buildPlanWriteStatePatch({
         toolName: actionForDispatch.name,
         toolInput: actionForDispatch.input,
-        toolOutput: rawOutput,
+        toolOutput: verificationOutput,
       });
       const execPatch = {
         pendingApproval: undefined,
@@ -780,13 +793,14 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
             stepIndex: ctx.stepIndex,
             toolName: actionForDispatch.name,
             inputHash: actionInputHash,
-            output: rawOutput,
+            output: storedOutput,
             capabilityClasses,
           }),
           ...planWritePatch,
           ...(filesystemInspectionCache !== undefined ? { filesystemInspectionCache } : {}),
           latestEvidenceDelta,
           decisionTrace: [
+            ...shaped.decisionTrace,
             {
               eventType: "decision.executed",
               phase: "acter",
@@ -1258,13 +1272,24 @@ function resumePendingEffect(input: {
     effectResult: input.effectResult,
     collectedOutput: unwrapAgentToolOutput(collectedOutput),
   });
-  const toolResult = ensureAgentToolResult({
+  let toolResult = ensureAgentToolResult({
     toolName,
     toolInput: pendingToolInput,
     output: collectedOutput,
     candidate: input.effectResult,
   });
   const rawOutput = unwrapAgentToolOutput(toolResult);
+  const shaped = shapeAgentToolResultForRuntime({
+    result: toolResult,
+    runId: input.runId,
+    stepIndex: input.stepIndex,
+    toolName,
+    toolInput: pendingToolInput,
+    rawOutput,
+  });
+  toolResult = shaped.result;
+  const verificationOutput = shaped.verificationOutput;
+  const persistedOutput = shaped.storedOutput;
   const pendingToolInputHash = hashToolInput(toolName, pendingToolInput);
   const capabilityClasses = input.toolCapabilityClassesByName[toolName] ?? [toolName];
   const capabilityEvidence = nextCapabilityEvidence(
@@ -1279,7 +1304,7 @@ function resumePendingEffect(input: {
   );
   const duplicateResult = toDuplicateResult({
     toolName,
-    output: rawOutput,
+    output: verificationOutput,
     ledger: [...input.duplicateLedger],
   });
   const devShellExecPatch = buildDevShellExecStatePatch({
@@ -1288,7 +1313,7 @@ function resumePendingEffect(input: {
     decisionVerification: asRecord(input.reactState.decisionVerification),
     toolName,
     toolInput: pendingToolInputForReducer,
-    toolOutput: rawOutput,
+    toolOutput: verificationOutput,
   });
   const reducerResult = applyReactStateEvent({
     reactState: input.reactState,
@@ -1304,18 +1329,18 @@ function resumePendingEffect(input: {
   });
   const preservedDevShellReadEvidence = preservePriorDevShellReadEvidence({
     toolName,
-    currentStoredOutput: rawOutput,
-    verificationOutput: rawOutput,
+    currentStoredOutput: persistedOutput,
+    verificationOutput,
     priorLastActionResult: input.reactState.lastActionResult,
     currentExecState: asRecord(input.reactState.exec),
   });
   const storedOutputForDecision = preservedDevShellReadEvidence.storedOutput;
   const reusedPriorDevShellReadEvidence = preservedDevShellReadEvidence.reusedPriorActionableOutput;
-  const artifacts = collectToolArtifacts(toolName, rawOutput);
+  const artifacts = [...collectToolArtifacts(toolName, rawOutput), ...shaped.artifacts];
   const postToolVerification = buildPostToolVerification({
     reactState: input.reactState,
     nextCapabilities: capabilityEvidence,
-    output: rawOutput,
+    output: verificationOutput,
     toolName,
     action: input.reactState.nextAction,
     duplicateResult,
@@ -1383,6 +1408,7 @@ function resumePendingEffect(input: {
       ...(filesystemInspectionCache !== undefined ? { filesystemInspectionCache } : {}),
       latestEvidenceDelta,
       decisionTrace: [
+        ...shaped.decisionTrace,
         {
           eventType: "decision.executed",
           phase: "acter",
@@ -1784,6 +1810,7 @@ async function executeToolBatchChunk(input: {
   }
 
   const chunkResults = await executeToolBatchItemsWithFilesystemReuse({
+    runId: input.runId,
     chunk,
     reactState: input.reactState,
     stepIndex: input.stepIndex,
@@ -1806,7 +1833,7 @@ async function executeToolBatchChunk(input: {
       reactState: cacheState,
       toolName: item.name,
       toolInput: item.input,
-      toolOutput: item.output,
+      toolOutput: item.verificationOutput,
       stepIndex: input.stepIndex + index,
       inputHash: hashToolInput(item.name, item.input),
       executionClass: input.toolExecutionClassByName[item.name],
@@ -1823,13 +1850,14 @@ async function executeToolBatchChunk(input: {
     items: toolResults.map((item) => ({
       name: item.name,
       input: item.input,
-      output: item.output,
+      output: item.verificationOutput,
     })),
     duplicateLedger: input.duplicateLedger,
     stepIndex: input.stepIndex,
   });
   const artifactIntents = toolResults.flatMap((item) => [
-    ...collectToolArtifacts(item.name, item.output),
+    ...collectToolArtifacts(item.name, item.verificationOutput),
+    ...item.artifacts,
   ]);
 
   const completedItems = [
@@ -1943,6 +1971,7 @@ async function executeToolBatchChunk(input: {
       ),
       ...(filesystemInspectionCache !== undefined ? { filesystemInspectionCache } : {}),
       decisionTrace: [
+        ...toolResults.flatMap((item) => item.decisionTrace),
         {
           eventType: "tool.chunk.started",
           phase: "acter",
@@ -1997,6 +2026,7 @@ async function executeToolBatchChunk(input: {
 }
 
 async function executeToolBatchItemsWithFilesystemReuse(input: {
+  runId?: string | undefined;
   reactState: Record<string, unknown>;
   stepIndex: number;
   chunk: Array<{ name: string; input: Record<string, unknown>; toolCallId?: string | undefined }>;
@@ -2008,6 +2038,9 @@ async function executeToolBatchItemsWithFilesystemReuse(input: {
   toolCallId?: string | undefined;
   toolResult?: AgentToolResult | undefined;
   output: unknown;
+  verificationOutput: unknown;
+  artifacts: ArtifactIntent[];
+  decisionTrace: Array<Record<string, unknown>>;
   reused?: boolean | undefined;
   cachedStepIndex?: number | undefined;
 }>> {
@@ -2018,10 +2051,12 @@ async function executeToolBatchItemsWithFilesystemReuse(input: {
     ) === false
   ) {
     return Promise.all(
-      input.chunk.map(async (item) => executeToolBatchItem({
+      input.chunk.map(async (item, index) => executeToolBatchItem({
         reactState: input.reactState,
         item,
         io: input.io,
+        runId: input.runId,
+        stepIndex: input.stepIndex + index,
       })),
     );
   }
@@ -2032,6 +2067,9 @@ async function executeToolBatchItemsWithFilesystemReuse(input: {
     toolCallId?: string | undefined;
     toolResult?: AgentToolResult | undefined;
     output: unknown;
+    verificationOutput: unknown;
+    artifacts: ArtifactIntent[];
+    decisionTrace: Array<Record<string, unknown>>;
     reused?: boolean | undefined;
     cachedStepIndex?: number | undefined;
   }> = [];
@@ -2050,6 +2088,9 @@ async function executeToolBatchItemsWithFilesystemReuse(input: {
           input: item.input,
           ...(item.toolCallId !== undefined ? { toolCallId: item.toolCallId } : {}),
           output: reusable.output,
+          verificationOutput: reusable.output,
+          artifacts: [],
+          decisionTrace: [],
           reused: true,
           cachedStepIndex: reusable.stepIndex,
         });
@@ -2061,13 +2102,15 @@ async function executeToolBatchItemsWithFilesystemReuse(input: {
       reactState: input.reactState,
       item,
       io: input.io,
+      runId: input.runId,
+      stepIndex: input.stepIndex + index,
     });
     results.push(result);
     const nextCache = applyFilesystemInspectionCacheAfterToolResult({
       reactState: cacheState,
       toolName: item.name,
       toolInput: item.input,
-      toolOutput: result.output,
+      toolOutput: result.verificationOutput,
       stepIndex: input.stepIndex + index,
       inputHash: hashToolInput(item.name, item.input),
       executionClass: toolClass,
@@ -2086,21 +2129,40 @@ async function executeToolBatchItem(input: {
   reactState: Record<string, unknown>;
   item: { name: string; input: Record<string, unknown>; toolCallId?: string | undefined };
   io: StepIO;
+  runId?: string | undefined;
+  stepIndex: number;
 }): Promise<{
   name: string;
   input: Record<string, unknown>;
   toolCallId?: string | undefined;
   toolResult?: AgentToolResult | undefined;
   output: unknown;
+  verificationOutput: unknown;
+  artifacts: ArtifactIntent[];
+  decisionTrace: Array<Record<string, unknown>>;
 }> {
   try {
     const toolResult = await input.io.useTool!(input.item.name, input.item.input);
+    const rawOutput = unwrapAgentToolOutput(toolResult);
+    const shaped = input.runId === undefined
+      ? undefined
+      : shapeAgentToolResultForRuntime({
+          result: toolResult,
+          runId: input.runId,
+          stepIndex: input.stepIndex,
+          toolName: input.item.name,
+          toolInput: input.item.input,
+          rawOutput,
+        });
     return {
       name: input.item.name,
       input: input.item.input,
       ...(input.item.toolCallId !== undefined ? { toolCallId: input.item.toolCallId } : {}),
-      toolResult,
-      output: unwrapAgentToolOutput(toolResult),
+      toolResult: shaped?.result ?? toolResult,
+      output: shaped?.storedOutput ?? rawOutput,
+      verificationOutput: shaped?.verificationOutput ?? rawOutput,
+      artifacts: shaped?.artifacts ?? [],
+      decisionTrace: shaped?.decisionTrace ?? [],
     };
   } catch (error) {
     if (
@@ -2115,12 +2177,26 @@ async function executeToolBatchItem(input: {
         input: input.item.input,
         error,
       });
+      const rawOutput = unwrapAgentToolOutput(toolResult);
+      const shaped = input.runId === undefined
+        ? undefined
+        : shapeAgentToolResultForRuntime({
+            result: toolResult,
+            runId: input.runId,
+            stepIndex: input.stepIndex,
+            toolName: input.item.name,
+            toolInput: input.item.input,
+            rawOutput,
+          });
       return {
         name: input.item.name,
         input: input.item.input,
         ...(input.item.toolCallId !== undefined ? { toolCallId: input.item.toolCallId } : {}),
-        toolResult,
-        output: unwrapAgentToolOutput(toolResult),
+        toolResult: shaped?.result ?? toolResult,
+        output: shaped?.storedOutput ?? rawOutput,
+        verificationOutput: shaped?.verificationOutput ?? rawOutput,
+        artifacts: shaped?.artifacts ?? [],
+        decisionTrace: shaped?.decisionTrace ?? [],
       };
     }
     throw error;
@@ -2677,6 +2753,57 @@ function safeSerialize(value: unknown): string {
   } catch {
     return stringifySanitizedJson({ value: sanitizeUtf16String(String(value)) });
   }
+}
+
+function shapeAgentToolResultForRuntime(input: {
+  result: AgentToolResult;
+  runId: string;
+  stepIndex: number;
+  toolName: string;
+  toolInput: unknown;
+  rawOutput: unknown;
+}): {
+  result: AgentToolResult;
+  storedOutput: unknown;
+  verificationOutput: unknown;
+  artifacts: ArtifactIntent[];
+  decisionTrace: Array<Record<string, unknown>>;
+} {
+  const normalizedResult = ensureAgentToolResult({
+    toolName: input.toolName,
+    toolInput: input.toolInput,
+    output: input.rawOutput,
+    candidate: input.result,
+  });
+  const shaped = shapeToolExecutionResult({
+    runId: input.runId,
+    stepIndex: input.stepIndex,
+    toolName: input.toolName,
+    output: input.rawOutput,
+  });
+  const rawSerialized = safeSerialize(input.rawOutput);
+  const projected = replaceAgentToolResultOutput(normalizedResult, shaped.storedOutput);
+  const durableRawArtifactRef = shaped.artifacts.find((artifact) => artifact.type === "tool-output")?.id;
+  return {
+    result: {
+      ...projected,
+      projections: {
+        rawReceived: {
+          sha256: hashString(rawSerialized),
+          bytes: Buffer.byteLength(rawSerialized, "utf8"),
+          tokens: Buffer.byteLength(rawSerialized, "utf8"),
+        },
+        ...(durableRawArtifactRef !== undefined ? { durableRawArtifactRef } : {}),
+        persistedOutput: shaped.storedOutput,
+        verificationOutput: shaped.verificationOutput,
+        modelVisibleOutput: projected.modelContext,
+      },
+    },
+    storedOutput: shaped.storedOutput,
+    verificationOutput: shaped.verificationOutput,
+    artifacts: shaped.artifacts,
+    decisionTrace: shaped.decisionTrace,
+  };
 }
 
 function stableStringify(value: unknown): string {

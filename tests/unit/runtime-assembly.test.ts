@@ -16,8 +16,7 @@ contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, speci
     store,
     profile: {
       ...buildProfile({ toolAllowlist: ["fs.read_text", "web.search"] }),
-      harnessEconomicsPolicy: economicsPolicy(),
-      modelEconomicsProfile: economicsModelProfile(),
+      harnessEconomics: economicsControl(),
     },
   });
 
@@ -40,7 +39,7 @@ contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, speci
   assert.equal(persistedBundle?.metadata?.modelProvider, "openrouter");
   assert.equal(persistedBundle?.metadata?.promptVariant, "reference-react:chat");
   assert.equal(persistedBundle?.metadata?.compatibilityProfile, "router.chat");
-  assert.deepEqual(persistedBundle?.metadata?.modelEconomicsProfile, economicsModelProfile());
+  assert.deepEqual(persistedBundle?.metadata?.harnessEconomics, economicsControl());
 });
 
 contractTest("runtime.hermetic", "AssemblyPolicyEvaluator rejects unknown bundles and requires approval for model widening", () => {
@@ -385,7 +384,7 @@ function buildProfile(input?: { toolAllowlist?: string[] | undefined }): TuiProf
   };
 }
 
-function economicsPolicy(): NonNullable<TuiProfile["harnessEconomicsPolicy"]> {
+function economicsPolicy(): NonNullable<TuiProfile["harnessEconomics"]>["policy"] {
   return {
     version: 1,
     policyId: "economics:reference:observe:v1",
@@ -402,10 +401,11 @@ function economicsPolicy(): NonNullable<TuiProfile["harnessEconomicsPolicy"]> {
       modelContextMaxTokens: 4_000,
       allowedFamiliesByPhase: { agent: ["filesystem"] },
     },
+    cache: { mode: "provider_default" },
   };
 }
 
-function economicsModelProfile(): NonNullable<TuiProfile["modelEconomicsProfile"]> {
+function economicsModelProfile(): NonNullable<TuiProfile["harnessEconomics"]>["modelProfiles"][number] {
   return {
     version: 1,
     profileId: "openrouter:mock-model:v1",
@@ -414,12 +414,17 @@ function economicsModelProfile(): NonNullable<TuiProfile["modelEconomicsProfile"
     contextWindowTokens: 100_000,
     maxOutputTokens: 8_000,
     counting: {
-      counter: "mock-tokenizer",
-      counterVersion: "1",
-      method: "exact",
-      confidence: "exact",
+      counter: "tiktoken:o200k_base",
+      counterVersion: "1.0.21",
+      method: "model_tokenizer",
+      confidence: "model_compatible",
     },
+    cache: { behavior: "provider_automatic" },
   };
+}
+
+function economicsControl(): NonNullable<TuiProfile["harnessEconomics"]> {
+  return { version: 1, policy: economicsPolicy(), modelProfiles: [economicsModelProfile()] };
 }
 
 function buildThread(

@@ -23,9 +23,10 @@ const PROFILE: ModelEconomicsProfileV1 = {
   counting: {
     counter: "counter-a",
     counterVersion: "1",
-    method: "exact",
-    confidence: "exact",
+    method: "model_tokenizer",
+    confidence: "model_compatible",
   },
+  cache: { behavior: "none" },
   price: {
     version: 1,
     priceVersion: "price:test:2026-07-22",
@@ -77,6 +78,7 @@ contractTest("runtime.hermetic", "append-only economics events replay into one c
   const events: RunEvent[] = [
     event("2026-07-22T10:00:00.000Z", {
       kind: "model_call.requested",
+      cache: { mode: "provider_default", stablePrefixHash: "c".repeat(64), stablePrefixTokens: 0, prefixChanged: false },
       callId: "call-1",
       providerPayloadHash: "payload-hash",
       componentHash: "component-hash",
@@ -103,6 +105,7 @@ contractTest("runtime.hermetic", "append-only economics events replay into one c
     }),
     event("2026-07-22T10:00:00.110Z", {
       kind: "model_call.completed",
+      providerReportedInputDeltaTokens: 0,
       callId: "call-1",
       provider: "provider-a",
       model: "model-a",
@@ -127,7 +130,6 @@ contractTest("runtime.hermetic", "append-only economics events replay into one c
   assert.equal(projection.calls[0]?.attempts[0]?.latencyMs, 90);
   assert.equal(projection.totals.calls, 1);
   assert.equal(projection.totals.attempts, 1);
-  assert.equal(projection.totals.independentlyAcceptedCalls, 1);
   assert.equal(projection.totals.unpricedCalls, 0);
 });
 
@@ -171,7 +173,7 @@ contractTest("runtime.hermetic", "economics replay keeps tool result reduction s
   assert.equal(projection.calls.length, 0);
   assert.equal(projection.toolResults.length, 1);
   assert.equal(projection.totals.toolResults, 1);
-  assert.ok(projection.totals.reducedToolResultTokens > 0);
+  assert.ok(projection.totals.rawToModelVisibleReductionTokens > 0);
 });
 
 function event(

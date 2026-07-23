@@ -15,8 +15,8 @@ const EXACT_ZERO: TokenCountV1 = {
   version: 1,
   tokens: 0,
   bytes: 0,
-  method: "exact",
-  confidence: "exact",
+  method: "model_tokenizer",
+  confidence: "model_compatible",
   counter: "test-counter",
   counterVersion: "1",
 };
@@ -25,7 +25,7 @@ contractTest("runtime.hermetic", "harness economics policy parser accepts the st
   const policy = parseHarnessEconomicsPolicyV1(policyFixture());
 
   assert.equal(policy.policyId, "economics:test:observe");
-  assert.equal(policy.context.sections[1]?.priority, "elastic");
+  assert.equal(policy.context.sections[1]?.priority, "required");
   assert.deepEqual(policy.tools.allowedFamiliesByPhase, {
     "agent.loop": ["filesystem", "devshell"],
   });
@@ -46,6 +46,16 @@ contractTest("runtime.hermetic", "harness economics policy parser rejects unknow
     }),
     /structured anchors and exactly one summary attempt/u,
   );
+  assert.throws(
+    () => parseHarnessEconomicsPolicyV1({
+      ...policyFixture(),
+      context: {
+        ...policyFixture().context,
+        sections: [{ id: "transcript", priority: "elastic", maxTokens: 30 }],
+      },
+    }),
+    /unknown field 'maxTokens'/u,
+  );
 });
 
 contractTest("runtime.hermetic", "model economics profile preserves versioned authoritative pricing", () => {
@@ -57,11 +67,12 @@ contractTest("runtime.hermetic", "model economics profile preserves versioned au
     contextWindowTokens: 200_000,
     maxOutputTokens: 16_384,
     counting: {
-      counter: "test-tokenizer",
-      counterVersion: "2026-07-22",
-      method: "exact",
-      confidence: "exact",
+      counter: "tiktoken:o200k_base",
+      counterVersion: "1.0.21",
+      method: "model_tokenizer",
+      confidence: "model_compatible",
     },
+    cache: { behavior: "provider_automatic" },
     price: {
       version: 1,
       priceVersion: "openai-2026-07-22",
@@ -91,11 +102,11 @@ contractTest("runtime.hermetic", "token counting labels exact and conservative e
 
   assert.deepEqual(
     { method: estimated.method, confidence: estimated.confidence, tokens: estimated.tokens },
-    { method: "estimated", confidence: "conservative", tokens: 5 },
+    { method: "conservative_estimate", confidence: "conservative", tokens: 5 },
   );
   assert.deepEqual(
     { method: exact.method, confidence: exact.confidence, tokens: exact.tokens },
-    { method: "exact", confidence: "exact", tokens: 1 },
+    { method: "model_tokenizer", confidence: "model_compatible", tokens: 1 },
   );
 });
 
@@ -105,8 +116,8 @@ contractTest("runtime.hermetic", "observation mode reports policy pressure witho
     policy: policyFixture(),
     modelProfile: profileFixture(),
     sections: [
-      section("task", 40),
-      section("transcript", 50),
+      section("task", 30),
+      section("transcript", 30),
       section("background", 20),
     ],
     toolSchema: exactCount(5),
@@ -114,20 +125,20 @@ contractTest("runtime.hermetic", "observation mode reports policy pressure witho
   });
 
   assert.equal(decision.manifest.availableContextTokens, 75);
-  assert.equal(decision.manifest.proposedContextTokens, 110);
-  assert.equal(decision.manifest.policyContextTokens, 75);
-  assert.equal(decision.manifest.effectiveContextTokens, 110);
+  assert.equal(decision.manifest.proposedContextTokens, 80);
+  assert.equal(decision.manifest.policyContextTokens, 60);
+  assert.equal(decision.manifest.effectiveContextTokens, 80);
   assert.deepEqual(
     decision.manifest.sections.map((section) => [section.id, section.policyAdmission, section.effectiveAdmission, section.policyTokens]),
     [
-      ["task", "admitted", "admitted", 40],
-      ["transcript", "truncated", "admitted", 30],
-      ["background", "truncated", "admitted", 5],
+      ["task", "admitted", "admitted", 30],
+      ["transcript", "admitted", "admitted", 30],
+      ["background", "dropped", "admitted", 0],
     ],
   );
 });
 
-contractTest("runtime.hermetic", "enforcement applies deterministic required elastic and optional admission", () => {
+contractTest("runtime.hermetic", "enforcement preserves required context and drops optional sections whole", () => {
   const controller = new HarnessEconomicsController();
   const policy: HarnessEconomicsPolicyV1 = {
     ...policyFixture(),
@@ -137,8 +148,8 @@ contractTest("runtime.hermetic", "enforcement applies deterministic required ela
     policy,
     modelProfile: profileFixture(),
     sections: [
-      section("task", 40),
-      section("transcript", 50),
+      section("task", 30),
+      section("transcript", 30),
       section("background", 20),
     ],
     toolSchema: exactCount(5),
@@ -146,9 +157,38 @@ contractTest("runtime.hermetic", "enforcement applies deterministic required ela
   });
 
   assert.equal(decision.manifest.enforceable, true);
-  assert.equal(decision.manifest.effectiveContextTokens, 75);
-  assert.deepEqual(decision.admittedSectionIds, ["task", "transcript", "background"]);
-  assert.deepEqual(decision.droppedSectionIds, []);
+  assert.equal(decision.manifest.effectiveContextTokens, 60);
+  assert.deepEqual(decision.admittedSectionIds, ["task", "transcript"]);
+  assert.deepEqual(decision.droppedSectionIds, ["background"]);
+});
+
+contractTest("runtime.hermetic", "unlisted transcript sections remain protected in enforce mode", () => {
+  const decision = new HarnessEconomicsController().decide({
+    policy: { ...policyFixture(), mode: "enforce" },
+    modelProfile: profileFixture(),
+    sections: [section("transcript:mt_1_0001_user", 20)],
+    toolSchema: EXACT_ZERO,
+    providerOverhead: EXACT_ZERO,
+  });
+
+  assert.equal(decision.manifest.sections[0]?.priority, "required");
+  assert.equal(decision.manifest.sections[0]?.effectiveAdmission, "admitted");
+  assert.deepEqual(decision.blockedSectionIds, []);
+});
+
+contractTest("runtime.hermetic", "core task context cannot be made optional by profile configuration", () => {
+  const policy = policyFixture();
+  policy.context.sections = [{ id: "task", priority: "optional" }];
+  const decision = new HarnessEconomicsController().decide({
+    policy: { ...policy, mode: "enforce" },
+    modelProfile: profileFixture(),
+    sections: [section("task", 80)],
+    toolSchema: exactCount(5),
+    providerOverhead: exactCount(5),
+  });
+
+  assert.equal(decision.manifest.sections[0]?.priority, "required");
+  assert.equal(decision.manifest.sections[0]?.policyAdmission, "blocked");
 });
 
 contractTest("runtime.hermetic", "estimated counts cannot enforce unless the policy explicitly permits them", () => {
@@ -163,7 +203,7 @@ contractTest("runtime.hermetic", "estimated counts cannot enforce unless the pol
       counting: {
         counter: "estimate",
         counterVersion: "1",
-        method: "estimated",
+        method: "conservative_estimate",
         confidence: "conservative",
       },
     },
@@ -172,7 +212,7 @@ contractTest("runtime.hermetic", "estimated counts cannot enforce unless the pol
         ...section("task", 90),
         count: {
           ...exactCount(90),
-          method: "estimated",
+          method: "conservative_estimate",
           confidence: "conservative",
         },
       },
@@ -220,7 +260,7 @@ function policyFixture(): HarnessEconomicsPolicyV1 {
       safetyReserveTokens: 5,
       sections: [
         { id: "task", priority: "required" },
-        { id: "transcript", priority: "elastic", maxTokens: 30 },
+        { id: "transcript", priority: "required" },
         { id: "background", priority: "optional" },
       ],
     },
@@ -235,6 +275,7 @@ function policyFixture(): HarnessEconomicsPolicyV1 {
         "agent.loop": ["filesystem", "devshell"],
       },
     },
+    cache: { mode: "provider_default" },
   };
 }
 
@@ -249,9 +290,10 @@ function profileFixture(): ModelEconomicsProfileV1 {
     counting: {
       counter: "test-counter",
       counterVersion: "1",
-      method: "exact",
-      confidence: "exact",
+      method: "model_tokenizer",
+      confidence: "model_compatible",
     },
+    cache: { behavior: "none" },
   };
 }
 
@@ -269,8 +311,8 @@ function exactCount(tokens: number): TokenCountV1 {
     version: 1,
     tokens,
     bytes: tokens * 4,
-    method: "exact",
-    confidence: "exact",
+    method: "model_tokenizer",
+    confidence: "model_compatible",
     counter: "test-counter",
     counterVersion: "1",
   };

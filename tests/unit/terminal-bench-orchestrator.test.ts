@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseHarnessEfficiencyLedgerV1, parseHarnessEfficiencyResultV1 } from "../../src/economics/index.js";
+import { parseHarnessEfficiencyLedgerV2, parseHarnessEfficiencyResultV2 } from "../../src/economics/index.js";
 
 import {
   appendRunNote,
@@ -107,15 +107,16 @@ contractTest("runtime.hermetic", "terminal bench emits the shared immutable effi
     });
 
     assert.equal(outputs.length, 1);
-    const result = parseHarnessEfficiencyResultV1(JSON.parse(readFileSync(outputs[0] as string, "utf8")));
+    const result = parseHarnessEfficiencyResultV2(JSON.parse(readFileSync(outputs[0] as string, "utf8")));
     assert.equal(result.lane, "terminal_bench");
     assert.equal(result.outcome.acceptance, "accepted");
     assert.equal(result.economics.status, "complete");
     assert.equal(result.economics.tokensPerAcceptedSuccess, 12);
+    assert.deepEqual(result.economics.missingFields, []);
     const ledgerArtifact = result.artifacts.find((artifact) => artifact.kind === "efficiency_ledger");
     assert.ok(ledgerArtifact);
-    const ledger = parseHarnessEfficiencyLedgerV1(JSON.parse(readFileSync(ledgerArtifact.path, "utf8")));
-    assert.equal(ledger.events.at(-1)?.type, "economics.run_outcome.evaluated");
+    const ledger = parseHarnessEfficiencyLedgerV2(JSON.parse(readFileSync(ledgerArtifact.path, "utf8")));
+    assert.equal(ledger.entries.at(-1)?.event.type, "economics.run_outcome.evaluated");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

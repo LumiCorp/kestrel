@@ -147,14 +147,18 @@ contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and v
     runtimeMetadata: {
       runtimeAssembly: {
         contextPolicyId: "context-policy:test",
-        modelEconomicsProfile: {
+        harnessEconomics: {
+          version: 1,
+          policy: economicsPolicy({ mode: "observe", exposure: "assembly_allowlist", maxToolTokens: 100_000 }),
+          modelProfiles: [{
           version: 1,
           profileId: "provider-a:model-a:v1",
           provider: "provider-a",
           model: "model-a",
           contextWindowTokens: 100_000,
           maxOutputTokens: 8_000,
-          counting: { counter: "counter-a", counterVersion: "1", method: "exact", confidence: "exact" },
+          counting: { counter: "tiktoken:o200k_base", counterVersion: "1.0.21", method: "model_tokenizer", confidence: "model_compatible" },
+          cache: { behavior: "none" },
           price: {
             version: 1,
             priceVersion: "price:test:v1",
@@ -164,6 +168,7 @@ contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and v
             sourceUrl: "https://provider.example/pricing",
             perMillionTokens: { input: 10, output: 20 },
           },
+          }],
         },
       },
     },
@@ -178,7 +183,11 @@ contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and v
     },
   });
 
-  await io.model(modelRequest());
+  await io.model({
+    ...modelRequest(),
+    model: "model-a",
+    metadata: { requestedProvider: "provider-a" },
+  });
   const ledger = projectEconomicsLedger(runEvents);
 
   assert.equal(ledger.invalidEvents.length, 0);
@@ -187,7 +196,11 @@ contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and v
   assert.equal(ledger.totals.inputTokens, 100);
   assert.equal(ledger.totals.unpricedCalls, 0);
   assert.equal(ledger.calls[0]?.request?.contextPolicyId, "context-policy:test");
+  assert.equal(ledger.calls[0]?.request?.modelProfileId, "provider-a:model-a:v1");
+  assert.equal(typeof ledger.calls[0]?.request?.economicsControlHash, "string");
+  assert.equal(ledger.calls[0]?.request?.economicsControl?.version, 1);
   assert.equal(ledger.calls[0]?.completion?.pricing.status, "priced");
+  assert.equal(ledger.calls[0]?.completion?.pricing.priceVersion, "price:test:v1");
 });
 
 contractTest("runtime.hermetic", "RuntimeIO records stored and exact model-visible tool result economics", async () => {
@@ -212,10 +225,10 @@ contractTest("runtime.hermetic", "RuntimeIO records stored and exact model-visib
   assert.equal(ledger.toolResults.length, 1);
   assert.equal(ledger.toolResults[0]?.event.toolName, "fs.read_text");
   assert.equal(typeof ledger.toolResults[0]?.event.resultManifest.truncated, "boolean");
-  assert.ok(ledger.totals.storedToolResultTokens > ledger.totals.modelVisibleToolResultTokens);
+  assert.ok(ledger.totals.rawToolResultTokens > ledger.totals.modelVisibleToolResultTokens);
   assert.equal(
-    ledger.totals.reducedToolResultTokens,
-    ledger.totals.storedToolResultTokens - ledger.totals.modelVisibleToolResultTokens,
+    ledger.totals.rawToModelVisibleReductionTokens,
+    ledger.totals.rawToolResultTokens - ledger.totals.modelVisibleToolResultTokens,
   );
   assert.ok(emitted.includes("economics.tool_result.recorded"));
 });
@@ -239,7 +252,7 @@ contractTest("runtime.hermetic", "RuntimeIO joins assembly tool selection to the
     signal: new AbortController().signal,
     emitted,
     runEvents,
-    runtimeMetadata: { runtimeAssembly: { economicsPolicy: policy } },
+    runtimeMetadata: { runtimeAssembly: { harnessEconomics: economicsControl(policy) } },
   });
 
   await io.model({
@@ -258,37 +271,90 @@ contractTest("runtime.hermetic", "RuntimeIO joins assembly tool selection to the
   assert.equal(exposure?.wouldBlock, false);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO enforcement fails closed before provider dispatch when tool schema exceeds its assembly budget", async () => {
+contractTest("runtime.hermetic", "phase-scoped exposure preserves tools when the phase has no explicit policy", () => {
+  const tool = {
+    name: "fs.read_text",
+    description: "Read a text file.",
+    inputSchema: { type: "object" },
+  };
+  const selected = selectToolsForEconomicsPolicyV1({
+    tools: [tool],
+    capabilityManifest: [{ name: tool.name, toolFamily: "filesystem" }],
+    policy: economicsPolicy({ mode: "enforce", exposure: "phase_scoped", maxToolTokens: 20_000 }),
+    phase: "agent.maintenance",
+  });
+
+  assert.deepEqual(selected.tools, [tool]);
+  assert.equal(selected.selection?.entries[0]?.reason, "phase_filter_inactive");
+  assert.equal(selected.selection?.entries[0]?.effectiveAdmission, "admitted");
+});
+
+contractTest("runtime.hermetic", "RuntimeIO records tool-schema pressure without failing a viable provider request", async () => {
   const emitted: string[] = [];
+  const runEvents: RunEvent[] = [];
   let providerCalled = false;
   const policy = economicsPolicy({ mode: "enforce", exposure: "assembly_allowlist", maxToolTokens: 0 });
   const io = createRuntimeIO({
     signal: new AbortController().signal,
     emitted,
-    runtimeMetadata: { runtimeAssembly: { economicsPolicy: policy } },
+    runEvents,
+    runtimeMetadata: { runtimeAssembly: { harnessEconomics: economicsControl(policy) } },
     modelCall: async () => {
       providerCalled = true;
       return { ok: true };
     },
   });
 
-  await assert.rejects(
-    () => io.model({
-      input: { prompt: "hello" },
-      messages: [{ role: "user", content: "hello" }],
-      tools: [{
-        name: "fs.read_text",
-        description: "Read a text file.",
-        inputSchema: { type: "object", properties: { path: { type: "string" } } },
-      }],
-      metadata: { phase: "agent.loop" },
-    }),
-    (error) => readErrorCode(error) === "HARNESS_ECONOMICS_TOOL_EXPOSURE_BLOCKED",
-  );
+  await io.model({
+    input: { prompt: "hello" },
+    messages: [{ role: "user", content: "hello" }],
+    tools: [{
+      name: "fs.read_text",
+      description: "Read a text file.",
+      inputSchema: { type: "object", properties: { path: { type: "string" } } },
+    }],
+    metadata: { phase: "agent.loop" },
+  });
 
-  assert.equal(providerCalled, false);
+  assert.equal(providerCalled, true);
+  assert.equal(projectEconomicsLedger(runEvents).calls[0]?.request?.requestManifest.toolExposure?.wouldBlock, true);
   assert.ok(emitted.includes("economics.model_call.requested"));
-  assert.ok(emitted.includes("economics.model_call.failed"));
+  assert.equal(emitted.includes("economics.model_call.failed"), false);
+});
+
+contractTest("runtime.hermetic", "RuntimeIO observe mode leaves stable-prefix request order unchanged", async () => {
+  const emitted: string[] = [];
+  const modelRequests: ModelRequest[] = [];
+  const policy = economicsPolicy({
+    mode: "observe",
+    exposure: "assembly_allowlist",
+    maxToolTokens: 10_000,
+    cacheMode: "stable_prefix",
+  });
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted,
+    modelRequests,
+    runtimeMetadata: { runtimeAssembly: { harnessEconomics: economicsControl(policy) } },
+  });
+  const request: ModelRequest = {
+    input: { prompt: "hello" },
+    messages: [
+      { role: "user", content: "hello" },
+      { role: "system", content: "system" },
+    ],
+    tools: [
+      { name: "z.tool", description: "Z", inputSchema: { type: "object" } },
+      { name: "a.tool", description: "A", inputSchema: { type: "object" } },
+    ],
+    metadata: { phase: "agent.loop" },
+  };
+
+  await io.model(request);
+
+  assert.deepEqual(modelRequests[0]?.messages, request.messages);
+  assert.deepEqual(modelRequests[0]?.tools, request.tools);
+  assert.equal(modelRequests[0]?.providerOptions, undefined);
 });
 
 contractTest("runtime.hermetic", "RuntimeIO does not enforce estimated tool-schema pressure without explicit assembly permission", async () => {
@@ -303,7 +369,7 @@ contractTest("runtime.hermetic", "RuntimeIO does not enforce estimated tool-sche
   const io = createRuntimeIO({
     signal: new AbortController().signal,
     emitted,
-    runtimeMetadata: { runtimeAssembly: { economicsPolicy: policy } },
+    runtimeMetadata: { runtimeAssembly: { harnessEconomics: economicsControl(policy) } },
     modelCall: async () => {
       providerCalled = true;
       return { ok: true };
@@ -329,6 +395,7 @@ function createRuntimeIO(input: {
   toolCallRetryCount?: number | undefined;
   retryableToolErrors?: boolean | undefined;
   runEvents?: RunEvent[] | undefined;
+  modelRequests?: ModelRequest[] | undefined;
   runtimeMetadata?: Record<string, unknown> | undefined;
 }): RuntimeIO {
   let seq = 0;
@@ -346,7 +413,8 @@ function createRuntimeIO(input: {
     deps: {
       store,
       modelGateway: {
-        call: async <T>(_request: ModelRequest, options?: ModelGatewayCallOptions) => {
+        call: async <T>(request: ModelRequest, options?: ModelGatewayCallOptions) => {
+          input.modelRequests?.push(request);
           const result = input.modelCall === undefined ? { ok: true } : await input.modelCall(options);
           return result as T;
         },
@@ -451,6 +519,7 @@ function economicsPolicy(input: {
   exposure: "assembly_allowlist" | "phase_scoped";
   maxToolTokens: number;
   allowEstimatedEnforcement?: boolean | undefined;
+  cacheMode?: "provider_default" | "stable_prefix" | undefined;
 }): HarnessEconomicsPolicyV1 {
   return {
     version: 1,
@@ -467,6 +536,29 @@ function economicsPolicy(input: {
       modelContextMaxTokens: input.maxToolTokens,
       allowedFamiliesByPhase: { "agent.loop": ["filesystem"] },
     },
+    cache: { mode: input.cacheMode ?? "provider_default" },
+  };
+}
+
+function economicsControl(policy: HarnessEconomicsPolicyV1) {
+  return {
+    version: 1 as const,
+    policy,
+    modelProfiles: [{
+      version: 1 as const,
+      profileId: "provider-a:model-a:v1",
+      provider: "provider-a",
+      model: "model-a",
+      contextWindowTokens: 100_000,
+      maxOutputTokens: 8_000,
+      counting: {
+        counter: "tiktoken:o200k_base",
+        counterVersion: "1.0.21",
+        method: "model_tokenizer" as const,
+        confidence: "model_compatible" as const,
+      },
+      cache: { behavior: "none" as const },
+    }],
   };
 }
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+import os
+import sys
 import uuid
 from typing import Mapping
 
@@ -46,6 +49,23 @@ TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS = [
 
 
 def build_terminal_bench_profile() -> dict:
+    profile_path = os.environ.get("KESTREL_BENCHMARK_PROFILE_FILE", "").strip()
+    profile_id = os.environ.get("KESTREL_BENCHMARK_PROFILE_ID", "").strip()
+    encoded_profile = os.environ.get("KESTREL_BENCHMARK_PROFILE_JSON_BASE64", "").strip()
+    if encoded_profile:
+        if not profile_id:
+            raise AssertionError("KESTREL_BENCHMARK_PROFILE_ID is required with a transported benchmark profile.")
+        try:
+            payload = json.loads(base64.b64decode(encoded_profile, validate=True).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise AssertionError("KESTREL_BENCHMARK_PROFILE_JSON_BASE64 is invalid.") from error
+        return _select_benchmark_profile(payload, profile_id, "transported benchmark profile")
+    if profile_path:
+        if not profile_id:
+            raise AssertionError("KESTREL_BENCHMARK_PROFILE_ID is required with KESTREL_BENCHMARK_PROFILE_FILE.")
+        with open(profile_path, encoding="utf-8") as profile_file:
+            payload = json.load(profile_file)
+        return _select_benchmark_profile(payload, profile_id, profile_path)
     assert_benchmark_provider_env()
     config = resolve_benchmark_provider_config()
     return {
@@ -58,7 +78,6 @@ def build_terminal_bench_profile() -> dict:
         "agentStageConfig": {
             "modelByStage": terminal_bench_model_by_stage(config.model),
         },
-        "storeDriver": "sqlite",
         "approvalPolicyPackId": "dev",
         "modeSystemV2Enabled": True,
         **benchmark_profile_mode(),
@@ -76,6 +95,18 @@ def build_terminal_bench_profile() -> dict:
     }
 
 
+def _select_benchmark_profile(payload: object, profile_id: str, source: str) -> dict:
+    profiles = payload.get("profiles") if isinstance(payload, dict) else None
+    candidates = profiles if isinstance(profiles, list) else [payload]
+    selected = next(
+        (profile for profile in candidates if isinstance(profile, dict) and profile.get("id") == profile_id),
+        None,
+    )
+    if selected is None:
+        raise AssertionError(f"Benchmark profile '{profile_id}' was not found in {source}.")
+    return dict(selected)
+
+
 def build_terminal_bench_job_input(
     instruction: str,
     task_id: str,
@@ -88,7 +119,6 @@ def build_terminal_bench_job_input(
     normalized_required_artifacts = normalize_required_artifacts(required_artifacts or [])
     job_input = {
         "version": "job_input_v1",
-        "storeDriver": "sqlite",
         "approvalPolicyPackId": "dev",
         "profile": build_terminal_bench_profile(),
         "turn": {
@@ -144,21 +174,13 @@ def normalize_required_artifacts(values: list[str]) -> list[str]:
 def assert_terminal_bench_job_input_contract(job_input: Mapping[str, object]) -> None:
     if job_input.get("version") != "job_input_v1":
         raise AssertionError("Terminal-Bench job input must use job_input_v1.")
+    if "storeDriver" in job_input:
+        raise AssertionError("Terminal-Bench job input must leave persistence selection to Local Core.")
 
     profile = job_input.get("profile")
     if not isinstance(profile, Mapping):
         raise AssertionError("Terminal-Bench job input must include a profile.")
-    assert_benchmark_profile_mode(profile, "Terminal-Bench profile")
-    if profile.get("agent") != "reference-react":
-        raise AssertionError("Terminal-Bench profile must use reference-react.")
-    if profile.get("modelProvider") != BENCHMARK_MODEL_PROVIDER:
-        raise AssertionError("Terminal-Bench profile must use OpenRouter.")
-    if profile.get("devShell") != {"enabled": True, "envMode": "inherit", "maxReadBytes": 131072}:
-        raise AssertionError("Terminal-Bench profile must enable inherited dev shell.")
-    if profile.get("toolAllowlist") != TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS:
-        raise AssertionError("Terminal-Bench profile tool allowlist drifted.")
-    if profile.get("guardrails") != benchmark_guardrails():
-        raise AssertionError("Terminal-Bench profile guardrails drifted.")
+    assert_terminal_bench_profile_contract(profile)
 
     turn = job_input.get("turn")
     if not isinstance(turn, Mapping):
@@ -199,6 +221,26 @@ def assert_terminal_bench_job_input_contract(job_input: Mapping[str, object]) ->
         raise AssertionError("Terminal-Bench must not require a managed worktree.")
 
 
+def assert_terminal_bench_profile_contract(profile: Mapping[str, object]) -> None:
+    assert_benchmark_profile_mode(profile, "Terminal-Bench profile")
+    if "storeDriver" in profile:
+        raise AssertionError("Terminal-Bench profile must leave persistence selection to Local Core.")
+    if profile.get("agent") != "reference-react":
+        raise AssertionError("Terminal-Bench profile must use reference-react.")
+    if profile.get("modelProvider") != BENCHMARK_MODEL_PROVIDER:
+        raise AssertionError("Terminal-Bench profile must use OpenRouter.")
+    if profile.get("devShell") != {"enabled": True, "envMode": "inherit", "maxReadBytes": 131072}:
+        raise AssertionError("Terminal-Bench profile must enable inherited dev shell.")
+    tool_allowlist = profile.get("toolAllowlist")
+    if not isinstance(tool_allowlist, list):
+        raise AssertionError("Terminal-Bench profile must include a tool allowlist.")
+    missing_tools = [tool for tool in TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS if tool not in tool_allowlist]
+    if missing_tools:
+        raise AssertionError(f"Terminal-Bench profile is missing required tools: {', '.join(missing_tools)}")
+    if profile.get("guardrails") != benchmark_guardrails():
+        raise AssertionError("Terminal-Bench profile guardrails drifted.")
+
+
 def terminal_bench_job_input_contract_hash(job_input: Mapping[str, object]) -> str:
     canonical = json.dumps(job_input, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -220,3 +262,16 @@ def react_model_stages() -> list[str]:
     return [
         "agent.loop",
     ]
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args != ["--validate-profile"]:
+        raise SystemExit("Usage: python3 -m benchmarks.terminal_bench.job_input --validate-profile")
+    assert_terminal_bench_profile_contract(build_terminal_bench_profile())
+    print("[terminal-bench] profile validation passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -204,13 +204,9 @@ export function shapeToolExecutionResult(input: {
             ...compactOutput,
             ...truncatedEnvelope,
           },
-    verificationOutput:
-      compactOutput === undefined
-        ? truncatedEnvelope
-        : {
-            ...compactOutput,
-            ...truncatedEnvelope,
-          },
+    // Verification evaluates the complete sanitized tool result. Only the
+    // persisted and model-visible projections are bounded.
+    verificationOutput: sanitizedOutput,
     artifacts: [
       {
         id: artifactId,

@@ -2,9 +2,12 @@ import type { StepAgent, StepContext, StepIO, Transition, UserWaitForMatcher } f
 import type { ModelReasoningRequest, ModelRequest, ModelResponse, ModelToolSpec } from "../../../../src/kestrel/contracts/model-io.js";
 import {
   buildToolSurfaceManifest,
-  parseHarnessEconomicsPolicyV1,
-  parseModelEconomicsProfileV1,
+  parseHarnessEconomicsControlV1,
+  resolveModelEconomicsProfileV1,
+  resolveModelTokenCounter,
   selectToolsForEconomicsPolicyV1,
+  type HarnessEconomicsPolicyV1,
+  type ModelEconomicsProfileV1,
   type ToolExposureSelectionV1,
 } from "../../../../src/economics/index.js";
 
@@ -46,9 +49,14 @@ import {
   buildKestrelAgentCompactedTranscript,
   buildKestrelAgentCompactionMessages,
   buildKestrelCompactionSummarySchema,
+  buildKestrelCompactionSufficiencyMessages,
   buildKestrelAgentValidationFeedbackMessage,
   planKestrelAgentCompaction,
   shouldCompactKestrelAgentContext,
+  KESTREL_COMPACTION_SUMMARY_SCHEMA,
+  KESTREL_COMPACTION_SUFFICIENCY_SCHEMA,
+  parseKestrelCompactionSummaryV1,
+  parseKestrelCompactionSufficiencyVerdictV1,
   type KestrelAgentCannotSatisfyReasonCode,
   type KestrelAgentFinalizeStatus,
 } from "../../../../src/runtime/KestrelAgentContextBuilder.js";
@@ -126,6 +134,7 @@ import { buildModeBlockedWaitGuidance } from "./modeBlockedPrompt.js";
 interface AgentLoopStepConfig {
   agentProvider?: string | undefined;
   agentModel: string;
+  maintenanceModel?: string | undefined;
   agentToolsProvider: (ctx: StepContext) => ModelToolSpec[];
   capabilityManifestProvider: (ctx: StepContext) => ToolCapabilityManifestItem[];
   defaultGoal: string;
@@ -349,6 +358,12 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const activeProjectContext = readActiveProjectContext(ctx.event.payload.projectContext);
     const activeSkillPackContext = readActiveSkillPackContext(ctx.event.payload.skillPack);
     const runtimeEconomics = readRuntimeEconomics(eventPayload);
+    const tokenCounter = runtimeEconomics.modelProfile?.counting.method === "model_tokenizer"
+      ? resolveModelTokenCounter(
+          runtimeEconomics.modelProfile.counting.counter,
+          runtimeEconomics.modelProfile.counting.counterVersion,
+        )
+      : undefined;
     const modeScopedDeliberatorTools = filterDeliberatorToolsForMode({
       tools: deliberatorTools,
       capabilityManifest,
@@ -403,6 +418,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       activeProjectContext,
       activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
+      ...(tokenCounter !== undefined ? { tokenCounter } : {}),
     });
     contextRequest = await compactContextRequestIfNeeded({
       io,
@@ -1057,6 +1073,7 @@ async function askDeliberator(
       contextBuilder: contextMetadata.builder,
       contextBuilderVersion: contextMetadata.version,
       contextSections: contextMetadata.manifestSections,
+      contextPipeline: contextMetadata.pipelineSections,
       ...(economicsToolExposureSelection !== undefined
         ? { economicsToolExposureSelection }
         : {}),
@@ -1106,8 +1123,19 @@ async function compactContextRequestIfNeeded(input: {
   }
   const compactionPlan = planKestrelAgentCompaction(compactionSource);
   const { activeTaskItemId, replacedItemIds } = compactionPlan;
+  const configuredMaintenanceModel = input.config.maintenanceModel ?? input.config.agentModel;
+  const maintenanceEconomics = readRuntimeEconomics(input.eventPayload, configuredMaintenanceModel);
+  const maintenanceModel = runtimeEconomics.policy !== undefined && configuredMaintenanceModel !== input.config.agentModel
+    ? canSafelyCompactWithProfile({
+        profile: maintenanceEconomics.modelProfile,
+        policy: runtimeEconomics.policy,
+        sourceTokens: contextTokens,
+      })
+      ? configuredMaintenanceModel
+      : input.config.agentModel
+    : configuredMaintenanceModel;
   const response = await input.io.useModel<ModelResponse<unknown>>({
-    model: input.config.agentModel,
+    model: maintenanceModel,
     input: {
       version: "compaction-v1",
       taskInstruction: readActiveTaskGoalFromTranscript(input.contextRequest.transcript) ?? input.goal,
@@ -1129,7 +1157,7 @@ async function compactContextRequestIfNeeded(input: {
     metadata: {
       phase: "agent.compaction",
       stepAgent: "agent.loop",
-      requestedModel: input.config.agentModel,
+      requestedModel: maintenanceModel,
       ...(input.config.agentProvider !== undefined ? { requestedProvider: input.config.agentProvider } : {}),
       modelRole: "compaction",
       modelBudgetClass: "maintenance",
@@ -1140,10 +1168,39 @@ async function compactContextRequestIfNeeded(input: {
     },
   });
   const summary = response.output ?? response.text;
+  const parsedSummary = parseKestrelCompactionSummaryV1(summary);
   const compactedTranscript = buildKestrelAgentCompactedTranscript({
     transcript: input.contextRequest.transcript,
-    summary,
+    summary: parsedSummary,
   });
+  if (runtimeEconomics.policy?.mode === "enforce") {
+    const sufficiencyResponse = await input.io.useModel<ModelResponse<unknown>>({
+      model: maintenanceModel,
+      input: { version: "compaction-sufficiency-v1" },
+      messages: buildKestrelCompactionSufficiencyMessages({
+        sourceItems: compactionSource.items,
+        proposedSummary: parsedSummary,
+      }),
+      responseFormat: "json",
+      responseSchema: KESTREL_COMPACTION_SUFFICIENCY_SCHEMA as unknown as Record<string, unknown>,
+      reasoning: { mode: "off" },
+      providerOptions: {
+        openrouter: { endpoint: "chat", toolChoice: "none" },
+        openai: { toolChoice: "none" },
+        anthropic: { toolChoice: "none" },
+      },
+      metadata: {
+        phase: "agent.compaction.verify",
+        stepAgent: "agent.loop",
+        requestedModel: maintenanceModel,
+        ...(input.config.agentProvider !== undefined ? { requestedProvider: input.config.agentProvider } : {}),
+        modelRole: "compaction_sufficiency",
+        modelBudgetClass: "maintenance",
+        reasoningRetentionScope: input.config.reasoningRetentionScope ?? "default",
+      },
+    });
+    parseKestrelCompactionSufficiencyVerdictV1(sufficiencyResponse.output ?? sufficiencyResponse.text);
+  }
   return buildContextRequest({
     reactState: {
       ...input.reactState,
@@ -1169,6 +1226,14 @@ async function compactContextRequestIfNeeded(input: {
     activeProjectContext: input.activeProjectContext,
     activeSkillPack: input.activeSkillPack,
     stepIndex: input.stepIndex,
+    ...(runtimeEconomics.modelProfile?.counting.method === "model_tokenizer"
+      ? {
+          tokenCounter: resolveModelTokenCounter(
+            runtimeEconomics.modelProfile.counting.counter,
+            runtimeEconomics.modelProfile.counting.counterVersion,
+          ),
+        }
+      : {}),
   });
 }
 
@@ -1215,18 +1280,35 @@ function readRuntimeAssemblyPromptVariant(eventPayload: Record<string, unknown>)
   return asString(runtimeAssembly?.promptVariant);
 }
 
-function readRuntimeEconomics(eventPayload: Record<string, unknown>) {
+function readRuntimeEconomics(eventPayload: Record<string, unknown>, requestedModel?: string): {
+  policy?: HarnessEconomicsPolicyV1 | undefined;
+  modelProfile?: ModelEconomicsProfileV1 | undefined;
+} {
   const runtimeAssembly =
     asRecord(asRecord(eventPayload.metadata)?.runtimeAssembly) ??
     asRecord(eventPayload.runtimeAssembly);
+  if (runtimeAssembly?.harnessEconomics === undefined) return {};
+  const control = parseHarnessEconomicsControlV1(runtimeAssembly.harnessEconomics);
+  const provider = asString(runtimeAssembly.modelProvider);
+  const model = requestedModel ?? asString(runtimeAssembly.model);
   return {
-    ...(runtimeAssembly?.economicsPolicy !== undefined
-      ? { policy: parseHarnessEconomicsPolicyV1(runtimeAssembly.economicsPolicy) }
-      : {}),
-    ...(runtimeAssembly?.modelEconomicsProfile !== undefined
-      ? { modelProfile: parseModelEconomicsProfileV1(runtimeAssembly.modelEconomicsProfile) }
+    policy: control.policy,
+    ...(provider !== undefined && model !== undefined
+      ? { modelProfile: resolveModelEconomicsProfileV1(control, provider, model) }
       : {}),
   };
+}
+
+function canSafelyCompactWithProfile(input: {
+  profile?: ModelEconomicsProfileV1 | undefined;
+  policy: HarnessEconomicsPolicyV1;
+  sourceTokens: number;
+}): boolean {
+  if (input.profile === undefined) return false;
+  const usableInputTokens = input.profile.contextWindowTokens
+    - input.policy.context.outputReserveTokens
+    - input.policy.context.safetyReserveTokens;
+  return input.sourceTokens <= usableInputTokens;
 }
 
 function readRuntimeShellKind(

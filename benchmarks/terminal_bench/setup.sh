@@ -60,6 +60,8 @@ tar -xzf /installed-agent/kestrel.tar.gz -C /opt/kestrel
 
 cd /opt/kestrel
 CI=true pnpm install --frozen-lockfile --prod=false
+pnpm --filter @kestrel-agents/protocol run build:self
 node -e 'require.resolve("tsx")'
+node --input-type=module -e 'await import("@kestrel-agents/protocol")'
 
 chmod +x /installed-agent/cli_task_runner.py

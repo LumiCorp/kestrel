@@ -1,6 +1,6 @@
 import type { AgentRegistrationOptions } from "./types.js";
 
-export type AgentModelOptionKey = keyof Pick<AgentRegistrationOptions, "agentModel">;
+export type AgentModelOptionKey = keyof Pick<AgentRegistrationOptions, "agentModel" | "maintenanceModel" | "delegationModel">;
 
 export interface AgentModelConfigStage {
   stageId: string;
@@ -14,6 +14,18 @@ export const AGENT_MODEL_CONFIG_STAGES = [
     stageId: "agent.loop",
     label: "Agent loop",
     modelOptionKey: "agentModel",
+    modelConfigurable: true,
+  },
+  {
+    stageId: "agent.maintenance",
+    label: "Agent maintenance",
+    modelOptionKey: "maintenanceModel",
+    modelConfigurable: true,
+  },
+  {
+    stageId: "delegation.child",
+    label: "Delegated child",
+    modelOptionKey: "delegationModel",
     modelConfigurable: true,
   },
 ] as const satisfies readonly AgentModelConfigStage[];

@@ -23,10 +23,11 @@ export function buildAnthropicHttpRequest(
   const parallelToolCalls = provider?.parallelToolCalls ?? fallback?.parallelToolCalls;
   const forcedToolAction = requestedToolChoice === "required";
   const model = request.model ?? env.model;
-  const system = toSystemPrompt(request.messages);
+  const useEphemeralCache = provider?.cacheControl === "ephemeral";
+  const system = toSystemPrompt(request.messages, useEphemeralCache);
   const messages = toAnthropicMessages(request, !forcedToolAction);
   const structuredOutput = resolveStructuredOutput(request);
-  const tools = toAnthropicTools(request.tools, structuredOutput);
+  const tools = toAnthropicTools(request.tools, structuredOutput, useEphemeralCache);
 
   const body: Record<string, unknown> = {
     model,
@@ -281,7 +282,10 @@ function mapAnthropicMessage(message: ModelMessage): Record<string, unknown> {
   };
 }
 
-function toSystemPrompt(messages: ModelMessage[] | undefined): string | undefined {
+function toSystemPrompt(
+  messages: ModelMessage[] | undefined,
+  useEphemeralCache: boolean,
+): string | Array<Record<string, unknown>> | undefined {
   if (Array.isArray(messages) === false) {
     return ;
   }
@@ -289,7 +293,11 @@ function toSystemPrompt(messages: ModelMessage[] | undefined): string | undefine
     .filter((message) => message.role === "system")
     .map((message) => contentText(message.content).trim())
     .filter((message) => message.length > 0);
-  return system.length > 0 ? system.join("\n\n") : undefined;
+  if (system.length === 0) return ;
+  const text = system.join("\n\n");
+  return useEphemeralCache
+    ? [{ type: "text", text, cache_control: { type: "ephemeral" } }]
+    : text;
 }
 
 function toAnthropicContent(content: ModelMessage["content"]): Array<Record<string, unknown>> {
@@ -330,6 +338,7 @@ function toAnthropicTools(
         schema?: Record<string, unknown> | undefined;
       }
     | undefined,
+  useEphemeralCache: boolean,
 ): Array<Record<string, unknown>> {
   const mapped: Array<Record<string, unknown>> = Array.isArray(tools)
     ? tools.map((tool) => ({
@@ -345,6 +354,16 @@ function toAnthropicTools(
       description: "Return the structured response payload for this turn.",
       input_schema: structuredOutput.schema,
     });
+  }
+
+  if (useEphemeralCache && mapped.length > 0) {
+    const finalTool = mapped[mapped.length - 1];
+    if (finalTool !== undefined) {
+      mapped[mapped.length - 1] = {
+        ...finalTool,
+        cache_control: { type: "ephemeral" },
+      };
+    }
   }
 
   return mapped;

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import sys
 import tempfile
 import unittest
@@ -14,6 +16,8 @@ from .cli_task_runner import (
     TERMINAL_BENCH_ENTRY_STEP_AGENT,
     TERMINAL_BENCH_PROTECTED_PATH_FAILURE_KIND,
     bridge_process_traffic,
+    benchmark_harness_revision_payload,
+    build_kestrel_job_command,
     build_job_input,
     build_profile,
     classify_cli_failure_kind,
@@ -39,6 +43,8 @@ from .cli_task_runner import (
 from .job_input import (
     TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS,
     assert_terminal_bench_job_input_contract,
+    assert_terminal_bench_profile_contract,
+    build_terminal_bench_profile,
     terminal_bench_job_input_contract_hash,
 )
 from .provider_config import (
@@ -77,7 +83,43 @@ class CliTaskRunnerTest(unittest.TestCase):
 
         self.assertEqual(TERMINAL_BENCH_ENTRY_STEP_AGENT, "agent.loop")
         self.assertEqual(job_input["turn"]["stepAgent"], "agent.loop")
+        self.assertNotIn("storeDriver", job_input)
+        self.assertNotIn("storeDriver", job_input["profile"])
         assert_terminal_bench_job_input_contract(job_input)
+
+    def test_harness_revision_is_recorded_only_when_explicitly_supplied(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(benchmark_harness_revision_payload(), {})
+        with mock.patch.dict("os.environ", {"KESTREL_BENCHMARK_HARNESS_REVISION": "abc123"}, clear=True):
+            self.assertEqual(benchmark_harness_revision_payload(), {"harness_revision": "abc123"})
+
+    def test_job_contract_rejects_explicit_persistence_selection(self) -> None:
+        job_input = build_job_input("Solve it.", "sample-task")
+
+        with self.assertRaisesRegex(AssertionError, "leave persistence selection to Local Core"):
+            assert_terminal_bench_job_input_contract({**job_input, "storeDriver": "sqlite"})
+        with self.assertRaisesRegex(AssertionError, "leave persistence selection to Local Core"):
+            assert_terminal_bench_job_input_contract(
+                {**job_input, "profile": {**job_input["profile"], "storeDriver": "sqlite"}}
+            )
+
+    def test_job_command_leaves_persistence_selection_to_local_core(self) -> None:
+        command = build_kestrel_job_command(Path("/tmp/job-input.json"), Path("/tmp/job-output.json"))
+
+        self.assertEqual(
+            command,
+            [
+                "node",
+                "/opt/kestrel/bin/kestrel.js",
+                "job",
+                "run",
+                "--json-in",
+                "/tmp/job-input.json",
+                "--json-out",
+                "/tmp/job-output.json",
+            ],
+        )
+        self.assertNotIn("--store", command)
 
     def test_profile_uses_canonical_build_mode(self) -> None:
         profile = build_profile()
@@ -89,6 +131,19 @@ class CliTaskRunnerTest(unittest.TestCase):
         self.assertEqual(profile["defaultActSubmode"], "full_auto")
         self.assertEqual(profile["guardrails"], benchmark_guardrails())
         self.assertEqual(profile["toolAllowlist"], TERMINAL_BENCH_REQUIRED_PROFILE_TOOLS)
+        self.assertNotIn("storeDriver", profile)
+        assert_terminal_bench_profile_contract(profile)
+        invalid_profile = dict(profile)
+        invalid_profile["devShell"] = {"enabled": True, "envMode": "inherit"}
+        with self.assertRaisesRegex(AssertionError, "enable inherited dev shell"):
+            assert_terminal_bench_profile_contract(invalid_profile)
+        union_profile = dict(profile)
+        union_profile["toolAllowlist"] = [*profile["toolAllowlist"], "artifact.read"]
+        assert_terminal_bench_profile_contract(union_profile)
+        missing_tool_profile = dict(profile)
+        missing_tool_profile["toolAllowlist"] = profile["toolAllowlist"][:-1]
+        with self.assertRaisesRegex(AssertionError, "missing required tools: exec_command"):
+            assert_terminal_bench_profile_contract(missing_tool_profile)
         self.assertEqual(
             profile["toolAllowlist"],
             [
@@ -103,6 +158,22 @@ class CliTaskRunnerTest(unittest.TestCase):
                 "exec_command",
             ],
         )
+
+    def test_transported_profile_does_not_require_host_file_inside_container(self) -> None:
+        payload = {"profiles": [{"id": "candidate", "label": "Candidate"}]}
+        encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "KESTREL_BENCHMARK_PROFILE_FILE": "/host/path/not-mounted.json",
+                "KESTREL_BENCHMARK_PROFILE_ID": "candidate",
+                "KESTREL_BENCHMARK_PROFILE_JSON_BASE64": encoded,
+            },
+            clear=False,
+        ):
+            profile = build_terminal_bench_profile()
+
+        self.assertEqual(profile, {"id": "candidate", "label": "Candidate"})
 
     def test_job_input_emits_structured_terminal_bench_context(self) -> None:
         job_input = build_job_input("Solve it.", "sample-task")

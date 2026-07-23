@@ -154,6 +154,11 @@ class HarborAgentsTest(unittest.TestCase):
                 environment.downloads,
                 [
                     ("/installed-agent/kestrel-cli-job-input.json", str(Path(raw_dir) / "kestrel-cli-job-input.json")),
+                    ("/installed-agent/kestrel-cli-job-output.json", str(Path(raw_dir) / "kestrel-cli-job-output.json")),
+                    (
+                        "/installed-agent/kestrel-cli-runtime-replay-bundle.json",
+                        str(Path(raw_dir) / "kestrel-cli-runtime-replay-bundle.json"),
+                    ),
                     ("/installed-agent/kestrel-cli-result.json", str(Path(raw_dir) / "kestrel-cli-result.json")),
                     ("/installed-agent/kestrel-cli-events.jsonl", str(Path(raw_dir) / "kestrel-cli-events.jsonl")),
                     ("/installed-agent/kestrel-cli-bridge.jsonl", str(Path(raw_dir) / "kestrel-cli-bridge.jsonl")),
@@ -163,6 +168,8 @@ class HarborAgentsTest(unittest.TestCase):
                 copied,
                 [
                     Path(raw_dir) / "kestrel-cli-job-input.json",
+                    Path(raw_dir) / "kestrel-cli-job-output.json",
+                    Path(raw_dir) / "kestrel-cli-runtime-replay-bundle.json",
                     Path(raw_dir) / "kestrel-cli-result.json",
                     Path(raw_dir) / "kestrel-cli-events.jsonl",
                     Path(raw_dir) / "kestrel-cli-bridge.jsonl",
@@ -178,6 +185,7 @@ class HarborAgentsTest(unittest.TestCase):
             "status": "completed",
             "duration_ms": 10,
             "failure_kind": "none",
+            "job_input_sha256": "a" * 64,
         }
         marker = "KESTREL_TBENCH_RESULT_JSON_BASE64:" + base64.b64encode(
             json.dumps(result).encode("utf-8")
@@ -206,6 +214,13 @@ class HarborAgentsTest(unittest.TestCase):
             payload = json.loads(artifact.read_text(encoding="utf-8"))
             self.assertEqual(payload["adapter"], "harbor-cli")
             self.assertEqual(payload["dataset"], "terminal-bench@2.0")
+            self.assertEqual(payload["job_input_path"], str(Path(raw_dir) / "kestrel-cli-job-input.json"))
+            self.assertEqual(payload["job_output_path"], str(Path(raw_dir) / "kestrel-cli-job-output.json"))
+            self.assertEqual(
+                payload["runtime_replay_bundle_path"],
+                str(Path(raw_dir) / "kestrel-cli-runtime-replay-bundle.json"),
+            )
+            self.assertEqual(payload["job_input_sha256"], "a" * 64)
 
     def test_run_preserves_structured_kestrel_failure_without_adapter_exception(self) -> None:
         result = {

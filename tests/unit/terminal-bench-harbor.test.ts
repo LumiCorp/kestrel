@@ -10,6 +10,7 @@ import {
   readRecentHarborRunFailure,
   readRecentHarborRunSummary,
   runTerminalBenchHarbor,
+  terminalBenchTaskInputHash,
 } from "../../scripts/terminal-bench-harbor.js";
 import { formatTb2ReadableSummary } from "../../scripts/tb2-result-summary.js";
 import { contractTest } from "../helpers/contract-test.js";
@@ -30,6 +31,14 @@ contractTest("runtime.hermetic", "terminal bench exposes a tb2 shortcut for Harb
   assert.match(wrapper, /unset OPENROUTER_MODEL/u);
   assert.doesNotMatch(wrapper, /KESTREL_TBENCH_MODEL_PROVIDER/u);
   assert.match(wrapper, /pnpm run bench:terminal:harbor -- "\$@"/u);
+});
+
+contractTest("runtime.hermetic", "terminal bench task identity excludes randomized job envelope fields", () => {
+  const baseline = terminalBenchTaskInputHash("terminal-bench@2.0", "fix-git");
+  const candidate = terminalBenchTaskInputHash("terminal-bench@2.0", "fix-git");
+
+  assert.equal(baseline, candidate);
+  assert.notEqual(baseline, terminalBenchTaskInputHash("terminal-bench@2.0", "prove-plus-comm"));
 });
 
 contractTest("runtime.hermetic", "terminal bench exposes a tb2 passing regression script", () => {
@@ -147,6 +156,33 @@ contractTest("runtime.hermetic", "terminal bench harbor dry-run does not require
   assert.equal(spawnCalls, 0);
   assert.match(stdout.join(""), /harbor run -d terminal-bench@2\.0/u);
   assert.equal(stderr.join(""), "");
+});
+
+contractTest("runtime.hermetic", "terminal bench harbor transports the selected profile into the task container", async () => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-profile-"));
+  try {
+    const profileFile = path.join(temporary, "profiles.json");
+    writeFileSync(profileFile, JSON.stringify({ profiles: [{ id: "candidate", harnessEconomics: { version: 1 } }] }));
+    const stdout: string[] = [];
+    const code = await runTerminalBenchHarbor(["fix-git", "--dry-run"], {
+      spawn: (() => { throw new Error("unexpected spawn"); }) as never,
+      env: {
+        OPENROUTER_API_KEY: "sk-test",
+        KESTREL_BENCHMARK_HARNESS_REVISION: "abc123",
+        KESTREL_BENCHMARK_PROFILE_FILE: profileFile,
+        KESTREL_BENCHMARK_PROFILE_ID: "candidate",
+      },
+      cwd: process.cwd(),
+      stdout: { write: (chunk: string) => { stdout.push(chunk); return true; } },
+      stderr: { write: () => true },
+    });
+
+    assert.equal(code, 0);
+    assert.match(stdout.join(""), /KESTREL_BENCHMARK_PROFILE_JSON_BASE64=/u);
+    assert.match(stdout.join(""), /KESTREL_BENCHMARK_HARNESS_REVISION/u);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 contractTest("runtime.hermetic", "terminal bench harbor warns when non-OpenRouter provider keys are present with OpenRouter", async () => {

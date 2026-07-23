@@ -13,7 +13,7 @@ import type {
   ToolResultEconomicsManifestV1,
 } from "./contracts.js";
 import { HarnessEconomicsController } from "./HarnessEconomicsController.js";
-import { countTextTokens } from "./tokenCounting.js";
+import { countTextTokens, resolveModelTokenCounter, type ExactTokenCounter } from "./tokenCounting.js";
 
 export function buildModelRequestEconomicsManifest(input: {
   request: ModelRequest;
@@ -23,11 +23,12 @@ export function buildModelRequestEconomicsManifest(input: {
   phase?: string | undefined;
   toolExposureSelection?: ToolExposureSelectionV1 | undefined;
 }): ModelRequestEconomicsManifestV1 {
+  const counter = counterForProfile(input.modelProfile);
   const messages = input.request.messages ?? [];
   const modelVisibleMessages = serialize(messages);
-  const messageCount = countTextTokens(modelVisibleMessages);
+  const messageCount = countTextTokens(modelVisibleMessages, counter);
   const contextSections = input.contextSections ?? messages.map((message, index) =>
-    contextSectionFromMessage(message, index)
+    contextSectionFromMessage(message, index, counter)
   );
   const accountedContext = sumCounts(contextSections.map((section) => section.count));
   const requestControl = countTextTokens(serialize({
@@ -39,9 +40,9 @@ export function buildModelRequestEconomicsManifest(input: {
     reasoning: input.request.reasoning === undefined
       ? undefined
       : { ...input.request.reasoning, continuation: input.request.reasoning.continuation?.map(() => "[opaque]") },
-  }));
-  const toolSurface = buildToolSurfaceManifest(input.request.tools ?? []);
-  const unattributedContextTokens = Math.max(0, messageCount.tokens - accountedContext.tokens);
+  }), counter);
+  const toolSurface = buildToolSurfaceManifest(input.request.tools ?? [], counter);
+  const unattributedContextTokens = messageCount.tokens - accountedContext.tokens;
   const providerOverhead = combineCounts([
     subtractCount(messageCount, accountedContext),
     requestControl,
@@ -76,6 +77,10 @@ export function buildModelRequestEconomicsManifest(input: {
     ...(toolExposure !== undefined ? { toolExposure } : {}),
     providerOverhead,
     unattributedContextTokens,
+    reconciliation: {
+      componentSumToCanonicalRequestTokens: unattributedContextTokens,
+      canonicalRequestToProviderPayloadTokens: 0,
+    },
     ...(decision !== undefined ? { decision } : {}),
   };
 }
@@ -113,7 +118,7 @@ function buildToolExposureDecision(input: {
       : "missing";
   const blockReasons: ToolExposureDecisionV1["blockReasons"] = [];
   if (selectionStatus === "missing") blockReasons.push("selection_missing");
-  const schemaBudgetEnforceable = input.toolSurface.count.method === "exact" || input.policy.counting.allowEstimatedEnforcement;
+  const schemaBudgetEnforceable = input.toolSurface.count.method !== "conservative_estimate" || input.policy.counting.allowEstimatedEnforcement;
   const schemaBudgetExceeded = input.toolSurface.count.tokens > input.policy.tools.modelContextMaxTokens;
   if (schemaBudgetExceeded && schemaBudgetEnforceable) {
     blockReasons.push("tool_schema_budget_exceeded");
@@ -137,50 +142,79 @@ function buildToolExposureDecision(input: {
   };
 }
 
-export function buildToolSurfaceManifest(tools: ModelToolSpec[]): ModelRequestEconomicsManifestV1["toolSurface"] {
+export function buildToolSurfaceManifest(
+  tools: ModelToolSpec[],
+  counter?: ExactTokenCounter | undefined,
+): ModelRequestEconomicsManifestV1["toolSurface"] {
   const entries: ToolSurfaceEntryManifestV1[] = tools.map((tool) => {
     const serialized = serialize(tool);
     return {
       name: tool.name,
       schemaHash: sha256(serialized),
-      count: countTextTokens(serialized),
+      count: countTextTokens(serialized, counter),
     };
   });
   const serializedSurface = serialize(tools);
   return {
     version: 1,
     surfaceHash: sha256(serializedSurface),
-    count: countTextTokens(serializedSurface),
+    count: countTextTokens(serializedSurface, counter),
     tools: entries,
   };
 }
 
 export function buildToolResultEconomicsManifest(result: AgentToolResult): ToolResultEconomicsManifestV1 {
-  const storedSerialized = serialize(result.auditRecord.output);
+  const rawSerialized = serialize(result.auditRecord.output);
+  const persistedSerialized = serialize(result.projections?.persistedOutput ?? result.auditRecord.output);
+  const verificationSerialized = serialize(result.projections?.verificationOutput ?? result.auditRecord.output);
   const modelVisibleSerialized = serialize(result.modelContext);
-  const storedOutput = countTextTokens(storedSerialized);
+  const rawReceived = result.projections === undefined
+    ? countTextTokens(rawSerialized)
+    : {
+        version: 1 as const,
+        tokens: result.projections.rawReceived.tokens,
+        bytes: result.projections.rawReceived.bytes,
+        method: "conservative_estimate" as const,
+        confidence: "conservative" as const,
+        counter: "tool-result-raw-received:v1",
+        counterVersion: "1",
+      };
+  const persistedOutput = countTextTokens(persistedSerialized);
+  const verificationVisible = countTextTokens(verificationSerialized);
   const modelVisible = countTextTokens(modelVisibleSerialized);
   return {
     version: 1,
-    storedOutputHash: sha256(storedSerialized),
-    storedOutput,
+    rawReceivedHash: result.projections?.rawReceived.sha256 ?? sha256(rawSerialized),
+    rawReceived,
+    ...(result.projections?.durableRawArtifactRef !== undefined
+      ? { durableRawArtifactRef: result.projections.durableRawArtifactRef }
+      : {}),
+    persistedOutputHash: sha256(persistedSerialized),
+    persistedOutput,
+    verificationVisibleHash: sha256(verificationSerialized),
+    verificationVisible,
     modelVisibleHash: sha256(modelVisibleSerialized),
     modelVisible,
-    reductionTokens: Math.max(0, storedOutput.tokens - modelVisible.tokens),
+    reductions: {
+      rawToPersistedTokens: Math.max(0, rawReceived.tokens - persistedOutput.tokens),
+      persistedToModelVisibleTokens: Math.max(0, persistedOutput.tokens - modelVisible.tokens),
+      rawToModelVisibleTokens: Math.max(0, rawReceived.tokens - modelVisible.tokens),
+    },
     truncated: result.modelContext.truncated === true,
-    ...(typeof result.modelContext.rawOutputRef === "string" && result.modelContext.rawOutputRef.trim().length > 0
-      ? { rawOutputRef: result.modelContext.rawOutputRef }
-      : {}),
   };
 }
 
-function contextSectionFromMessage(message: ModelMessage, index: number): ContextSectionCandidateV1 {
+function contextSectionFromMessage(
+  message: ModelMessage,
+  index: number,
+  counter?: ExactTokenCounter | undefined,
+): ContextSectionCandidateV1 {
   const serialized = serialize(message);
   return {
     id: `message:${index}`,
     origin: `model-message:${message.role}`,
     contentHash: sha256(serialized),
-    count: countTextTokens(serialized),
+    count: countTextTokens(serialized, counter),
   };
 }
 
@@ -189,13 +223,14 @@ function sumCounts(counts: TokenCountV1[]): TokenCountV1 {
 }
 
 function combineCounts(counts: TokenCountV1[], counter: string): TokenCountV1 {
-  const exact = counts.every((count) => count.method === "exact");
+  const providerExact = counts.every((count) => count.method === "provider_reported");
+  const tokenizerCompatible = counts.every((count) => count.method !== "conservative_estimate");
   return {
     version: 1,
     tokens: counts.reduce((total, count) => total + count.tokens, 0),
     bytes: counts.reduce((total, count) => total + count.bytes, 0),
-    method: exact ? "exact" : "estimated",
-    confidence: exact ? "exact" : "conservative",
+    method: providerExact ? "provider_reported" : tokenizerCompatible ? "model_tokenizer" : "conservative_estimate",
+    confidence: providerExact ? "provider_exact" : tokenizerCompatible ? "model_compatible" : "conservative",
     counter,
     counterVersion: "1",
   };
@@ -206,8 +241,16 @@ function subtractCount(total: TokenCountV1, accounted: TokenCountV1): TokenCount
     version: 1,
     tokens: Math.max(0, total.tokens - accounted.tokens),
     bytes: Math.max(0, total.bytes - accounted.bytes),
-    method: total.method === "exact" && accounted.method === "exact" ? "exact" : "estimated",
-    confidence: total.confidence === "exact" && accounted.confidence === "exact" ? "exact" : "conservative",
+    method: total.method === "provider_reported" && accounted.method === "provider_reported"
+      ? "provider_reported"
+      : total.method !== "conservative_estimate" && accounted.method !== "conservative_estimate"
+        ? "model_tokenizer"
+        : "conservative_estimate",
+    confidence: total.confidence === "provider_exact" && accounted.confidence === "provider_exact"
+      ? "provider_exact"
+      : total.confidence !== "conservative" && accounted.confidence !== "conservative"
+        ? "model_compatible"
+        : "conservative",
     counter: "unattributed-message-overhead:v1",
     counterVersion: "1",
   };
@@ -226,4 +269,13 @@ function sortValue(value: unknown): unknown {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function counterForProfile(profile: ModelEconomicsProfileV1 | undefined): ExactTokenCounter | undefined {
+  if (profile?.counting.method !== "model_tokenizer") return undefined;
+  const counter = resolveModelTokenCounter(profile.counting.counter, profile.counting.counterVersion);
+  if (counter === undefined) {
+    throw new Error(`Configured model token counter '${profile.counting.counter}' is unavailable.`);
+  }
+  return counter;
 }

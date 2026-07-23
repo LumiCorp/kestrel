@@ -4,10 +4,9 @@ import type {
   DevShellProfileConfig,
   ExecutionPolicyOverride,
   GuardrailConfig,
-  HarnessEconomicsPolicyV1,
+  HarnessEconomicsControlV1,
   InteractionMode,
   McpServerConfig,
-  ModelEconomicsProfileV1,
   NormalizedOutput,
   ProgressUpdateV1,
   ReasoningUpdateV1,
@@ -219,8 +218,7 @@ export interface TuiProfile {
         visionInputEnabled?: boolean | undefined;
       }
     | undefined;
-  harnessEconomicsPolicy?: HarnessEconomicsPolicyV1 | undefined;
-  modelEconomicsProfile?: ModelEconomicsProfileV1 | undefined;
+  harnessEconomics?: HarnessEconomicsControlV1 | undefined;
   agentStageConfig?: AgentStageConfig | undefined;
   modelTimeoutMs?: number | undefined;
   storeDriver?: StoreDriverId | undefined;

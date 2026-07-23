@@ -20,7 +20,6 @@ import {
   buildKestrelAgentValidationFeedbackMessage,
   buildKestrelTerminalBenchRepairPrompt,
   shouldCompactKestrelAgentContext,
-  type KestrelCompactionSummaryV1,
 } from "../../src/runtime/KestrelAgentContextBuilder.js";
 import { contractTest } from "../helpers/contract-test.js";
 import { readActiveTaskGoalFromTranscript } from "../../src/runtime/modelTranscript.js";
@@ -106,7 +105,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder records determin
       "workspaceFreshness",
       "correction",
       "activeWait",
-      "transcript",
+    "transcript:mt_1_0001_user",
     ],
   );
   assert.deepEqual(
@@ -634,6 +633,7 @@ contractTest("runtime.hermetic", "enforce-mode compaction uses resolved model to
     context: { outputReserveTokens: 10, safetyReserveTokens: 5, sections: [] },
     compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
     tools: { exposure: "assembly_allowlist", modelContextMaxTokens: 20, allowedFamiliesByPhase: {} },
+    cache: { mode: "provider_default" },
   };
   const modelProfile: ModelEconomicsProfileV1 = {
     version: 1,
@@ -642,12 +642,13 @@ contractTest("runtime.hermetic", "enforce-mode compaction uses resolved model to
     model: "model",
     contextWindowTokens: 100,
     maxOutputTokens: 10,
-    counting: { counter: "test", counterVersion: "1", method: "exact", confidence: "exact" },
+    counting: { counter: "test", counterVersion: "1", method: "model_tokenizer", confidence: "model_compatible" },
+    cache: { behavior: "none" },
   };
   const transcript = { version: 1 as const, windowId: 1, items: [] };
 
-  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 64, toolSchemaTokens: 5 }), false);
-  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 65, toolSchemaTokens: 5 }), true);
+  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 79, toolSchemaTokens: 5 }), false);
+  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 80, toolSchemaTokens: 5 }), true);
   assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 55, toolSchemaTokens: 30 }), true);
 });
 
@@ -661,6 +662,7 @@ contractTest("runtime.hermetic", "observe-mode token pressure never changes comp
     context: { outputReserveTokens: 10, safetyReserveTokens: 5, sections: [] },
     compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
     tools: { exposure: "assembly_allowlist", modelContextMaxTokens: 20, allowedFamiliesByPhase: {} },
+    cache: { mode: "provider_default" },
   } satisfies HarnessEconomicsPolicyV1;
   const modelProfile = {
     version: 1,
@@ -669,7 +671,8 @@ contractTest("runtime.hermetic", "observe-mode token pressure never changes comp
     model: "model",
     contextWindowTokens: 100,
     maxOutputTokens: 10,
-    counting: { counter: "test", counterVersion: "1", method: "exact", confidence: "exact" },
+    counting: { counter: "test", counterVersion: "1", method: "model_tokenizer", confidence: "model_compatible" },
+    cache: { behavior: "none" },
   } satisfies ModelEconomicsProfileV1;
 
   assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 1_000, toolSchemaTokens: 500 }), false);
@@ -703,7 +706,7 @@ contractTest("runtime.hermetic", "Kestrel compaction fails closed when a replace
   }), /does not preserve replaced item/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel compaction treats a matched tool call and result as one semantic anchor", () => {
+contractTest("runtime.hermetic", "Kestrel compaction keeps paired tool provenance machine-only", () => {
   const transcript = {
     version: 1,
     windowId: 1,
@@ -757,11 +760,14 @@ contractTest("runtime.hermetic", "Kestrel compaction treats a matched tool call 
     },
   });
 
-  const summary = JSON.parse(compacted.items[0]?.content ?? "null") as KestrelCompactionSummaryV1;
-  assert.deepEqual(summary.evidence[0]?.sourceItemIds, [
-    "mt_1_0003_tool_result",
-    "mt_1_0002_tool_call",
-  ]);
+  const replacedItemIds = compacted.compactions?.at(-1)?.replacedItemIds;
+  assert.ok(replacedItemIds);
+  assert.equal(replacedItemIds.includes("mt_1_0002_tool_call"), true);
+  assert.equal(replacedItemIds.includes("mt_1_0003_tool_result"), true);
+  assert.equal(
+    compacted.items[0]?.content?.includes("mt_1_0002_tool_call"),
+    false,
+  );
 });
 
 contractTest("runtime.hermetic", "repeated compaction preserves the active task and explicit semantic-anchor provenance", () => {
@@ -819,12 +825,47 @@ contractTest("runtime.hermetic", "repeated compaction preserves the active task 
       coveredItemIds: secondReplacedIds,
     },
   });
+  const thirdSource = {
+    ...second,
+    items: [
+      ...second.items,
+      ...Array.from({ length: 30 }, (_, index) => ({
+        id: `third-${index}`,
+        createdAt: `2026-07-22T02:${String(index).padStart(2, "0")}:00.000Z`,
+        kind: "assistant_text" as const,
+        content: `Third-window evidence ${index}`,
+      })),
+    ],
+  };
+  const thirdRetainedIds = new Set(["first-0", ...thirdSource.items.slice(-24).map((item) => item.id)]);
+  const thirdReplacedIds = thirdSource.items.filter((item) => thirdRetainedIds.has(item.id) === false).map((item) => item.id);
+  const third = buildKestrelAgentCompactedTranscript({
+    transcript: thirdSource,
+    summary: {
+      version: 1,
+      activeTaskItemId: "first-0",
+      decisions: [{ text: "Keep the reviewed harness design.", sourceItemIds: thirdReplacedIds }],
+      constraints: [{ text: "Preserve all three compaction windows.", sourceItemIds: thirdReplacedIds }],
+      evidence: [{ text: "Prior windows contain accepted evidence.", sourceItemIds: thirdReplacedIds }],
+      fileState: [{ text: "Workspace state remains attributable.", sourceItemIds: thirdReplacedIds }],
+      blockers: [{ text: "No unresolved blocker may be hidden.", sourceItemIds: thirdReplacedIds }],
+      nextActions: [{ text: "Continue from the retained state.", sourceItemIds: thirdReplacedIds }],
+      coveredItemIds: thirdReplacedIds,
+    },
+  });
 
-  assert.equal(readActiveTaskGoalFromTranscript(second), activeTask);
-  assert.equal(second.compactions?.length, 2);
-  const latestSummary = JSON.parse(second.items.find((item) => item.kind === "compaction_summary")?.content ?? "null") as Record<string, unknown>;
-  assert.deepEqual(latestSummary.coveredItemIds, secondReplacedIds);
-  assert.deepEqual((latestSummary.constraints as Array<Record<string, unknown>>)[0]?.sourceItemIds, secondReplacedIds);
+  assert.equal(readActiveTaskGoalFromTranscript(third), activeTask);
+  assert.equal(third.compactions?.length, 3);
+  const latestSummary = JSON.parse(third.items.find((item) => item.kind === "compaction_summary")?.content ?? "null") as Record<string, unknown>;
+  assert.equal(latestSummary.coveredItemIds, undefined);
+  assert.deepEqual(latestSummary.decisions, ["Keep the reviewed harness design."]);
+  assert.deepEqual(latestSummary.constraints, ["Preserve all three compaction windows."]);
+  assert.deepEqual(latestSummary.evidence, ["Prior windows contain accepted evidence."]);
+  assert.deepEqual(latestSummary.fileState, ["Workspace state remains attributable."]);
+  assert.deepEqual(latestSummary.blockers, ["No unresolved blocker may be hidden."]);
+  assert.deepEqual(latestSummary.nextActions, ["Continue from the retained state."]);
+  assert.deepEqual(third.compactions?.at(-1)?.replacedItemIds, thirdReplacedIds);
+  assert.equal(typeof third.compactions?.at(-1)?.sourceWindowHash, "string");
 });
 
 contractTest("runtime.hermetic", "Kestrel agent context builder owns the provider-facing tool surface", () => {
