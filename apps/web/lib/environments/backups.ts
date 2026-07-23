@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
+import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import {
@@ -89,6 +90,7 @@ export async function createWorkspaceBackup(input: {
       organizationId: input.organizationId,
       threadId: binding.threadId,
       actorUserId: input.actorUserId,
+      owningLifecycleOperationId: operationId,
     });
     const archive = await fetchBackupArchive(
       route.baseUrl,
@@ -663,14 +665,14 @@ export async function restoreWorkspaceBackup(input: {
         appName: flyAppName,
         machineId: replacementMachine.id,
         state: "started",
-        timeoutSeconds: 90,
+        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
       });
     }
     await provider.waitForMachineHealth({
       appName: flyAppName,
       machineId: replacementMachine.id,
       checkName: "workspace",
-      timeoutSeconds: 90,
+      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
     const replacementRoute = () =>
       createEnvironmentMachineRoute({
@@ -707,13 +709,13 @@ export async function restoreWorkspaceBackup(input: {
       appName: flyAppName,
       machineId: replacementMachine.id,
       state: "started",
-      timeoutSeconds: 90,
+      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
     await provider.waitForMachineHealth({
       appName: flyAppName,
       machineId: replacementMachine.id,
       checkName: "workspace",
-      timeoutSeconds: 90,
+      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
     await waitForWorkspaceService(replacementRoute);
     const completedAt = new Date();

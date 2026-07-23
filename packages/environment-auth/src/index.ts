@@ -2,6 +2,7 @@ import { sign, verify } from "node:crypto";
 
 export * from "./gateway-config.js";
 export * from "./preview-relay.js";
+export * from "./workspace-readiness.js";
 
 export const ENVIRONMENT_ROUTER_AUDIENCE = "kestrel-environment-router";
 export const ENVIRONMENT_TICKET_VERSION = 1;

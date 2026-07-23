@@ -3,6 +3,7 @@ import {
   KestrelClient,
   type KestrelRequestContext,
 } from "@kestrel-agents/sdk/runner";
+import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { createReadStream } from "node:fs";
 import {
@@ -30,6 +31,10 @@ import { isPortListening } from "./previews.js";
 import { buildWorkspaceProxyHeaders, isRunnerProxyPath } from "./proxy.js";
 import { handlePreviewRelayHttp, handlePreviewRelayUpgrade, isPreviewRelayRequest } from "./preview-relay.js";
 import { resolveRunnerServiceEntrypoint } from "./runner-entrypoint.js";
+import {
+  createWorkspaceRunnerReadiness,
+  workspaceRunnerHealthStatus,
+} from "./runner-readiness.js";
 import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
 import { WorkspaceTerminalRegistry } from "./terminals.js";
 import {
@@ -60,19 +65,27 @@ const workspaceSkills = new WorkspaceSkillManager({
 });
 const workspaceSkillsActivation = workspaceSkills.syncAll();
 const runnerToken = randomBytes(32).toString("base64url");
-let runner: ChildProcess | null = null;
-let runnerReady: Promise<void> | null = null;
 let sourceInitialization: Promise<void> | null = null;
+const runnerReadiness = createWorkspaceRunnerReadiness({
+  startRunner: () => startRunner(runnerToken),
+  waitUntilHealthy: waitForRunnerService,
+  probeHealth: probeRunnerService,
+  onFatalExit: shutdown,
+  log: (event) => {
+    process.stdout.write(
+      `${JSON.stringify({
+        ...event,
+        workspaceId: config.workspaceId,
+        occurredAt: new Date().toISOString(),
+      })}\n`,
+    );
+  },
+});
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     try {
       await workspaceSkillsActivation;
-      writeJson(response, 200, {
-        ok: true,
-        workspaceId: config.workspaceId,
-        runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
-      });
     } catch {
       writeJson(response, 503, {
         ok: false,
@@ -80,7 +93,25 @@ const server = createServer(async (request, response) => {
         runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
         error: { code: "WORKSPACE_SKILLS_ACTIVATION_FAILED" },
       });
+      return;
     }
+    await runnerReadiness.probeReady().catch(() => {});
+    const runnerHealth = workspaceRunnerHealthStatus(runnerReadiness.state());
+    if (runnerHealth.status !== 200) {
+      void runnerReadiness.ensureReady().catch(() => {});
+      writeJson(response, runnerHealth.status, {
+        ok: false,
+        workspaceId: config.workspaceId,
+        runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
+        error: { code: runnerHealth.code },
+      });
+      return;
+    }
+    writeJson(response, 200, {
+      ok: true,
+      workspaceId: config.workspaceId,
+      runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
+    });
     return;
   }
   if (drainingForIdleStop) {
@@ -490,6 +521,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(config.port, config.listenHost);
+void runnerReadiness.ensureReady().catch(() => {});
 server.on("upgrade", (request, socket, head) => {
   if (!isPreviewRelayRequest(request.url) || drainingForIdleStop) {
     socket.destroy();
@@ -560,21 +592,11 @@ function startRunner(authToken: string): ChildProcess {
       workspaceServiceToken: config.workspaceServiceToken,
     }),
   });
-  child.once("exit", (code) => {
-    if (runner === child) runner = null;
-    runnerReady = null;
-    if (code !== 0) shutdown(code ?? 1);
-  });
   return child;
 }
 
 function ensureRunnerReady() {
-  runner ??= startRunner(runnerToken);
-  runnerReady ??= waitForRunnerService().catch((error) => {
-    runnerReady = null;
-    throw error;
-  });
-  return runnerReady;
+  return runnerReadiness.ensureReady();
 }
 
 async function waitForRunnerService() {
@@ -587,6 +609,21 @@ async function waitForRunnerService() {
   });
   try {
     await waitForRunner(client);
+  } finally {
+    await client.close();
+  }
+}
+
+async function probeRunnerService() {
+  const client = new KestrelClient({
+    target: {
+      kind: "remote",
+      baseUrl: "http://127.0.0.1:43105",
+      authToken: runnerToken,
+    },
+  });
+  try {
+    await client.getHealth();
   } finally {
     await client.close();
   }
@@ -624,7 +661,7 @@ async function withRunnerClient<T>(
 }
 
 async function waitForRunner(client: KestrelClient) {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
       await client.getHealth();
@@ -1071,7 +1108,7 @@ function shutdown(code: number) {
   shutdownStarted = true;
   clearInterval(idleTimer);
   terminals.closeAll();
-  runner?.kill("SIGTERM");
+  runnerReadiness.stop();
   void Promise.allSettled([
     applications.stopAll(),
     backupImports.closeAll(),
