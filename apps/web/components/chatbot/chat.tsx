@@ -252,11 +252,18 @@ function useChatCallbacks(input: {
   mutate: ReturnType<typeof useSWRConfig>["mutate"];
   refreshConversationState?: () => Promise<void>;
   setDataStream: Dispatch<SetStateAction<unknown[]>>;
+  setThreadTitle: (title: string) => void;
+  threadId: string;
   setInteractionMode: (mode: KestrelOneInteractionMode) => void;
   setShowCreditCardAlert: Dispatch<SetStateAction<boolean>>;
 }) {
   return {
     onData: (dataPart: DataUIPart<CustomUIDataTypes>) => {
+      if (dataPart.type === "data-chat-title") {
+        input.setThreadTitle(dataPart.data.title);
+        return;
+      }
+
       if (dataPart.type === "data-stream-resumed") {
         if (
           input.hasShownResumedToastRef &&
@@ -310,6 +317,9 @@ function useChatCallbacks(input: {
       input.setDataStream((current) => [...current, dataPart]);
     },
     onFinish: () => {
+      input.mutate(`/api/threads/${input.threadId}`);
+      input.mutate("/api/threads?limit=30");
+      input.mutate("/api/threads?limit=100");
       input.mutate(unstable_serialize(getThreadHistoryPaginationKey));
       void input.refreshConversationState?.().catch(() => {});
     },
@@ -735,6 +745,7 @@ export function Chat({
   const hasShownResumedToastRef = useRef(false);
   const hasShownStreamWarningRef = useRef(false);
   const hasStartedHandoffRequestRef = useRef(false);
+  const [liveThreadTitle, setLiveThreadTitle] = useState(threadTitle);
   const [chatExists, setChatExists] = useState(initialChatExists);
   const [queuedMessages, setQueuedMessages] = useState<QueuedUserMessage[]>([]);
   const [conversationState, setConversationState] = useState(
@@ -756,6 +767,10 @@ export function Chat({
     setChatExists(initialChatExists);
     setConversationState(initialConversationState);
   }, [id, initialChatExists, initialConversationState]);
+
+  useEffect(() => {
+    setLiveThreadTitle(threadTitle);
+  }, [threadTitle]);
 
   useEffect(() => {
     hasStartedHandoffRequestRef.current = false;
@@ -815,6 +830,8 @@ export function Chat({
     mutate,
     refreshConversationState,
     setDataStream: shared.setDataStream as Dispatch<SetStateAction<unknown[]>>,
+    setThreadTitle: setLiveThreadTitle,
+    threadId: id,
     setInteractionMode: shared.setInteractionMode,
     setShowCreditCardAlert: shared.setShowCreditCardAlert,
   });
@@ -1206,7 +1223,7 @@ export function Chat({
         status={controller.status}
         threadExists={chatExists}
         threadId={id}
-        threadTitle={threadTitle}
+        threadTitle={liveThreadTitle}
       />
       <ChatAlerts
         open={shared.showCreditCardAlert}
