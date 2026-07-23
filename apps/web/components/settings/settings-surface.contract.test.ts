@@ -51,6 +51,8 @@ contractTest(
     const inference = read("components/settings/inference-client.tsx");
     const environments = read("components/settings/environments-client.tsx");
     const setup = read("components/settings/setup-client.tsx");
+    const settingsLayout = read("app/(workspace)/settings/layout.tsx");
+    const teamSwitcher = read("components/team-switcher.tsx");
 
     assert.match(layout, /max-w-7xl/u);
     assert.match(layout, /<main className="[^"]*px-4/u);
@@ -64,6 +66,16 @@ contractTest(
     assert.match(environments, /FlyWorkspaceProviderClient/u);
     assert.match(setup, /Start first chat/u);
     assert.doesNotMatch(setup, /components\/ui\/card/u);
+    assert.equal(
+      settingsLayout.match(/lg:mr-0 lg:ml-8 lg:w-auto/gu)?.length,
+      2
+    );
+    assert.equal(settingsLayout.match(/max-w-\[100rem\]/gu)?.length, 2);
+    assert.match(teamSwitcher, /aria-label="Switch organization"/u);
+    assert.match(teamSwitcher, /tooltip="Switch organization"/u);
+    assert.doesNotMatch(teamSwitcher, />\s*Workspace\s*<\/span>/u);
+    assert.match(teamSwitcher, /bg-sidebar-primary/u);
+    assert.match(teamSwitcher, /text-sidebar-primary-foreground/u);
     assert.equal(
       fs.existsSync(
         path.join(
