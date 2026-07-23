@@ -630,6 +630,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_API.unauthorized
   ),
   api(
+    "app/api/organization/environments/[id]/workspaces/[workspaceId]/retry/route.ts",
+    "/api/organization/environments/:id/workspaces/:workspaceId/retry",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized
+  ),
+  api(
     "app/api/organization/environments/[id]/workspaces/[workspaceId]/backups/[backupId]/restore/route.ts",
     "/api/organization/environments/:id/workspaces/:workspaceId/backups/:backupId/restore",
     ADMIN_API.owner,

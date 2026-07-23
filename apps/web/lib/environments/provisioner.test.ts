@@ -399,6 +399,58 @@ contractTest("web.hermetic", "Environment updates recover an incompatible stoppe
   ]);
 });
 
+contractTest("web.hermetic", "Environment updates report Workspaces that require provisioning recovery", async () => {
+  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const { repository, provider } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "ready-workspace",
+      flyMachineId: "ready-machine",
+      flyVolumeId: "ready-volume",
+    },
+    {
+      id: "failed-workspace",
+      flyMachineId: null,
+      flyVolumeId: null,
+    },
+  ];
+  let completion:
+    | {
+        stage: string;
+        result: Record<string, unknown>;
+      }
+    | undefined;
+  repository.completeOperation = async (input) => {
+    completion = input;
+  };
+  provider.updateMachineImage = async (input) => ({
+    id: input.machineId,
+    state: "started",
+    region: "iad",
+  });
+
+  await createProvisioner(repository, provider, async () => {}).process(
+    "operation-id"
+  );
+
+  assert.deepEqual(completion, {
+    operationId: "operation-id",
+    stage: "environment.update.recovery_required",
+    result: {
+      gatewayMachineId: "gateway-machine-id",
+      routerImage,
+      runtimeImage,
+      workspaceCount: 2,
+      updatedWorkspaceCount: 1,
+      skippedWorkspaceIds: ["failed-workspace"],
+    },
+  });
+});
+
 contractTest("web.hermetic", "Workspace provisioning persists provider resources only after readiness", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.provision",
