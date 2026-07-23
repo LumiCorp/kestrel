@@ -760,20 +760,12 @@ contractTest("runtime.hermetic", "Kestrel compaction keeps paired tool provenanc
     },
   });
 
+  const replacedItemIds = compacted.compactions?.at(-1)?.replacedItemIds;
+  assert.ok(replacedItemIds);
+  assert.equal(replacedItemIds.includes("mt_1_0002_tool_call"), true);
+  assert.equal(replacedItemIds.includes("mt_1_0003_tool_result"), true);
   assert.equal(
-    compacted.compactions?.at(-1)?.replacedItemIds.includes(
-      "mt_1_0002_tool_call",
-    ),
-    true,
-  );
-  assert.equal(
-    compacted.compactions?.at(-1)?.replacedItemIds.includes(
-      "mt_1_0003_tool_result",
-    ),
-    true,
-  );
-  assert.equal(
-    compacted.items[0]?.content.includes("mt_1_0002_tool_call"),
+    compacted.items[0]?.content?.includes("mt_1_0002_tool_call"),
     false,
   );
 });
