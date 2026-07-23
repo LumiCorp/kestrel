@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
+import { composeKestrelOneProfile } from "../../src/profile/kestrelOnePolicy.js";
 import type { McpStatusSnapshot, ToolRunContext } from "../../src/index.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { validateWorkspaceSkillPackage } from "../../src/skills/index.js";
@@ -2230,6 +2231,45 @@ contractTest("runtime.hermetic", "Kestrel-One profile exposes only model-visible
       ),
     ["dialog.open", "dialog.send", "dialog.close"],
   );
+});
+
+contractTest("runtime.hermetic", "every canonical Kestrel One environment exposes dialogs without legacy delegation tools", async () => {
+  for (const environmentPresetId of [
+    "cli_dev_local",
+    "desktop_dev_local",
+    "workspace_hosted",
+  ] as const) {
+    const profile = composeKestrelOneProfile({
+      environmentPresetId,
+      overlay: {
+        additionalToolNames: [
+          "agent.spawn",
+          "delegate.spawn_child",
+        ],
+      },
+    }).profile;
+    const registry = new UnifiedToolRegistry({
+      allowlist: profile.toolAllowlist ?? [],
+      mcpManager: new MockMcpProvider({
+        healthy: true,
+        checkedAt: new Date().toISOString(),
+        servers: [],
+        tools: [],
+      }),
+    });
+    await registry.refresh();
+    assert.deepEqual(
+      registry.getModelTools()
+        .map((tool) => tool.name)
+        .filter(
+          (name) =>
+            name.startsWith("dialog.") ||
+            name.startsWith("delegate.") ||
+            name === "agent.spawn",
+        ),
+      ["dialog.open", "dialog.send", "dialog.close"],
+    );
+  }
 });
 
 contractTest("runtime.hermetic", "UnifiedToolRegistry blocks all legacy spawn tools even when allowlisted", async () => {

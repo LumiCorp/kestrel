@@ -3,7 +3,7 @@ id: architecture-root
 domain: runtime
 status: active
 owner: kestrel-runtime
-last_verified_at: 2026-07-20
+last_verified_at: 2026-07-23
 depends_on:
   - docs/index.md
   - docs/references/architecture-rules.json
@@ -85,6 +85,28 @@ runner-service URL.
 The runtime creates and continues sessions, advances runs through validated
 steps, coordinates model and tool calls, and records explicit outcomes. It does
 not depend on which product initiated the work.
+
+### Agent policy and environment composition
+
+Kestrel One has one versioned agent policy across Desktop, CLI/TUI, and the
+hosted product. The policy owns agent identity, prompt selection, interaction
+modes, safety defaults, and the model-visible collaborator contract. Only
+`dialog.open`, `dialog.send`, and `dialog.close` are model-visible collaboration
+tools; legacy spawn/delegate operations remain internal, and collaborators
+cannot create nested collaborators.
+
+Environment presets are separate from agent policy. `cli_dev_local`,
+`desktop_dev_local`, and `workspace_hosted` contribute only their runtime
+capabilities. Model, App/MCP, approval, concurrency, and instruction overlays
+are typed inputs to composition and cannot replace managed policy fields.
+Composition produces a resolved `RunnerProfile` snapshot without changing the
+Execution Protocol.
+
+Local Core is the authority for this composition on a user's machine. Desktop
+and CLI/TUI resolve typed selections through Core and execute with immutable,
+fingerprinted profile references. Local Core rejects inline execution profiles.
+Trusted remote application servers may continue sending resolved inline
+profiles to a runner service.
 
 ### Model and tool gateways
 
