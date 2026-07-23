@@ -181,8 +181,11 @@ export async function resolveEnvironmentGatewayConfig(input: {
         ),
     ]);
 
+  const hasNgrokPreviews = previews.some(
+    (preview) => preview.ingressProvider === "ngrok",
+  );
   let ngrokCredential = null;
-  if (ngrokConnection) {
+  if (ngrokConnection && hasNgrokPreviews) {
     try {
       const resolved = await resolveEnvironmentAppCredential({
         organizationId: environment.organizationId,
@@ -237,7 +240,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
     environmentId: environment.id,
     revision: now.toISOString(),
     ngrok:
-      ngrokConnection && ngrokCredential
+      hasNgrokPreviews && ngrokConnection && ngrokCredential
         ? {
             connectionId: ngrokConnection.id,
             authtoken: ngrokCredential.authtoken,
@@ -268,7 +271,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
               workspaceId: preview.workspaceId,
               machineId: workspace.flyMachineId,
               hostname: preview.hostname,
-              ingress: "ngrok" as const,
+              ingress: preview.ingressProvider,
               port: preview.port,
               expiresAt: preview.expiresAt.toISOString(),
               relayTicket: signPreviewRelayTicket({

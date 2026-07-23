@@ -6,10 +6,40 @@ import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { proxy } from "../proxy";
 import {
   authorizeAuthenticatedMutationOrigin,
+  canonicalProductionRedirect,
   getKestrelSessionCookie,
   resolveAuthSecurityPolicy,
   type AuthSecurityEnvironment,
 } from "./auth-security-policy";
+
+contractTest(
+  "web.auth.host-only-cookie",
+  "canonical production redirect matches only explicit legacy hosts",
+  () => {
+    const policy = resolveAuthSecurityPolicy({
+      NODE_ENV: "production",
+      BETTER_AUTH_URL: "https://kestrelagents.dev",
+      NEXT_PUBLIC_APP_URL: "https://kestrelagents.dev",
+      KESTREL_LEGACY_PRODUCTION_HOSTS: "kestrel-one-green.vercel.app",
+    });
+    assert.equal(
+      canonicalProductionRedirect({
+        host: "kestrel-one-green.vercel.app",
+        requestUrl: "https://kestrel-one-green.vercel.app/api/runtime/x?y=1",
+        policy,
+      })?.toString(),
+      "https://kestrelagents.dev/api/runtime/x?y=1",
+    );
+    assert.equal(
+      canonicalProductionRedirect({
+        host: "preview-kestrel-one-green.vercel.app",
+        requestUrl: "https://preview-kestrel-one-green.vercel.app/",
+        policy,
+      }),
+      null,
+    );
+  },
+);
 
 const productionEnvironment: AuthSecurityEnvironment = {
   NODE_ENV: "production",

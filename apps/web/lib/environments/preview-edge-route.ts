@@ -21,7 +21,7 @@ export class PreviewEdgeRouteError extends Error {
   }
 }
 
-type PreviewEdgeRouteDependencies = {
+export type PreviewEdgeRouteDependencies = {
   expectedServiceToken: string | undefined;
   privateKey: string | undefined;
   findActiveLease(input: {
@@ -33,6 +33,7 @@ type PreviewEdgeRouteDependencies = {
     environmentId: string;
     workspaceId: string;
     hostname: string;
+    ingressProvider: "ngrok" | "kestrel_edge";
     expiresAt: Date;
   } | null>;
   findEnvironment(environmentId: string): Promise<{
@@ -49,6 +50,7 @@ const defaultDependencies: PreviewEdgeRouteDependencies = {
     (await knowledgeDb.query.workspacePreviewLeases.findFirst({
       where: and(
         eq(schema.workspacePreviewLeases.hostname, hostname),
+        eq(schema.workspacePreviewLeases.ingressProvider, "kestrel_edge"),
         eq(schema.workspacePreviewLeases.status, "active"),
         gt(schema.workspacePreviewLeases.expiresAt, now)
       ),
@@ -58,6 +60,7 @@ const defaultDependencies: PreviewEdgeRouteDependencies = {
         environmentId: true,
         workspaceId: true,
         hostname: true,
+        ingressProvider: true,
         expiresAt: true,
       },
     })) ?? null,
