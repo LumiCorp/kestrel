@@ -367,7 +367,7 @@ export function GatewayAdminClient() {
           </div>
         </div>
 
-        <div className="grid min-h-[640px] lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="grid min-h-[640px] lg:grid-cols-[280px_minmax(0,1fr)]">
           <aside className="border-border/70 border-r bg-background/40">
             <div className="flex items-center justify-between px-5 py-4">
               <div>
@@ -664,7 +664,7 @@ function GatewayDetailPane({
   return (
     <div className="flex h-full flex-col">
       <div className="border-border/70 border-b px-6 py-5">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.95fr)] xl:items-start">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">
               <h3 className="font-semibold text-2xl">
@@ -697,7 +697,7 @@ function GatewayDetailPane({
             </div>
           </div>
 
-          <div className="grid gap-3 xl:min-w-[520px] xl:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div className="grid gap-3 xl:min-w-0 xl:grid-cols-[minmax(0,1fr)_auto_auto]">
             <div className="space-y-2">
               <Label className="text-[11px] text-muted-foreground/80 uppercase tracking-[0.18em]">
                 Replace API Key
@@ -818,8 +818,8 @@ function GatewayDetailPane({
         </div>
       </div>
 
-      <div className="flex-1 p-6">
-        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="min-w-0 flex-1 p-6">
+        <div className="mb-5 space-y-4">
           <div>
             <div className="font-medium text-sm">Model Catalog</div>
             <div className="text-muted-foreground text-xs">
@@ -827,7 +827,7 @@ function GatewayDetailPane({
               aliases, set defaults, or remove imported entries.
             </div>
           </div>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)] xl:grid-cols-[auto_minmax(220px,1fr)_minmax(150px,0.6fr)_minmax(150px,0.6fr)_auto]">
             <Button
               className="h-10"
               onClick={() => setIsAddModelOpen((current) => !current)}
@@ -839,7 +839,7 @@ function GatewayDetailPane({
             <div className="relative">
               <Filter className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-3 size-4 text-muted-foreground" />
               <Input
-                className="h-10 w-full border-border/70 bg-background pl-9 lg:min-w-[280px]"
+                className="h-10 w-full border-border/70 bg-background pl-9"
                 onChange={(event) => setFilter(event.target.value)}
                 placeholder="Search model, alias, or modality"
                 value={filter}
@@ -851,7 +851,7 @@ function GatewayDetailPane({
               }
               value={modalityFilter}
             >
-              <SelectTrigger className="h-10 min-w-[150px] border-border/70 bg-background">
+              <SelectTrigger className="h-10 w-full min-w-[150px] border-border/70 bg-background">
                 <SelectValue placeholder="All modalities" />
               </SelectTrigger>
               <SelectContent>
@@ -869,7 +869,7 @@ function GatewayDetailPane({
               ) => setApprovalFilter(value)}
               value={approvalFilter}
             >
-              <SelectTrigger className="h-10 min-w-[150px] border-border/70 bg-background">
+              <SelectTrigger className="h-10 w-full min-w-[150px] border-border/70 bg-background">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
               <SelectContent>
@@ -879,7 +879,7 @@ function GatewayDetailPane({
                 <SelectItem value="default">Default only</SelectItem>
               </SelectContent>
             </Select>
-            <Badge className="rounded-full px-2.5 py-1" variant="outline">
+            <Badge className="w-fit self-center rounded-full px-2.5 py-1" variant="outline">
               {filteredModels.length} / {bundle.models.length}
             </Badge>
           </div>
@@ -1002,8 +1002,8 @@ function GatewayDetailPane({
           </div>
         ) : null}
 
-        <div className="overflow-hidden rounded-md border border-border/70 bg-background">
-          <Table>
+        <div className="min-w-0 overflow-hidden rounded-md border border-border/70 bg-background">
+          <Table className="min-w-[1180px]">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="px-4">Model</TableHead>
