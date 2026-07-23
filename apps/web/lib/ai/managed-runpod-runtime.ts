@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, eq, inArray, isNotNull, ne, notInArray } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { meterRunPodUsage } from "@/lib/costs/metering";
 import { buildRunPodServerlessBaseUrl } from "./gateway-utils";
 import { createGateway, validateRunPodGatewayModelByRawId } from "./gateways";
 import {
@@ -729,7 +730,7 @@ export async function ingestManagedRunPodUsage(now = new Date()) {
     for (const record of records) {
       const deployment = byEndpoint.get(record.endpointId);
       if (!deployment) continue;
-      await knowledgeDb
+      const [usage] = await knowledgeDb
         .insert(schema.aiDeploymentUsage)
         .values({
           id: crypto.randomUUID(),
@@ -753,7 +754,9 @@ export async function ingestManagedRunPodUsage(now = new Date()) {
             diskSpaceBilledGb: record.diskSpaceBilledGb,
             updatedAt: new Date(),
           },
-        });
+        })
+        .returning();
+      if (usage) await meterRunPodUsage({ usage, deployment });
       stored += 1;
     }
   }

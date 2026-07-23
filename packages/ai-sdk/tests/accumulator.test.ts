@@ -79,6 +79,12 @@ contractTest("packages.hermetic", "completed output becomes canonical assistant 
 
   assert.equal(snapshot.terminalStatus, "completed");
   assert.equal(snapshot.assistantText, "The canonical answer.");
+  assert.deepEqual(snapshot.telemetry, {
+    inputTokens: 120,
+    cachedInputTokens: 20,
+    outputTokens: 30,
+    reasoningTokens: 10,
+  });
   assert.equal(snapshot.message.metadata?.kestrelTurnId, "turn-1");
   assert.deepEqual(snapshot.message.parts.at(-1), {
     type: "text",
@@ -219,6 +225,12 @@ function completedEvent(
           sessionId: "session-1",
           runId: "run-1",
           errors: [],
+          telemetry: {
+            inputTokens: 120,
+            cachedInputTokens: 20,
+            outputTokens: 30,
+            reasoningTokens: 10,
+          },
         },
       },
     },

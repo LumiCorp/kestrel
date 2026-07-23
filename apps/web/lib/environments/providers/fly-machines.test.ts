@@ -1051,6 +1051,7 @@ contractTest("web.hermetic", "Fly inventory preserves exact Workspace ownership 
           id: "volume-1",
           name: "ws_workspace1",
           region: "iad",
+          sizeGb: 20,
           attachedMachineId: "machine-1",
         },
       ],
@@ -1068,6 +1069,7 @@ contractTest("web.hermetic", "Fly Machine lookup preserves exact Workspace mount
         state: "stopped",
         region: "iad",
         config: {
+          guest: { cpu_kind: "shared", cpus: 2, memory_mb: 4096 },
           metadata: { kestrel_workspace_id: "workspace-1" },
           mounts: [
             {
@@ -1085,6 +1087,9 @@ contractTest("web.hermetic", "Fly Machine lookup preserves exact Workspace mount
       id: "machine-1",
       state: "stopped",
       region: "iad",
+      cpuKind: "shared",
+      cpus: 2,
+      memoryMb: 4096,
       workspaceId: "workspace-1",
       mounts: [
         {
