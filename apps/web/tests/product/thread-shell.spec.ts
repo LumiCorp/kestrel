@@ -99,21 +99,27 @@ contractTest(
     await expect(
       page.getByRole("heading", { name: "New Thread" })
     ).toBeVisible();
+    const threadShell = page.locator('[data-slot="thread-shell"]');
+    await expect(threadShell).toHaveCount(1);
 
-    await page.getByRole("button", { name: "Rename Thread" }).click();
-    const titleInput = page.getByRole("textbox", { name: "Thread title" });
+    await threadShell.getByRole("button", { name: "Rename Thread" }).click();
+    const titleInput = threadShell.getByRole("textbox", {
+      name: "Thread title",
+    });
     await titleInput.fill("Discard this title");
-    await titleInput.press("Escape");
+    await page.keyboard.press("Escape");
     await expect(
       page.getByRole("heading", { name: "New Thread" })
     ).toBeVisible();
+    await expectThreadTitle(page, threadId, "New thread");
 
-    await page.getByRole("button", { name: "Rename Thread" }).click();
+    await threadShell.getByRole("button", { name: "Rename Thread" }).click();
     await titleInput.fill("Saved after blur");
-    await titleInput.press("Tab");
+    await page.keyboard.press("Tab");
     await expect(
       page.getByRole("heading", { name: "Saved after blur" })
     ).toBeVisible();
+    await expectThreadTitle(page, threadId, "Saved after blur");
 
     await page
       .getByRole("button", { name: "Move Thread to Project" })
@@ -168,4 +174,14 @@ async function createThread(page: Page, text: string) {
     );
   }
   return threadId;
+}
+
+async function expectThreadTitle(
+  page: Page,
+  threadId: string,
+  title: string
+) {
+  const response = await page.context().request.get(`/api/threads/${threadId}`);
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toMatchObject({ title });
 }

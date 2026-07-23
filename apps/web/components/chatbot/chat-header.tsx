@@ -76,7 +76,7 @@ function PureChatHeader({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   const renamePendingRef = useRef(false);
-  const skipBlurSaveRef = useRef(false);
+  const cancelTitleSaveRef = useRef(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const saveTitleRef = useRef<(value: string) => void>(() => {});
 
@@ -84,7 +84,7 @@ function PureChatHeader({
     setDisplayTitle(initialTitle);
     setDraftTitle(initialTitle);
     setIsEditingTitle(false);
-    skipBlurSaveRef.current = false;
+    cancelTitleSaveRef.current = false;
   }, [initialTitle, threadId]);
 
   async function patchThread(body: Record<string, unknown>) {
@@ -109,7 +109,7 @@ function PureChatHeader({
   }
 
   async function saveTitle(value = draftTitle) {
-    if (renamePendingRef.current) return;
+    if (cancelTitleSaveRef.current || renamePendingRef.current) return;
 
     const nextTitle = value.trim();
     if (!nextTitle) {
@@ -258,10 +258,6 @@ function PureChatHeader({
                 autoFocus
                 className="h-9 min-w-0 max-w-[min(28rem,55vw)] font-semibold text-lg"
                 onBlur={(event) => {
-                  if (skipBlurSaveRef.current) {
-                    skipBlurSaveRef.current = false;
-                    return;
-                  }
                   void saveTitle(event.currentTarget.value);
                 }}
                 onChange={(event) => setDraftTitle(event.target.value)}
@@ -274,7 +270,7 @@ function PureChatHeader({
                   }
                   if (event.key === "Escape") {
                     event.preventDefault();
-                    skipBlurSaveRef.current = true;
+                    cancelTitleSaveRef.current = true;
                     setDraftTitle(displayTitle);
                     setIsEditingTitle(false);
                   }
@@ -294,7 +290,7 @@ function PureChatHeader({
                   className="size-8 shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/title:opacity-100 sm:group-focus-within/title:opacity-100"
                   disabled={isRenaming}
                   onClick={() => {
-                    skipBlurSaveRef.current = false;
+                    cancelTitleSaveRef.current = false;
                     setDraftTitle(displayTitle);
                     setIsEditingTitle(true);
                   }}
