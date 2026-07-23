@@ -337,6 +337,13 @@
       "when": 1784768400000,
       "tag": "0045_organization_cost_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1784816906000,
+      "tag": "0046_organization_app_connection_owner_type",
+      "breakpoints": true
     }
   ]
 }
