@@ -1367,6 +1367,12 @@ export interface DesktopManagedProjectRunPreviewUrl {
   count: number;
 }
 
+export interface DesktopManagedProjectRunOutputLine {
+  source: "stdout" | "stderr";
+  line: string;
+  observedAt: string;
+}
+
 export interface DesktopManagedProjectRun {
   runId: string;
   projectPath: string;
@@ -1383,6 +1389,7 @@ export interface DesktopManagedProjectRun {
   stopSignal?: string | undefined;
   previewUrls?: DesktopManagedProjectRunPreviewUrl[] | undefined;
   primaryPreviewUrl?: string | undefined;
+  outputTail?: DesktopManagedProjectRunOutputLine[] | undefined;
   stdoutTail: string[];
   stderrTail: string[];
 }

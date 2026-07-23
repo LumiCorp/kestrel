@@ -2073,7 +2073,18 @@ contractTest("runtime.process", "Local Core API owns Desktop project runs and st
     coreVersion: "0.6.0",
     idleTimeoutMs: 0,
   });
-  const events: Array<{ runs: Array<{ runId: string; status: string; primaryPreviewUrl?: string | undefined }> }> = [];
+  const events: Array<{
+    runs: Array<{
+      runId: string;
+      status: string;
+      primaryPreviewUrl?: string | undefined;
+      outputTail?: Array<{
+        source: "stdout" | "stderr";
+        line: string;
+        observedAt: string;
+      }> | undefined;
+    }>;
+  }> = [];
   try {
     const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
     const unsubscribe = client.subscribeDesktopProjectRuns({
@@ -2092,14 +2103,29 @@ contractTest("runtime.process", "Local Core API owns Desktop project runs and st
       await waitFor(() => events.some((event) => event.runs.some((entry) => entry.runId === run.runId)));
       await waitFor(async () => {
         const runs = await client.listDesktopProjectRuns();
-        return runs.some((entry) => entry.runId === run.runId && entry.primaryPreviewUrl === "http://127.0.0.1:4123/");
+        return runs.some((entry) =>
+          entry.runId === run.runId &&
+          entry.primaryPreviewUrl === "http://127.0.0.1:4123/" &&
+          entry.outputTail?.some((line) =>
+            line.source === "stdout" &&
+            line.line === "http://127.0.0.1:4123" &&
+            Number.isNaN(new Date(line.observedAt).getTime()) === false
+          ) === true
+        );
       });
+      await waitFor(() => events.some((event) =>
+        event.runs.some((entry) =>
+          entry.runId === run.runId &&
+          entry.outputTail?.some((line) => line.line === "http://127.0.0.1:4123") === true
+        )
+      ));
 
       const reset = await client.resetRuntimeStore();
       assert.equal(reset.status.state, "healthy");
       const preserved = (await client.listDesktopProjectRuns()).find((entry) => entry.runId === run.runId);
       assert.equal(preserved?.status, "running");
       assert.equal(preserved?.primaryPreviewUrl, "http://127.0.0.1:4123/");
+      assert.equal(preserved?.outputTail?.[0]?.source, "stdout");
 
       const stopped = await client.stopDesktopProjectRun(run.runId);
       assert.equal(stopped?.runId, run.runId);
