@@ -838,6 +838,42 @@ contractTest("web.hermetic", "Fly Workspace image updates repair missing gracefu
   );
 });
 
+contractTest("web.hermetic", "Fly Workspace image updates accept canonical graceful stop durations", async () => {
+  const requests: Array<{ method: string; body: unknown }> = [];
+  const digest = `sha256:${"c".repeat(64)}`;
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ method: init?.method ?? "GET", body });
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        instance_id: "instance-1",
+        config: {
+          image: `registry.fly.io/kestrel-one-runner@${digest}`,
+          env: { KESTREL_WORKSPACE_ID: "workspace-1" },
+          stop_config: {
+            signal: "SIGTERM",
+            timeout: "2m0s",
+          },
+        },
+      });
+    }) as typeof fetch,
+  });
+
+  await client.updateMachineImage({
+    appName: "app-1",
+    machineId: "machine-1",
+    runtimeImage: `registry.fly.io/kestrel-one-runner@${digest}`,
+    stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
+  });
+
+  assert.deepEqual(requests.map(({ method }) => method), ["GET"]);
+});
+
 contractTest("web.hermetic", "Fly workspace updates reconcile preview environment without replacing unrelated configuration", async () => {
   const requests: Array<{ method: string; body: unknown }> = [];
   const digest = `sha256:${"a".repeat(64)}`;
