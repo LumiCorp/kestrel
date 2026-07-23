@@ -692,8 +692,9 @@ contractTest("runtime.process", "Local Core runtime-store reset rejects an activ
   });
   try {
     await writeFile(path.join(paths.pgliteDataPath, "active-run-sentinel"), "present\n", "utf8");
+    const profileId = await resolveCliExecutionProfile(client);
     const stream = sdk.streamRun({
-      profileId: "reference",
+      profileId,
       turn: {
         sessionId: "session-reset-active",
         runId: "run-reset-active",
@@ -931,8 +932,9 @@ contractTest("runtime.process", "Local Core serializes reset against every other
     target: { kind: "local", socketPath: server.socketPath, authToken: server.token },
   });
   try {
+    const profileId = await resolveCliExecutionProfile(client);
     const stream = sdk.streamRun({
-      profileId: "reference",
+      profileId,
       turn: {
         sessionId: "session-reset-maintenance",
         runId: "run-reset-maintenance",
@@ -1341,8 +1343,14 @@ contractTest("runtime.process", "Local Core replays durable execution events to 
         },
       });
       try {
+        const profileId = await resolveCliExecutionProfile(
+          new LocalCoreClient({
+            socketPath: firstServer.socketPath,
+            token: firstServer.token,
+          }),
+        );
         const stream = sdk.streamRun({
-          profileId: "reference",
+          profileId,
           turn: {
             sessionId: "session-local-core-durable",
             runId: "run-local-core-durable",
@@ -1455,13 +1463,14 @@ contractTest("runtime.process", "CLI disconnect leaves a durable Core run availa
         resolveStarted?.();
       }
     });
+    const profileId = await resolveCliExecutionProfile(
+      new LocalCoreClient({
+        socketPath: server.socketPath,
+        token: server.token,
+      }),
+    );
     const pending = cli.sendCommand("run.start", {
-      profile: {
-        id: "reference",
-        label: "Reference",
-        agent: "reference-react",
-        sessionPrefix: "reference",
-      },
+      profileId,
       turn: {
         sessionId: "session-cli-disconnect",
         runId: "run-cli-disconnect",
@@ -1812,9 +1821,21 @@ contractTest("runtime.process", "Local Core registers a Core-owned Desktop execu
     const initialRuntimeConfiguration = await client.runtimeConfiguration();
     assert.equal(initialRuntimeConfiguration.generation, 0);
     assert.equal(initialRuntimeConfiguration.modelPolicy.provider, "openrouter");
-    const initial = await client.desktopExecutionConfig();
+    const initialResponse = await client.getJson(
+      "/v1/desktop/execution-config",
+    ) as { executionConfig: { profileId?: unknown } };
+    assert.match(
+      String(initialResponse.executionConfig.profileId),
+      /^kestrel-one:desktop_dev_local:[a-f0-9]{64}$/u,
+    );
+    const initial = parseLocalCoreDesktopExecutionConfig(
+      initialResponse.executionConfig,
+    );
     assert.equal(initial.version, 1);
-    assert.equal(initial.profileId, LOCAL_CORE_DESKTOP_PROFILE_ID);
+    assert.match(
+      initial.profileId,
+      /^kestrel-one:desktop_dev_local:[a-f0-9]{64}$/u,
+    );
     assert.equal(initial.resolvedProfile.id, initial.profileId);
     assert.equal(initial.resolvedProfile.shellKind, "desktop");
     assert.equal(initial.resolvedProfile.presetId, "desktop_dev_local");
@@ -1854,16 +1875,42 @@ contractTest("runtime.process", "Local Core registers a Core-owned Desktop execu
     const storedProfiles = await client.getJson("/v1/profiles") as {
       profiles: Array<Record<string, unknown>>;
     };
-    await assert.rejects(
-      () => client.putJson("/v1/profiles", {
-        profiles: storedProfiles.profiles.map((profile, index) => index === 0
-          ? { ...profile, id: LOCAL_CORE_DESKTOP_PROFILE_ID }
-          : profile),
-      }),
-      (error) => error instanceof LocalCoreApiError
-        && error.statusCode === 409
-        && (error.body as { error?: { code?: string } }).error?.code === "LOCAL_CORE_PROFILE_ID_RESERVED",
+    const profilesWithLegacyDesktop = storedProfiles.profiles.map(
+      (profile, index) =>
+        index === 0
+          ? {
+              ...profile,
+              id: LOCAL_CORE_DESKTOP_PROFILE_ID,
+              sessionPrefix: LOCAL_CORE_DESKTOP_PROFILE_ID,
+            }
+          : profile,
     );
+    await client.putJson("/v1/profiles", {
+      profiles: profilesWithLegacyDesktop,
+    });
+    const readableLegacyProfiles = await client.getJson(
+      "/v1/profiles",
+    ) as { profiles: Array<{ id?: string }> };
+    assert.equal(
+      readableLegacyProfiles.profiles.some(
+        (profile) => profile.id === LOCAL_CORE_DESKTOP_PROFILE_ID,
+      ),
+      true,
+    );
+    await assert.rejects(
+      () =>
+        client.resolveExecutionProfile({
+          client: "cli",
+          profileId: LOCAL_CORE_DESKTOP_PROFILE_ID,
+        }),
+      (error) =>
+        error instanceof LocalCoreApiError &&
+        error.statusCode === 409 &&
+        /historical inspection only/u.test(error.message),
+    );
+    await client.putJson("/v1/profiles", {
+      profiles: storedProfiles.profiles,
+    });
 
     await assert.rejects(
       () => client.patchSettings({
@@ -1890,6 +1937,31 @@ contractTest("runtime.process", "Local Core registers a Core-owned Desktop execu
           visionInputEnabled: true,
         },
       },
+      modelConfigurations: [
+        {
+          id: "desktop-default",
+          name: "Default",
+          currentRevision: 1,
+          revisions: [
+            {
+              revision: 1,
+              createdAt: "2026-07-23T00:00:00.000Z",
+              policy: {
+                version: 1,
+                provider: "ollama",
+                model: "llama3.2:latest",
+                modelByStage: {
+                  "agent.loop": "llama3.2:latest",
+                },
+                modelCapabilities: {
+                  visionInputEnabled: true,
+                },
+              },
+            },
+          ],
+        },
+      ],
+      mcpServers: [],
     });
 
     const updatedRuntimeConfiguration = await client.runtimeConfiguration();
@@ -1911,8 +1983,18 @@ contractTest("runtime.process", "Local Core registers a Core-owned Desktop execu
     assert.equal(savedProfiles.profiles[0]?.modelProvider, "ollama");
     assert.equal(savedProfiles.profiles[0]?.model, "llama3.2:latest");
 
-    const resolved = await client.desktopExecutionConfig();
-    assert.equal(resolved.profileId, initial.profileId);
+    const resolved = await client.resolveExecutionProfile({
+      client: "desktop",
+      selection: {
+        modelConfiguration: { id: "desktop-default", revision: 1 },
+        apps: [],
+      },
+    });
+    assert.match(
+      resolved.profileId,
+      /^kestrel-one:desktop_dev_local:[a-f0-9]{64}$/u,
+    );
+    assert.equal(resolved.resolvedProfile.agentProfileId, "kestrel-one");
     assert.equal(resolved.resolvedProfile.modelProvider, "ollama");
     assert.equal(resolved.resolvedProfile.model, "llama3.2:latest");
 
@@ -2240,6 +2322,18 @@ async function withTimeout<T>(
       clearTimeout(timer);
     }
   }
+}
+
+async function resolveCliExecutionProfile(
+  client: LocalCoreClient,
+  profileId = "reference",
+): Promise<string> {
+  return (
+    await client.resolveExecutionProfile({
+      client: "cli",
+      profileId,
+    })
+  ).profileId;
 }
 
 function restoreEnv(key: string, value: string | undefined): void {

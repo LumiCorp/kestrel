@@ -1,10 +1,10 @@
 import { homedir } from "node:os";
 import path from "node:path";
-import {
-  LOCAL_CORE_STATE_EPOCH,
-  type KestrelCoreHomeResolution,
-  type LocalCorePaths,
+import type {
+  KestrelCoreHomeResolution,
+  LocalCorePaths,
 } from "./contracts.js";
+import { LOCAL_CORE_STATE_EPOCH } from "./constants.js";
 
 export function resolveKestrelCoreHome(
   env: NodeJS.ProcessEnv = process.env,
