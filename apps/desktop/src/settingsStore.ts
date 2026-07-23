@@ -16,6 +16,10 @@ import {
   resolveProfileWithModelPolicy,
 } from "../../../src/profile/modelPolicy.js";
 import {
+  composeKestrelOneProfile,
+  KESTREL_ONE_POLICY_ID,
+} from "../../../src/profile/kestrelOnePolicy.js";
+import {
   createDesktopModelConfiguration,
   DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
   DESKTOP_DEFAULT_ENABLED_APP_IDS,
@@ -30,7 +34,6 @@ import {
   hasDesktopStandardAppRequiredTools,
   selectDesktopStandardAppTools,
 } from "../../../src/desktopShell/standardAppConnections.js";
-import { createWebDemoProfile } from "../../../src/web/profile.js";
 import type { McpServerConfig } from "../../../src/mcp/contracts.js";
 import type {
   DesktopCapabilityPackId,
@@ -460,7 +463,9 @@ export function buildDesktopRunnerProfile(
   settings?: DesktopSettings | undefined,
 ) {
   const profile = resolveProfileWithModelPolicy(
-    createWebDemoProfile("desktop"),
+    composeKestrelOneProfile({
+      environmentPresetId: "desktop_dev_local",
+    }).profile,
     modelPolicy,
   );
   if (settings === undefined) return profile;
@@ -475,6 +480,7 @@ export function buildDesktopRunnerProfile(
   );
   return {
     ...profile,
+    agentProfileId: KESTREL_ONE_POLICY_ID,
     approvalPolicyPackId: settings.approvalPolicyPackId,
     devShell: {
       ...(profile.devShell ?? { enabled: false }),

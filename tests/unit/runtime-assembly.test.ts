@@ -6,6 +6,7 @@ import {
   AssemblyPolicyEvaluator,
   RuntimeComposer,
 } from "../../src/orchestration/index.js";
+import { composeKestrelOneProfile } from "../../src/profile/kestrelOnePolicy.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -366,6 +367,65 @@ contractTest("runtime.hermetic", "RuntimeComposer keeps runtime-internal tools w
     "delegate.spawn_child",
   ]);
   assert.equal(recomposed?.bundle?.source, "runtime_derived");
+});
+
+contractTest("runtime.hermetic", "RuntimeComposer appends one canonical assembly transition for legacy Desktop threads", async () => {
+  const store = new InMemorySessionStore();
+  const legacyBundle = {
+    bundleId: "bundle:reference-web:legacy-desktop",
+    label: "Reference React on desktop:desktop_dev_local",
+    source: "profile_default" as const,
+    toolAllowlist: ["FinalizeAnswer"],
+    specialistIds: [],
+    metadata: {
+      profileId: "local-core-desktop",
+      agentProfileId: "reference-web",
+      environmentPresetId: "desktop_dev_local",
+    },
+    createdAt: "2026-07-22T00:00:00.000Z",
+    updatedAt: "2026-07-22T00:00:00.000Z",
+  };
+  await store.upsertAssemblyBundle(legacyBundle);
+  const thread = buildThread("thread-legacy-desktop");
+  await store.ensureSession(thread.sessionId);
+  await store.upsertThread(thread);
+  await store.appendThreadAssemblyRecord({
+    recordId: "assembly-record-legacy-desktop",
+    threadId: thread.threadId,
+    bundleId: legacyBundle.bundleId,
+    cause: "thread_start",
+    authority: "profile",
+    createdAt: "2026-07-22T00:00:00.000Z",
+  });
+  const catalog = new AssemblyCatalog({
+    store,
+    profile: composeKestrelOneProfile({
+      environmentPresetId: "desktop_dev_local",
+    }).profile,
+  });
+  const composer = new RuntimeComposer({
+    store,
+    catalog,
+    policyEvaluator: new AssemblyPolicyEvaluator(),
+  });
+
+  const migrated = await composer.composeThreadAssembly({
+    thread,
+    cause: "turn_start",
+  });
+  const repeated = await composer.composeThreadAssembly({
+    thread,
+    cause: "turn_start",
+  });
+
+  assert.equal(migrated.record.cause, "profile_migration");
+  assert.equal(migrated.record.authority, "profile");
+  assert.equal(migrated.bundle?.metadata?.agentProfileId, "kestrel-one");
+  assert.equal(repeated.record.recordId, migrated.record.recordId);
+  assert.equal(
+    (await store.listThreadAssemblyRecords(thread.threadId)).length,
+    2,
+  );
 });
 
 function buildProfile(input?: { toolAllowlist?: string[] | undefined }): TuiProfile {

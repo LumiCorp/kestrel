@@ -53,6 +53,7 @@ export interface OperatorAssemblySummary {
     | "proposal"
     | "capability_loss"
     | "policy_change"
+    | "profile_migration"
     | "context_pressure"
     | "inheritance"
     | undefined;

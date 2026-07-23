@@ -100,6 +100,10 @@ export class AssemblyCatalog {
             profileId: this.profile.id,
             agent: this.profile.agent,
             defaultInteractionMode: this.profile.defaultInteractionMode,
+            promptVariant:
+              runtimeIdentity.agentProfileId === "kestrel-one"
+                ? `kestrel-one:${this.profile.defaultInteractionMode ?? "chat"}`
+                : `reference-react:${this.profile.defaultInteractionMode ?? "chat"}`,
             agentProfileId: runtimeIdentity.agentProfileId,
             agentProfileLabel: runtimeIdentity.agentProfileLabel,
             environmentShellKind: runtimeIdentity.environmentShellKind,
