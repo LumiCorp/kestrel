@@ -29,7 +29,7 @@ The approved Fly builder may publish the image without deploying it:
 
 ```bash
 fly deploy . \
-  --config apps/preview-edge/fly.build.toml \
+  --config fly.preview-edge.toml \
   --build-only \
   --push \
   --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}"
