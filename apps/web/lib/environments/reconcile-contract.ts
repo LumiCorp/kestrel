@@ -54,7 +54,6 @@ export function assessWorkspaceVolumeBinding(input: {
     return degraded("Workspace Machine Volume is not mounted at /workspace.");
   }
   if (
-    mount.name !== input.expectedVolumeName ||
     input.inventory.volumes.filter((volume) => volume.id === mount.volumeId)
       .length !== 1
   ) {
@@ -65,7 +64,6 @@ export function assessWorkspaceVolumeBinding(input: {
   );
   if (
     !mountedVolume ||
-    mountedVolume.name !== input.expectedVolumeName ||
     mountedVolume.region !== input.environmentRegion ||
     mountedVolume.attachedMachineId !== input.machine.id
   ) {
@@ -73,6 +71,12 @@ export function assessWorkspaceVolumeBinding(input: {
   }
   if (mount.volumeId === input.recordedVolumeId) {
     return { status: "matched", volumeId: mount.volumeId };
+  }
+  if (
+    mount.name !== input.expectedVolumeName ||
+    mountedVolume.name !== input.expectedVolumeName
+  ) {
+    return degraded("Mounted Workspace Volume identity is not canonical.");
   }
   if (
     input.recordedVolumeId &&
@@ -112,6 +116,32 @@ export function selectOrphanVolumeIds(input: {
     )
     .map((volume) => volume.id)
     .sort();
+}
+
+export function retainedFailedRestoreResourceIds(
+  results: readonly unknown[]
+): { machineIds: Set<string>; volumeIds: Set<string> } {
+  const machineIds = new Set<string>();
+  const volumeIds = new Set<string>();
+  for (const value of results) {
+    if (!(value && typeof value === "object" && !Array.isArray(value))) {
+      continue;
+    }
+    const result = value as Record<string, unknown>;
+    if (
+      typeof result.oldMachineId === "string" &&
+      result.oldMachineId.length > 0
+    ) {
+      machineIds.add(result.oldMachineId);
+    }
+    if (
+      typeof result.oldVolumeId === "string" &&
+      result.oldVolumeId.length > 0
+    ) {
+      volumeIds.add(result.oldVolumeId);
+    }
+  }
+  return { machineIds, volumeIds };
 }
 
 function degraded(reason: string): WorkspaceVolumeBindingAssessment {
