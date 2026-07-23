@@ -96,15 +96,12 @@ export function createSqlExecutorFromEnv(options: CreateSessionStoreOptions = {}
     };
   }
 
-  const sqlitePath =
-    resolveKestrelHomePath({
-      ...process.env,
-      KESTREL_HOME:
-      options.sqlitePath ??
-        readOptionalString(process.env.KESTREL_SQLITE_PATH) ??
-        defaults.sqlitePath ??
-        path.join(resolveRuntimeHomePath(), "runtime.db"),
-    });
+  const sqlitePath = resolveSqliteStorePath(
+    options.sqlitePath ??
+      readOptionalString(process.env.KESTREL_SQLITE_PATH) ??
+      defaults.sqlitePath ??
+      path.join(resolveRuntimeHomePath(), "runtime.db"),
+  );
 
   mkdirSync(path.dirname(sqlitePath), { recursive: true });
   // "sqlite" is a local durable mode backed by PGlite so we can preserve Postgres semantics.
@@ -197,6 +194,10 @@ function resolveRuntimeSettingsPath(): string {
 
 function resolveRuntimeHomePath(): string {
   return resolveKestrelHomePath();
+}
+
+function resolveSqliteStorePath(candidate: string): string {
+  return path.resolve(candidate);
 }
 
 class LazyReadySqlExecutor implements SqlExecutor {
