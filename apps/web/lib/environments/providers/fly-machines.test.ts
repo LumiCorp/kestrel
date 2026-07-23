@@ -986,6 +986,19 @@ contractTest("web.hermetic", "replacement resources are idempotently namespaced 
     fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
       requests.push({ url: String(url), init: init ?? {} });
       const pathname = new URL(String(url)).pathname;
+      if (init?.method === "GET" && pathname.endsWith("/machines")) {
+        return Response.json([
+          {
+            id: "old-machine-id",
+            state: "stopped",
+            region: "iad",
+            config: {
+              image: "registry.fly.io/runtime@sha256:old",
+              stop_config: null,
+            },
+          },
+        ]);
+      }
       if (init?.method === "GET") return Response.json([]);
       if (pathname.endsWith("/volumes")) {
         const body = JSON.parse(String(init?.body));
