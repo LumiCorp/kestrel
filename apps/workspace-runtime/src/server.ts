@@ -134,14 +134,33 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "POST" && url.pathname === "/v1/skills") {
       requireCapability(ticket.capabilities, "workspace.skills.write");
-      const skill = await workspaceSkills.install(parseWorkspaceSkillSource(parseJson(await readBody(request, 100_000))));
+      const skill = await workspaceSkills.install(
+        parseWorkspaceSkillSource(
+          parseJson(await readBody(request, 100_000)),
+        ),
+      );
       writeJson(response, 201, { skill });
       return;
     }
     if (request.method === "POST" && url.pathname === "/v1/skills/sync") {
       requireCapability(ticket.capabilities, "workspace.skills.write");
-      if (!(await workspaceIsIdle())) throw new WorkspaceRequestError(409, "WORKSPACE_SKILLS_ACTIVE_RUN");
+      if (!(await workspaceIsIdle())) {
+        throw new WorkspaceRequestError(409, "WORKSPACE_SKILLS_ACTIVE_RUN");
+      }
       writeJson(response, 200, { skills: await workspaceSkills.syncAll() });
+      return;
+    }
+    if (request.method === "PUT" && url.pathname === "/v1/skills/catalog") {
+      requireCapability(ticket.capabilities, "workspace.skills.write");
+      if (!(await workspaceIsIdle())) {
+        throw new WorkspaceRequestError(409, "WORKSPACE_SKILLS_ACTIVE_RUN");
+      }
+      const installations = parseDesiredWorkspaceSkillCatalog(
+        parseJson(await readBody(request, 250_000)),
+      );
+      writeJson(response, 200, {
+        skills: await workspaceSkills.reconcile(installations),
+      });
       return;
     }
     const workspaceSkillPath = url.pathname.match(/^\/v1\/skills\/([^/]+)$/u);
@@ -1019,6 +1038,21 @@ function parseWorkspaceSkillSource(value: unknown): WorkspaceSkillSource {
     branch: value.branch,
     ...(typeof value.path === "string" && value.path.trim().length > 0 ? { path: value.path } : {}),
   };
+}
+
+function parseDesiredWorkspaceSkillCatalog(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.installations) || value.installations.length > 100) {
+    throw new WorkspaceRequestError(400, "WORKSPACE_SKILL_CATALOG_INVALID");
+  }
+  return value.installations.map((installation) => {
+    if (!isRecord(installation) || typeof installation.installationId !== "string") {
+      throw new WorkspaceRequestError(400, "WORKSPACE_SKILL_CATALOG_INVALID");
+    }
+    return {
+      installationId: installation.installationId,
+      source: parseWorkspaceSkillSource(installation.source),
+    };
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

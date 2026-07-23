@@ -153,8 +153,8 @@
   --palette-light-code-number: #8b4b1d;
   --palette-light-selection: #111111;
   --palette-light-selection-foreground: #fffdf7;
-  --palette-light-message-user: #005bd6;
-  --palette-light-message-user-foreground: #ffffff;
+  --palette-light-message-user: #e8efe9;
+  --palette-light-message-user-foreground: #111111;
 
   --palette-dark-background: #111111;
   --palette-dark-foreground: #f7f3e8;

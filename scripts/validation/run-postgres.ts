@@ -6,6 +6,7 @@ const files = execFileSync("git", ["ls-files", "-z", "apps/web/**/*.postgres.tes
   .concat(
     "apps/web/lib/costs/store.postgres.test.ts",
     "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
+    "apps/web/lib/projects/skills.postgres.test.ts",
   )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort()
@@ -30,6 +31,7 @@ const groups = [
       "lib/environments/reconcile-lock.postgres.test.ts",
       "lib/environments/store.postgres.test.ts",
       "lib/integrations/github-action-approvals.postgres.test.ts",
+      "lib/projects/skills.postgres.test.ts",
     ],
   },
   {

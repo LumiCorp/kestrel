@@ -15,6 +15,11 @@ export interface WorkspaceSkillSource {
   path?: string | undefined;
 }
 
+export interface DesiredWorkspaceSkillInstallation {
+  installationId: string;
+  source: WorkspaceSkillSource;
+}
+
 export interface WorkspaceSkillManifest {
   name: string;
   description: string;

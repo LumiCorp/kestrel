@@ -119,8 +119,8 @@ const lumiLight: PaletteTokens = {
   "code-number": "#8b4b1d",
   selection: "#111111",
   "selection-foreground": "#fffdf7",
-  "message-user": "#005bd6",
-  "message-user-foreground": "#ffffff",
+  "message-user": "#e8efe9",
+  "message-user-foreground": "#111111",
 };
 
 const lumiDark: PaletteTokens = {
@@ -209,8 +209,8 @@ const graphiteLight: PaletteTokens = {
   "code-number": "#405f78",
   selection: "#293640",
   "selection-foreground": "#ffffff",
-  "message-user": "#405f78",
-  "message-user-foreground": "#ffffff",
+  "message-user": "#e4e9ed",
+  "message-user-foreground": "#17191c",
 };
 
 const graphiteDark: PaletteTokens = {
@@ -299,8 +299,8 @@ const harborLight: PaletteTokens = {
   "code-number": "#1f5f8f",
   selection: "#173b55",
   "selection-foreground": "#ffffff",
-  "message-user": "#1f5f8f",
-  "message-user-foreground": "#ffffff",
+  "message-user": "#dceaf1",
+  "message-user-foreground": "#102333",
 };
 
 const harborDark: PaletteTokens = {
@@ -389,8 +389,8 @@ const juniperLight: PaletteTokens = {
   "code-number": "#38694f",
   selection: "#234331",
   "selection-foreground": "#ffffff",
-  "message-user": "#38694f",
-  "message-user-foreground": "#ffffff",
+  "message-user": "#dfe9da",
+  "message-user-foreground": "#17251c",
 };
 
 const juniperDark: PaletteTokens = {
@@ -479,8 +479,8 @@ const emberLight: PaletteTokens = {
   "code-number": "#984426",
   selection: "#5a2a1b",
   "selection-foreground": "#ffffff",
-  "message-user": "#984426",
-  "message-user-foreground": "#ffffff",
+  "message-user": "#efe0d3",
+  "message-user-foreground": "#2b1c16",
 };
 
 const emberDark: PaletteTokens = {
@@ -569,8 +569,8 @@ const irisLight: PaletteTokens = {
   "code-number": "#67468e",
   selection: "#4d3568",
   "selection-foreground": "#ffffff",
-  "message-user": "#67468e",
-  "message-user-foreground": "#ffffff",
+  "message-user": "#e9dff0",
+  "message-user-foreground": "#281d31",
 };
 
 const irisDark: PaletteTokens = {

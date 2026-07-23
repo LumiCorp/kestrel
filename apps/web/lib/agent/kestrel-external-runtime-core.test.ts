@@ -67,6 +67,16 @@ contractTest("web.hermetic", "external replies use the hosted chat id and canoni
         capabilities: [{ name: "kestrel_one.search_knowledge_documents" }],
       },
     },
+    workspaceSkills: [
+      {
+        installationId: "skill_123",
+        name: "review",
+        description: "Review changes.",
+        commitSha: "a".repeat(40),
+        contentDigest: `sha256:${"b".repeat(64)}`,
+        skillFile: ".kestrel/skills/skill_123/revisions/review/SKILL.md",
+      },
+    ],
   });
 
   assert.deepEqual(capturedTurn, {
@@ -79,6 +89,16 @@ contractTest("web.hermetic", "external replies use the hosted chat id and canoni
         capabilities: [{ name: "kestrel_one.search_knowledge_documents" }],
       },
     },
+    workspaceSkills: [
+      {
+        installationId: "skill_123",
+        name: "review",
+        description: "Review changes.",
+        commitSha: "a".repeat(40),
+        contentDigest: `sha256:${"b".repeat(64)}`,
+        skillFile: ".kestrel/skills/skill_123/revisions/review/SKILL.md",
+      },
+    ],
   });
   assert.deepEqual(capturedContext, context);
   assert.equal(result.userMessage.role, "user");

@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { contractTest } from "../helpers/contract-test.js";
 import {
+  normalizeWorkspaceSkillSource,
   parseSkillManifest,
   materializeWorkspaceSkillSnapshot,
   validateWorkspaceSkillPackage,
@@ -18,6 +19,30 @@ import {
 const execFileAsync = promisify(execFile);
 
 contractTest("runtime.hermetic", "workspace skill source accepts only public credential-free HTTPS Git URLs", async () => {
+  assert.deepEqual(
+    normalizeWorkspaceSkillSource({
+      gitUrl: " https://git.example/acme/skills.git ",
+      branch: " main ",
+      path: "./skills/review/",
+    }),
+    {
+      gitUrl: "https://git.example/acme/skills.git",
+      branch: "main",
+      path: "skills/review",
+    },
+  );
+  for (const source of [
+    { gitUrl: "http://git.example/acme/skills.git", branch: "main" },
+    { gitUrl: "https://git.example:8443/acme/skills.git", branch: "main" },
+    { gitUrl: "https://git.example/acme/skills.git", branch: "../main" },
+    {
+      gitUrl: "https://git.example/acme/skills.git",
+      branch: "main",
+      path: "../escape",
+    },
+  ]) {
+    assert.throws(() => normalizeWorkspaceSkillSource(source));
+  }
   assert.deepEqual(
     await validateWorkspaceSkillSource(
       { gitUrl: "https://git.example/acme/skills.git", branch: "main", path: "skills/review" },
@@ -211,6 +236,44 @@ contractTest("runtime.hermetic", "workspace skill changes remain pending until t
   assert.equal((await manager.list())[0]?.status, "removal_pending");
   idle = true;
   assert.deepEqual(await manager.syncAll(), []);
+  assert.deepEqual(await manager.list(), []);
+});
+
+contractTest("runtime.hermetic", "workspace skill reconciliation uses canonical ids and removes absent installations", async () => {
+  const workspaceRoot = await fixtureRoot("skill-reconcile-");
+  const commits = new Map([
+    ["main", "e".repeat(40)],
+    ["next", "f".repeat(40)],
+  ]);
+  const installer = new WorkspaceSkillInstaller({
+    resolveHost: async () => ["93.184.216.34"],
+    runGit: async ({ args, cwd }) => {
+      if (args[0] === "rev-parse") return `${commits.get("main")}\n`;
+      if (args[0] === "checkout") {
+        await writeFile(path.join(cwd!, "SKILL.md"), skillFile("canonical-skill"));
+      }
+      return "";
+    },
+  });
+  const manager = new WorkspaceSkillManager(
+    { workspaceId: "workspace-canonical", workspaceRoot },
+    { installer },
+  );
+  const [installed] = await manager.reconcile([{
+    installationId: "canonical-id",
+    source: { gitUrl: "https://git.example/acme/skill.git", branch: "main" },
+  }]);
+  assert.equal(installed?.installationId, "canonical-id");
+  assert.equal(installed?.status, "ready");
+  assert.equal(installed?.revision?.installationId, "canonical-id");
+
+  const [updated] = await manager.reconcile([{
+    installationId: "canonical-id",
+    source: { gitUrl: "https://git.example/acme/skill.git", branch: "next" },
+  }]);
+  assert.equal(updated?.source.branch, "next");
+  assert.equal(updated?.status, "ready");
+  assert.deepEqual(await manager.reconcile([]), []);
   assert.deepEqual(await manager.list(), []);
 });
 

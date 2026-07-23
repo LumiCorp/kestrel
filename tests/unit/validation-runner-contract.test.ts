@@ -248,6 +248,10 @@ contractTest(
       assert.match(sharedBuild, new RegExp(`--filter ${packageName}`, "u"));
     }
     assert.match(sharedBuild, /run build:self$/u);
+    assert.match(
+      rootPackage.scripts?.["web:prepare"] ?? "",
+      /--filter @kestrel-agents\/workspace-skills build/u,
+    );
     assert.match(runnerDockerIgnore, /^tests\/\*$/mu);
     assert.match(runnerDockerIgnore, /^!tests\/helpers\/$/mu);
     assert.match(

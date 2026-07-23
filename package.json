@@ -64,7 +64,7 @@
     "test": "pnpm validate",
     "test:unit": "node scripts/validate.mjs --leaf hermetic .",
     "test:integration": "node scripts/validate.mjs --leaf process .",
-    "web:prepare": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm run ai-sdk:build && pnpm run next:build",
+    "web:prepare": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm --filter @kestrel-agents/workspace-skills build && pnpm run ai-sdk:build && pnpm run next:build",
     "web:dev": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one dev",
     "web:build": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one preflight:vercel:production && pnpm --filter @kestrel/kestrel-one build",
     "web:start": "pnpm --filter @kestrel/kestrel-one start",

@@ -14,7 +14,7 @@ function read(relativePath: string) {
 }
 
 contractTest("web.hermetic", "organization cost ledger uses additive numeric money tables", () => {
-  const migration = read("lib/db/migrations/0044_organization_cost_ledger.sql");
+  const migration = read("lib/db/migrations/0045_organization_cost_ledger.sql");
   for (const table of [
     "organization_usage_events",
     "cost_rate_cards",

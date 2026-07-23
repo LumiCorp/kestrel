@@ -335,39 +335,41 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
             <TabsTrigger value="skills">Skills</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
-          <div className="flex gap-2">
-            {!initial.project.archivedAt && (
-              <Button asChild>
-                <Link href={`/projects/${initial.project.id}/threads/new`}>
-                  <Plus className="size-4" /> New Thread
-                </Link>
-              </Button>
-            )}
-            {initial.role === "owner" &&
-              (initial.project.archivedAt ? (
-                <>
+          {activeTab === "overview" ? (
+            <div className="flex gap-2">
+              {!initial.project.archivedAt && (
+                <Button asChild>
+                  <Link href={`/projects/${initial.project.id}/threads/new`}>
+                    <Plus className="size-4" /> New Thread
+                  </Link>
+                </Button>
+              )}
+              {initial.role === "owner" &&
+                (initial.project.archivedAt ? (
+                  <>
+                    <Button
+                      onClick={() => void setArchived(false)}
+                      variant="outline"
+                    >
+                      <RotateCcw className="size-4" /> Restore
+                    </Button>
+                    <Button
+                      onClick={() => setDeleteDialogOpen(true)}
+                      variant="destructive"
+                    >
+                      <Trash2 className="size-4" /> Delete permanently
+                    </Button>
+                  </>
+                ) : (
                   <Button
-                    onClick={() => void setArchived(false)}
+                    onClick={() => void setArchived(true)}
                     variant="outline"
                   >
-                    <RotateCcw className="size-4" /> Restore
+                    <Archive className="size-4" /> Archive
                   </Button>
-                  <Button
-                    onClick={() => setDeleteDialogOpen(true)}
-                    variant="destructive"
-                  >
-                    <Trash2 className="size-4" /> Delete permanently
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  onClick={() => void setArchived(true)}
-                  variant="outline"
-                >
-                  <Archive className="size-4" /> Archive
-                </Button>
-              ))}
-          </div>
+                ))}
+            </div>
+          ) : null}
         </div>
 
         <TabsContent value="overview">

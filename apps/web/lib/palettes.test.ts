@@ -115,6 +115,21 @@ test("palette text pairs meet WCAG AA contrast", () => {
   }
 });
 
+test("light palette user messages use softened surfaces with standard foreground text", () => {
+  for (const palette of PALETTE_FAMILIES) {
+    assert.notEqual(
+      palette.light["message-user"],
+      palette.light.primary,
+      `${palette.id}.light user message surface should not use the saturated primary color`
+    );
+    assert.equal(
+      palette.light["message-user-foreground"],
+      palette.light.foreground,
+      `${palette.id}.light user message text should use the standard readable foreground`
+    );
+  }
+});
+
 test("palette focus rings remain visible against application surfaces", () => {
   for (const palette of PALETTE_FAMILIES) {
     for (const mode of ["light", "dark"] as const) {
