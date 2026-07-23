@@ -10,7 +10,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-export function InvitationError() {
+export function InvitationError({
+  detail,
+  signInHref,
+}: {
+  detail?: string;
+  signInHref?: string;
+}) {
   return (
     <Card className="mx-auto w-full max-w-md">
       <CardHeader>
@@ -26,17 +32,16 @@ export function InvitationError() {
       </CardHeader>
       <CardContent>
         <p className="mb-4 text-muted-foreground text-sm">
-          The invitation you're trying to access is either invalid or you don't
-          have the correct permissions. Please check your email for a valid
-          invitation or contact the person who sent it.
+          {detail ||
+            "The invitation you're trying to access is either invalid or you don't have the correct permissions. Please check your email for a valid invitation or contact the person who sent it."}
         </p>
       </CardContent>
       <CardFooter>
-        <Link className="w-full" href="/">
-          <Button className="w-full" variant="outline">
-            Go back to home
-          </Button>
-        </Link>
+        <Button asChild className="w-full" variant="outline">
+          <Link href={signInHref || "/"}>
+            {signInHref ? "Switch account" : "Go back to home"}
+          </Link>
+        </Button>
       </CardFooter>
     </Card>
   );

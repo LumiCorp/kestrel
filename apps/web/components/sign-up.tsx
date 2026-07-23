@@ -16,6 +16,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { signUp } from "@/lib/auth-client";
+import {
+  invitationIdFromCallbackURL,
+  INVITATION_SIGNUP_HEADER,
+} from "@/lib/invitation-shared";
 import { getCallbackURL } from "@/lib/shared";
 
 export function SignUp() {
@@ -29,6 +33,8 @@ export function SignUp() {
   const router = useRouter();
   const params = useSearchParams();
   const [loading, startTransition] = useTransition();
+  const callbackURL = getCallbackURL(params);
+  const invitationId = invitationIdFromCallbackURL(callbackURL);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -159,14 +165,17 @@ export function SignUp() {
                   password,
                   name: `${firstName} ${lastName}`,
                   image: image ? await convertImageToBase64(image) : "",
-                  callbackURL: "/dashboard",
+                  callbackURL,
                   fetchOptions: {
+                    headers: invitationId
+                      ? { [INVITATION_SIGNUP_HEADER]: invitationId }
+                      : undefined,
                     onError: (ctx: any) => {
                       toast.error(ctx.error.message);
                     },
                     onSuccess: () => {
                       toast.success("Successfully signed up");
-                      router.push(getCallbackURL(params));
+                      router.push(callbackURL);
                     },
                   },
                 });
