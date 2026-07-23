@@ -31,6 +31,7 @@ import { isPortListening } from "./previews.js";
 import { buildWorkspaceProxyHeaders, isRunnerProxyPath } from "./proxy.js";
 import { handlePreviewRelayHttp, handlePreviewRelayUpgrade, isPreviewRelayRequest } from "./preview-relay.js";
 import { resolveRunnerServiceEntrypoint } from "./runner-entrypoint.js";
+import { createWorkspaceRunnerContext } from "./runner-context.js";
 import {
   createWorkspaceRunnerReadiness,
   workspaceRunnerHealthStatus,
@@ -251,7 +252,8 @@ const server = createServer(async (request, response) => {
       const sessionId = decodeURIComponent(storedSessionPath[1]);
       const description = await withRunnerClient(
         (client, context) => client.describeSession(sessionId, context),
-        ticket
+        ticket,
+        { resolveProfile: false }
       );
       writeJson(response, 200, { description });
       return;
@@ -653,7 +655,8 @@ async function withRunnerClient<T>(
     client: KestrelClient,
     context: KestrelRequestContext
   ) => Promise<T>,
-  ticket: { actorId: string; organizationId: string }
+  ticket: { actorId: string; organizationId: string },
+  options: { resolveProfile?: boolean } = {}
 ): Promise<T> {
   await ensureRunnerReady();
   const client = new KestrelClient({
@@ -664,16 +667,17 @@ async function withRunnerClient<T>(
     },
   });
   try {
-    const context: KestrelRequestContext = {
-      actor: {
-        actorId: ticket.actorId,
-        actorType: "end_user",
-        tenantId: ticket.organizationId,
-      },
-      tenantId: ticket.organizationId,
-    };
-    const profile = await client.getProfile(config.profileId, context);
-    return await run(client, { ...context, profile });
+    const context = await createWorkspaceRunnerContext({
+      actorId: ticket.actorId,
+      organizationId: ticket.organizationId,
+      ...(options.resolveProfile === false
+        ? {}
+        : {
+            loadProfile: (baseContext) =>
+              client.getProfile(config.profileId, baseContext),
+          }),
+    });
+    return await run(client, context);
   } finally {
     await client.close();
   }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   performGuardedWorkspaceRestoreCutover,
   resolveWorkspaceBackupRecoverySource,
+  resolveWorkspaceBackupSnapshotSourceVolumeId,
   selectWorkspaceBackupRecoverySource,
   WorkspaceRestoreCasConflictError,
   WorkspaceRestorePostCutoverError,
@@ -107,6 +108,27 @@ contractTest("web.hermetic", "Workspace restore verifies a recorded snapshot liv
       objectKey: "backup.enc",
       checksumSha256: "checksum",
     },
+  );
+});
+
+contractTest("web.hermetic", "Workspace restore retains the recorded snapshot source volume across later cutovers", () => {
+  assert.equal(
+    resolveWorkspaceBackupSnapshotSourceVolumeId({
+      manifest: {
+        flySnapshotSourceVolumeId: "vol_snapshot_source",
+      },
+      currentVolumeId: "vol_current_binding",
+    }),
+    "vol_snapshot_source",
+  );
+  assert.equal(
+    resolveWorkspaceBackupSnapshotSourceVolumeId({
+      manifest: {
+        flySnapshotId: "vs_legacy",
+      },
+      currentVolumeId: "vol_current_binding",
+    }),
+    "vol_current_binding",
   );
 });
 

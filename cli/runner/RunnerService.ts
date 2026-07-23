@@ -220,7 +220,9 @@ function createRunnerRuntimeStoreReadiness(
         );
       });
       const tracked = current.finally(() => {
-        if (probePromise === tracked) probePromise = null;
+        setImmediate(() => {
+          if (probePromise === tracked) probePromise = null;
+        });
       });
       probePromise = tracked;
     }
