@@ -114,6 +114,15 @@ const machineSchema = z.object({
     .optional(),
 });
 
+const machineCreateResponseSchema = z
+  .object({
+    id: z.string().min(1),
+    state: z.string().min(1),
+    region: z.string().min(1),
+    instance_id: z.string().min(1).optional(),
+  })
+  .passthrough();
+
 const snapshotResponseSchema = z.object({
   Msg: z.object({
     backup: z.object({
@@ -570,7 +579,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     replacementId?: string
   ) {
     const machine = parseResponse(
-      machineSchema,
+      machineCreateResponseSchema,
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/machines`,
         {
@@ -584,7 +593,12 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         }
       )
     );
-    return toMachine(machine);
+    return {
+      id: machine.id,
+      state: machine.state,
+      region: machine.region,
+      ...(machine.instance_id ? { instanceId: machine.instance_id } : {}),
+    };
   }
 
   private async reconcileWorkspaceServiceToken(input: {

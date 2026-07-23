@@ -1014,6 +1014,11 @@ contractTest("web.hermetic", "replacement resources are idempotently namespaced 
         id: "replacement-machine-id",
         state: "started",
         region: "iad",
+        config: {
+          mounts: null,
+          services: null,
+          stop_config: null,
+        },
       });
     }) as typeof fetch,
   });
