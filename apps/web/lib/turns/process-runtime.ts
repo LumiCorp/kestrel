@@ -380,6 +380,11 @@ export async function processDurableThreadTurn(
             projectContextRevisionId: turn.projectContextRevisionId,
             parts: message.parts,
             model: meta.model,
+            inputTokens: meta.telemetry?.inputTokens,
+            cachedInputTokens: meta.telemetry?.cachedInputTokens,
+            outputTokens: meta.telemetry?.outputTokens,
+            reasoningTokens: meta.telemetry?.reasoningTokens,
+            durationMs: meta.telemetry?.durationMs,
             source: turn.source,
           })),
         });
@@ -438,6 +443,11 @@ export async function processDurableThreadTurn(
         projectContextRevisionId: turn.projectContextRevisionId,
         parts: assistantMessage.parts,
         model: turn.requestedModelId ?? "unknown",
+        inputTokens: undefined,
+        cachedInputTokens: undefined,
+        outputTokens: undefined,
+        reasoningTokens: undefined,
+        durationMs: undefined,
         source: turn.source,
       })),
     });

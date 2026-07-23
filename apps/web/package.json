@@ -44,6 +44,7 @@
     "generate-secret": "tsx scripts/generate-secret.ts",
     "gateway-credentials:migrate": "tsx scripts/migrate-gateway-credentials.ts",
     "organization-settings:backfill": "tsx scripts/backfill-organization-settings.ts",
+    "organization-costs:backfill": "node --conditions=react-server --import tsx scripts/backfill-organization-costs.ts",
     "setup": "tsx scripts/setup.ts",
     "fixtures:rag": "pnpm exec tsx scripts/generate-rag-fixtures.ts",
     "test:knowledge-rag:unit": "pnpm exec tsx --test tests/fixtures/knowledge-rag/fixture-corpus.test.ts lib/knowledge/documents/shared.test.ts lib/knowledge/documents/retrieval.test.ts",

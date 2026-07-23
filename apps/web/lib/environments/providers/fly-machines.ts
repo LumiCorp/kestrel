@@ -76,6 +76,14 @@ const machineSchema = z.object({
       metadata: z.record(z.string(), z.string()).optional(),
       mounts: z.array(machineMountSchema).optional(),
       services: z.array(z.unknown()).optional(),
+      guest: z
+        .object({
+          cpu_kind: z.string().min(1).optional(),
+          cpus: z.number().int().positive().optional(),
+          memory_mb: z.number().int().positive().optional(),
+        })
+        .passthrough()
+        .optional(),
     })
     .passthrough()
     .optional(),
@@ -648,6 +656,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         id: volume.id,
         name: volume.name,
         region: volume.region,
+        sizeGb: volume.size_gb,
         attachedMachineId: volume.attached_machine_id ?? null,
       })),
     };
@@ -1051,6 +1060,15 @@ function toMachine(
     id: machine.id,
     state: machine.state,
     region: machine.region,
+    ...(machine.config?.guest?.cpu_kind
+      ? { cpuKind: machine.config.guest.cpu_kind }
+      : {}),
+    ...(machine.config?.guest?.cpus
+      ? { cpus: machine.config.guest.cpus }
+      : {}),
+    ...(machine.config?.guest?.memory_mb
+      ? { memoryMb: machine.config.guest.memory_mb }
+      : {}),
     ...(machine.config?.image ? { image: machine.config.image } : {}),
     ...(machine.instance_id ? { instanceId: machine.instance_id } : {}),
     ...(machine.config?.metadata?.kestrel_workspace_id

@@ -13,6 +13,10 @@ const connectionIdFor = (organizationId: string) =>
   `organization-fly:${organizationId}`;
 
 type FlyMetadata = { organizationSlug?: string };
+export type FlyProviderAuthority = {
+  token: string;
+  organizationSlug: string;
+};
 
 export async function getFlyProviderConnection(organizationId: string) {
   return knowledgeDb.query.aiProviderConnections.findFirst({
@@ -96,6 +100,16 @@ export function createFlyProviderClientFromConnection(
   connection: typeof schema.aiProviderConnections.$inferSelect,
   options: { fetchImpl?: typeof fetch } = {}
 ) {
+  const authority = resolveFlyProviderAuthorityFromConnection(connection);
+  return new FlyMachinesClient({
+    ...authority,
+    fetchImpl: options.fetchImpl,
+  });
+}
+
+function resolveFlyProviderAuthorityFromConnection(
+  connection: typeof schema.aiProviderConnections.$inferSelect
+): FlyProviderAuthority {
   if (!connection.enabled) {
     throw new Error("Fly provider connection is disabled.");
   }
@@ -104,19 +118,20 @@ export function createFlyProviderClientFromConnection(
   if (!(connection.apiKey?.trim() && organizationSlug)) {
     throw new Error("Fly provider connection is incomplete.");
   }
-  return new FlyMachinesClient({
+  return {
     token: decryptGatewayCredential({
       gatewayId: connection.id,
       encrypted: connection.apiKey.trim(),
     }),
     organizationSlug,
-    fetchImpl: options.fetchImpl,
-  });
+  };
 }
 
-export async function createFlyProviderClient(organizationId: string) {
+export async function resolveFlyProviderAuthority(
+  organizationId: string
+): Promise<FlyProviderAuthority> {
   const connection = await getFlyProviderConnection(organizationId);
-  if (connection) return createFlyProviderClientFromConnection(connection);
+  if (connection) return resolveFlyProviderAuthorityFromConnection(connection);
   const organization = await knowledgeDb.query.organizations.findFirst({
     where: eq(schema.organizations.id, organizationId),
     columns: { slug: true },
@@ -126,10 +141,16 @@ export async function createFlyProviderClient(organizationId: string) {
     const organizationSlug =
       process.env.KESTREL_FLY_ORGANIZATION_SLUG?.trim();
     if (token && organizationSlug) {
-      return new FlyMachinesClient({ token, organizationSlug });
+      return { token, organizationSlug };
     }
   }
   throw new Error("Fly provider connection is not configured.");
+}
+
+export async function createFlyProviderClient(organizationId: string) {
+  return new FlyMachinesClient(
+    await resolveFlyProviderAuthority(organizationId)
+  );
 }
 
 export async function testFlyProviderConnection(

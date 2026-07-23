@@ -61,6 +61,13 @@ contractTest(
     assert.equal(stored?.provider, "fly");
     assert.ok(stored?.apiKey);
     assert.notEqual(stored.apiKey, "FlyV1 organization-secret");
+    assert.deepEqual(
+      await flyConnection.resolveFlyProviderAuthority(organizationId),
+      {
+        token: "FlyV1 organization-secret",
+        organizationSlug: "fly-test-org",
+      }
+    );
 
     let releaseTest: (() => void) | undefined;
     let markTestStarted: (() => void) | undefined;
@@ -91,5 +98,12 @@ contractTest(
     assert.deepEqual(current?.metadata, {
       organizationSlug: "replacement-fly-org",
     });
+    assert.deepEqual(
+      await flyConnection.resolveFlyProviderAuthority(organizationId),
+      {
+        token: "FlyV1 replacement-secret",
+        organizationSlug: "replacement-fly-org",
+      }
+    );
   }
 );

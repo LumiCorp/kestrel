@@ -11,6 +11,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { meterPersistedModelMessages } from "@/lib/costs/metering";
 import type { DbThread, DbThreadMessage } from "@/lib/knowledge/db-types";
 import {
   getProjectAccess,
@@ -443,7 +444,9 @@ export async function saveThreadMessages(
         feedback: message.feedback ?? null,
         model: message.model ?? null,
         inputTokens: message.inputTokens ?? null,
+        cachedInputTokens: message.cachedInputTokens ?? null,
         outputTokens: message.outputTokens ?? null,
+        reasoningTokens: message.reasoningTokens ?? null,
         durationMs: message.durationMs ?? null,
         externalMessageId: message.externalMessageId ?? null,
         source:
@@ -460,7 +463,9 @@ export async function saveThreadMessages(
         feedback: sql`excluded.feedback`,
         model: sql`excluded.model`,
         inputTokens: sql`excluded.input_tokens`,
+        cachedInputTokens: sql`excluded.cached_input_tokens`,
         outputTokens: sql`excluded.output_tokens`,
+        reasoningTokens: sql`excluded.reasoning_tokens`,
         durationMs: sql`excluded.duration_ms`,
         externalMessageId: sql`excluded.external_message_id`,
         source: sql`excluded.source`,
@@ -476,6 +481,14 @@ export async function saveThreadMessages(
       .set({ updatedAt: new Date() })
       .where(inArray(schema.threads.id, threadIds));
   }
+  await meterPersistedModelMessages(result.map((message) => message.id)).catch(
+    (error) => {
+      console.error(
+        "Model usage metering will retry from the durable message ledger.",
+        { message: error instanceof Error ? error.message : "Unknown error" }
+      );
+    }
+  );
   return result;
 }
 

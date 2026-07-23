@@ -16,6 +16,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { meterPersistedModelMessages } from "@/lib/costs/metering";
 import type { DbThreadTurn, DbThreadTurnEvent } from "@/lib/knowledge/db-types";
 import {
   type MobileActivityStage,
@@ -936,12 +937,17 @@ export async function persistDurableAssistantOutcome(input: {
     id: string;
     parts: unknown;
     model: string;
+    inputTokens?: number | undefined;
+    cachedInputTokens?: number | undefined;
+    outputTokens?: number | undefined;
+    reasoningTokens?: number | undefined;
+    durationMs?: number | undefined;
     source: ThreadTurnSource;
     projectContextRevisionId: string | null;
   }>;
   interaction: KestrelInteractionPresentation | null;
 }) {
-  return knowledgeDb.transaction(async (tx) => {
+  const result = await knowledgeDb.transaction(async (tx) => {
     const [turn] = await tx
       .select()
       .from(schema.threadTurns)
@@ -1028,6 +1034,11 @@ export async function persistDurableAssistantOutcome(input: {
             parts: message.parts,
             searchText: extractSearchText(message.parts),
             model: message.model,
+            inputTokens: message.inputTokens ?? null,
+            cachedInputTokens: message.cachedInputTokens ?? null,
+            outputTokens: message.outputTokens ?? null,
+            reasoningTokens: message.reasoningTokens ?? null,
+            durationMs: message.durationMs ?? null,
             source: message.source,
             ...(message.dialog !== undefined
               ? {
@@ -1046,6 +1057,11 @@ export async function persistDurableAssistantOutcome(input: {
             parts: sql`excluded.parts`,
             searchText: sql`excluded.search_text`,
             model: sql`excluded.model`,
+            inputTokens: sql`excluded.input_tokens`,
+            cachedInputTokens: sql`excluded.cached_input_tokens`,
+            outputTokens: sql`excluded.output_tokens`,
+            reasoningTokens: sql`excluded.reasoning_tokens`,
+            durationMs: sql`excluded.duration_ms`,
             turnId: sql`excluded.turn_id`,
           },
         });
@@ -1229,6 +1245,14 @@ export async function persistDurableAssistantOutcome(input: {
     }
     return { turn: waiting ?? turn, interaction: interaction ?? null };
   });
+  await meterPersistedModelMessages(
+    input.messages.map((message) => message.id)
+  ).catch((error) => {
+    console.error("Model usage metering will retry from the durable message ledger.", {
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
+  });
+  return result;
 }
 
 function splitDialogPresentationMessages<

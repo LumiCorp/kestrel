@@ -4,6 +4,7 @@ const files = execFileSync("git", ["ls-files", "-z", "apps/web/**/*.postgres.tes
   .split("\0")
   .filter(Boolean)
   .concat(
+    "apps/web/lib/costs/store.postgres.test.ts",
     "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
     "apps/web/lib/projects/skills.postgres.test.ts",
   )
@@ -24,6 +25,7 @@ const groups = [
     databaseUrl: required("KESTREL_ENVIRONMENT_DB_TEST_URL"),
     files: [
       "lib/ai/gateways.postgres.test.ts",
+      "lib/costs/store.postgres.test.ts",
       "lib/environments/cutover-readiness.postgres.test.ts",
       "lib/environments/fly-connection.postgres.test.ts",
       "lib/environments/reconcile-lock.postgres.test.ts",
