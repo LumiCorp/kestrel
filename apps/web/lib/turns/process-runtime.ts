@@ -299,6 +299,7 @@ export async function processDurableThreadTurn(
               message: submittedUserMessage,
               modelId: turn.requestedModelId ?? undefined,
               organizationId: turn.organizationId,
+              environmentId: turn.requestedEnvironmentId,
             }).catch(() => null)
           : null,
       signal: cancellation.signal,
@@ -394,6 +395,7 @@ export async function processDurableThreadTurn(
             userId: turn.authorUserId,
             organizationId: turn.organizationId,
             title: meta.title,
+            onlyIfUntitled: true,
           });
         }
       },

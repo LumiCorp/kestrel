@@ -398,6 +398,7 @@ export async function updateThreadTitleForUser(input: {
   userId: string;
   organizationId: string;
   title: string;
+  onlyIfUntitled?: boolean;
 }) {
   const access = await getThreadAccessForUser(
     input.id,
@@ -410,7 +411,14 @@ export async function updateThreadTitleForUser(input: {
   const [thread] = await knowledgeDb
     .update(schema.threads)
     .set({ title: input.title, updatedAt: new Date() })
-    .where(eq(schema.threads.id, input.id))
+    .where(
+      and(
+        eq(schema.threads.id, input.id),
+        input.onlyIfUntitled
+          ? or(isNull(schema.threads.title), eq(schema.threads.title, ""))
+          : undefined,
+      ),
+    )
     .returning();
   return thread ?? null;
 }
