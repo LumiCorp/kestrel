@@ -31,7 +31,6 @@ import { isPortListening } from "./previews.js";
 import { buildWorkspaceProxyHeaders, isRunnerProxyPath } from "./proxy.js";
 import { handlePreviewRelayHttp, handlePreviewRelayUpgrade, isPreviewRelayRequest } from "./preview-relay.js";
 import { resolveRunnerServiceEntrypoint } from "./runner-entrypoint.js";
-import { createWorkspaceRunnerContext } from "./runner-context.js";
 import {
   createWorkspaceRunnerReadiness,
   workspaceRunnerHealthStatus,
@@ -242,20 +241,6 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/v1/apps") {
       requireCapability(ticket.capabilities, "workspace.apps.read");
       writeJson(response, 200, { applications: applications.list() });
-      return;
-    }
-    const storedSessionPath = url.pathname.match(
-      /^\/v1\/backups\/sessions\/([^/]+)$/u
-    );
-    if (request.method === "GET" && storedSessionPath?.[1]) {
-      requireCapability(ticket.capabilities, "workspace.backups.restore");
-      const sessionId = decodeURIComponent(storedSessionPath[1]);
-      const description = await withRunnerClient(
-        (client, context) => client.describeSession(sessionId, context),
-        ticket,
-        { resolveProfile: false }
-      );
-      writeJson(response, 200, { description });
       return;
     }
     const previewPort = url.pathname.match(/^\/v1\/preview-ports\/(\d+)$/u);
@@ -655,8 +640,7 @@ async function withRunnerClient<T>(
     client: KestrelClient,
     context: KestrelRequestContext
   ) => Promise<T>,
-  ticket: { actorId: string; organizationId: string },
-  options: { resolveProfile?: boolean } = {}
+  ticket: { actorId: string; organizationId: string }
 ): Promise<T> {
   await ensureRunnerReady();
   const client = new KestrelClient({
@@ -667,17 +651,16 @@ async function withRunnerClient<T>(
     },
   });
   try {
-    const context = await createWorkspaceRunnerContext({
-      actorId: ticket.actorId,
-      organizationId: ticket.organizationId,
-      ...(options.resolveProfile === false
-        ? {}
-        : {
-            loadProfile: (baseContext) =>
-              client.getProfile(config.profileId, baseContext),
-          }),
-    });
-    return await run(client, context);
+    const context: KestrelRequestContext = {
+      actor: {
+        actorId: ticket.actorId,
+        actorType: "end_user",
+        tenantId: ticket.organizationId,
+      },
+      tenantId: ticket.organizationId,
+    };
+    const profile = await client.getProfile(config.profileId, context);
+    return await run(client, { ...context, profile });
   } finally {
     await client.close();
   }

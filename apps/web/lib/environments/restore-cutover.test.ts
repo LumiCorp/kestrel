@@ -4,6 +4,7 @@ import {
   resolveWorkspaceBackupRecoverySource,
   resolveWorkspaceBackupSnapshotSourceVolumeId,
   selectWorkspaceBackupRecoverySource,
+  WORKSPACE_RESTORE_ROUTE_CAPABILITIES,
   WorkspaceRestoreCasConflictError,
   WorkspaceRestorePostCutoverError,
 } from "./restore-cutover";
@@ -130,6 +131,14 @@ contractTest("web.hermetic", "Workspace restore retains the recorded snapshot so
     }),
     "vol_current_binding",
   );
+});
+
+contractTest("web.hermetic", "Workspace restore validation uses the existing session command capability", () => {
+  assert.deepEqual(WORKSPACE_RESTORE_ROUTE_CAPABILITIES, [
+    "workspace.backups.restore",
+    "workspace.apps.read",
+    "session.read",
+  ]);
 });
 
 contractTest("web.hermetic", "Workspace restore validates before one CAS cutover and cleanup", async () => {
