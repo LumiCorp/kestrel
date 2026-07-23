@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
@@ -10,18 +11,28 @@ import {
   RESOURCE_MUTATING_OPERATION_TYPES,
 } from "./operation-routing";
 import { processEnvironmentOperation } from "./process-runtime";
-import type { EnvironmentProviderInventory } from "./providers/contracts";
+import {
+  EnvironmentProviderError,
+  type EnvironmentProviderInventory,
+} from "./providers/contracts";
 import {
   type FlyMachinesClient,
   workspaceVolumeName,
 } from "./providers/fly-machines";
 import {
+  assessWorkspaceMachineReadiness,
   assessWorkspaceVolumeBinding,
   selectOrphanVolumeIds,
 } from "./reconcile-contract";
 import { selectDueDailyBackupCandidate } from "./reconcile-selection";
 import { hashEnvironmentServiceToken } from "./service-tokens";
 import { refreshEnvironmentGateway } from "./gateway-refresh";
+import {
+  findActiveWorkspaceLifecycleOperation,
+  hasActiveWorkspaceLifecycleOperation,
+} from "./lifecycle-operations";
+import { workspaceLifecycleLockKey } from "./lifecycle-lock";
+import { recordWorkspaceReconciliationStatus } from "./reconciliation-status";
 
 export async function reconcileHostedEnvironments() {
   const now = new Date();
@@ -167,19 +178,28 @@ async function reconcileOrganizationEnvironments(input: {
   let degradedWorkspaceCount = 0;
   for (const { workspace, environment } of workspaces) {
     if (!(workspace.flyMachineId && environment.flyAppName)) continue;
+    if (
+      await hasActiveWorkspaceLifecycleOperation({
+        organizationId,
+        environmentId: environment.id,
+        workspaceId: workspace.id,
+      })
+    ) {
+      continue;
+    }
     try {
       const machine = await provider.getMachine({
         appName: environment.flyAppName,
         machineId: workspace.flyMachineId,
       });
       if (!machine) {
-        degradedWorkspaceCount += 1;
-        await markWorkspaceDegraded(
-          workspace.id,
+        const degraded = await markWorkspaceDegraded(
+          workspace,
           now,
           "ENVIRONMENT_WORKSPACE_MACHINE_MISSING",
           "Workspace Machine is missing during reconciliation.",
         );
+        if (degraded) degradedWorkspaceCount += 1;
         continue;
       }
       let inventoryPromise = inventoryByAppName.get(environment.flyAppName);
@@ -198,13 +218,13 @@ async function reconcileOrganizationEnvironments(input: {
         inventory: await inventoryPromise,
       });
       if (assessment.status === "degraded") {
-        degradedWorkspaceCount += 1;
-        await markWorkspaceDegraded(
-          workspace.id,
+        const degraded = await markWorkspaceDegraded(
+          workspace,
           now,
           "ENVIRONMENT_WORKSPACE_VOLUME_RECONCILE_FAILED",
           assessment.reason,
         );
+        if (degraded) degradedWorkspaceCount += 1;
         continue;
       }
       if (assessment.status === "adopt") {
@@ -218,25 +238,66 @@ async function reconcileOrganizationEnvironments(input: {
         if (!adopted) continue;
         adoptedVolumeCount += 1;
       }
-      const status = machine?.state === "started" ? "ready" : "stopped";
-      await knowledgeDb
-        .update(schema.environmentWorkspaces)
-        .set({
-          status,
-          lastHealthAt: now,
-          failureCode: null,
-          failureMessage: null,
-          updatedAt: now,
-        })
-        .where(eq(schema.environmentWorkspaces.id, workspace.id));
-    } catch {
-      degradedWorkspaceCount += 1;
-      await markWorkspaceDegraded(
-        workspace.id,
+      const appName = environment.flyAppName;
+      const machineId = workspace.flyMachineId;
+      const readiness = await assessWorkspaceMachineReadiness({
+        machineState: machine.state,
+        checkHealth: () =>
+          provider.waitForMachineHealth({
+            appName,
+            machineId,
+            checkName: "workspace",
+            timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+          }),
+      });
+      if (readiness.status === "degraded") {
+        const error = readiness.error;
+        const code =
+          error instanceof EnvironmentProviderError
+            ? error.code
+            : "ENVIRONMENT_WORKSPACE_RECONCILE_FAILED";
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Workspace health reconciliation failed.";
+        const degraded = await markWorkspaceDegraded(
+          workspace,
+          now,
+          code,
+          message,
+        );
+        if (degraded) degradedWorkspaceCount += 1;
+        continue;
+      }
+      if (readiness.status === "ready") {
+        await recordWorkspaceReconciliationStatus({
+          organizationId: workspace.organizationId,
+          environmentId: workspace.environmentId,
+          workspaceId: workspace.id,
+          status: "ready",
+          reconciledAt: now,
+        });
+        continue;
+      }
+      if (readiness.status === "stopped") {
+        await recordWorkspaceReconciliationStatus({
+          organizationId: workspace.organizationId,
+          environmentId: workspace.environmentId,
+          workspaceId: workspace.id,
+          status: "stopped",
+          reconciledAt: now,
+        });
+      }
+    } catch (error) {
+      const degraded = await markWorkspaceDegraded(
+        workspace,
         now,
         "ENVIRONMENT_WORKSPACE_RECONCILE_FAILED",
-        "Workspace reconciliation failed.",
+        error instanceof Error
+          ? error.message
+          : "Workspace reconciliation failed.",
       );
+      if (degraded) degradedWorkspaceCount += 1;
     }
   }
   await cleanupReplacedWorkspaceResources(provider, organizationId);
@@ -281,20 +342,33 @@ export async function reconcileClosingWorkspacePreviews(now = new Date()) {
 }
 
 async function markWorkspaceDegraded(
-  workspaceId: string,
+  workspace: typeof schema.environmentWorkspaces.$inferSelect,
   now: Date,
   failureCode: string,
   failureMessage: string,
 ) {
-  await knowledgeDb
-    .update(schema.environmentWorkspaces)
-    .set({
-      status: "degraded",
-      failureCode,
-      failureMessage,
-      updatedAt: now,
-    })
-    .where(eq(schema.environmentWorkspaces.id, workspaceId));
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(workspace.id)}, 0))`,
+    );
+    const active = await findActiveWorkspaceLifecycleOperation(transaction, {
+      organizationId: workspace.organizationId,
+      environmentId: workspace.environmentId,
+      workspaceId: workspace.id,
+    });
+    if (active) return false;
+    const [updated] = await transaction
+      .update(schema.environmentWorkspaces)
+      .set({
+        status: "degraded",
+        failureCode,
+        failureMessage,
+        updatedAt: now,
+      })
+      .where(eq(schema.environmentWorkspaces.id, workspace.id))
+      .returning({ id: schema.environmentWorkspaces.id });
+    return Boolean(updated);
+  });
 }
 
 async function adoptWorkspaceVolumeBinding(input: {
@@ -305,6 +379,15 @@ async function adoptWorkspaceVolumeBinding(input: {
   reconciledAt: Date;
 }) {
   return knowledgeDb.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspace.id)}, 0))`,
+    );
+    const active = await findActiveWorkspaceLifecycleOperation(tx, {
+      organizationId: input.workspace.organizationId,
+      environmentId: input.workspace.environmentId,
+      workspaceId: input.workspace.id,
+    });
+    if (active) return false;
     const oldVolumeCondition = input.oldVolumeId
       ? eq(schema.environmentWorkspaces.flyVolumeId, input.oldVolumeId)
       : isNull(schema.environmentWorkspaces.flyVolumeId);

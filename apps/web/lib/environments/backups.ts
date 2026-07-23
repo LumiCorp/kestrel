@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
+import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import {
@@ -35,6 +36,7 @@ export async function createWorkspaceBackup(input: {
   idempotencyKey?: string;
   signal?: AbortSignal | undefined;
   executionOwnership?: BackupExecutionOwnership | undefined;
+  parentLifecycleOperationId?: string | undefined;
   preDestructiveSnapshot?: { id: string; state: string } | undefined;
 }) {
   const [environment, workspace, binding] = await Promise.all([
@@ -89,6 +91,12 @@ export async function createWorkspaceBackup(input: {
       organizationId: input.organizationId,
       threadId: binding.threadId,
       actorUserId: input.actorUserId,
+      owningLifecycleOperationIds: [
+        operationId,
+        ...(input.parentLifecycleOperationId
+          ? [input.parentLifecycleOperationId]
+          : []),
+      ],
     });
     const archive = await fetchBackupArchive(
       route.baseUrl,
@@ -663,14 +671,14 @@ export async function restoreWorkspaceBackup(input: {
         appName: flyAppName,
         machineId: replacementMachine.id,
         state: "started",
-        timeoutSeconds: 90,
+        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
       });
     }
     await provider.waitForMachineHealth({
       appName: flyAppName,
       machineId: replacementMachine.id,
       checkName: "workspace",
-      timeoutSeconds: 90,
+      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
     const replacementRoute = () =>
       createEnvironmentMachineRoute({
@@ -707,13 +715,13 @@ export async function restoreWorkspaceBackup(input: {
       appName: flyAppName,
       machineId: replacementMachine.id,
       state: "started",
-      timeoutSeconds: 90,
+      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
     await provider.waitForMachineHealth({
       appName: flyAppName,
       machineId: replacementMachine.id,
       checkName: "workspace",
-      timeoutSeconds: 90,
+      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
     await waitForWorkspaceService(replacementRoute);
     const completedAt = new Date();

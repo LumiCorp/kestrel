@@ -24,6 +24,7 @@ import {
   environmentLifecycleLockKey,
   organizationEnvironmentCreateLockKey,
   organizationEnvironmentDefaultLockKey,
+  workspaceLifecycleLockKey,
 } from "./lifecycle-lock";
 
 const UNAVAILABLE_ENVIRONMENT_STATES = ["deleting", "deleted"] as const;
@@ -927,7 +928,7 @@ export async function requestFailedWorkspaceProvisionRetry(input: {
   workspaceId: string;
   userId: string;
 }) {
-  const lockKey = `kestrel:workspace:lifecycle:${input.workspaceId}`;
+  const lockKey = workspaceLifecycleLockKey(input.workspaceId);
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
@@ -1003,7 +1004,7 @@ export async function requestWorkspaceStart(input: {
   workspaceId: string;
   userId: string;
 }) {
-  const lockKey = `kestrel:workspace:lifecycle:${input.workspaceId}`;
+  const lockKey = workspaceLifecycleLockKey(input.workspaceId);
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
@@ -1061,7 +1062,7 @@ export async function requestWorkspaceIdleStop(input: {
   machineId: string;
   lastActivityAt: Date;
 }) {
-  const lockKey = `kestrel:workspace:lifecycle:${input.workspaceId}`;
+  const lockKey = workspaceLifecycleLockKey(input.workspaceId);
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`

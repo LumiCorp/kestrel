@@ -1,6 +1,7 @@
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
   signEnvironmentExecutionTicket,
+  WORKSPACE_READINESS_TIMEOUT_MS,
 } from "@lumi/kestrel-environment-auth";
 import { and, eq, inArray } from "drizzle-orm";
 import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
@@ -17,6 +18,7 @@ import {
   requestWorkspaceStart,
   resolveOrCreateThreadExecutionBinding,
 } from "./store";
+import { hasActiveWorkspaceLifecycleOperation } from "./lifecycle-operations";
 
 export type EnvironmentActivationProgress = {
   stage:
@@ -74,6 +76,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     projectContextRevisionId?: string | undefined;
     durableTurnId?: string | undefined;
   };
+  owningLifecycleOperationIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
   await requireHostedEnvironmentsEnabled({
@@ -134,6 +137,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     environmentId: resolved.binding.environmentId,
     workspaceId: resolved.binding.workspaceId,
     actorUserId: input.actorUserId,
+    owningLifecycleOperationIds: input.owningLifecycleOperationIds,
     onProgress: input.onProgress,
   });
   const now = Math.floor(Date.now() / 1000);
@@ -305,13 +309,14 @@ async function waitForExecutionResources(input: {
   environmentId: string;
   workspaceId: string;
   actorUserId: string;
+  owningLifecycleOperationIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
   let lastDetail = "";
   let startRequested = false;
   while (Date.now() < deadline) {
-    const [environment, workspace] = await Promise.all([
+    const [environment, workspace, activeLifecycleOperation] = await Promise.all([
       knowledgeDb.query.environments.findFirst({
         where: (table, { and, eq }) =>
           and(
@@ -326,6 +331,12 @@ async function waitForExecutionResources(input: {
             eq(table.organizationId, input.organizationId),
             eq(table.environmentId, input.environmentId),
           ),
+      }),
+      hasActiveWorkspaceLifecycleOperation({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        excludedOperationIds: input.owningLifecycleOperationIds,
       }),
     ]);
     if (!(environment && workspace)) {
@@ -347,7 +358,8 @@ async function waitForExecutionResources(input: {
       environment.flyGatewayMachineId &&
       workspace.status === "ready" &&
       workspace.flyMachineId &&
-      workspace.runtimeImage
+      workspace.runtimeImage &&
+      !activeLifecycleOperation
     ) {
       return {
         environment: {
@@ -377,11 +389,18 @@ async function waitForExecutionResources(input: {
       }
       startRequested = true;
     }
-    const progress = describeEnvironmentActivation({
-      environmentStatus: environment.status,
-      workspaceStatus: workspace.status,
-      failureMessage: workspace.failureMessage ?? environment.failureMessage,
-    });
+    const progress = activeLifecycleOperation
+      ? {
+          stage: "environment.health.checking" as const,
+          detail: "Checking Workspace health…",
+          status: "pending" as const,
+        }
+      : describeEnvironmentActivation({
+          environmentStatus: environment.status,
+          workspaceStatus: workspace.status,
+          failureMessage:
+            workspace.failureMessage ?? environment.failureMessage,
+        });
     if (progress.detail !== lastDetail) {
       lastDetail = progress.detail;
       input.onProgress?.(progress);

@@ -1,3 +1,5 @@
+import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
+
 const BACKUP_CHUNK_BYTES = 512 * 1024;
 
 export async function uploadBackupArchive(input: {
@@ -93,7 +95,8 @@ export async function waitForWorkspaceService(
   } = {}
 ) {
   const fetchImpl = input.fetchImpl ?? fetch;
-  const deadline = Date.now() + (input.timeoutMs ?? 60_000);
+  const deadline =
+    Date.now() + (input.timeoutMs ?? WORKSPACE_READINESS_TIMEOUT_MS);
   while (Date.now() < deadline) {
     const current = route();
     const response = await fetchImpl(new URL("/v1/apps", current.baseUrl), {
