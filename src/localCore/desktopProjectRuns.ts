@@ -7,6 +7,7 @@ import type { Readable } from "node:stream";
 
 import type {
   DesktopManagedProjectRun,
+  DesktopManagedProjectRunOutputLine,
   DesktopManagedProjectRunPreviewUrl,
   DesktopPackageManager,
   DesktopProjectLauncherDescriptor,
@@ -78,6 +79,9 @@ function cloneRun(run: DesktopManagedProjectRun): DesktopManagedProjectRun {
     ...run,
     ...(run.previewUrls !== undefined
       ? { previewUrls: run.previewUrls.map((entry) => ({ ...entry })) }
+      : {}),
+    ...(run.outputTail !== undefined
+      ? { outputTail: run.outputTail.map((entry) => ({ ...entry })) }
       : {}),
     stdoutTail: [...run.stdoutTail],
     stderrTail: [...run.stderrTail],
@@ -162,8 +166,42 @@ function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
     ...(typeof record.primaryPreviewUrl === "string" && isPreviewableHttpUrl(record.primaryPreviewUrl)
       ? { primaryPreviewUrl: record.primaryPreviewUrl }
       : {}),
+    ...(Array.isArray(record.outputTail)
+      ? {
+          outputTail: record.outputTail
+            .map(parseLedgerOutputLine)
+            .filter(
+              (
+                entry,
+              ): entry is DesktopManagedProjectRunOutputLine =>
+                entry !== undefined,
+            )
+            .slice(-RUN_TAIL_LIMIT),
+        }
+      : {}),
     stdoutTail: Array.isArray(record.stdoutTail) ? record.stdoutTail.filter((line): line is string => typeof line === "string") : [],
     stderrTail: Array.isArray(record.stderrTail) ? record.stderrTail.filter((line): line is string => typeof line === "string") : [],
+  };
+}
+
+function parseLedgerOutputLine(
+  value: unknown,
+): DesktopManagedProjectRunOutputLine | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    (record.source !== "stdout" && record.source !== "stderr") ||
+    typeof record.line !== "string" ||
+    typeof record.observedAt !== "string"
+  ) {
+    return;
+  }
+  return {
+    source: record.source,
+    line: record.line,
+    observedAt: record.observedAt,
   };
 }
 
@@ -199,12 +237,18 @@ function settleHydratedRun(run: DesktopManagedProjectRun): DesktopManagedProject
   if (run.status !== "running" && run.status !== "stopping") {
     return run;
   }
+  const message = "Desktop restarted before this run completed.";
   return {
     ...run,
     status: "stopped",
     pendingAction: undefined,
     completedAt: run.completedAt ?? run.updatedAt,
-    stderrTail: appendTail(run.stderrTail, "Desktop restarted before this run completed."),
+    outputTail: appendOutputTail(run.outputTail, {
+      source: "stderr",
+      line: message,
+      observedAt: run.updatedAt,
+    }),
+    stderrTail: appendTail(run.stderrTail, message),
   };
 }
 
@@ -214,12 +258,19 @@ function sanitizeRunForLedger(run: DesktopManagedProjectRun): DesktopManagedProj
     url: redactDiagnosticText(entry.url).value,
     line: redactDiagnosticText(entry.line).value,
   }));
+  const outputTail = run.outputTail
+    ?.slice(-RUN_TAIL_LIMIT)
+    .map((entry) => ({
+      ...entry,
+      line: redactDiagnosticText(entry.line).value,
+    }));
   return {
     ...run,
     projectPath: redactDiagnosticText(run.projectPath).value,
     manifestPath: redactDiagnosticText(run.manifestPath).value,
     command: redactDiagnosticText(run.command).value,
     ...(previewUrls !== undefined ? { previewUrls } : {}),
+    ...(outputTail !== undefined ? { outputTail } : {}),
     ...(run.primaryPreviewUrl !== undefined
       ? { primaryPreviewUrl: redactDiagnosticText(run.primaryPreviewUrl).value }
       : {}),
@@ -235,6 +286,20 @@ function appendTail(existing: string[], line: string): string[] {
   }
   const next = [...existing, normalized];
   return next.length > RUN_TAIL_LIMIT ? next.slice(next.length - RUN_TAIL_LIMIT) : next;
+}
+
+function appendOutputTail(
+  existing: DesktopManagedProjectRunOutputLine[] | undefined,
+  input: DesktopManagedProjectRunOutputLine,
+): DesktopManagedProjectRunOutputLine[] {
+  const normalized = input.line.trimEnd();
+  if (normalized.length === 0) {
+    return existing ?? [];
+  }
+  const next = [...(existing ?? []), { ...input, line: normalized }];
+  return next.length > RUN_TAIL_LIMIT
+    ? next.slice(next.length - RUN_TAIL_LIMIT)
+    : next;
 }
 
 function extractPreviewUrlsFromLine(line: string): string[] {
@@ -548,6 +613,7 @@ export class DesktopProjectRunRegistry {
       status: "running",
       startedAt,
       updatedAt: startedAt,
+      outputTail: [],
       stdoutTail: [],
       stderrTail: [],
     };
@@ -567,6 +633,11 @@ export class DesktopProjectRunRegistry {
       const observedAt = this.now().toISOString();
       this.updateRun(runId, (current) => ({
         ...current,
+        outputTail: appendOutputTail(current.outputTail, {
+          source: "stdout",
+          line,
+          observedAt,
+        }),
         stdoutTail: appendTail(current.stdoutTail, line),
         ...appendPreviewUrls(current.previewUrls, {
           line,
@@ -580,6 +651,11 @@ export class DesktopProjectRunRegistry {
       const observedAt = this.now().toISOString();
       this.updateRun(runId, (current) => ({
         ...current,
+        outputTail: appendOutputTail(current.outputTail, {
+          source: "stderr",
+          line,
+          observedAt,
+        }),
         stderrTail: appendTail(current.stderrTail, line),
         ...appendPreviewUrls(current.previewUrls, {
           line,
@@ -590,10 +666,16 @@ export class DesktopProjectRunRegistry {
       }));
     });
     child.on("error", (error) => {
+      const observedAt = this.now().toISOString();
       this.updateRun(runId, (current) => ({
         ...current,
+        outputTail: appendOutputTail(current.outputTail, {
+          source: "stderr",
+          line: error.message,
+          observedAt,
+        }),
         stderrTail: appendTail(current.stderrTail, error.message),
-        updatedAt: this.now().toISOString(),
+        updatedAt: observedAt,
       }));
       void this.settleRun(runId, {
         status: "failed",
@@ -852,28 +934,49 @@ export class DesktopProjectRunRegistry {
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const line = `${failurePrefix}: ${message}`;
+        const observedAt = this.now().toISOString();
         this.updateRun(running.snapshot.runId, (current) => ({
           ...current,
-          stderrTail: appendTail(current.stderrTail, `${failurePrefix}: ${message}`),
-          updatedAt: this.now().toISOString(),
+          outputTail: appendOutputTail(current.outputTail, {
+            source: "stderr",
+            line,
+            observedAt,
+          }),
+          stderrTail: appendTail(current.stderrTail, line),
+          updatedAt: observedAt,
         }));
       }
     }
     try {
       const signalled = running.child.kill(signal);
       if (signalled === false) {
+        const line = `${failurePrefix}: kill(${signal}) returned false.`;
+        const observedAt = this.now().toISOString();
         this.updateRun(running.snapshot.runId, (current) => ({
           ...current,
-          stderrTail: appendTail(current.stderrTail, `${failurePrefix}: kill(${signal}) returned false.`),
-          updatedAt: this.now().toISOString(),
+          outputTail: appendOutputTail(current.outputTail, {
+            source: "stderr",
+            line,
+            observedAt,
+          }),
+          stderrTail: appendTail(current.stderrTail, line),
+          updatedAt: observedAt,
         }));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const line = `${failurePrefix}: ${message}`;
+      const observedAt = this.now().toISOString();
       this.updateRun(running.snapshot.runId, (current) => ({
         ...current,
-        stderrTail: appendTail(current.stderrTail, `${failurePrefix}: ${message}`),
-        updatedAt: this.now().toISOString(),
+        outputTail: appendOutputTail(current.outputTail, {
+          source: "stderr",
+          line,
+          observedAt,
+        }),
+        stderrTail: appendTail(current.stderrTail, line),
+        updatedAt: observedAt,
       }));
     }
   }
