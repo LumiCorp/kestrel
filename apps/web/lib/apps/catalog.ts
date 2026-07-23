@@ -26,6 +26,7 @@ export type AppCatalogDefinition = {
   delivery: AppDelivery;
   installMode: AppInstallMode;
   icon: string | null;
+  configurationPath: string | null;
   metadata: Record<string, unknown>;
   capabilities: Array<{
     key: string;
@@ -102,7 +103,14 @@ function toAppDefinition(
     delivery: provider.app.delivery as AppDelivery,
     installMode: provider.app.installMode as AppInstallMode,
     icon: provider.app.icon,
-    metadata: { ...metadata, authMethods },
+    configurationPath: provider.app.configurationPath ?? null,
+    metadata: {
+      ...metadata,
+      authMethods,
+      ...(provider.app.configurationPath
+        ? { configurationPath: provider.app.configurationPath }
+        : {}),
+    },
     capabilities: provider.capabilities.map((capability) => ({
       key: capability.key,
       runtimeName: capability.runtimeName,

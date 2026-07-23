@@ -254,6 +254,11 @@ export async function saveEmailConfig(input: {
         "A stored Resend API key is required."
       );
     }
+  } else if (!clean(env.RESEND_API_KEY)) {
+    throw new EmailConfigError(
+      "EMAIL_ENVIRONMENT_CREDENTIAL_MISSING",
+      "RESEND_API_KEY is not configured for this deployment. Set it in the deployment environment or choose an encrypted key in Kestrel One."
+    );
   }
 
   const deliveryChanged =

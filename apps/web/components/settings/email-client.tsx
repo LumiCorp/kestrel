@@ -69,6 +69,9 @@ export function EmailIntegrationAdminClient({
   const [message, setMessage] = useState("Loading email configuration...");
   const apiBase =
     scope === "organization" ? "/api/organization/email" : "/api/platform/email";
+  const hasTestPrerequisites = Boolean(
+    config.credentialConfigured && config.fromEmail.trim()
+  );
 
   const load = useCallback(async () => {
     const response = await fetch(apiBase, {
@@ -208,6 +211,15 @@ export function EmailIntegrationAdminClient({
               />
             </div>
           ) : null}
+          {scope === "platform" &&
+          config.credentialSource === "environment" &&
+          !config.credentialConfigured ? (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-950 text-sm dark:text-amber-100">
+              RESEND_API_KEY is unavailable to this deployment. Set it in the
+              deployment environment, or select “Encrypted in Kestrel One” and
+              save a Resend API key here.
+            </p>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <Field
               id="email-from-name"
@@ -241,7 +253,7 @@ export function EmailIntegrationAdminClient({
               Save configuration
             </Button>
             <Button
-              disabled={busy || !config.persisted}
+              disabled={busy || !config.persisted || !hasTestPrerequisites}
               onClick={() => void testDelivery()}
               variant="outline"
             >
@@ -259,6 +271,11 @@ export function EmailIntegrationAdminClient({
               />
             </div>
           </div>
+          {!config.enabled && config.status !== "ready" ? (
+            <p className="text-muted-foreground text-sm">
+              Send a successful test email before enabling delivery.
+            </p>
+          ) : null}
           {config.lastTestedAt ? (
             <p className="text-muted-foreground text-sm">
               Last accepted test:{" "}
