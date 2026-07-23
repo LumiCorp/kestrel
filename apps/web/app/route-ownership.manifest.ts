@@ -1235,13 +1235,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized
   ),
   api(
-    "app/api/knowledge/ask/route.ts",
-    "/api/knowledge/ask",
-    "knowledge",
-    AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
-  ),
-  api(
     "app/api/knowledge/documents/route.ts",
     "/api/knowledge/documents",
     "knowledge",

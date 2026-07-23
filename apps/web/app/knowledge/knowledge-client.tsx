@@ -43,7 +43,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { TimeText } from "@/components/ui/time-text";
 import type { Session } from "@/lib/auth-types";
 import {
@@ -88,19 +87,6 @@ type DocumentsPayload = {
   documents: KnowledgeDocument[];
 };
 
-type KnowledgeAnswer = {
-  answer: string;
-  grounded: boolean;
-  sources: Array<{
-    citationNumber: number;
-    documentId: string;
-    label: string;
-    url: string;
-    locations: string[];
-    excerpts: Array<{ text: string }>;
-  }>;
-};
-
 function formatFileSize(sizeBytes: number) {
   if (sizeBytes < 1024 * 1024) {
     return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
@@ -141,10 +127,6 @@ export function KnowledgeClient({
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [deleteDocument, setDeleteDocument] =
     useState<KnowledgeDocument | null>(null);
-  const [knowledgeQuestion, setKnowledgeQuestion] = useState("");
-  const [knowledgeAnswer, setKnowledgeAnswer] =
-    useState<KnowledgeAnswer | null>(null);
-  const [askingKnowledge, setAskingKnowledge] = useState(false);
   const uploadInputId = useId();
   const currentUserId =
     (session?.user as { id?: string | null } | undefined)?.id ?? null;
@@ -219,31 +201,6 @@ export function KnowledgeClient({
     toast.success("Document deleted permanently.");
   }
 
-  async function askKnowledge() {
-    const question = knowledgeQuestion.trim();
-    if (question.length < 3) return;
-    setAskingKnowledge(true);
-    setKnowledgeAnswer(null);
-    try {
-      const response = await fetch("/api/knowledge/ask", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question }),
-      });
-      const body = (await response.json().catch(() => ({}))) as KnowledgeAnswer & {
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || "Knowledge answer failed");
-      setKnowledgeAnswer(body);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Knowledge answer failed"
-      );
-    } finally {
-      setAskingKnowledge(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <AdminPageHeader
@@ -267,103 +224,6 @@ export function KnowledgeClient({
           variant={statusVariant}
         />
       ) : null}
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1.5">
-              <CardTitle>Ask your knowledge</CardTitle>
-              <CardDescription>
-                Search organization documents only. Project Threads use their own approved context.
-              </CardDescription>
-            </div>
-            <div className="flex gap-2">
-              <Badge variant="outline">{documentsData.readyCount} ready</Badge>
-              {documentsData.processingCount > 0 ? (
-                <Badge variant="outline">{documentsData.processingCount} processing</Badge>
-              ) : null}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void askKnowledge();
-            }}
-          >
-            <Textarea
-              aria-label="Ask a question about organization knowledge"
-              disabled={askingKnowledge || documentsData.readyCount === 0}
-              onChange={(event) => setKnowledgeQuestion(event.target.value)}
-              placeholder="What does our incident playbook require before escalation?"
-              rows={3}
-              value={knowledgeQuestion}
-            />
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-muted-foreground text-xs">
-                Answers cite the documents used as evidence.
-              </p>
-              <Button
-                disabled={
-                  askingKnowledge ||
-                  knowledgeQuestion.trim().length < 3 ||
-                  documentsData.readyCount === 0
-                }
-                type="submit"
-              >
-                {askingKnowledge ? "Searching…" : "Ask"}
-              </Button>
-            </div>
-          </form>
-
-          {documentsData.readyCount === 0 ? (
-            <AdminStatusBanner
-              description="Upload a document and wait for indexing before asking grounded questions."
-              title="No indexed documents are ready"
-              variant="info"
-            />
-          ) : null}
-
-          {knowledgeAnswer ? (
-            <div className="space-y-4 border-t pt-4">
-              <Badge variant={knowledgeAnswer.grounded ? "default" : "outline"}>
-                {knowledgeAnswer.grounded ? "Grounded answer" : "Evidence insufficient"}
-              </Badge>
-              <p className="whitespace-pre-wrap text-sm leading-6">
-                {knowledgeAnswer.answer}
-              </p>
-              {knowledgeAnswer.sources.length > 0 ? (
-                <div className="space-y-2">
-                  <h3 className="font-medium text-sm">Citations</h3>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    {knowledgeAnswer.sources.map((source) => (
-                      <a
-                        className="space-y-1 rounded-md border p-3 transition-colors hover:bg-muted/50"
-                        href={source.url}
-                        key={source.documentId}
-                      >
-                        <div className="font-medium text-sm">
-                          [{source.citationNumber}] {source.label}
-                        </div>
-                        <div className="line-clamp-2 text-muted-foreground text-xs">
-                          {source.excerpts[0]?.text}
-                        </div>
-                        {source.locations[0] ? (
-                          <div className="font-mono text-[11px] text-muted-foreground">
-                            {source.locations[0]}
-                          </div>
-                        ) : null}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
