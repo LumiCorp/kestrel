@@ -20,7 +20,6 @@ import {
   buildKestrelAgentValidationFeedbackMessage,
   buildKestrelTerminalBenchRepairPrompt,
   shouldCompactKestrelAgentContext,
-  type KestrelCompactionSummaryV1,
 } from "../../src/runtime/KestrelAgentContextBuilder.js";
 import { contractTest } from "../helpers/contract-test.js";
 import { readActiveTaskGoalFromTranscript } from "../../src/runtime/modelTranscript.js";
@@ -707,7 +706,7 @@ contractTest("runtime.hermetic", "Kestrel compaction fails closed when a replace
   }), /does not preserve replaced item/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel compaction treats a matched tool call and result as one semantic anchor", () => {
+contractTest("runtime.hermetic", "Kestrel compaction keeps paired tool provenance machine-only", () => {
   const transcript = {
     version: 1,
     windowId: 1,
@@ -761,11 +760,22 @@ contractTest("runtime.hermetic", "Kestrel compaction treats a matched tool call 
     },
   });
 
-  const summary = JSON.parse(compacted.items[0]?.content ?? "null") as KestrelCompactionSummaryV1;
-  assert.deepEqual(summary.evidence[0]?.sourceItemIds, [
-    "mt_1_0003_tool_result",
-    "mt_1_0002_tool_call",
-  ]);
+  assert.equal(
+    compacted.compactions?.at(-1)?.replacedItemIds.includes(
+      "mt_1_0002_tool_call",
+    ),
+    true,
+  );
+  assert.equal(
+    compacted.compactions?.at(-1)?.replacedItemIds.includes(
+      "mt_1_0003_tool_result",
+    ),
+    true,
+  );
+  assert.equal(
+    compacted.items[0]?.content.includes("mt_1_0002_tool_call"),
+    false,
+  );
 });
 
 contractTest("runtime.hermetic", "repeated compaction preserves the active task and explicit semantic-anchor provenance", () => {
