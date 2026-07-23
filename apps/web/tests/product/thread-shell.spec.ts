@@ -101,6 +101,9 @@ contractTest(
     ).toBeVisible();
     const threadShell = page.locator('[data-slot="thread-shell"]');
     await expect(threadShell).toHaveCount(1);
+    await expect(
+      threadShell.getByRole("textbox", { name: "Send a message..." })
+    ).toBeFocused();
 
     await threadShell.getByRole("button", { name: "Rename Thread" }).click();
     const titleInput = threadShell.getByRole("textbox", {

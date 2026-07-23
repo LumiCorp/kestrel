@@ -76,10 +76,6 @@ export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.vercel_deployment_events",
 ] as const);
 
-const INTERNAL_TOOL_NAMES = new Set<string>(
-  KESTREL_ONE_INTERNAL_DELEGATION_TOOL_NAMES,
-);
-
 const DEFAULT_TOOL_QUEUE = Object.freeze({
   perRunConcurrency: 8,
   globalConcurrency: 24,
@@ -122,8 +118,7 @@ export interface KestrelOneProfileOverlay {
   model?: string | undefined;
   modelCredential?: TuiProfile["modelCredential"] | undefined;
   modelCapabilities?: TuiProfile["modelCapabilities"] | undefined;
-  harnessEconomicsPolicy?: TuiProfile["harnessEconomicsPolicy"] | undefined;
-  modelEconomicsProfile?: TuiProfile["modelEconomicsProfile"] | undefined;
+  harnessEconomics?: TuiProfile["harnessEconomics"] | undefined;
   agentStageConfig?: TuiProfile["agentStageConfig"] | undefined;
   modelTimeoutMs?: number | undefined;
   storeDriver?: TuiProfile["storeDriver"] | undefined;
@@ -229,11 +224,8 @@ export function composeKestrelOneProfile(
     ...(input.overlay?.modelCapabilities !== undefined
       ? { modelCapabilities: input.overlay.modelCapabilities }
       : {}),
-    ...(input.overlay?.harnessEconomicsPolicy !== undefined
-      ? { harnessEconomicsPolicy: input.overlay.harnessEconomicsPolicy }
-      : {}),
-    ...(input.overlay?.modelEconomicsProfile !== undefined
-      ? { modelEconomicsProfile: input.overlay.modelEconomicsProfile }
+    ...(input.overlay?.harnessEconomics !== undefined
+      ? { harnessEconomics: input.overlay.harnessEconomics }
       : {}),
     ...(input.overlay?.agentStageConfig !== undefined
       ? { agentStageConfig: input.overlay.agentStageConfig }
@@ -305,7 +297,10 @@ export function normalizeKestrelOneToolAllowlist(
       toolNames
         .map((name) => name.trim())
         .filter(
-          (name) => name.length > 0 && INTERNAL_TOOL_NAMES.has(name) === false,
+          (name) =>
+            name.length > 0 &&
+            name !== "agent.spawn" &&
+            name.startsWith("delegate.") === false,
         ),
     ),
   ];
@@ -325,9 +320,18 @@ export function assertRequiredKestrelOneTools(
   }
 }
 
-export function fingerprintResolvedProfile(profile: TuiProfile): string {
+export function fingerprintResolvedProfile(
+  profile: TuiProfile,
+  revisionProvenance?: unknown,
+): string {
   return createHash("sha256")
-    .update(stableJson(profile))
+    .update(
+      stableJson(
+        revisionProvenance === undefined
+          ? profile
+          : { profile, revisionProvenance },
+      ),
+    )
     .digest("hex");
 }
 

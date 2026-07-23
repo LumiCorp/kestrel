@@ -42,6 +42,52 @@ contractTest("runtime.hermetic", "Local Core execution profile registry is deter
   );
 });
 
+contractTest("runtime.hermetic", "Local Core execution profile registry invalidates immutable selection revisions", async () => {
+  const home = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-execution-profile-revisions-"),
+  );
+  const profile = composeKestrelOneProfile({
+    environmentPresetId: "desktop_dev_local",
+  }).profile;
+  const registry = new LocalCoreExecutionProfileRegistry(home);
+  const first = await registry.register(profile, "desktop_dev_local", {
+    policy: { id: "kestrel-one", version: 1 },
+    environmentPreset: { id: "desktop_dev_local", version: 1 },
+    modelConfiguration: { id: "desktop-default", revision: 1 },
+    integrationContracts: [{ id: "github", revision: 1 }],
+  });
+  const repeated = await registry.register(profile, "desktop_dev_local", {
+    policy: { id: "kestrel-one", version: 1 },
+    environmentPreset: { id: "desktop_dev_local", version: 1 },
+    modelConfiguration: { id: "desktop-default", revision: 1 },
+    integrationContracts: [{ id: "github", revision: 1 }],
+  });
+  const modelRevision = await registry.register(
+    profile,
+    "desktop_dev_local",
+    {
+      policy: { id: "kestrel-one", version: 1 },
+      environmentPreset: { id: "desktop_dev_local", version: 1 },
+      modelConfiguration: { id: "desktop-default", revision: 2 },
+      integrationContracts: [{ id: "github", revision: 1 }],
+    },
+  );
+  const integrationRevision = await registry.register(
+    profile,
+    "desktop_dev_local",
+    {
+      policy: { id: "kestrel-one", version: 1 },
+      environmentPreset: { id: "desktop_dev_local", version: 1 },
+      modelConfiguration: { id: "desktop-default", revision: 1 },
+      integrationContracts: [{ id: "github", revision: 2 }],
+    },
+  );
+
+  assert.equal(first.profileId, repeated.profileId);
+  assert.notEqual(first.profileId, modelRevision.profileId);
+  assert.notEqual(first.profileId, integrationRevision.profileId);
+});
+
 contractTest("runtime.hermetic", "Local Core execution profile registry rejects secret material", async () => {
   const home = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-execution-profile-secret-"),

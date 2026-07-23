@@ -23,6 +23,29 @@ export interface RegisteredExecutionProfile {
   fingerprint: string;
 }
 
+export interface ExecutionProfileRevisionProvenance {
+  policy: {
+    id: string;
+    version: number;
+  };
+  environmentPreset: {
+    id: ShellPresetId;
+    version: number;
+  };
+  modelConfiguration?: {
+    id: string;
+    revision: number;
+  } | undefined;
+  integrationContracts?: Array<{
+    id: string;
+    revision: number;
+  }> | undefined;
+  authoringProfile?: {
+    id: string;
+    revision: string;
+  } | undefined;
+}
+
 export class LocalCoreExecutionProfileRegistry {
   private readonly filePath: string;
 
@@ -37,6 +60,7 @@ export class LocalCoreExecutionProfileRegistry {
   async register(
     inputProfile: TuiProfile,
     environmentPresetId: ShellPresetId,
+    revisionProvenance?: ExecutionProfileRevisionProvenance | undefined,
   ): Promise<RegisteredExecutionProfile> {
     assertSecretFreeProfile(inputProfile);
     const fingerprintSeed = {
@@ -46,7 +70,10 @@ export class LocalCoreExecutionProfileRegistry {
           ? KESTREL_ONE_POLICY_ID
           : inputProfile.id,
     };
-    const fingerprint = fingerprintResolvedProfile(fingerprintSeed);
+    const fingerprint = fingerprintResolvedProfile(
+      fingerprintSeed,
+      revisionProvenance,
+    );
     const prefix =
       inputProfile.agentProfileId === KESTREL_ONE_POLICY_ID
         ? KESTREL_ONE_POLICY_ID

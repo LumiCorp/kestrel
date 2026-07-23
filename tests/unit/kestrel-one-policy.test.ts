@@ -89,6 +89,7 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy fingerprints norm
       additionalToolNames: [
         "free.weather.current",
         "agent.spawn",
+        "delegate.future_internal_tool",
         "dialog.open",
       ],
     },
@@ -99,6 +100,7 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy fingerprints norm
       additionalToolNames: [
         "free.weather.current",
         "agent.spawn",
+        "delegate.future_internal_tool",
         "dialog.open",
       ],
     },
@@ -113,6 +115,10 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy fingerprints norm
   assert.equal(first.provenance.fingerprint, second.provenance.fingerprint);
   assert.notEqual(first.provenance.fingerprint, changed.provenance.fingerprint);
   assert.equal(first.profile.toolAllowlist?.includes("agent.spawn"), false);
+  assert.equal(
+    first.profile.toolAllowlist?.includes("delegate.future_internal_tool"),
+    false,
+  );
 });
 
 contractTest("runtime.hermetic", "canonical Kestrel One policy fails closed without required dialog tools", () => {

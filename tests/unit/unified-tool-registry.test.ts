@@ -2274,7 +2274,13 @@ contractTest("runtime.hermetic", "every canonical Kestrel One environment expose
 
 contractTest("runtime.hermetic", "UnifiedToolRegistry blocks all legacy spawn tools even when allowlisted", async () => {
   const registry = new UnifiedToolRegistry({
-    allowlist: ["agent.spawn", "delegate.spawn_child", "delegate.list_children", "delegate.get_child_result"],
+    allowlist: [
+      "agent.spawn",
+      "delegate.spawn_child",
+      "delegate.list_children",
+      "delegate.get_child_result",
+      "delegate.future_internal_tool",
+    ],
     mcpManager: new MockMcpProvider({
       healthy: true,
       checkedAt: new Date().toISOString(),
@@ -2304,6 +2310,10 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry blocks all legacy spawn to
         parentSessionId: "session-parent",
       }),
     /internal-only runtime tool/
+  );
+  await assert.rejects(
+    () => registry.validateInput("delegate.future_internal_tool", {}),
+    /internal-only runtime tool/,
   );
 });
 

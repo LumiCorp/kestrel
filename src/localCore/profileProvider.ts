@@ -12,7 +12,10 @@ import {
 } from "../desktopShell/configuration.js";
 import {
   composeKestrelOneProfile,
+  fingerprintResolvedProfile,
+  KESTREL_ONE_ENVIRONMENT_PRESETS,
   KESTREL_ONE_POLICY_ID,
+  KESTREL_ONE_POLICY_VERSION,
 } from "../profile/kestrelOnePolicy.js";
 import {
   LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION,
@@ -22,7 +25,10 @@ import {
   parseLocalCoreDesktopExecutionConfig,
   type LocalCoreDesktopExecutionConfig,
 } from "./contracts.js";
-import { LocalCoreExecutionProfileRegistry } from "./executionProfileRegistry.js";
+import {
+  LocalCoreExecutionProfileRegistry,
+  type ExecutionProfileRevisionProvenance,
+} from "./executionProfileRegistry.js";
 import { readLocalCoreLocalSettings } from "./localSettings.js";
 import type { LocalCoreRuntimeConfigurationV1 } from "./runtimeConfiguration.js";
 import { createWebDemoProfile } from "../web/profile.js";
@@ -139,12 +145,71 @@ export async function resolveLocalCoreExecutionProfile(
   }
   const registered = await new LocalCoreExecutionProfileRegistry(
     homePath,
-  ).register(profile, environmentPresetId);
+  ).register(
+    profile,
+    environmentPresetId,
+    buildExecutionProfileRevisionProvenance(
+      request,
+      profile,
+      environmentPresetId,
+    ),
+  );
   return {
     version: 1,
     profileId: registered.profileId,
     fingerprint: registered.fingerprint,
     resolvedProfile: registered.profile,
+  };
+}
+
+function buildExecutionProfileRevisionProvenance(
+  request: LocalCoreExecutionProfileResolveRequest,
+  profile: TuiProfile,
+  environmentPresetId:
+    | "desktop_dev_local"
+    | "cli_dev_local"
+    | "web_balanced",
+): ExecutionProfileRevisionProvenance {
+  const policyId = profile.agentProfileId ?? profile.id;
+  const policyVersion =
+    policyId === KESTREL_ONE_POLICY_ID ? KESTREL_ONE_POLICY_VERSION : 1;
+  const environmentPresetVersion =
+    environmentPresetId === "web_balanced"
+      ? 1
+      : KESTREL_ONE_ENVIRONMENT_PRESETS[environmentPresetId].version;
+  if (request.client === "desktop") {
+    return {
+      policy: { id: policyId, version: policyVersion },
+      environmentPreset: {
+        id: environmentPresetId,
+        version: environmentPresetVersion,
+      },
+      modelConfiguration: {
+        id: request.selection.modelConfiguration.id,
+        revision: request.selection.modelConfiguration.revision,
+      },
+      integrationContracts: [...request.selection.apps]
+        .map((app) => ({
+          id: app.id,
+          revision: app.contractVersion,
+        }))
+        .sort(
+          (left, right) =>
+            left.id.localeCompare(right.id) ||
+            left.revision - right.revision,
+        ),
+    };
+  }
+  return {
+    policy: { id: policyId, version: policyVersion },
+    environmentPreset: {
+      id: environmentPresetId,
+      version: environmentPresetVersion,
+    },
+    authoringProfile: {
+      id: request.profileId,
+      revision: fingerprintResolvedProfile(profile),
+    },
   };
 }
 
