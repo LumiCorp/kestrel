@@ -36,6 +36,14 @@ contractTest(
       }),
       "https://kestrel.example.com",
     );
+    assert.equal(
+      invitationOrigin({
+        BETTER_AUTH_URL: "https://kestrel-one-green.vercel.app",
+        NODE_ENV: "production",
+        VERCEL_ENV: "production",
+      }),
+      "https://kestrelagents.dev",
+    );
     assert.throws(() => invitationOrigin({ NODE_ENV: "production" }));
     assert.throws(() =>
       invitationOrigin({
