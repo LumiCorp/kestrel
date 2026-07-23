@@ -11,6 +11,8 @@ import {
   verifyEnvironmentExecutionTicket,
   verifyEnvironmentToolCredential,
   verifyPreviewRelayTicket,
+  WORKSPACE_READINESS_TIMEOUT_MS,
+  WORKSPACE_READINESS_TIMEOUT_SECONDS,
   type EnvironmentExecutionTicket,
   type EnvironmentToolCredentialTicket,
 } from "../src/index.js";
@@ -41,6 +43,18 @@ const ticket: EnvironmentExecutionTicket = {
   expiresAt: 1300,
   nonce: "nonce-1",
 };
+
+contractTest(
+  "packages.hermetic",
+  "Workspace readiness uses the shared 120 second budget",
+  () => {
+    assert.equal(WORKSPACE_READINESS_TIMEOUT_SECONDS, 120);
+    assert.equal(
+      WORKSPACE_READINESS_TIMEOUT_MS,
+      WORKSPACE_READINESS_TIMEOUT_SECONDS * 1000,
+    );
+  },
+);
 
 contractTest("packages.hermetic", "execution tickets bind the complete routing identity", () => {
   const token = signEnvironmentExecutionTicket({ ticket, privateKey });

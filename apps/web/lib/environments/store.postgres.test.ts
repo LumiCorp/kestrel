@@ -270,6 +270,16 @@ contractTest(
         "runtime_image" = 'registry.example/kestrel-workspace@sha256:test'
       WHERE "id" = ${projectBinding.workspace.id}
     `;
+    await sql`
+      UPDATE "environment_operations"
+      SET
+        "status" = 'completed',
+        "stage" = 'environment.activation.ready',
+        "completed_at" = now(),
+        "updated_at" = now()
+      WHERE "workspace_id" = ${projectBinding.workspace.id}
+        AND "status" IN ('queued', 'running')
+    `;
 
     await assert.rejects(
       executionRoute.resolveEnvironmentExecutionRoute({
@@ -288,13 +298,79 @@ contractTest(
         AND "key" = 'hosted_environments'
     `;
 
-    const route = await executionRoute.resolveEnvironmentExecutionRoute({
+    const coldWakeOperationId = `cold-wake-operation-${suffix}`;
+    await sql.begin(async (transaction) => {
+      await transaction`
+        UPDATE "environment_workspaces"
+        SET
+          "status" = 'starting',
+          "last_health_at" = NULL,
+          "updated_at" = now()
+        WHERE "id" = ${projectBinding.workspace.id}
+      `;
+      await transaction`
+        INSERT INTO "environment_operations" (
+          "id", "organization_id", "environment_id", "workspace_id",
+          "requested_by_user_id", "type", "status", "stage",
+          "idempotency_key", "started_at", "created_at", "updated_at"
+        ) VALUES (
+          ${coldWakeOperationId}, ${organizationA},
+          ${createdEnvironment.environment.id}, ${projectBinding.workspace.id},
+          ${userA}, 'workspace.start', 'running',
+          'environment.health.checking', ${coldWakeOperationId},
+          now(), now(), now()
+        )
+      `;
+    });
+    let healthCheckingObserved!: () => void;
+    const healthChecking = new Promise<void>((resolve) => {
+      healthCheckingObserved = resolve;
+    });
+    const routePromise = executionRoute.resolveEnvironmentExecutionRoute({
       organizationId: organizationA,
       threadId: projectThreadId,
       actorUserId: userA,
       agentId: "kestrel-one",
       recordExecution: { projectContextRevisionId: revisionId },
+      onProgress(progress) {
+        if (progress.stage === "environment.health.checking") {
+          healthCheckingObserved();
+        }
+      },
     });
+    await healthChecking;
+    const [executionBeforeReady] = await sql<Array<{ count: number }>>`
+      SELECT count(*)::integer AS "count"
+      FROM "environment_run_executions"
+      WHERE "thread_id" = ${projectThreadId}
+    `;
+    assert.equal(executionBeforeReady?.count, 0);
+    await sql.begin(async (transaction) => {
+      await transaction`
+        UPDATE "environment_workspaces"
+        SET
+          "status" = 'ready',
+          "last_health_at" = now(),
+          "updated_at" = now()
+        WHERE "id" = ${projectBinding.workspace.id}
+      `;
+      await transaction`
+        UPDATE "environment_operations"
+        SET
+          "status" = 'completed',
+          "stage" = 'environment.activation.ready',
+          "completed_at" = now(),
+          "updated_at" = now()
+        WHERE "id" = ${coldWakeOperationId}
+      `;
+    });
+    const route = await routePromise;
+    const [executionAfterReady] = await sql<Array<{ count: number }>>`
+      SELECT count(*)::integer AS "count"
+      FROM "environment_run_executions"
+      WHERE "thread_id" = ${projectThreadId}
+    `;
+    assert.equal(executionAfterReady?.count, 1);
     assert.equal(route.environmentId, createdEnvironment.environment.id);
     assert.equal(route.workspaceId, projectBinding.workspace.id);
     assert.equal(route.baseUrl, "https://environment.example");

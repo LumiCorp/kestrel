@@ -4,6 +4,7 @@ import type {
   EnvironmentProviderMachine,
 } from "./providers/contracts";
 import {
+  assessWorkspaceMachineReadiness,
   assessWorkspaceVolumeBinding,
   mountedVolumeIdsFromInventory,
   selectOrphanVolumeIds,
@@ -13,6 +14,68 @@ import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const workspaceId = "87408a50-5dc3-448a-b099-aada6811996a";
 const expectedVolumeName = "ws_87408a505dc3448ab099";
+
+contractTest(
+  "web.hermetic",
+  "started Workspace Machines become ready only after their health check passes",
+  async () => {
+    let checks = 0;
+    assert.deepEqual(
+      await assessWorkspaceMachineReadiness({
+        machineState: "started",
+        checkHealth: async () => {
+          checks += 1;
+        },
+      }),
+      { status: "ready" },
+    );
+    assert.equal(checks, 1);
+  },
+);
+
+contractTest(
+  "web.hermetic",
+  "started unhealthy Workspace Machines become degraded instead of ready",
+  async () => {
+    const healthError = new Error("runner unavailable");
+    assert.deepEqual(
+      await assessWorkspaceMachineReadiness({
+        machineState: "started",
+        checkHealth: async () => {
+          throw healthError;
+        },
+      }),
+      { status: "degraded", error: healthError },
+    );
+  },
+);
+
+contractTest(
+  "web.hermetic",
+  "only stopped Workspace Machines reconcile to stopped without a health check",
+  async () => {
+    let checks = 0;
+    assert.deepEqual(
+      await assessWorkspaceMachineReadiness({
+        machineState: "stopped",
+        checkHealth: async () => {
+          checks += 1;
+        },
+      }),
+      { status: "stopped" },
+    );
+    assert.deepEqual(
+      await assessWorkspaceMachineReadiness({
+        machineState: "starting",
+        checkHealth: async () => {
+          checks += 1;
+        },
+      }),
+      { status: "unchanged" },
+    );
+    assert.equal(checks, 0);
+  },
+);
 
 function machine(
   overrides: Partial<EnvironmentProviderMachine> = {}

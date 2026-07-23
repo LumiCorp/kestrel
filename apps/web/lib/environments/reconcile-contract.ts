@@ -5,6 +5,26 @@ import type {
 
 export const WORKSPACE_VOLUME_MOUNT_PATH = "/workspace";
 
+export type WorkspaceMachineReadinessAssessment =
+  | { status: "ready" }
+  | { status: "stopped" }
+  | { status: "unchanged" }
+  | { status: "degraded"; error: unknown };
+
+export async function assessWorkspaceMachineReadiness(input: {
+  machineState: string;
+  checkHealth: () => Promise<void>;
+}): Promise<WorkspaceMachineReadinessAssessment> {
+  if (input.machineState === "stopped") return { status: "stopped" };
+  if (input.machineState !== "started") return { status: "unchanged" };
+  try {
+    await input.checkHealth();
+    return { status: "ready" };
+  } catch (error) {
+    return { status: "degraded", error };
+  }
+}
+
 export type WorkspaceVolumeBindingAssessment =
   | { status: "matched"; volumeId: string }
   | { status: "adopt"; oldVolumeId: string | null; newVolumeId: string }
