@@ -82,6 +82,7 @@ function createRunHarness(input: {
   diagnostics: Array<{ scope: string; summary: string; details?: string | undefined }>;
   runLogs: AgentRunLogLine[];
   reasoning: AgentProgressUpdateV1[];
+  registeredProfileId: string;
 } {
   const activeProfile: TuiProfile = {
     id: "reference",
@@ -122,6 +123,8 @@ function createRunHarness(input: {
   );
 
   const commands: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const registeredProfileId =
+    "kestrel-one:cli_dev_local:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const history: Array<{
     role: string;
     text: string;
@@ -169,6 +172,28 @@ function createRunHarness(input: {
         });
       }),
     },
+    getLocalCoreClient: () => ({
+      resolveExecutionProfile: async (request: {
+        client: "cli";
+        profileId: string;
+      }) => {
+        assert.deepEqual(request, {
+          client: "cli",
+          profileId: activeProfile.id,
+        });
+        return {
+          version: 1,
+          profileId: registeredProfileId,
+          fingerprint:
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          resolvedProfile: {
+            ...activeProfile,
+            id: registeredProfileId,
+            agentProfileId: "kestrel-one",
+          },
+        };
+      },
+    }),
     uiStore,
     selectors: createUiDerivedSelectors(),
     getRuntimeSettings: () => ({ version: 1, defaults: {} }),
@@ -238,6 +263,7 @@ function createRunHarness(input: {
     diagnostics,
     runLogs,
     reasoning,
+    registeredProfileId,
   };
 }
 
@@ -256,6 +282,11 @@ contractTest("runtime.hermetic", "TuiRunController startActiveTurn forwards bloc
 
   assert.equal(harness.commands[0]?.type, "run.start");
   const turn = harness.commands[0]?.payload.turn as Record<string, unknown>;
+  assert.equal(
+    harness.commands[0]?.payload.profileId,
+    harness.registeredProfileId,
+  );
+  assert.equal("profile" in harness.commands[0]!.payload, false);
   assert.equal(turn.sessionId, "session-1");
   assert.equal(turn.message, "continue");
   assert.equal(turn.eventType, "user.reply");

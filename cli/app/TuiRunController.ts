@@ -13,7 +13,6 @@ import {
   extractWaitPrompt,
 } from "./waitForPrompt.js";
 import type { TuiAppContext } from "./TuiAppContext.js";
-import { toCoreExecutionProfile } from "../client/coreExecutionProfile.js";
 import {
   createTuiClientCapabilities,
   DEFAULT_ACT_SUBMODE,
@@ -88,7 +87,17 @@ export class TuiRunController {
     const pendingWait = input.forceFreshTurn === true ? undefined : submittedPendingWait;
     const eventType = pendingWait?.eventType ?? "user.message";
     const stepAgent = pendingWait !== undefined ? undefined : getEntryStepAgent(state.activeProfile);
-    const effectiveProfile = toCoreExecutionProfile(state.activeProfile);
+    const effectiveProfile = state.activeProfile;
+    const core = this.context.getLocalCoreClient?.();
+    if (core === undefined) {
+      throw new Error(
+        "Kestrel Local Core is required to resolve the active execution profile.",
+      );
+    }
+    const executionProfile = await core.resolveExecutionProfile({
+      client: "cli",
+      profileId: state.activeProfile.id,
+    });
     const workspace = await this.context.refreshWorkspaceForActiveSession();
     const baseHistorySource =
       pendingWait !== undefined
@@ -137,7 +146,7 @@ export class TuiRunController {
 
     try {
       const response = await this.context.client.sendCommand("run.start", {
-        profile: effectiveProfile,
+        profileId: executionProfile.profileId,
         turn: {
           sessionId: state.activeSession.sessionId,
           message: input.submittedMessage,

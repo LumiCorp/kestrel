@@ -85,7 +85,6 @@ import { TuiRunController, resolveRunFailureSummary as resolveRunFailureSummaryF
 import { WorkspaceController, type WorkspaceSelection } from "./WorkspaceController.js";
 import type { ProtocolClient } from "../client/ProtocolClient.js";
 import { createConfiguredCliProtocolClient } from "../client/configuredClient.js";
-import { toCoreExecutionProfile } from "../client/coreExecutionProfile.js";
 import {
   buildModelCatalogStatusLine,
   buildModelSearchResultBlock,
@@ -312,9 +311,7 @@ export class App {
   }
 
   private getActiveRunnerMetadata(): RunnerCommandMetadata {
-    return {
-      profile: toCoreExecutionProfile(this.uiStore.getState().activeProfile),
-    };
+    return {};
   }
 
   async start(): Promise<void> {
@@ -2982,9 +2979,19 @@ export class App {
       );
       await this.appendHistoryLine("system", `Launched background task '${delegatedSession.name}'.`);
 
-      const effectiveProfile = toCoreExecutionProfile(profile);
+      const effectiveProfile = profile;
+      const core = this.localCoreStatus?.client;
+      if (core === undefined) {
+        throw new Error(
+          "Kestrel Local Core is required to resolve background execution profiles.",
+        );
+      }
+      const executionProfile = await core.resolveExecutionProfile({
+        client: "cli",
+        profileId: profile.id,
+      });
       void this.client.sendCommand("run.start", {
-        profile: effectiveProfile,
+        profileId: executionProfile.profileId,
         turn: {
           sessionId: delegatedSession.sessionId,
           message: prompt,
@@ -3396,8 +3403,18 @@ export class App {
 
   private async fetchMcpStatus(refresh: boolean): Promise<McpStatusSnapshot> {
     const state = this.uiStore.getState();
+    const core = this.localCoreStatus?.client;
+    if (core === undefined) {
+      throw new Error(
+        "Kestrel Local Core is required to resolve the active MCP profile.",
+      );
+    }
+    const executionProfile = await core.resolveExecutionProfile({
+      client: "cli",
+      profileId: state.activeProfile.id,
+    });
     const response = await this.client.sendCommand(refresh ? "mcp.refresh" : "mcp.status", {
-      profile: state.activeProfile,
+      profileId: executionProfile.profileId,
     });
 
     if (response.type !== "mcp.status" && response.type !== "mcp.refreshed") {

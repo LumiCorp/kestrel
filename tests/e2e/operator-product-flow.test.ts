@@ -81,6 +81,32 @@ async function createHarness(): Promise<{
   appState.uiStore = uiStore;
   appState.activeWorkspace = undefined;
   appState.launchWorkspace = undefined;
+  appState.localCoreStatus = {
+    client: {
+      resolveExecutionProfile: async (request: {
+        client: "cli";
+        profileId: string;
+      }) => {
+        assert.deepEqual(request, {
+          client: "cli",
+          profileId: activeProfile.id,
+        });
+        const fingerprint =
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        const profileId = `kestrel-one:cli_dev_local:${fingerprint}`;
+        return {
+          version: 1,
+          profileId,
+          fingerprint,
+          resolvedProfile: {
+            ...activeProfile,
+            id: profileId,
+            agentProfileId: "kestrel-one",
+          },
+        };
+      },
+    },
+  };
 
   await ((appState.refreshActiveSessionOperatorState as (() => Promise<void>) | undefined)?.() ?? Promise.resolve());
   return { app, cwd };
@@ -126,8 +152,13 @@ contractTest("runtime.process", "operator shell deterministic journey e2e covers
   }
 
   appState.client = {
-    sendCommand: async (type: string) => {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
       if (type === "mcp.status") {
+        assert.equal(
+          payload.profileId,
+          "kestrel-one:cli_dev_local:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+        assert.equal("profile" in payload, false);
         return {
           type: "mcp.status",
           payload: {
