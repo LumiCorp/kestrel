@@ -25,6 +25,11 @@ import { canUserManageOrganizationBilling } from "@/lib/billing/access";
 import { getStripeBillingConfigStatus } from "@/lib/billing/config";
 import { deliverTransactionalEmail } from "@/lib/email/service";
 import { isDisallowedToolProviderSignIn } from "./auth-policy";
+import {
+  assertInvitationSignupFromHeaders,
+  INVITATION_EXPIRY_SECONDS,
+} from "./invitations";
+import { invitationOrigin } from "./invitation-origin";
 import { pool } from "./db-client";
 import { reactInvitationEmail } from "./email/invitation";
 import { reactResetPasswordEmail } from "./email/reset-password";
@@ -63,11 +68,6 @@ const localDevOrigins = [3000, 3001, 3100, 43_103].flatMap((port) => [
   `http://127.0.0.1:${port}`,
 ]);
 
-const devBaseUrl =
-  process.env.BETTER_AUTH_URL ||
-  process.env.NEXT_PUBLIC_APP_URL ||
-  "http://localhost:43103";
-
 const mobileTrustedOrigins = (
   process.env.KESTREL_ONE_MOBILE_TRUSTED_ORIGINS ?? "kestrelone://"
 )
@@ -84,8 +84,8 @@ const trustedOrigins = Array.from(
       process.env.BETTER_AUTH_URL,
       process.env.NEXT_PUBLIC_APP_URL,
       ...localDevOrigins,
-    ].filter((origin): origin is string => Boolean(origin))
-  )
+    ].filter((origin): origin is string => Boolean(origin)),
+  ),
 );
 
 const adminUserIds = (process.env.ADMIN_USER_IDS ?? "")
@@ -96,13 +96,13 @@ const adminUserIds = (process.env.ADMIN_USER_IDS ?? "")
 const stripeConfigStatus = getStripeBillingConfigStatus();
 const stripeEnvConfigured = stripeConfigStatus.isReady;
 const githubOAuthConfigured = Boolean(
-  process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
+  process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET,
 );
 const googleOAuthConfigured = Boolean(
-  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET,
 );
 const microsoftOAuthConfigured = Boolean(
-  process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET
+  process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET,
 );
 
 export const auth = betterAuth({
@@ -143,10 +143,10 @@ export const auth = betterAuth({
     ...(githubOAuthConfigured
       ? {
           github: {
-          clientId: process.env.GITHUB_CLIENT_ID as string,
-          clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
-          scope: ["repo"],
-          disableImplicitSignUp: true,
+            clientId: process.env.GITHUB_CLIENT_ID as string,
+            clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
+            scope: ["repo"],
+            disableImplicitSignUp: true,
           },
         }
       : {}),
@@ -175,6 +175,12 @@ export const auth = betterAuth({
             "This provider is available only as a linked organizational tool.",
         });
       }
+      if (context.path === "/sign-up/email") {
+        await assertInvitationSignupFromHeaders({
+          headers: context.headers,
+          email: (context.body as { email?: unknown } | undefined)?.email,
+        });
+      }
     }),
   },
   emailAndPassword: {
@@ -201,7 +207,13 @@ export const auth = betterAuth({
               clientId: process.env.MICROSOFT_CLIENT_ID as string,
               clientSecret: process.env.MICROSOFT_CLIENT_SECRET as string,
               tenantId: process.env.MICROSOFT_TENANT_ID ?? "organizations",
-              scopes: ["openid", "profile", "email", "offline_access", "User.Read"],
+              scopes: [
+                "openid",
+                "profile",
+                "email",
+                "offline_access",
+                "User.Read",
+              ],
               disableImplicitSignUp: true,
             }),
           ]
@@ -209,8 +221,10 @@ export const auth = betterAuth({
     }),
     expo(),
     organization({
+      invitationExpiresIn: INVITATION_EXPIRY_SECONDS,
+      requireEmailVerificationOnInvitation: false,
       async sendInvitationEmail(data) {
-        const inviteLink = `${devBaseUrl}/accept-invitation/${data.id}`;
+        const inviteLink = `${invitationOrigin()}/accept-invitation/${data.id}`;
         await deliverTransactionalEmail({
           kind: "organization_invitation",
           to: data.email,

@@ -1,10 +1,12 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
-import { auth } from "@/lib/auth";
+import {
+  SettingsPage,
+  SettingsPageHeader,
+} from "@/components/settings/settings-section";
 import type { ActiveOrganization, Session } from "@/lib/auth-types";
 import { dbClient } from "@/lib/db-client";
-import { ensurePersonalOrganization } from "@/lib/personal-workspace";
+import { resolveEmailConfig } from "@/lib/email/config";
+import { invitationOrigin } from "@/lib/invitation-origin";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { OrganizationCard } from "@/components/settings/members-client";
 
 function parseOrganizationMetadata(metadata: string | null) {
@@ -20,30 +22,46 @@ function parseOrganizationMetadata(metadata: string | null) {
 }
 
 export default async function OrganizationsPage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
-  if (!session?.user) {
-    redirect("/sign-in");
+  const { session, organizationId } = await requireOrganizationAdmin();
+  let invitationOriginValue: string | null = null;
+  let invitationSetupIssue: string | null = null;
+  const addInvitationSetupIssue = (message: string) => {
+    invitationSetupIssue = invitationSetupIssue
+      ? `${invitationSetupIssue} ${message}`
+      : message;
+  };
+  try {
+    invitationOriginValue = invitationOrigin();
+  } catch (error) {
+    addInvitationSetupIssue(
+      error instanceof Error
+        ? error.message
+        : "Invitation links are not configured.",
+    );
   }
-
-  // Get active organization if session has one
+  try {
+    const emailConfig = await resolveEmailConfig();
+    const invitationDeliveryReady =
+      emailConfig.enabled &&
+      Boolean(emailConfig.apiKey && emailConfig.fromEmail) &&
+      (!emailConfig.persisted || emailConfig.status === "ready");
+    if (!invitationDeliveryReady) {
+      addInvitationSetupIssue(
+        `Email delivery is ${emailConfig.status.replaceAll("_", " ")}. Invitations may remain pending until you configure and test delivery.`,
+      );
+    }
+  } catch {
+    addInvitationSetupIssue(
+      "Email delivery configuration could not be read. Invitations may remain pending until it is repaired.",
+    );
+  }
   let activeOrganization: ActiveOrganization | null = null;
-  let activeOrgId = (
-    session.session as { activeOrganizationId?: string | null }
-  )?.activeOrganizationId;
-
-  if (!activeOrgId) {
-    const personalOrganization = await ensurePersonalOrganization(session.user);
-    activeOrgId = personalOrganization.id;
-  }
-  if (activeOrgId) {
+  if (organizationId) {
     const orgData = await dbClient
-        .selectFrom("organization")
-        .selectAll()
-        .where("id", "=", activeOrgId)
-        .executeTakeFirst();
+      .selectFrom("organization")
+      .selectAll()
+      .where("id", "=", organizationId)
+      .executeTakeFirst();
 
     if (orgData) {
       // Get members
@@ -64,12 +82,12 @@ export default async function OrganizationsPage() {
         .where("member.organizationId", "=", orgData.id)
         .execute();
 
-      // Get invitations
+      // Owners and admins can review the complete invitation lifecycle.
       const invitations = await dbClient
         .selectFrom("invitation")
         .selectAll()
         .where("organizationId", "=", orgData.id)
-        .where("status", "=", "pending")
+        .orderBy("createdAt", "desc")
         .execute();
 
       activeOrganization = {
@@ -116,6 +134,8 @@ export default async function OrganizationsPage() {
 
       <OrganizationCard
         activeOrganization={activeOrganization}
+        invitationOrigin={invitationOriginValue}
+        invitationSetupIssue={invitationSetupIssue}
         session={session as Session}
       />
     </SettingsPage>

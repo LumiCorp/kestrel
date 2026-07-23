@@ -17,11 +17,8 @@ contractTest(
       "test-key": randomBytes(32).toString("base64"),
     });
 
-    const [{ resetDbRuntimeForTests }, { EmailConfigError, saveEmailConfig }]
-      = await Promise.all([
-        import("@/lib/db/runtime"),
-        import("./config"),
-      ]);
+    const [{ resetDbRuntimeForTests }, { EmailConfigError, saveEmailConfig }] =
+      await Promise.all([import("@/lib/db/runtime"), import("./config")]);
     const sql = postgres(databaseUrl, { max: 1 });
     const userId = `platform-email-user-${crypto.randomUUID()}`;
     const now = new Date();
@@ -47,7 +44,7 @@ contractTest(
         fromName: "Kestrel One",
         fromEmail: "hello@example.test",
         enabled: false,
-        env: {},
+        env: { NODE_ENV: "test" },
       }),
       (error: unknown) => {
         assert.ok(error instanceof EmailConfigError);
