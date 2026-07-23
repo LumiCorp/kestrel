@@ -1,52 +1,14 @@
-import {
-  Activity,
-  Boxes,
-  Bot,
-  Cpu,
-  DollarSign,
-  ExternalLink,
-  Server,
-  Users,
-} from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AppPage } from "@/components/app-page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getOrganizationDashboardSnapshot } from "@/lib/costs/dashboard";
-import {
-  type CostCategory,
-  parseDashboardRange,
-} from "@/lib/costs/contracts";
+import { parseDashboardRange } from "@/lib/costs/contracts";
 import { requireAuthenticatedShell } from "@/lib/knowledge/auth";
 import { CostTrendChart } from "./cost-trend-chart";
-
-const CATEGORY_COPY: Record<
-  CostCategory,
-  { label: string; description: string; icon: typeof Bot }
-> = {
-  models: {
-    label: "Models",
-    description: "Token and model API usage",
-    icon: Bot,
-  },
-  environments: {
-    label: "Environments",
-    description: "Fly compute, storage, and network",
-    icon: Server,
-  },
-  managed_compute: {
-    label: "Managed compute",
-    description: "RunPod endpoints and storage",
-    icon: Cpu,
-  },
-  services: {
-    label: "Services",
-    description: "Apps, MCP, email, and tunnels",
-    icon: Boxes,
-  },
-};
 
 export default async function DashboardPage({
   searchParams,
@@ -70,7 +32,7 @@ export default async function DashboardPage({
   const hasPricedUsage = snapshot.pricingCoverage.pricedMeters > 0;
 
   return (
-    <AppPage>
+    <AppPage className="space-y-5">
       <AdminPageHeader
         actions={
           <div className="flex flex-wrap gap-2">
@@ -88,8 +50,7 @@ export default async function DashboardPage({
             ))}
           </div>
         }
-        description={`Attributed operating cost and activity for ${snapshot.organization.name}. As of ${formatDateTime(snapshot.asOf)}.`}
-        eyebrow="Organization pulse"
+        description={`As of ${formatDateTime(snapshot.asOf)}`}
         title="Costs and activity"
       />
 
@@ -100,79 +61,70 @@ export default async function DashboardPage({
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <HeadlineMetric
-          icon={DollarSign}
+      <MetricGrid>
+        <Metric
           label="Attributed operating cost"
           value={formatOptionalUsd(snapshot.totals.amountUsd)}
         />
-        <HeadlineMetric
-          icon={Users}
-          label="Active members"
-          value={formatNumber(snapshot.totals.activeMembers)}
-        />
-        <HeadlineMetric
-          icon={Activity}
+        <Metric
           label="Runs"
           value={formatNumber(snapshot.totals.runs)}
         />
-        <HeadlineMetric
-          icon={Bot}
+        <Metric
+          label="Completed"
+          value={formatNumber(snapshot.totals.completedRuns)}
+        />
+        <Metric
+          label="Failed"
+          value={formatNumber(snapshot.totals.failedRuns)}
+        />
+        <Metric
+          label="Active members"
+          value={formatNumber(snapshot.totals.activeMembers)}
+        />
+        <Metric
           label="Model tokens"
           value={formatCompact(snapshot.totals.modelTokens)}
         />
-      </div>
+      </MetricGrid>
 
-      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-        {snapshot.categories.map((category) => {
-          const copy = CATEGORY_COPY[category.category];
-          const Icon = copy.icon;
-          return (
-            <Card key={category.category}>
-              <CardHeader className="space-y-1 pb-3">
-                <div className="flex items-center justify-between gap-3">
-                  <CardTitle className="text-base">{copy.label}</CardTitle>
-                  <Icon className="size-4 text-muted-foreground" />
-                </div>
-                <p className="text-muted-foreground text-xs">{copy.description}</p>
-              </CardHeader>
-              <CardContent>
-                <div className="font-semibold text-2xl tabular-nums">
-                  {formatOptionalUsd(category.amountUsd)}
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-                  <span>
-                    {formatCompact(category.usageQuantity)} {category.usageUnit}
-                  </span>
-                  {category.deltaPercent == null ? null : (
-                    <Badge variant="secondary">
-                      {formatDelta(category.deltaPercent)} vs prior
-                    </Badge>
-                  )}
-                </div>
+      <section className="border-b pb-5">
+        <h2 className="mb-3 font-medium text-sm">Cost by category</h2>
+        <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+          {snapshot.categories.map((category) => (
+            <div className="min-w-0" key={category.category}>
+              <div className="text-muted-foreground text-xs capitalize">
+                {category.category.replace("_", " ")}
+              </div>
+              <div className="mt-1 font-semibold text-lg tabular-nums">
+                {formatOptionalUsd(category.amountUsd)}
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 text-muted-foreground text-xs">
+                <span>
+                  {formatCompact(category.usageQuantity)} {category.usageUnit}
+                </span>
+                {category.deltaPercent == null ? null : (
+                  <span>{formatDelta(category.deltaPercent)} vs prior</span>
+                )}
                 {category.basisBreakdown.length ? (
-                  <div className="mt-3 flex flex-wrap gap-1">
-                    {category.basisBreakdown.map((basis) => (
-                      <Badge key={basis.basis} variant="outline">
-                        {formatBasis(basis.basis)} {formatUsd(basis.amountUsd)}
-                      </Badge>
-                    ))}
-                  </div>
+                  <span>
+                    {category.basisBreakdown
+                      .map((basis) => formatBasis(basis.basis))
+                      .join(", ")}
+                  </span>
                 ) : null}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Daily attributed cost</CardTitle>
-          <p className="text-muted-foreground text-sm">
-            Stacked by cost category. This is operating cost, not a Kestrel invoice.
-          </p>
-        </CardHeader>
-        <CardContent>
+      <section className="border-b pb-5">
+        <h2 className="font-medium text-sm">Daily attributed cost</h2>
+        <p className="mt-1 text-muted-foreground text-xs">
+          Operating cost, not a Kestrel invoice.
+        </p>
+        <div className="mt-3">
           {snapshot.costsVisible && hasPricedUsage ? (
             <CostTrendChart data={snapshot.daily} />
           ) : (
@@ -187,71 +139,36 @@ export default async function DashboardPage({
             />
           )}
           {snapshot.sourceFreshness.length ? (
-            <div className="mt-4 grid gap-2 border-t pt-4 sm:grid-cols-2 lg:grid-cols-3">
-              {snapshot.sourceFreshness.map((source) => (
-                <div className="text-xs" key={source.source}>
-                  <div className="font-medium">{source.source}</div>
-                  <div className="text-muted-foreground">
-                    Updated {formatDateTime(source.lastUpdatedAt)}
+            <details className="mt-3 text-xs">
+              <summary className="cursor-pointer text-muted-foreground">
+                Data sources ({snapshot.sourceFreshness.length})
+              </summary>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {snapshot.sourceFreshness.map((source) => (
+                  <div className="text-xs" key={source.source}>
+                    <div className="font-medium">{source.source}</div>
+                    <div className="text-muted-foreground">
+                      Updated {formatDateTime(source.lastUpdatedAt)}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </details>
           ) : null}
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Organization activity</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-3 gap-4">
-            <ActivityValue label="Runs" value={snapshot.activity.organization.runs} />
-            <ActivityValue
-              label="Completed"
-              value={snapshot.activity.organization.completedRuns}
-            />
-            <ActivityValue
-              label="Failed"
-              value={snapshot.activity.organization.failedRuns}
-            />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Your activity</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-3 gap-4">
-            <ActivityValue label="Runs" value={snapshot.activity.currentUser.runs} />
-            <ActivityValue
-              label="Model tokens"
-              value={snapshot.activity.currentUser.modelTokens}
-            />
-            <ActivityValue
-              label="Attributed cost"
-              value={formatOptionalUsd(snapshot.activity.currentUser.attributedCostUsd)}
-            />
-          </CardContent>
-        </Card>
-      </div>
+        </div>
+      </section>
 
       {canManageActiveOrganization ? (
-        <Card>
-          <CardHeader className="flex-row items-center justify-between gap-4">
-            <div>
-              <CardTitle>Team and project attribution</CardTitle>
-              <p className="mt-1 text-muted-foreground text-sm">
-                Admin-only detail for this period.
-              </p>
-            </div>
+        <section className="border-b pb-5">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="font-medium text-sm">Attribution</h2>
             <Button asChild size="sm" variant="outline">
               <Link href="/settings/organization/usage">
                 Open explorer <ExternalLink className="ml-1 size-3.5" />
               </Link>
             </Button>
-          </CardHeader>
-          <CardContent className="grid gap-6 lg:grid-cols-2">
+          </div>
+          <div className="mt-4 grid gap-6 lg:grid-cols-2">
             <AttributionList
               rows={snapshot.people.map((row) => ({
                 id: row.userId,
@@ -270,68 +187,49 @@ export default async function DashboardPage({
               }))}
               title="Projects"
             />
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-4">
-            <CardTitle>Pricing coverage</CardTitle>
-            <Badge variant={snapshot.pricingCoverage.complete ? "secondary" : "outline"}>
-              {snapshot.pricingCoverage.pricedMeters} of {snapshot.pricingCoverage.activeMeters}{" "}
+      {snapshot.pricingCoverage.complete ? null : (
+        <section className="border-l-2 border-amber-500/50 pl-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-medium text-sm">Pricing needs attention</h2>
+            <Badge variant="outline">
+              {snapshot.pricingCoverage.pricedMeters} of{" "}
+              {snapshot.pricingCoverage.activeMeters}{" "}
               active meters priced
             </Badge>
           </div>
-        </CardHeader>
-        <CardContent>
-          {snapshot.pricingCoverage.unpricedServices.length ? (
-            <div className="space-y-2">
-              <p className="text-muted-foreground text-sm">
-                These providers have usage but no applicable rate. Missing dollars are
-                not estimated, and period deltas are suppressed.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {snapshot.pricingCoverage.unpricedServices.map((item) => (
-                  <Badge key={`${item.provider}/${item.service}/${item.meter}`} variant="outline">
-                    {item.provider} · {item.service} · {item.meter} ({item.eventCount})
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              All active meters in this period have a price. Calculated amounts may
-              still exclude credits, taxes, discounts, or invoice adjustments.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {snapshot.pricingCoverage.unpricedServices.map((item) => (
+              <Badge
+                key={`${item.provider}/${item.service}/${item.meter}`}
+                variant="outline"
+              >
+                {item.provider} · {item.service} · {item.meter} ({item.eventCount})
+              </Badge>
+            ))}
+          </div>
+        </section>
+      )}
     </AppPage>
   );
 }
 
-function HeadlineMetric({ icon: Icon, label, value }: { icon: typeof Bot; label: string; value: string }) {
+function MetricGrid({ children }: { children: ReactNode }) {
   return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-center justify-between gap-3 text-muted-foreground text-sm">
-          <span>{label}</span>
-          <Icon className="size-4" />
-        </div>
-        <div className="mt-2 font-semibold text-3xl tabular-nums">{value}</div>
-      </CardContent>
-    </Card>
+    <dl className="grid gap-x-6 gap-y-4 border-y py-4 sm:grid-cols-2 xl:grid-cols-3">
+      {children}
+    </dl>
   );
 }
 
-function ActivityValue({ label, value }: { label: string; value: number | string }) {
+function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-muted-foreground text-xs">{label}</div>
-      <div className="mt-1 font-semibold text-xl tabular-nums">
-        {typeof value === "number" ? formatCompact(value) : value}
-      </div>
+      <dt className="text-muted-foreground text-xs">{label}</dt>
+      <dd className="mt-1 font-semibold text-xl tabular-nums">{value}</dd>
     </div>
   );
 }
@@ -346,18 +244,25 @@ function AttributionList({
   return (
     <div>
       <h3 className="mb-2 font-medium text-sm">{title}</h3>
-      <div className="divide-y rounded-md border">
+      <div className="divide-y border-y">
         {rows.slice(0, 8).map((row) => (
-          <div className="flex items-center justify-between gap-4 px-3 py-2 text-sm" key={row.id}>
+          <div
+            className="flex items-center justify-between gap-4 px-3 py-2 text-sm"
+            key={row.id}
+          >
             <div className="min-w-0">
               <div className="truncate font-medium">{row.name}</div>
-              <div className="text-muted-foreground text-xs">{formatNumber(row.runs)} runs</div>
+              <div className="text-muted-foreground text-xs">
+                {formatNumber(row.runs)} runs
+              </div>
             </div>
             <div className="font-mono tabular-nums">{formatOptionalUsd(row.amount)}</div>
           </div>
         ))}
         {rows.length === 0 ? (
-          <div className="px-3 py-5 text-center text-muted-foreground text-sm">No activity</div>
+          <div className="px-3 py-5 text-center text-muted-foreground text-sm">
+            No activity
+          </div>
         ) : null}
       </div>
     </div>
@@ -365,7 +270,11 @@ function AttributionList({
 }
 
 function EmptyState({ message }: { message: string }) {
-  return <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">{message}</div>;
+  return (
+    <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">
+      {message}
+    </div>
+  );
 }
 
 function formatOptionalUsd(value: number | null) {
@@ -382,7 +291,10 @@ function formatUsd(value: number) {
 }
 
 function formatCompact(value: number) {
-  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
 }
 
 function formatNumber(value: number) {

@@ -22,7 +22,7 @@ export function CostTrendChart({
   data: OrganizationDashboardSnapshot["daily"];
 }) {
   return (
-    <ChartContainer className="h-[280px] w-full" config={chartConfig}>
+    <ChartContainer className="h-[220px] w-full" config={chartConfig}>
       <AreaChart accessibilityLayer data={data} margin={{ left: 4, right: 4 }}>
         <CartesianGrid vertical={false} />
         <XAxis
