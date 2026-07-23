@@ -28,11 +28,7 @@ export function selectWorkspaceBackupRecoverySource(input: {
     manifest.flySnapshotId.trim().length > 0
       ? manifest.flySnapshotId
       : null;
-  const snapshotState =
-    typeof manifest.flySnapshotState === "string"
-      ? manifest.flySnapshotState
-      : null;
-  if (snapshotId && snapshotState === "created") {
+  if (snapshotId) {
     return { kind: "snapshot" as const, snapshotId };
   }
   if (input.objectKey && input.checksumSha256) {
@@ -43,6 +39,22 @@ export function selectWorkspaceBackupRecoverySource(input: {
     };
   }
   return null;
+}
+
+export async function resolveWorkspaceBackupRecoverySource(input: {
+  manifest: unknown;
+  objectKey: string | null;
+  checksumSha256: string | null;
+  isSnapshotUsable: (snapshotId: string) => Promise<boolean>;
+}) {
+  const preferred = selectWorkspaceBackupRecoverySource(input);
+  if (!preferred || preferred.kind === "archive") return preferred;
+  if (await input.isSnapshotUsable(preferred.snapshotId)) return preferred;
+  return selectWorkspaceBackupRecoverySource({
+    manifest: {},
+    objectKey: input.objectKey,
+    checksumSha256: input.checksumSha256,
+  });
 }
 
 export async function performGuardedWorkspaceRestoreCutover<Validation>(input: {

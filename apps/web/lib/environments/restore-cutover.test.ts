@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   performGuardedWorkspaceRestoreCutover,
+  resolveWorkspaceBackupRecoverySource,
   selectWorkspaceBackupRecoverySource,
   WorkspaceRestoreCasConflictError,
   WorkspaceRestorePostCutoverError,
@@ -71,10 +72,35 @@ contractTest("web.hermetic", "Workspace restore prefers a recorded Fly snapshot 
     selectWorkspaceBackupRecoverySource({
       manifest: {
         flySnapshotId: "vs_pending",
-        flySnapshotState: "pending",
+        flySnapshotState: "prepare",
       },
       objectKey: "backup.enc",
       checksumSha256: "checksum",
+    }),
+    { kind: "snapshot", snapshotId: "vs_pending" },
+  );
+});
+
+contractTest("web.hermetic", "Workspace restore verifies a recorded snapshot live before archive fallback", async () => {
+  const input = {
+    manifest: {
+      flySnapshotId: "vs_recorded",
+      flySnapshotState: "prepare",
+    },
+    objectKey: "backup.enc",
+    checksumSha256: "checksum",
+  };
+  assert.deepEqual(
+    await resolveWorkspaceBackupRecoverySource({
+      ...input,
+      isSnapshotUsable: async () => true,
+    }),
+    { kind: "snapshot", snapshotId: "vs_recorded" },
+  );
+  assert.deepEqual(
+    await resolveWorkspaceBackupRecoverySource({
+      ...input,
+      isSnapshotUsable: async () => false,
     }),
     {
       kind: "archive",
