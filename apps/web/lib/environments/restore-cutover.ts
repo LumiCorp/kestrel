@@ -15,6 +15,7 @@ export class WorkspaceRestorePostCutoverError extends Error {
 export const WORKSPACE_RESTORE_ROUTE_CAPABILITIES = [
   "workspace.backups.restore",
   "workspace.apps.read",
+  "profile.read",
   "session.read",
 ] as const;
 
