@@ -951,7 +951,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         response.status
       );
     }
-    if (response.status === 202 || response.status === 204) {
+    if (response.status === 204) {
       return {};
     }
     return response.json().catch(() => ({}));
@@ -1234,9 +1234,11 @@ function stopConfigsEqual(
 function parseResponse<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path.length ? issue.path.join(".") : "root";
     throw new EnvironmentProviderError(
       "FLY_RESPONSE_INVALID",
-      "Fly Machines API returned an invalid response."
+      `Fly Machines API returned an invalid response at ${path} (${issue?.code ?? "unknown"}).`
     );
   }
   return parsed.data;

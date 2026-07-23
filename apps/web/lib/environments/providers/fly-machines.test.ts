@@ -1083,14 +1083,17 @@ contractTest("web.hermetic", "Fly snapshot replacement volumes validate ownershi
         return Response.json([]);
       }
       if (pathname.endsWith("/volumes") && method === "POST") {
-        return Response.json({
-          id: "replacement-volume",
-          name: body.name,
-          region: "iad",
-          size_gb: 20,
-          encrypted: true,
-          state: "restoring",
-        });
+        return Response.json(
+          {
+            id: "replacement-volume",
+            name: body.name,
+            region: "iad",
+            size_gb: 20,
+            encrypted: true,
+            state: "restoring",
+          },
+          { status: 202 },
+        );
       }
       return Response.json({
         id: "replacement-volume",
