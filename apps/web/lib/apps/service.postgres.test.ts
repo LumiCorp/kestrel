@@ -360,6 +360,45 @@ contractTest(
       enabled: true,
     });
 
+    const weatherFallback = await appService.saveEnvironmentAppConnection({
+      organizationId,
+      environmentId,
+      appKey: "built_in.weather",
+      actorUserId: userId,
+      connection: {
+        name: "Visual Crossing fallback",
+        apiKey: "visual-crossing-fallback-secret",
+      },
+    });
+    const weatherWithFallback = await appService.getEnvironmentAppConfiguration({
+      organizationId,
+      environmentId,
+      appKey: "built_in.weather",
+    });
+    assert.deepEqual(weatherWithFallback.connections, [
+      {
+        id: weatherFallback.id,
+        name: "Visual Crossing fallback",
+        ownerType: "environment",
+        status: "connected",
+        environmentId,
+        isMine: false,
+        lastHealthAt: weatherFallback.lastHealthAt,
+      },
+    ]);
+    assert.deepEqual(
+      await appService.resolveEnvironmentAppCredential({
+        organizationId,
+        environmentId,
+        appKey: "built_in.weather",
+        connectionId: weatherFallback.id,
+      }),
+      {
+        kind: "api_key",
+        apiKey: "visual-crossing-fallback-secret",
+      },
+    );
+
     await appService.setAppInstallation({
       organizationId,
       appKey: "tavily",

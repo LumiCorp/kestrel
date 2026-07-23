@@ -859,7 +859,9 @@ export async function saveEnvironmentAppConnection(input: {
   if (
     (definition.connectionModel !== "environment" &&
       definition.connectionModel !== "hybrid") ||
-    (definition.delivery !== "api_key" && definition.delivery !== "lifecycle")
+    (definition.delivery !== "api_key" &&
+      definition.delivery !== "lifecycle" &&
+      definition.delivery !== "native")
   ) {
     throw new AppServiceError(
       "APP_CONNECTION_NOT_SUPPORTED",
