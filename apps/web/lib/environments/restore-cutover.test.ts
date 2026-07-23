@@ -137,6 +137,7 @@ contractTest("web.hermetic", "Workspace restore validation uses the existing ses
   assert.deepEqual(WORKSPACE_RESTORE_ROUTE_CAPABILITIES, [
     "workspace.backups.restore",
     "workspace.apps.read",
+    "profile.read",
     "session.read",
   ]);
 });

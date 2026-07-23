@@ -36,6 +36,7 @@ import {
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
 const BACKUP_EXECUTION_OWNERSHIP_KEY = "backupExecutionOwnership";
+const DEFAULT_WORKSPACE_PROFILE_ID = "kestrel-one";
 type BackupExecutionOwnership = "parent_operation" | "queue";
 
 export async function createWorkspaceBackup(input: {
@@ -1015,7 +1016,15 @@ async function readStoredSessionDescription(input: {
     tenantId: input.organizationId,
   };
   try {
-    return await client.describeSession(input.sessionId, context);
+    const profile = await client.getProfile(
+      process.env.KESTREL_ONE_PROFILE_ID?.trim() ||
+        DEFAULT_WORKSPACE_PROFILE_ID,
+      context
+    );
+    return await client.describeSession(input.sessionId, {
+      ...context,
+      profile,
+    });
   } catch (error) {
     const status =
       error instanceof KestrelSdkError && typeof error.status === "number"
