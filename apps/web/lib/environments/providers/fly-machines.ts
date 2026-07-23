@@ -117,9 +117,6 @@ const machineSchema = z.object({
 const machineCreateResponseSchema = z
   .object({
     id: z.string().min(1),
-    state: z.string().min(1),
-    region: z.string().min(1),
-    instance_id: z.string().min(1).nullable().optional(),
   })
   .passthrough();
 
@@ -595,9 +592,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     );
     return {
       id: machine.id,
-      state: machine.state,
-      region: machine.region,
-      ...(machine.instance_id ? { instanceId: machine.instance_id } : {}),
+      state: "created",
+      region: input.region,
     };
   }
 
