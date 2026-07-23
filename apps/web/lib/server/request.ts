@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { resolveKestrelAppUrl } from "@/lib/app-url";
 
 export async function getRequestOrigin() {
   const headerStore = await headers();
@@ -20,5 +21,5 @@ export async function getRequestOrigin() {
     return `${proto}://${host}`;
   }
 
-  return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:43103";
+  return resolveKestrelAppUrl(process.env);
 }

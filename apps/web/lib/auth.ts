@@ -24,6 +24,7 @@ import { Stripe } from "stripe";
 import { canUserManageOrganizationBilling } from "@/lib/billing/access";
 import { getStripeBillingConfigStatus } from "@/lib/billing/config";
 import { deliverTransactionalEmail } from "@/lib/email/service";
+import { resolveKestrelAppUrl } from "./app-url";
 import { isDisallowedToolProviderSignIn } from "./auth-policy";
 import {
   assertInvitationSignupFromHeaders,
@@ -43,25 +44,13 @@ const dialect = new PostgresDialect({
   pool,
 });
 
-const baseURL: string | undefined = (() => {
-  if (process.env.VERCEL !== "1") {
-    return;
-  }
-  if (process.env.BETTER_AUTH_URL) {
-    return process.env.BETTER_AUTH_URL;
-  }
-  return `https://${process.env.VERCEL_URL}`;
-})();
-
-const cookieDomain: string | undefined = (() => {
-  if (process.env.VERCEL !== "1") {
-    return;
-  }
-  if (process.env.BETTER_AUTH_URL) {
-    return new URL(process.env.BETTER_AUTH_URL).hostname;
-  }
-  return `.${process.env.VERCEL_URL}`;
-})();
+const configuredAppUrl = resolveKestrelAppUrl(process.env);
+const baseURL: string | undefined =
+  process.env.VERCEL === "1" ? configuredAppUrl : undefined;
+const cookieDomain: string | undefined =
+  process.env.VERCEL === "1"
+    ? new URL(configuredAppUrl).hostname
+    : undefined;
 
 const localDevOrigins = [3000, 3001, 3100, 43_103].flatMap((port) => [
   `http://localhost:${port}`,
@@ -81,8 +70,7 @@ const trustedOrigins = Array.from(
       ...(process.env.NODE_ENV === "production" ? [] : ["exp://"]),
       ...mobileTrustedOrigins,
       "https://appleid.apple.com",
-      process.env.BETTER_AUTH_URL,
-      process.env.NEXT_PUBLIC_APP_URL,
+      configuredAppUrl,
       ...localDevOrigins,
     ].filter((origin): origin is string => Boolean(origin)),
   ),

@@ -7,7 +7,7 @@ primary_region = "iad"
 [env]
   KESTREL_RUNNER_SERVICE_HOST = "0.0.0.0"
   KESTREL_RUNNER_SERVICE_PORT = "8080"
-  KESTREL_ONE_APP_URL = "https://kestrel-one-green.vercel.app"
+  KESTREL_ONE_APP_URL = "https://kestrelagents.dev"
   KESTREL_HOME = "/data/.kestrel"
   KESTREL_STORE_DRIVER = "sqlite"
   KESTREL_SQLITE_PATH = "/data/runtime.db"
