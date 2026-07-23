@@ -4,6 +4,7 @@ import "../../scripts/register-server-only.mjs";
 import {
   flyPublicEgressService,
   queryFlyPublicEgressHour,
+  queryOrganizationFlyPublicEgressHour,
 } from "./fly-metrics";
 
 test("Fly metrics use the documented Prometheus query boundary", async () => {
@@ -11,11 +12,8 @@ test("Fly metrics use the documented Prometheus query boundary", async () => {
   let requestedBody = "";
   const rows = await queryFlyPublicEgressHour({
     endedAt: new Date("2026-07-22T12:00:00Z"),
-    env: {
-      ...process.env,
-      FLY_API_TOKEN: "token",
-      KESTREL_FLY_ORGANIZATION_SLUG: "kestrel-test",
-    },
+    token: "token",
+    organizationSlug: "kestrel-test",
     fetchImpl: (async (url, init) => {
       requestedUrl = String(url);
       requestedBody = String(init?.body);
@@ -38,6 +36,35 @@ test("Fly metrics use the documented Prometheus query boundary", async () => {
     region: "iad",
     bytes: 1_250_000_000,
   }]);
+});
+
+test("Fly metrics resolve authority for the requested organization", async () => {
+  const resolved: string[] = [];
+  let requestedUrl = "";
+  await queryOrganizationFlyPublicEgressHour({
+    organizationId: "organization-a",
+    endedAt: new Date("2026-07-22T12:00:00Z"),
+    resolveAuthority: async (organizationId) => {
+      resolved.push(organizationId);
+      return {
+        token: "organization-token",
+        organizationSlug: "organization-fly",
+      };
+    },
+    fetchImpl: (async (url) => {
+      requestedUrl = String(url);
+      return Response.json({
+        status: "success",
+        data: { resultType: "vector", result: [] },
+      });
+    }) as typeof fetch,
+  });
+
+  assert.deepEqual(resolved, ["organization-a"]);
+  assert.match(
+    requestedUrl,
+    /api\.fly\.io\/prometheus\/organization-fly\/api\/v1\/query/u
+  );
 });
 
 test("Fly egress regions select the published price groups explicitly", () => {

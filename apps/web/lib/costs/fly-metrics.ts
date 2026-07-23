@@ -1,6 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
+import type { FlyProviderAuthority } from "@/lib/environments/fly-connection";
 
 const prometheusResponseSchema = z.object({
   status: z.literal("success"),
@@ -26,14 +27,14 @@ export type FlyPublicEgress = {
 
 export async function queryFlyPublicEgressHour(input: {
   endedAt: Date;
-  env?: NodeJS.ProcessEnv;
+  token: string;
+  organizationSlug: string;
   fetchImpl?: typeof fetch;
 }): Promise<FlyPublicEgress[]> {
-  const env = input.env ?? process.env;
-  const token = env.FLY_API_TOKEN?.trim();
-  const organizationSlug = env.KESTREL_FLY_ORGANIZATION_SLUG?.trim();
+  const token = input.token.trim();
+  const organizationSlug = input.organizationSlug.trim();
   if (!(token && organizationSlug)) {
-    throw new Error("Platform Fly metrics connection is not configured.");
+    throw new Error("Fly metrics connection is not configured.");
   }
   const body = new URLSearchParams({
     query:
@@ -69,6 +70,26 @@ export async function queryFlyPublicEgressHour(input: {
           bytes,
         }]
       : [];
+  });
+}
+
+export async function queryOrganizationFlyPublicEgressHour(input: {
+  organizationId: string;
+  endedAt: Date;
+  fetchImpl?: typeof fetch;
+  resolveAuthority?: (
+    organizationId: string
+  ) => Promise<FlyProviderAuthority>;
+}) {
+  const resolveAuthority =
+    input.resolveAuthority ??
+    (await import("@/lib/environments/fly-connection"))
+      .resolveFlyProviderAuthority;
+  const authority = await resolveAuthority(input.organizationId);
+  return queryFlyPublicEgressHour({
+    endedAt: input.endedAt,
+    ...authority,
+    fetchImpl: input.fetchImpl,
   });
 }
 

@@ -16,11 +16,16 @@ import {
 } from "drizzle-orm";
 import { createFlyProviderClient } from "@/lib/environments/fly-connection";
 import type {
+  EnvironmentInfrastructureProvider,
   EnvironmentProviderInventory,
   EnvironmentProviderMachine,
 } from "@/lib/environments/providers/contracts";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { flyPublicEgressService, queryFlyPublicEgressHour } from "./fly-metrics";
+import {
+  flyPublicEgressService,
+  queryOrganizationFlyPublicEgressHour,
+} from "./fly-metrics";
+import { runFlyOrganizationMetering } from "./fly-metering-coordinator";
 import { describeFlyMachineUsage } from "./fly-usage";
 import { parseModelCostIdentity } from "./pricing";
 import { recordUsageEvent } from "./store";
@@ -302,107 +307,6 @@ export async function meterFlyReconciledHour(now = new Date()) {
   ) {
     return { gateways: 0, workspaces: 0, volumes: 0, snapshots: 0, networkSeries: 0 };
   }
-  type FlyProvider = Awaited<ReturnType<typeof createFlyProviderClient>>;
-  const providerByOrganization = new Map<string, Promise<FlyProvider>>();
-  const providerForOrganization = (organizationId: string) => {
-    let provider = providerByOrganization.get(organizationId);
-    if (!provider) {
-      provider = createFlyProviderClient(organizationId);
-      providerByOrganization.set(organizationId, provider);
-    }
-    return provider;
-  };
-  const inventoryByOrganizationAndApp = new Map<
-    string,
-    Promise<EnvironmentProviderInventory>
-  >();
-  const inventoryFor = (organizationId: string, appName: string) => {
-    const key = `${organizationId}:${appName}`;
-    let inventory = inventoryByOrganizationAndApp.get(key);
-    if (!inventory) {
-      inventory = providerForOrganization(organizationId).then((provider) =>
-        provider.listEnvironmentResources({ appName })
-      );
-      inventoryByOrganizationAndApp.set(key, inventory);
-    }
-    return inventory;
-  };
-  let gatewayCount = 0;
-  let workspaceCount = 0;
-  let volumeCount = 0;
-  for (const environment of environments) {
-    if (!(environment.flyAppName && environment.flyGatewayMachineId)) continue;
-    const provider = await providerForOrganization(environment.organizationId);
-    const machine = await provider.getMachine({
-      appName: environment.flyAppName,
-      machineId: environment.flyGatewayMachineId,
-    });
-    if (!machine) continue;
-    await meterFlyMachine({
-      organizationId: environment.organizationId,
-      actorUserId: environment.createdByUserId,
-      sourceId: `gateway:${environment.id}`,
-      machine,
-      startedAt,
-      endedAt,
-    });
-    gatewayCount += 1;
-  }
-  for (const { workspace, environment } of workspaceRows) {
-    if (!environment.flyAppName) continue;
-    const provider = await providerForOrganization(workspace.organizationId);
-    if (workspace.flyMachineId) {
-      const machine = await provider.getMachine({
-        appName: environment.flyAppName,
-        machineId: workspace.flyMachineId,
-      });
-      if (machine) {
-        await meterFlyMachine({
-          organizationId: workspace.organizationId,
-          actorUserId: workspace.createdByUserId,
-          projectId: workspace.projectId,
-          threadId: workspace.standaloneThreadId,
-          sourceId: `workspace:${workspace.id}`,
-          machine,
-          startedAt,
-          endedAt,
-        });
-        workspaceCount += 1;
-      }
-    }
-    if (workspace.flyVolumeId) {
-      const inventory = await inventoryFor(
-        workspace.organizationId,
-        environment.flyAppName
-      );
-      const volume = inventory.volumes.find(
-        (candidate) => candidate.id === workspace.flyVolumeId
-      );
-      if (!volume?.sizeGb) continue;
-      await recordUsageEvent({
-        organizationId: workspace.organizationId,
-        actorUserId: workspace.createdByUserId,
-        projectId: workspace.projectId,
-        threadId: workspace.standaloneThreadId,
-        category: "environments",
-        provider: "fly",
-        service: "volume",
-        meter: "provisioned_gb_hours",
-        quantity: volume.sizeGb,
-        unit: "gb_hour",
-        sourceKind: "fly_reconciled_resource",
-        sourceId: `volume:${workspace.flyVolumeId}`,
-        occurredAt: startedAt,
-        intervalStartedAt: startedAt,
-        intervalEndedAt: endedAt,
-        metadata: {
-          region: volume.region ?? environment.region,
-          source: "machines_api",
-        },
-      });
-      volumeCount += 1;
-    }
-  }
   for (const backup of snapshotRows) {
     if (!backup.sizeBytes) continue;
     await recordUsageEvent({
@@ -421,15 +325,161 @@ export async function meterFlyReconciledHour(now = new Date()) {
       metadata: { source: "backup_artifact_size_assumption" },
     });
   }
+
+  const organizationMetering = await runFlyOrganizationMetering({
+    organizationIds: [
+      ...environments.map((environment) => environment.organizationId),
+      ...workspaceRows.map(({ workspace }) => workspace.organizationId),
+    ],
+    createProvider: createFlyProviderClient,
+    meterOrganization: ({ organizationId, provider }) =>
+      meterFlyOrganizationReconciledHour({
+        organizationId,
+        provider,
+        environments: environments.filter(
+          (environment) => environment.organizationId === organizationId
+        ),
+        workspaceRows: workspaceRows.filter(
+          ({ workspace }) => workspace.organizationId === organizationId
+        ),
+        startedAt,
+        endedAt,
+      }),
+    onFailure: ({ organizationId, message }) => {
+      console.error("Organization Fly cost metering failed.", {
+        organizationId,
+        message,
+      });
+    },
+  });
+  const totals = organizationMetering.results.reduce(
+    (current, { result }) => ({
+      gateways: current.gateways + result.gateways,
+      workspaces: current.workspaces + result.workspaces,
+      volumes: current.volumes + result.volumes,
+      networkSeries: current.networkSeries + result.networkSeries,
+    }),
+    { gateways: 0, workspaces: 0, volumes: 0, networkSeries: 0 }
+  );
+
+  return {
+    ...totals,
+    snapshots: snapshotRows.length,
+    failedOrganizations: organizationMetering.failures.length,
+  };
+}
+
+async function meterFlyOrganizationReconciledHour(input: {
+  organizationId: string;
+  provider: Pick<
+    EnvironmentInfrastructureProvider,
+    "getMachine" | "listEnvironmentResources"
+  >;
+  environments: Array<typeof schema.environments.$inferSelect>;
+  workspaceRows: Array<{
+    workspace: typeof schema.environmentWorkspaces.$inferSelect;
+    environment: typeof schema.environments.$inferSelect;
+  }>;
+  startedAt: Date;
+  endedAt: Date;
+}) {
+  const inventoryByApp = new Map<
+    string,
+    Promise<EnvironmentProviderInventory>
+  >();
+  const inventoryFor = (appName: string) => {
+    let inventory = inventoryByApp.get(appName);
+    if (!inventory) {
+      inventory = input.provider.listEnvironmentResources({ appName });
+      inventoryByApp.set(appName, inventory);
+    }
+    return inventory;
+  };
+  let gatewayCount = 0;
+  let workspaceCount = 0;
+  let volumeCount = 0;
+  for (const environment of input.environments) {
+    if (!(environment.flyAppName && environment.flyGatewayMachineId)) continue;
+    const machine = await input.provider.getMachine({
+      appName: environment.flyAppName,
+      machineId: environment.flyGatewayMachineId,
+    });
+    if (!machine) continue;
+    await meterFlyMachine({
+      organizationId: environment.organizationId,
+      actorUserId: environment.createdByUserId,
+      sourceId: `gateway:${environment.id}`,
+      machine,
+      startedAt: input.startedAt,
+      endedAt: input.endedAt,
+    });
+    gatewayCount += 1;
+  }
+  for (const { workspace, environment } of input.workspaceRows) {
+    if (!environment.flyAppName) continue;
+    if (workspace.flyMachineId) {
+      const machine = await input.provider.getMachine({
+        appName: environment.flyAppName,
+        machineId: workspace.flyMachineId,
+      });
+      if (machine) {
+        await meterFlyMachine({
+          organizationId: workspace.organizationId,
+          actorUserId: workspace.createdByUserId,
+          projectId: workspace.projectId,
+          threadId: workspace.standaloneThreadId,
+          sourceId: `workspace:${workspace.id}`,
+          machine,
+          startedAt: input.startedAt,
+          endedAt: input.endedAt,
+        });
+        workspaceCount += 1;
+      }
+    }
+    if (workspace.flyVolumeId) {
+      const inventory = await inventoryFor(environment.flyAppName);
+      const volume = inventory.volumes.find(
+        (candidate) => candidate.id === workspace.flyVolumeId
+      );
+      if (!volume?.sizeGb) continue;
+      await recordUsageEvent({
+        organizationId: workspace.organizationId,
+        actorUserId: workspace.createdByUserId,
+        projectId: workspace.projectId,
+        threadId: workspace.standaloneThreadId,
+        category: "environments",
+        provider: "fly",
+        service: "volume",
+        meter: "provisioned_gb_hours",
+        quantity: volume.sizeGb,
+        unit: "gb_hour",
+        sourceKind: "fly_reconciled_resource",
+        sourceId: `volume:${workspace.flyVolumeId}`,
+        occurredAt: input.startedAt,
+        intervalStartedAt: input.startedAt,
+        intervalEndedAt: input.endedAt,
+        metadata: {
+          region: volume.region ?? environment.region,
+          source: "machines_api",
+        },
+      });
+      volumeCount += 1;
+    }
+  }
   const environmentByApp = new Map(
-    [...environments, ...workspaceRows.map((row) => row.environment)].flatMap(
-      (environment) =>
-        environment.flyAppName
-          ? [[environment.flyAppName, environment] as const]
-          : []
+    [
+      ...input.environments,
+      ...input.workspaceRows.map((row) => row.environment),
+    ].flatMap((environment) =>
+      environment.flyAppName
+        ? [[environment.flyAppName, environment] as const]
+        : []
     )
   );
-  const networkRows = await queryFlyPublicEgressHour({ endedAt });
+  const networkRows = await queryOrganizationFlyPublicEgressHour({
+    organizationId: input.organizationId,
+    endedAt: input.endedAt,
+  });
   for (const row of networkRows) {
     const environment = environmentByApp.get(row.appName);
     if (!environment || row.bytes <= 0) continue;
@@ -444,9 +494,9 @@ export async function meterFlyReconciledHour(now = new Date()) {
       unit: "gb",
       sourceKind: "fly_metrics",
       sourceId: `network:${row.appName}:${row.region ?? "unknown"}`,
-      occurredAt: startedAt,
-      intervalStartedAt: startedAt,
-      intervalEndedAt: endedAt,
+      occurredAt: input.startedAt,
+      intervalStartedAt: input.startedAt,
+      intervalEndedAt: input.endedAt,
       metadata: { region: row.region, source: "prometheus" },
     });
   }
@@ -454,7 +504,6 @@ export async function meterFlyReconciledHour(now = new Date()) {
     gateways: gatewayCount,
     workspaces: workspaceCount,
     volumes: volumeCount,
-    snapshots: snapshotRows.length,
     networkSeries: networkRows.length,
   };
 }
