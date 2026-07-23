@@ -355,6 +355,7 @@ export function buildSweVerifiedJobInput(input: {
   modelName: string;
   runtimeModelName?: string | undefined;
   profile?: Record<string, unknown> | undefined;
+  sessionId?: string | undefined;
 }): Record<string, unknown> {
   const problemStatement = sanitizeSweVerifiedIssueText(input.instance.problem_statement);
   const hintsText = input.instance.hints_text === undefined
@@ -398,7 +399,7 @@ export function buildSweVerifiedJobInput(input: {
       ],
     },
     turn: {
-      sessionId: `swe-verified-${input.instance.instance_id}`,
+      sessionId: input.sessionId ?? `swe-verified-${input.instance.instance_id}`,
       eventType: "job.run",
       message: `Resolve SWE-bench Verified instance ${input.instance.instance_id} in this checked-out repository.`,
       stepAgent: "agent.loop",
@@ -668,6 +669,9 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     workspaceRoot: SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT,
     modelName,
     runtimeModelName,
+    ...(benchmarkEnv.KESTREL_BENCHMARK_ATTEMPT_ID !== undefined
+      ? { sessionId: benchmarkEnv.KESTREL_BENCHMARK_ATTEMPT_ID }
+      : {}),
     ...(benchmarkProfile !== undefined ? { profile: benchmarkProfile } : {}),
   });
   try {

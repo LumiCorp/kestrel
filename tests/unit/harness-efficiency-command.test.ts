@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   buildHarnessEfficiencyVariantEnvironment,
+  buildHarnessEfficiencyAttemptId,
   createPlan,
   findNewEfficiencyResultCandidates,
   isCollectedEfficiencyResultPath,
@@ -60,6 +61,33 @@ contractTest("runtime.hermetic", "efficiency attempts derive model identity from
   assert.equal(environment.OPENROUTER_MODEL, "z-ai/glm-5.2");
   assert.equal(environment.KESTREL_BENCHMARK_MODEL_PROVIDER, "openrouter");
   assert.equal(environment.KESTREL_BENCHMARK_MODEL, "z-ai/glm-5.2");
+});
+
+contractTest("runtime.hermetic", "efficiency attempt identities isolate experiments and variants", () => {
+  const baseline = buildHarnessEfficiencyAttemptId({
+    specHash: "spec-a",
+    variant: "baseline",
+    pairId: "pair-a",
+    trial: 1,
+  });
+  assert.equal(baseline, buildHarnessEfficiencyAttemptId({
+    specHash: "spec-a",
+    variant: "baseline",
+    pairId: "pair-a",
+    trial: 1,
+  }));
+  assert.notEqual(baseline, buildHarnessEfficiencyAttemptId({
+    specHash: "spec-b",
+    variant: "baseline",
+    pairId: "pair-a",
+    trial: 1,
+  }));
+  assert.notEqual(baseline, buildHarnessEfficiencyAttemptId({
+    specHash: "spec-a",
+    variant: "candidate",
+    pairId: "pair-a",
+    trial: 1,
+  }));
 });
 
 contractTest("runtime.hermetic", "efficiency comparison reads only collector-owned result artifacts", () => {

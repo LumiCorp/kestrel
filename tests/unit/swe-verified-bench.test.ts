@@ -278,7 +278,9 @@ contractTest("runtime.hermetic", "swe verified bench strips oracle fields before
     dataset: "custom/SWE-bench_Verified",
     workspaceRoot: "/tmp/workspace",
     modelName: "kestrel",
+    sessionId: "efficiency-attempt-123",
   });
+  assert.equal((jobInput as { turn: { sessionId: string } }).turn.sessionId, "efficiency-attempt-123");
   assert.equal((jobInput as { storeDriver?: unknown }).storeDriver, undefined);
   assert.deepEqual((jobInput as { profile: Record<string, unknown> }).profile, {
     id: "swe-verified",

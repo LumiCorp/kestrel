@@ -209,6 +209,12 @@ function executePlan(plan: HarnessEfficiencyPlanV1, output: Pick<NodeJS.WriteStr
           ...buildHarnessEfficiencyVariantEnvironment(plan.variants[variantName].profile, process.env),
           KESTREL_BENCHMARK_PAIR_ID: pair.pairId,
           KESTREL_BENCHMARK_TRIAL: String(pair.trial),
+          KESTREL_BENCHMARK_ATTEMPT_ID: buildHarnessEfficiencyAttemptId({
+            specHash: plan.specHash,
+            variant: variantName,
+            pairId: pair.pairId,
+            trial: pair.trial,
+          }),
           KESTREL_BENCHMARK_HARNESS_REVISION: plan.variants[variantName].sourceRevision,
           KESTREL_BENCHMARK_PROFILE_FILE: planned.profileFile,
           KESTREL_BENCHMARK_PROFILE_ID: planned.profileId,
@@ -229,6 +235,15 @@ function executePlan(plan: HarnessEfficiencyPlanV1, output: Pick<NodeJS.WriteStr
     }
   }
   return comparePlan(plan, output);
+}
+
+export function buildHarnessEfficiencyAttemptId(input: {
+  specHash: string;
+  variant: VariantName;
+  pairId: string;
+  trial: number;
+}): string {
+  return `efficiency-${hashHarnessEfficiencyValue(input).slice(0, 24)}`;
 }
 
 export function buildHarnessEfficiencyVariantEnvironment(
