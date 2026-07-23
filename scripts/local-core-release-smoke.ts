@@ -107,6 +107,28 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
 
     const supportBundle = await client.supportBundle();
     assert.equal(JSON.stringify(supportBundle).includes("sk-redact-me"), false);
+    const executionProfile = await client.resolveExecutionProfile({
+      client: "cli",
+      profileId: "kestrel-one",
+    });
+    assert.match(
+      executionProfile.profileId,
+      /^kestrel-one:cli_dev_local:[a-f0-9]{64}$/u,
+    );
+    assert.equal(executionProfile.resolvedProfile.agentProfileId, "kestrel-one");
+    assert.equal(
+      executionProfile.resolvedProfile.presetId,
+      "cli_dev_local",
+    );
+    assert.deepEqual(
+      executionProfile.resolvedProfile.toolAllowlist?.filter(
+        (toolName) =>
+          toolName.startsWith("dialog.") ||
+          toolName.startsWith("delegate.") ||
+          toolName === "agent.spawn",
+      ),
+      ["dialog.open", "dialog.send", "dialog.close"],
+    );
   } finally {
     restoreEnv("KESTREL_CORE_HOME", previousCoreHome);
     restoreEnv("KESTREL_LOCAL_CORE_API_SOCKET", previousSocket);

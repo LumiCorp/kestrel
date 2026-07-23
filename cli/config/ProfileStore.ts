@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -29,9 +30,17 @@ import {
   ModelPolicyStore,
   resolveProfileWithModelPolicy,
 } from "../../src/profile/modelPolicy.js";
+import {
+  composeKestrelOneProfile,
+  KESTREL_ONE_DIALOG_TOOL_NAMES,
+  KESTREL_ONE_POLICY_ID,
+  normalizeKestrelOneToolAllowlist,
+  type KestrelOneProfileOverlay,
+} from "../../src/profile/kestrelOnePolicy.js";
 import { resolveRuntimeProfileSelection } from "../../src/profile/runtimeProfile.js";
 import type {
-  ProfilesFile,
+  KestrelOneManagedProfileOverlay,
+  ProfilesFileV5,
   ToolQueueProfileConfig,
   TuiProfile,
 } from "../contracts.js";
@@ -62,44 +71,6 @@ const DEFAULT_DELEGATION_POLICY = {
   maxConcurrentChildSessions: 2,
   maxDepth: 2,
 };
-const DELEGATION_TOOL_NAMES = [
-  "dialog.open",
-  "dialog.send",
-  "dialog.close",
-  "delegate.spawn_child",
-  "delegate.list_children",
-  "delegate.get_child_result",
-] as const;
-const KESTREL_ONE_PROFILE_ID = "kestrel-one";
-const KESTREL_ONE_TOOL_NAMES = [
-  "kestrel_one.search_knowledge_documents",
-  "kestrel_one.github_repository_read",
-  "kestrel_one.github_push_agent_branch",
-  "workspace.preview.publish",
-  "workspace.preview.list",
-  "workspace.preview.renew",
-  "workspace.preview.close",
-  "kestrel_one.github_issue_create",
-  "kestrel_one.github_pull_request_create",
-  "kestrel_one.github_pull_request_merge",
-  "kestrel_one.github_release_create",
-  "kestrel_one.github_workflow_dispatch",
-  "kestrel_one.google_calendar_list_events",
-  "kestrel_one.google_calendar_create_event",
-  "kestrel_one.google_calendar_update_event",
-  "kestrel_one.google_calendar_delete_event",
-  "kestrel_one.google_calendar_list_availability_subjects",
-  "kestrel_one.google_calendar_check_availability",
-  "kestrel_one.microsoft_365_list_mail",
-  "kestrel_one.microsoft_365_send_mail",
-  "kestrel_one.microsoft_365_list_events",
-  "kestrel_one.microsoft_365_list_chats",
-  "kestrel_one.microsoft_365_send_chat_message",
-  "kestrel_one.microsoft_365_search_sites",
-  "kestrel_one.vercel_list_projects",
-  "kestrel_one.vercel_list_deployments",
-  "kestrel_one.vercel_deployment_events",
-] as const;
 
 function createDefaultCliProfile(input: {
   id: string;
@@ -136,7 +107,9 @@ function createDefaultCliProfile(input: {
     guardrails: { ...DEFAULT_PROFILE_GUARDRAILS },
     codeMode: resolved.codeMode,
     devShell: resolved.devShell,
-    delegation: { ...DEFAULT_DELEGATION_POLICY },
+    delegation: {
+      ...DEFAULT_DELEGATION_POLICY,
+    },
     default: input.default,
   };
 }
@@ -149,11 +122,10 @@ const DEFAULT_PROFILES: TuiProfile[] = [
     default: true,
   }),
   createDefaultCliProfile({
-    id: KESTREL_ONE_PROFILE_ID,
-    label: "Kestrel-One",
-    sessionPrefix: "kestrel-one",
+    id: KESTREL_ONE_POLICY_ID,
+    label: "Kestrel One",
+    sessionPrefix: KESTREL_ONE_POLICY_ID,
     default: false,
-    extraToolAllowlist: [...KESTREL_ONE_TOOL_NAMES],
   }),
 ];
 
@@ -164,20 +136,37 @@ const LEGACY_PROFILE_ALIASES: Readonly<Record<string, string>> = {
 
 interface ParsedProfilesResult {
   profiles: TuiProfile[];
+  managedProfileOverlays?: ProfilesFileV5["managedProfileOverlays"] | undefined;
+  sourceVersion: 2 | 3 | 4 | 5;
   migrated: boolean;
   notices: string[];
+}
+
+export interface ProfileStoreOptions {
+  managedEnvironmentPresetId?: "cli_dev_local" | "workspace_hosted" | undefined;
 }
 
 export class ProfileStore {
   private readonly baseDir: string;
   private readonly filePath: string;
   private readonly modelPolicyStore: ModelPolicyStore;
+  private readonly managedEnvironmentPresetId:
+    | "cli_dev_local"
+    | "workspace_hosted";
   private lastLoadNotices: string[] = [];
 
-  constructor(baseDir = resolveKestrelHomePath()) {
+  constructor(
+    baseDir = resolveKestrelHomePath(),
+    options: ProfileStoreOptions = {},
+  ) {
     this.baseDir = baseDir;
     this.filePath = path.join(this.baseDir, PROFILE_FILE_NAME);
     this.modelPolicyStore = new ModelPolicyStore(baseDir);
+    this.managedEnvironmentPresetId =
+      options.managedEnvironmentPresetId ??
+      (process.env.KESTREL_PROFILE_ENVIRONMENT === "workspace_hosted"
+        ? "workspace_hosted"
+        : "cli_dev_local");
   }
 
   async load(): Promise<TuiProfile[]> {
@@ -209,8 +198,9 @@ export class ProfileStore {
 
     const raw = await this.readFile();
     if (raw === undefined) {
-      const profiles =
-        this.resolveProfilesWithSharedModelPolicy(DEFAULT_PROFILES);
+      const profiles = this.resolveProfilesWithSharedModelPolicy(
+        this.createDefaultProfiles(),
+      );
       await this.save(profiles);
       return profiles;
     }
@@ -220,8 +210,9 @@ export class ProfileStore {
       parsed = parseProfilesFile(raw);
     } catch (error) {
       if (error instanceof ProfileSchemaVersionError) {
-        const profiles =
-          this.resolveProfilesWithSharedModelPolicy(DEFAULT_PROFILES);
+        const profiles = this.resolveProfilesWithSharedModelPolicy(
+          this.createDefaultProfiles(),
+        );
         await this.save(profiles);
         return profiles;
       }
@@ -229,15 +220,33 @@ export class ProfileStore {
     }
     this.lastLoadNotices.push(...parsed.notices);
 
-    if (parsed.profiles.length === 0) {
-      const profiles =
-        this.resolveProfilesWithSharedModelPolicy(DEFAULT_PROFILES);
+    if (
+      parsed.profiles.length === 0 &&
+      Object.keys(parsed.managedProfileOverlays ?? {}).length === 0
+    ) {
+      const profiles = this.resolveProfilesWithSharedModelPolicy(
+        this.createDefaultProfiles(),
+      );
       await this.save(profiles);
       return profiles;
     }
 
-    const hydrated = parsed.profiles.map((profile) => {
-      const normalized = applyProfileDefaults(profile);
+    const persistedManagedProfile = parsed.profiles.find(
+      (profile) => profile.id === KESTREL_ONE_POLICY_ID,
+    );
+    const managedOverlay =
+      parsed.managedProfileOverlays?.[
+        managedOverlayKey(this.managedEnvironmentPresetId)
+      ] ??
+      (persistedManagedProfile === undefined
+        ? undefined
+        : extractKestrelOneManagedOverlay(persistedManagedProfile));
+    const hydrated = parsed.profiles
+      .filter((profile) => profile.id !== KESTREL_ONE_POLICY_ID)
+      .map((profile) => {
+      const normalized = applyProfileDefaults(
+        applyManagedProfileInvariants(profile),
+      );
       if (
         profile.agent === "reference-react" &&
         profile.modeSystemV2Enabled !== true
@@ -247,11 +256,32 @@ export class ProfileStore {
         );
       }
       return normalized;
-    });
-    const profiles = this.resolveProfilesWithSharedModelPolicy(
-      ensureKestrelOneProfile(hydrated),
+      });
+    const managedProfile = createManagedKestrelOneProfile(
+      this.managedEnvironmentPresetId,
+      managedOverlay,
     );
-    if (parsed.migrated || profilesChanged(parsed.profiles, profiles)) {
+    const profiles = this.resolveProfilesWithSharedModelPolicy(
+      [...hydrated, managedProfile],
+    );
+    if (
+      parsed.migrated ||
+      profilesChanged(
+        parsed.profiles.filter(
+          (profile) => profile.id !== KESTREL_ONE_POLICY_ID,
+        ),
+        hydrated,
+      ) ||
+      JSON.stringify(
+        parsed.managedProfileOverlays?.[
+          managedOverlayKey(this.managedEnvironmentPresetId)
+        ] ?? {},
+      ) !==
+        JSON.stringify(extractKestrelOneManagedOverlay(managedProfile))
+    ) {
+      if (parsed.sourceVersion === 4) {
+        await this.writeVersion4Backup(raw);
+      }
       await this.save(profiles);
     }
 
@@ -275,22 +305,48 @@ export class ProfileStore {
       return;
     }
 
-    const payload: ProfilesFile = {
-      version: 4,
-      profiles: profiles.map((profile) =>
+    const managedProfile = profiles.find(
+      (profile) => profile.id === KESTREL_ONE_POLICY_ID,
+    );
+    const payload: ProfilesFileV5 = {
+      version: 5,
+      profiles: profiles
+        .filter((profile) => profile.id !== KESTREL_ONE_POLICY_ID)
+        .map((profile) =>
         sanitizeProfileForPersistence(profile),
       ),
+      managedProfileOverlays: {
+        ...(managedProfile !== undefined
+          ? {
+              [managedOverlayKey(this.managedEnvironmentPresetId)]:
+                extractKestrelOneManagedOverlay(managedProfile),
+            }
+          : {}),
+      },
     };
 
     await mkdir(this.baseDir, { recursive: true });
+    const temporaryPath =
+      `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(
-      this.filePath,
+      temporaryPath,
       `${JSON.stringify(payload, null, 2)}\n`,
-      "utf8",
+      {
+        encoding: "utf8",
+        mode: 0o600,
+      },
     );
+    await rename(temporaryPath, this.filePath);
   }
 
   getDefault(profiles: TuiProfile[]): TuiProfile {
+    const kestrelOne = profiles.find(
+      (profile) =>
+        profile.id === KESTREL_ONE_POLICY_ID && profile.default === true,
+    );
+    if (kestrelOne !== undefined) {
+      return kestrelOne;
+    }
     const explicit = profiles.find((profile) => profile.default === true);
     if (explicit !== undefined) {
       return explicit;
@@ -327,6 +383,28 @@ export class ProfileStore {
     }
   }
 
+  private async writeVersion4Backup(raw: string): Promise<void> {
+    try {
+      await writeFile(`${this.filePath}.v4.bak`, raw, {
+        encoding: "utf8",
+        flag: "wx",
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    }
+  }
+
+  private createDefaultProfiles(): TuiProfile[] {
+    return [
+      ...DEFAULT_PROFILES.filter(
+        (profile) => profile.id !== KESTREL_ONE_POLICY_ID,
+      ).map((profile) => structuredClone(profile)),
+      createManagedKestrelOneProfile(this.managedEnvironmentPresetId),
+    ];
+  }
+
   private resolveProfilesWithSharedModelPolicy(
     profiles: TuiProfile[],
   ): TuiProfile[] {
@@ -359,9 +437,9 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
 
   const root = decoded as Record<string, unknown>;
   const version = root.version;
-  if (version !== 2 && version !== 3 && version !== 4) {
+  if (version !== 2 && version !== 3 && version !== 4 && version !== 5) {
     throw new ProfileSchemaVersionError(
-      "profiles.json version must be 2, 3, or 4",
+      "profiles.json version must be 2, 3, 4, or 5",
     );
   }
 
@@ -373,12 +451,17 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
   const validated: TuiProfile[] = profiles.map((profile) =>
     validateProfile(profile, version, notices),
   );
+  const managedProfileOverlays =
+    version === 5
+      ? parseKestrelOneManagedOverlays(root.managedProfileOverlays, notices)
+      : undefined;
   if (version === 2) {
     return {
       profiles: validated.map((profile) => ({
         ...profile,
         mcpServers: [],
       })),
+      sourceVersion: version,
       migrated: true,
       notices,
     };
@@ -386,26 +469,32 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
 
   return {
     profiles: validated,
-    migrated: version !== 4,
+    ...(managedProfileOverlays !== undefined
+      ? { managedProfileOverlays }
+      : {}),
+    sourceVersion: version,
+    migrated: version !== 5,
     notices,
   };
 }
 
-function ensureKestrelOneProfile(profiles: TuiProfile[]): TuiProfile[] {
-  if (profiles.some((profile) => profile.id === KESTREL_ONE_PROFILE_ID)) {
-    return profiles;
+function applyManagedProfileInvariants(profile: TuiProfile): TuiProfile {
+  if (profile.id !== KESTREL_ONE_POLICY_ID) {
+    return profile;
   }
-  const profile = DEFAULT_PROFILES.find(
-    (item) => item.id === KESTREL_ONE_PROFILE_ID,
+  return createManagedKestrelOneProfile(
+    profile.presetId === "workspace_hosted"
+      ? "workspace_hosted"
+      : "cli_dev_local",
+    extractKestrelOneManagedOverlay(profile),
   );
-  return profile === undefined ? profiles : [...profiles, { ...profile }];
 }
 
 class ProfileSchemaVersionError extends Error {}
 
 function validateProfile(
   value: unknown,
-  version: 2 | 3 | 4,
+  version: 2 | 3 | 4 | 5,
   notices: string[],
 ): TuiProfile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -430,7 +519,8 @@ function validateProfile(
   const presetId =
     item.presetId === "cli_dev_local" ||
     item.presetId === "web_balanced" ||
-    item.presetId === "desktop_dev_local"
+    item.presetId === "desktop_dev_local" ||
+    item.presetId === "workspace_hosted"
       ? item.presetId
       : undefined;
   const capabilityPacks =
@@ -547,11 +637,6 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
   const codeMode = resolvedProfile.codeMode;
   const devShell = resolvedProfile.devShell;
   const toolAllowlist = [...resolvedProfile.toolAllowlist];
-  if (profile.id === KESTREL_ONE_PROFILE_ID) {
-    for (const toolName of KESTREL_ONE_TOOL_NAMES) {
-      if (!toolAllowlist.includes(toolName)) toolAllowlist.push(toolName);
-    }
-  }
   if (hasCanonicalSelection === false && legacyExtraTools !== undefined) {
     for (const toolName of legacyExtraTools) {
       if (toolAllowlist.includes(toolName) === false) {
@@ -564,7 +649,7 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
     ...(profile.delegation ?? {}),
   };
   if (delegation.allowAgentSpawn === true) {
-    for (const name of DELEGATION_TOOL_NAMES) {
+    for (const name of KESTREL_ONE_DIALOG_TOOL_NAMES) {
       if (toolAllowlist.includes(name) === false) {
         toolAllowlist.push(name);
       }
@@ -607,6 +692,249 @@ function profilesChanged(before: TuiProfile[], after: TuiProfile[]): boolean {
   const normalize = (profiles: TuiProfile[]) =>
     profiles.map((profile) => sanitizeProfileForPersistence(profile));
   return JSON.stringify(normalize(before)) !== JSON.stringify(normalize(after));
+}
+
+function createManagedKestrelOneProfile(
+  environmentPresetId: "cli_dev_local" | "workspace_hosted",
+  overlay: KestrelOneManagedProfileOverlay = {},
+): TuiProfile {
+  const composedOverlay: KestrelOneProfileOverlay = {
+    ...(overlay.approvalPolicyPackId !== undefined
+      ? { approvalPolicyPackId: overlay.approvalPolicyPackId }
+      : {}),
+    ...(overlay.additionalToolNames !== undefined
+      ? { additionalToolNames: overlay.additionalToolNames }
+      : {}),
+    ...(overlay.mcpServers !== undefined
+      ? { mcpServers: overlay.mcpServers }
+      : {}),
+    ...(overlay.toolQueue !== undefined
+      ? { toolQueue: overlay.toolQueue }
+      : {}),
+    ...(overlay.codeMode !== undefined ? { codeMode: overlay.codeMode } : {}),
+    ...(overlay.devShell !== undefined ? { devShell: overlay.devShell } : {}),
+    ...(overlay.delegationLimits !== undefined
+      ? { delegationLimits: overlay.delegationLimits }
+      : {}),
+    ...(overlay.reasoning !== undefined
+      ? { reasoning: overlay.reasoning }
+      : {}),
+    default: true,
+  };
+  return composeKestrelOneProfile({
+    environmentPresetId,
+    overlay: composedOverlay,
+    resolvedProfileId: KESTREL_ONE_POLICY_ID,
+  }).profile;
+}
+
+function extractKestrelOneManagedOverlay(
+  profile: TuiProfile,
+): KestrelOneManagedProfileOverlay {
+  const environmentPresetId =
+    profile.presetId === "workspace_hosted"
+      ? "workspace_hosted"
+      : "cli_dev_local";
+  const baseline = composeKestrelOneProfile({
+    environmentPresetId,
+    resolvedProfileId: KESTREL_ONE_POLICY_ID,
+  }).profile;
+  const baselineTools = new Set(baseline.toolAllowlist ?? []);
+  const additionalToolNames = normalizeKestrelOneToolAllowlist(
+    (profile.toolAllowlist ?? []).filter(
+      (toolName) => baselineTools.has(toolName) === false,
+    ),
+  );
+  return {
+    ...(profile.approvalPolicyPackId !== undefined
+      ? { approvalPolicyPackId: profile.approvalPolicyPackId }
+      : {}),
+    ...(additionalToolNames.length > 0 ? { additionalToolNames } : {}),
+    ...(profile.mcpServers !== undefined
+      ? { mcpServers: structuredClone(profile.mcpServers) }
+      : {}),
+    ...(profile.toolQueue !== undefined
+      ? { toolQueue: structuredClone(profile.toolQueue) }
+      : {}),
+    ...(profile.codeMode !== undefined
+      ? { codeMode: structuredClone(profile.codeMode) }
+      : {}),
+    ...(profile.devShell !== undefined
+      ? { devShell: structuredClone(profile.devShell) }
+      : {}),
+    delegationLimits: {
+      ...(profile.delegation?.maxConcurrentChildSessions !== undefined
+        ? {
+            maxConcurrentChildSessions:
+              profile.delegation.maxConcurrentChildSessions,
+          }
+        : {}),
+      ...(profile.delegation?.maxDepth !== undefined
+        ? { maxDepth: profile.delegation.maxDepth }
+        : {}),
+    },
+    ...(profile.reasoning !== undefined
+      ? { reasoning: structuredClone(profile.reasoning) }
+      : {}),
+    ...(profile.default !== undefined ? { default: profile.default } : {}),
+  };
+}
+
+function parseKestrelOneManagedOverlays(
+  value: unknown,
+  _notices: string[],
+): ProfilesFileV5["managedProfileOverlays"] | undefined {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("profiles.json managedProfileOverlays must be an object");
+  }
+  const overlays = value as Record<string, unknown>;
+  const unsupportedKey = Object.keys(overlays).find(
+    (key) =>
+      key !== "kestrel-one@cli_dev_local" &&
+      key !== "kestrel-one@workspace_hosted",
+  );
+  if (unsupportedKey !== undefined) {
+    throw new Error(
+      `profiles.json managedProfileOverlays contains unsupported key '${unsupportedKey}'`,
+    );
+  }
+  const parsed: ProfilesFileV5["managedProfileOverlays"] = {};
+  for (const key of [
+    "kestrel-one@cli_dev_local",
+    "kestrel-one@workspace_hosted",
+  ] as const) {
+    const raw = overlays[key];
+    if (raw === undefined) continue;
+    parsed[key] = parseKestrelOneManagedOverlayValue(raw);
+  }
+  return parsed;
+}
+
+function parseKestrelOneManagedOverlayValue(
+  raw: unknown,
+): KestrelOneManagedProfileOverlay {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(
+      "profiles.json Kestrel One managed overlay must be an object",
+    );
+  }
+  const record = raw as Record<string, unknown>;
+  const allowed = new Set([
+    "approvalPolicyPackId",
+    "additionalToolNames",
+    "mcpServers",
+    "toolQueue",
+    "codeMode",
+    "devShell",
+    "delegationLimits",
+    "reasoning",
+    "default",
+  ]);
+  const unknown = Object.keys(record).find((key) => allowed.has(key) === false);
+  if (unknown !== undefined) {
+    throw new Error(
+      `profiles.json Kestrel One managed overlay contains unsupported field '${unknown}'`,
+    );
+  }
+  const additionalToolNames =
+    record.additionalToolNames === undefined
+      ? undefined
+      : Array.isArray(record.additionalToolNames) &&
+          record.additionalToolNames.every(
+            (toolName) => typeof toolName === "string",
+          )
+        ? normalizeKestrelOneToolAllowlist(record.additionalToolNames)
+        : undefined;
+  if (
+    record.additionalToolNames !== undefined &&
+    additionalToolNames === undefined
+  ) {
+    throw new Error(
+      "profiles.json Kestrel One additionalToolNames must be an array of strings",
+    );
+  }
+  const delegation = parseDelegation(record.delegationLimits);
+  return {
+    ...(record.approvalPolicyPackId !== undefined
+      ? {
+          approvalPolicyPackId: parseApprovalPolicyPackId(
+            record.approvalPolicyPackId,
+            KESTREL_ONE_POLICY_ID,
+          ),
+        }
+      : {}),
+    ...(additionalToolNames !== undefined ? { additionalToolNames } : {}),
+    ...(record.mcpServers !== undefined
+      ? {
+          mcpServers: parseMcpServers(
+            record.mcpServers,
+            KESTREL_ONE_POLICY_ID,
+          ),
+        }
+      : {}),
+    ...(record.toolQueue !== undefined
+      ? {
+          toolQueue: parseToolQueue(
+            record.toolQueue,
+            KESTREL_ONE_POLICY_ID,
+          ),
+        }
+      : {}),
+    ...(record.codeMode !== undefined
+      ? {
+          codeMode: parseCodeMode(record.codeMode, KESTREL_ONE_POLICY_ID),
+        }
+      : {}),
+    ...(record.devShell !== undefined
+      ? {
+          devShell: parseDevShell(record.devShell, KESTREL_ONE_POLICY_ID),
+        }
+      : {}),
+    ...(delegation !== undefined
+      ? {
+          delegationLimits: {
+            ...(delegation.maxConcurrentChildSessions !== undefined
+              ? {
+                  maxConcurrentChildSessions:
+                    delegation.maxConcurrentChildSessions,
+                }
+              : {}),
+            ...(delegation.maxDepth !== undefined
+              ? { maxDepth: delegation.maxDepth }
+              : {}),
+          },
+        }
+      : {}),
+    ...(record.reasoning !== undefined
+      ? {
+          reasoning: parseReasoningPolicy(
+            record.reasoning,
+            KESTREL_ONE_POLICY_ID,
+          ),
+        }
+      : {}),
+    ...(record.default !== undefined
+      ? {
+          default:
+            typeof record.default === "boolean"
+              ? record.default
+              : (() => {
+                  throw new Error(
+                    "profiles.json Kestrel One default must be a boolean",
+                  );
+                })(),
+        }
+      : {}),
+  };
+}
+
+function managedOverlayKey(
+  environmentPresetId: "cli_dev_local" | "workspace_hosted",
+):
+  | "kestrel-one@cli_dev_local"
+  | "kestrel-one@workspace_hosted" {
+  return `kestrel-one@${environmentPresetId}`;
 }
 
 function sanitizeProfileForPersistence(profile: TuiProfile): TuiProfile {

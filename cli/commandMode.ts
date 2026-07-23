@@ -345,6 +345,11 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
       "job input storeDriver is no longer supported; Local Core owns persistence for every local run.",
     );
   }
+  if (input.profile !== undefined) {
+    throw new Error(
+      "job input inline profiles are not supported by Local Core; persist the custom profile and reference its profileId.",
+    );
+  }
   const home = resolveKestrelHome(cwd);
   const profileStore = new ProfileStore(home);
   const profiles = await profileStore.load();
@@ -367,6 +372,11 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
   };
 
   const client = createConfiguredCliProtocolClient();
+  const core = requireLocalCoreClient(cwd);
+  const executionProfile = await core.resolveExecutionProfile({
+    client: "cli",
+    profileId: profile.id,
+  });
   const eventLogPath = process.env.KESTREL_JOB_EVENT_LOG_PATH?.trim();
   const unsubscribe =
     eventLogPath !== undefined && eventLogPath.length > 0
@@ -379,7 +389,16 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
       await mkdir(path.dirname(eventLogPath), { recursive: true });
     }
     const commandId = randomUUID();
-    const commandPayload = buildResolvedJobRunCommandPayload(input, effectiveProfile);
+    const commandPayload = buildResolvedJobRunCommandPayload(
+      {
+        ...input,
+        approvalPolicyPackId:
+          input.approvalPolicyPackId ??
+          settings.defaults.approvalPolicyPackId,
+      },
+      effectiveProfile,
+      executionProfile.profileId,
+    );
     const response = await client.sendCommandWithId(
       commandId,
       "job.run",
@@ -409,6 +428,7 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
 export function buildResolvedJobRunCommandPayload(
   input: JobInputV1,
   effectiveProfile: TuiProfile,
+  registeredProfileId: string,
 ): JobRunCommandPayload {
   if (input.storeDriver !== undefined) {
     throw new Error(
@@ -416,7 +436,7 @@ export function buildResolvedJobRunCommandPayload(
     );
   }
   return {
-    profile: toCoreExecutionProfile(effectiveProfile),
+    profileId: registeredProfileId,
     input: {
       version: input.version,
       turn: {

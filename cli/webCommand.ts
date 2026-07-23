@@ -8,6 +8,7 @@ import {
 } from "./webRunnerProxy.js";
 import { ensureCliLocalCoreReady } from "./localCoreShell.js";
 import { DEFAULT_KESTREL_RUNNER_SERVICE_PORT } from "../src/config/localDev.js";
+import { LocalCoreClient } from "../src/localCore/client.js";
 
 const DEFAULT_RUNNER_SERVICE_HOST = "127.0.0.1";
 const DEFAULT_WEB_COMMAND_SHUTDOWN_GRACE_MS = 10_000;
@@ -51,6 +52,13 @@ export async function runWebCommand(args: string[], cwd = process.cwd()): Promis
 
   const config = resolveWebCommandConfig(args, process.env);
   const localCore = resolveWebCommandLocalCoreTarget(process.env);
+  await new LocalCoreClient({
+    socketPath: localCore.socketPath,
+    token: localCore.authToken,
+  }).resolveExecutionProfile({
+    client: "reference_web",
+    profileId: "reference",
+  });
   let server: WebRunnerProxyServer;
 
   try {

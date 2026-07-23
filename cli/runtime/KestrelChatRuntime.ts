@@ -62,6 +62,8 @@ import {
   type OperatorInboxSummary,
   type OperatorSteeringSummary,
   WorkspaceSkillInstaller,
+  assertRequiredKestrelOneTools,
+  KESTREL_ONE_POLICY_ID,
 } from "../../src/index.js";
 import type {
   OperatorCompactionState,
@@ -2740,6 +2742,11 @@ function createRuntimeWithStore(
       ? { mcpOAuthProviderFactory }
       : {}),
   });
+  if (profile.agentProfileId === KESTREL_ONE_POLICY_ID) {
+    assertRequiredKestrelOneTools(
+      toolRegistry.getModelTools().map((tool) => tool.name),
+    );
+  }
 
   const modelGateway = createModelGatewayForProfile(profile, { env: modelEnv });
   const providerReasoningVault = createProviderReasoningVaultFromEnv(

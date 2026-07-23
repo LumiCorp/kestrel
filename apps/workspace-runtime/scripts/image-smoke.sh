@@ -45,4 +45,28 @@ if [[ -n "${EXPECTED_GIT_SHA:-}" ]]; then
   [[ "$revision" == "$EXPECTED_GIT_SHA" ]]
 fi
 
+docker run --rm \
+  --entrypoint node \
+  "$image" \
+  --input-type=module \
+  --eval '
+    const { ProfileStore } = await import("/app/dist/cli/config/ProfileStore.js");
+    const profiles = await new ProfileStore("/tmp/kestrel-profile-smoke").load();
+    const profile = profiles.find((candidate) => candidate.id === "kestrel-one");
+    const collaborationTools = (profile?.toolAllowlist ?? []).filter(
+      (toolName) => toolName.startsWith("dialog.") || toolName.startsWith("delegate.") || toolName === "agent.spawn",
+    );
+    const expected = ["dialog.open", "dialog.send", "dialog.close"];
+    if (
+      profile?.agentProfileId !== "kestrel-one" ||
+      profile?.presetId !== "workspace_hosted" ||
+      profile?.delegation?.allowAgentSpawn !== true ||
+      profile?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents") !== true ||
+      profile?.toolAllowlist?.includes("desktop.host.open") === true ||
+      JSON.stringify(collaborationTools) !== JSON.stringify(expected)
+    ) {
+      throw new Error(`Workspace Runtime Kestrel-One profile is invalid: ${JSON.stringify({ agentProfileId: profile?.agentProfileId, presetId: profile?.presetId, delegation: profile?.delegation, collaborationTools })}`);
+    }
+  '
+
 printf 'Workspace Runtime image smoke passed\n'

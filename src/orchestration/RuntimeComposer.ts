@@ -43,7 +43,27 @@ export class RuntimeComposer {
   }> {
     const existing = await this.getActiveAssembly(input.thread.threadId);
     if (existing !== null && input.cause === "turn_start") {
-      return existing;
+      const { defaultBundle } = await this.catalog.ensureDefaults();
+      if (
+        defaultBundle === undefined ||
+        shouldMigrateLegacyDesktopAssembly(existing.bundle, defaultBundle) === false
+      ) {
+        return existing;
+      }
+      const record: ThreadAssemblyRecord = {
+        recordId: `assembly-record-${randomUUID()}`,
+        threadId: input.thread.threadId,
+        bundleId: defaultBundle.bundleId,
+        cause: "profile_migration",
+        authority: "profile",
+        metadata: {
+          previousBundleId: existing.record.bundleId,
+          previousRecordId: existing.record.recordId,
+        },
+        createdAt: new Date().toISOString(),
+      };
+      await this.store.appendThreadAssemblyRecord(record);
+      return { record, bundle: defaultBundle };
     }
 
     const { defaultBundle } = await this.catalog.ensureDefaults();
@@ -470,6 +490,46 @@ export class RuntimeComposer {
       bundle: input.bundle,
     };
   }
+}
+
+function shouldMigrateLegacyDesktopAssembly(
+  existing: AssemblyBundleRecord | undefined,
+  canonical: AssemblyBundleRecord,
+): boolean {
+  const existingAgentProfileId = readStringMetadata(
+    existing?.metadata,
+    "agentProfileId",
+  ) ?? readStringMetadata(existing?.metadata, "profileId");
+  const existingEnvironment = readStringMetadata(
+    existing?.metadata,
+    "environmentPresetId",
+  );
+  const canonicalAgentProfileId = readStringMetadata(
+    canonical.metadata,
+    "agentProfileId",
+  );
+  const canonicalEnvironment = readStringMetadata(
+    canonical.metadata,
+    "environmentPresetId",
+  );
+  return (
+    canonicalAgentProfileId === "kestrel-one" &&
+    canonicalEnvironment === "desktop_dev_local" &&
+    existingEnvironment === "desktop_dev_local" &&
+    (existingAgentProfileId === "local-core-desktop" ||
+      existingAgentProfileId === "reference-web" ||
+      existingAgentProfileId?.startsWith("reference-web-") === true)
+  );
+}
+
+function readStringMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

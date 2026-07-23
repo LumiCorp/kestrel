@@ -1,9 +1,141 @@
-export const LOCAL_CORE_MANIFEST_VERSION = 2;
-export const LOCAL_CORE_LOCK_VERSION = 1;
-export const LOCAL_CORE_SCHEMA_VERSION = 1;
-export const LOCAL_CORE_STATE_EPOCH = "0.6";
+import type { TuiProfile } from "../../cli/contracts.js";
+import {
+  parseDesktopExecutionSelection,
+  type DesktopExecutionSelection,
+} from "../desktopShell/configuration.js";
+import {
+  LOCAL_CORE_LOCK_VERSION,
+  LOCAL_CORE_MANIFEST_VERSION,
+  LOCAL_CORE_SCHEMA_VERSION,
+  LOCAL_CORE_STATE_EPOCH,
+} from "./constants.js";
+
+export {
+  LOCAL_CORE_LOCK_VERSION,
+  LOCAL_CORE_MANIFEST_VERSION,
+  LOCAL_CORE_SCHEMA_VERSION,
+  LOCAL_CORE_STATE_EPOCH,
+} from "./constants.js";
 export const LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION = 1;
 export const LOCAL_CORE_DESKTOP_PROFILE_ID = "local-core-desktop";
+export const LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION = 1;
+
+export type LocalCoreExecutionProfileResolveRequest =
+  | {
+      client: "desktop";
+      selection: DesktopExecutionSelection;
+    }
+  | {
+      client: "cli";
+      profileId: string;
+    }
+  | {
+      client: "reference_web";
+      profileId: string;
+    };
+
+export interface LocalCoreExecutionProfileResolution {
+  version: typeof LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION;
+  profileId: string;
+  fingerprint: string;
+  resolvedProfile: TuiProfile;
+}
+
+export function parseLocalCoreExecutionProfileResolveRequest(
+  value: unknown,
+): LocalCoreExecutionProfileResolveRequest {
+  const record = requireLocalCoreRecord(
+    value,
+    "execution profile resolve request",
+  );
+  if (record.client === "desktop") {
+    rejectUnknownLocalCoreFields(
+      record,
+      new Set(["client", "selection"]),
+      "execution profile resolve request",
+    );
+    return {
+      client: "desktop",
+      selection: parseDesktopExecutionSelection(record.selection),
+    };
+  }
+  if (record.client === "cli" || record.client === "reference_web") {
+    rejectUnknownLocalCoreFields(
+      record,
+      new Set(["client", "profileId"]),
+      "execution profile resolve request",
+    );
+    return {
+      client: record.client,
+      profileId: requireLocalCoreString(
+        record.profileId,
+        "execution profile resolve request.profileId",
+      ),
+    };
+  }
+  throw new Error(
+    "Local Core execution profile resolve request.client must be 'desktop', 'cli', or 'reference_web'.",
+  );
+}
+
+export function parseLocalCoreExecutionProfileResolution(
+  value: unknown,
+): LocalCoreExecutionProfileResolution {
+  const record = requireLocalCoreRecord(value, "execution profile resolution");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set(["version", "profileId", "fingerprint", "resolvedProfile"]),
+    "execution profile resolution",
+  );
+  if (record.version !== LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION) {
+    throw new Error(
+      `Local Core execution profile resolution.version must be ${LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION}.`,
+    );
+  }
+  const profileId = requireLocalCoreString(
+    record.profileId,
+    "execution profile resolution.profileId",
+  );
+  const fingerprint = requireLocalCoreString(
+    record.fingerprint,
+    "execution profile resolution.fingerprint",
+  );
+  if (/^[a-f0-9]{64}$/u.test(fingerprint) === false) {
+    throw new Error(
+      "Local Core execution profile resolution.fingerprint must be a SHA-256 digest.",
+    );
+  }
+  const profile = requireLocalCoreRecord(
+    record.resolvedProfile,
+    "execution profile resolution.resolvedProfile",
+  ) as Partial<TuiProfile>;
+  if (
+    profile.id !== profileId ||
+    typeof profile.label !== "string" ||
+    profile.label.trim().length === 0 ||
+    profile.agent !== "reference-react"
+  ) {
+    throw new Error(
+      "Local Core execution profile resolution.resolvedProfile is invalid.",
+    );
+  }
+  if (
+    profile.presetId !== "cli_dev_local" &&
+    profile.presetId !== "desktop_dev_local" &&
+    profile.presetId !== "workspace_hosted" &&
+    profile.presetId !== "web_balanced"
+  ) {
+    throw new Error(
+      "Local Core execution profile resolution.resolvedProfile.presetId is invalid.",
+    );
+  }
+  return {
+    version: LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION,
+    profileId,
+    fingerprint,
+    resolvedProfile: structuredClone(profile as TuiProfile),
+  };
+}
 
 export interface LocalCoreRuntimeStoreResetRequest {
   confirm: true;
@@ -83,7 +215,7 @@ export function parseLocalCoreRuntimeStoreResetResult(
 }
 
 export interface LocalCoreDesktopProfileSnapshot {
-  id: typeof LOCAL_CORE_DESKTOP_PROFILE_ID;
+  id: string;
   label: string;
   agent: "reference-react";
   shellKind: "desktop";
@@ -97,7 +229,7 @@ export interface LocalCoreDesktopProfileSnapshot {
 
 export interface LocalCoreDesktopExecutionConfig {
   version: typeof LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION;
-  profileId: typeof LOCAL_CORE_DESKTOP_PROFILE_ID;
+  profileId: string;
   resolvedProfile: LocalCoreDesktopProfileSnapshot;
 }
 
@@ -120,9 +252,13 @@ export function parseLocalCoreDesktopExecutionConfig(
       `Local Core Desktop execution config.version must be ${LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION}.`,
     );
   }
-  if (record.profileId !== LOCAL_CORE_DESKTOP_PROFILE_ID) {
+  if (
+    typeof record.profileId !== "string" ||
+    /^kestrel-one:desktop_dev_local:[a-f0-9]{64}$/u.test(record.profileId) ===
+      false
+  ) {
     throw new Error(
-      `Local Core Desktop execution config.profileId must be '${LOCAL_CORE_DESKTOP_PROFILE_ID}'.`,
+      "Local Core Desktop execution config.profileId must be an immutable Kestrel One Desktop profile reference.",
     );
   }
 
@@ -195,9 +331,9 @@ export function parseLocalCoreDesktopExecutionConfig(
 
   return {
     version: LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION,
-    profileId: LOCAL_CORE_DESKTOP_PROFILE_ID,
+    profileId: record.profileId,
     resolvedProfile: {
-      id: LOCAL_CORE_DESKTOP_PROFILE_ID,
+      id: record.profileId,
       label,
       agent: "reference-react",
       shellKind: "desktop",

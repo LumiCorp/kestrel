@@ -111,13 +111,6 @@ const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set([
   "dialog.send",
   "dialog.close",
 ]);
-const INTERNAL_ONLY_RUNTIME_TOOL_NAMES = new Set([
-  "agent.spawn",
-  "delegate.spawn_child",
-  "delegate.list_children",
-  "delegate.get_child_result",
-]);
-
 export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   private readonly ajv = new Ajv({
     allErrors: true,
@@ -488,7 +481,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         },
       );
     }
-    if (INTERNAL_ONLY_RUNTIME_TOOL_NAMES.has(name)) {
+    if (isInternalOnlyRuntimeToolName(name)) {
       throw createRuntimeFailure(
         "TOOL_INTERNAL_ONLY",
         `Tool '${name}' is an internal-only runtime tool. Use the dialog tools for model-facing collaboration.`,
@@ -900,6 +893,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     if (tickets?.size !== 1) return;
     return tickets.values().next().value;
   }
+}
+
+function isInternalOnlyRuntimeToolName(name: string): boolean {
+  return name === "agent.spawn" || name.startsWith("delegate.");
 }
 
 async function annotateWorkspaceSkillRead(input: {

@@ -17,6 +17,7 @@ import { normalizeRunnerEventPayload, type RunnerEventSink } from "./EventWriter
 import {
   RunnerHost,
   type RunnerProfileProvider,
+  type RunnerProfileSourcePolicy,
 } from "./RunnerHost.js";
 import type {
   RunnerServiceEventJournal,
@@ -40,6 +41,7 @@ interface FilteredRunnerEventListener {
 export interface RunnerServiceHostOptions {
   runtimeFactory?: ConstructorParameters<typeof RunnerHost>[1] | undefined;
   profileProvider?: RunnerProfileProvider | undefined;
+  profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
   serviceVersion: string;
   eventJournal?: RunnerServiceEventJournal | undefined;
 }
@@ -513,7 +515,12 @@ export class RunnerServiceHost {
 
   constructor(options: RunnerServiceHostOptions) {
     this.events = new RunnerServiceEventBus(options.eventJournal);
-    this.host = new RunnerHost(this.events, options.runtimeFactory, options.profileProvider);
+    this.host = new RunnerHost(
+      this.events,
+      options.runtimeFactory,
+      options.profileProvider,
+      { profileSourcePolicy: options.profileSourcePolicy },
+    );
     this.router = new CommandRouter(this.host, this.events);
     this.health = createRunnerHealthV1({
       serviceVersion: options.serviceVersion,

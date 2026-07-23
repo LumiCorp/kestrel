@@ -3,7 +3,7 @@ id: local-platform-delivery
 domain: architecture
 status: active
 owner: kestrel-runtime
-last_verified_at: 2026-07-17
+last_verified_at: 2026-07-23
 depends_on:
   - ../../ARCHITECTURE.md
   - ../../packages/protocol/README.md
@@ -29,11 +29,17 @@ runner.
    registered profile reference, never an inline runtime profile, and never
    receives raw credentials. Keychain activation, plaintext migration, and
    removal of Desktop's child runner ship as one cutover.
-3. **State and recovery.** PGlite is the default local store in the 0.6 state
+3. **Policy composition.** One immutable Kestrel One policy is composed with
+   independently versioned CLI, Desktop, or hosted environment presets. Core
+   resolves Desktop model/App references and CLI profile revisions, registers
+   the secret-free resolved snapshot by deterministic fingerprint, and rejects
+   mutable or inline execution profiles. Reference React remains a developer
+   harness rather than a Desktop policy source.
+4. **State and recovery.** PGlite is the default local store in the 0.6 state
    epoch; external Postgres is explicit and never mutated by local recovery.
    Reset/restart share a serialized maintenance boundary, require confirmation,
    archive only canonical Core state, and preserve 0.5 state.
-4. **Product lifecycle.** Deliver a private, pinned runtime with signed macOS
+5. **Product lifecycle.** Deliver a private, pinned runtime with signed macOS
    installation, staged activation, health checks, update, rollback, uninstall,
    and no source-tree or system-Node requirement. Remove legacy bundled
    services only after all clients are cut over.
@@ -43,6 +49,7 @@ runner.
 | Milestone | Exit criteria |
 | --- | --- |
 | Core client cutover | CLI, Desktop, and local SDK use Core for execution and evidence reads; no client owns a runner or store. |
+| Canonical agent policy | Desktop and CLI/TUI use Core-issued immutable Kestrel One profile references; hosted Kestrel One composes the same policy with `workspace_hosted`. |
 | Credential activation | Credential writes are Core/Keychain owned, diagnostics are redacted, and the Desktop child runner is removed. |
 | Lifecycle release | Signed install/update/rollback/uninstall works on a clean machine and legacy services are removed. |
 

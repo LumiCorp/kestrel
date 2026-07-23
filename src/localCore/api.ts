@@ -65,7 +65,10 @@ import type {
   LocalCoreRuntimeStoreResetResult,
   LocalCoreStatus,
 } from "./contracts.js";
-import { parseLocalCoreRuntimeStoreResetRequest } from "./contracts.js";
+import {
+  parseLocalCoreExecutionProfileResolveRequest,
+  parseLocalCoreRuntimeStoreResetRequest,
+} from "./contracts.js";
 import {
   createLocalCoreConnectionDescriptor,
   type LocalCoreConnectionDescriptor,
@@ -82,6 +85,10 @@ import {
 import { syncDesktopThreadWorkspace } from "./desktopThreadWorkspace.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
+import {
+  patchLocalCoreLocalSettings,
+  readLocalCoreLocalSettings,
+} from "./localSettings.js";
 import {
   parseLocalCoreCredentialId,
   parseLocalCoreCredentialSecret,
@@ -115,11 +122,10 @@ import {
   type LocalCoreRuntimeConfigurationV1,
 } from "./runtimeConfiguration.js";
 import {
-  assertNoLocalCoreReservedProfileCollision,
   createLocalCoreProfileProvider,
-  LocalCoreReservedProfileIdError,
   resolveLocalCoreConfiguredProfiles,
   resolveLocalCoreDesktopExecutionConfig,
+  resolveLocalCoreExecutionProfile,
 } from "./profileProvider.js";
 import { ensureLocalCoreReady } from "./ready.js";
 import {
@@ -771,6 +777,7 @@ async function createExecutionBundle(input: {
       input.status.home.homePath,
       { runtimeConfiguration },
     ),
+    profileSourcePolicy: "registered-only",
     eventJournal: new LocalCoreProtocolEventJournal(storeHandle.executor),
   });
   try {
@@ -1010,7 +1017,7 @@ async function handleRequest(input: {
       let settings: Record<string, unknown>;
       if (patch.modelPolicy !== undefined) {
         await input.updateRuntimeConfiguration(async () => {
-          await patchLocalSettings(
+          await patchLocalCoreLocalSettings(
             input.status.home.homePath,
             patch.localSettings,
           );
@@ -1025,7 +1032,7 @@ async function handleRequest(input: {
         );
       } else {
         settings = await input.withRuntimeConfigurationMutation(async () => {
-          await patchLocalSettings(
+          await patchLocalCoreLocalSettings(
             input.status.home.homePath,
             patch.localSettings,
           );
@@ -1277,6 +1284,40 @@ async function handleRequest(input: {
           input.status.home.homePath,
           { runtimeConfiguration },
         ),
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/execution-profiles/resolve") {
+      let request;
+      try {
+        request = parseLocalCoreExecutionProfileResolveRequest(
+          await readJsonBody(input.request),
+        );
+      } catch (error) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_EXECUTION_PROFILE_INPUT_INVALID",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      const runtimeConfiguration = await input.runtimeConfigurationStore.read();
+      let resolution;
+      try {
+        resolution = await resolveLocalCoreExecutionProfile(
+          input.status.home.homePath,
+          request,
+          { runtimeConfiguration },
+        );
+      } catch (error) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_EXECUTION_PROFILE_UNAVAILABLE",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      writeJson(input.response, 200, {
+        ok: true,
+        resolution,
       });
       return;
     }
@@ -1738,7 +1779,6 @@ async function handleRequest(input: {
     if (method === "GET" && url.pathname === "/v1/profiles") {
       const store = new ProfileStore(input.status.home.homePath);
       const profiles = await store.load();
-      assertNoLocalCoreReservedProfileCollision(profiles);
       writeJson(input.response, 200, {
         ok: true,
         profiles: resolveLocalCoreConfiguredProfiles(
@@ -1754,7 +1794,6 @@ async function handleRequest(input: {
         const body = await readJsonBody(input.request);
         const store = new ProfileStore(input.status.home.homePath);
         const profiles = normalizeArrayField<TuiProfile>(body, "profiles");
-        assertNoLocalCoreReservedProfileCollision(profiles);
         const runtimeConfiguration =
           await input.runtimeConfigurationStore.read();
         await store.save(profiles);
@@ -1957,18 +1996,14 @@ async function handleRequest(input: {
   } catch (error) {
     const requestError =
       error instanceof LocalCoreApiRequestError ? error : undefined;
-    const profileIdError =
-      error instanceof LocalCoreReservedProfileIdError ? error : undefined;
     const runtimeConfigurationError =
       error instanceof LocalCoreRuntimeConfigurationError ? error : undefined;
     writeJson(
       input.response,
-      requestError?.statusCode ?? (profileIdError === undefined ? 500 : 409),
+      requestError?.statusCode ?? 500,
       errorBody(
         requestError?.code ??
-          (profileIdError !== undefined
-            ? "LOCAL_CORE_PROFILE_ID_RESERVED"
-            : (runtimeConfigurationError?.code ?? "LOCAL_CORE_API_ERROR")),
+          (runtimeConfigurationError?.code ?? "LOCAL_CORE_API_ERROR"),
         error instanceof Error ? error.message : String(error),
       ),
     );
@@ -2351,7 +2386,7 @@ async function readSettings(
   runtimeConfigurationStore: LocalCoreRuntimeConfigurationStore,
 ): Promise<Record<string, unknown>> {
   const runtimeConfiguration = await runtimeConfigurationStore.read();
-  const localSettings = await readLocalSettings(homePath);
+  const localSettings = await readLocalCoreLocalSettings(homePath);
   return {
     ...localSettings,
     modelPolicy: runtimeConfiguration.modelPolicy,
@@ -2362,7 +2397,7 @@ async function resolveCoreOwnedReadyOptions(
   homePath: string,
   options: StartLocalCoreApiServerOptions,
 ): Promise<EnsureLocalCoreReadyOptions> {
-  const settings = await readLocalSettings(homePath);
+  const settings = await readLocalCoreLocalSettings(homePath);
   const legacySettingsDatabaseUrl = normalizeString(settings.databaseUrl);
   const settingsDatabaseMode =
     settings.databaseMode === "external"
@@ -2384,7 +2419,7 @@ async function resolveCoreOwnedReadyOptions(
       "data.database.external",
       legacySettingsDatabaseUrl,
     );
-    await patchLocalSettings(homePath, { databaseUrl: null });
+    await patchLocalCoreLocalSettings(homePath, { databaseUrl: null });
     storedDatabaseUrl = legacySettingsDatabaseUrl;
   }
   const externalDatabaseUrl =
@@ -2435,47 +2470,13 @@ function parseSettingsPatch(patch: unknown): ParsedLocalCoreSettingsPatch {
   };
 }
 
-async function patchLocalSettings(
-  homePath: string,
-  patch: Record<string, unknown>,
-): Promise<void> {
-  if (Object.keys(patch).length === 0) {
-    return;
-  }
-  const current = await readLocalSettings(homePath);
-  const next = {
-    ...current,
-    ...patch,
-  };
-  await writeLocalSettings(homePath, next);
-}
-
-async function readLocalSettings(
-  homePath: string,
-): Promise<Record<string, unknown>> {
-  const filePath = path.join(homePath, "settings", "local-core-settings.json");
-  try {
-    const parsed = JSON.parse(await readFile(filePath, "utf8")) as unknown;
-    return typeof parsed === "object" &&
-      parsed !== null &&
-      Array.isArray(parsed) === false
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch (error) {
-    if (isNotFoundError(error)) {
-      return {};
-    }
-    throw error;
-  }
-}
-
 async function readConfiguredMcpCredentialBindings(homePath: string): Promise<
   {
     credentialId: LocalCoreCredentialId;
     envKey: string;
   }[]
 > {
-  const settings = await readLocalSettings(homePath);
+  const settings = await readLocalCoreLocalSettings(homePath);
   if (Array.isArray(settings.mcpServers) === false) return [];
   const bindings = new Map<
     string,
@@ -2524,7 +2525,7 @@ async function readConfiguredMcpCredentialBindings(homePath: string): Promise<
 async function readDesktopDeveloperEnvironmentOptions(
   homePath: string,
 ): Promise<Partial<Record<"SHELL" | "PATH", string>>> {
-  const settings = await readLocalSettings(homePath);
+  const settings = await readLocalCoreLocalSettings(homePath);
   return {
     ...(typeof settings.developerShellPath === "string" &&
     settings.developerShellPath.trim().length > 0
@@ -2535,15 +2536,6 @@ async function readDesktopDeveloperEnvironmentOptions(
       ? { PATH: settings.developerPath.trim() }
       : {}),
   };
-}
-
-async function writeLocalSettings(
-  homePath: string,
-  value: Record<string, unknown>,
-): Promise<void> {
-  const filePath = path.join(homePath, "settings", "local-core-settings.json");
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 async function providerReadiness(

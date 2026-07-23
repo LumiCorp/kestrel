@@ -19,7 +19,11 @@ import type {
   RunnerEventSubscriptionRequest,
   RunnerEventType,
 } from "../protocol/contracts.js";
-import type { RunnerHost, RunnerProfileProvider } from "./RunnerHost.js";
+import type {
+  RunnerHost,
+  RunnerProfileProvider,
+  RunnerProfileSourcePolicy,
+} from "./RunnerHost.js";
 import type { CommandRouter } from "./CommandRouter.js";
 import {
   buildCompatibilityHeaders,
@@ -80,6 +84,7 @@ interface RunnerServiceRuntimeOptions {
   authToken?: string | undefined;
   runtimeFactory?: ConstructorParameters<typeof RunnerHost>[1] | undefined;
   profileProvider?: RunnerProfileProvider | undefined;
+  profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
   serviceVersion?: string | undefined;
   eventJournal?: RunnerServiceEventJournal | undefined;
 }
@@ -144,6 +149,7 @@ export function createRunnerServiceHttpHandler(
   const serviceHost = new RunnerServiceHost({
     runtimeFactory: options.runtimeFactory,
     profileProvider: options.profileProvider,
+    profileSourcePolicy: options.profileSourcePolicy,
     serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
     eventJournal: options.eventJournal,
   });

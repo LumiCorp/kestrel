@@ -85,10 +85,16 @@ contractTest("runtime.hermetic", "command mode emits one resolved profile for pr
     { version: "job_input_v1" as const, profileId: profile.id, turn },
     { version: "job_input_v1" as const, profile, turn },
   ]) {
-    const payload = buildResolvedJobRunCommandPayload(input, profile);
+    const registeredProfileId = `reference:cli_dev_local:${"a".repeat(64)}`;
+    const payload = buildResolvedJobRunCommandPayload(
+      input,
+      profile,
+      registeredProfileId,
+    );
     assert.equal(payload.input.profile, undefined);
     assert.equal(payload.input.profileId, undefined);
-    assert.equal(payload.profile?.storeDriver, undefined);
+    assert.equal(payload.profile, undefined);
+    assert.equal(payload.profileId, registeredProfileId);
     assert.equal(payload.input.turn.eventType, "job.run");
     assert.equal(payload.input.turn.stepAgent, "agent.loop");
     assert.doesNotThrow(() => parseRunnerCommandV2({
@@ -114,7 +120,7 @@ contractTest("runtime.hermetic", "command mode rejects job-owned persistence sel
       label: "Reference",
       agent: "reference-react",
       sessionPrefix: "reference",
-    }),
+    }, `reference:cli_dev_local:${"a".repeat(64)}`),
     /Local Core owns persistence/u,
   );
 });

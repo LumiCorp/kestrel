@@ -31,6 +31,7 @@ export type AssemblyChangeCause =
   | "proposal"
   | "capability_loss"
   | "policy_change"
+  | "profile_migration"
   | "context_pressure"
   | "inheritance";
 export type AssemblyProposalStatus = "PENDING" | "APPROVED" | "REJECTED";

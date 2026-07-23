@@ -23,7 +23,8 @@ export type CapabilityPackId =
 export type ShellPresetId =
   | "cli_dev_local"
   | "web_balanced"
-  | "desktop_dev_local";
+  | "desktop_dev_local"
+  | "workspace_hosted";
 export type ModelProviderId = "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
 
 export interface RuntimeProfileAuthoringInput {
@@ -78,6 +79,7 @@ export const SHELL_PRESET_PACKS: Record<ShellPresetId, CapabilityPackId[]> = {
   cli_dev_local: ["balanced", "filesystem", "dev_shell"],
   web_balanced: ["balanced"],
   desktop_dev_local: ["balanced", "filesystem", "dev_shell", "desktop_host"],
+  workspace_hosted: ["balanced", "filesystem", "dev_shell"],
 };
 
 const DEFAULT_PRESET_BY_SHELL: Record<ShellKind, ShellPresetId> = {
@@ -192,7 +194,8 @@ export function normalizeShellKind(value: unknown): ShellKind {
 export function normalizeShellPresetId(value: unknown): ShellPresetId | undefined {
   return value === "cli_dev_local" ||
       value === "web_balanced" ||
-      value === "desktop_dev_local"
+      value === "desktop_dev_local" ||
+      value === "workspace_hosted"
     ? value
     : undefined;
 }

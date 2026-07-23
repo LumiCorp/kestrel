@@ -19,9 +19,12 @@ import type {
 import type { RuntimeReplayBundleV1 } from "../replay/RuntimeReplayBundle.js";
 import {
   parseLocalCoreDesktopExecutionConfig,
+  parseLocalCoreExecutionProfileResolution,
   parseLocalCoreRuntimeStoreResetResult,
   parseLocalCoreStatus,
   type LocalCoreDesktopExecutionConfig,
+  type LocalCoreExecutionProfileResolution,
+  type LocalCoreExecutionProfileResolveRequest,
   type LocalCoreRuntimeStoreResetResult,
   type LocalCoreStatus,
 } from "./contracts.js";
@@ -264,6 +267,19 @@ export class LocalCoreClient {
         response,
         "executionConfig",
         "Desktop execution config",
+      ),
+    );
+  }
+
+  async resolveExecutionProfile(
+    input: LocalCoreExecutionProfileResolveRequest,
+  ): Promise<LocalCoreExecutionProfileResolution> {
+    const response = await this.post("/v1/execution-profiles/resolve", input);
+    return parseLocalCoreExecutionProfileResolution(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "resolution",
+        "execution profile resolution",
       ),
     );
   }

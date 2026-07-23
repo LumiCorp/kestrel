@@ -76,8 +76,14 @@ contractTest("web.turn-reload-rendering", "completed turn streams activity, pers
 
   await page.goto(`/threads/${created.threadId}`);
   await page.reload();
+  const visibleThreadShell = page.locator(
+    '[data-slot="thread-shell"]:visible'
+  );
+  await expect(visibleThreadShell).toHaveCount(1);
   await expect(
-    page.getByText("Hello from the fake cross-surface model.", { exact: true })
+    visibleThreadShell.getByText("Hello from the fake cross-surface model.", {
+      exact: true,
+    })
   ).toBeVisible();
 });
 
@@ -112,8 +118,14 @@ contractTest("web.waiting-interaction-browser", "waiting prompt and request iden
 
   await page.goto(`/threads/${created.threadId}`);
   await page.reload();
+  const visibleThreadShell = page.locator(
+    '[data-slot="thread-shell"]:visible'
+  );
+  await expect(visibleThreadShell).toHaveCount(1);
   await expect(
-    page.getByText("Which workspace should I inspect?", { exact: true })
+    visibleThreadShell.getByText("Which workspace should I inspect?", {
+      exact: true,
+    })
   ).toBeVisible();
 
   await postStream(page, testInfo, `/api/threads/${created.threadId}`, {

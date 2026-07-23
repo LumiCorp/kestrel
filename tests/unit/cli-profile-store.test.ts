@@ -83,7 +83,7 @@ contractTest("runtime.hermetic", "ProfileStore applies shared model policy when 
   assert.equal(profiles[0]?.modelCapabilities?.visionInputEnabled, true);
 });
 
-contractTest("runtime.hermetic", "ProfileStore allowlists Kestrel-One knowledge only on the Kestrel-One profile", async () => {
+contractTest("runtime.hermetic", "ProfileStore keeps hosted tools out of the local Kestrel One policy", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-"));
   const store = new ProfileStore(tempDir);
 
@@ -92,7 +92,100 @@ contractTest("runtime.hermetic", "ProfileStore allowlists Kestrel-One knowledge 
   const kestrelOne = profiles.find((profile) => profile.id === "kestrel-one");
 
   assert.equal(reference?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents"), false);
-  assert.equal(kestrelOne?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents"), true);
+  assert.equal(kestrelOne?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents"), false);
+  assert.equal(reference?.delegation?.allowAgentSpawn, false);
+  assert.equal(kestrelOne?.delegation?.allowAgentSpawn, true);
+  assert.deepEqual(
+    kestrelOne?.toolAllowlist?.filter(
+      (toolName) =>
+        toolName.startsWith("dialog.") ||
+        toolName.startsWith("delegate.") ||
+        toolName === "agent.spawn",
+    ),
+    ["dialog.open", "dialog.send", "dialog.close"],
+  );
+});
+
+contractTest("runtime.hermetic", "ProfileStore reconciles persisted Kestrel-One collaborator dialogs idempotently", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-dialogs-"));
+  const filePath = path.join(tempDir, "profiles.json");
+  await writeFile(
+    filePath,
+    `${JSON.stringify({
+      version: 4,
+      profiles: [
+        {
+          id: "reference",
+          label: "Reference React",
+          agent: "reference-react",
+          sessionPrefix: "reference",
+          delegation: {
+            allowAgentSpawn: false,
+            maxConcurrentChildSessions: 4,
+            maxDepth: 3,
+          },
+        },
+        {
+          id: "kestrel-one",
+          label: "Kestrel-One",
+          agent: "reference-react",
+          sessionPrefix: "kestrel-one",
+          toolAllowlist: [
+            "FinalizeAnswer",
+            "agent.spawn",
+            "delegate.spawn_child",
+            "delegate.list_children",
+            "delegate.get_child_result",
+          ],
+          delegation: {
+            allowAgentSpawn: false,
+            maxConcurrentChildSessions: 7,
+            maxDepth: 1,
+          },
+        },
+      ],
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  const store = new ProfileStore(tempDir);
+
+  const firstLoad = await store.load();
+  const firstPersisted = await readFile(filePath, "utf8");
+  const secondLoad = await store.load();
+  const secondPersisted = await readFile(filePath, "utf8");
+  const reference = secondLoad.find((profile) => profile.id === "reference");
+  const kestrelOne = secondLoad.find((profile) => profile.id === "kestrel-one");
+
+  assert.equal(reference?.delegation?.allowAgentSpawn, false);
+  assert.equal(reference?.delegation?.maxConcurrentChildSessions, 4);
+  assert.equal(reference?.delegation?.maxDepth, 3);
+  assert.equal(kestrelOne?.delegation?.allowAgentSpawn, true);
+  assert.equal(kestrelOne?.delegation?.maxConcurrentChildSessions, 7);
+  assert.equal(kestrelOne?.delegation?.maxDepth, 1);
+  assert.deepEqual(
+    kestrelOne?.toolAllowlist?.filter(
+      (toolName) =>
+        toolName.startsWith("dialog.") ||
+        toolName.startsWith("delegate.") ||
+        toolName === "agent.spawn",
+    ),
+    ["dialog.open", "dialog.send", "dialog.close"],
+  );
+  assert.deepEqual(firstLoad, secondLoad);
+  assert.equal(firstPersisted, secondPersisted);
+  assert.equal(JSON.parse(firstPersisted).version, 5);
+  assert.equal(
+    JSON.parse(firstPersisted).profiles.some(
+      (profile: { id?: string }) => profile.id === "kestrel-one",
+    ),
+    false,
+  );
+  assert.equal(
+    (await readFile(`${filePath}.v4.bak`, "utf8")).includes(
+      '"version": 4',
+    ),
+    true,
+  );
 });
 
 contractTest("runtime.hermetic", "ProfileStore resolves legacy provider-specific profile ids to the canonical reference profile", async () => {
@@ -133,11 +226,51 @@ contractTest("runtime.hermetic", "ProfileStore adds Kestrel-One profile to exist
   const kestrelOne = profiles.find((profile) => profile.id === "kestrel-one");
 
   assert.equal(reference?.default, true);
-  assert.equal(kestrelOne?.default, false);
-  assert.equal(kestrelOne?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents"), true);
+  assert.equal(kestrelOne?.default, true);
+  assert.deepEqual(
+    kestrelOne?.toolAllowlist?.filter((name) => name.startsWith("dialog.")),
+    ["dialog.open", "dialog.send", "dialog.close"],
+  );
 
   const saved = parseProfilesFile(await readFile(filePath, "utf8"));
-  assert.equal(saved.profiles.some((profile) => profile.id === "kestrel-one"), true);
+  assert.equal(saved.sourceVersion, 5);
+  assert.equal(saved.profiles.some((profile) => profile.id === "kestrel-one"), false);
+  assert.equal(
+    saved.managedProfileOverlays?.["kestrel-one@cli_dev_local"]?.default,
+    true,
+  );
+});
+
+contractTest("runtime.hermetic", "ProfileStore preserves a version-5 managed overlay without authoring profiles", async () => {
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-managed-only-"),
+  );
+  const filePath = path.join(tempDir, "profiles.json");
+  await writeFile(
+    filePath,
+    `${JSON.stringify({
+      version: 5,
+      profiles: [],
+      managedProfileOverlays: {
+        "kestrel-one@cli_dev_local": {
+          approvalPolicyPackId: "production",
+          delegationLimits: {
+            maxConcurrentChildSessions: 6,
+            maxDepth: 1,
+          },
+        },
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const profiles = await new ProfileStore(tempDir).load();
+  const managed = profiles.find((profile) => profile.id === "kestrel-one");
+
+  assert.equal(profiles.length, 1);
+  assert.equal(managed?.approvalPolicyPackId, "production");
+  assert.equal(managed?.delegation?.maxConcurrentChildSessions, 6);
+  assert.equal(managed?.delegation?.maxDepth, 1);
 });
 
 contractTest("runtime.hermetic", "ProfileStore never persists transient gateway credential references", async () => {

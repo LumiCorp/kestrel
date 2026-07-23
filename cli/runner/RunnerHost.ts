@@ -151,6 +151,10 @@ export interface RunnerProfileProvider {
   getProfile(profileId: string): Promise<TuiProfile | undefined>;
 }
 
+export type RunnerProfileSourcePolicy =
+  | "inline-or-registered"
+  | "registered-only";
+
 export interface RunnerRuntime {
   runTurn(
     input: RunTurnInput,
@@ -480,6 +484,7 @@ export class RunnerHost {
   private readonly writer: RunnerEventSink;
   private readonly runtimeFactory: RunnerRuntimeFactory;
   private readonly profileProvider: RunnerProfileProvider;
+  private readonly profileSourcePolicy: RunnerProfileSourcePolicy;
   private readonly diagnosticsStore = new DiagnosticLogStore();
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
@@ -515,11 +520,16 @@ export class RunnerHost {
         onTaskUpdate,
         onRunEvent,
       }),
-    profileProvider: RunnerProfileProvider = createDefaultProfileProvider()
+    profileProvider: RunnerProfileProvider = createDefaultProfileProvider(),
+    options: {
+      profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
+    } = {},
   ) {
     this.writer = writer;
     this.runtimeFactory = runtimeFactory;
     this.profileProvider = profileProvider;
+    this.profileSourcePolicy =
+      options.profileSourcePolicy ?? "inline-or-registered";
   }
 
   async profileList(
@@ -2727,9 +2737,22 @@ export class RunnerHost {
     commandType: string
   ): Promise<TuiProfile> {
     if (input.profile !== undefined) {
+      if (this.profileSourcePolicy === "registered-only") {
+        throw new Error(
+          `${commandType} inline profiles are not accepted by this runner; resolve and submit profileId instead`,
+        );
+      }
       return input.profile;
     }
     if (input.profileId !== undefined) {
+      if (
+        this.profileSourcePolicy === "registered-only" &&
+        /:[a-f0-9]{64}$/u.test(input.profileId) === false
+      ) {
+        throw new Error(
+          `${commandType} profileId '${input.profileId}' is not an immutable Local Core execution profile reference`,
+        );
+      }
       const profile = await this.profileProvider.getProfile(input.profileId);
       if (profile !== undefined) {
         return profile;

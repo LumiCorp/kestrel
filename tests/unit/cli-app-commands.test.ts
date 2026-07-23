@@ -112,6 +112,32 @@ async function createAppHarness(input: {
   appState.uiStore = uiStore;
   appState.activeWorkspace = undefined;
   appState.launchWorkspace = undefined;
+  appState.localCoreStatus = {
+    client: {
+      resolveExecutionProfile: async (request: {
+        client: "cli";
+        profileId: string;
+      }) => {
+        assert.deepEqual(request, {
+          client: "cli",
+          profileId: activeProfile.id,
+        });
+        const fingerprint =
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        const profileId = `kestrel-one:cli_dev_local:${fingerprint}`;
+        return {
+          version: 1,
+          profileId,
+          fingerprint,
+          resolvedProfile: {
+            ...activeProfile,
+            id: profileId,
+            agentProfileId: "kestrel-one",
+          },
+        };
+      },
+    },
+  };
 
   await ((appState.refreshActiveSessionOperatorState as (() => Promise<void>) | undefined)?.() ??
     Promise.resolve());
@@ -1288,8 +1314,13 @@ contractTest("runtime.process", "/mcp opens the MCP workspace and stores the lat
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   appState.client = {
-    sendCommand: async (type: string) => {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
       assert.equal(type, "mcp.status");
+      assert.equal(
+        payload.profileId,
+        "kestrel-one:cli_dev_local:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      );
+      assert.equal("profile" in payload, false);
       return {
         type: "mcp.status",
         payload: {
@@ -2355,7 +2386,7 @@ contractTest("runtime.process", "interactive operator commands bypass the queued
 
   assert.equal(sent[0]?.type, "operator.control");
   assert.equal(sent[0]?.payload.action, "steer");
-  assert.equal((sent[0]?.metadata?.profile as { id?: string } | undefined)?.id, "reference");
+  assert.equal("profile" in (sent[0]?.metadata ?? {}), false);
 });
 
 contractTest("runtime.process", "/steer during a pending wait sends operator control instead of resuming the wait", async () => {

@@ -1,0 +1,4 @@
+export const LOCAL_CORE_MANIFEST_VERSION = 2;
+export const LOCAL_CORE_LOCK_VERSION = 1;
+export const LOCAL_CORE_SCHEMA_VERSION = 1;
+export const LOCAL_CORE_STATE_EPOCH = "0.6";

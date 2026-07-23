@@ -3,6 +3,8 @@ import { mkdir as fsMkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { ProfileStore } from "../../cli/config/ProfileStore.js";
+import { composeKestrelOneProfile } from "../../src/profile/kestrelOnePolicy.js";
 import type { McpStatusSnapshot, ToolRunContext } from "../../src/index.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { validateWorkspaceSkillPackage } from "../../src/skills/index.js";
@@ -2201,9 +2203,84 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry exposes persistent dialog 
   );
 });
 
+contractTest("runtime.hermetic", "Kestrel-One profile exposes only model-visible collaborator dialogs", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dialog-profile-registry-"));
+  const profile = (await new ProfileStore(tempDir).load()).find(
+    (candidate) => candidate.id === "kestrel-one",
+  );
+  assert.ok(profile);
+  const registry = new UnifiedToolRegistry({
+    allowlist: profile.toolAllowlist ?? [],
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  await registry.refresh();
+
+  assert.deepEqual(
+    registry.getModelTools()
+      .map((tool) => tool.name)
+      .filter(
+        (toolName) =>
+          toolName.startsWith("dialog.") ||
+          toolName.startsWith("delegate.") ||
+          toolName === "agent.spawn",
+      ),
+    ["dialog.open", "dialog.send", "dialog.close"],
+  );
+});
+
+contractTest("runtime.hermetic", "every canonical Kestrel One environment exposes dialogs without legacy delegation tools", async () => {
+  for (const environmentPresetId of [
+    "cli_dev_local",
+    "desktop_dev_local",
+    "workspace_hosted",
+  ] as const) {
+    const profile = composeKestrelOneProfile({
+      environmentPresetId,
+      overlay: {
+        additionalToolNames: [
+          "agent.spawn",
+          "delegate.spawn_child",
+        ],
+      },
+    }).profile;
+    const registry = new UnifiedToolRegistry({
+      allowlist: profile.toolAllowlist ?? [],
+      mcpManager: new MockMcpProvider({
+        healthy: true,
+        checkedAt: new Date().toISOString(),
+        servers: [],
+        tools: [],
+      }),
+    });
+    await registry.refresh();
+    assert.deepEqual(
+      registry.getModelTools()
+        .map((tool) => tool.name)
+        .filter(
+          (name) =>
+            name.startsWith("dialog.") ||
+            name.startsWith("delegate.") ||
+            name === "agent.spawn",
+        ),
+      ["dialog.open", "dialog.send", "dialog.close"],
+    );
+  }
+});
+
 contractTest("runtime.hermetic", "UnifiedToolRegistry blocks all legacy spawn tools even when allowlisted", async () => {
   const registry = new UnifiedToolRegistry({
-    allowlist: ["agent.spawn", "delegate.spawn_child", "delegate.list_children", "delegate.get_child_result"],
+    allowlist: [
+      "agent.spawn",
+      "delegate.spawn_child",
+      "delegate.list_children",
+      "delegate.get_child_result",
+      "delegate.future_internal_tool",
+    ],
     mcpManager: new MockMcpProvider({
       healthy: true,
       checkedAt: new Date().toISOString(),
@@ -2233,6 +2310,10 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry blocks all legacy spawn to
         parentSessionId: "session-parent",
       }),
     /internal-only runtime tool/
+  );
+  await assert.rejects(
+    () => registry.validateInput("delegate.future_internal_tool", {}),
+    /internal-only runtime tool/,
   );
 });
 

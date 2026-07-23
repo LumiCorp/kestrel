@@ -3,6 +3,7 @@ export {
   clampHistoryWindow,
   type CreateWebRunnerAdapterOptions,
   type WebRunnerAdapter,
+  type WebRunnerRegisteredProfileSnapshot,
 } from "./adapter.js";
 export { createWebDemoProfile } from "./profile.js";
 export type {

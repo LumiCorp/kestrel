@@ -44,6 +44,7 @@ import { listMcpOAuthCredentialIds } from "../../../src/localCore/mcpOAuthProvid
 import {
   createWebRunnerAdapter,
   type WebRunnerAdapter,
+  type WebRunnerRegisteredProfileSnapshot,
   type WebRunnerRequestContext,
 } from "../../../src/web/index.js";
 import {
@@ -65,10 +66,10 @@ import {
 import { resolveProviderModelCatalog } from "../../../src/profile/modelCatalogDiscovery.js";
 import {
   assertDesktopModelConfigurationHistoryPreserved,
+  currentDesktopModelConfigurationRef,
   formatDesktopWorkflowInstructions,
+  getDesktopAppDefinition,
   resolveDesktopWorkflowSelections,
-  resolveDesktopModelConfiguration,
-  type DesktopExecutionSelection,
 } from "../../../src/desktopShell/configuration.js";
 import {
   desktopStandardAppToolRequiresApproval,
@@ -132,8 +133,6 @@ import {
   type DesktopRunnerControlTransport,
 } from "./localCoreRunnerTransport.js";
 import {
-  buildDesktopExecutionProfile,
-  buildDesktopRunnerProfile,
   createDefaultDesktopSettings,
   normalizeDesktopSettings,
 } from "./settingsStore.js";
@@ -257,7 +256,8 @@ let databaseStatus: DesktopDatabaseStatus = {
 let desktopSettings: DesktopSettings = createDefaultDesktopSettings();
 let desktopModelPolicy: ResolvedModelPolicy = createDefaultModelPolicy();
 let localCoreConnectionManager: LocalCoreConnectionManager | undefined;
-let desktopRunnerAdapter: WebRunnerAdapter | undefined;
+const desktopRunnerAdapters = new Map<string, WebRunnerAdapter>();
+let defaultDesktopRunnerProfileId: string | undefined;
 let unsubscribeProjectRunEvents: (() => void) | undefined;
 let desktopProfileOverrideVersion = 0;
 let currentDatabaseUrl: string | undefined;
@@ -391,6 +391,7 @@ async function main(): Promise<void> {
       }
     },
   });
+  await prepareDefaultDesktopRunnerAdapter(runnerTransport);
   subscribeToCoreProjectRuns();
   globalThis.__kestrelDesktopRunnerTransportFactory = () => {
     if (runnerTransport === undefined) {
@@ -424,8 +425,12 @@ async function main(): Promise<void> {
       closeWebServer: async () => {},
       stopRunner: async () => {
         unsubscribeProjectRunEvents?.();
-        await desktopRunnerAdapter?.close();
-        desktopRunnerAdapter = undefined;
+        await Promise.all(
+          [...desktopRunnerAdapters.values()].map(
+            async (adapter) => await adapter.close(),
+          ),
+        );
+        desktopRunnerAdapters.clear();
         await runnerTransport?.stop();
         await databaseController?.close();
       },
@@ -1073,7 +1078,15 @@ function registerIpcHandlers(
       executionSelection,
       ...turnRequest
     } = request;
-    const runProfile = resolveDesktopExecutionProfile(executionSelection);
+    const executionProfile =
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) =>
+          await client.resolveExecutionProfile({
+            client: "desktop",
+            selection: executionSelection,
+          }),
+      );
+    const runProfile = executionProfile.resolvedProfile;
     const workflows = resolveDesktopWorkflowSelections(
       executionSelection,
       desktopSettings.mcpServers,
@@ -1153,7 +1166,11 @@ function registerIpcHandlers(
       );
     }
     try {
-      return await requireDesktopRunnerAdapter(runnerTransport).runTurnStream(
+      return await requireDesktopRunnerAdapter(
+        runnerTransport,
+        executionProfile.profileId,
+        runProfile,
+      ).runTurnStream(
         {
           ...turnRequest,
           ...(attachments !== undefined ? { attachments } : {}),
@@ -1166,7 +1183,7 @@ function registerIpcHandlers(
         {
           onEvent() {},
         },
-        { ...DESKTOP_RUNNER_REQUEST_CONTEXT, profile: runProfile },
+        DESKTOP_RUNNER_REQUEST_CONTEXT,
       );
     } finally {
       if (skillWorkspaceRoot !== undefined) {
@@ -3859,14 +3876,32 @@ async function readDesktopMcpInventory(): Promise<DesktopMcpDiscoveryResult> {
 
 function requireDesktopRunnerAdapter(
   transport: DesktopRunnerControlTransport,
+  profileId?: string | undefined,
+  resolvedProfile?: WebRunnerRegisteredProfileSnapshot | undefined,
 ): WebRunnerAdapter {
-  if (desktopRunnerAdapter === undefined) {
-    desktopRunnerAdapter = createWebRunnerAdapter({
-      profile: buildDesktopRunnerProfile(desktopModelPolicy, desktopSettings),
-      transportFactory: () => transport,
+  const effectiveProfileId = profileId ?? defaultDesktopRunnerProfileId;
+  if (effectiveProfileId === undefined) {
+    throw createDesktopError({
+      code: "desktop.execution_profile_unavailable",
+      message: "Desktop has not resolved its Core-owned execution profile.",
     });
   }
-  return desktopRunnerAdapter;
+  let adapter = desktopRunnerAdapters.get(effectiveProfileId);
+  if (adapter === undefined) {
+    if (resolvedProfile === undefined) {
+      throw createDesktopError({
+        code: "desktop.execution_profile_unavailable",
+        message: "Desktop execution profile metadata is unavailable.",
+      });
+    }
+    adapter = createWebRunnerAdapter({
+      profileId: effectiveProfileId,
+      resolvedProfile,
+      transportFactory: () => transport,
+    });
+    desktopRunnerAdapters.set(effectiveProfileId, adapter);
+  }
+  return adapter;
 }
 
 function requireDesktopRunnerTransport(): DesktopRunnerControlTransport {
@@ -3879,39 +3914,58 @@ function requireDesktopRunnerTransport(): DesktopRunnerControlTransport {
   return runnerTransport;
 }
 
-function resolveDesktopExecutionProfile(selection: DesktopExecutionSelection) {
-  const resolved = resolveDesktopModelConfiguration(
-    desktopSettings.modelConfigurations,
-    selection.modelConfiguration,
-  );
-  if (resolved === undefined) {
-    throw createDesktopError({
-      code: "desktop.model_configuration_not_found",
-      message: "The selected model configuration revision is unavailable.",
-      details: JSON.stringify(selection.modelConfiguration),
-    });
+async function resetDesktopRunnerAdapter(): Promise<void> {
+  const adapters = [...desktopRunnerAdapters.values()];
+  desktopRunnerAdapters.clear();
+  defaultDesktopRunnerProfileId = undefined;
+  await Promise.all(adapters.map(async (adapter) => await adapter.close()));
+  if (runnerTransport !== undefined) {
+    await prepareDefaultDesktopRunnerAdapter(runnerTransport);
   }
-  const result = buildDesktopExecutionProfile(
-    resolved.revision.policy,
-    desktopSettings,
-    selection,
-  );
-  if ("missingApp" in result) {
-    throw createDesktopError({
-      code: "desktop.app_contract_not_found",
-      message: `The selected app contract '${result.missingApp.id}@${result.missingApp.contractVersion}' is unavailable.`,
-    });
-  }
-  return {
-    ...result.profile,
-    label: `${resolved.configuration.name} · ${result.profile.label}`,
-  };
 }
 
-async function resetDesktopRunnerAdapter(): Promise<void> {
-  const adapter = desktopRunnerAdapter;
-  desktopRunnerAdapter = undefined;
-  await adapter?.close();
+async function prepareDefaultDesktopRunnerAdapter(
+  transport: DesktopRunnerControlTransport,
+): Promise<void> {
+  const configuration =
+    desktopSettings.modelConfigurations.find(
+      (candidate) =>
+        candidate.id === desktopSettings.defaultModelConfigurationId,
+    ) ?? desktopSettings.modelConfigurations[0];
+  if (configuration === undefined) {
+    throw createDesktopError({
+      code: "desktop.model_configuration_not_found",
+      message: "Desktop has no default model configuration.",
+    });
+  }
+  const apps = desktopSettings.defaultEnabledAppIds.flatMap((id) => {
+    const definition = getDesktopAppDefinition(
+      id,
+      undefined,
+      desktopSettings.mcpServers,
+    );
+    return definition === undefined
+      ? []
+      : [{ id: definition.id, contractVersion: definition.contractVersion }];
+  });
+  const resolution =
+    await requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) =>
+        await client.resolveExecutionProfile({
+          client: "desktop",
+          selection: {
+            modelConfiguration:
+              currentDesktopModelConfigurationRef(configuration),
+            apps,
+          },
+        }),
+    );
+  defaultDesktopRunnerProfileId = resolution.profileId;
+  requireDesktopRunnerAdapter(
+    transport,
+    resolution.profileId,
+    resolution.resolvedProfile,
+  );
 }
 
 async function refreshDesktopCoreState(): Promise<void> {

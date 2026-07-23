@@ -1788,7 +1788,10 @@ function readAssemblyShellPresetId(
   key: string,
 ): ThreadRecord["environmentPresetId"] {
   const value = metadata?.[key];
-  return value === "cli_dev_local" || value === "web_balanced" || value === "desktop_dev_local"
+  return value === "cli_dev_local" ||
+    value === "web_balanced" ||
+    value === "desktop_dev_local" ||
+    value === "workspace_hosted"
     ? value
     : undefined;
 }

@@ -84,10 +84,17 @@ export const CHAT_MODE_DELIBERATOR_PROMPT = [
   "For software build requests, stay in the active mode unless the user explicitly requests a mode switch.",
 ].join("\n");
 
-export type ReferenceReactPromptVariant =
+export type DeliberatorPromptVariant =
   | "reference-react:chat"
   | "reference-react:plan"
-  | "reference-react:build";
+  | "reference-react:build"
+  | "kestrel-one:chat"
+  | "kestrel-one:plan"
+  | "kestrel-one:build";
+export type ReferenceReactPromptVariant = Extract<
+  DeliberatorPromptVariant,
+  `reference-react:${string}`
+>;
 
 export interface DeliberatorPromptInput {
   interactionMode: InteractionMode;
@@ -96,19 +103,22 @@ export interface DeliberatorPromptInput {
   systemInstructions?: readonly string[] | undefined;
 }
 
-const PROMPT_BY_VARIANT: Record<ReferenceReactPromptVariant, string> = {
+const PROMPT_BY_VARIANT: Record<DeliberatorPromptVariant, string> = {
   "reference-react:chat": CHAT_MODE_DELIBERATOR_PROMPT,
   "reference-react:plan": PLAN_MODE_DELIBERATOR_PROMPT,
   "reference-react:build": BUILD_MODE_DELIBERATOR_PROMPT,
+  "kestrel-one:chat": CHAT_MODE_DELIBERATOR_PROMPT,
+  "kestrel-one:plan": PLAN_MODE_DELIBERATOR_PROMPT,
+  "kestrel-one:build": BUILD_MODE_DELIBERATOR_PROMPT,
 };
 
 export function resolveDeliberatorPromptVariant(
   input: DeliberatorPromptInput,
-): ReferenceReactPromptVariant {
+): DeliberatorPromptVariant {
   const normalizedInteractionMode = input.interactionMode;
   if (
-    isReferenceReactPromptVariant(input.promptVariant) &&
-    input.promptVariant === `reference-react:${normalizedInteractionMode}`
+    isDeliberatorPromptVariant(input.promptVariant) &&
+    input.promptVariant.endsWith(`:${normalizedInteractionMode}`)
   ) {
     return input.promptVariant;
   }
@@ -139,6 +149,17 @@ export function buildDeliberatorSystemPrompt(input: DeliberatorPromptInput): str
         ]
       : []),
   ].join("\n");
+}
+
+export function isDeliberatorPromptVariant(
+  value: string | undefined,
+): value is DeliberatorPromptVariant {
+  return value === "reference-react:chat" ||
+    value === "reference-react:plan" ||
+    value === "reference-react:build" ||
+    value === "kestrel-one:chat" ||
+    value === "kestrel-one:plan" ||
+    value === "kestrel-one:build";
 }
 
 export function isReferenceReactPromptVariant(
