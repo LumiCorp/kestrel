@@ -55,8 +55,15 @@ docker run --rm \
       (toolName) => toolName.startsWith("dialog.") || toolName.startsWith("delegate.") || toolName === "agent.spawn",
     );
     const expected = ["dialog.open", "dialog.send", "dialog.close"];
-    if (profile?.delegation?.allowAgentSpawn !== true || JSON.stringify(collaborationTools) !== JSON.stringify(expected)) {
-      throw new Error(`Workspace Runtime Kestrel-One collaborator profile is invalid: ${JSON.stringify({ delegation: profile?.delegation, collaborationTools })}`);
+    if (
+      profile?.agentProfileId !== "kestrel-one" ||
+      profile?.presetId !== "workspace_hosted" ||
+      profile?.delegation?.allowAgentSpawn !== true ||
+      profile?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents") !== true ||
+      profile?.toolAllowlist?.includes("desktop.host.open") === true ||
+      JSON.stringify(collaborationTools) !== JSON.stringify(expected)
+    ) {
+      throw new Error(`Workspace Runtime Kestrel-One profile is invalid: ${JSON.stringify({ agentProfileId: profile?.agentProfileId, presetId: profile?.presetId, delegation: profile?.delegation, collaborationTools })}`);
     }
   '
 
