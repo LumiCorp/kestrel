@@ -2,6 +2,7 @@ import type {
   RunnerInteractionRequestV1,
   RunnerRunStreamEvent,
   RunnerRunTerminalEvent,
+  RunnerTelemetry,
 } from "@kestrel-agents/sdk";
 import type {
   KestrelArtifactPresentation,
@@ -74,6 +75,7 @@ export function createKestrelPresentationAccumulator(input: {
   let errorMessage: string | null = null;
   let interaction: KestrelInteractionPresentation | null = null;
   let finalizedPayload: unknown | undefined;
+  let telemetry: RunnerTelemetry | undefined;
 
   const appendPart = (part: KestrelPresentationPart): KestrelPresentationPart[] => {
     const id = "id" in part && typeof part.id === "string" ? part.id : undefined;
@@ -150,6 +152,7 @@ export function createKestrelPresentationAccumulator(input: {
         terminalStatus === "contract_failure",
       interaction,
       ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
+      ...(telemetry !== undefined ? { telemetry } : {}),
     };
   };
 
@@ -277,6 +280,7 @@ export function createKestrelPresentationAccumulator(input: {
         } else {
           const result = event.payload.result;
           finalizedPayload = result.finalizedPayload;
+          telemetry = result.output.telemetry;
           runId = result.output.runId;
           if (result.output.status === "COMPLETED") {
             assistantText = requireNonEmptyString(

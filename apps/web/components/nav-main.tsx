@@ -1,18 +1,23 @@
 "use client";
 
-import { BookOpen, Bot, PlugZap } from "lucide-react";
+import { BookOpen, Bot, LayoutDashboard, PlugZap } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import {
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
 const modeItems = [
+  {
+    title: "Dashboard",
+    url: "/dashboard",
+    icon: LayoutDashboard,
+    isActive: (pathname: string) => pathname === "/dashboard",
+  },
   {
     title: "Work",
     url: "/",
@@ -44,7 +49,6 @@ export function NavMain() {
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Navigate</SidebarGroupLabel>
       <SidebarMenu>
         {modeItems.map((item) => (
           <SidebarMenuItem key={item.title}>

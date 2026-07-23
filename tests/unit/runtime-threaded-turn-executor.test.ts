@@ -88,6 +88,10 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor compiles threaded 
         specialistIds: ["reviewer"],
         contextPolicyId: "context:review",
         approvalPolicyId: "approval:review",
+        modelProvider: "provider-a",
+        model: "model-a",
+        promptVariant: "prompt:test",
+        harnessEconomics: { version: 1, policy: { mode: "observe" } },
       },
     },
   });
@@ -133,6 +137,10 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor compiles threaded 
     specialistIds: ["reviewer"],
     contextPolicyId: "context:review",
     approvalPolicyId: "approval:review",
+    modelProvider: "provider-a",
+    model: "model-a",
+    promptVariant: "prompt:test",
+    harnessEconomics: { version: 1, policy: { mode: "observe" } },
   });
   assert.deepEqual(result.finalizedPayload, { message: "done" });
   assert.equal(result.assistantText, "done");
@@ -183,6 +191,9 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor applies capability
         bundleId: "bundle:original",
         toolAllowlist: ["fs.read_text"],
         specialistIds: ["original"],
+        modelProvider: "provider-a",
+        model: "model-a",
+        harnessEconomics: { version: 1, policy: { mode: "observe" } },
       },
     },
   });
@@ -193,6 +204,9 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor applies capability
     specialistIds: ["fallback-specialist"],
     contextPolicyId: "context:fallback",
     approvalPolicyId: "approval:fallback",
+    modelProvider: "provider-a",
+    model: "model-a",
+    harnessEconomics: { version: 1, policy: { mode: "observe" } },
   });
 });
 

@@ -23,8 +23,8 @@ import {
   buildKestrelTerminalBenchRepairPrompt,
 } from "../src/runtime/KestrelAgentContextBuilder.js";
 import {
-  createHarnessEfficiencyLedgerV1,
-  createHarnessEfficiencyResultV1,
+  createHarnessEfficiencyLedgerV2,
+  createHarnessEfficiencyResultV2,
   emptyHarnessEfficiencyEconomics,
   hashHarnessEfficiencyValue,
   readHarnessEfficiencyEconomicsFromLedger,
@@ -1874,7 +1874,7 @@ export function writeTerminalBenchEfficiencyResults(input: {
     let ledgerWritten = false;
     if (replayBundle !== undefined) {
       try {
-        const ledger = createHarnessEfficiencyLedgerV1({
+        const ledger = createHarnessEfficiencyLedgerV2({
           replayBundle,
           recordedAt,
           runId: readNonEmptyRecordString(record, "kestrel_run_id"),
@@ -1905,7 +1905,7 @@ export function writeTerminalBenchEfficiencyResults(input: {
     const model = readNonEmptyRecordString(record, "model") ?? "unknown";
     const trial = readTerminalBenchTrial(input.env.KESTREL_BENCHMARK_TRIAL);
     const taskInputHash = readHashRecordString(record, "job_input_sha256") ?? hashHarnessEfficiencyValue({ dataset: input.dataset, taskId });
-    const result = createHarnessEfficiencyResultV1({
+    const result = createHarnessEfficiencyResultV2({
       pairId: input.env.KESTREL_BENCHMARK_PAIR_ID?.trim() || `terminal_bench:${input.dataset}:${taskId}:trial:${trial}`,
       lane: "terminal_bench",
       dataset: input.dataset,
@@ -1929,8 +1929,7 @@ export function writeTerminalBenchEfficiencyResults(input: {
         }),
         controlVariantHash: hashHarnessEfficiencyValue({
           harnessRevision,
-          harnessEconomicsPolicy: profile?.harnessEconomicsPolicy,
-          modelEconomicsProfile: profile?.modelEconomicsProfile,
+          harnessEconomics: profile?.harnessEconomics,
         }),
         harnessRevision: harnessRevision ?? "unknown",
         modelProvider,

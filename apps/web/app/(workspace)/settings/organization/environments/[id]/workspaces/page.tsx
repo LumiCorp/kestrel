@@ -44,7 +44,7 @@ export default async function EnvironmentWorkspacesPage({
                 <TableHead>Workspace</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="text-right">Backups</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

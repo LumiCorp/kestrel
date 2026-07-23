@@ -464,7 +464,7 @@ contractTest("runtime.hermetic", "re-appending same user task after tool results
   assert.equal(userItems[1]?.content, "Now fix the other bug.");
 });
 
-contractTest("runtime.hermetic", "transcript append trimming preserves the original active task", () => {
+contractTest("runtime.hermetic", "transcript append preserves all valid history and the original active task", () => {
   let transcript = appendUserTurnToTranscript({
     transcript: undefined,
     message: "Initial task",
@@ -476,13 +476,13 @@ contractTest("runtime.hermetic", "transcript append trimming preserves the origi
     });
   }
 
-  assert.equal(transcript.items.length, 120);
+  assert.equal(transcript.items.length, 131);
   assert.equal(transcript.items[0]?.content, "Initial task");
   assert.equal(transcript.items.at(-1)?.content, "Follow-up 129");
   assert.equal(readActiveTaskGoalFromTranscript(transcript), "Initial task");
 });
 
-contractTest("runtime.hermetic", "transcript normalization preserves the original active task when loading long state", () => {
+contractTest("runtime.hermetic", "transcript normalization preserves all valid history and the original active task", () => {
   const transcript = normalizeModelTranscript({
     version: 1,
     windowId: 1,
@@ -503,7 +503,7 @@ contractTest("runtime.hermetic", "transcript normalization preserves the origina
   });
 
   assert.ok(transcript);
-  assert.equal(transcript.items.length, 120);
+  assert.equal(transcript.items.length, 131);
   assert.equal(transcript.items[0]?.content, "Initial task");
   assert.equal(transcript.items.at(-1)?.content, "Assistant update 129");
   assert.equal(readActiveTaskGoalFromTranscript(transcript), "Initial task");

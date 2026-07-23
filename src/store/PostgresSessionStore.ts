@@ -2074,8 +2074,11 @@ export class PostgresSessionStore implements SessionStore {
       clauses.push(`occurred_at <= $${values.length}::timestamptz`);
     }
 
-    values.push(input.limit ?? 1000);
-    const limitPlaceholder = `$${values.length}`;
+    let limitClause = "";
+    if (input.limit !== undefined) {
+      values.push(input.limit);
+      limitClause = `LIMIT $${values.length}`;
+    }
 
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const result = await this.db.query<{
@@ -2088,10 +2091,10 @@ export class PostgresSessionStore implements SessionStore {
       occurred_at: string;
     }>(
       `SELECT run_id, session_id, step_index, event_type, level, metadata_json, occurred_at
-         FROM run_events
+        FROM run_events
          ${whereClause}
         ORDER BY occurred_at ASC, id ASC
-        LIMIT ${limitPlaceholder}`,
+        ${limitClause}`,
       values,
     );
 

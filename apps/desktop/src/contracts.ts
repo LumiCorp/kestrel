@@ -139,6 +139,7 @@ export type {
   DesktopWorkspaceGitSnapshot,
   DesktopWorkspaceFeedbackSubmitResult,
   DesktopManagedProjectRunPreviewUrl,
+  DesktopManagedProjectRunOutputLine,
   DesktopLegacyUiStateEntries,
   DesktopMcpDiscoveryDiagnostic,
   DesktopMicrophoneAccess,

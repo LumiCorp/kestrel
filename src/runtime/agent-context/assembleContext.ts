@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { ModelMessage } from "../../kestrel/contracts/model-io.js";
 import type { ContextSectionCandidateV1 } from "../../economics/contracts.js";
-import { countTextTokens } from "../../economics/tokenCounting.js";
+import { countTextTokens, type ExactTokenCounter } from "../../economics/tokenCounting.js";
 
 import {
   buildDeliberatorSystemPrompt,
@@ -46,8 +46,11 @@ export {
   buildKestrelAgentCompactedTranscript,
   buildKestrelAgentCompactionMessages,
   buildKestrelCompactionSummarySchema,
+  buildKestrelCompactionSufficiencyMessages,
   buildKestrelTerminalBenchRepairPrompt,
   KESTREL_COMPACTION_SUMMARY_SCHEMA,
+  KESTREL_COMPACTION_SUFFICIENCY_SCHEMA,
+  parseKestrelCompactionSufficiencyVerdictV1,
   parseKestrelCompactionSummaryV1,
   planKestrelAgentCompaction,
   shouldCompactKestrelAgentContext,
@@ -94,6 +97,7 @@ export interface KestrelAgentContextBuildInput {
   retryContext?: Record<string, unknown> | undefined;
   systemPrompt?: KestrelAgentSystemPromptInput | undefined;
   stepIndex?: number | undefined;
+  tokenCounter?: ExactTokenCounter | undefined;
 }
 
 export type KestrelAgentSystemPromptInput =
@@ -115,6 +119,15 @@ export interface KestrelAgentContextMetadata {
   version: 2;
   sections: KestrelAgentContextSection[];
   manifestSections: ContextSectionCandidateV1[];
+  pipelineSections: Array<{
+    id: string;
+    origin: string;
+    revision?: string | undefined;
+    contentHash: string;
+    renderedContent: string;
+    binding: "system" | "runtime" | "transcript";
+    messageIndex: number;
+  }>;
 }
 
 export interface KestrelAgentContextSection {
@@ -251,19 +264,49 @@ export function buildKestrelAgentContext(
     transcript: normalizeModelTranscript(transcript),
   };
   const transcriptMessages = contextMessages.slice(runtimeContext.trim().length > 0 ? 1 : 0);
+  const systemOffset = systemMessage === undefined ? 0 : 1;
+  const runtimeMessagePresent = runtimeContext.trim().length > 0;
+  const runtimeMessageIndex = systemOffset;
+  const transcriptOffset = systemOffset + (runtimeMessagePresent ? 1 : 0);
+  const pipelineSections = [
+    ...(systemMessage !== undefined
+      ? [toPipelineSection("systemPrompt", "system-prompt", serializeMessageContent(systemMessage), "system" as const, 0)]
+      : []),
+    ...runtimeSections.map((section) => toPipelineSection(
+      section.id,
+      section.origin,
+      section.content,
+      "runtime" as const,
+      runtimeMessageIndex,
+      section.revision,
+    )),
+    ...transcriptMessages.map((message, index) => toPipelineSection(
+      `transcript:${transcript.items[index]?.id ?? index}`,
+      `model-transcript:${message.role}`,
+      JSON.stringify(message),
+      "transcript" as const,
+      transcriptOffset + index,
+      transcript.items[index]?.id,
+    )),
+  ];
   const manifestSections = withExactDuplicates([
     ...(systemMessage !== undefined
-      ? [toManifestSection("systemPrompt", "system-prompt", serializeMessageContent(systemMessage))]
+      ? [toManifestSection("systemPrompt", "system-prompt", serializeMessageContent(systemMessage), undefined, input.tokenCounter)]
       : []),
     ...runtimeSections.map((section) => toManifestSection(
       section.id,
       section.origin,
       section.content,
       section.revision,
+      input.tokenCounter,
     )),
-    ...(transcriptMessages.length > 0
-      ? [toManifestSection("transcript", "model-transcript", JSON.stringify(transcriptMessages))]
-      : []),
+    ...transcriptMessages.map((message, index) => toManifestSection(
+      `transcript:${transcript.items[index]?.id ?? index}`,
+      `model-transcript:${message.role}`,
+      JSON.stringify(message),
+      transcript.items[index]?.id,
+      input.tokenCounter,
+    )),
   ]);
   return {
     transcript,
@@ -274,6 +317,7 @@ export function buildKestrelAgentContext(
       builder: "kestrel-agent-context",
       version: 2,
       manifestSections,
+      pipelineSections,
       sections: [
         { id: "systemPrompt", origin: "system-prompt", rendered: systemMessage !== undefined },
         { id: "task", origin: "turn", rendered: input.goal.trim().length > 0 },
@@ -297,9 +341,32 @@ export function buildKestrelAgentContext(
         },
         { id: "correction", origin: "feedback", rendered: correction !== undefined },
         { id: "activeWait", origin: "runtime-state", rendered: asRecord(input.reactState.waitingFor) !== undefined },
-        { id: "transcript", origin: "model-transcript", rendered: transcript.items.length > 0 },
+        ...transcriptMessages.map((message, index) => ({
+          id: `transcript:${transcript.items[index]?.id ?? index}`,
+          origin: `model-transcript:${message.role}`,
+          rendered: true,
+        })),
       ],
     },
+  };
+}
+
+function toPipelineSection(
+  id: string,
+  origin: string,
+  renderedContent: string,
+  binding: "system" | "runtime" | "transcript",
+  messageIndex: number,
+  revision?: string | undefined,
+): KestrelAgentContextMetadata["pipelineSections"][number] {
+  return {
+    id,
+    origin,
+    ...(revision !== undefined ? { revision } : {}),
+    contentHash: createHash("sha256").update(renderedContent).digest("hex"),
+    renderedContent,
+    binding,
+    messageIndex,
   };
 }
 
@@ -308,13 +375,14 @@ function toManifestSection(
   origin: string,
   content: string,
   revision?: string | undefined,
+  counter?: ExactTokenCounter | undefined,
 ): ContextSectionCandidateV1 {
   return {
     id,
     origin,
     ...(revision !== undefined ? { revision } : {}),
     contentHash: createHash("sha256").update(content).digest("hex"),
-    count: countTextTokens(content),
+    count: countTextTokens(content, counter),
   };
 }
 

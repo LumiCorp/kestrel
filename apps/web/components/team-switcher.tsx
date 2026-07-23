@@ -98,27 +98,18 @@ export function TeamSwitcher({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-              size="lg"
+              aria-label="Switch workspace"
+              className="h-9 gap-1.5 px-2 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              tooltip="Switch workspace"
             >
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                {!activeIsPersonal && activeOrg ? (
-                  <Building2 className="size-4" />
-                ) : (
-                  <span className="font-semibold text-xs">P</span>
-                )}
-              </div>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">
-                  {activeIsPersonal
-                    ? "Personal"
-                    : activeOrg?.name || "Personal"}
-                </span>
-                <span className="truncate text-xs">
-                  {activeIsPersonal ? "Personal Workspace" : "Organization"}
-                </span>
-              </div>
-              <ChevronsUpDown className="ml-auto" />
+              <Building2 className="hidden size-4 group-data-[collapsible=icon]:block" />
+              <span className="text-sidebar-foreground/60 text-xs group-data-[collapsible=icon]:hidden">
+                Workspace
+              </span>
+              <span className="min-w-0 flex-1 truncate font-medium group-data-[collapsible=icon]:hidden">
+                {activeIsPersonal ? "Personal" : activeOrg?.name || "Personal"}
+              </span>
+              <ChevronsUpDown className="ml-auto size-3.5 group-data-[collapsible=icon]:hidden" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent

@@ -9,6 +9,7 @@ import {
 } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
+  assertWorkspaceTransition,
   type CreateEnvironmentInput,
   ENVIRONMENT_IDLE_TIMEOUT_MINUTES,
   ENVIRONMENT_RUNTIME_TEMPLATE,
@@ -917,6 +918,82 @@ export async function listEnvironmentOperations(input: {
         eq(table.environmentId, input.environmentId),
       ),
     orderBy: (table, { desc }) => [desc(table.createdAt), desc(table.id)],
+  });
+}
+
+export async function requestFailedWorkspaceProvisionRetry(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  userId: string;
+}) {
+  const lockKey = `kestrel:workspace:lifecycle:${input.workspaceId}`;
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+    );
+    const workspace = await transaction.query.environmentWorkspaces.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.id, input.workspaceId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+          isNull(table.deletedAt)
+        ),
+    });
+    if (!workspace) return null;
+    const operation =
+      await transaction.query.environmentOperations.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.workspaceId, workspace.id),
+            eq(table.type, "workspace.provision")
+          ),
+      });
+    if (!operation) return null;
+    if (
+      workspace.status === "provisioning" &&
+      (operation.status === "queued" || operation.status === "running")
+    ) {
+      return operation;
+    }
+    if (
+      workspace.status !== "failed" ||
+      (operation.status !== "failed" && operation.status !== "cancelled")
+    ) {
+      return null;
+    }
+    assertWorkspaceTransition(workspace.status, "provisioning");
+    const now = new Date();
+    const [retriedOperation] = await transaction
+      .update(schema.environmentOperations)
+      .set({
+        status: "queued",
+        stage: "environment.activation.requested",
+        requestedByUserId: input.userId,
+        providerRequestId: null,
+        result: null,
+        errorCode: null,
+        errorMessage: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.environmentOperations.id, operation.id))
+      .returning();
+    if (!retriedOperation) {
+      throw new Error("Workspace provisioning retry was not persisted.");
+    }
+    await transaction
+      .update(schema.environmentWorkspaces)
+      .set({
+        status: "provisioning",
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.environmentWorkspaces.id, workspace.id));
+    return retriedOperation;
   });
 }
 

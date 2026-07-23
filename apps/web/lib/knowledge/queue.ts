@@ -7,6 +7,10 @@ import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
 
 const ENVIRONMENT_OPERATION_QUEUE = "environment.operation";
 const ENVIRONMENT_RECONCILE_QUEUE = "environment.reconcile";
+const COST_PRICING_QUEUE = "costs.price";
+const COST_ACCRUAL_QUEUE = "costs.accrue-fixed";
+const COST_FLY_METERING_QUEUE = "costs.meter-fly";
+type CostPricingJobData = { backfill?: unknown };
 export const ENVIRONMENT_OPERATION_EXPIRE_SECONDS = 12 * 60 * 60;
 export const ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS = 60;
 export const ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS = 30;
@@ -66,6 +70,9 @@ async function createBoss() {
     ENVIRONMENT_RECONCILE_CRON,
     {}
   );
+  await boss.createQueue(COST_PRICING_QUEUE);
+  await boss.createQueue(COST_ACCRUAL_QUEUE);
+  await boss.createQueue(COST_FLY_METERING_QUEUE);
   await boss.createQueue(MANAGED_RUNPOD_RUN_QUEUE);
   await boss.createQueue(MANAGED_RUNPOD_RECONCILE_QUEUE);
   await boss.createQueue(MANAGED_RUNPOD_USAGE_QUEUE);
@@ -251,6 +258,50 @@ export async function startEnvironmentLifecycleWorker() {
     );
     await runScheduledEnvironmentReconciliation();
   });
+  await boss.work(
+    COST_PRICING_QUEUE,
+    async (jobs: Array<{ data?: CostPricingJobData }>) => {
+      const { backfillAuthoritativeUsage } = await import(
+        "@/lib/costs/metering"
+      );
+      const { priceRecentUnpricedUsage, priceRecentlyUpdatedUsage } =
+        await import("@/lib/costs/store");
+      for (const job of jobs) {
+        const backfill = job.data?.backfill;
+        if (backfill !== "startup" && backfill !== "incremental") continue;
+        const windowMs =
+          backfill === "startup"
+            ? 48 * 60 * 60 * 1000
+            : 15 * 60 * 1000;
+        await backfillAuthoritativeUsage({
+          since: new Date(Date.now() - windowMs),
+        });
+      }
+      await priceRecentlyUpdatedUsage(
+        new Date(Date.now() - 15 * 60 * 1000)
+      );
+      await priceRecentUnpricedUsage();
+    }
+  );
+  await boss.work(COST_ACCRUAL_QUEUE, async () => {
+    const { accrueOrganizationFixedRates } = await import("@/lib/costs/metering");
+    await accrueOrganizationFixedRates();
+  });
+  await boss.work(COST_FLY_METERING_QUEUE, async () => {
+    const { meterFlyReconciledHour } = await import("@/lib/costs/metering");
+    await meterFlyReconciledHour();
+  });
+  await boss.schedule(COST_PRICING_QUEUE, "*/5 * * * *", {
+    backfill: "incremental",
+  });
+  await boss.schedule(COST_FLY_METERING_QUEUE, "5 * * * *", {});
+  await boss.schedule(COST_ACCRUAL_QUEUE, "10 0 * * *", {});
+  await boss.send(
+    COST_PRICING_QUEUE,
+    { backfill: "startup" },
+    { singletonKey: "startup-backfill" }
+  );
+  await boss.send(COST_ACCRUAL_QUEUE, {}, { singletonKey: "startup-accrual" });
   await reconcileEnvironmentOperationQueue(boss);
   environmentMaintenanceTimer = setInterval(() => {
     void runEnvironmentMaintenance(boss).catch((error) => {

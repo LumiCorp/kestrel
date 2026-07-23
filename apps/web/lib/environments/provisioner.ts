@@ -540,8 +540,13 @@ export class EnvironmentProvisioner {
       operationId: operation.id,
       stage: "environment.update.workspaces",
     });
+    const skippedWorkspaceIds: string[] = [];
+    let updatedWorkspaceCount = 0;
     for (const workspace of workspaces) {
-      if (!workspace.flyMachineId) continue;
+      if (!workspace.flyMachineId) {
+        skippedWorkspaceIds.push(workspace.id);
+        continue;
+      }
       await this.updateWorkspaceRuntime({
         appName: environment.flyAppName,
         workspaceId: workspace.id,
@@ -549,6 +554,7 @@ export class EnvironmentProvisioner {
         runtimeImage,
         forceStart: true,
       });
+      updatedWorkspaceCount += 1;
     }
     await this.repository.updateOperationStage({
       operationId: operation.id,
@@ -560,12 +566,17 @@ export class EnvironmentProvisioner {
     });
     await this.repository.completeOperation({
       operationId: operation.id,
-      stage: "environment.update.ready",
+      stage:
+        skippedWorkspaceIds.length > 0
+          ? "environment.update.recovery_required"
+          : "environment.update.ready",
       result: {
         gatewayMachineId: environment.flyGatewayMachineId,
         routerImage,
         runtimeImage,
         workspaceCount: workspaces.length,
+        updatedWorkspaceCount,
+        skippedWorkspaceIds,
       },
     });
   }

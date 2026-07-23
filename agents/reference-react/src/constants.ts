@@ -86,6 +86,16 @@ export function resolveAgentOptions(
       options?.agentModel ??
       options?.deliberatorModel ??
       (options?.decisionModel !== undefined ? config.decisionModel : config.agentModel),
+    maintenanceModel:
+      options?.maintenanceModel ??
+      options?.agentModel ??
+      options?.deliberatorModel ??
+      (options?.decisionModel !== undefined ? config.decisionModel : config.agentModel),
+    delegationModel:
+      options?.delegationModel ??
+      options?.agentModel ??
+      options?.deliberatorModel ??
+      (options?.decisionModel !== undefined ? config.decisionModel : config.agentModel),
     agentToolsProvider,
     capabilityManifestProvider,
     ...(options?.managedWorktreeProposalProvider !== undefined

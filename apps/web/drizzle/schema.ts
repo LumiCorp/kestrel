@@ -17,6 +17,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   real,
@@ -640,7 +641,9 @@ export const threadMessages = pgTable(
     feedback: text("feedback", { enum: ["positive", "negative"] }),
     model: text("model"),
     inputTokens: integer("input_tokens"),
+    cachedInputTokens: integer("cached_input_tokens"),
     outputTokens: integer("output_tokens"),
+    reasoningTokens: integer("reasoning_tokens"),
     durationMs: integer("duration_ms"),
     externalMessageId: text("external_message_id"),
     source: text("source", {
@@ -4184,6 +4187,268 @@ export const usageStats = pgTable(
   ]
 );
 
+/** =========================
+ *  Organization cost ledger
+ *  ========================= */
+
+export const organizationUsageEvents = pgTable(
+  "organization_usage_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    threadId: text("thread_id").references(() => threads.id, {
+      onDelete: "set null",
+    }),
+    runId: text("run_id"),
+    category: text("category", {
+      enum: ["models", "environments", "managed_compute", "services"],
+    }).notNull(),
+    provider: text("provider").notNull(),
+    service: text("service").notNull(),
+    meter: text("meter").notNull(),
+    quantity: numeric("quantity", { precision: 24, scale: 8 }).notNull(),
+    unit: text("unit").notNull(),
+    reportedAmountUsd: numeric("reported_amount_usd", {
+      precision: 20,
+      scale: 8,
+    }),
+    sourceKind: text("source_kind").notNull(),
+    sourceId: text("source_id").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    intervalStartedAt: timestamp("interval_started_at", {
+      withTimezone: true,
+    }),
+    intervalEndedAt: timestamp("interval_ended_at", { withTimezone: true }),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("organization_usage_events_source_meter_idx")
+      .on(
+        table.organizationId,
+        table.sourceKind,
+        table.sourceId,
+        table.meter,
+        table.intervalStartedAt
+      )
+      .nullsNotDistinct(),
+    index("organization_usage_events_org_occurred_idx").on(
+      table.organizationId,
+      table.occurredAt
+    ),
+    index("organization_usage_events_service_idx").on(
+      table.organizationId,
+      table.provider,
+      table.service,
+      table.meter
+    ),
+    check(
+      "organization_usage_events_category_check",
+      sql`${table.category} in ('models', 'environments', 'managed_compute', 'services')`
+    ),
+    check(
+      "organization_usage_events_quantity_check",
+      sql`${table.quantity} >= 0`
+    ),
+    check(
+      "organization_usage_events_reported_amount_check",
+      sql`${table.reportedAmountUsd} is null or ${table.reportedAmountUsd} >= 0`
+    ),
+    check(
+      "organization_usage_events_interval_check",
+      sql`${table.intervalEndedAt} is null or ${table.intervalStartedAt} is not null and ${table.intervalEndedAt} >= ${table.intervalStartedAt}`
+    ),
+  ]
+);
+
+export const costRateCards = pgTable(
+  "cost_rate_cards",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
+    category: text("category", {
+      enum: ["models", "environments", "managed_compute", "services"],
+    }).notNull(),
+    provider: text("provider").notNull(),
+    service: text("service").notNull(),
+    meter: text("meter").notNull(),
+    unit: text("unit").notNull(),
+    rateKind: text("rate_kind", {
+      enum: ["unit", "monthly", "annual"],
+    })
+      .notNull()
+      .default("unit"),
+    unitPriceUsd: numeric("unit_price_usd", {
+      precision: 20,
+      scale: 10,
+    }).notNull(),
+    provenance: text("provenance", {
+      enum: ["published", "contract", "assumption"],
+    }).notNull(),
+    sourceUrl: text("source_url"),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    enabled: boolean("enabled").notNull().default(true),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("cost_rate_cards_scope_effective_idx")
+      .on(
+        table.organizationId,
+        table.category,
+        table.provider,
+        table.service,
+        table.meter,
+        table.unit,
+        table.effectiveFrom
+      )
+      .nullsNotDistinct(),
+    index("cost_rate_cards_lookup_idx").on(
+      table.organizationId,
+      table.category,
+      table.provider,
+      table.service,
+      table.meter,
+      table.enabled,
+      table.effectiveFrom
+    ),
+    check(
+      "cost_rate_cards_category_check",
+      sql`${table.category} in ('models', 'environments', 'managed_compute', 'services')`
+    ),
+    check(
+      "cost_rate_cards_rate_kind_check",
+      sql`${table.rateKind} in ('unit', 'monthly', 'annual')`
+    ),
+    check(
+      "cost_rate_cards_provenance_check",
+      sql`${table.provenance} in ('published', 'contract', 'assumption')`
+    ),
+    check("cost_rate_cards_price_check", sql`${table.unitPriceUsd} >= 0`),
+    check(
+      "cost_rate_cards_effective_check",
+      sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`
+    ),
+  ]
+);
+
+export const organizationCostEntries = pgTable(
+  "organization_cost_entries",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    usageEventId: text("usage_event_id")
+      .notNull()
+      .references(() => organizationUsageEvents.id, { onDelete: "cascade" }),
+    rateCardId: text("rate_card_id").references(() => costRateCards.id, {
+      onDelete: "restrict",
+    }),
+    supersedesEntryId: text("supersedes_entry_id"),
+    revision: integer("revision").notNull().default(1),
+    amountUsd: numeric("amount_usd", { precision: 20, scale: 8 }).notNull(),
+    quantity: numeric("quantity", { precision: 24, scale: 8 }).notNull(),
+    unitPriceUsd: numeric("unit_price_usd", {
+      precision: 20,
+      scale: 10,
+    }),
+    pricingBasis: text("pricing_basis", {
+      enum: ["provider_reported", "measured_at_rate", "allocated_fixed", "assumed"],
+    }).notNull(),
+    rateSnapshot: jsonb("rate_snapshot").$type<Record<string, unknown>>(),
+    isCurrent: boolean("is_current").notNull().default(true),
+    pricedAt: timestamp("priced_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.supersedesEntryId],
+      foreignColumns: [table.id],
+      name: "organization_cost_entries_supersedes_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("organization_cost_entries_usage_revision_idx").on(
+      table.usageEventId,
+      table.revision
+    ),
+    uniqueIndex("organization_cost_entries_current_idx")
+      .on(table.usageEventId)
+      .where(sql`${table.isCurrent} = true`),
+    index("organization_cost_entries_org_priced_idx").on(
+      table.organizationId,
+      table.pricedAt
+    ),
+    check("organization_cost_entries_revision_check", sql`${table.revision} > 0`),
+    check("organization_cost_entries_amount_check", sql`${table.amountUsd} >= 0`),
+    check(
+      "organization_cost_entries_basis_check",
+      sql`${table.pricingBasis} in ('provider_reported', 'measured_at_rate', 'allocated_fixed', 'assumed')`
+    ),
+  ]
+);
+
+export const organizationDashboardSettings = pgTable(
+  "organization_dashboard_settings",
+  {
+    organizationId: text("organization_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    costVisibility: text("cost_visibility", {
+      enum: ["all_members", "admins_only"],
+    })
+      .notNull()
+      .default("all_members"),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "organization_dashboard_settings_visibility_check",
+      sql`${table.costVisibility} in ('all_members', 'admins_only')`
+    ),
+  ]
+);
+
 export const knowledgeKv = pgTable(
   "knowledge_kv",
   {
@@ -4819,6 +5084,16 @@ export type McpInteractionCheckpoint = InferSelectModel<
 export type AgentConfig = InferSelectModel<typeof agentConfig>;
 export type ApiUsage = InferSelectModel<typeof apiUsage>;
 export type UsageStat = InferSelectModel<typeof usageStats>;
+export type OrganizationUsageEvent = InferSelectModel<
+  typeof organizationUsageEvents
+>;
+export type CostRateCard = InferSelectModel<typeof costRateCards>;
+export type OrganizationCostEntry = InferSelectModel<
+  typeof organizationCostEntries
+>;
+export type OrganizationDashboardSetting = InferSelectModel<
+  typeof organizationDashboardSettings
+>;
 export type ArtifactDocument = InferSelectModel<typeof artifactDocuments>;
 export type ArtifactSuggestion = InferSelectModel<typeof artifactSuggestions>;
 export type AdminEventLog = InferSelectModel<typeof adminEventLogs>;

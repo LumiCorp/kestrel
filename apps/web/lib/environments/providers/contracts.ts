@@ -29,6 +29,9 @@ export type EnvironmentProviderMachine = {
   id: string;
   state: string;
   region: string;
+  cpuKind?: string | undefined;
+  cpus?: number | undefined;
+  memoryMb?: number | undefined;
   image?: string | undefined;
   instanceId?: string | undefined;
   workspaceId?: string | undefined;
@@ -55,6 +58,7 @@ export type EnvironmentProviderInventory = {
     id: string;
     name: string;
     region?: string | undefined;
+    sizeGb?: number | undefined;
     attachedMachineId?: string | null | undefined;
   }>;
 };

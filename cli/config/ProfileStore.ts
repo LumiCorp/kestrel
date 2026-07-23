@@ -1,16 +1,25 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { CodeModeProfileConfig } from "../../src/code/contracts.js";
-import { DEFAULT_CODE_MODE_DISABLED_CONFIG } from "../../src/code/contracts.js";
-import type { DevShellProfileConfig } from "../../src/devshell/contracts.js";
-import { DEFAULT_DEV_SHELL_DISABLED_CONFIG } from "../../src/devshell/contracts.js";
-import type { GuardrailConfig } from "../../src/kestrel/contracts/execution.js";
+import type {
+  CodeModeProfileConfig,
+} from "../../src/code/contracts.js";
 import {
-  parseHarnessEconomicsPolicyV1,
-  parseModelEconomicsProfileV1,
-} from "../../src/economics/policy.js";
-import type { McpServerConfig } from "../../src/mcp/contracts.js";
+  DEFAULT_CODE_MODE_DISABLED_CONFIG,
+} from "../../src/code/contracts.js";
+import type {
+  DevShellProfileConfig,
+} from "../../src/devshell/contracts.js";
+import {
+  DEFAULT_DEV_SHELL_DISABLED_CONFIG,
+} from "../../src/devshell/contracts.js";
+import type {
+  GuardrailConfig,
+} from "../../src/kestrel/contracts/execution.js";
+import { parseHarnessEconomicsControlV1 } from "../../src/economics/policy.js";
+import type {
+  McpServerConfig,
+} from "../../src/mcp/contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
@@ -477,16 +486,11 @@ function validateProfile(
   const modelTimeoutMs =
     version >= 3 ? parseModelTimeoutMs(item.modelTimeoutMs, id) : undefined;
   const theme = version >= 3 ? parseTheme(item.theme, id, notices) : undefined;
-  const delegation =
-    version >= 3 ? parseDelegation(item.delegation) : undefined;
-  const reasoning =
-    version >= 4 ? parseReasoningPolicy(item.reasoning, id) : undefined;
-  const harnessEconomicsPolicy = item.harnessEconomicsPolicy === undefined
+  const delegation = version >= 3 ? parseDelegation(item.delegation) : undefined;
+  const reasoning = version >= 4 ? parseReasoningPolicy(item.reasoning, id) : undefined;
+  const harnessEconomics = item.harnessEconomics === undefined
     ? undefined
-    : parseHarnessEconomicsPolicyV1(item.harnessEconomicsPolicy);
-  const modelEconomicsProfile = item.modelEconomicsProfile === undefined
-    ? undefined
-    : parseModelEconomicsProfileV1(item.modelEconomicsProfile);
+    : parseHarnessEconomicsControlV1(item.harnessEconomics);
 
   return {
     id,
@@ -515,8 +519,7 @@ function validateProfile(
     ...(delegation !== undefined ? { delegation } : {}),
     ...(theme !== undefined ? { theme } : {}),
     ...(reasoning !== undefined ? { reasoning } : {}),
-    ...(harnessEconomicsPolicy !== undefined ? { harnessEconomicsPolicy } : {}),
-    ...(modelEconomicsProfile !== undefined ? { modelEconomicsProfile } : {}),
+    ...(harnessEconomics !== undefined ? { harnessEconomics } : {}),
     ...(defaultFlag !== undefined ? { default: defaultFlag } : {}),
   };
 }

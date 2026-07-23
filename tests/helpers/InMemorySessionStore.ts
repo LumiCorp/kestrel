@@ -908,7 +908,6 @@ export class InMemorySessionStore implements SessionStore {
   }): Promise<RunEvent[]> {
     const fromTs = input.fromTimestamp ?? "";
     const toTs = input.toTimestamp ?? "9999-12-31T23:59:59.999Z";
-    const limit = input.limit ?? 1000;
     const threadSessionId =
       input.threadId !== undefined
         ? (await this.orchestrationStore.getThread(input.threadId))?.sessionId
@@ -921,7 +920,7 @@ export class InMemorySessionStore implements SessionStore {
         ? (await this.orchestrationStore.getThread(delegation.childThreadId))?.sessionId
         : undefined;
 
-    return this.runEvents
+    const events = this.runEvents
       .filter((event) => {
         if (input.runId !== undefined && event.runId !== input.runId) {
           return false;
@@ -947,8 +946,8 @@ export class InMemorySessionStore implements SessionStore {
         }
         return event.timestamp >= fromTs && event.timestamp <= toTs;
       })
-      .slice(0, limit)
       .map((event) => ({ ...event }));
+    return input.limit === undefined ? events : events.slice(0, input.limit);
   }
 
   async upsertThread(thread: Parameters<InMemoryOrchestrationStore["upsertThread"]>[0]): Promise<void> {

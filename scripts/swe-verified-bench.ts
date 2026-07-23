@@ -28,15 +28,16 @@ import type {
   SweWorkspacePatchReport,
 } from "./swe-verified-workspace-patch.js";
 import {
-  createHarnessEfficiencyLedgerV1,
-  createHarnessEfficiencyResultV1,
+  createHarnessEfficiencyLedgerV2,
+  createHarnessEfficiencyResultV2,
   emptyHarnessEfficiencyEconomics,
   hashHarnessEfficiencyValue,
   readHarnessEfficiencyEconomicsFromLedger,
   readHarnessEfficiencyEconomicsFromReplayBundle,
+  reconcileHarnessEfficiencyRuntimeTelemetry,
 } from "../src/economics/index.js";
 
-type CommandMode = "preflight" | "run" | "evaluate" | "list";
+type CommandMode = "preflight" | "validate-profile" | "run" | "evaluate" | "list";
 
 export interface SweVerifiedBenchOptions {
   mode: CommandMode;
@@ -114,6 +115,7 @@ interface KestrelJobStatusSummary {
   status?: string | undefined;
   waitEventType?: string | undefined;
   waitReason?: string | undefined;
+  telemetry?: unknown;
 }
 
 interface RuntimeDeps {
@@ -178,7 +180,7 @@ export function parseSweVerifiedBenchArgs(argv: string[]): SweVerifiedBenchOptio
       continue;
     }
 
-    if (arg === "preflight" || arg === "run" || arg === "evaluate" || arg === "list") {
+    if (arg === "preflight" || arg === "validate-profile" || arg === "run" || arg === "evaluate" || arg === "list") {
       mode = arg;
       continue;
     }
@@ -255,7 +257,7 @@ export function parseSweVerifiedBenchArgs(argv: string[]): SweVerifiedBenchOptio
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  if (mode !== "preflight" && instanceId === undefined) {
+  if (mode !== "preflight" && mode !== "validate-profile" && instanceId === undefined) {
     throw new Error("--instance-id is required for SWE Verified run and evaluate modes");
   }
 
@@ -352,6 +354,8 @@ export function buildSweVerifiedJobInput(input: {
   workspaceRoot: string;
   modelName: string;
   runtimeModelName?: string | undefined;
+  profile?: Record<string, unknown> | undefined;
+  sessionId?: string | undefined;
 }): Record<string, unknown> {
   const problemStatement = sanitizeSweVerifiedIssueText(input.instance.problem_statement);
   const hintsText = input.instance.hints_text === undefined
@@ -360,7 +364,7 @@ export function buildSweVerifiedJobInput(input: {
   return {
     version: "job_input_v1",
     approvalPolicyPackId: "dev",
-    profile: {
+    profile: input.profile ?? {
       id: "swe-verified",
       label: "SWE Verified",
       agent: "reference-react",
@@ -395,7 +399,7 @@ export function buildSweVerifiedJobInput(input: {
       ],
     },
     turn: {
-      sessionId: `swe-verified-${input.instance.instance_id}`,
+      sessionId: input.sessionId ?? `swe-verified-${input.instance.instance_id}`,
       eventType: "job.run",
       message: `Resolve SWE-bench Verified instance ${input.instance.instance_id} in this checked-out repository.`,
       stepAgent: "agent.loop",
@@ -442,6 +446,10 @@ export function assertSweVerifiedJobInputContract(jobInput: Record<string, unkno
     throw new Error("SWE Verified job input must include an embedded profile.");
   }
 
+  assertSweVerifiedProfileContract(profile);
+}
+
+export function assertSweVerifiedProfileContract(profile: Record<string, unknown>): void {
   if (profile.agent !== "reference-react") {
     throw new Error("SWE Verified job profile must use the reference-react agent.");
   }
@@ -548,6 +556,21 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     return runPreflight(deps, resolvePythonBin(options, deps.env));
   }
 
+  if (options.mode === "validate-profile") {
+    try {
+      const profile = loadBenchmarkProfileOverride(deps.env);
+      if (profile === undefined) {
+        throw new Error("SWE Verified profile validation requires KESTREL_BENCHMARK_PROFILE_FILE and KESTREL_BENCHMARK_PROFILE_ID.");
+      }
+      assertSweVerifiedProfileContract(profile);
+      deps.stdout.write("[bench:swe] profile validation passed.\n");
+      return 0;
+    } catch (error) {
+      deps.stderr.write(`[bench:swe] ${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
+  }
+
   const instanceId = options.instanceId as string;
   const pythonBin = resolvePythonBin(options, deps.env);
   const instancePaths = buildSweVerifiedAttemptPaths({
@@ -634,13 +657,22 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     deps.stderr.write(`[bench:swe] ${warning}\n`);
   }
   const benchmarkEnv = benchmarkProviderEnv(deps.env);
-  const { modelName, runtimeModelName } = modelSelection;
+  const benchmarkProfile = loadBenchmarkProfileOverride(deps.env);
+  const profileModel = typeof benchmarkProfile?.model === "string" && benchmarkProfile.model.trim().length > 0
+    ? benchmarkProfile.model.trim()
+    : undefined;
+  const modelName = profileModel ?? modelSelection.modelName;
+  const runtimeModelName = profileModel ?? modelSelection.runtimeModelName;
   const jobInput = buildSweVerifiedJobInput({
     instance,
     dataset: options.dataset,
     workspaceRoot: SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT,
     modelName,
     runtimeModelName,
+    ...(benchmarkEnv.KESTREL_BENCHMARK_ATTEMPT_ID !== undefined
+      ? { sessionId: benchmarkEnv.KESTREL_BENCHMARK_ATTEMPT_ID }
+      : {}),
+    ...(benchmarkProfile !== undefined ? { profile: benchmarkProfile } : {}),
   });
   try {
     assertSweVerifiedJobInputContract(jobInput);
@@ -1944,6 +1976,8 @@ function readKestrelJobStatus(jobOutputPath: string): KestrelJobStatusSummary {
   const job = asRecord(output?.job);
   const waitFor = asRecord(job?.waitFor);
   const waitMetadata = asRecord(waitFor?.metadata);
+  const result = asRecord(job?.result);
+  const resultOutput = asRecord(result?.output);
   return {
     runId: typeof job?.runId === "string" ? job.runId : undefined,
     sessionId: typeof job?.sessionId === "string" ? job.sessionId : undefined,
@@ -1952,6 +1986,7 @@ function readKestrelJobStatus(jobOutputPath: string): KestrelJobStatusSummary {
     status: typeof job?.status === "string" ? job.status : undefined,
     waitEventType: typeof waitFor?.eventType === "string" ? waitFor.eventType : undefined,
     waitReason: typeof waitMetadata?.reason === "string" ? waitMetadata.reason : undefined,
+    telemetry: resultOutput?.telemetry,
   };
 }
 
@@ -2120,7 +2155,7 @@ export function writeSweVerifiedEfficiencyResult(input: {
     : readHarnessEfficiencyEconomicsFromReplayBundle(replayBundle, acceptance);
   if (replayBundle !== undefined) {
     try {
-      const ledger = createHarnessEfficiencyLedgerV1({
+      const ledger = createHarnessEfficiencyLedgerV2({
         replayBundle,
         recordedAt,
         runId: input.kestrelJobSummary?.runId,
@@ -2129,6 +2164,7 @@ export function writeSweVerifiedEfficiencyResult(input: {
       });
       writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2) + "\n", "utf8");
       economics = readHarnessEfficiencyEconomicsFromLedger(ledger);
+      economics = reconcileHarnessEfficiencyRuntimeTelemetry(economics, input.kestrelJobSummary?.telemetry);
       ledgerWritten = true;
     } catch {
       economics = {
@@ -2141,8 +2177,14 @@ export function writeSweVerifiedEfficiencyResult(input: {
     }
   }
   const profile = asRecord(input.jobInput.profile);
+  const frozenModelProvider = typeof profile?.modelProvider === "string" && profile.modelProvider.trim().length > 0
+    ? profile.modelProvider.trim()
+    : "openrouter";
+  const frozenModel = typeof profile?.model === "string" && profile.model.trim().length > 0
+    ? profile.model.trim()
+    : input.modelName;
   const trial = readPositiveTrial(input.env.KESTREL_BENCHMARK_TRIAL);
-  const result = createHarnessEfficiencyResultV1({
+  const result = createHarnessEfficiencyResultV2({
     pairId: input.env.KESTREL_BENCHMARK_PAIR_ID?.trim() || `swe_verified:${input.dataset}:${input.instance.instance_id}:trial:${trial}`,
     lane: "swe_verified",
     dataset: input.dataset,
@@ -2164,8 +2206,8 @@ export function writeSweVerifiedEfficiencyResult(input: {
         split: input.split,
         maxWorkers: input.options.maxWorkers,
         timeout: input.options.timeout,
-        modelProvider: "openrouter",
-        model: input.modelName,
+        modelProvider: frozenModelProvider,
+        model: frozenModel,
         guardrails: profile?.guardrails,
         toolAllowlist: profile?.toolAllowlist,
         defaultInteractionMode: profile?.defaultInteractionMode,
@@ -2173,12 +2215,11 @@ export function writeSweVerifiedEfficiencyResult(input: {
       }),
       controlVariantHash: hashHarnessEfficiencyValue({
         sourceHash: input.sourceHash,
-        harnessEconomicsPolicy: profile?.harnessEconomicsPolicy,
-        modelEconomicsProfile: profile?.modelEconomicsProfile,
+        harnessEconomics: profile?.harnessEconomics,
       }),
       harnessRevision: input.sourceHash,
-      modelProvider: "openrouter",
-      model: input.modelName,
+      modelProvider: frozenModelProvider,
+      model: frozenModel,
     },
     runtime: {
       ...(input.kestrelJobSummary?.runId !== undefined ? { runId: input.kestrelJobSummary.runId } : {}),
@@ -2401,12 +2442,27 @@ function shellQuote(value: string): string {
   return /^[a-zA-Z0-9_./:=@+-]+$/u.test(value) ? value : JSON.stringify(value);
 }
 
+function loadBenchmarkProfileOverride(env: NodeJS.ProcessEnv): Record<string, unknown> | undefined {
+  const profilePath = env.KESTREL_BENCHMARK_PROFILE_FILE?.trim();
+  const profileId = env.KESTREL_BENCHMARK_PROFILE_ID?.trim();
+  if (profilePath === undefined || profilePath.length === 0) return undefined;
+  if (profileId === undefined || profileId.length === 0) throw new Error("KESTREL_BENCHMARK_PROFILE_ID is required with KESTREL_BENCHMARK_PROFILE_FILE.");
+  const parsed = JSON.parse(readFileSync(profilePath, "utf8")) as unknown;
+  const record = asRecord(parsed);
+  const profiles = Array.isArray(record?.profiles) ? record.profiles : [parsed];
+  const profile = profiles.find((value) => asRecord(value)?.id === profileId);
+  const selected = asRecord(profile);
+  if (selected === undefined) throw new Error(`Benchmark profile '${profileId}' was not found in ${profilePath}.`);
+  return structuredClone(selected);
+}
+
 function helpText(): string {
   return [
     "Usage: pnpm run bench:swe -- <mode> [options]",
     "",
     "Modes:",
     "  preflight        Check local SWE-bench evaluator prerequisites.",
+    "  validate-profile Validate the selected profile without starting paid work.",
     "  run              Generate one prediction with Kestrel, then evaluate that one instance.",
     "  evaluate         Evaluate an existing predictions.jsonl for one instance.",
     "  list             List recorded attempts for one instance.",

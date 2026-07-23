@@ -208,6 +208,13 @@ export interface AgentToolResult {
   status: "OK" | "FAILED";
   modelContext: AgentToolModelContext;
   auditRecord: AgentToolAuditRecord;
+  projections?: {
+    rawReceived: { sha256: string; bytes: number; tokens: number };
+    durableRawArtifactRef?: string | undefined;
+    persistedOutput: unknown;
+    verificationOutput: unknown;
+    modelVisibleOutput: unknown;
+  } | undefined;
   presentation?: AgentToolPresentation | undefined;
 }
 
@@ -259,6 +266,7 @@ export interface AnthropicProviderOptions {
   toolChoice?: "auto" | "none" | "required" | string | undefined;
   parallelToolCalls?: boolean | undefined;
   responseSchemaName?: string | undefined;
+  cacheControl?: "ephemeral" | undefined;
 }
 
 export interface ModelResponse<TOutput = unknown> {

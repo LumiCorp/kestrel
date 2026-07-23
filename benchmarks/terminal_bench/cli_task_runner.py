@@ -71,7 +71,7 @@ def main() -> int:
     home = Path(tempfile.mkdtemp(prefix="kestrel-tbench-cli-home-"))
     job_in = home / "job-input.json"
     job_out = home / "job-output.json"
-    replay_bundle = home / "runtime-replay-bundle.json"
+    replay_bundle = Path("/installed-agent/kestrel-cli-runtime-replay-bundle.json")
     event_log = Path("/installed-agent/kestrel-cli-events.jsonl")
     bridge_log = Path("/installed-agent/kestrel-cli-bridge.jsonl")
     task_id = args.task_id
@@ -87,6 +87,7 @@ def main() -> int:
                 "failure_kind": "benchmark_setup_failed",
                 "notes": " ".join(provider_issues),
                 **benchmark_provider_artifact_payload(),
+                **benchmark_harness_revision_payload(),
             }
         )
         return 2
@@ -120,18 +121,7 @@ def main() -> int:
     try:
         emit_progress(f"launching Kestrel runtime; event log: {event_log}; bridge log: {bridge_log}")
         completed = subprocess.run(
-            [
-                "node",
-                "/opt/kestrel/bin/kestrel.js",
-                "job",
-                "run",
-                "--json-in",
-                str(job_in),
-                "--json-out",
-                str(job_out),
-                "--store",
-                "sqlite",
-            ],
+            build_kestrel_job_command(job_in, job_out),
             cwd=workspace_root,
             env=env,
             text=True,
@@ -161,13 +151,14 @@ def main() -> int:
             "duration_ms": round((time.monotonic() - started_at) * 1000),
             "failure_kind": failure_kind,
             "notes": notes,
-            "job_input_path": str(job_in),
-            "job_output_path": str(job_out),
+            "job_input_path": "/installed-agent/kestrel-cli-job-input.json",
+            "job_output_path": "/installed-agent/kestrel-cli-job-output.json",
             "event_log_path": str(event_log),
             "bridge_log_path": str(bridge_log),
             "job_input_sha256": job_input_hash,
             **({"runtime_replay_bundle_path": str(replay_bundle)} if replay_bundle.exists() else {}),
             **benchmark_provider_artifact_payload(),
+            **benchmark_harness_revision_payload(),
             **payload,
         }
         if failure_details:
@@ -195,12 +186,13 @@ def main() -> int:
                 "duration_ms": round((time.monotonic() - started_at) * 1000),
                 "failure_kind": failure_kind if failure_kind != "none" else "timeout",
                 "notes": str(error),
-                "job_input_path": str(job_in),
-                "job_output_path": str(job_out),
+                "job_input_path": "/installed-agent/kestrel-cli-job-input.json",
+                "job_output_path": "/installed-agent/kestrel-cli-job-output.json",
                 "event_log_path": str(event_log),
                 "bridge_log_path": str(bridge_log),
                 "job_input_sha256": job_input_hash,
                 **benchmark_provider_artifact_payload(),
+                **benchmark_harness_revision_payload(),
                 **payload,
                 **({"failure_details": failure_details} if failure_details else {}),
             }
@@ -212,6 +204,24 @@ def main() -> int:
 
 def result_adapter() -> str:
     return os.environ.get("KESTREL_TBENCH_RESULT_ADAPTER") or DEFAULT_RESULT_ADAPTER
+
+
+def benchmark_harness_revision_payload() -> dict[str, str]:
+    revision = os.environ.get("KESTREL_BENCHMARK_HARNESS_REVISION", "").strip()
+    return {"harness_revision": revision} if revision else {}
+
+
+def build_kestrel_job_command(job_input_path: Path, job_output_path: Path) -> list[str]:
+    return [
+        "node",
+        "/opt/kestrel/bin/kestrel.js",
+        "job",
+        "run",
+        "--json-in",
+        str(job_input_path),
+        "--json-out",
+        str(job_output_path),
+    ]
 
 
 def result_dataset() -> str:

@@ -1,6 +1,6 @@
 import type { RunEventType, RuntimeError } from "../kestrel/contracts/base.js";
 import type { RuntimeEvent } from "../kestrel/contracts/events.js";
-import type { NormalizedOutput, RuntimeDependencies, Transition } from "../kestrel/contracts/execution.js";
+import type { NormalizedOutput, RuntimeDependencies, StepIO, Transition } from "../kestrel/contracts/execution.js";
 import type { PersistedArtifact, SessionRecord } from "../kestrel/contracts/store.js";
 
 import { isFilesystemInspectionToolName } from "../../agents/reference-react/src/filesystemInspection.js";
@@ -73,7 +73,7 @@ type ReturnTerminal = (
 ) => Promise<NormalizedOutput | undefined>;
 
 export interface LoopGuardCoordinatorDependencies {
-  runtimeDeps: Pick<RuntimeDependencies, "store" | "modelGateway">;
+  runtimeDeps: Pick<RuntimeDependencies, "store">;
   waitResumeCoordinator: WaitResumeCoordinator;
   appendRunEvent: (
     runId: string,
@@ -956,8 +956,10 @@ export class LoopGuardCoordinator {
     stepIndex: number;
     guardrails: Guardrails;
     progressSeq: number;
+    getProgressSeq: () => number;
     runtimeError: RuntimeError;
     signal?: AbortSignal | undefined;
+    useModel: StepIO["useModel"];
   }): Promise<NormalizedOutput | undefined> {
     const reactState = asRecord(input.session.state.agent) ?? {};
     const summary = this.buildResearchStallSummary(reactState, input.currentStep, input.runtimeError);
@@ -977,6 +979,7 @@ export class LoopGuardCoordinator {
       reactState,
       summary,
       signal: input.signal,
+      useModel: input.useModel,
     });
     if (synthesisResult === undefined) {
       return ;
@@ -1089,7 +1092,7 @@ export class LoopGuardCoordinator {
       },
       [],
       input.guardrails,
-      input.progressSeq,
+      input.getProgressSeq(),
     );
   }
 
@@ -1102,6 +1105,7 @@ export class LoopGuardCoordinator {
     reactState: Record<string, unknown>;
     summary: ResearchStallSummary;
     signal?: AbortSignal | undefined;
+    useModel: StepIO["useModel"];
   }): Promise<
     | {
       message: string;
@@ -1141,9 +1145,7 @@ export class LoopGuardCoordinator {
         };
       }
 
-      input.guardrails.onModelCall();
-      const response = await this.deps.modelGateway.call<unknown>(
-        {
+      const response = await input.useModel<unknown>({
           responseFormat: "text",
           tools: [],
           messages: [
@@ -1188,12 +1190,7 @@ export class LoopGuardCoordinator {
             sessionId: input.sessionId,
             stepIndex: input.stepIndex,
           },
-        },
-        {
-          signal: input.signal,
-        },
-      );
-      input.guardrails.onModelUsage(extractModelUsage(response));
+        });
       const message = extractVerifiedRetrievalSynthesisMessage(response);
       return message !== undefined && asksToContinue(message) === false
         ? {
@@ -2508,33 +2505,6 @@ function renderVerifiedRetrievalSynthesisUserPrompt(input: {
     }),
     "</context_json>",
   ].join("\n");
-}
-
-function extractModelUsage(value: unknown):
-  | {
-      inputTokens?: number | undefined;
-      outputTokens?: number | undefined;
-      totalTokens?: number | undefined;
-    }
-  | undefined {
-  const record = asRecord(value);
-  const usage = asRecord(record?.usage);
-  if (usage === undefined) {
-    return ;
-  }
-
-  const inputTokens = readMaybeNumber(usage.inputTokens);
-  const outputTokens = readMaybeNumber(usage.outputTokens);
-  const totalTokens = readMaybeNumber(usage.totalTokens);
-  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
-    return ;
-  }
-
-  return {
-    ...(inputTokens !== undefined ? { inputTokens } : {}),
-    ...(outputTokens !== undefined ? { outputTokens } : {}),
-    ...(totalTokens !== undefined ? { totalTokens } : {}),
-  };
 }
 
 function readMaybeNumber(value: unknown): number | undefined {

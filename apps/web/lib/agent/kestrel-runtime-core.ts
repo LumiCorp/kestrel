@@ -14,6 +14,7 @@ import type {
   RunnerHistoryEntry,
   RunnerRunStreamEvent,
   RunnerRunTerminalEvent,
+  RunnerTelemetry,
   RunnerStream,
 } from "@kestrel-agents/sdk";
 import {
@@ -114,6 +115,7 @@ export type KestrelOneAgentResponsePersistMeta = {
   interaction: KestrelInteractionPresentation | null;
   assistantMessageId: string;
   runId: string | null;
+  telemetry: RunnerTelemetry | null;
 };
 
 export type KestrelOneAgentResponseInput = {
@@ -346,6 +348,7 @@ export function createKestrelOneAgentResponseFromAgent(
         interaction: streamResult.interaction,
         assistantMessageId: streamResult.message.id,
         runId: streamResult.message.metadata?.kestrelRunId ?? null,
+        telemetry: streamResult.telemetry ?? null,
       });
     },
     onError: (error) => {

@@ -316,6 +316,84 @@ contractTest("desktop.process", "DesktopProjectRunRegistry records emitted HTTP 
       },
     ],
   );
+  assert.deepEqual(
+    snapshot?.outputTail,
+    [
+      {
+        source: "stdout",
+        line: "Local: http://localhost:5173/",
+        observedAt: "2026-05-12T12:00:01.000Z",
+      },
+      {
+        source: "stderr",
+        line: "Network: https://preview.example.test/app",
+        observedAt: "2026-05-12T12:00:02.000Z",
+      },
+      {
+        source: "stdout",
+        line: "Local again: http://localhost:5173/",
+        observedAt: "2026-05-12T12:00:03.000Z",
+      },
+      {
+        source: "stdout",
+        line: "Ignore file:///tmp/index.html and javascript:alert(1)",
+        observedAt: "2026-05-12T12:00:04.000Z",
+      },
+    ],
+  );
+  const mutated = registry.listRuns().find((entry) => entry.runId === run.runId);
+  mutated?.outputTail?.push({
+    source: "stderr",
+    line: "mutated",
+    observedAt: "2026-05-12T12:00:05.000Z",
+  });
+  assert.equal(
+    registry
+      .listRuns()
+      .find((entry) => entry.runId === run.runId)
+      ?.outputTail?.some((entry) => entry.line === "mutated"),
+    false,
+  );
+});
+
+contractTest("desktop.process", "DesktopProjectRunRegistry bounds the ordered output tail to 160 lines", async () => {
+  const projectPath = await createProjectFixture({
+    packageJson: JSON.stringify({
+      name: "fixture",
+      packageManager: "pnpm@9.12.2",
+      scripts: { dev: "vite" },
+    }),
+  });
+  let stdout: PassThrough | undefined;
+  const spawnImpl = (() => {
+    const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+    child.stdin = new PassThrough() as ChildProcessWithoutNullStreams["stdin"];
+    stdout = new PassThrough();
+    child.stdout = stdout as ChildProcessWithoutNullStreams["stdout"];
+    child.stderr = new PassThrough() as ChildProcessWithoutNullStreams["stderr"];
+    child.pid = 900;
+    child.kill = (() => true) as ChildProcessWithoutNullStreams["kill"];
+    child.once = child.once.bind(child);
+    child.on = child.on.bind(child);
+    return child;
+  }) as typeof spawn;
+  const registry = new DesktopProjectRunRegistry({
+    spawnImpl,
+    platform: "win32",
+  });
+
+  const started = await registry.startRun({ projectPath, scriptName: "dev" });
+  for (let index = 0; index < 162; index += 1) {
+    stdout?.write(`line-${index}\n`);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const output = registry
+    .listRuns()
+    .find((entry) => entry.runId === started.runId)?.outputTail;
+
+  assert.equal(output?.length, 160);
+  assert.equal(output?.[0]?.line, "line-2");
+  assert.equal(output?.at(-1)?.line, "line-161");
 });
 
 contractTest("desktop.process", "DesktopProjectRunRegistry batches noisy output notifications and flushes on exit", async (context) => {

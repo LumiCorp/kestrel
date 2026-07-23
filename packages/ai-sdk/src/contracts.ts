@@ -1,4 +1,5 @@
 import type { RunnerInteractionRequestV1 } from "@kestrel-agents/protocol";
+import type { RunnerTelemetry } from "@kestrel-agents/sdk";
 import type { UIMessage } from "ai";
 
 export type KestrelTerminalStatus =
@@ -172,4 +173,5 @@ export interface KestrelPresentationSnapshot {
   failureVisible: boolean;
   interaction: KestrelInteractionPresentation | null;
   finalizedPayload?: unknown | undefined;
+  telemetry?: RunnerTelemetry | undefined;
 }

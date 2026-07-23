@@ -8,10 +8,10 @@ import {
 import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "agent stage model manifest exposes only the loop model", () => {
+contractTest("runtime.hermetic", "agent stage model manifest exposes loop maintenance and delegated-child models", () => {
   assert.deepEqual(
     AGENT_MODEL_CONFIG_STAGES.map((stage) => stage.stageId),
-    [AGENT_STEP_IDS.loop],
+    [AGENT_STEP_IDS.loop, "agent.maintenance", "delegation.child"],
   );
 });
 
@@ -22,6 +22,19 @@ contractTest("runtime.hermetic", "applyStageModelOverridesToAgentOptions maps lo
     }),
     {
       agentModel: "provider/agent-model",
+    },
+  );
+});
+
+contractTest("runtime.hermetic", "applyStageModelOverridesToAgentOptions maps maintenance and delegated-child overrides independently", () => {
+  assert.deepEqual(
+    applyStageModelOverridesToAgentOptions({
+      "agent.maintenance": "provider/maintenance-model",
+      "delegation.child": "provider/child-model",
+    }),
+    {
+      maintenanceModel: "provider/maintenance-model",
+      delegationModel: "provider/child-model",
     },
   );
 });

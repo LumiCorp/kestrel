@@ -3,15 +3,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  compareHarnessEfficiencyPairsV1,
-  parseHarnessEfficiencyResultV1,
-  type HarnessEfficiencyResultV1,
+  compareHarnessEfficiencyPairsV2,
+  parseHarnessEfficiencyResultV2,
+  type HarnessEfficiencyResultV2,
 } from "../src/economics/index.js";
 
-export function loadHarnessEfficiencyResults(target: string): HarnessEfficiencyResultV1[] {
+export function loadHarnessEfficiencyResults(target: string): HarnessEfficiencyResultV2[] {
   if (existsSync(target) === false) throw new Error(`Efficiency result path does not exist: ${target}`);
   const files = statSync(target).isDirectory() ? listJsonFiles(target) : [target];
-  const results: HarnessEfficiencyResultV1[] = [];
+  const results: HarnessEfficiencyResultV2[] = [];
   for (const file of files) {
     let parsed: unknown;
     try {
@@ -19,8 +19,8 @@ export function loadHarnessEfficiencyResults(target: string): HarnessEfficiencyR
     } catch {
       continue;
     }
-    if ((parsed as { schema?: unknown })?.schema !== "kestrel.harness-efficiency-result/v1") continue;
-    results.push(parseHarnessEfficiencyResultV1(parsed));
+    if ((parsed as { schema?: unknown })?.schema !== "kestrel.harness-efficiency-result/v2") continue;
+    results.push(parseHarnessEfficiencyResultV2(parsed));
   }
   if (results.length === 0) throw new Error(`No harness efficiency results found under: ${target}`);
   return results;
@@ -28,14 +28,14 @@ export function loadHarnessEfficiencyResults(target: string): HarnessEfficiencyR
 
 export function runHarnessEfficiencyComparison(argv: string[], output: Pick<NodeJS.WriteStream, "write">): number {
   const options = parseArgs(argv);
-  const comparison = compareHarnessEfficiencyPairsV1({
+  const comparison = compareHarnessEfficiencyPairsV2({
     baseline: loadHarnessEfficiencyResults(options.baseline),
     candidate: loadHarnessEfficiencyResults(options.candidate),
   });
   const serialized = JSON.stringify(comparison, null, 2) + "\n";
   if (options.out === undefined) output.write(serialized);
   else writeFileSync(options.out, serialized, "utf8");
-  return comparison.promotable ? 0 : 2;
+  return comparison.passed ? 0 : 2;
 }
 
 function parseArgs(argv: string[]): { baseline: string; candidate: string; out?: string | undefined } {

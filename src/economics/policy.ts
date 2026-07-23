@@ -1,7 +1,9 @@
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { isSupportedModelTokenizer } from "./tokenCounting.js";
 import type {
   ContextSectionPolicyV1,
   ContextSectionCandidateV1,
+  HarnessEconomicsControlV1,
   HarnessEconomicsPolicyV1,
   ModelEconomicsPriceV1,
   ModelEconomicsProfileV1,
@@ -10,12 +12,14 @@ import type {
   TokenCountV1,
 } from "./contracts.js";
 
-const POLICY_FIELDS = new Set(["version", "policyId", "mode", "counting", "context", "compaction", "tools"]);
+const CONTROL_FIELDS = new Set(["version", "policy", "modelProfiles"]);
+const POLICY_FIELDS = new Set(["version", "policyId", "mode", "counting", "context", "compaction", "tools", "cache"]);
 const COUNTING_FIELDS = new Set(["estimatorVersion", "allowEstimatedEnforcement"]);
 const CONTEXT_FIELDS = new Set(["outputReserveTokens", "safetyReserveTokens", "sections"]);
-const SECTION_FIELDS = new Set(["id", "priority", "maxTokens"]);
+const SECTION_FIELDS = new Set(["id", "priority"]);
 const COMPACTION_FIELDS = new Set(["requireStructuredAnchors", "maxSummaryAttempts"]);
 const TOOLS_FIELDS = new Set(["exposure", "modelContextMaxTokens", "allowedFamiliesByPhase"]);
+const CACHE_FIELDS = new Set(["mode"]);
 const PROFILE_FIELDS = new Set([
   "version",
   "profileId",
@@ -24,9 +28,11 @@ const PROFILE_FIELDS = new Set([
   "contextWindowTokens",
   "maxOutputTokens",
   "counting",
+  "cache",
   "price",
 ]);
 const PROFILE_COUNTING_FIELDS = new Set(["counter", "counterVersion", "method", "confidence"]);
+const PROFILE_CACHE_FIELDS = new Set(["behavior"]);
 const PRICE_FIELDS = new Set([
   "version",
   "priceVersion",
@@ -97,6 +103,8 @@ export function parseHarnessEconomicsPolicyV1(value: unknown): HarnessEconomicsP
   rejectUnknownFields(compaction, COMPACTION_FIELDS, "Harness economics policy compaction");
   const tools = requireRecord(root.tools, "Harness economics policy tools");
   rejectUnknownFields(tools, TOOLS_FIELDS, "Harness economics policy tools");
+  const cache = requireRecord(root.cache, "Harness economics policy cache");
+  rejectUnknownFields(cache, CACHE_FIELDS, "Harness economics policy cache");
 
   if (compaction.requireStructuredAnchors !== true || compaction.maxSummaryAttempts !== 1) {
     throw createRuntimeFailure(
@@ -149,7 +157,51 @@ export function parseHarnessEconomicsPolicyV1(value: unknown): HarnessEconomicsP
       ),
       allowedFamiliesByPhase,
     },
+    cache: {
+      mode: requireEnum(
+        cache.mode,
+        ["provider_default", "stable_prefix"] as const,
+        "Harness economics policy cache mode",
+      ),
+    },
   };
+}
+
+export function parseHarnessEconomicsControlV1(value: unknown): HarnessEconomicsControlV1 {
+  const root = requireRecord(value, "Harness economics control");
+  rejectUnknownFields(root, CONTROL_FIELDS, "Harness economics control");
+  requireVersionOne(root.version, "HARNESS_ECONOMICS_CONTROL_VERSION_INVALID", "Harness economics control");
+  if (Array.isArray(root.modelProfiles) === false || root.modelProfiles.length === 0) {
+    throw createRuntimeFailure(
+      "HARNESS_ECONOMICS_MODEL_PROFILES_INVALID",
+      "Harness economics control modelProfiles must be a non-empty array.",
+    );
+  }
+  const modelProfiles = root.modelProfiles.map(parseModelEconomicsProfileV1);
+  const identities = new Set<string>();
+  for (const profile of modelProfiles) {
+    const identity = `${profile.provider}\u0000${profile.model}`;
+    if (identities.has(identity)) {
+      throw createRuntimeFailure(
+        "HARNESS_ECONOMICS_MODEL_PROFILE_DUPLICATE",
+        `Harness economics control contains duplicate model profile '${profile.provider}/${profile.model}'.`,
+      );
+    }
+    identities.add(identity);
+  }
+  return {
+    version: 1,
+    policy: parseHarnessEconomicsPolicyV1(root.policy),
+    modelProfiles,
+  };
+}
+
+export function resolveModelEconomicsProfileV1(
+  control: HarnessEconomicsControlV1,
+  provider: string,
+  model: string,
+): ModelEconomicsProfileV1 | undefined {
+  return control.modelProfiles.find((profile) => profile.provider === provider && profile.model === model);
 }
 
 export function parseModelEconomicsProfileV1(value: unknown): ModelEconomicsProfileV1 {
@@ -158,6 +210,8 @@ export function parseModelEconomicsProfileV1(value: unknown): ModelEconomicsProf
   requireVersionOne(root.version, "MODEL_ECONOMICS_PROFILE_VERSION_INVALID", "Model economics profile");
   const counting = requireRecord(root.counting, "Model economics profile counting");
   rejectUnknownFields(counting, PROFILE_COUNTING_FIELDS, "Model economics profile counting");
+  const cache = requireRecord(root.cache, "Model economics profile cache");
+  rejectUnknownFields(cache, PROFILE_CACHE_FIELDS, "Model economics profile cache");
   const contextWindowTokens = requirePositiveInteger(
     root.contextWindowTokens,
     "Model economics profile contextWindowTokens",
@@ -173,6 +227,20 @@ export function parseModelEconomicsProfileV1(value: unknown): ModelEconomicsProf
     );
   }
 
+  const countingMethod = requireTokenCountMethod(counting.method);
+  const counter = requireString(counting.counter, "Model economics profile counter");
+  if (countingMethod === "provider_reported") {
+    throw createRuntimeFailure(
+      "MODEL_ECONOMICS_PROFILE_COUNTER_INVALID",
+      "Model economics profile preflight counting cannot use provider_reported usage.",
+    );
+  }
+  if (countingMethod === "model_tokenizer" && isSupportedModelTokenizer(counter) === false) {
+    throw createRuntimeFailure(
+      "MODEL_ECONOMICS_PROFILE_COUNTER_UNAVAILABLE",
+      `Model economics profile counter '${counter}' is not registered.`,
+    );
+  }
   return {
     version: 1,
     profileId: requireString(root.profileId, "Model economics profile profileId"),
@@ -181,10 +249,17 @@ export function parseModelEconomicsProfileV1(value: unknown): ModelEconomicsProf
     contextWindowTokens,
     maxOutputTokens,
     counting: {
-      counter: requireString(counting.counter, "Model economics profile counter"),
+      counter,
       counterVersion: requireString(counting.counterVersion, "Model economics profile counterVersion"),
-      method: requireTokenCountMethod(counting.method),
+      method: countingMethod,
       confidence: requireTokenCountConfidence(counting.confidence),
+    },
+    cache: {
+      behavior: requireEnum(
+        cache.behavior,
+        ["none", "provider_automatic", "anthropic_ephemeral"] as const,
+        "Model economics profile cache behavior",
+      ),
     },
     ...(root.price !== undefined ? { price: parseModelEconomicsPriceV1(root.price) } : {}),
   };
@@ -248,12 +323,9 @@ function parseSectionPolicies(value: unknown): ContextSectionPolicyV1[] {
       id,
       priority: requireEnum(
         record.priority,
-        ["required", "elastic", "optional"] as const,
+        ["required", "optional"] as const,
         `Harness economics policy section ${id} priority`,
       ),
-      ...(record.maxTokens !== undefined
-        ? { maxTokens: requireNonNegativeInteger(record.maxTokens, `Harness economics policy section ${id} maxTokens`) }
-        : {}),
     };
   });
 }
@@ -367,9 +439,17 @@ function requireEnum<const T extends readonly string[]>(value: unknown, allowed:
 }
 
 function requireTokenCountMethod(value: unknown): TokenCountMethod {
-  return requireEnum(value, ["exact", "estimated"] as const, "Model economics profile counting method");
+  return requireEnum(
+    value,
+    ["provider_reported", "model_tokenizer", "conservative_estimate"] as const,
+    "Model economics profile counting method",
+  );
 }
 
 function requireTokenCountConfidence(value: unknown): TokenCountConfidence {
-  return requireEnum(value, ["exact", "conservative"] as const, "Model economics profile counting confidence");
+  return requireEnum(
+    value,
+    ["provider_exact", "model_compatible", "conservative"] as const,
+    "Model economics profile counting confidence",
+  );
 }

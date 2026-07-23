@@ -91,7 +91,8 @@ contractTest("runtime.hermetic", "shapeToolExecutionResultForTests sanitizes mal
 
   assert.equal((shaped.storedOutput as { truncated?: boolean }).truncated, true);
   assert.match((shaped.storedOutput as { summary: string }).summary, /\uFFFDhello/u);
-  assert.match((shaped.verificationOutput as { summary: string }).summary, /\uFFFDhello/u);
+  assert.match((shaped.verificationOutput as { text: string }).text, /\uFFFDhello/u);
+  assert.equal((shaped.verificationOutput as { text: string }).text.length > 9000, true);
   assert.equal(
     (((shaped.artifacts[0]?.payload ?? {}) as { output?: { text?: string } }).output?.text ?? "").startsWith("\uFFFDhello"),
     true,
@@ -163,7 +164,7 @@ contractTest("runtime.hermetic", "shapeToolExecutionResultForTests persists dige
   assert.equal(shaped.artifacts.some((artifact) => artifact.type === "tool-output-digest"), true);
 });
 
-contractTest("runtime.hermetic", "shapeToolExecutionResultForTests keeps compact fs.verify_json artifact facts for large outputs", () => {
+contractTest("runtime.hermetic", "shapeToolExecutionResultForTests keeps full verification facts and compact persisted facts", () => {
   const requirements = Array.from({ length: 80 }, (_, index) => ({
     id: `field_${index}`,
     status: "passed",
@@ -196,17 +197,20 @@ contractTest("runtime.hermetic", "shapeToolExecutionResultForTests keeps compact
 
   const verificationOutput = shaped.verificationOutput as Record<string, unknown>;
   const artifactVerification = verificationOutput.artifactVerification as Record<string, unknown>;
-  const requirementsSummary = artifactVerification.requirementsSummary as Record<string, unknown>;
+  const storedOutput = shaped.storedOutput as Record<string, unknown>;
+  const storedVerification = storedOutput.artifactVerification as Record<string, unknown>;
+  const requirementsSummary = storedVerification.requirementsSummary as Record<string, unknown>;
 
-  assert.equal(verificationOutput.truncated, true);
   assert.equal(verificationOutput.status, "passed");
   assert.equal(verificationOutput.target, "newsletter-report.json::stories");
   assert.equal(verificationOutput.verificationToken, "verify:newsletter-report.json::stories");
   assert.equal(artifactVerification.status, "passed");
   assert.equal(artifactVerification.target, "newsletter-report.json::stories");
+  assert.equal(Array.isArray(artifactVerification.requirements), true);
+  assert.equal((artifactVerification.requirements as unknown[]).length, 80);
+  assert.equal(storedOutput.truncated, true);
+  assert.equal(Array.isArray(storedVerification.requirements), false);
   assert.equal(requirementsSummary.total, 80);
   assert.equal(requirementsSummary.passed, 80);
-  assert.equal(requirementsSummary.failed, 0);
-  assert.equal(Array.isArray(artifactVerification.requirements), false);
   assert.equal(shaped.artifacts.some((artifact) => artifact.type === "tool-output"), true);
 });

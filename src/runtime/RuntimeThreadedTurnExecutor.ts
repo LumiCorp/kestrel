@@ -227,6 +227,10 @@ export class RuntimeThreadedTurnExecutor {
       approvalPolicyId?: string | undefined;
     };
   }): RuntimeTurnInput {
+    const resolvedRuntimeAssembly =
+      asRecord(input.input.metadata?.runtimeAssembly) ??
+      asRecord(input.baseRuntimeTurn?.metadata?.runtimeAssembly) ??
+      {};
     const executionPolicy =
       input.baseRuntimeTurn?.executionPolicy ??
       (asRecord(input.orchestrationMetadata?.executionPolicy) !== undefined
@@ -286,6 +290,7 @@ export class RuntimeThreadedTurnExecutor {
         ...(input.baseRuntimeTurn?.metadata ?? {}),
         ...(input.input.metadata ?? {}),
         runtimeAssembly: {
+          ...resolvedRuntimeAssembly,
           bundleId: input.effectiveAssembly.bundleId ?? "implicit/legacy",
           toolAllowlist: input.effectiveToolAllowlist,
           specialistIds: input.effectiveAssembly.specialistIds,

@@ -37,7 +37,7 @@ export async function GET() {
         .filter(
           (event) =>
             event.category === "email" &&
-            event.targetType === "organization_email_config"
+            event.targetType === "organization_email_config",
         )
         .slice(0, 20)
         .map((event) => ({
@@ -66,7 +66,13 @@ export async function PUT(request: NextRequest) {
       replyTo: body.replyTo,
       enabled: body.enabled,
     });
-    await syncOrganizationEmailAppConnection({ organizationId, config });
+    await syncOrganizationEmailAppConnection({ organizationId, config }).catch(
+      () => {
+        console.error(
+          "[organization:email] Configuration committed, but its App connection could not be synchronized.",
+        );
+      },
+    );
     await logAdminEvent({
       organizationId,
       actorUserId: session.user.id,
@@ -78,6 +84,10 @@ export async function PUT(request: NextRequest) {
         ? "Enabled organization App email delivery."
         : "Updated organization App email configuration.",
       metadata: { provider: "resend", status: config.status },
+    }).catch(() => {
+      console.error(
+        "[organization:email] Configuration committed, but its audit event could not be recorded.",
+      );
     });
     return NextResponse.json({
       config: toPublicOrganizationEmailConfig(config),

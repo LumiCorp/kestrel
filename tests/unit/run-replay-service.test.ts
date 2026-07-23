@@ -119,6 +119,29 @@ contractTest("runtime.hermetic", "RunReplayService reconstructs ordered stream s
   assert.equal(doctor.lastMeaningfulProgress?.label, "run.completed");
 });
 
+contractTest("runtime.hermetic", "RunReplayService does not silently truncate an unbounded replay", async () => {
+  const store = new InMemorySessionStore();
+  for (let index = 0; index < 1_025; index += 1) {
+    await store.appendRunEvent({
+      runId: "run-complete-replay",
+      sessionId: "session-complete-replay",
+      stepIndex: index,
+      type: "step.started",
+      level: "INFO",
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, index)).toISOString(),
+    });
+  }
+
+  const service = new RunReplayService(store);
+  const complete = await service.replay({ runId: "run-complete-replay" });
+  const limited = await service.replay({ runId: "run-complete-replay", limit: 1_000 });
+
+  assert.equal(complete.events.length, 1_025);
+  assert.equal(complete.summary.truncated, false);
+  assert.equal(limited.events.length, 1_000);
+  assert.equal(limited.summary.truncated, true);
+});
+
 contractTest("runtime.hermetic", "RunReplayService reports action and maintenance model call counts", async () => {
   const store = new InMemorySessionStore();
   await store.appendRunEvent({

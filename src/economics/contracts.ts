@@ -1,7 +1,10 @@
 export type HarnessEconomicsPolicyMode = "observe" | "enforce";
 
-export type TokenCountMethod = "exact" | "estimated";
-export type TokenCountConfidence = "exact" | "conservative";
+export type TokenCountMethod =
+  | "provider_reported"
+  | "model_tokenizer"
+  | "conservative_estimate";
+export type TokenCountConfidence = "provider_exact" | "model_compatible" | "conservative";
 
 export interface TokenCountV1 {
   version: 1;
@@ -13,12 +16,11 @@ export interface TokenCountV1 {
   counterVersion: string;
 }
 
-export type ContextSectionPriority = "required" | "elastic" | "optional";
+export type ContextSectionPriority = "required" | "optional";
 
 export interface ContextSectionPolicyV1 {
   id: string;
   priority: ContextSectionPriority;
-  maxTokens?: number | undefined;
 }
 
 export interface HarnessEconomicsPolicyV1 {
@@ -42,6 +44,9 @@ export interface HarnessEconomicsPolicyV1 {
     exposure: "assembly_allowlist" | "phase_scoped";
     modelContextMaxTokens: number;
     allowedFamiliesByPhase: Record<string, string[]>;
+  };
+  cache: {
+    mode: "provider_default" | "stable_prefix";
   };
 }
 
@@ -74,7 +79,16 @@ export interface ModelEconomicsProfileV1 {
     method: TokenCountMethod;
     confidence: TokenCountConfidence;
   };
+  cache: {
+    behavior: "none" | "provider_automatic" | "anthropic_ephemeral";
+  };
   price?: ModelEconomicsPriceV1 | undefined;
+}
+
+export interface HarnessEconomicsControlV1 {
+  version: 1;
+  policy: HarnessEconomicsPolicyV1;
+  modelProfiles: ModelEconomicsProfileV1[];
 }
 
 export interface ContextSectionCandidateV1 {
@@ -86,15 +100,12 @@ export interface ContextSectionCandidateV1 {
   duplicateOf?: string[] | undefined;
 }
 
-export type ContextAdmission = "admitted" | "truncated" | "dropped" | "blocked";
+export type ContextAdmission = "admitted" | "dropped" | "blocked";
 
 export type ContextAdmissionReason =
   | "within_budget"
-  | "truncated_to_section_cap"
-  | "truncated_to_remaining_budget"
   | "optional_budget_exhausted"
   | "required_budget_exhausted"
-  | "section_policy_missing"
   | "estimated_count_not_enforceable";
 
 export interface ContextSectionManifestV1 {
@@ -170,7 +181,7 @@ export interface ToolExposureSelectionEntryV1 {
   toolFamily?: string | undefined;
   policyAdmission: ToolExposureAdmission;
   effectiveAdmission: ToolExposureAdmission;
-  reason: "assembly_allowlisted" | "family_allowed" | "family_not_allowed" | "tool_family_missing";
+  reason: "assembly_allowlisted" | "phase_filter_inactive" | "family_allowed" | "family_not_allowed" | "tool_family_missing";
 }
 
 /**
@@ -217,18 +228,30 @@ export interface ModelRequestEconomicsManifestV1 {
   toolExposure?: ToolExposureDecisionV1 | undefined;
   providerOverhead: TokenCountV1;
   unattributedContextTokens: number;
+  reconciliation: {
+    componentSumToCanonicalRequestTokens: number;
+    canonicalRequestToProviderPayloadTokens: number;
+  };
   decision?: HarnessEconomicsDecisionV1 | undefined;
 }
 
 export interface ToolResultEconomicsManifestV1 {
   version: 1;
-  storedOutputHash: string;
-  storedOutput: TokenCountV1;
+  rawReceivedHash: string;
+  rawReceived: TokenCountV1;
+  durableRawArtifactRef?: string | undefined;
+  persistedOutputHash: string;
+  persistedOutput: TokenCountV1;
+  verificationVisibleHash: string;
+  verificationVisible: TokenCountV1;
   modelVisibleHash: string;
   modelVisible: TokenCountV1;
-  reductionTokens: number;
+  reductions: {
+    rawToPersistedTokens: number;
+    persistedToModelVisibleTokens: number;
+    rawToModelVisibleTokens: number;
+  };
   truncated: boolean;
-  rawOutputRef?: string | undefined;
 }
 
 export interface EconomicsUsageV1 {
@@ -289,6 +312,15 @@ export interface EconomicsModelCallRequestedV1 extends EconomicsLedgerEventBaseV
   phase: string;
   assemblyId?: string | undefined;
   contextPolicyId?: string | undefined;
+  modelProfileId?: string | undefined;
+  economicsControlHash?: string | undefined;
+  economicsControl?: HarnessEconomicsControlV1 | undefined;
+  cache: {
+    mode: "provider_default" | "stable_prefix";
+    stablePrefixHash: string;
+    stablePrefixTokens: number;
+    prefixChanged: boolean;
+  };
   requestManifest: ModelRequestEconomicsManifestV1;
 }
 
@@ -325,6 +357,7 @@ export interface EconomicsModelCallCompletedV1 extends EconomicsLedgerEventBaseV
   latencyMs: number;
   usage: EconomicsUsageV1;
   pricing: EconomicsPricingAttributionV1;
+  providerReportedInputDeltaTokens: number;
 }
 
 export interface EconomicsModelCallFailedV1 extends EconomicsLedgerEventBaseV1 {
@@ -421,18 +454,25 @@ export interface EconomicsLedgerProjectionV1 {
     outputTokens: number;
     cachedInputTokens: number;
     cacheWriteInputTokens: number;
+    cacheHitRatio: number;
+    cacheWriteAmplification: number;
     reasoningTokens: number;
     pricedCostUsd: number;
     unpricedCalls: number;
-    independentlyAcceptedCalls: number;
     toolResults: number;
-    storedToolResultTokens: number;
+    rawToolResultTokens: number;
+    persistedToolResultTokens: number;
+    verificationVisibleToolResultTokens: number;
     modelVisibleToolResultTokens: number;
-    reducedToolResultTokens: number;
+    rawToPersistedReductionTokens: number;
+    persistedToModelVisibleReductionTokens: number;
+    rawToModelVisibleReductionTokens: number;
   };
   invalidEvents: Array<{
     eventId?: string | undefined;
     type: string;
     reason: string;
   }>;
+  complete: boolean;
+  incompleteReasons: string[];
 }

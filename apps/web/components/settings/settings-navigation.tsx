@@ -90,7 +90,7 @@ const organizationItems: SettingsItem[] = [
   {
     href: "/settings/organization/usage",
     icon: Activity,
-    label: "Usage",
+    label: "Costs & usage",
   },
   {
     href: "/settings/organization/audit",

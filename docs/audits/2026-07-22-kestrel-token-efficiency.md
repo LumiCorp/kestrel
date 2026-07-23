@@ -12,7 +12,7 @@ last_verified_at: 2026-07-22
 
 This is the evidence ledger and scorecard for the 94-check Kestrel harness audit. It evaluates whether model tokens produce independently accepted outcomes, not merely completed runs or shorter prompts.
 
-The static, historical, and provisional deterministic reviews are complete. The live 16-attempt pilot is intentionally gated because the checkout is not yet a reproducible baseline: `a16f819ea4c2def236e46d1acb94a719aa1ae357` is checked out on `asher/kestrel-one-dictation-thread-ui`, with pre-existing changes in the CLI runtime, unified tool registry, related tests, and workspace-runtime Dockerfile. Those changes are preserved and excluded from clean-baseline claims until committed or parked.
+The static, historical, and provisional deterministic reviews are complete. The live four-attempt canary is intentionally gated until clean baseline and candidate source roots are prepared. The current worktree still contains pre-existing changes in the CLI runtime, unified tool registry, related tests, and workspace-runtime Dockerfile. Those changes are preserved and excluded from clean-baseline claims.
 
 Current verdict: **not measurable for optimization claims**. Several P0 checks score `0`, especially complete token-class accounting, context-section attribution, token-aware compaction, cost per accepted success, and a unified evaluation result.
 
@@ -263,22 +263,16 @@ These results do not satisfy the clean-baseline requirement because the working 
 
 The audit failure is a governance/evidence finding rather than a token-efficiency score improvement. Until the registry and timing artifacts are complete, Kestrel cannot claim that its proof inventory is closed or compare token changes against a fully governed validation baseline.
 
-## Live pilot manifest
+## Live canary manifest
 
-The live pilot remains gated on a clean pinned commit and complete canary artifacts. It uses OpenRouter and the pinned canonical model/configuration without harness changes between runs.
+The live canary remains gated on clean pinned baseline and candidate commits and complete artifacts. It uses one trial for one SWE Verified task and one Terminal-Bench task. Each task runs once against the baseline and once against the candidate, for two matched pairs and four total paid attempts.
 
-| Wave | Task | Lane | Status |
-|---|---|---|---|
-| 1, 2 | `astropy__astropy-12907` | SWE-Verified | gated |
-| 1, 2 | `django__django-14089` | SWE-Verified | gated |
-| 1, 2 | `pylint-dev__pylint-4604` | SWE-Verified | gated |
-| 1, 2 | `mwaskom__seaborn-3069` | SWE-Verified | gated |
-| 1, 2 | `fix-git` | Terminal-Bench 2 | gated |
-| 1, 2 | `prove-plus-comm` | Terminal-Bench 2 | gated |
-| 1, 2 | `cobol-modernization` | Terminal-Bench 2 | gated |
-| 1, 2 | `constraints-scheduling` | Terminal-Bench 2 | gated |
+| Pair | Task | Lane | Trial count | Status |
+|---:|---|---|---:|---|
+| 1 | `django__django-14089` | SWE-Verified | 1 | gated canary |
+| 2 | `fix-git` | Terminal-Bench 2 | 1 | gated canary |
 
-Wave 1 runs in listed order; Wave 2 runs in reverse. No third attempts are permitted. `astropy__astropy-12907` and `fix-git` are the canaries; the remaining paid runs stop if either lacks exact commit/model provenance, correlated IDs, base usage, official outcome, or complete artifacts.
+Pair 1 runs baseline then candidate. Pair 2 runs candidate then baseline to balance ordering. No retries or additional trials are part of the decision canary. Any missing commit/model provenance, correlated IDs, provider usage, independent outcome, pricing, or required artifact makes the comparison incomplete rather than triggering more paid attempts.
 
 ### Candidate environment manifest
 
@@ -301,28 +295,16 @@ This environment is ready but not yet the official baseline because the worktree
 | SWE runner SHA-256 | `77ca877f3e7e7891391bdd7df99cbfee301aa73dca76c7e00ee90d2deffeb3f2` |
 | Terminal-Bench runner SHA-256 | `3af18581101a2957cdb76cf2c2b531565a5ed936e334b86289b8bbcd0d1d2137` |
 
-### Frozen attempt ledger
+### Frozen canary attempt ledger
 
-Every attempt runs sequentially. SWE uses the explicit run ID shown. Harbor generates its job directory; the audit records the unique new `jobs/<timestamp>/<task>__<trial>` path observed after each Terminal-Bench command. The model and benchmark configuration remain unchanged between attempts.
+Every attempt runs sequentially. SWE uses the explicit run IDs shown. Harbor generates its job directory; the audit records the unique new `jobs/<timestamp>/<task>__<trial>` path observed after each Terminal-Bench command. The model, evaluator, dataset, task input, tool surface, guardrails, and non-economics profile fields remain frozen across each pair.
 
-| # | Wave | Lane | Task | Run label / command | Status |
-|---:|---:|---|---|---|---|
-| 1 | 1 | SWE | `astropy__astropy-12907` | `pnpm run swe astropy__astropy-12907 --run-id audit-w1-astropy-12907` | gated canary |
-| 2 | 1 | SWE | `django__django-14089` | `pnpm run swe django__django-14089 --run-id audit-w1-django-14089` | gated |
-| 3 | 1 | SWE | `pylint-dev__pylint-4604` | `pnpm run swe pylint-dev__pylint-4604 --run-id audit-w1-pylint-4604` | gated |
-| 4 | 1 | SWE | `mwaskom__seaborn-3069` | `pnpm run swe mwaskom__seaborn-3069 --run-id audit-w1-seaborn-3069` | gated |
-| 5 | 1 | TB2 | `fix-git` | `pnpm run tb2 fix-git` | gated canary |
-| 6 | 1 | TB2 | `prove-plus-comm` | `pnpm run tb2 prove-plus-comm` | gated |
-| 7 | 1 | TB2 | `cobol-modernization` | `pnpm run tb2 cobol-modernization --artifact /app/program.py` | gated |
-| 8 | 1 | TB2 | `constraints-scheduling` | `pnpm run tb2 constraints-scheduling` | gated |
-| 9 | 2 | TB2 | `constraints-scheduling` | `pnpm run tb2 constraints-scheduling` | gated |
-| 10 | 2 | TB2 | `cobol-modernization` | `pnpm run tb2 cobol-modernization --artifact /app/program.py` | gated |
-| 11 | 2 | TB2 | `prove-plus-comm` | `pnpm run tb2 prove-plus-comm` | gated |
-| 12 | 2 | TB2 | `fix-git` | `pnpm run tb2 fix-git` | gated |
-| 13 | 2 | SWE | `mwaskom__seaborn-3069` | `pnpm run swe mwaskom__seaborn-3069 --run-id audit-w2-seaborn-3069` | gated |
-| 14 | 2 | SWE | `pylint-dev__pylint-4604` | `pnpm run swe pylint-dev__pylint-4604 --run-id audit-w2-pylint-4604` | gated |
-| 15 | 2 | SWE | `django__django-14089` | `pnpm run swe django__django-14089 --run-id audit-w2-django-14089` | gated |
-| 16 | 2 | SWE | `astropy__astropy-12907` | `pnpm run swe astropy__astropy-12907 --run-id audit-w2-astropy-12907` | gated |
+| # | Pair | Variant | Lane | Task | Run label / command | Status |
+|---:|---:|---|---|---|---|---|
+| 1 | 1 | baseline | SWE | `django__django-14089` | `pnpm run bench:swe -- run --dataset princeton-nlp/SWE-bench_Verified --instance-id django__django-14089` | gated canary |
+| 2 | 1 | candidate | SWE | `django__django-14089` | same frozen command with candidate source/profile | gated canary |
+| 3 | 2 | candidate | Terminal-Bench | `fix-git` | `pnpm run bench:terminal:harbor -- fix-git --dataset terminal-bench@2.0` | gated canary |
+| 4 | 2 | baseline | Terminal-Bench | `fix-git` | same frozen command with baseline source/profile | gated canary |
 
 ### Per-attempt acceptance contract
 
@@ -339,6 +321,6 @@ SWE completeness requires `job-input.json`, `job-output.json`, `workspace-baseli
 - [x] Attach provisional benchmark-smoke, observability, and 309-test targeted probe results.
 - [x] Run and attach the full deterministic validation leaves provisionally; record the contract-proof failures without suppressing them.
 - [ ] Reproduce and disclose the twelve registration gaps and eight missing timing artifacts on the clean settled commit; remediation remains a separate follow-on project.
-- [ ] Complete the 16-attempt live pilot or record an evidence-gate stop for every unrun attempt.
+- [ ] Complete the four-attempt live canary or record an evidence-gate stop for every unrun attempt.
 - [ ] Recompute weighted scores and validate all P0 rows in a second evidence pass.
 - [ ] Finalize the highest-leverage findings without adding an implementation roadmap.

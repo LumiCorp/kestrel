@@ -19,6 +19,7 @@ import {
   sendOrganizationEmail,
 } from "@/lib/email/organization-service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { recordUsageEvent } from "@/lib/costs/store";
 import { errorResponse } from "@/lib/knowledge/http";
 
 const emailAddress = z.string().trim().email().max(320);
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
   let recipientDomains: string[] = [];
   let subjectHash = "";
   let approvalId: string | null = null;
+  let meteredApprovalId: string | null = null;
   try {
     ticket = verifyEnvironmentExecutionTicket({
       token: readBearer(request.headers.get("authorization")),
@@ -124,6 +126,24 @@ export async function POST(request: Request) {
     ].sort();
     subjectHash = createHash("sha256").update(input.subject).digest("hex");
     const config = await resolveOrganizationEmailConfig(ticket.organizationId);
+    await recordUsageEvent({
+      organizationId: ticket.organizationId,
+      actorUserId: ticket.actorId,
+      projectId,
+      threadId: ticket.threadId,
+      runId: ticket.runId,
+      category: "services",
+      provider: "resend",
+      service: "organization_email",
+      meter: "recipients",
+      quantity: recipientCount,
+      unit: "recipient",
+      sourceKind: "email_delivery",
+      sourceId: consumed.id,
+      occurredAt: new Date(),
+      metadata: { phase: "accepted_for_delivery" },
+    });
+    meteredApprovalId = consumed.id;
     const result = await sendOrganizationEmail({
       config,
       to: input.to,
@@ -170,6 +190,7 @@ export async function POST(request: Request) {
           projectId,
           threadId: ticket.threadId,
           actorUserId: ticket.actorId,
+          approvalId: meteredApprovalId,
           status: "failed",
           recipientCount,
           recipientDomains,
