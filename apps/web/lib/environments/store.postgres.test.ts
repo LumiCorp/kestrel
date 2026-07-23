@@ -179,6 +179,65 @@ contractTest(
       projectBinding.workspace.id
     );
 
+    await sql`
+      UPDATE "environment_workspaces"
+      SET
+        "status" = 'failed',
+        "failure_code" = 'FLY_MACHINE_UNHEALTHY',
+        "failure_message" = 'Workspace health check failed.'
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
+    await sql`
+      UPDATE "environment_operations"
+      SET
+        "status" = 'failed',
+        "stage" = 'environment.activation.failed',
+        "error_code" = 'FLY_MACHINE_UNHEALTHY',
+        "error_message" = 'Workspace health check failed.',
+        "completed_at" = now()
+      WHERE "workspace_id" = ${projectBinding.workspace.id}
+        AND "type" = 'workspace.provision'
+    `;
+    const retriedProvision =
+      await environmentStore.requestFailedWorkspaceProvisionRetry({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        userId: userA,
+      });
+    assert.equal(retriedProvision?.status, "queued");
+    assert.equal(
+      retriedProvision?.stage,
+      "environment.activation.requested"
+    );
+    const repeatedProvisionRetry =
+      await environmentStore.requestFailedWorkspaceProvisionRetry({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        userId: userA,
+      });
+    assert.equal(repeatedProvisionRetry?.id, retriedProvision?.id);
+    const [retriedWorkspace] = await sql<
+      Array<{
+        status: string;
+        failureCode: string | null;
+        failureMessage: string | null;
+      }>
+    >`
+      SELECT
+        "status",
+        "failure_code" AS "failureCode",
+        "failure_message" AS "failureMessage"
+      FROM "environment_workspaces"
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
+    assert.deepEqual(retriedWorkspace, {
+      status: "provisioning",
+      failureCode: null,
+      failureMessage: null,
+    });
+
     const scratchBinding =
       await environmentStore.resolveOrCreateThreadExecutionBinding({
         organizationId: organizationA,

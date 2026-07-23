@@ -49,6 +49,8 @@ const STAGE_DETAILS: Record<string, string> = {
   "environment.update.workspaces": "Updating Workspace runtimes…",
   "environment.update.verifying": "Verifying the updated Environment…",
   "environment.update.ready": "Environment update completed.",
+  "environment.update.recovery_required":
+    "Environment updated; one or more Workspaces require provisioning retry.",
   "environment.deleted": "Environment deleted.",
   "workspace.deleted": "Workspace deleted.",
   "workspace.backup.exporting": "Encrypting and exporting the Workspace…",
@@ -87,6 +89,8 @@ export function describeEnvironmentOperation(
     };
   }
   const workspaceOperation = WORKSPACE_OPERATION_TYPES.has(input.type);
+  const recoveryRequired =
+    input.stage === "environment.update.recovery_required";
   const stageDetail =
     input.stage === "environment.activation.requested" && workspaceOperation
       ? "Preparing the Workspace…"
@@ -101,7 +105,7 @@ export function describeEnvironmentOperation(
         ? `${label} completed.`
         : `${label} is in progress…`),
     tone:
-      input.status === "completed"
+      input.status === "completed" && !recoveryRequired
         ? ("success" as const)
         : ("neutral" as const),
   };

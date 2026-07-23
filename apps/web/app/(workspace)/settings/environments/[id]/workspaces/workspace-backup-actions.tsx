@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { WorkspaceBackup } from "@/drizzle/schema";
 import { Button } from "@/components/ui/button";
@@ -23,8 +24,9 @@ export function WorkspaceBackupActions({
   workspaceId,
   workspaceStatus,
 }: WorkspaceBackupActionsProps) {
+  const router = useRouter();
   const [backups, setBackups] = useState<WorkspaceBackup[]>([]);
-  const [busy, setBusy] = useState<"backup" | "restore" | null>(null);
+  const [busy, setBusy] = useState<"backup" | "restore" | "retry" | null>(null);
   const [restoreConfirmation, setRestoreConfirmation] = useState<string | null>(
     null
   );
@@ -112,11 +114,49 @@ export function WorkspaceBackupActions({
     }
   }
 
+  async function retryProvisioning() {
+    setBusy("retry");
+    try {
+      const response = await fetch(
+        `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/retry`,
+        { method: "POST" }
+      );
+      if (!response.ok) {
+        throw new Error(
+          await responseError(
+            response,
+            "Workspace provisioning retry failed."
+          )
+        );
+      }
+      toast.success("Workspace provisioning retry queued.");
+      router.refresh();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Workspace provisioning retry failed."
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="flex items-center justify-end gap-2">
       <span className="text-muted-foreground text-xs tabular-nums">
         {availableBackups.length} {availableBackups.length === 1 ? "backup" : "backups"}
       </span>
+      {workspaceStatus === "failed" ? (
+        <Button
+          disabled={busy !== null}
+          onClick={() => void retryProvisioning()}
+          size="sm"
+          variant="outline"
+        >
+          {busy === "retry" ? "Retrying…" : "Retry provisioning"}
+        </Button>
+      ) : null}
       <Button
         disabled={workspaceStatus !== "ready" || busy !== null}
         onClick={() => void createBackup()}
