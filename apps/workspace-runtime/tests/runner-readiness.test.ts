@@ -26,7 +26,7 @@ function fakeRunner() {
 
 contractTest(
   "services.hermetic",
-  "Workspace health stays unavailable until the shared internal runner is ready",
+  "concurrent Workspace health checks start one runner and stay unavailable until it is ready",
   async () => {
     const health = deferred();
     const runner = fakeRunner();
@@ -47,9 +47,8 @@ contractTest(
       status: 503,
       code: "WORKSPACE_RUNNER_STARTING",
     });
-    const first = readiness.ensureReady();
-    const second = readiness.ensureReady();
-    assert.equal(first, second);
+    const requests = Array.from({ length: 16 }, () => readiness.ensureReady());
+    assert.ok(requests.every((request) => request === requests[0]));
     assert.equal(starts, 1);
     assert.deepEqual(workspaceRunnerHealthStatus(readiness.state()), {
       status: 503,
@@ -57,7 +56,7 @@ contractTest(
     });
 
     health.resolve();
-    await first;
+    await Promise.all(requests);
     assert.deepEqual(workspaceRunnerHealthStatus(readiness.state()), {
       status: 200,
       code: null,

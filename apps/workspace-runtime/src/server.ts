@@ -582,11 +582,13 @@ process.on("SIGINT", () => shutdown(0));
 
 function startRunner(authToken: string): ChildProcess {
   const entrypoint = resolveRunnerServiceEntrypoint();
+  const runnerHome = path.join(config.workspaceRoot, ".kestrel", "runner");
   const child = spawn(process.execPath, [entrypoint], {
     cwd: config.workspaceRoot,
     stdio: ["ignore", "inherit", "inherit"],
     env: workspaceRunnerEnvironment({
-      home: config.workspaceRoot,
+      home: runnerHome,
+      storeDir: path.join(runnerHome, "store"),
       runtimeUrl: `http://127.0.0.1:${config.port}`,
       serviceToken: authToken,
       workspaceServiceToken: config.workspaceServiceToken,

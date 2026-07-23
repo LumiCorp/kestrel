@@ -1,12 +1,31 @@
 #!/usr/bin/env node
 
+import {
+  createHostedRunnerRuntimeFactory,
+  createHostedRunnerStoreFromEnv,
+} from "./HostedRunnerStore.js";
 import { createRunnerServiceServer } from "./RunnerService.js";
 
 async function main(): Promise<void> {
+  const store = await createHostedRunnerStoreFromEnv({
+    onStoreQuarantined: ({ sqlitePath, recoveryPath }) => {
+      process.stdout.write(`${JSON.stringify({
+        type: "runner.store.quarantined",
+        sqlitePath,
+        recoveryPath,
+      })}\n`);
+    },
+  });
   const server = await createRunnerServiceServer({
     host: process.env.KESTREL_RUNNER_SERVICE_HOST,
     port: parsePort(process.env.KESTREL_RUNNER_SERVICE_PORT),
     authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN,
+    ...(store === undefined
+      ? {}
+      : { runtimeFactory: createHostedRunnerRuntimeFactory(store.store) }),
+  }).catch(async (error: unknown) => {
+    await store?.close();
+    throw error;
   });
 
   process.stdout.write(`${JSON.stringify({
@@ -17,7 +36,11 @@ async function main(): Promise<void> {
   })}\n`);
 
   const shutdown = async () => {
-    await server.close();
+    try {
+      await server.close();
+    } finally {
+      await store?.close();
+    }
   };
 
   process.on("SIGINT", () => {
