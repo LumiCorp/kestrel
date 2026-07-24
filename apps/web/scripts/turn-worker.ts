@@ -6,6 +6,7 @@ import {
   startEnvironmentLifecycleWorker,
   stopEnvironmentLifecycleWorker,
 } from "@/lib/knowledge/queue";
+import { getGatewayCredentialAuthorityReadiness } from "@/lib/ai/gateway-credential-readiness.server";
 import { rm, writeFile } from "node:fs/promises";
 
 const readyFile = process.env.KESTREL_TURN_WORKER_READY_FILE;
@@ -23,6 +24,13 @@ async function clearReady() {
 }
 
 async function main() {
+  const gatewayCredentialReadiness =
+    await getGatewayCredentialAuthorityReadiness();
+  if (!gatewayCredentialReadiness.ok) {
+    throw new Error(
+      `Gateway credential readiness failed: ${gatewayCredentialReadiness.code}`
+    );
+  }
   await Promise.all([
     startDurableThreadTurnWorker(),
     startEnvironmentLifecycleWorker(),
