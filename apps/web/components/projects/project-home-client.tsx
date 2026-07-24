@@ -2,6 +2,7 @@
 
 import {
   Archive,
+  Copy,
   MessageSquare,
   Plus,
   RotateCcw,
@@ -64,8 +65,15 @@ export type ProjectHomeData = {
     name: string;
     description: string | null;
     currentContextRevision: number;
+    environmentId: string;
     archivedAt: string | null;
   };
+  environments: Array<{
+    id: string;
+    name: string;
+    region: string;
+    status: string;
+  }>;
   role: Role;
   contextRevision: { instructions: string } | null;
   documents: DocumentItem[];
@@ -96,6 +104,7 @@ export type ProjectHomeData = {
     title: string;
     updatedAt: string;
     archivedAt: string | null;
+    canManage: boolean;
   }>;
 };
 
@@ -123,6 +132,11 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [environmentId, setEnvironmentId] = useState(
+    initial.project.environmentId
+  );
+  const [movingEnvironment, setMovingEnvironment] = useState(false);
+  const [threadActionId, setThreadActionId] = useState<string | null>(null);
   const activeTab = resolveProjectTab({
     tab: searchParams.get("tab"),
     hasGoogle: searchParams.has("google"),
@@ -144,6 +158,93 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const candidates = initial.organizationMembers.filter(
     (member) => !memberIds.has(member.organizationMemberId)
   );
+
+  async function changeEnvironment(nextEnvironmentId: string) {
+    if (nextEnvironmentId === environmentId) return;
+    const previousEnvironmentId = environmentId;
+    setEnvironmentId(nextEnvironmentId);
+    setMovingEnvironment(true);
+    try {
+      const response = await fetch(
+        `/api/projects/${initial.project.id}/environment`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ environmentId: nextEnvironmentId }),
+        }
+      );
+      const result = (await response.json()) as {
+        binding?: { environmentId: string };
+        error?: string;
+      };
+      if (!(response.ok && result.binding)) {
+        throw new Error(
+          result.error ?? "Project Environment could not be changed."
+        );
+      }
+      setEnvironmentId(result.binding.environmentId);
+      toast.success("Project Environment changed. New Threads will use it.");
+      router.refresh();
+    } catch (error) {
+      setEnvironmentId(previousEnvironmentId);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Project Environment could not be changed."
+      );
+    } finally {
+      setMovingEnvironment(false);
+    }
+  }
+
+  async function setThreadArchived(threadId: string, archived: boolean) {
+    setThreadActionId(threadId);
+    try {
+      const response = await fetch(`/api/threads/${threadId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ archived }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(result.error ?? "Thread could not be updated.");
+      }
+      toast.success(archived ? "Thread archived." : "Thread restored.");
+      router.refresh();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Thread could not be updated."
+      );
+    } finally {
+      setThreadActionId(null);
+    }
+  }
+
+  async function duplicateThread(threadId: string) {
+    setThreadActionId(threadId);
+    try {
+      const response = await fetch(`/api/threads/${threadId}/duplicate`, {
+        method: "POST",
+      });
+      const result = (await response.json()) as {
+        thread?: { id: string };
+        error?: string;
+      };
+      if (!(response.ok && result.thread)) {
+        throw new Error(result.error ?? "Thread could not be duplicated.");
+      }
+      toast.success("Thread duplicated.");
+      router.refresh();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Thread could not be duplicated."
+      );
+    } finally {
+      setThreadActionId(null);
+    }
+  }
 
   async function saveContext() {
     setSaving(true);
@@ -315,6 +416,71 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
 
   return (
     <>
+      <header className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-muted-foreground text-sm capitalize">
+            {initial.role} · context revision {initial.project.currentContextRevision}
+          </p>
+          <h1 className="font-semibold text-3xl">{initial.project.name}</h1>
+          <p className="mt-1 text-muted-foreground">
+            {initial.project.description || "Shared Project workspace"}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2 sm:justify-end">
+          <div className="grid gap-1.5">
+            <Label className="text-muted-foreground text-xs" htmlFor="project-environment">
+              Environment
+            </Label>
+            <Select
+              disabled={!canEdit || movingEnvironment || Boolean(initial.project.archivedAt)}
+              onValueChange={(value) => void changeEnvironment(value)}
+              value={environmentId}
+            >
+              <SelectTrigger aria-label="Project Environment" id="project-environment" className="w-[180px]">
+                <SelectValue placeholder="Select Environment" />
+              </SelectTrigger>
+              <SelectContent>
+                {initial.environments.map((environment) => (
+                  <SelectItem
+                    disabled={environment.status !== "ready" && environment.id !== environmentId}
+                    key={environment.id}
+                    value={environment.id}
+                  >
+                    {environment.name} · {environment.region}
+                    {environment.status === "ready" ? "" : ` · ${environment.status}`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {!initial.project.archivedAt && (
+            <Button
+              disabled={movingEnvironment}
+              onClick={() => router.push(`/projects/${initial.project.id}/threads/new`)}
+            >
+              <Plus className="size-4" /> New Thread
+            </Button>
+          )}
+          {initial.role === "owner" &&
+            (initial.project.archivedAt ? (
+              <>
+                <Button onClick={() => void setArchived(false)} variant="outline">
+                  <RotateCcw className="size-4" /> Restore project
+                </Button>
+                <Button
+                  onClick={() => setDeleteDialogOpen(true)}
+                  variant="destructive"
+                >
+                  <Trash2 className="size-4" /> Delete project
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => void setArchived(true)} variant="outline">
+                <Archive className="size-4" /> Archive project
+              </Button>
+            ))}
+        </div>
+      </header>
       <Tabs
         onValueChange={(value) =>
           router.push(
@@ -326,7 +492,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
         }
         value={activeTab}
       >
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+        <div className="border-b pb-4 md:hidden">
           <TabsList className="h-9 bg-transparent p-0 md:hidden">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="context">Context</TabsTrigger>
@@ -335,66 +501,59 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
             <TabsTrigger value="skills">Skills</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
-          {activeTab === "overview" ? (
-            <div className="flex gap-2">
-              {!initial.project.archivedAt && (
-                <Button asChild>
-                  <Link href={`/projects/${initial.project.id}/threads/new`}>
-                    <Plus className="size-4" /> New Thread
-                  </Link>
-                </Button>
-              )}
-              {initial.role === "owner" &&
-                (initial.project.archivedAt ? (
-                  <>
-                    <Button
-                      onClick={() => void setArchived(false)}
-                      variant="outline"
-                    >
-                      <RotateCcw className="size-4" /> Restore
-                    </Button>
-                    <Button
-                      onClick={() => setDeleteDialogOpen(true)}
-                      variant="destructive"
-                    >
-                      <Trash2 className="size-4" /> Delete permanently
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    onClick={() => void setArchived(true)}
-                    variant="outline"
-                  >
-                    <Archive className="size-4" /> Archive
-                  </Button>
-                ))}
-            </div>
-          ) : null}
         </div>
 
         <TabsContent value="overview">
-          <SettingsSection
-            description="Open, review, or continue the conversations attached to this Project."
-            title="Project threads"
-          >
+          <section className="mt-6">
             <div className="divide-y border-y">
             {initial.threads.map((thread) => (
-              <Link
-                className="group flex items-center gap-3 py-3 text-sm transition-colors hover:text-primary"
-                href={`/threads/${thread.id}`}
-                key={thread.id}
-              >
-                <MessageSquare className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
-                <span className="min-w-0 flex-1 truncate font-medium">
-                  {thread.title || "New thread"}
-                </span>
-                <span className="shrink-0 text-muted-foreground text-xs">
+              <div className="group flex items-center gap-3 py-3 text-sm" key={thread.id}>
+                <Link
+                  className="flex min-w-0 flex-1 items-center gap-3 transition-colors hover:text-primary"
+                  href={`/threads/${thread.id}`}
+                >
+                  <MessageSquare className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
+                  <span className="min-w-0 flex-1 truncate font-medium">
+                    {thread.title || "New thread"}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground text-xs">
                     {thread.archivedAt ? "Archived" : "Updated"}{" "}
                     {new Date(
                       thread.archivedAt || thread.updatedAt
                     ).toLocaleString()}
-                </span>
-              </Link>
+                  </span>
+                </Link>
+                {thread.canManage ? (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      aria-label={`Duplicate ${thread.title}`}
+                      disabled={threadActionId !== null}
+                      onClick={() => void duplicateThread(thread.id)}
+                      size="icon-sm"
+                      title="Duplicate thread"
+                      variant="ghost"
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                    <Button
+                      aria-label={`${thread.archivedAt ? "Restore" : "Archive"} ${thread.title}`}
+                      disabled={threadActionId !== null}
+                      onClick={() =>
+                        void setThreadArchived(thread.id, !thread.archivedAt)
+                      }
+                      size="icon-sm"
+                      title={thread.archivedAt ? "Restore thread" : "Archive thread"}
+                      variant="ghost"
+                    >
+                      {thread.archivedAt ? (
+                        <RotateCcw className="size-4" />
+                      ) : (
+                        <Archive className="size-4" />
+                      )}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             ))}
             {!initial.threads.length && (
               <p className="py-10 text-center text-muted-foreground text-sm">
@@ -402,7 +561,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
               </p>
             )}
             </div>
-          </SettingsSection>
+          </section>
         </TabsContent>
 
         <TabsContent value="context">
