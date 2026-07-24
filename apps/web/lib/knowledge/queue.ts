@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { ENVIRONMENT_RECONCILE_CRON } from "@/lib/environments/reconcile-schedule";
 import {
@@ -21,6 +21,7 @@ export const ENVIRONMENT_OPERATION_EXPIRE_SECONDS = 12 * 60 * 60;
 export const ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS = 60;
 export const ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS = 30;
 export const ENVIRONMENT_OPERATION_RETRY_LIMIT = 20;
+const ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS = 3;
 const MANAGED_RUNPOD_RUN_QUEUE = "ai.runpod.run";
 const MANAGED_RUNPOD_RECONCILE_QUEUE = "ai.runpod.reconcile";
 const MANAGED_RUNPOD_USAGE_QUEUE = "ai.runpod.usage";
@@ -178,7 +179,7 @@ export async function enqueueEnvironmentOperation(
     {
       id: operationId,
       retryLimit: options.retryLimit ?? ENVIRONMENT_OPERATION_RETRY_LIMIT,
-      retryDelay: 3,
+      retryDelay: ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS,
       retryBackoff: true,
       expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
       heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
@@ -197,6 +198,45 @@ export async function enqueueEnvironmentOperation(
     return;
   }
   throw new Error("The Environment operation queue rejected the job.");
+}
+
+async function deferEnvironmentOperation(
+  boss: PgBoss,
+  operationId: string,
+) {
+  const operation = await knowledgeDb.query.environmentOperations.findFirst({
+    where: (table, { and, eq }) =>
+      and(eq(table.id, operationId), eq(table.status, "queued")),
+    columns: {
+      id: true,
+      type: true,
+      idempotencyKey: true,
+      attempt: true,
+    },
+  });
+  if (!operation) return;
+  const retryLimit =
+    operation.type === "workspace.backup" &&
+    isDailyWorkspaceBackupIdempotencyKey(operation.idempotencyKey)
+      ? Math.max(0, DAILY_BACKUP_MAX_ATTEMPTS - operation.attempt - 1)
+      : ENVIRONMENT_OPERATION_RETRY_LIMIT;
+  const jobId = await boss.send(
+    ENVIRONMENT_OPERATION_QUEUE,
+    { operationId },
+    {
+      retryLimit,
+      retryDelay: ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS,
+      retryBackoff: true,
+      expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+      heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+      startAfter: new Date(
+        Date.now() + ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS * 1000,
+      ),
+    },
+  );
+  if (!jobId) {
+    throw new Error("The Environment operation queue rejected the deferral.");
+  }
 }
 
 export async function enqueueOrganizationDeletion(operationId: string) {
@@ -325,13 +365,16 @@ export async function startEnvironmentLifecycleWorker() {
         await import("@/lib/environments/process-runtime");
       for (const job of jobs) {
         if (typeof job.data?.operationId !== "string") continue;
-        await processEnvironmentOperation(job.data.operationId, {
+        const result = await processEnvironmentOperation(job.data.operationId, {
           workerSignal: job.signal,
           workerAttempt: parseEnvironmentWorkerAttempt({
             retryCount: job.retryCount,
             retryLimit: job.retryLimit,
           }),
         });
+        if (result === "deferred" || result === "not_claimed") {
+          await deferEnvironmentOperation(boss, job.data.operationId);
+        }
       }
     },
   );

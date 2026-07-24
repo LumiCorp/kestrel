@@ -26,9 +26,12 @@ const groups = [
     files: [
       "lib/ai/gateways.postgres.test.ts",
       "lib/costs/store.postgres.test.ts",
+      "lib/email/config.postgres.test.ts",
+      "lib/environments/backup-execution-guard.postgres.test.ts",
       "lib/environments/cutover-readiness.postgres.test.ts",
       "lib/environments/fly-connection.postgres.test.ts",
       "lib/environments/reconcile-lock.postgres.test.ts",
+      "lib/environments/reconciliation-status.postgres.test.ts",
       "lib/environments/store.postgres.test.ts",
       "lib/integrations/github-action-approvals.postgres.test.ts",
       "lib/projects/skills.postgres.test.ts",
