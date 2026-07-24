@@ -365,6 +365,13 @@
       "when": 1784844000000,
       "tag": "0051_preview_ingress_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1784847600000,
+      "tag": "0052_organization_lifecycle",
+      "breakpoints": true
     }
   ]
 }

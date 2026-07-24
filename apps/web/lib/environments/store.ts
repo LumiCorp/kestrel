@@ -1,12 +1,4 @@
-import {
-  and,
-  asc,
-  eq,
-  inArray,
-  isNull,
-  notInArray,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   assertEnvironmentTransition,
@@ -188,7 +180,7 @@ export async function recoverDefaultEnvironmentProvisioning(input: {
 }) {
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`,
     );
     const environment = await transaction.query.environments.findFirst({
       where: (table, { and, eq, isNull, notInArray }) =>
@@ -196,31 +188,31 @@ export async function recoverDefaultEnvironmentProvisioning(input: {
           eq(table.organizationId, input.organizationId),
           eq(table.isDefault, true),
           isNull(table.archivedAt),
-          notInArray(table.status, ["deleting", "deleted"])
+          notInArray(table.status, ["deleting", "deleted"]),
         ),
     });
     if (!environment) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_NOT_FOUND",
-        "The default Environment is unavailable. Open Environments to repair it."
+        "The default Environment is unavailable. Open Environments to repair it.",
       );
     }
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environment.id)}, 0))`
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environment.id)}, 0))`,
     );
     const operation = await transaction.query.environmentOperations.findFirst({
       where: (table, { and, eq }) =>
         and(
           eq(table.organizationId, input.organizationId),
           eq(table.environmentId, environment.id),
-          eq(table.type, "environment.provision")
+          eq(table.type, "environment.provision"),
         ),
       orderBy: (table, { desc }) => [desc(table.createdAt)],
     });
     if (!operation) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
-        `Default Environment provisioning history is missing. Open /settings/organization/environments/${environment.id}/activity.`
+        `Default Environment provisioning history is missing. Open /settings/organization/environments/${environment.id}/activity.`,
       );
     }
     const recoveryAction = selectDefaultEnvironmentRecoveryAction({
@@ -236,7 +228,7 @@ export async function recoverDefaultEnvironmentProvisioning(input: {
     if (recoveryAction === "unsupported") {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
-        `Default Environment state '${environment.status}' cannot be retried automatically. Open /settings/organization/environments/${environment.id}/activity.`
+        `Default Environment state '${environment.status}' cannot be retried automatically. Open /settings/organization/environments/${environment.id}/activity.`,
       );
     }
     const now = new Date();
@@ -257,8 +249,8 @@ export async function recoverDefaultEnvironmentProvisioning(input: {
       .where(
         and(
           eq(schema.environmentOperations.id, operation.id),
-          inArray(schema.environmentOperations.status, ["failed", "cancelled"])
-        )
+          inArray(schema.environmentOperations.status, ["failed", "cancelled"]),
+        ),
       )
       .returning();
     if (!requeued) {
@@ -348,7 +340,8 @@ export async function createOrganizationEnvironment(input: {
         idempotencyKey: environmentProvisionIdempotencyKey(environmentId),
         input: {
           region: input.environment.region,
-          runtimeTemplate: input.runtimeTemplate ?? ENVIRONMENT_RUNTIME_TEMPLATE,
+          runtimeTemplate:
+            input.runtimeTemplate ?? ENVIRONMENT_RUNTIME_TEMPLATE,
         },
         createdAt: now,
         updatedAt: now,
@@ -405,28 +398,26 @@ export async function requestOrganizationEnvironmentDelete(input: {
   confirmationName: string;
 }) {
   const now = new Date();
-  const idempotencyKey = environmentDeleteIdempotencyKey(
-    input.environmentId
-  );
+  const idempotencyKey = environmentDeleteIdempotencyKey(input.environmentId);
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`,
     );
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
     );
     const environment = await transaction.query.environments.findFirst({
       where: (table, { and, eq, isNull }) =>
         and(
           eq(table.id, input.environmentId),
           eq(table.organizationId, input.organizationId),
-          isNull(table.archivedAt)
+          isNull(table.archivedAt),
         ),
     });
     if (!environment) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_NOT_FOUND",
-        "Environment not found or unavailable."
+        "Environment not found or unavailable.",
       );
     }
     if (environment.name !== input.confirmationName) {
@@ -437,7 +428,7 @@ export async function requestOrganizationEnvironmentDelete(input: {
       where: (table, { and, eq }) =>
         and(
           eq(table.organizationId, input.organizationId),
-          eq(table.idempotencyKey, idempotencyKey)
+          eq(table.idempotencyKey, idempotencyKey),
         ),
     });
     if (existing?.status === "queued" || existing?.status === "running") {
@@ -447,13 +438,13 @@ export async function requestOrganizationEnvironmentDelete(input: {
     if (environment.isDefault) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_IS_DEFAULT",
-        "Select another ready Environment as default before deleting this Environment."
+        "Select another ready Environment as default before deleting this Environment.",
       );
     }
     if (environment.status === "deleting") {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
-        "Environment deletion is already in progress."
+        "Environment deletion is already in progress.",
       );
     }
     assertEnvironmentTransition(environment.status, "deleting");
@@ -467,31 +458,33 @@ export async function requestOrganizationEnvironmentDelete(input: {
               eq(table.isDefault, true),
               eq(table.status, "ready"),
               ne(table.id, input.environmentId),
-              isNull(table.archivedAt)
+              isNull(table.archivedAt),
             ),
           columns: { id: true },
         }),
         transaction.query.projects.findFirst({
-          where: (table, { eq }) => eq(table.environmentId, input.environmentId),
+          where: (table, { eq }) =>
+            eq(table.environmentId, input.environmentId),
           columns: { id: true },
         }),
         transaction.query.aiDeployments.findFirst({
           where: (table, { and, eq, isNull }) =>
             and(
               eq(table.environmentId, input.environmentId),
-              isNull(table.deletedAt)
+              isNull(table.deletedAt),
             ),
           columns: { id: true },
         }),
         transaction.query.aiGateways.findFirst({
-          where: (table, { eq }) => eq(table.environmentId, input.environmentId),
+          where: (table, { eq }) =>
+            eq(table.environmentId, input.environmentId),
           columns: { id: true },
         }),
         transaction.query.environmentOperations.findFirst({
           where: (table, { and, eq, inArray }) =>
             and(
               eq(table.environmentId, input.environmentId),
-              inArray(table.status, ["queued", "running"])
+              inArray(table.status, ["queued", "running"]),
             ),
           columns: { id: true },
         }),
@@ -499,25 +492,25 @@ export async function requestOrganizationEnvironmentDelete(input: {
     if (!readyDefault) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
-        "A different ready Environment must be the organization default before deletion."
+        "A different ready Environment must be the organization default before deletion.",
       );
     }
     if (project) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_HAS_PROJECTS",
-        "Move every Project to another Environment before deleting this Environment."
+        "Move every Project to another Environment before deleting this Environment.",
       );
     }
     if (deployment || gateway) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_HAS_PRIVATE_INFERENCE",
-        "Remove private inference before deleting this Environment."
+        "Remove private inference before deleting this Environment.",
       );
     }
     if (activeOperation) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
-        "Wait for the Environment's active lifecycle operation before deleting it."
+        "Wait for the Environment's active lifecycle operation before deleting it.",
       );
     }
 
@@ -644,7 +637,7 @@ export async function bindProjectToEnvironment(input: {
         .from(schema.threadTurns)
         .innerJoin(
           schema.threads,
-          eq(schema.threads.id, schema.threadTurns.threadId)
+          eq(schema.threads.id, schema.threadTurns.threadId),
         )
         .where(
           and(
@@ -653,14 +646,14 @@ export async function bindProjectToEnvironment(input: {
               "queued",
               "running",
               "waiting_for_input",
-            ])
-          )
+            ]),
+          ),
         )
         .limit(1);
       if (activeTurn.length > 0) {
         throw new EnvironmentContractError(
           "ENVIRONMENT_UNAVAILABLE",
-          "Project Environment cannot change while a Thread turn is active."
+          "Project Environment cannot change while a Thread turn is active.",
         );
       }
       await transaction
@@ -746,7 +739,7 @@ export async function resolveThreadEnvironment(input: {
       and(
         eq(table.id, input.threadId),
         eq(table.organizationId, input.organizationId),
-        isNull(table.archivedAt)
+        isNull(table.archivedAt),
       ),
     columns: { id: true, projectId: true },
   });
@@ -755,7 +748,7 @@ export async function resolveThreadEnvironment(input: {
     where: (table, { and, eq }) =>
       and(
         eq(table.threadId, thread.id),
-        eq(table.organizationId, input.organizationId)
+        eq(table.organizationId, input.organizationId),
       ),
     columns: { environmentId: true },
   });
@@ -765,7 +758,7 @@ export async function resolveThreadEnvironment(input: {
           where: (table, { and, eq }) =>
             and(
               eq(table.id, thread.projectId!),
-              eq(table.organizationId, input.organizationId)
+              eq(table.organizationId, input.organizationId),
             ),
           columns: { environmentId: true },
         })
@@ -780,14 +773,14 @@ export async function resolveThreadEnvironment(input: {
             ? eq(table.id, project.environmentId)
             : eq(table.isDefault, true),
         isNull(table.archivedAt),
-        notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES])
+        notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES]),
       ),
     columns: { id: true, name: true, slug: true, status: true },
   });
 }
 
 export async function getDefaultOrganizationEnvironment(
-  organizationId: string
+  organizationId: string,
 ) {
   return knowledgeDb.query.environments.findFirst({
     where: (table, { and, eq, isNull, notInArray }) =>
@@ -795,7 +788,7 @@ export async function getDefaultOrganizationEnvironment(
         eq(table.organizationId, organizationId),
         eq(table.isDefault, true),
         isNull(table.archivedAt),
-        notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES])
+        notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES]),
       ),
     columns: { id: true, name: true, slug: true, status: true },
   });
@@ -966,7 +959,7 @@ async function resolveWorkspaceSourceForActor(
     environmentId: string;
     userId: string;
     source: WorkspaceSource;
-  }
+  },
 ) {
   if (input.source.type === "blank") {
     return {
@@ -982,7 +975,7 @@ async function resolveWorkspaceSourceForActor(
     .from(schema.appConnectionResources)
     .innerJoin(
       schema.appConnections,
-      eq(schema.appConnections.id, schema.appConnectionResources.connectionId)
+      eq(schema.appConnections.id, schema.appConnectionResources.connectionId),
     )
     .where(
       and(
@@ -993,8 +986,8 @@ async function resolveWorkspaceSourceForActor(
         eq(schema.appConnections.appKey, "github"),
         eq(schema.appConnections.ownerType, "personal"),
         eq(schema.appConnections.userId, input.userId),
-        eq(schema.appConnections.status, "connected")
-      )
+        eq(schema.appConnections.status, "connected"),
+      ),
     )
     .limit(1);
   const sourceResource = sourceResourceRow?.resource ?? null;
@@ -1006,14 +999,14 @@ async function resolveWorkspaceSourceForActor(
             eq(table.appKey, "github"),
             eq(table.capabilityKey, "repository.read"),
             eq(table.enabled, true),
-            notInArray(table.approvalMode, ["deny"])
+            notInArray(table.approvalMode, ["deny"]),
           ),
       })
     : null;
   if (!(sourceResource && sourceResource.permissions?.pull && grant)) {
     throw new EnvironmentContractError(
       "WORKSPACE_SOURCE_FORBIDDEN",
-      "You or this Environment cannot read the repository."
+      "You or this Environment cannot read the repository.",
     );
   }
   const metadata = sourceResource.metadata;
@@ -1118,7 +1111,7 @@ export async function requestFailedWorkspaceProvisionRetry(input: {
   const lockKey = workspaceLifecycleLockKey(input.workspaceId);
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
     );
     const workspace = await transaction.query.environmentWorkspaces.findFirst({
       where: (table, { and, eq, isNull }) =>
@@ -1126,18 +1119,17 @@ export async function requestFailedWorkspaceProvisionRetry(input: {
           eq(table.id, input.workspaceId),
           eq(table.environmentId, input.environmentId),
           eq(table.organizationId, input.organizationId),
-          isNull(table.deletedAt)
+          isNull(table.deletedAt),
         ),
     });
     if (!workspace) return null;
-    const operation =
-      await transaction.query.environmentOperations.findFirst({
-        where: (table, { and, eq }) =>
-          and(
-            eq(table.workspaceId, workspace.id),
-            eq(table.type, "workspace.provision")
-          ),
-      });
+    const operation = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.workspaceId, workspace.id),
+          eq(table.type, "workspace.provision"),
+        ),
+    });
     if (!operation) return null;
     if (
       workspace.status === "provisioning" &&
@@ -1242,6 +1234,144 @@ export async function requestWorkspaceStart(input: {
   });
 }
 
+export async function requestWorkspaceStop(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  userId: string;
+}) {
+  const lockKey = workspaceLifecycleLockKey(input.workspaceId);
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+    );
+    const workspace = await transaction.query.environmentWorkspaces.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.id, input.workspaceId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+          isNull(table.deletedAt),
+        ),
+    });
+    if (!workspace?.flyMachineId) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_UNAVAILABLE",
+        "Workspace Machine is unavailable.",
+      );
+    }
+    const active = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.workspaceId, workspace.id),
+          eq(table.type, "workspace.stop"),
+          inArray(table.status, ["queued", "running"]),
+        ),
+    });
+    if (active) return active;
+    if (workspace.status !== "ready") {
+      throw new EnvironmentContractError(
+        "WORKSPACE_INVALID_TRANSITION",
+        `Workspace cannot stop from '${workspace.status}'.`,
+      );
+    }
+    const now = new Date();
+    const [operation] = await transaction
+      .insert(schema.environmentOperations)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        requestedByUserId: input.userId,
+        type: "workspace.stop",
+        status: "queued",
+        stage: "environment.machine.stopping",
+        idempotencyKey: `workspace.stop:${workspace.id}:${now.getTime()}`,
+        input: { reason: "organization_management" },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!operation)
+      throw new Error("Workspace stop operation was not created.");
+    return operation;
+  });
+}
+
+export async function requestWorkspaceRetirement(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  confirmationName: string;
+  userId: string;
+}) {
+  const lockKey = workspaceLifecycleLockKey(input.workspaceId);
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+    );
+    const workspace = await transaction.query.environmentWorkspaces.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.id, input.workspaceId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+          isNull(table.deletedAt),
+        ),
+    });
+    if (!workspace) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_NOT_FOUND",
+        "Workspace not found.",
+      );
+    }
+    if (workspace.name !== input.confirmationName) {
+      throw new EnvironmentContractError(
+        "WORKSPACE_INVALID_TRANSITION",
+        "Workspace confirmation does not match.",
+      );
+    }
+    const active = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.workspaceId, workspace.id),
+          inArray(table.status, ["queued", "running"]),
+        ),
+    });
+    if (active) {
+      throw new EnvironmentContractError(
+        "WORKSPACE_INVALID_TRANSITION",
+        "Wait for the active Workspace operation to finish before retiring it.",
+      );
+    }
+    const now = new Date();
+    const [operation] = await transaction
+      .insert(schema.environmentOperations)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        requestedByUserId: input.userId,
+        type: "workspace.delete",
+        status: "queued",
+        stage: "workspace.deletion.requested",
+        idempotencyKey: `workspace.delete:${workspace.id}:${now.getTime()}`,
+        input: {
+          reason: "organization_management",
+          confirmationName: workspace.name,
+        },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!operation)
+      throw new Error("Workspace retirement operation was not created.");
+    return operation;
+  });
+}
+
 export async function requestWorkspaceIdleStop(input: {
   organizationId: string;
   environmentId: string;
@@ -1252,7 +1382,7 @@ export async function requestWorkspaceIdleStop(input: {
   const lockKey = workspaceLifecycleLockKey(input.workspaceId);
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
     );
     const workspace = await transaction.query.environmentWorkspaces.findFirst({
       where: (table, { and, eq, isNull }) =>
@@ -1261,37 +1391,39 @@ export async function requestWorkspaceIdleStop(input: {
           eq(table.environmentId, input.environmentId),
           eq(table.organizationId, input.organizationId),
           eq(table.flyMachineId, input.machineId),
-          isNull(table.deletedAt)
+          isNull(table.deletedAt),
         ),
     });
     if (!workspace) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_FORBIDDEN",
-        "Workspace idle identity does not match the provisioned Machine."
+        "Workspace idle identity does not match the provisioned Machine.",
       );
     }
-    const activePreview = await transaction.query.workspacePreviewLeases.findFirst({
-      where: (table, { and, eq, gt, inArray }) => and(
-        eq(table.workspaceId, workspace.id),
-        inArray(table.status, ["provisioning", "active"]),
-        gt(table.expiresAt, new Date())
-      ),
-      columns: { id: true },
-    });
+    const activePreview =
+      await transaction.query.workspacePreviewLeases.findFirst({
+        where: (table, { and, eq, gt, inArray }) =>
+          and(
+            eq(table.workspaceId, workspace.id),
+            inArray(table.status, ["provisioning", "active"]),
+            gt(table.expiresAt, new Date()),
+          ),
+        columns: { id: true },
+      });
     if (activePreview) return null;
     const active = await transaction.query.environmentOperations.findFirst({
       where: (table, { and, eq, inArray }) =>
         and(
           eq(table.workspaceId, workspace.id),
           eq(table.type, "workspace.stop"),
-          inArray(table.status, ["queued", "running"])
+          inArray(table.status, ["queued", "running"]),
         ),
     });
     if (active) return active;
     if (workspace.status !== "ready") {
       throw new EnvironmentContractError(
         "WORKSPACE_INVALID_TRANSITION",
-        `Workspace cannot enter idle stop from '${workspace.status}'.`
+        `Workspace cannot enter idle stop from '${workspace.status}'.`,
       );
     }
     const operationId = crypto.randomUUID();
@@ -1306,14 +1438,14 @@ export async function requestWorkspaceIdleStop(input: {
       .where(
         and(
           eq(schema.environmentWorkspaces.id, workspace.id),
-          eq(schema.environmentWorkspaces.status, "ready")
-        )
+          eq(schema.environmentWorkspaces.status, "ready"),
+        ),
       )
       .returning({ id: schema.environmentWorkspaces.id });
     if (!updatedWorkspace) {
       throw new EnvironmentContractError(
         "WORKSPACE_INVALID_TRANSITION",
-        "Workspace lifecycle changed before the idle stop was accepted."
+        "Workspace lifecycle changed before the idle stop was accepted.",
       );
     }
     const [operation] = await transaction
@@ -1597,7 +1729,7 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
   const lockKey = `kestrel:thread-environment:${input.threadId}`;
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
     );
     const [thread, environment] = await Promise.all([
       transaction.query.threads.findFirst({
@@ -1607,7 +1739,7 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
             eq(table.organizationId, input.organizationId),
             eq(table.createdByUserId, input.userId),
             isNull(table.projectId),
-            isNull(table.archivedAt)
+            isNull(table.archivedAt),
           ),
       }),
       transaction.query.environments.findFirst({
@@ -1616,14 +1748,14 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
             eq(table.id, input.environmentId),
             eq(table.organizationId, input.organizationId),
             isNull(table.archivedAt),
-            notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES])
+            notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES]),
           ),
       }),
     ]);
     if (!(thread && environment)) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_NOT_FOUND",
-        "Standalone Thread or Environment is unavailable."
+        "Standalone Thread or Environment is unavailable.",
       );
     }
     const [existing, existingBinding] = await Promise.all([
@@ -1632,21 +1764,21 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
           and(
             eq(table.organizationId, input.organizationId),
             eq(table.standaloneThreadId, input.threadId),
-            isNull(table.deletedAt)
+            isNull(table.deletedAt),
           ),
       }),
       transaction.query.threadExecutionBindings.findFirst({
         where: (table, { and, eq }) =>
           and(
             eq(table.threadId, input.threadId),
-            eq(table.organizationId, input.organizationId)
+            eq(table.organizationId, input.organizationId),
           ),
       }),
     ]);
     if (existing && existing.status !== "requested") {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
-        "Workspace source cannot change after provisioning has started."
+        "Workspace source cannot change after provisioning has started.",
       );
     }
     if (
@@ -1655,7 +1787,7 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
     ) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_BINDING_NOT_FOUND",
-        "Thread Environment binding references a different Workspace."
+        "Thread Environment binding references a different Workspace.",
       );
     }
     const existingOperation = existing
@@ -1663,14 +1795,14 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
           where: (table, { and, eq }) =>
             and(
               eq(table.workspaceId, existing.id),
-              eq(table.type, "workspace.provision")
+              eq(table.type, "workspace.provision"),
             ),
         })
       : null;
     if (existingOperation && existingOperation.status !== "queued") {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
-        "Workspace source cannot change after provisioning has started."
+        "Workspace source cannot change after provisioning has started.",
       );
     }
     const sourceValues = await resolveWorkspaceSourceForActor(transaction, {

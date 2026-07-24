@@ -79,7 +79,10 @@ export interface EnvironmentProvisioningRepository {
     appName: string;
     gatewayServiceTokenHash: string;
   }): Promise<"staged" | "superseded">;
-  setEnvironmentDeleting(environmentId: string): Promise<void>;
+  setEnvironmentDeleting(
+    environmentId: string,
+    options?: { organizationTeardown?: boolean },
+  ): Promise<void>;
   completeEnvironmentProvision(input: {
     environmentId: string;
     operationId: string;
@@ -243,7 +246,7 @@ export class EnvironmentProvisioner {
   }
 
   async process(
-    operationId: string
+    operationId: string,
   ): Promise<"processed" | "not_claimed" | "deferred"> {
     const operation = await this.repository.claimOperation(operationId);
     if (!operation) return "not_claimed";
@@ -267,7 +270,7 @@ export class EnvironmentProvisioner {
       } else {
         throw operationError(
           "ENVIRONMENT_OPERATION_UNSUPPORTED",
-          `Operation '${operation.type}' is not handled by the provisioner.`
+          `Operation '${operation.type}' is not handled by the provisioner.`,
         );
       }
       return "processed";
@@ -361,8 +364,8 @@ export class EnvironmentProvisioner {
       }),
     );
     if (begin === "superseded") return;
-    const environment = await this.persistEnvironmentProvisioning(
-      () => this.repository.getEnvironment(operation.environmentId),
+    const environment = await this.persistEnvironmentProvisioning(() =>
+      this.repository.getEnvironment(operation.environmentId),
     );
     if (
       !environment ||
@@ -370,12 +373,12 @@ export class EnvironmentProvisioner {
     ) {
       throw operationError(
         "ENVIRONMENT_NOT_FOUND",
-        "Environment provisioning target is unavailable."
+        "Environment provisioning target is unavailable.",
       );
     }
     assertEnvironmentOperationTransition(
       environmentStatusSchema.parse(environment.status),
-      "provisioning"
+      "provisioning",
     );
     const appName =
       environment.flyAppName ?? flyEnvironmentAppName(environment.id);
@@ -411,7 +414,9 @@ export class EnvironmentProvisioner {
         operationId: operation.id,
         attempt: operation.attempt,
         appName,
-        gatewayServiceTokenHash: hashEnvironmentServiceToken(gateway.serviceToken),
+        gatewayServiceTokenHash: hashEnvironmentServiceToken(
+          gateway.serviceToken,
+        ),
       }),
     );
     if (staged === "superseded") return;
@@ -448,7 +453,7 @@ export class EnvironmentProvisioner {
         routerImage: this.routerImage,
         runtimeImage: this.runtimeImage,
         gatewayServiceTokenHash: hashEnvironmentServiceToken(
-          gateway.serviceToken
+          gateway.serviceToken,
         ),
       }),
     );
@@ -466,7 +471,7 @@ export class EnvironmentProvisioner {
 
   private async updateEnvironment(operation: ProvisioningOperation) {
     const environment = await this.repository.getEnvironment(
-      operation.environmentId
+      operation.environmentId,
     );
     if (
       !environment ||
@@ -478,19 +483,19 @@ export class EnvironmentProvisioner {
     ) {
       throw operationError(
         "ENVIRONMENT_NOT_READY",
-        "Environment update target is unavailable."
+        "Environment update target is unavailable.",
       );
     }
     const runtimeImage = readImmutableImage(
       operation.input?.runtimeImage,
-      "Workspace runtime image"
+      "Workspace runtime image",
     );
     const routerImage = readImmutableImage(
       operation.input?.routerImage,
-      "Environment router image"
+      "Environment router image",
     );
     const workspaces = await this.repository.listEnvironmentWorkspaces(
-      environment.id
+      environment.id,
     );
     await this.repository.updateOperationStage({
       operationId: operation.id,
@@ -511,10 +516,12 @@ export class EnvironmentProvisioner {
         await this.backupWorkspace(backupInput);
       } catch (error) {
         if (!hasErrorCode(error, "ENVIRONMENT_ACTIVATION_TIMEOUT")) throw error;
-        const preDestructiveSnapshot = await this.provider.createVolumeSnapshot({
-          appName: environment.flyAppName,
-          volumeId: workspace.flyVolumeId,
-        });
+        const preDestructiveSnapshot = await this.provider.createVolumeSnapshot(
+          {
+            appName: environment.flyAppName,
+            volumeId: workspace.flyVolumeId,
+          },
+        );
         await this.updateWorkspaceRuntime({
           appName: environment.flyAppName,
           workspaceId: workspace.id,
@@ -547,9 +554,8 @@ export class EnvironmentProvisioner {
       await this.repository.stageEnvironmentGatewayIdentity({
         environmentId: environment.id,
         appName: environment.flyAppName,
-        gatewayServiceTokenHash: hashEnvironmentServiceToken(
-          gatewayServiceToken
-        ),
+        gatewayServiceTokenHash:
+          hashEnvironmentServiceToken(gatewayServiceToken),
       });
       if (gateway.state === "stopped") {
         await this.provider.startMachine({
@@ -608,9 +614,7 @@ export class EnvironmentProvisioner {
     await this.repository.completeEnvironmentGatewayUpdate({
       environmentId: environment.id,
       routerImage,
-      gatewayServiceTokenHash: hashEnvironmentServiceToken(
-        gatewayServiceToken
-      ),
+      gatewayServiceTokenHash: hashEnvironmentServiceToken(gatewayServiceToken),
     });
     await this.repository.updateOperationStage({
       operationId: operation.id,
@@ -725,7 +729,7 @@ export class EnvironmentProvisioner {
     if (!operation.workspaceId) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace provisioning operation has no Workspace."
+        "Workspace provisioning operation has no Workspace.",
       );
     }
     const [environment, workspace] = await Promise.all([
@@ -740,18 +744,18 @@ export class EnvironmentProvisioner {
     ) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace provisioning target is unavailable."
+        "Workspace provisioning target is unavailable.",
       );
     }
     if (environment.status !== "ready" || !environment.flyAppName) {
       throw operationError(
         "ENVIRONMENT_NOT_READY",
-        "Environment must be ready before its Workspace can be provisioned."
+        "Environment must be ready before its Workspace can be provisioned.",
       );
     }
     assertWorkspaceOperationTransition(
       workspaceStatusSchema.parse(workspace.status),
-      "provisioning"
+      "provisioning",
     );
     await this.repository.setWorkspaceProvisioning(workspace.id);
     await this.repository.updateOperationStage({
@@ -786,9 +790,15 @@ export class EnvironmentProvisioner {
         serviceToken: workspaceServiceToken,
         source: {
           type: workspace.sourceType,
-          ...(workspace.sourceResourceId ? { resourceId: workspace.sourceResourceId } : {}),
-          ...(workspace.sourceRepository ? { repository: workspace.sourceRepository } : {}),
-          ...(workspace.sourceDefaultBranch ? { defaultBranch: workspace.sourceDefaultBranch } : {}),
+          ...(workspace.sourceResourceId
+            ? { resourceId: workspace.sourceResourceId }
+            : {}),
+          ...(workspace.sourceRepository
+            ? { repository: workspace.sourceRepository }
+            : {}),
+          ...(workspace.sourceDefaultBranch
+            ? { defaultBranch: workspace.sourceDefaultBranch }
+            : {}),
         },
         idleTimeoutMinutes:
           environment.idleTimeoutMinutes || ENVIRONMENT_IDLE_TIMEOUT_MINUTES,
@@ -834,7 +844,11 @@ export class EnvironmentProvisioner {
       await this.repository.completeOperation({
         operationId: operation.id,
         stage: "environment.activation.ready",
-        result: { volumeId: volume.id, machineId: machine.id, runtimeContractRevision: 2 },
+        result: {
+          volumeId: volume.id,
+          machineId: machine.id,
+          runtimeContractRevision: 2,
+        },
       });
     } catch (error) {
       await cleanupFailedWorkspaceProvisioning({
@@ -852,7 +866,7 @@ export class EnvironmentProvisioner {
     if (!operation.workspaceId) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace start target is unavailable."
+        "Workspace start target is unavailable.",
       );
     }
     const [environment, workspace] = await Promise.all([
@@ -868,12 +882,12 @@ export class EnvironmentProvisioner {
     ) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace start target is unavailable."
+        "Workspace start target is unavailable.",
       );
     }
     assertWorkspaceOperationTransition(
       workspaceStatusSchema.parse(workspace.status),
-      "starting"
+      "starting",
     );
     await this.repository.setWorkspaceStarting(workspace.id);
     await this.repository.updateOperationStage({
@@ -912,7 +926,7 @@ export class EnvironmentProvisioner {
     if (!operation.workspaceId) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace stop target is unavailable."
+        "Workspace stop target is unavailable.",
       );
     }
     const [environment, workspace] = await Promise.all([
@@ -928,7 +942,7 @@ export class EnvironmentProvisioner {
     ) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace stop target is unavailable."
+        "Workspace stop target is unavailable.",
       );
     }
     const workspaceStatus = workspaceStatusSchema.parse(workspace.status);
@@ -962,7 +976,7 @@ export class EnvironmentProvisioner {
     if (!operation.workspaceId) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace deletion target is unavailable."
+        "Workspace deletion target is unavailable.",
       );
     }
     const [environment, workspace] = await Promise.all([
@@ -978,12 +992,12 @@ export class EnvironmentProvisioner {
     ) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace deletion target is unavailable."
+        "Workspace deletion target is unavailable.",
       );
     }
     assertWorkspaceOperationTransition(
       workspaceStatusSchema.parse(workspace.status),
-      "deleting"
+      "deleting",
     );
     await this.repository.setWorkspaceDeleting(workspace.id);
     if (workspace.flyMachineId) {
@@ -1011,7 +1025,7 @@ export class EnvironmentProvisioner {
 
   private async deleteEnvironment(operation: ProvisioningOperation) {
     const environment = await this.repository.getEnvironment(
-      operation.environmentId
+      operation.environmentId,
     );
     if (
       !environment ||
@@ -1019,14 +1033,17 @@ export class EnvironmentProvisioner {
     ) {
       throw operationError(
         "ENVIRONMENT_NOT_FOUND",
-        "Environment deletion target is unavailable."
+        "Environment deletion target is unavailable.",
       );
     }
     assertEnvironmentOperationTransition(
       environmentStatusSchema.parse(environment.status),
-      "deleting"
+      "deleting",
     );
-    await this.repository.setEnvironmentDeleting(environment.id);
+    await this.repository.setEnvironmentDeleting(environment.id, {
+      organizationTeardown:
+        typeof operation.input?.organizationDeletionOperationId === "string",
+    });
     if (environment.flyAppName) {
       await this.provider.deleteEnvironmentApp({
         appName: environment.flyAppName,
@@ -1044,7 +1061,7 @@ export class EnvironmentProvisioner {
     if (!operation.workspaceId) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace rebuild target is unavailable."
+        "Workspace rebuild target is unavailable.",
       );
     }
     const [environment, workspace] = await Promise.all([
@@ -1060,12 +1077,12 @@ export class EnvironmentProvisioner {
     ) {
       throw operationError(
         "WORKSPACE_NOT_FOUND",
-        "Workspace rebuild target is unavailable."
+        "Workspace rebuild target is unavailable.",
       );
     }
     assertWorkspaceOperationTransition(
       workspaceStatusSchema.parse(workspace.status),
-      "starting"
+      "starting",
     );
     await this.repository.setWorkspaceStarting(workspace.id);
     await this.repository.updateOperationStage({
@@ -1138,9 +1155,9 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             inArray(schema.environmentOperations.status, ["queued", "running"]),
             inArray(
               schema.environmentOperations.type,
-              PROVISIONER_OPERATION_TYPES
-            )
-          )
+              PROVISIONER_OPERATION_TYPES,
+            ),
+          ),
         )
         .returning({
           id: schema.environmentOperations.id,
@@ -1214,23 +1231,28 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           .where(
             and(
               eq(schema.environmentOperations.id, input.operationId),
-              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(
+                schema.environmentOperations.environmentId,
+                input.environmentId,
+              ),
               eq(schema.environmentOperations.status, "running"),
               eq(schema.environmentOperations.attempt, input.attempt),
             ),
           )
           .returning({ id: schema.environmentOperations.id });
         if (!operation) return "superseded" as const;
-        const currentEnvironment = await transaction.query.environments.findFirst({
-          where: (table, { eq }) =>
-            eq(table.id, input.environmentId),
-          columns: { status: true },
-        });
+        const currentEnvironment =
+          await transaction.query.environments.findFirst({
+            where: (table, { eq }) => eq(table.id, input.environmentId),
+            columns: { status: true },
+          });
         if (
-          !(currentEnvironment &&
+          !(
+            currentEnvironment &&
             ["requested", "provisioning", "failed"].includes(
               currentEnvironment.status,
-            ))
+            )
+          )
         ) {
           return "superseded" as const;
         }
@@ -1273,7 +1295,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           .where(
             and(
               eq(schema.environmentOperations.id, operationId),
-              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(
+                schema.environmentOperations.environmentId,
+                input.environmentId,
+              ),
               eq(schema.environmentOperations.status, "running"),
               eq(schema.environmentOperations.attempt, attempt),
             ),
@@ -1292,10 +1317,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         return environment ? ("staged" as const) : ("superseded" as const);
       });
     },
-    async setEnvironmentDeleting(environmentId) {
+    async setEnvironmentDeleting(environmentId, options) {
       await knowledgeDb.transaction(async (transaction) => {
         await transaction.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environmentId)}, 0))`
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environmentId)}, 0))`,
         );
         const [environment] = await transaction
           .update(schema.environments)
@@ -1308,23 +1333,23 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         if (!environment) {
           throw operationError(
             "ENVIRONMENT_NOT_FOUND",
-            "Environment deletion target is unavailable."
+            "Environment deletion target is unavailable.",
           );
         }
-        if (environment.isDefault) {
+        if (environment.isDefault && !options?.organizationTeardown) {
           throw operationError(
             "ENVIRONMENT_IS_DEFAULT",
-            "Select another default Environment before deleting this Environment."
+            "Select another default Environment before deleting this Environment.",
           );
         }
         const project = await transaction.query.projects.findFirst({
           where: (table, { eq }) => eq(table.environmentId, environmentId),
           columns: { id: true },
         });
-        if (project) {
+        if (project && !options?.organizationTeardown) {
           throw operationError(
             "ENVIRONMENT_HAS_PROJECTS",
-            "Move every Project to another Environment before deleting this Environment."
+            "Move every Project to another Environment before deleting this Environment.",
           );
         }
         const [deployment, gateway] = await Promise.all([
@@ -1332,7 +1357,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             where: (table, { and, eq, isNull }) =>
               and(
                 eq(table.environmentId, environmentId),
-                isNull(table.deletedAt)
+                isNull(table.deletedAt),
               ),
             columns: { id: true },
           }),
@@ -1341,10 +1366,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             columns: { id: true },
           }),
         ]);
-        if (deployment || gateway) {
+        if ((deployment || gateway) && !options?.organizationTeardown) {
           throw operationError(
             "ENVIRONMENT_HAS_PRIVATE_INFERENCE",
-            "Remove private inference before deleting this Environment."
+            "Remove private inference before deleting this Environment.",
           );
         }
       });
@@ -1361,7 +1386,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           .where(
             and(
               eq(schema.environmentOperations.id, input.operationId),
-              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(
+                schema.environmentOperations.environmentId,
+                input.environmentId,
+              ),
               eq(schema.environmentOperations.status, "running"),
               eq(schema.environmentOperations.attempt, input.attempt),
             ),
@@ -1435,7 +1463,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           .where(
             and(
               eq(schema.environmentOperations.id, input.operationId),
-              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(
+                schema.environmentOperations.environmentId,
+                input.environmentId,
+              ),
               eq(schema.environmentOperations.status, "running"),
               eq(schema.environmentOperations.attempt, input.attempt),
             ),
@@ -1518,12 +1549,12 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         await transaction
           .delete(schema.threadExecutionBindings)
           .where(
-            eq(schema.threadExecutionBindings.environmentId, environmentId)
+            eq(schema.threadExecutionBindings.environmentId, environmentId),
           );
         await transaction
           .delete(schema.projectEnvironmentBindings)
           .where(
-            eq(schema.projectEnvironmentBindings.environmentId, environmentId)
+            eq(schema.projectEnvironmentBindings.environmentId, environmentId),
           );
         await transaction
           .update(schema.environmentWorkspaces)
@@ -1643,8 +1674,8 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             .where(
               eq(
                 schema.projectEnvironmentBindings.projectId,
-                workspace.projectId
-              )
+                workspace.projectId,
+              ),
             );
         }
         await transaction
@@ -1687,8 +1718,8 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             eq(schema.environmentOperations.status, "running"),
             ...(input.attempt === undefined
               ? []
-              : [eq(schema.environmentOperations.attempt, input.attempt)])
-          )
+              : [eq(schema.environmentOperations.attempt, input.attempt)]),
+          ),
         );
     },
     async completeOperation(input) {
@@ -1762,16 +1793,28 @@ async function cleanupFailedWorkspaceProvisioning(input: {
 }) {
   const failures: string[] = [];
   if (input.machineId) {
-    await input.provider.deleteMachine({
-      appName: input.appName,
-      machineId: input.machineId,
-    }).catch((error) => failures.push(error instanceof Error ? error.message : "machine cleanup failed"));
+    await input.provider
+      .deleteMachine({
+        appName: input.appName,
+        machineId: input.machineId,
+      })
+      .catch((error) =>
+        failures.push(
+          error instanceof Error ? error.message : "machine cleanup failed",
+        ),
+      );
   }
   if (input.volumeId) {
-    await input.provider.deleteVolume({
-      appName: input.appName,
-      volumeId: input.volumeId,
-    }).catch((error) => failures.push(error instanceof Error ? error.message : "volume cleanup failed"));
+    await input.provider
+      .deleteVolume({
+        appName: input.appName,
+        volumeId: input.volumeId,
+      })
+      .catch((error) =>
+        failures.push(
+          error instanceof Error ? error.message : "volume cleanup failed",
+        ),
+      );
   }
   if (failures.length > 0) {
     console.error("Workspace provisioning cleanup failed.", {
@@ -1797,12 +1840,12 @@ function readImmutableImage(value: unknown, label: string) {
   if (
     typeof value !== "string" ||
     !/^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u.test(
-      value
+      value,
     )
   ) {
     throw operationError(
       "ENVIRONMENT_IMAGE_INVALID",
-      `${label} must use an immutable registry.fly.io sha256 digest.`
+      `${label} must use an immutable registry.fly.io sha256 digest.`,
     );
   }
   return value;
@@ -1810,14 +1853,14 @@ function readImmutableImage(value: unknown, label: string) {
 
 function assertEnvironmentOperationTransition(
   current: Parameters<typeof assertEnvironmentTransition>[0],
-  next: Parameters<typeof assertEnvironmentTransition>[1]
+  next: Parameters<typeof assertEnvironmentTransition>[1],
 ) {
   if (current !== next) assertEnvironmentTransition(current, next);
 }
 
 function assertWorkspaceOperationTransition(
   current: Parameters<typeof assertWorkspaceTransition>[0],
-  next: Parameters<typeof assertWorkspaceTransition>[1]
+  next: Parameters<typeof assertWorkspaceTransition>[1],
 ) {
   if (current !== next) assertWorkspaceTransition(current, next);
 }

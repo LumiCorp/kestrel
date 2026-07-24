@@ -114,7 +114,7 @@ export const apiKeys = pgTable(
     index("apikey_reference_id_idx").on(table.referenceId),
     index("apikey_user_id_idx").on(table.userId),
     index("apikey_key_idx").on(table.key),
-  ]
+  ],
 );
 
 /** =========================
@@ -171,7 +171,53 @@ export const organizations = pgTable("organization", {
   createdAt: timestamp("createdAt", { withTimezone: true }).notNull(),
   metadata: text("metadata"),
   stripeCustomerId: text("stripeCustomerId"),
+  lifecycleState: text("lifecycle_state", {
+    enum: ["active", "deleting"],
+  })
+    .notNull()
+    .default("active"),
 });
+
+export const organizationDeletionOperations = pgTable(
+  "organization_deletion_operations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Deliberately not a foreign key: this is the minimal completion record
+    // that remains after the organization and its cascaded data are gone.
+    organizationId: text("organization_id").notNull(),
+    organizationName: text("organization_name").notNull(),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", {
+      enum: ["queued", "running", "completed", "failed", "cancelled"],
+    })
+      .notNull()
+      .default("queued"),
+    stage: text("stage").notNull().default("requested"),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    inventory: jsonb("inventory").$type<Record<string, unknown>>(),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("organization_deletion_operations_org_status_idx").on(
+      table.organizationId,
+      table.status,
+    ),
+  ],
+);
 
 /** =========================
  *  member
@@ -216,9 +262,9 @@ export const organizationFeatureFlags = pgTable(
     }),
     index("organization_feature_flags_enabled_idx").on(
       table.key,
-      table.enabled
+      table.enabled,
     ),
-  ]
+  ],
 );
 
 /** =========================
@@ -268,7 +314,7 @@ export const projects = pgTable(
     index("projects_created_by_user_id_idx").on(table.createdByUserId),
     index("projects_updated_at_idx").on(table.updatedAt),
     index("projects_archived_at_idx").on(table.archivedAt),
-  ]
+  ],
 );
 
 export const projectMembers = pgTable(
@@ -294,7 +340,7 @@ export const projectMembers = pgTable(
     primaryKey({ columns: [table.projectId, table.organizationMemberId] }),
     index("project_members_member_id_idx").on(table.organizationMemberId),
     index("project_members_role_idx").on(table.projectId, table.role),
-  ]
+  ],
 );
 
 export const projectContextRevisions = pgTable(
@@ -319,10 +365,10 @@ export const projectContextRevisions = pgTable(
   (table) => [
     uniqueIndex("project_context_revisions_project_revision_idx").on(
       table.projectId,
-      table.revision
+      table.revision,
     ),
     index("project_context_revisions_created_by_idx").on(table.createdByUserId),
-  ]
+  ],
 );
 
 export const projectAuditEvents = pgTable(
@@ -348,10 +394,10 @@ export const projectAuditEvents = pgTable(
   (table) => [
     index("project_audit_events_project_created_at_idx").on(
       table.projectId,
-      table.createdAt
+      table.createdAt,
     ),
     index("project_audit_events_actor_idx").on(table.actorUserId),
-  ]
+  ],
 );
 
 export const projectSkillInstallations = pgTable(
@@ -406,21 +452,21 @@ export const projectSkillInstallations = pgTable(
       table.projectId,
       table.gitUrl,
       table.branch,
-      table.path
+      table.path,
     ),
     index("project_skill_installations_org_project_idx").on(
       table.organizationId,
-      table.projectId
+      table.projectId,
     ),
     index("project_skill_installations_status_idx").on(
       table.organizationId,
-      table.status
+      table.status,
     ),
     check(
       "project_skill_installations_status_check",
-      sql`${table.status} IN ('pending', 'syncing', 'ready', 'stale', 'failed', 'removal_pending')`
+      sql`${table.status} IN ('pending', 'syncing', 'ready', 'stale', 'failed', 'removal_pending')`,
     ),
-  ]
+  ],
 );
 
 /** =========================
@@ -593,7 +639,7 @@ export const threads = pgTable(
     index("threads_archived_at_idx").on(table.archivedAt),
     index("threads_parent_thread_id_idx").on(table.parentThreadId),
     uniqueIndex("threads_share_token_idx").on(table.shareToken),
-  ]
+  ],
 );
 
 export const threadDialogs = pgTable(
@@ -620,7 +666,7 @@ export const threadDialogs = pgTable(
     uniqueIndex("thread_dialogs_open_name_idx")
       .on(table.threadId, sql`lower(${table.name})`)
       .where(sql`${table.status} = 'open'`),
-  ]
+  ],
 );
 
 export const threadMessages = pgTable(
@@ -639,7 +685,7 @@ export const threadMessages = pgTable(
     }),
     projectContextRevisionId: text("project_context_revision_id").references(
       () => projectContextRevisions.id,
-      { onDelete: "restrict" }
+      { onDelete: "restrict" },
     ),
     parts: jsonb("parts"),
     searchText: text("search_text").notNull().default(""),
@@ -672,23 +718,23 @@ export const threadMessages = pgTable(
     index("thread_messages_turn_id_idx").on(table.turnId),
     index("thread_messages_author_user_id_idx").on(table.authorUserId),
     index("thread_messages_context_revision_idx").on(
-      table.projectContextRevisionId
+      table.projectContextRevisionId,
     ),
     index("thread_messages_created_at_idx").on(table.createdAt),
     index("thread_messages_thread_created_id_idx").on(
       table.threadId,
       table.createdAt,
-      table.id
+      table.id,
     ),
     uniqueIndex("thread_messages_external_message_idx").on(
       table.threadId,
-      table.externalMessageId
+      table.externalMessageId,
     ),
     uniqueIndex("thread_messages_dialog_message_idx").on(
       table.threadId,
-      table.dialogMessageId
+      table.dialogMessageId,
     ),
-  ]
+  ],
 );
 
 /** =========================
@@ -712,18 +758,18 @@ export const threadTurns = pgTable(
       .references(() => users.id, { onDelete: "restrict" }),
     inputMessageId: text("input_message_id").references(
       () => threadMessages.id,
-      { onDelete: "restrict" }
+      { onDelete: "restrict" },
     ),
     approvalId: text("approval_id"),
     approvalApproved: boolean("approval_approved"),
     approvalReason: text("approval_reason"),
     projectContextRevisionId: text("project_context_revision_id").references(
       () => projectContextRevisions.id,
-      { onDelete: "restrict" }
+      { onDelete: "restrict" },
     ),
     environmentExecutionId: text("environment_execution_id").references(
       () => environmentRunExecutions.id,
-      { onDelete: "set null" }
+      { onDelete: "set null" },
     ),
     requestedEnvironmentId: text("requested_environment_id"),
     idempotencyKey: text("idempotency_key").notNull(),
@@ -768,22 +814,22 @@ export const threadTurns = pgTable(
   (table) => [
     uniqueIndex("thread_turns_thread_sequence_idx").on(
       table.threadId,
-      table.sequence
+      table.sequence,
     ),
     uniqueIndex("thread_turns_thread_idempotency_idx").on(
       table.threadId,
-      table.idempotencyKey
+      table.idempotencyKey,
     ),
     uniqueIndex("thread_turns_input_message_idx").on(table.inputMessageId),
     index("thread_turns_org_status_idx").on(table.organizationId, table.status),
     index("thread_turns_thread_status_idx").on(table.threadId, table.status),
     index("thread_turns_thread_queue_ordinal_idx").on(
       table.threadId,
-      table.queueOrdinal
+      table.queueOrdinal,
     ),
     index("thread_turns_author_idx").on(table.authorUserId),
     index("thread_turns_context_revision_idx").on(
-      table.projectContextRevisionId
+      table.projectContextRevisionId,
     ),
     index("thread_turns_execution_idx").on(table.environmentExecutionId),
     index("thread_turns_environment_idx").on(table.requestedEnvironmentId),
@@ -798,9 +844,9 @@ export const threadTurns = pgTable(
         (${table.inputMessageId} IS NOT NULL AND ${table.approvalId} IS NULL AND ${table.approvalApproved} IS NULL AND ${table.approvalReason} IS NULL)
         OR
         (${table.inputMessageId} IS NULL AND ${table.approvalId} IS NOT NULL AND ${table.approvalApproved} IS NOT NULL)
-      )`
+      )`,
     ),
-  ]
+  ],
 );
 
 export const threadTurnEvents = pgTable(
@@ -825,10 +871,10 @@ export const threadTurnEvents = pgTable(
   (table) => [
     uniqueIndex("thread_turn_events_turn_sequence_idx").on(
       table.turnId,
-      table.sequence
+      table.sequence,
     ),
     index("thread_turn_events_expiry_idx").on(table.expiresAt),
-  ]
+  ],
 );
 
 export const threadTurnQueueState = pgTable("thread_turn_queue_state", {
@@ -875,7 +921,7 @@ export const threadTurnPresentations = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index("thread_turn_presentations_stage_idx").on(table.stage)]
+  (table) => [index("thread_turn_presentations_stage_idx").on(table.stage)],
 );
 
 export const threadReadStates = pgTable(
@@ -892,7 +938,7 @@ export const threadReadStates = pgTable(
       .references(() => threads.id, { onDelete: "cascade" }),
     lastReadMessageId: text("last_read_message_id").references(
       () => threadMessages.id,
-      { onDelete: "set null" }
+      { onDelete: "set null" },
     ),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -902,9 +948,9 @@ export const threadReadStates = pgTable(
     primaryKey({ columns: [table.userId, table.threadId] }),
     index("thread_read_states_org_user_idx").on(
       table.organizationId,
-      table.userId
+      table.userId,
     ),
-  ]
+  ],
 );
 
 export const mobileDeviceRegistrations = pgTable(
@@ -935,11 +981,11 @@ export const mobileDeviceRegistrations = pgTable(
   },
   (table) => [
     uniqueIndex("mobile_device_registrations_push_token_idx").on(
-      table.expoPushToken
+      table.expoPushToken,
     ),
     index("mobile_device_registrations_user_idx").on(table.userId),
     index("mobile_device_registrations_org_idx").on(table.organizationId),
-  ]
+  ],
 );
 
 export const accountDeletionRequests = pgTable(
@@ -977,17 +1023,17 @@ export const accountDeletionRequests = pgTable(
   },
   (table) => [
     uniqueIndex("account_deletion_requests_token_idx").on(
-      table.confirmationTokenHash
+      table.confirmationTokenHash,
     ),
     index("account_deletion_requests_user_status_idx").on(
       table.userId,
-      table.status
+      table.status,
     ),
     index("account_deletion_requests_status_created_idx").on(
       table.status,
-      table.createdAt
+      table.createdAt,
     ),
-  ]
+  ],
 );
 
 export const mobilePushDeliveries = pgTable(
@@ -1036,11 +1082,11 @@ export const mobilePushDeliveries = pgTable(
     uniqueIndex("mobile_push_deliveries_turn_device_kind_idx").on(
       table.turnId,
       table.deviceRegistrationId,
-      table.kind
+      table.kind,
     ),
     index("mobile_push_deliveries_status_idx").on(table.status),
     index("mobile_push_deliveries_ticket_idx").on(table.expoTicketId),
-  ]
+  ],
 );
 
 export const discordGuildBindings = pgTable(
@@ -1065,7 +1111,7 @@ export const discordGuildBindings = pgTable(
   (table) => [
     uniqueIndex("discord_guild_bindings_guild_id_idx").on(table.guildId),
     index("discord_guild_bindings_enabled_idx").on(table.enabled),
-  ]
+  ],
 );
 
 export const toolProviders = pgTable(
@@ -1097,7 +1143,7 @@ export const toolProviders = pgTable(
   (table) => [
     index("tool_providers_type_idx").on(table.type),
     index("tool_providers_auth_type_idx").on(table.authType),
-  ]
+  ],
 );
 
 export const toolCapabilities = pgTable(
@@ -1145,7 +1191,7 @@ export const toolCapabilities = pgTable(
     index("tool_capabilities_provider_idx").on(table.providerKey),
     index("tool_capabilities_runtime_name_idx").on(table.runtimeName),
     index("tool_capabilities_access_mode_idx").on(table.accessMode),
-  ]
+  ],
 );
 
 export const organizationToolProviders = pgTable(
@@ -1167,7 +1213,7 @@ export const organizationToolProviders = pgTable(
   (table) => [
     primaryKey({ columns: [table.organizationId, table.providerKey] }),
     index("organization_tool_providers_provider_idx").on(table.providerKey),
-  ]
+  ],
 );
 
 export const organizationToolCapabilities = pgTable(
@@ -1214,7 +1260,7 @@ export const organizationToolCapabilities = pgTable(
       name: "organization_tool_capabilities_capability_fk",
     }).onDelete("cascade"),
     index("organization_tool_capabilities_provider_idx").on(table.providerKey),
-  ]
+  ],
 );
 
 export const organizationToolConnections = pgTable(
@@ -1245,7 +1291,7 @@ export const organizationToolConnections = pgTable(
   (table) => [
     primaryKey({ columns: [table.organizationId, table.providerKey] }),
     index("organization_tool_connections_status_idx").on(table.status),
-  ]
+  ],
 );
 
 /** =========================
@@ -1299,14 +1345,20 @@ export const environments = pgTable(
     idleTimeoutMinutes: integer("idle_timeout_minutes").notNull().default(15),
     reasoningRequestMode: text("reasoning_request_mode", {
       enum: ["off", "summary", "provider_visible"],
-    }).notNull().default("provider_visible"),
+    })
+      .notNull()
+      .default("provider_visible"),
     reasoningEffort: text("reasoning_effort", {
       enum: ["low", "medium", "high"],
     }),
     reasoningRetentionMode: text("reasoning_retention_mode", {
       enum: ["live_only", "provider_visible"],
-    }).notNull().default("live_only"),
-    reasoningRetentionDays: integer("reasoning_retention_days").notNull().default(7),
+    })
+      .notNull()
+      .default("live_only"),
+    reasoningRetentionDays: integer("reasoning_retention_days")
+      .notNull()
+      .default(7),
     lastHealthAt: timestamp("last_health_at", { withTimezone: true }),
     failureCode: text("failure_code"),
     failureMessage: text("failure_message"),
@@ -1321,7 +1373,7 @@ export const environments = pgTable(
   (table) => [
     uniqueIndex("environments_org_slug_idx").on(
       table.organizationId,
-      table.slug
+      table.slug,
     ),
     uniqueIndex("environments_org_id_idx").on(table.organizationId, table.id),
     uniqueIndex("environments_org_default_idx")
@@ -1333,13 +1385,13 @@ export const environments = pgTable(
     index("environments_org_status_idx").on(table.organizationId, table.status),
     check(
       "environments_idle_timeout_check",
-      sql`${table.idleTimeoutMinutes} > 0`
+      sql`${table.idleTimeoutMinutes} > 0`,
     ),
     check(
       "environments_reasoning_retention_days_check",
-      sql`${table.reasoningRetentionDays} between 1 and 30`
+      sql`${table.reasoningRetentionDays} between 1 and 30`,
     ),
-  ]
+  ],
 );
 
 export const environmentWorkspaces = pgTable(
@@ -1359,7 +1411,7 @@ export const environmentWorkspaces = pgTable(
     }),
     standaloneThreadId: text("standalone_thread_id").references(
       () => threads.id,
-      { onDelete: "cascade" }
+      { onDelete: "cascade" },
     ),
     createdByUserId: text("created_by_user_id")
       .notNull()
@@ -1371,7 +1423,7 @@ export const environmentWorkspaces = pgTable(
       .default("blank"),
     sourceResourceId: text("source_resource_id").references(
       () => appConnectionResources.id,
-      { onDelete: "restrict" }
+      { onDelete: "restrict" },
     ),
     sourceRepository: text("source_repository"),
     sourceDefaultBranch: text("source_default_branch"),
@@ -1411,12 +1463,12 @@ export const environmentWorkspaces = pgTable(
     uniqueIndex("environment_workspaces_project_idx")
       .on(table.environmentId, table.projectId)
       .where(
-        sql`${table.projectId} is not null and ${table.deletedAt} is null`
+        sql`${table.projectId} is not null and ${table.deletedAt} is null`,
       ),
     uniqueIndex("environment_workspaces_thread_idx")
       .on(table.environmentId, table.standaloneThreadId)
       .where(
-        sql`${table.standaloneThreadId} is not null and ${table.deletedAt} is null`
+        sql`${table.standaloneThreadId} is not null and ${table.deletedAt} is null`,
       ),
     uniqueIndex("environment_workspaces_machine_idx")
       .on(table.flyMachineId)
@@ -1426,7 +1478,7 @@ export const environmentWorkspaces = pgTable(
       .where(sql`${table.flyVolumeId} is not null`),
     index("environment_workspaces_org_status_idx").on(
       table.organizationId,
-      table.status
+      table.status,
     ),
     index("environment_workspaces_environment_idx").on(table.environmentId),
     check(
@@ -1435,7 +1487,7 @@ export const environmentWorkspaces = pgTable(
         (${table.kind} = 'project' and ${table.projectId} is not null and ${table.standaloneThreadId} is null)
         or
         (${table.kind} = 'scratch' and ${table.projectId} is null and ${table.standaloneThreadId} is not null)
-      )`
+      )`,
     ),
     check(
       "environment_workspaces_source_check",
@@ -1443,9 +1495,9 @@ export const environmentWorkspaces = pgTable(
         (${table.sourceType} = 'blank' and ${table.sourceResourceId} is null and ${table.sourceRepository} is null)
         or
         (${table.sourceType} = 'github' and ${table.sourceResourceId} is not null and ${table.sourceRepository} is not null)
-      )`
+      )`,
     ),
-  ]
+  ],
 );
 
 export const projectEnvironmentBindings = pgTable(
@@ -1473,9 +1525,9 @@ export const projectEnvironmentBindings = pgTable(
   (table) => [
     index("project_environment_bindings_org_idx").on(table.organizationId),
     index("project_environment_bindings_environment_idx").on(
-      table.environmentId
+      table.environmentId,
     ),
-  ]
+  ],
 );
 
 export const threadExecutionBindings = pgTable(
@@ -1510,7 +1562,7 @@ export const threadExecutionBindings = pgTable(
     index("thread_execution_bindings_org_idx").on(table.organizationId),
     index("thread_execution_bindings_environment_idx").on(table.environmentId),
     index("thread_execution_bindings_workspace_idx").on(table.workspaceId),
-  ]
+  ],
 );
 
 export const environmentRunExecutions = pgTable(
@@ -1534,7 +1586,7 @@ export const environmentRunExecutions = pgTable(
     }),
     projectContextRevisionId: text("project_context_revision_id").references(
       () => projectContextRevisions.id,
-      { onDelete: "set null" }
+      { onDelete: "set null" },
     ),
     actorId: text("actor_id").notNull(),
     runtimeImage: text("runtime_image").notNull(),
@@ -1543,7 +1595,10 @@ export const environmentRunExecutions = pgTable(
       .notNull(),
     runtimeRunId: text("runtime_run_id"),
     reasoningPolicySnapshot: jsonb("reasoning_policy_snapshot").$type<{
-      request: { mode: "off" | "summary" | "provider_visible"; effort?: "low" | "medium" | "high" };
+      request: {
+        mode: "off" | "summary" | "provider_visible";
+        effort?: "low" | "medium" | "high";
+      };
       retention: { mode: "live_only" | "provider_visible"; days: number };
     }>(),
     reasoningKeyReady: boolean("reasoning_key_ready").notNull().default(false),
@@ -1564,17 +1619,17 @@ export const environmentRunExecutions = pgTable(
   (table) => [
     index("environment_run_executions_thread_created_idx").on(
       table.threadId,
-      table.createdAt
+      table.createdAt,
     ),
     index("environment_run_executions_workspace_status_idx").on(
       table.workspaceId,
-      table.status
+      table.status,
     ),
     index("environment_run_executions_org_created_idx").on(
       table.organizationId,
-      table.createdAt
+      table.createdAt,
     ),
-  ]
+  ],
 );
 
 export const githubActionApprovals = pgTable(
@@ -1600,7 +1655,7 @@ export const githubActionApprovals = pgTable(
       .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
     consumedExecutionId: text("consumed_execution_id").references(
       () => environmentRunExecutions.id,
-      { onDelete: "restrict" }
+      { onDelete: "restrict" },
     ),
     actorUserId: text("actor_user_id")
       .notNull()
@@ -1643,31 +1698,31 @@ export const githubActionApprovals = pgTable(
   (table) => [
     uniqueIndex("github_action_approvals_runtime_idx").on(
       table.organizationId,
-      table.runtimeApprovalId
+      table.runtimeApprovalId,
     ),
     index("github_action_approvals_thread_status_idx").on(
       table.organizationId,
       table.threadId,
-      table.status
+      table.status,
     ),
     index("github_action_approvals_expiry_idx").on(
       table.status,
-      table.expiresAt
+      table.expiresAt,
     ),
     index("github_action_approvals_execution_idx").on(
-      table.requestedExecutionId
+      table.requestedExecutionId,
     ),
     check(
       "github_action_approvals_operation_check",
-      sql`${table.operation} in ('issue.create', 'pull_request.create', 'pull_request.merge', 'release.create', 'workflow.dispatch')`
+      sql`${table.operation} in ('issue.create', 'pull_request.create', 'pull_request.merge', 'release.create', 'workflow.dispatch')`,
     ),
     check(
       "github_action_approvals_status_check",
-      sql`${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`
+      sql`${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`,
     ),
     check(
       "github_action_approvals_payload_hash_check",
-      sql`${table.payloadHash} ~ '^[0-9a-f]{64}$'`
+      sql`${table.payloadHash} ~ '^[0-9a-f]{64}$'`,
     ),
     check(
       "github_action_approvals_lifecycle_check",
@@ -1679,9 +1734,9 @@ export const githubActionApprovals = pgTable(
         (${table.status} = 'consumed' and ${table.decidedAt} is not null and ${table.decidedByUserId} is not null and ${table.consumedAt} is not null and ${table.consumedExecutionId} is not null)
         or
         (${table.status} = 'expired' and ${table.consumedAt} is null and ${table.consumedExecutionId} is null)
-      )`
+      )`,
     ),
-  ]
+  ],
 );
 
 export const environmentOperations = pgTable(
@@ -1698,7 +1753,7 @@ export const environmentOperations = pgTable(
       .references(() => environments.id, { onDelete: "cascade" }),
     workspaceId: text("workspace_id").references(
       () => environmentWorkspaces.id,
-      { onDelete: "cascade" }
+      { onDelete: "cascade" },
     ),
     requestedByUserId: text("requested_by_user_id").references(() => users.id, {
       onDelete: "set null",
@@ -1743,14 +1798,14 @@ export const environmentOperations = pgTable(
   (table) => [
     uniqueIndex("environment_operations_idempotency_idx").on(
       table.organizationId,
-      table.idempotencyKey
+      table.idempotencyKey,
     ),
     index("environment_operations_environment_status_idx").on(
       table.environmentId,
-      table.status
+      table.status,
     ),
     index("environment_operations_workspace_idx").on(table.workspaceId),
-  ]
+  ],
 );
 
 export const environmentApplications = pgTable(
@@ -1802,18 +1857,18 @@ export const environmentApplications = pgTable(
   (table) => [
     uniqueIndex("environment_applications_workspace_slug_idx").on(
       table.workspaceId,
-      table.slug
+      table.slug,
     ),
     index("environment_applications_environment_idx").on(table.environmentId),
     index("environment_applications_workspace_status_idx").on(
       table.workspaceId,
-      table.status
+      table.status,
     ),
     check(
       "environment_applications_port_check",
-      sql`${table.port} >= 1024 and ${table.port} <= 65535`
+      sql`${table.port} >= 1024 and ${table.port} <= 65535`,
     ),
-  ]
+  ],
 );
 
 export const workspaceBackups = pgTable(
@@ -1835,7 +1890,7 @@ export const workspaceBackups = pgTable(
       () => environmentOperations.id,
       {
         onDelete: "set null",
-      }
+      },
     ),
     reason: text("reason", {
       enum: ["checkpoint", "daily", "pre_destructive", "pre_promotion"],
@@ -1862,10 +1917,10 @@ export const workspaceBackups = pgTable(
   (table) => [
     index("workspace_backups_workspace_created_idx").on(
       table.workspaceId,
-      table.createdAt
+      table.createdAt,
     ),
     index("workspace_backups_expiry_idx").on(table.status, table.expiresAt),
-  ]
+  ],
 );
 
 export const toolConnectionResources = pgTable(
@@ -1896,16 +1951,16 @@ export const toolConnectionResources = pgTable(
     uniqueIndex("tool_connection_resources_external_idx").on(
       table.organizationId,
       table.providerKey,
-      table.externalId
+      table.externalId,
     ),
     uniqueIndex("tool_connection_resources_installation_idx")
       .on(table.providerKey, table.externalId)
       .where(sql`${table.resourceType} = 'installation'`),
     index("tool_connection_resources_provider_idx").on(
       table.organizationId,
-      table.providerKey
+      table.providerKey,
     ),
-  ]
+  ],
 );
 
 export const userToolConnections = pgTable(
@@ -1948,19 +2003,19 @@ export const userToolConnections = pgTable(
     uniqueIndex("user_tool_connections_org_provider_user_idx").on(
       table.organizationId,
       table.providerKey,
-      table.userId
+      table.userId,
     ),
     uniqueIndex("user_tool_connections_org_provider_account_idx").on(
       table.organizationId,
       table.providerKey,
-      table.authAccountId
+      table.authAccountId,
     ),
     index("user_tool_connections_status_idx").on(
       table.organizationId,
       table.providerKey,
-      table.status
+      table.status,
     ),
-  ]
+  ],
 );
 
 export const userToolConnectionResources = pgTable(
@@ -1988,7 +2043,7 @@ export const userToolConnectionResources = pgTable(
   (table) => [
     primaryKey({ columns: [table.connectionId, table.resourceId] }),
     index("user_tool_connection_resources_resource_idx").on(table.resourceId),
-  ]
+  ],
 );
 
 export const projectAppUserCapabilities = pgTable(
@@ -2020,7 +2075,7 @@ export const projectAppUserCapabilities = pgTable(
       table.connectionId,
       table.appKey,
       table.capabilityKey,
-      table.audience
+      table.audience,
     ),
     foreignKey({
       columns: [table.appKey, table.capabilityKey],
@@ -2029,16 +2084,16 @@ export const projectAppUserCapabilities = pgTable(
     }).onDelete("cascade"),
     index("project_app_user_capabilities_project_idx").on(table.projectId),
     index("project_app_user_capabilities_connection_idx").on(
-      table.connectionId
+      table.connectionId,
     ),
     index("project_app_user_capabilities_subject_idx").on(
       table.projectId,
       table.appKey,
       table.capabilityKey,
       table.audience,
-      table.enabled
+      table.enabled,
     ),
-  ]
+  ],
 );
 
 /** =========================
@@ -2102,17 +2157,17 @@ export const appDefinitions = pgTable(
     index("app_definitions_published_idx").on(table.published),
     check(
       "app_definitions_connection_model_check",
-      sql`${table.connectionModel} in ('none', 'personal', 'environment', 'hybrid')`
+      sql`${table.connectionModel} in ('none', 'personal', 'environment', 'hybrid')`,
     ),
     check(
       "app_definitions_connection_requirement_check",
-      sql`${table.connectionRequirement} in ('none', 'optional', 'required')`
+      sql`${table.connectionRequirement} in ('none', 'optional', 'required')`,
     ),
     check(
       "app_definitions_connection_contract_check",
-      sql`(${table.connectionModel} = 'none') = (${table.connectionRequirement} = 'none')`
+      sql`(${table.connectionModel} = 'none') = (${table.connectionRequirement} = 'none')`,
     ),
-  ]
+  ],
 );
 
 export const appCapabilities = pgTable(
@@ -2166,7 +2221,7 @@ export const appCapabilities = pgTable(
     index("app_capabilities_connection_idx").on(table.connectionId),
     index("app_capabilities_runtime_name_idx").on(table.runtimeName),
     index("app_capabilities_group_idx").on(table.appKey, table.groupKey),
-  ]
+  ],
 );
 
 export const appInstallations = pgTable(
@@ -2196,8 +2251,11 @@ export const appInstallations = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.organizationId, table.appKey] }),
-    index("app_installations_status_idx").on(table.organizationId, table.status),
-  ]
+    index("app_installations_status_idx").on(
+      table.organizationId,
+      table.status,
+    ),
+  ],
 );
 
 export const appCredentials = pgTable(
@@ -2244,14 +2302,14 @@ export const appCredentials = pgTable(
       .where(sql`${table.status} = 'active'`),
     uniqueIndex("app_credentials_environment_id_idx").on(
       table.environmentId,
-      table.id
+      table.id,
     ),
     index("app_credentials_app_status_idx").on(table.appKey, table.status),
     check(
       "app_credentials_encrypted_payload_check",
-      sql`${table.encryptedPayload} like 'kapp:v1:%' or ${table.encryptedPayload} like 'kmcp:v1:%'`
+      sql`${table.encryptedPayload} like 'kapp:v1:%' or ${table.encryptedPayload} like 'kmcp:v1:%'`,
     ),
-  ]
+  ],
 );
 
 export const appConnections = pgTable(
@@ -2325,12 +2383,12 @@ export const appConnections = pgTable(
     uniqueIndex("app_connections_ngrok_wildcard_domain_idx")
       .on(sql`(${table.deliveryConfig} ->> 'wildcardDomain')`)
       .where(
-        sql`${table.appKey} = 'ngrok' and ${table.ownerType} = 'environment' and ${table.status} in ('connected', 'degraded')`
+        sql`${table.appKey} = 'ngrok' and ${table.ownerType} = 'environment' and ${table.status} in ('connected', 'degraded')`,
       ),
     index("app_connections_org_app_status_idx").on(
       table.organizationId,
       table.appKey,
-      table.status
+      table.status,
     ),
     index("app_connections_user_idx").on(table.userId, table.status),
     check(
@@ -2343,9 +2401,9 @@ export const appConnections = pgTable(
         (${table.ownerType} = 'personal' and ${table.userId} is not null and ${table.environmentId} is null and ${table.credentialId} is null)
         or
         (${table.ownerType} in ('environment', 'deployment_managed') and ${table.environmentId} is not null and ${table.userId} is null)
-      )`
+      )`,
     ),
-  ]
+  ],
 );
 
 export const workspacePreviewLeases = pgTable(
@@ -2416,28 +2474,26 @@ export const workspacePreviewLeases = pgTable(
     uniqueIndex("workspace_preview_leases_hostname_idx").on(table.hostname),
     uniqueIndex("workspace_preview_leases_active_port_idx")
       .on(table.workspaceId, table.port)
-      .where(
-        sql`${table.status} in ('provisioning', 'active', 'closing')`
-      ),
+      .where(sql`${table.status} in ('provisioning', 'active', 'closing')`),
     index("workspace_preview_leases_environment_status_idx").on(
       table.environmentId,
-      table.status
+      table.status,
     ),
     index("workspace_preview_leases_workspace_status_idx").on(
       table.workspaceId,
-      table.status
+      table.status,
     ),
     index("workspace_preview_leases_expiry_idx").on(
       table.status,
-      table.expiresAt
+      table.expiresAt,
     ),
     check(
       "workspace_preview_leases_port_check",
-      sql`${table.port} between 1024 and 65535 and ${table.port} not in (43104, 43105)`
+      sql`${table.port} between 1024 and 65535 and ${table.port} not in (43104, 43105)`,
     ),
     check(
       "workspace_preview_leases_expiry_check",
-      sql`${table.expiresAt} <= ${table.maximumExpiresAt}`
+      sql`${table.expiresAt} <= ${table.maximumExpiresAt}`,
     ),
     check(
       "workspace_preview_leases_ingress_check",
@@ -2445,9 +2501,9 @@ export const workspacePreviewLeases = pgTable(
         (${table.ingressProvider} = 'kestrel_edge' and ${table.connectionId} is null)
         or
         (${table.ingressProvider} = 'ngrok' and (${table.status} not in ('provisioning', 'active', 'closing') or ${table.connectionId} is not null))
-      )`
+      )`,
     ),
-  ]
+  ],
 );
 
 export const appConnectionResources = pgTable(
@@ -2474,10 +2530,10 @@ export const appConnectionResources = pgTable(
     uniqueIndex("app_connection_resources_external_idx").on(
       table.connectionId,
       table.resourceType,
-      table.externalId
+      table.externalId,
     ),
     index("app_connection_resources_connection_idx").on(table.connectionId),
-  ]
+  ],
 );
 
 export const appOperationApprovals = pgTable(
@@ -2503,7 +2559,7 @@ export const appOperationApprovals = pgTable(
       .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
     consumedExecutionId: text("consumed_execution_id").references(
       () => environmentRunExecutions.id,
-      { onDelete: "restrict" }
+      { onDelete: "restrict" },
     ),
     actorUserId: text("actor_user_id")
       .notNull()
@@ -2548,27 +2604,27 @@ export const appOperationApprovals = pgTable(
     }).onDelete("restrict"),
     uniqueIndex("app_operation_approvals_runtime_idx").on(
       table.organizationId,
-      table.runtimeApprovalId
+      table.runtimeApprovalId,
     ),
     index("app_operation_approvals_thread_status_idx").on(
       table.organizationId,
       table.threadId,
-      table.status
+      table.status,
     ),
     index("app_operation_approvals_expiry_idx").on(
       table.status,
-      table.expiresAt
+      table.expiresAt,
     ),
     index("app_operation_approvals_execution_idx").on(
-      table.requestedExecutionId
+      table.requestedExecutionId,
     ),
     check(
       "app_operation_approvals_payload_hash_check",
-      sql`length(${table.payloadHash}) = 64`
+      sql`length(${table.payloadHash}) = 64`,
     ),
     check(
       "app_operation_approvals_status_check",
-      sql`${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`
+      sql`${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`,
     ),
     check(
       "app_operation_approvals_lifecycle_check",
@@ -2577,9 +2633,9 @@ export const appOperationApprovals = pgTable(
         or (${table.status} in ('approved', 'denied') and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
         or (${table.status} = 'consumed' and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
         or (${table.status} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
-      )`
+      )`,
     ),
-  ]
+  ],
 );
 
 export const environmentAppCapabilityGrants = pgTable(
@@ -2611,7 +2667,9 @@ export const environmentAppCapabilityGrants = pgTable(
       .defaultNow(),
   },
   (table) => [
-    primaryKey({ columns: [table.environmentId, table.appKey, table.capabilityKey] }),
+    primaryKey({
+      columns: [table.environmentId, table.appKey, table.capabilityKey],
+    }),
     foreignKey({
       columns: [table.appKey, table.capabilityKey],
       foreignColumns: [appCapabilities.appKey, appCapabilities.key],
@@ -2619,9 +2677,9 @@ export const environmentAppCapabilityGrants = pgTable(
     }).onDelete("cascade"),
     index("environment_app_capability_grants_app_idx").on(
       table.environmentId,
-      table.appKey
+      table.appKey,
     ),
-  ]
+  ],
 );
 
 export const projectApps = pgTable(
@@ -2646,7 +2704,7 @@ export const projectApps = pgTable(
   (table) => [
     primaryKey({ columns: [table.projectId, table.appKey] }),
     index("project_apps_app_enabled_idx").on(table.appKey, table.enabled),
-  ]
+  ],
 );
 
 export const projectAppConnections = pgTable(
@@ -2673,7 +2731,9 @@ export const projectAppConnections = pgTable(
       .defaultNow(),
   },
   (table) => [
-    primaryKey({ columns: [table.projectId, table.appKey, table.connectionId] }),
+    primaryKey({
+      columns: [table.projectId, table.appKey, table.connectionId],
+    }),
     foreignKey({
       columns: [table.projectId, table.appKey],
       foreignColumns: [projectApps.projectId, projectApps.appKey],
@@ -2692,9 +2752,9 @@ export const projectAppConnections = pgTable(
         (${table.scope} = 'shared' and ${table.userId} is null)
         or
         (${table.scope} = 'personal' and ${table.userId} is not null)
-      )`
+      )`,
     ),
-  ]
+  ],
 );
 
 export const projectAppCapabilityPolicies = pgTable(
@@ -2726,7 +2786,9 @@ export const projectAppCapabilityPolicies = pgTable(
       .defaultNow(),
   },
   (table) => [
-    primaryKey({ columns: [table.projectId, table.appKey, table.capabilityKey] }),
+    primaryKey({
+      columns: [table.projectId, table.appKey, table.capabilityKey],
+    }),
     foreignKey({
       columns: [table.projectId, table.appKey],
       foreignColumns: [projectApps.projectId, projectApps.appKey],
@@ -2739,9 +2801,9 @@ export const projectAppCapabilityPolicies = pgTable(
     }).onDelete("cascade"),
     index("project_app_capability_policies_app_idx").on(
       table.projectId,
-      table.appKey
+      table.appKey,
     ),
-  ]
+  ],
 );
 
 export const environmentCapabilityGrants = pgTable(
@@ -2759,7 +2821,7 @@ export const environmentCapabilityGrants = pgTable(
       () => toolConnectionResources.id,
       {
         onDelete: "cascade",
-      }
+      },
     ),
     approvalMode: text("approval_mode", { enum: ["auto", "ask", "deny"] })
       .notNull()
@@ -2788,7 +2850,7 @@ export const environmentCapabilityGrants = pgTable(
         table.environmentId,
         table.providerKey,
         table.capabilityKey,
-        table.resourceId
+        table.resourceId,
       )
       .where(sql`${table.resourceId} is not null`),
     uniqueIndex("environment_capability_grants_unscoped_idx")
@@ -2800,9 +2862,9 @@ export const environmentCapabilityGrants = pgTable(
       name: "environment_capability_grants_capability_fk",
     }).onDelete("cascade"),
     index("environment_capability_grants_environment_idx").on(
-      table.environmentId
+      table.environmentId,
     ),
-  ]
+  ],
 );
 
 export const projectCapabilityRestrictions = pgTable(
@@ -2820,7 +2882,7 @@ export const projectCapabilityRestrictions = pgTable(
       () => toolConnectionResources.id,
       {
         onDelete: "cascade",
-      }
+      },
     ),
     enabled: boolean("enabled").notNull().default(false),
     approvalMode: text("approval_mode", { enum: ["auto", "ask", "deny"] })
@@ -2839,7 +2901,7 @@ export const projectCapabilityRestrictions = pgTable(
         table.projectId,
         table.providerKey,
         table.capabilityKey,
-        table.resourceId
+        table.resourceId,
       )
       .where(sql`${table.resourceId} is not null`),
     uniqueIndex("project_capability_restrictions_unscoped_idx")
@@ -2851,7 +2913,7 @@ export const projectCapabilityRestrictions = pgTable(
       name: "project_capability_restrictions_capability_fk",
     }).onDelete("cascade"),
     index("project_capability_restrictions_project_idx").on(table.projectId),
-  ]
+  ],
 );
 
 /** =========================
@@ -2899,21 +2961,21 @@ export const mcpCredentials = pgTable(
     }).onDelete("cascade"),
     uniqueIndex("mcp_credentials_environment_id_idx").on(
       table.environmentId,
-      table.id
+      table.id,
     ),
     uniqueIndex("mcp_credentials_environment_name_idx").on(
       table.environmentId,
-      table.name
+      table.name,
     ),
     index("mcp_credentials_environment_status_idx").on(
       table.environmentId,
-      table.status
+      table.status,
     ),
     check(
       "mcp_credentials_encrypted_payload_check",
-      sql`${table.encryptedPayload} like 'kmcp:v1:%'`
+      sql`${table.encryptedPayload} like 'kmcp:v1:%'`,
     ),
-  ]
+  ],
 );
 
 export const mcpOauthAuthorizations = pgTable(
@@ -2967,20 +3029,20 @@ export const mcpOauthAuthorizations = pgTable(
       name: "mcp_oauth_authorizations_organization_environment_fk",
     }).onDelete("cascade"),
     uniqueIndex("mcp_oauth_authorizations_state_digest_idx").on(
-      table.stateDigest
+      table.stateDigest,
     ),
     uniqueIndex("mcp_oauth_authorizations_credential_id_idx").on(
-      table.credentialId
+      table.credentialId,
     ),
     index("mcp_oauth_authorizations_expiry_status_idx").on(
       table.expiresAt,
-      table.status
+      table.status,
     ),
     check(
       "mcp_oauth_authorizations_encrypted_session_check",
-      sql`${table.encryptedSession} like 'kmcp:v1:%'`
+      sql`${table.encryptedSession} like 'kmcp:v1:%'`,
     ),
-  ]
+  ],
 );
 
 export const mcpServers = pgTable(
@@ -3055,12 +3117,12 @@ export const mcpServers = pgTable(
     }).onDelete("restrict"),
     uniqueIndex("mcp_servers_environment_slug_idx").on(
       table.environmentId,
-      table.slug
+      table.slug,
     ),
     uniqueIndex("mcp_servers_provider_key_idx").on(table.providerKey),
     index("mcp_servers_environment_status_idx").on(
       table.environmentId,
-      table.status
+      table.status,
     ),
     check(
       "mcp_servers_source_check",
@@ -3068,7 +3130,7 @@ export const mcpServers = pgTable(
         (${table.sourceType} = 'remote' and ${table.transport} = 'streamable_http' and ${table.remoteUrl} is not null and ${table.ociImageReference} is null and ${table.ociDigest} is null)
         or
         (${table.sourceType} = 'oci' and ${table.remoteUrl} is null and ${table.ociImageReference} is not null and ${table.ociDigest} ~ '^sha256:[0-9a-f]{64}$' and ${table.ociImageReference} like '%@sha256:%')
-      )`
+      )`,
     ),
     check(
       "mcp_servers_auth_check",
@@ -3076,13 +3138,13 @@ export const mcpServers = pgTable(
         (${table.authMode} = 'none' and ${table.credentialId} is null)
         or
         (${table.authMode} <> 'none' and ${table.credentialId} is not null)
-      )`
+      )`,
     ),
     check(
       "mcp_servers_resource_limits_check",
-      sql`${table.cpuMillicores} > 0 and ${table.memoryMib} > 0 and ${table.pidsLimit} > 0`
+      sql`${table.cpuMillicores} > 0 and ${table.memoryMib} > 0 and ${table.pidsLimit} > 0`,
     ),
-  ]
+  ],
 );
 
 export const mcpCapabilitySnapshots = pgTable(
@@ -3116,16 +3178,16 @@ export const mcpCapabilitySnapshots = pgTable(
   (table) => [
     uniqueIndex("mcp_capability_snapshots_server_digest_idx").on(
       table.serverId,
-      table.capabilityDigest
+      table.capabilityDigest,
     ),
     index("mcp_capability_snapshots_server_status_idx").on(
       table.serverId,
-      table.status
+      table.status,
     ),
     uniqueIndex("mcp_capability_snapshots_approved_server_idx")
       .on(table.serverId)
       .where(sql`${table.status} = 'approved'`),
-  ]
+  ],
 );
 
 export const mcpDiscoveryJobs = pgTable(
@@ -3174,9 +3236,9 @@ export const mcpDiscoveryJobs = pgTable(
       .where(sql`${table.status} in ('queued', 'running')`),
     index("mcp_discovery_jobs_status_created_idx").on(
       table.status,
-      table.createdAt
+      table.createdAt,
     ),
-  ]
+  ],
 );
 
 export const mcpCapabilities = pgTable(
@@ -3229,7 +3291,7 @@ export const mcpCapabilities = pgTable(
     uniqueIndex("mcp_capabilities_snapshot_kind_key_idx").on(
       table.snapshotId,
       table.kind,
-      table.capabilityKey
+      table.capabilityKey,
     ),
     foreignKey({
       columns: [table.providerKey, table.toolCapabilityKey],
@@ -3238,7 +3300,7 @@ export const mcpCapabilities = pgTable(
     }).onDelete("cascade"),
     index("mcp_capabilities_provider_enabled_idx").on(
       table.providerKey,
-      table.environmentEnabled
+      table.environmentEnabled,
     ),
     check(
       "mcp_capabilities_tool_projection_check",
@@ -3246,9 +3308,9 @@ export const mcpCapabilities = pgTable(
         (${table.kind} = 'tool' and ${table.toolCapabilityKey} is not null)
         or
         (${table.kind} <> 'tool' and ${table.toolCapabilityKey} is null)
-      )`
+      )`,
     ),
-  ]
+  ],
 );
 
 export const mcpProjectCapabilityRestrictions = pgTable(
@@ -3274,9 +3336,9 @@ export const mcpProjectCapabilityRestrictions = pgTable(
   (table) => [
     primaryKey({ columns: [table.projectId, table.capabilityId] }),
     index("mcp_project_capability_restrictions_capability_idx").on(
-      table.capabilityId
+      table.capabilityId,
     ),
-  ]
+  ],
 );
 
 export const mcpProjectResourceReferences = pgTable(
@@ -3308,10 +3370,10 @@ export const mcpProjectResourceReferences = pgTable(
     uniqueIndex("mcp_project_resource_references_uri_idx").on(
       table.projectId,
       table.serverId,
-      table.resourceUri
+      table.resourceUri,
     ),
     index("mcp_project_resource_references_server_idx").on(table.serverId),
-  ]
+  ],
 );
 
 export const mcpRunGrants = pgTable(
@@ -3369,9 +3431,9 @@ export const mcpRunGrants = pgTable(
     index("mcp_run_grants_expiry_status_idx").on(table.expiresAt, table.status),
     check(
       "mcp_run_grants_expiry_check",
-      sql`${table.expiresAt} > ${table.createdAt}`
+      sql`${table.expiresAt} > ${table.createdAt}`,
     ),
-  ]
+  ],
 );
 
 export const mcpInvocations = pgTable(
@@ -3421,17 +3483,17 @@ export const mcpInvocations = pgTable(
   (table) => [
     uniqueIndex("mcp_invocations_grant_request_idx").on(
       table.grantId,
-      table.requestId
+      table.requestId,
     ),
     index("mcp_invocations_server_created_idx").on(
       table.serverId,
-      table.createdAt
+      table.createdAt,
     ),
     index("mcp_invocations_status_created_idx").on(
       table.status,
-      table.createdAt
+      table.createdAt,
     ),
-  ]
+  ],
 );
 
 export const mcpInteractionCheckpoints = pgTable(
@@ -3488,16 +3550,16 @@ export const mcpInteractionCheckpoints = pgTable(
   },
   (table) => [
     uniqueIndex("mcp_interaction_checkpoints_invocation_idx").on(
-      table.invocationId
+      table.invocationId,
     ),
     index("mcp_interaction_checkpoints_thread_status_idx").on(
       table.threadId,
-      table.status
+      table.status,
     ),
     index("mcp_interaction_checkpoints_processing_expiry_idx")
       .on(table.processingExpiresAt)
       .where(sql`${table.status} = 'processing'`),
-  ]
+  ],
 );
 
 /**
@@ -3523,20 +3585,15 @@ export const threadInteractions = pgTable(
     }),
     assistantMessageId: text("assistant_message_id").references(
       () => threadMessages.id,
-      { onDelete: "set null" }
+      { onDelete: "set null" },
     ),
     source: text("source", { enum: ["runtime", "mcp"] }).notNull(),
     sourceCheckpointId: text("source_checkpoint_id").references(
       () => mcpInteractionCheckpoints.id,
-      { onDelete: "cascade" }
+      { onDelete: "cascade" },
     ),
     kind: text("kind", {
-      enum: [
-        "user_input",
-        "approval",
-        "mcp_sampling",
-        "mcp_elicitation",
-      ],
+      enum: ["user_input", "approval", "mcp_sampling", "mcp_elicitation"],
     }).notNull(),
     eventType: text("event_type").notNull(),
     prompt: text("prompt").notNull(),
@@ -3548,9 +3605,8 @@ export const threadInteractions = pgTable(
     requestEnvelope: jsonb("request_envelope")
       .$type<Record<string, unknown>>()
       .notNull(),
-    responseEnvelope: jsonb("response_envelope").$type<
-      Record<string, unknown>
-    >(),
+    responseEnvelope:
+      jsonb("response_envelope").$type<Record<string, unknown>>(),
     resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -3566,11 +3622,11 @@ export const threadInteractions = pgTable(
   (table) => [
     uniqueIndex("thread_interactions_request_idx").on(table.requestId),
     uniqueIndex("thread_interactions_source_checkpoint_idx").on(
-      table.sourceCheckpointId
+      table.sourceCheckpointId,
     ),
     index("thread_interactions_thread_status_idx").on(
       table.threadId,
-      table.status
+      table.status,
     ),
     index("thread_interactions_turn_idx").on(table.turnId),
     check(
@@ -3579,9 +3635,9 @@ export const threadInteractions = pgTable(
         (${table.source} = 'runtime' AND ${table.turnId} IS NOT NULL AND ${table.sourceCheckpointId} IS NULL)
         OR
         (${table.source} = 'mcp' AND ${table.sourceCheckpointId} IS NOT NULL)
-      )`
+      )`,
     ),
-  ]
+  ],
 );
 
 export const environmentCapabilitySubjectRestrictions = pgTable(
@@ -3602,7 +3658,7 @@ export const environmentCapabilitySubjectRestrictions = pgTable(
     capabilityKey: text("capability_key").notNull(),
     resourceId: text("resource_id").references(
       () => toolConnectionResources.id,
-      { onDelete: "cascade" }
+      { onDelete: "cascade" },
     ),
     enabled: boolean("enabled").notNull().default(false),
     approvalMode: text("approval_mode", { enum: ["auto", "ask", "deny"] })
@@ -3623,7 +3679,7 @@ export const environmentCapabilitySubjectRestrictions = pgTable(
         table.subjectId,
         table.providerKey,
         table.capabilityKey,
-        table.resourceId
+        table.resourceId,
       )
       .where(sql`${table.resourceId} is not null`),
     uniqueIndex("environment_capability_subject_unscoped_idx")
@@ -3632,7 +3688,7 @@ export const environmentCapabilitySubjectRestrictions = pgTable(
         table.subjectType,
         table.subjectId,
         table.providerKey,
-        table.capabilityKey
+        table.capabilityKey,
       )
       .where(sql`${table.resourceId} is null`),
     foreignKey({
@@ -3644,9 +3700,9 @@ export const environmentCapabilitySubjectRestrictions = pgTable(
       table.organizationId,
       table.environmentId,
       table.subjectType,
-      table.subjectId
+      table.subjectId,
     ),
-  ]
+  ],
 );
 
 export const agentConfig = pgTable("agent_config", {
@@ -3708,7 +3764,7 @@ export const aiProviderConnections = pgTable(
       .on(table.organizationId, table.provider)
       .where(sql`${table.organizationId} is not null`),
     index("ai_provider_connections_organization_idx").on(table.organizationId),
-  ]
+  ],
 );
 
 export const aiDeploymentProfiles = pgTable(
@@ -3753,17 +3809,17 @@ export const aiDeploymentProfiles = pgTable(
     uniqueIndex("ai_deployment_profiles_key_version_idx").on(
       table.organizationId,
       table.profileKey,
-      table.version
+      table.version,
     ),
     uniqueIndex("ai_deployment_profiles_spec_hash_idx").on(
       table.organizationId,
-      table.specHash
+      table.specHash,
     ),
     index("ai_deployment_profiles_status_idx").on(
       table.organizationId,
-      table.status
+      table.status,
     ),
-  ]
+  ],
 );
 
 export const organizationAiDeploymentPolicies = pgTable(
@@ -3783,7 +3839,7 @@ export const organizationAiDeploymentPolicies = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-  }
+  },
 );
 
 export const organizationAiDeploymentEntitlements = pgTable(
@@ -3806,7 +3862,7 @@ export const organizationAiDeploymentEntitlements = pgTable(
   (table) => [
     primaryKey({ columns: [table.organizationId, table.userId] }),
     index("organization_ai_deployment_entitlements_user_idx").on(table.userId),
-  ]
+  ],
 );
 
 export const aiGateways = pgTable(
@@ -3822,7 +3878,7 @@ export const aiGateways = pgTable(
     deploymentId: text("deployment_id"),
     providerConnectionId: text("provider_connection_id").references(
       () => aiProviderConnections.id,
-      { onDelete: "restrict" }
+      { onDelete: "restrict" },
     ),
     provider: text("provider", {
       enum: [
@@ -3860,7 +3916,7 @@ export const aiGateways = pgTable(
     uniqueIndex("ai_gateways_org_shared_provider_display_name_idx")
       .on(table.organizationId, table.provider, table.displayName)
       .where(
-        sql`${table.organizationId} IS NOT NULL AND ${table.environmentId} IS NULL`
+        sql`${table.organizationId} IS NOT NULL AND ${table.environmentId} IS NULL`,
       ),
     uniqueIndex("ai_gateways_environment_provider_display_name_idx")
       .on(table.environmentId, table.provider, table.displayName)
@@ -3876,9 +3932,9 @@ export const aiGateways = pgTable(
     }).onDelete("restrict"),
     check(
       "ai_gateways_environment_scope_check",
-      sql`${table.environmentId} IS NULL OR ${table.organizationId} IS NOT NULL`
+      sql`${table.environmentId} IS NULL OR ${table.organizationId} IS NOT NULL`,
     ),
-  ]
+  ],
 );
 
 export const aiGatewayModels = pgTable(
@@ -3913,13 +3969,13 @@ export const aiGatewayModels = pgTable(
     index("ai_gateway_models_approved_idx").on(table.approved),
     uniqueIndex("ai_gateway_models_gateway_raw_model_idx").on(
       table.gatewayId,
-      table.rawModelId
+      table.rawModelId,
     ),
     uniqueIndex("ai_gateway_models_alias_idx").on(
       table.organizationId,
-      table.alias
+      table.alias,
     ),
-  ]
+  ],
 );
 
 export const environmentModelGrants = pgTable(
@@ -3966,13 +4022,13 @@ export const environmentModelGrants = pgTable(
     }).onDelete("restrict"),
     index("environment_model_grants_environment_status_idx").on(
       table.environmentId,
-      table.status
+      table.status,
     ),
     index("environment_model_grants_workspace_status_idx").on(
       table.workspaceId,
-      table.status
+      table.status,
     ),
-  ]
+  ],
 );
 
 export const environmentAiModelDefaults = pgTable(
@@ -4004,7 +4060,7 @@ export const environmentAiModelDefaults = pgTable(
       name: "environment_ai_model_defaults_organization_environment_fk",
     }).onDelete("cascade"),
     index("environment_ai_model_defaults_model_idx").on(table.modelId),
-  ]
+  ],
 );
 
 export const aiDeployments = pgTable(
@@ -4063,7 +4119,7 @@ export const aiDeployments = pgTable(
       .on(table.environmentId, table.profileId)
       .where(sql`${table.deletedAt} IS NULL`),
     uniqueIndex("ai_deployments_provider_endpoint_idx").on(
-      table.providerEndpointId
+      table.providerEndpointId,
     ),
     index("ai_deployments_org_id_idx").on(table.organizationId),
     index("ai_deployments_environment_id_idx").on(table.environmentId),
@@ -4073,7 +4129,7 @@ export const aiDeployments = pgTable(
       foreignColumns: [environments.organizationId, environments.id],
       name: "ai_deployments_organization_environment_fk",
     }).onDelete("restrict"),
-  ]
+  ],
 );
 
 export const aiDeploymentRuns = pgTable(
@@ -4113,7 +4169,7 @@ export const aiDeploymentRuns = pgTable(
     index("ai_deployment_runs_deployment_idx").on(table.deploymentId),
     index("ai_deployment_runs_profile_idx").on(table.profileId),
     index("ai_deployment_runs_status_idx").on(table.status),
-  ]
+  ],
 );
 
 export const aiDeploymentUsage = pgTable(
@@ -4144,7 +4200,7 @@ export const aiDeploymentUsage = pgTable(
       .on(table.deploymentId, table.bucketStartedAt, table.gpuTypeId)
       .nullsNotDistinct(),
     index("ai_deployment_usage_endpoint_idx").on(table.providerEndpointId),
-  ]
+  ],
 );
 
 export const apiUsage = pgTable(
@@ -4173,7 +4229,7 @@ export const apiUsage = pgTable(
     index("knowledge_api_usage_org_id_idx").on(table.organizationId),
     index("knowledge_api_usage_source_idx").on(table.source),
     index("knowledge_api_usage_created_at_idx").on(table.createdAt),
-  ]
+  ],
 );
 
 export const usageStats = pgTable(
@@ -4205,9 +4261,9 @@ export const usageStats = pgTable(
       table.organizationId,
       table.userId,
       table.source,
-      table.model
+      table.model,
     ),
-  ]
+  ],
 );
 
 /** =========================
@@ -4267,36 +4323,36 @@ export const organizationUsageEvents = pgTable(
         table.sourceKind,
         table.sourceId,
         table.meter,
-        table.intervalStartedAt
+        table.intervalStartedAt,
       )
       .nullsNotDistinct(),
     index("organization_usage_events_org_occurred_idx").on(
       table.organizationId,
-      table.occurredAt
+      table.occurredAt,
     ),
     index("organization_usage_events_service_idx").on(
       table.organizationId,
       table.provider,
       table.service,
-      table.meter
+      table.meter,
     ),
     check(
       "organization_usage_events_category_check",
-      sql`${table.category} in ('models', 'environments', 'managed_compute', 'services')`
+      sql`${table.category} in ('models', 'environments', 'managed_compute', 'services')`,
     ),
     check(
       "organization_usage_events_quantity_check",
-      sql`${table.quantity} >= 0`
+      sql`${table.quantity} >= 0`,
     ),
     check(
       "organization_usage_events_reported_amount_check",
-      sql`${table.reportedAmountUsd} is null or ${table.reportedAmountUsd} >= 0`
+      sql`${table.reportedAmountUsd} is null or ${table.reportedAmountUsd} >= 0`,
     ),
     check(
       "organization_usage_events_interval_check",
-      sql`${table.intervalEndedAt} is null or ${table.intervalStartedAt} is not null and ${table.intervalEndedAt} >= ${table.intervalStartedAt}`
+      sql`${table.intervalEndedAt} is null or ${table.intervalStartedAt} is not null and ${table.intervalEndedAt} >= ${table.intervalStartedAt}`,
     ),
-  ]
+  ],
 );
 
 export const costRateCards = pgTable(
@@ -4328,7 +4384,9 @@ export const costRateCards = pgTable(
       enum: ["published", "contract", "assumption"],
     }).notNull(),
     sourceUrl: text("source_url"),
-    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveFrom: timestamp("effective_from", {
+      withTimezone: true,
+    }).notNull(),
     effectiveTo: timestamp("effective_to", { withTimezone: true }),
     enabled: boolean("enabled").notNull().default(true),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
@@ -4350,7 +4408,7 @@ export const costRateCards = pgTable(
         table.service,
         table.meter,
         table.unit,
-        table.effectiveFrom
+        table.effectiveFrom,
       )
       .nullsNotDistinct(),
     index("cost_rate_cards_lookup_idx").on(
@@ -4360,26 +4418,26 @@ export const costRateCards = pgTable(
       table.service,
       table.meter,
       table.enabled,
-      table.effectiveFrom
+      table.effectiveFrom,
     ),
     check(
       "cost_rate_cards_category_check",
-      sql`${table.category} in ('models', 'environments', 'managed_compute', 'services')`
+      sql`${table.category} in ('models', 'environments', 'managed_compute', 'services')`,
     ),
     check(
       "cost_rate_cards_rate_kind_check",
-      sql`${table.rateKind} in ('unit', 'monthly', 'annual')`
+      sql`${table.rateKind} in ('unit', 'monthly', 'annual')`,
     ),
     check(
       "cost_rate_cards_provenance_check",
-      sql`${table.provenance} in ('published', 'contract', 'assumption')`
+      sql`${table.provenance} in ('published', 'contract', 'assumption')`,
     ),
     check("cost_rate_cards_price_check", sql`${table.unitPriceUsd} >= 0`),
     check(
       "cost_rate_cards_effective_check",
-      sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`
+      sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`,
     ),
-  ]
+  ],
 );
 
 export const organizationCostEntries = pgTable(
@@ -4406,7 +4464,12 @@ export const organizationCostEntries = pgTable(
       scale: 10,
     }),
     pricingBasis: text("pricing_basis", {
-      enum: ["provider_reported", "measured_at_rate", "allocated_fixed", "assumed"],
+      enum: [
+        "provider_reported",
+        "measured_at_rate",
+        "allocated_fixed",
+        "assumed",
+      ],
     }).notNull(),
     rateSnapshot: jsonb("rate_snapshot").$type<Record<string, unknown>>(),
     isCurrent: boolean("is_current").notNull().default(true),
@@ -4425,22 +4488,28 @@ export const organizationCostEntries = pgTable(
     }).onDelete("restrict"),
     uniqueIndex("organization_cost_entries_usage_revision_idx").on(
       table.usageEventId,
-      table.revision
+      table.revision,
     ),
     uniqueIndex("organization_cost_entries_current_idx")
       .on(table.usageEventId)
       .where(sql`${table.isCurrent} = true`),
     index("organization_cost_entries_org_priced_idx").on(
       table.organizationId,
-      table.pricedAt
+      table.pricedAt,
     ),
-    check("organization_cost_entries_revision_check", sql`${table.revision} > 0`),
-    check("organization_cost_entries_amount_check", sql`${table.amountUsd} >= 0`),
+    check(
+      "organization_cost_entries_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+    check(
+      "organization_cost_entries_amount_check",
+      sql`${table.amountUsd} >= 0`,
+    ),
     check(
       "organization_cost_entries_basis_check",
-      sql`${table.pricingBasis} in ('provider_reported', 'measured_at_rate', 'allocated_fixed', 'assumed')`
+      sql`${table.pricingBasis} in ('provider_reported', 'measured_at_rate', 'allocated_fixed', 'assumed')`,
     ),
-  ]
+  ],
 );
 
 export const organizationDashboardSettings = pgTable(
@@ -4467,9 +4536,9 @@ export const organizationDashboardSettings = pgTable(
   (table) => [
     check(
       "organization_dashboard_settings_visibility_check",
-      sql`${table.costVisibility} in ('all_members', 'admins_only')`
+      sql`${table.costVisibility} in ('all_members', 'admins_only')`,
     ),
-  ]
+  ],
 );
 
 export const knowledgeKv = pgTable(
@@ -4485,7 +4554,7 @@ export const knowledgeKv = pgTable(
   (table) => [
     index("knowledge_kv_updated_idx").on(table.updatedAt),
     index("knowledge_kv_org_id_idx").on(table.organizationId),
-  ]
+  ],
 );
 
 export const knowledgeDocuments = pgTable(
@@ -4542,7 +4611,7 @@ export const knowledgeDocuments = pgTable(
       .on(table.projectId, table.checksumSha256)
       .where(sql`${table.projectId} is not null`),
     uniqueIndex("knowledge_documents_storage_key_idx").on(table.storageKey),
-  ]
+  ],
 );
 
 export const projectContextDocuments = pgTable(
@@ -4561,7 +4630,7 @@ export const projectContextDocuments = pgTable(
   (table) => [
     primaryKey({ columns: [table.contextRevisionId, table.documentId] }),
     index("project_context_documents_document_id_idx").on(table.documentId),
-  ]
+  ],
 );
 
 export const knowledgeIngestionRuns = pgTable(
@@ -4605,7 +4674,7 @@ export const knowledgeIngestionRuns = pgTable(
     index("knowledge_ingestion_runs_status_idx").on(table.status),
     index("knowledge_ingestion_runs_stage_idx").on(table.stage),
     index("knowledge_ingestion_runs_updated_at_idx").on(table.updatedAt),
-  ]
+  ],
 );
 
 export const knowledgeDocumentChunks = pgTable(
@@ -4637,9 +4706,9 @@ export const knowledgeDocumentChunks = pgTable(
     index("knowledge_document_chunks_document_id_idx").on(table.documentId),
     uniqueIndex("knowledge_document_chunks_document_chunk_idx").on(
       table.documentId,
-      table.chunkIndex
+      table.chunkIndex,
     ),
-  ]
+  ],
 );
 
 export const artifactDocuments = pgTable(
@@ -4670,7 +4739,7 @@ export const artifactDocuments = pgTable(
     index("knowledge_artifact_documents_user_id_idx").on(table.userId),
     index("knowledge_artifact_documents_org_id_idx").on(table.organizationId),
     index("artifact_documents_thread_id_idx").on(table.threadId),
-  ]
+  ],
 );
 
 export const messageSpeechAssets = pgTable(
@@ -4704,10 +4773,10 @@ export const messageSpeechAssets = pgTable(
       table.messageId,
       table.modelId,
       table.voice,
-      table.textHash
+      table.textHash,
     ),
     uniqueIndex("message_speech_assets_storage_key_idx").on(table.storageKey),
-  ]
+  ],
 );
 
 export const mediaGenerationJobs = pgTable(
@@ -4753,7 +4822,7 @@ export const mediaGenerationJobs = pgTable(
     index("media_generation_jobs_status_idx").on(table.status),
     index("media_generation_jobs_kind_idx").on(table.kind),
     index("media_generation_jobs_gateway_id_idx").on(table.gatewayId),
-  ]
+  ],
 );
 
 export const artifactSuggestions = pgTable(
@@ -4785,11 +4854,11 @@ export const artifactSuggestions = pgTable(
       name: "knowledge_artifact_suggestions_document_fk",
     }),
     index("knowledge_artifact_suggestions_document_id_idx").on(
-      table.documentId
+      table.documentId,
     ),
     index("knowledge_artifact_suggestions_user_id_idx").on(table.userId),
     index("knowledge_artifact_suggestions_org_id_idx").on(table.organizationId),
-  ]
+  ],
 );
 
 export const adminEventLogs = pgTable(
@@ -4824,7 +4893,7 @@ export const adminEventLogs = pgTable(
     index("admin_event_logs_actor_user_id_idx").on(table.actorUserId),
     index("admin_event_logs_level_idx").on(table.level),
     index("admin_event_logs_created_at_idx").on(table.createdAt),
-  ]
+  ],
 );
 
 export const platformEmailConfig = pgTable("platform_email_config", {
@@ -4857,35 +4926,32 @@ export const platformEmailConfig = pgTable("platform_email_config", {
     .defaultNow(),
 });
 
-export const organizationEmailConfig = pgTable(
-  "organization_email_config",
-  {
-    organizationId: text("organization_id")
-      .primaryKey()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    provider: text("provider", { enum: ["resend"] })
-      .notNull()
-      .default("resend"),
-    enabled: boolean("enabled").notNull().default(false),
-    encryptedApiKey: text("encrypted_api_key"),
-    fromName: text("from_name").notNull(),
-    fromEmail: text("from_email").notNull(),
-    replyTo: text("reply_to"),
-    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
-    lastTestMessageId: text("last_test_message_id"),
-    lastTestConfigFingerprint: text("last_test_config_fingerprint"),
-    lastErrorCode: text("last_error_code"),
-    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  }
-);
+export const organizationEmailConfig = pgTable("organization_email_config", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  provider: text("provider", { enum: ["resend"] })
+    .notNull()
+    .default("resend"),
+  enabled: boolean("enabled").notNull().default(false),
+  encryptedApiKey: text("encrypted_api_key"),
+  fromName: text("from_name").notNull(),
+  fromEmail: text("from_email").notNull(),
+  replyTo: text("reply_to"),
+  lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+  lastTestMessageId: text("last_test_message_id"),
+  lastTestConfigFingerprint: text("last_test_config_fingerprint"),
+  lastErrorCode: text("last_error_code"),
+  updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export const organizationInfrastructureSettings = pgTable(
   "organization_infrastructure_settings",
@@ -4912,7 +4978,7 @@ export const organizationInfrastructureSettings = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-  }
+  },
 );
 
 export const organizationEmailDeliveries = pgTable(
@@ -4951,11 +5017,11 @@ export const organizationEmailDeliveries = pgTable(
   (table) => [
     index("organization_email_deliveries_org_created_idx").on(
       table.organizationId,
-      table.createdAt
+      table.createdAt,
     ),
     index("organization_email_deliveries_project_idx").on(table.projectId),
     index("organization_email_deliveries_approval_idx").on(table.approvalId),
-  ]
+  ],
 );
 
 export const adminApiKeys = pgTable(
@@ -4990,7 +5056,7 @@ export const adminApiKeys = pgTable(
     index("admin_api_keys_creator_user_id_idx").on(table.creatorUserId),
     index("admin_api_keys_enabled_idx").on(table.enabled),
     index("admin_api_keys_created_at_idx").on(table.createdAt),
-  ]
+  ],
 );
 
 // Export types for use throughout the application

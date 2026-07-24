@@ -6,6 +6,7 @@ import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
 import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
 
 const ENVIRONMENT_OPERATION_QUEUE = "environment.operation";
+const ORGANIZATION_DELETION_QUEUE = "organization.deletion";
 const ENVIRONMENT_RECONCILE_QUEUE = "environment.reconcile";
 const COST_PRICING_QUEUE = "costs.price";
 const COST_ACCRUAL_QUEUE = "costs.accrue-fixed";
@@ -30,7 +31,7 @@ async function sendManagedRunPodRun(boss: PgBoss, runId: string) {
   await boss.send(
     MANAGED_RUNPOD_RUN_QUEUE,
     { runId },
-    { ...MANAGED_RUNPOD_RUN_OPTIONS, singletonKey: runId }
+    { ...MANAGED_RUNPOD_RUN_OPTIONS, singletonKey: runId },
   );
 }
 
@@ -60,6 +61,10 @@ async function createBoss() {
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
   });
+  await boss.createQueue(ORGANIZATION_DELETION_QUEUE, {
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
   await boss.updateQueue(ENVIRONMENT_OPERATION_QUEUE, {
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
@@ -68,7 +73,7 @@ async function createBoss() {
   await boss.schedule(
     ENVIRONMENT_RECONCILE_QUEUE,
     ENVIRONMENT_RECONCILE_CRON,
-    {}
+    {},
   );
   await boss.createQueue(COST_PRICING_QUEUE);
   await boss.createQueue(COST_ACCRUAL_QUEUE);
@@ -90,16 +95,15 @@ export async function getKnowledgeBoss() {
     await boss.work(
       KNOWLEDGE_DOCUMENT_QUEUE,
       async (jobs: Array<{ data?: unknown }>) => {
-        const { processKnowledgeDocumentRun } = await import(
-          "@/lib/knowledge/documents/process-runtime"
-        );
+        const { processKnowledgeDocumentRun } =
+          await import("@/lib/knowledge/documents/process-runtime");
         for (const job of jobs) {
           const payload = job.data as { runId?: string } | null;
           if (payload?.runId) {
             await processKnowledgeDocumentRun(payload.runId);
           }
         }
-      }
+      },
     );
   }
 
@@ -120,31 +124,27 @@ export async function startManagedRunPodWorker() {
   await boss.work(
     MANAGED_RUNPOD_RUN_QUEUE,
     async (jobs: Array<{ data?: unknown }>) => {
-      const { processManagedRunPodRun } = await import(
-        "@/lib/ai/managed-runpod-runtime"
-      );
+      const { processManagedRunPodRun } =
+        await import("@/lib/ai/managed-runpod-runtime");
       for (const job of jobs) {
         const payload = job.data as { runId?: string } | null;
         if (payload?.runId) await processManagedRunPodRun(payload.runId);
       }
-    }
+    },
   );
   await boss.work(MANAGED_RUNPOD_RECONCILE_QUEUE, async () => {
     await recoverQueuedManagedRunPodRuns(boss);
-    const { reconcileManagedRunPodFleet } = await import(
-      "@/lib/ai/managed-runpod-runtime"
-    );
+    const { reconcileManagedRunPodFleet } =
+      await import("@/lib/ai/managed-runpod-runtime");
     await reconcileManagedRunPodFleet();
   });
   await boss.work(MANAGED_RUNPOD_USAGE_QUEUE, async () => {
-    const { ingestManagedRunPodUsage } = await import(
-      "@/lib/ai/managed-runpod-runtime"
-    );
+    const { ingestManagedRunPodUsage } =
+      await import("@/lib/ai/managed-runpod-runtime");
     await ingestManagedRunPodUsage();
   });
-  const { isManagedRunPodEnabled } = await import(
-    "@/lib/ai/managed-runpod-config"
-  );
+  const { isManagedRunPodEnabled } =
+    await import("@/lib/ai/managed-runpod-config");
   if (isManagedRunPodEnabled()) {
     await boss.schedule(MANAGED_RUNPOD_RECONCILE_QUEUE, "*/5 * * * *", {});
     await boss.schedule(MANAGED_RUNPOD_USAGE_QUEUE, "15 * * * *", {});
@@ -169,15 +169,30 @@ export async function enqueueEnvironmentOperation(operationId: string) {
       retryBackoff: true,
       expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
       heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
-    }
+    },
   );
-  if (!jobId) throw new Error("The Environment operation queue rejected the job.");
+  if (!jobId)
+    throw new Error("The Environment operation queue rejected the job.");
 }
 
-async function hasNonterminalEnvironmentJob(
-  boss: PgBoss,
-  operationId: string,
-) {
+export async function enqueueOrganizationDeletion(operationId: string) {
+  const boss = await getKnowledgeBossProducer();
+  const jobId = await boss.send(
+    ORGANIZATION_DELETION_QUEUE,
+    { operationId },
+    {
+      retryLimit: 20,
+      retryDelay: 5,
+      retryBackoff: true,
+      expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+      heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+    },
+  );
+  if (!jobId)
+    throw new Error("The organization deletion queue rejected the job.");
+}
+
+async function hasNonterminalEnvironmentJob(boss: PgBoss, operationId: string) {
   const jobs = await boss.findJobs<{ operationId?: unknown }>(
     ENVIRONMENT_OPERATION_QUEUE,
     { data: { operationId } },
@@ -189,33 +204,53 @@ export async function reconcileEnvironmentOperationQueue(boss: PgBoss) {
   const {
     isParentOwnedWorkspaceBackup,
     reconcileTerminalWorkspaceBackupRecords,
-  } = await import(
-    "@/lib/environments/backups"
-  );
+  } = await import("@/lib/environments/backups");
   await reconcileTerminalWorkspaceBackupRecords();
-  const { PROVISIONER_OPERATION_TYPES } = await import(
-    "@/lib/environments/operation-routing"
-  );
+  const { PROVISIONER_OPERATION_TYPES } =
+    await import("@/lib/environments/operation-routing");
   const operations = await knowledgeDb.query.environmentOperations.findMany({
     where: (table, { and, inArray }) =>
       and(
         inArray(table.status, ["queued", "running"]),
-        inArray(table.type, [...PROVISIONER_OPERATION_TYPES, "workspace.backup"]),
+        inArray(table.type, [
+          ...PROVISIONER_OPERATION_TYPES,
+          "workspace.backup",
+        ]),
       ),
     columns: { id: true, status: true, type: true, input: true },
     limit: 100,
   });
   for (const operation of operations) {
     if (await hasNonterminalEnvironmentJob(boss, operation.id)) continue;
-    if (operation.status === "running" && operation.type === "workspace.backup") {
+    if (
+      operation.status === "running" &&
+      operation.type === "workspace.backup"
+    ) {
       if (isParentOwnedWorkspaceBackup(operation.input)) continue;
-      const { failInterruptedWorkspaceBackup } = await import(
-        "@/lib/environments/backups"
-      );
+      const { failInterruptedWorkspaceBackup } =
+        await import("@/lib/environments/backups");
       await failInterruptedWorkspaceBackup(operation.id);
       continue;
     }
     await enqueueEnvironmentOperation(operation.id);
+  }
+}
+
+async function reconcileOrganizationDeletionQueue(boss: PgBoss) {
+  const operations =
+    await knowledgeDb.query.organizationDeletionOperations.findMany({
+      where: (table, { inArray }) =>
+        inArray(table.status, ["queued", "running"]),
+      columns: { id: true },
+      limit: 20,
+    });
+  for (const operation of operations) {
+    const jobs = await boss.findJobs<{ operationId?: unknown }>(
+      ORGANIZATION_DELETION_QUEUE,
+      { data: { operationId: operation.id } },
+    );
+    if (jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state))) continue;
+    await enqueueOrganizationDeletion(operation.id);
   }
 }
 
@@ -224,6 +259,7 @@ async function runEnvironmentMaintenance(boss: PgBoss) {
   environmentMaintenanceRunning = true;
   try {
     await reconcileEnvironmentOperationQueue(boss);
+    await reconcileOrganizationDeletionQueue(boss);
   } finally {
     environmentMaintenanceRunning = false;
   }
@@ -241,9 +277,8 @@ export async function startEnvironmentLifecycleWorker() {
       heartbeatRefreshSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS,
     },
     async (jobs: Array<JobWithMetadata<{ operationId?: unknown }>>) => {
-      const { processEnvironmentOperation } = await import(
-        "@/lib/environments/process-runtime"
-      );
+      const { processEnvironmentOperation } =
+        await import("@/lib/environments/process-runtime");
       for (const job of jobs) {
         if (typeof job.data?.operationId !== "string") continue;
         await processEnvironmentOperation(job.data.operationId, {
@@ -252,39 +287,45 @@ export async function startEnvironmentLifecycleWorker() {
       }
     },
   );
+  await boss.work(
+    ORGANIZATION_DELETION_QUEUE,
+    async (jobs: Array<{ data?: { operationId?: unknown } }>) => {
+      const { processOrganizationDeletion } =
+        await import("@/lib/organizations/deletion");
+      for (const job of jobs) {
+        if (typeof job.data?.operationId !== "string") continue;
+        await processOrganizationDeletion(job.data.operationId);
+      }
+    },
+  );
   await boss.work(ENVIRONMENT_RECONCILE_QUEUE, async () => {
-    const { runScheduledEnvironmentReconciliation } = await import(
-      "@/lib/environments/reconcile-schedule"
-    );
+    const { runScheduledEnvironmentReconciliation } =
+      await import("@/lib/environments/reconcile-schedule");
     await runScheduledEnvironmentReconciliation();
   });
   await boss.work(
     COST_PRICING_QUEUE,
     async (jobs: Array<{ data?: CostPricingJobData }>) => {
-      const { backfillAuthoritativeUsage } = await import(
-        "@/lib/costs/metering"
-      );
+      const { backfillAuthoritativeUsage } =
+        await import("@/lib/costs/metering");
       const { priceRecentUnpricedUsage, priceRecentlyUpdatedUsage } =
         await import("@/lib/costs/store");
       for (const job of jobs) {
         const backfill = job.data?.backfill;
         if (backfill !== "startup" && backfill !== "incremental") continue;
         const windowMs =
-          backfill === "startup"
-            ? 48 * 60 * 60 * 1000
-            : 15 * 60 * 1000;
+          backfill === "startup" ? 48 * 60 * 60 * 1000 : 15 * 60 * 1000;
         await backfillAuthoritativeUsage({
           since: new Date(Date.now() - windowMs),
         });
       }
-      await priceRecentlyUpdatedUsage(
-        new Date(Date.now() - 15 * 60 * 1000)
-      );
+      await priceRecentlyUpdatedUsage(new Date(Date.now() - 15 * 60 * 1000));
       await priceRecentUnpricedUsage();
-    }
+    },
   );
   await boss.work(COST_ACCRUAL_QUEUE, async () => {
-    const { accrueOrganizationFixedRates } = await import("@/lib/costs/metering");
+    const { accrueOrganizationFixedRates } =
+      await import("@/lib/costs/metering");
     await accrueOrganizationFixedRates();
   });
   await boss.work(COST_FLY_METERING_QUEUE, async () => {
@@ -299,10 +340,11 @@ export async function startEnvironmentLifecycleWorker() {
   await boss.send(
     COST_PRICING_QUEUE,
     { backfill: "startup" },
-    { singletonKey: "startup-backfill" }
+    { singletonKey: "startup-backfill" },
   );
   await boss.send(COST_ACCRUAL_QUEUE, {}, { singletonKey: "startup-accrual" });
   await reconcileEnvironmentOperationQueue(boss);
+  await reconcileOrganizationDeletionQueue(boss);
   environmentMaintenanceTimer = setInterval(() => {
     void runEnvironmentMaintenance(boss).catch((error) => {
       console.error("Environment lifecycle worker maintenance failed.", {
@@ -342,6 +384,7 @@ export async function enqueueManagedRunPodUsageIngestion() {
 
 export {
   ENVIRONMENT_OPERATION_QUEUE,
+  ORGANIZATION_DELETION_QUEUE,
   ENVIRONMENT_RECONCILE_QUEUE,
   MANAGED_RUNPOD_RECONCILE_QUEUE,
   MANAGED_RUNPOD_RUN_QUEUE,
