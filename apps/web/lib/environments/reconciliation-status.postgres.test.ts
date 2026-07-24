@@ -92,7 +92,6 @@ contractTest(
       "workspace.stop",
       "workspace.rebuild",
       "workspace.delete",
-      "workspace.backup",
       "workspace.restore",
       "workspace.reconcile",
     ] as const;
@@ -143,6 +142,33 @@ contractTest(
         DELETE FROM "environment_operations" WHERE "id" = ${operationId}
       `;
     }
+
+    const queuedBackupOperationId = `queued-backup-operation-${suffix}`;
+    await sql`
+      INSERT INTO "environment_operations" (
+        "id", "organization_id", "environment_id", "workspace_id",
+        "requested_by_user_id", "type", "status", "stage",
+        "idempotency_key", "created_at", "updated_at"
+      ) VALUES (
+        ${queuedBackupOperationId}, ${organizationId}, ${environmentId},
+        ${workspaceId}, ${userId}, 'workspace.backup', 'queued',
+        'workspace.backup.queued', ${queuedBackupOperationId}, ${now}, ${now}
+      )
+    `;
+    assert.equal(
+      await recordWorkspaceReconciliationStatus({
+        organizationId,
+        environmentId,
+        workspaceId,
+        status: "ready",
+        reconciledAt: new Date(now.getTime() + 50),
+      }),
+      true,
+      "a queued backup must not reserve Workspace execution",
+    );
+    await sql`
+      DELETE FROM "environment_operations" WHERE "id" = ${queuedBackupOperationId}
+    `;
 
     for (const [index, type] of [
       "environment.update",

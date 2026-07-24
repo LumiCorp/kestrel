@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   KestrelClient,
   KestrelSdkError,
@@ -69,13 +69,7 @@ export async function createWorkspaceBackup(input: {
           eq(table.organizationId, input.organizationId)
         ),
     }),
-    knowledgeDb.query.threadExecutionBindings.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.workspaceId, input.workspaceId),
-          eq(table.organizationId, input.organizationId)
-        ),
-    }),
+    findActiveWorkspaceExecutionBinding(input),
   ]);
   if (
     !(
@@ -578,13 +572,7 @@ export async function restoreWorkspaceBackup(input: {
           eq(table.organizationId, input.organizationId)
         ),
     }),
-    knowledgeDb.query.threadExecutionBindings.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.workspaceId, input.workspaceId),
-          eq(table.organizationId, input.organizationId)
-        ),
-    }),
+    findActiveWorkspaceExecutionBinding(input),
   ]);
   if (!backup) {
     throw new Error("Workspace backup is unavailable.");
@@ -1150,13 +1138,7 @@ async function assertWorkspaceBackupReady(input: {
           eq(table.organizationId, input.organizationId),
         ),
     }),
-    knowledgeDb.query.threadExecutionBindings.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.workspaceId, input.workspaceId),
-          eq(table.organizationId, input.organizationId),
-        ),
-    }),
+    findActiveWorkspaceExecutionBinding(input),
   ]);
   if (
     !(
@@ -1168,6 +1150,39 @@ async function assertWorkspaceBackupReady(input: {
   ) {
     throw new Error("Workspace is not ready for backup.");
   }
+}
+
+async function findActiveWorkspaceExecutionBinding(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+}) {
+  const [binding] = await knowledgeDb
+    .select({ threadId: schema.threadExecutionBindings.threadId })
+    .from(schema.threadExecutionBindings)
+    .innerJoin(
+      schema.threads,
+      and(
+        eq(schema.threads.id, schema.threadExecutionBindings.threadId),
+        isNull(schema.threads.archivedAt),
+      ),
+    )
+    .where(
+      and(
+        eq(
+          schema.threadExecutionBindings.organizationId,
+          input.organizationId,
+        ),
+        eq(schema.threadExecutionBindings.environmentId, input.environmentId),
+        eq(schema.threadExecutionBindings.workspaceId, input.workspaceId),
+      ),
+    )
+    .orderBy(
+      desc(schema.threads.updatedAt),
+      desc(schema.threadExecutionBindings.updatedAt),
+    )
+    .limit(1);
+  return binding;
 }
 
 function backupKey() {
