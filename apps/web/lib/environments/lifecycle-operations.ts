@@ -1,10 +1,15 @@
-import { notInArray } from "drizzle-orm";
+import { and, eq, ne, notInArray, or } from "drizzle-orm";
 import { knowledgeDb } from "@/lib/knowledge/db";
 
 export const ENVIRONMENT_WIDE_WORKSPACE_LIFECYCLE_TYPES = [
   "environment.update",
   "environment.delete",
 ] as const;
+
+// A queued backup has not started touching the Workspace. It must not reserve
+// execution for however long the queue is delayed. Once running, it still owns
+// the Workspace so a backup observes a stable export.
+const QUEUED_NON_BLOCKING_WORKSPACE_LIFECYCLE_TYPE = "workspace.backup";
 
 type EnvironmentOperationReader = Pick<typeof knowledgeDb, "query">;
 
@@ -21,11 +26,17 @@ export async function findActiveWorkspaceLifecycleOperation(
     ...new Set(input.excludedOperationIds?.filter(Boolean) ?? []),
   ];
   return database.query.environmentOperations.findFirst({
-    where: (table, { and, eq, inArray, isNull, or }) =>
+    where: (table, { inArray, isNull }) =>
       and(
         eq(table.organizationId, input.organizationId),
         eq(table.environmentId, input.environmentId),
-        inArray(table.status, ["queued", "running"]),
+        or(
+          eq(table.status, "running"),
+          and(
+            eq(table.status, "queued"),
+            ne(table.type, QUEUED_NON_BLOCKING_WORKSPACE_LIFECYCLE_TYPE),
+          ),
+        ),
         excludedOperationIds.length > 0
           ? notInArray(table.id, excludedOperationIds)
           : undefined,

@@ -870,7 +870,7 @@ contractTest("runtime.hermetic", "ThreadRuntime appends completed assistant outp
   assert.deepEqual(persisted?.metadata?.evidenceLedger, [{ claim: "preserved" }]);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime preserves submitted history and appends the waiting assistant prompt", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime persists the canonical waiting prompt instead of stale assistant text", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -885,6 +885,7 @@ contractTest("runtime.hermetic", "ThreadRuntime preserves submitted history and 
           },
         },
       }),
+      assistantText: "Waiting for user.reply.",
     },
   ]);
 
