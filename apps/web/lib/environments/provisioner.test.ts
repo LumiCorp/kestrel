@@ -19,6 +19,7 @@ function fixture(
   const calls: string[] = [];
   let operation: ProvisioningOperation | null = {
     id: "operation-id",
+    attempt: 1,
     organizationId: "organization-id",
     environmentId: "environment-id",
     workspaceId,
@@ -66,20 +67,29 @@ function fixture(
     async listEnvironmentWorkspaces() {
       return [];
     },
-    async setEnvironmentProvisioning() {
+    async beginEnvironmentProvisioning() {
       calls.push("environment:provisioning");
+      return "prepared";
     },
     async stageEnvironmentGatewayIdentity() {
       calls.push("environment:gateway-token-staged");
+      return "staged";
     },
     async setEnvironmentDeleting() {
       calls.push("environment:deleting");
     },
-    async completeEnvironment() {
+    async completeEnvironmentProvision() {
       calls.push("environment:ready");
+      calls.push("operation:completed");
+      return "completed";
     },
     async failEnvironment(input) {
       calls.push(`environment:failed:${input.code}`);
+    },
+    async failEnvironmentProvision(input) {
+      calls.push(`environment:failed:${input.code}`);
+      calls.push(`operation:failed:${input.code}`);
+      return "failed";
     },
     async degradeEnvironment(input) {
       calls.push(`environment:degraded:${input.code}`);
@@ -537,6 +547,106 @@ contractTest("web.hermetic", "transient Fly failures return the durable operatio
     "environment:provisioning",
     "operation:stage:environment.runtime.connecting",
     "operation:deferred:Fly is temporarily unavailable.",
+  ]);
+});
+
+contractTest("web.hermetic", "Environment persistence failures after provider creation defer without poisoning lifecycle state", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  repository.stageEnvironmentGatewayIdentity = async () => {
+    calls.push("environment:gateway-token-staged");
+    throw new Error("database connection interrupted");
+  };
+  const provisioner = createProvisioner(repository, provider);
+
+  assert.equal(await provisioner.process("operation-id"), "deferred");
+  assert.deepEqual(calls, [
+    "environment:provisioning",
+    "operation:stage:environment.runtime.connecting",
+    "provider:app",
+    "operation:stage:environment.machine.starting",
+    "provider:gateway",
+    "environment:gateway-token-staged",
+    "operation:deferred:Kestrel could not record Environment provisioning state. Retrying.",
+  ]);
+});
+
+contractTest("web.hermetic", "Environment completion persistence failures defer after gateway health succeeds", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  repository.completeEnvironmentProvision = async () => {
+    calls.push("environment:completion-persist");
+    throw new Error("transaction aborted");
+  };
+  const provisioner = createProvisioner(repository, provider);
+
+  assert.equal(await provisioner.process("operation-id"), "deferred");
+  assert.deepEqual(calls, [
+    "environment:provisioning",
+    "operation:stage:environment.runtime.connecting",
+    "provider:app",
+    "operation:stage:environment.machine.starting",
+    "provider:gateway",
+    "environment:gateway-token-staged",
+    "provider:wait",
+    "operation:stage:environment.health.checking",
+    "provider:health",
+    "environment:completion-persist",
+    "operation:deferred:Kestrel could not record Environment provisioning state. Retrying.",
+  ]);
+});
+
+contractTest("web.hermetic", "a superseded provisioning attempt cannot overwrite newer gateway state", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  repository.stageEnvironmentGatewayIdentity = async () => {
+    calls.push("environment:gateway-token-staged");
+    return "superseded";
+  };
+  const provisioner = createProvisioner(repository, provider);
+
+  assert.equal(await provisioner.process("operation-id"), "processed");
+  assert.deepEqual(calls, [
+    "environment:provisioning",
+    "operation:stage:environment.runtime.connecting",
+    "provider:app",
+    "operation:stage:environment.machine.starting",
+    "provider:gateway",
+    "environment:gateway-token-staged",
+  ]);
+});
+
+contractTest("web.hermetic", "a superseded provisioning attempt exits before reading or changing lifecycle state", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  repository.beginEnvironmentProvisioning = async () => {
+    calls.push("environment:superseded");
+    return "superseded";
+  };
+  repository.getEnvironment = async () => {
+    calls.push("environment:read");
+    throw new Error("superseded work must not read lifecycle state");
+  };
+  const provisioner = createProvisioner(repository, provider);
+
+  assert.equal(await provisioner.process("operation-id"), "processed");
+  assert.deepEqual(calls, ["environment:superseded"]);
+});
+
+contractTest("web.hermetic", "a superseded provisioning failure cannot overwrite newer lifecycle state", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  provider.ensureEnvironmentApp = async () => {
+    throw Object.assign(new Error("Fly rejected the stale request."), {
+      code: "FLY_PROVIDER_REJECTED",
+    });
+  };
+  repository.failEnvironmentProvision = async () => {
+    calls.push("environment:failure-superseded");
+    return "superseded";
+  };
+  const provisioner = createProvisioner(repository, provider);
+
+  assert.equal(await provisioner.process("operation-id"), "processed");
+  assert.deepEqual(calls, [
+    "environment:provisioning",
+    "operation:stage:environment.runtime.connecting",
+    "environment:failure-superseded",
   ]);
 });
 

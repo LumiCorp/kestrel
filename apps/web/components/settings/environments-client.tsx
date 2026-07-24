@@ -320,7 +320,19 @@ export function EnvironmentsAdminClient({
                       {environment.runtimeTemplate}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{environment.status}</Badge>
+                      <div className="space-y-1">
+                        <Badge variant="outline">{environment.status}</Badge>
+                        {environment.failureCode ? (
+                          <p className="font-mono text-destructive text-xs">
+                            {environment.failureCode}
+                          </p>
+                        ) : null}
+                        {environment.failureMessage ? (
+                          <p className="max-w-72 text-destructive text-xs">
+                            {environment.failureMessage}
+                          </p>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground text-xs">
                       {formatUpdatedAt(environment.updatedAt)}

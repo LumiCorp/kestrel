@@ -36,6 +36,20 @@ export default async function EnvironmentOverviewPage({
             {environment.idleTimeoutMinutes} minutes
           </SettingsRow>
           <SettingsRow label="Lifecycle status">{environment.status}</SettingsRow>
+          {environment.failureCode ? (
+            <SettingsRow label="Failure code">
+              <span className="font-mono text-destructive text-xs">
+                {environment.failureCode}
+              </span>
+            </SettingsRow>
+          ) : null}
+          {environment.failureMessage ? (
+            <SettingsRow label="Failure details">
+              <span className="text-destructive text-sm">
+                {environment.failureMessage}
+              </span>
+            </SettingsRow>
+          ) : null}
           <SettingsRow label="Default Environment">
             <EnvironmentOverviewActions
               environmentId={environment.id}

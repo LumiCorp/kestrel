@@ -97,6 +97,23 @@ contractTest("web.hermetic", "queued Environment operations identify Kestrel One
   );
 });
 
+contractTest("web.hermetic", "queued Environment persistence recovery explains the retry", () => {
+  assert.deepEqual(
+    describeEnvironmentOperation({
+      type: "environment.provision",
+      status: "queued",
+      stage: "environment.activation.reconciling",
+      errorMessage:
+        "Kestrel could not record Environment provisioning state. Retrying.",
+    }),
+    {
+      label: "Environment provisioning",
+      detail: "Kestrel could not record Environment provisioning state. Retrying.",
+      tone: "neutral",
+    }
+  );
+});
+
 contractTest("web.hermetic", "Environment updates expose the durable rollout stage", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
