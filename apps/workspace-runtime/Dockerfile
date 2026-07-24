@@ -16,6 +16,7 @@ COPY cli cli
 COPY models models
 COPY src src
 COPY tools tools
+COPY tests/helpers/contract-test.ts tests/helpers/contract-test.ts
 COPY db db
 RUN pnpm --filter @kestrel-agents/sdk build \
     && pnpm run clean \

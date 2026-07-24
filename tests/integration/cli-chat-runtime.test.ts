@@ -194,7 +194,7 @@ contractTest("runtime.process", "KestrelChatRuntime consumes hosted MCP authoriz
 contractTest("runtime.process", "KestrelChatRuntime consumes execution authorization without requiring an MCP grant", async () => {
   const events: RuntimeEvent[] = [];
   const prepared: unknown[] = [];
-  const released: string[] = [];
+  const released: Array<{ runId: string; sessionId?: string }> = [];
   const runtime = new KestrelChatRuntime(profile, {
     create: () => ({
       kestrel: {
@@ -209,8 +209,11 @@ contractTest("runtime.process", "KestrelChatRuntime consumes execution authoriza
       prepareHostedMcpRuntime: async (input) => {
         prepared.push(input);
       },
-      releaseRuntimeAuthorization: (runId) => {
-        released.push(runId);
+      releaseRuntimeAuthorization: (runId, sessionId) => {
+        released.push({
+          runId,
+          ...(sessionId !== undefined ? { sessionId } : {}),
+        });
       },
       close: async () => {},
     }),
@@ -233,7 +236,12 @@ contractTest("runtime.process", "KestrelChatRuntime consumes execution authoriza
   assert.deepEqual(preparedTurn.mcpAuthorization, {
     executionTicket: "signed-run-ticket",
   });
-  assert.deepEqual(released, [preparedTurn.runId]);
+  assert.deepEqual(released, [
+    {
+      runId: preparedTurn.runId,
+      sessionId: "session-environment-app",
+    },
+  ]);
   assert.equal(events[0]?.id, preparedTurn.runId);
   assert.equal("mcpAuthorization" in (events[0]?.payload ?? {}), false);
   assert.equal(

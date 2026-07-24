@@ -154,7 +154,9 @@ interface RuntimeBootstrap {
   prepareHostedMcpRuntime?:
     | ((input: Pick<RunTurnInput, "runId" | "sessionId" | "mcpContext" | "mcpAuthorization">) => Promise<unknown>)
     | undefined;
-  releaseRuntimeAuthorization?: ((runId: string) => void) | undefined;
+  releaseRuntimeAuthorization?:
+    | ((runId: string, sessionId?: string) => void)
+    | undefined;
   reasoningPolicyReady?: Promise<unknown> | undefined;
 }
 
@@ -400,7 +402,13 @@ export class KestrelChatRuntime {
       return result as RunTurnResult;
     } finally {
       if (mcpAuthorization !== undefined) {
-        this.releaseRuntimeAuthorization?.(persistableInput.runId!);
+        // The authorization is keyed by the requested Environment run ID and
+        // also indexed by session for the engine's distinct internal run ID.
+        // Pass both identities so neither authorization entry can leak.
+        this.releaseRuntimeAuthorization?.(
+          persistableInput.runId!,
+          persistableInput.sessionId
+        );
       }
     }
   }
@@ -2133,7 +2141,8 @@ function createRuntimeWithStore(
       return asRecord(session?.state.agent)?.finalOutput;
     },
     prepareHostedMcpRuntime: (input) => toolRegistry.refreshForRuntimeTurn(input),
-    releaseRuntimeAuthorization: (runId) => toolRegistry.clearRuntimeTurnAuthorization(runId),
+    releaseRuntimeAuthorization: (runId, sessionId) =>
+      toolRegistry.clearRuntimeTurnAuthorization(runId, sessionId),
     close: async () => {
       clearInterval(providerReasoningPurgeTimer);
       await userTerminalReady?.catch(() => {});

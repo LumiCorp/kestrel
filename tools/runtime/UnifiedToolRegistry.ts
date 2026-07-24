@@ -110,7 +110,15 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   private readonly builtInContext: SharedToolContext;
   private readonly mcpManager: McpToolProvider;
   private readonly hostedMcpScopes = new Map<string, HostedMcpScope>();
+  // AUTHORIZATION INVARIANT: the hosted Environment stores the ticket under
+  // its requested execution run ID, but ExecutionEngine may create a different
+  // internal run ID for tool calls. Do not assume those IDs are equal or
+  // replace the session index with a single run-ID lookup.
   private readonly executionTicketsByRun = new Map<string, string>();
+  private readonly executionTicketsBySession = new Map<
+    string,
+    Map<string, string>
+  >();
 
   private defaultAllowlist: Set<string>;
   private mcpStatus: McpStatusSnapshot = {
@@ -166,10 +174,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       await this.refresh();
     }
     if (input.mcpAuthorization !== undefined && input.runId !== undefined) {
-      this.executionTicketsByRun.set(
-        input.runId,
-        parseExecutionTicketAuthorization(input.mcpAuthorization)
+      const executionTicket = parseExecutionTicketAuthorization(
+        input.mcpAuthorization
       );
+      this.executionTicketsByRun.set(input.runId, executionTicket);
+      if (input.sessionId !== undefined) {
+        // Preserve every requested-run ticket so the internal engine run can
+        // use a session fallback only when that fallback is unambiguous.
+        const tickets =
+          this.executionTicketsBySession.get(input.sessionId) ?? new Map();
+        tickets.set(input.runId, executionTicket);
+        this.executionTicketsBySession.set(input.sessionId, tickets);
+      }
     }
     if (input.mcpContext === undefined) {
       if (input.mcpAuthorization !== undefined && input.runId === undefined) {
@@ -222,8 +238,21 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     );
   }
 
-  clearRuntimeTurnAuthorization(runId: string): void {
+  clearRuntimeTurnAuthorization(runId: string, sessionId?: string): void {
+    // Clear both indexes together. Leaving the session entry behind could
+    // authorize a later internal engine run with a completed turn's ticket.
     this.executionTicketsByRun.delete(runId);
+    const sessionIds =
+      sessionId === undefined
+        ? [...this.executionTicketsBySession.keys()]
+        : [sessionId];
+    for (const id of sessionIds) {
+      const tickets = this.executionTicketsBySession.get(id);
+      tickets?.delete(runId);
+      if (tickets?.size === 0) {
+        this.executionTicketsBySession.delete(id);
+      }
+    }
   }
 
   resolveAvailableAllowlistForRuntimeTurn(
@@ -812,10 +841,25 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         runContext.payload,
         runContext.sessionId
       ),
+      // Lookup order is security-sensitive: exact run first; then the session
+      // bridge required because the Environment run ID and engine run ID can
+      // differ; finally the hosted MCP grant. Never make the session bridge
+      // choose among multiple active tickets.
       this.executionTicketsByRun.get(runContext.runId) ??
+        this.resolveUnambiguousSessionExecutionTicket(runContext.sessionId) ??
         this.hostedMcpScopes.get(readHostedMcpGrantId(runContext.payload) ?? "")
           ?.executionTicket
     );
+  }
+
+  private resolveUnambiguousSessionExecutionTicket(
+    sessionId: string
+  ): string | undefined {
+    const tickets = this.executionTicketsBySession.get(sessionId);
+    // Overlapping turns in one session must fail closed. Selecting either
+    // ticket would break the run isolation this index exists to preserve.
+    if (tickets?.size !== 1) return;
+    return tickets.values().next().value;
   }
 }
 
