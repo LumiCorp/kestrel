@@ -2,12 +2,69 @@ import assert from "node:assert/strict";
 import {
   createAssistantFailureText,
   ensureAssistantFailureVisibility,
+  getErrorFromResponse,
   isAssistantFailureText,
   isPersistableAssistantMessage,
   sanitizeMessagesForModelInput,
 } from "./utils";
+import { ChatbotError } from "./errors";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
+contractTest("web.hermetic", "response errors preserve the current API error message", async () => {
+  const error = await getErrorFromResponse(
+    Response.json(
+      {
+        code: "ORGANIZATION_SETUP_REQUIRED",
+        error:
+          "Organization setup must be completed before starting a new agent turn.",
+      },
+      { status: 409 }
+    )
+  );
+
+  assert.equal(
+    error.message,
+    "Organization setup must be completed before starting a new agent turn."
+  );
+});
+
+contractTest("web.hermetic", "response errors retain the legacy chatbot contract", async () => {
+  const error = await getErrorFromResponse(
+    Response.json(
+      { code: "forbidden:chat", cause: "Thread access was denied." },
+      { status: 403 }
+    )
+  );
+
+  assert.equal(error instanceof ChatbotError, true);
+  assert.equal(error.message, "This chat belongs to another user. Please check the chat ID and try again.");
+  assert.equal(error.cause, "Thread access was denied.");
+});
+
+contractTest("web.hermetic", "response errors support nested public API errors", async () => {
+  const error = await getErrorFromResponse(
+    Response.json(
+      {
+        error: {
+          code: "SERVICE_UNAVAILABLE",
+          message: "Kestrel One is temporarily unavailable.",
+          retryable: true,
+        },
+      },
+      { status: 503 }
+    )
+  );
+
+  assert.equal(error.message, "Kestrel One is temporarily unavailable.");
+});
+
+contractTest("web.hermetic", "response errors fall back safely for invalid bodies", async () => {
+  const error = await getErrorFromResponse(
+    new Response("not json", { status: 502 })
+  );
+
+  assert.equal(error.message, "Request failed with status 502.");
+});
 
 contractTest("web.hermetic", "assistant messages with approval-only tool state are persistable", () => {
   assert.equal(

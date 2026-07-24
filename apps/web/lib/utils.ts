@@ -7,7 +7,7 @@ import type {
 import { type ClassValue, clsx } from "clsx";
 import { formatISO } from "date-fns";
 import { twMerge } from "tailwind-merge";
-import { ChatbotError, type ErrorCode } from "./errors";
+import { ChatbotError, isErrorCode } from "./errors";
 import type {
   ArtifactDocument,
   ChatMessage,
@@ -19,12 +19,43 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export async function getErrorFromResponse(response: Response): Promise<Error> {
+  const payload: unknown = await response.json().catch(() => null);
+
+  if (isRecord(payload) && isErrorCode(payload.code)) {
+    return new ChatbotError(
+      payload.code,
+      typeof payload.cause === "string" ? payload.cause : undefined
+    );
+  }
+
+  const nestedError =
+    isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+  const message =
+    (isRecord(payload) && typeof payload.error === "string"
+      ? payload.error
+      : undefined) ??
+    (nestedError && typeof nestedError.message === "string"
+      ? nestedError.message
+      : undefined) ??
+    (isRecord(payload) && typeof payload.message === "string"
+      ? payload.message
+      : undefined);
+
+  return new Error(
+    message?.trim() || `Request failed with status ${response.status}.`
+  );
+}
+
 export const fetcher = async (url: string) => {
   const response = await fetch(url);
 
   if (!response.ok) {
-    const { code, cause } = await response.json();
-    throw new ChatbotError(code as ErrorCode, cause);
+    throw await getErrorFromResponse(response);
   }
 
   return response.json();
@@ -38,8 +69,7 @@ export async function fetchWithErrorHandlers(
     const response = await fetch(input, init);
 
     if (!response.ok) {
-      const { code, cause } = await response.json();
-      throw new ChatbotError(code as ErrorCode, cause);
+      throw await getErrorFromResponse(response);
     }
 
     return response;

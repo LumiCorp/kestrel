@@ -22,6 +22,41 @@ export type ErrorCode = `${ErrorType}:${Surface}`;
 
 export type ErrorVisibility = "response" | "log" | "none";
 
+const errorTypes = new Set<ErrorType>([
+  "bad_request",
+  "unauthorized",
+  "forbidden",
+  "not_found",
+  "rate_limit",
+  "offline",
+]);
+
+const errorSurfaces = new Set<Surface>([
+  "chat",
+  "auth",
+  "api",
+  "stream",
+  "database",
+  "history",
+  "vote",
+  "document",
+  "suggestions",
+  "activate_gateway",
+]);
+
+export function isErrorCode(value: unknown): value is ErrorCode {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const [type, surface, extra] = value.split(":");
+  return (
+    extra === undefined &&
+    errorTypes.has(type as ErrorType) &&
+    errorSurfaces.has(surface as Surface)
+  );
+}
+
 export const visibilityBySurface: Record<Surface, ErrorVisibility> = {
   database: "log",
   chat: "response",
