@@ -41,6 +41,8 @@ import {
   isPersistableAssistantMessage,
 } from "@/lib/utils";
 
+const TITLE_FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,119}$/u;
+
 function workerRequest(turnId: string) {
   const baseUrl =
     process.env.KESTREL_ONE_APP_URL?.trim() || "http://localhost:43103";
@@ -327,7 +329,29 @@ export async function processDurableThreadTurn(
               modelId: turn.requestedModelId ?? undefined,
               organizationId: turn.organizationId,
               environmentId: turn.requestedEnvironmentId,
-            }).catch(() => null)
+            }).catch(async (error: unknown) => {
+              const code =
+                error &&
+                typeof error === "object" &&
+                "code" in error &&
+                typeof error.code === "string" &&
+                TITLE_FAILURE_CODE_PATTERN.test(error.code)
+                  ? error.code
+                  : "TITLE_GENERATION_FAILED";
+              console.error("Kestrel One title generation failed.", {
+                turnId: turn.id,
+                threadId: turn.threadId,
+                organizationId: turn.organizationId,
+                environmentId: turn.requestedEnvironmentId,
+                code,
+              });
+              await appendDurableTurnEvent({
+                turnId: turn.id,
+                type: "turn.activity",
+                data: { stage: "thread.title.failed", code },
+              }).catch(() => {});
+              return null;
+            })
           : null,
       signal: cancellation.signal,
       onExecutionRouted: (executionId) => {

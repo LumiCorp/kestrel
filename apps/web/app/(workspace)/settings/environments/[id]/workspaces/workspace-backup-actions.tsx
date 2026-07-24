@@ -54,6 +54,9 @@ export function WorkspaceBackupActions({
     (backup) => backup.status === "available"
   );
   const latestBackup = availableBackups[0];
+  const failedDailyBackup = backups.find(
+    (backup) => backup.reason === "daily" && backup.status === "failed"
+  );
 
   async function createBackup() {
     setBusy("backup");
@@ -142,6 +145,32 @@ export function WorkspaceBackupActions({
     }
   }
 
+  async function retryDailyBackup() {
+    if (!failedDailyBackup) return;
+    setBusy("retry");
+    try {
+      const response = await fetch(
+        `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/backups/${failedDailyBackup.id}/retry`,
+        { method: "POST" }
+      );
+      if (!response.ok) {
+        throw new Error(
+          await responseError(response, "Daily Workspace backup retry failed.")
+        );
+      }
+      await refreshBackups();
+      toast.success("Daily Workspace backup retry queued.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Daily Workspace backup retry failed."
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="flex items-center justify-end gap-2">
       <span className="text-muted-foreground text-xs tabular-nums">
@@ -165,6 +194,16 @@ export function WorkspaceBackupActions({
       >
         {busy === "backup" ? "Backing up…" : "Back up"}
       </Button>
+      {failedDailyBackup ? (
+        <Button
+          disabled={busy !== null}
+          onClick={() => void retryDailyBackup()}
+          size="sm"
+          variant="outline"
+        >
+          {busy === "retry" ? "Retrying…" : "Retry daily backup"}
+        </Button>
+      ) : null}
       {latestBackup ? (
         <Button
           disabled={busy !== null}

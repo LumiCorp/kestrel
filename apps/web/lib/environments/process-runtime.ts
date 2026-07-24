@@ -6,10 +6,17 @@ import {
   EnvironmentProvisioner,
 } from "./provisioner";
 import { withEnvironmentOperationLock } from "./reconcile-lock";
+import {
+  parseEnvironmentWorkerAttempt,
+  type EnvironmentWorkerAttempt,
+} from "./worker-failure";
 
 export async function processEnvironmentOperation(
   operationId: string,
-  options: { workerSignal?: AbortSignal | undefined } = {},
+  options: {
+    workerSignal?: AbortSignal | undefined;
+    workerAttempt?: EnvironmentWorkerAttempt | undefined;
+  } = {},
 ) {
   const operation = await knowledgeDb.query.environmentOperations.findFirst({
     where: eq(schema.environmentOperations.id, operationId),
@@ -24,6 +31,12 @@ export async function processEnvironmentOperation(
         return processQueuedWorkspaceBackup({
           operationId,
           signal: options.workerSignal,
+          workerAttempt:
+            options.workerAttempt ??
+            parseEnvironmentWorkerAttempt({
+              retryCount: 0,
+              retryLimit: 0,
+            }),
         });
       }
       const provisioner = new EnvironmentProvisioner({

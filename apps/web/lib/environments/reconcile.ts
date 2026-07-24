@@ -5,6 +5,10 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
 import { queueWorkspaceBackup } from "./backups";
+import {
+  workspaceDailyBackupDayStart,
+  workspaceDailyBackupIdempotencyKey,
+} from "./daily-backup-contract";
 import { createFlyProviderClient } from "./fly-connection";
 import {
   PROVISIONER_OPERATION_TYPES,
@@ -705,24 +709,23 @@ async function expireWorkspaceBackups(now: Date) {
 }
 
 async function createDueDailyBackup(now: Date) {
-  const cutoff = new Date(now.getTime() - 24 * 60 * 60_000);
+  const dayStart = workspaceDailyBackupDayStart(now);
   const candidates = await knowledgeDb.query.environmentWorkspaces.findMany({
     where: (table, { and, eq, isNull }) =>
       and(eq(table.status, "ready"), isNull(table.deletedAt)),
     orderBy: (table, { asc }) => [asc(table.lastActivityAt), asc(table.id)],
   });
   if (candidates.length === 0) return;
-  const [recent, active] = await Promise.all([
+  const [scheduledToday, active] = await Promise.all([
     knowledgeDb.query.workspaceBackups.findMany({
-      where: (table, { and, eq, gt, inArray }) =>
+      where: (table, { and, eq, gte, inArray }) =>
         and(
           inArray(
             table.workspaceId,
             candidates.map((candidate) => candidate.id),
           ),
           eq(table.reason, "daily"),
-          inArray(table.status, ["creating", "available"]),
-          gt(table.createdAt, cutoff),
+          gte(table.createdAt, dayStart),
         ),
       columns: { workspaceId: true },
     }),
@@ -740,7 +743,7 @@ async function createDueDailyBackup(now: Date) {
   ]);
   const candidate = selectDueDailyBackupCandidate(
     candidates,
-    [...recent, ...active].map((backup) => backup.workspaceId),
+    [...scheduledToday, ...active].map((backup) => backup.workspaceId),
   );
   if (!candidate) return;
   await queueWorkspaceBackup({
@@ -749,6 +752,7 @@ async function createDueDailyBackup(now: Date) {
     workspaceId: candidate.id,
     actorUserId: candidate.createdByUserId,
     reason: "daily",
+    idempotencyKey: workspaceDailyBackupIdempotencyKey(candidate.id, now),
   });
 }
 

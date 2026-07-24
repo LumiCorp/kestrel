@@ -488,6 +488,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_PAGE.access,
     ADMIN_PAGE.unauthorized,
   ),
+  page(
+    "app/admin/environments/page.tsx",
+    "/admin/environments",
+    ADMIN_PAGE.owner,
+    ADMIN_PAGE.access,
+    ADMIN_PAGE.unauthorized,
+  ),
   page("app/debug/page.tsx", "/debug", "debug", "admin", "admin-denied"),
 
   api("app/api/health/route.ts", "/api/health", "health", "public", "public"),
@@ -767,6 +774,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/organization/environments/[id]/workspaces/[workspaceId]/backups/[backupId]/restore/route.ts",
     "/api/organization/environments/:id/workspaces/:workspaceId/backups/:backupId/restore",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/organization/environments/[id]/workspaces/[workspaceId]/backups/[backupId]/retry/route.ts",
+    "/api/organization/environments/:id/workspaces/:workspaceId/backups/:backupId/retry",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized,
