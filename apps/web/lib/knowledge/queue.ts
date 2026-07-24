@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { ENVIRONMENT_RECONCILE_CRON } from "@/lib/environments/reconcile-schedule";
+import {
+  DAILY_BACKUP_MAX_ATTEMPTS,
+  isDailyWorkspaceBackupIdempotencyKey,
+} from "@/lib/environments/daily-backup-contract";
+import { parseEnvironmentWorkerAttempt } from "@/lib/environments/worker-failure";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
 import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
@@ -15,6 +20,7 @@ type CostPricingJobData = { backfill?: unknown };
 export const ENVIRONMENT_OPERATION_EXPIRE_SECONDS = 12 * 60 * 60;
 export const ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS = 60;
 export const ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS = 30;
+export const ENVIRONMENT_OPERATION_RETRY_LIMIT = 20;
 const MANAGED_RUNPOD_RUN_QUEUE = "ai.runpod.run";
 const MANAGED_RUNPOD_RECONCILE_QUEUE = "ai.runpod.reconcile";
 const MANAGED_RUNPOD_USAGE_QUEUE = "ai.runpod.usage";
@@ -158,21 +164,39 @@ export async function enqueueKnowledgeDocumentRun(runId: string) {
   await boss.send(KNOWLEDGE_DOCUMENT_QUEUE, { runId });
 }
 
-export async function enqueueEnvironmentOperation(operationId: string) {
+export async function enqueueEnvironmentOperation(
+  operationId: string,
+  options: {
+    retryLimit?: number | undefined;
+    retryTerminal?: boolean | undefined;
+  } = {},
+) {
   const boss = await getKnowledgeBossProducer();
   const jobId = await boss.send(
     ENVIRONMENT_OPERATION_QUEUE,
     { operationId },
     {
-      retryLimit: 20,
+      id: operationId,
+      retryLimit: options.retryLimit ?? ENVIRONMENT_OPERATION_RETRY_LIMIT,
       retryDelay: 3,
       retryBackoff: true,
       expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
       heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+      singletonKey: operationId,
     },
   );
-  if (!jobId)
-    throw new Error("The Environment operation queue rejected the job.");
+  if (jobId) return;
+  const existingJobs = await boss.findJobs<{ operationId?: unknown }>(
+    ENVIRONMENT_OPERATION_QUEUE,
+    { id: operationId },
+  );
+  const existingJob = existingJobs[0];
+  if (existingJob && NONTERMINAL_JOB_STATES.has(existingJob.state)) return;
+  if (options.retryTerminal && existingJob?.state === "failed") {
+    await boss.retry(ENVIRONMENT_OPERATION_QUEUE, operationId);
+    return;
+  }
+  throw new Error("The Environment operation queue rejected the job.");
 }
 
 export async function enqueueOrganizationDeletion(operationId: string) {
@@ -192,12 +216,10 @@ export async function enqueueOrganizationDeletion(operationId: string) {
     throw new Error("The organization deletion queue rejected the job.");
 }
 
-async function hasNonterminalEnvironmentJob(boss: PgBoss, operationId: string) {
-  const jobs = await boss.findJobs<{ operationId?: unknown }>(
-    ENVIRONMENT_OPERATION_QUEUE,
-    { data: { operationId } },
-  );
-  return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
+async function findEnvironmentOperationJobs(boss: PgBoss, operationId: string) {
+  return boss.findJobs<{ operationId?: unknown }>(ENVIRONMENT_OPERATION_QUEUE, {
+    data: { operationId },
+  });
 }
 
 export async function reconcileEnvironmentOperationQueue(boss: PgBoss) {
@@ -217,11 +239,28 @@ export async function reconcileEnvironmentOperationQueue(boss: PgBoss) {
           "workspace.backup",
         ]),
       ),
-    columns: { id: true, status: true, type: true, input: true },
+    columns: {
+      id: true,
+      status: true,
+      type: true,
+      input: true,
+      idempotencyKey: true,
+      attempt: true,
+    },
     limit: 100,
   });
   for (const operation of operations) {
-    if (await hasNonterminalEnvironmentJob(boss, operation.id)) continue;
+    const jobs = await findEnvironmentOperationJobs(boss, operation.id);
+    if (jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state))) continue;
+    if (
+      operation.type === "workspace.backup" &&
+      jobs.some((job) => job.state === "failed")
+    ) {
+      const { failExhaustedWorkspaceBackup } =
+        await import("@/lib/environments/backups");
+      await failExhaustedWorkspaceBackup(operation.id);
+      continue;
+    }
     if (
       operation.status === "running" &&
       operation.type === "workspace.backup"
@@ -232,7 +271,12 @@ export async function reconcileEnvironmentOperationQueue(boss: PgBoss) {
       await failInterruptedWorkspaceBackup(operation.id);
       continue;
     }
-    await enqueueEnvironmentOperation(operation.id);
+    const retryLimit =
+      operation.type === "workspace.backup" &&
+      isDailyWorkspaceBackupIdempotencyKey(operation.idempotencyKey)
+        ? Math.max(0, DAILY_BACKUP_MAX_ATTEMPTS - operation.attempt - 1)
+        : undefined;
+    await enqueueEnvironmentOperation(operation.id, { retryLimit });
   }
 }
 
@@ -283,6 +327,10 @@ export async function startEnvironmentLifecycleWorker() {
         if (typeof job.data?.operationId !== "string") continue;
         await processEnvironmentOperation(job.data.operationId, {
           workerSignal: job.signal,
+          workerAttempt: parseEnvironmentWorkerAttempt({
+            retryCount: job.retryCount,
+            retryLimit: job.retryLimit,
+          }),
         });
       }
     },

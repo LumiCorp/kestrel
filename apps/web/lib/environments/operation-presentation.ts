@@ -55,7 +55,10 @@ const STAGE_DETAILS: Record<string, string> = {
     "Environment updated; one or more Workspaces require provisioning retry.",
   "environment.deleted": "Environment deleted.",
   "workspace.deleted": "Workspace deleted.",
+  "workspace.backup.queued": "Waiting to start the Workspace backup…",
   "workspace.backup.exporting": "Encrypting and exporting the Workspace…",
+  "workspace.backup.retrying":
+    "The Workspace backup attempt failed and will be retried…",
   "workspace.backup.available": "Encrypted Workspace backup available.",
   "workspace.restore.importing": "Importing the encrypted Workspace backup…",
   "workspace.restore.provisioning_replacement":
