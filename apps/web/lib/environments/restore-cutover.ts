@@ -19,6 +19,24 @@ export const WORKSPACE_RESTORE_ROUTE_CAPABILITIES = [
   "session.read",
 ] as const;
 
+export function workspaceRestoreResourceIdentities(input: {
+  oldMachineId: string;
+  oldVolumeId: string;
+  replacementMachineId?: string | null | undefined;
+  replacementVolumeId?: string | null | undefined;
+}) {
+  return {
+    oldMachineId: input.oldMachineId,
+    oldVolumeId: input.oldVolumeId,
+    ...(input.replacementMachineId
+      ? { replacementMachineId: input.replacementMachineId }
+      : {}),
+    ...(input.replacementVolumeId
+      ? { replacementVolumeId: input.replacementVolumeId }
+      : {}),
+  };
+}
+
 export function selectWorkspaceBackupRecoverySource(input: {
   manifest: unknown;
   objectKey: string | null;

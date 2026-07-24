@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   KestrelClient,
   KestrelSdkError,
@@ -27,11 +27,13 @@ import {
   createEnvironmentServiceToken,
   hashEnvironmentServiceToken,
 } from "./service-tokens";
+import { workspaceLifecycleLockKey } from "./lifecycle-lock";
 import {
   performGuardedWorkspaceRestoreCutover,
   resolveWorkspaceBackupRecoverySource,
   resolveWorkspaceBackupSnapshotSourceVolumeId,
   WORKSPACE_RESTORE_ROUTE_CAPABILITIES,
+  workspaceRestoreResourceIdentities,
 } from "./restore-cutover";
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
@@ -440,6 +442,9 @@ async function prepareWorkspaceBackup(input: {
         };
       }
       await knowledgeDb.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
+        );
         await transaction
           .update(schema.environmentOperations)
           .set({
@@ -484,6 +489,9 @@ async function prepareWorkspaceBackup(input: {
   const backupId = crypto.randomUUID();
   const initialStatus = input.initialStatus ?? "running";
   await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
+    );
     await transaction.insert(schema.environmentOperations).values({
       id: operationId,
       organizationId: input.organizationId,
@@ -664,25 +672,30 @@ export async function restoreWorkspaceBackup(input: {
   const validationThreadId = validationExecution?.threadId ?? binding.threadId;
   const operationId = crypto.randomUUID();
   const startedAt = new Date();
-  await knowledgeDb.insert(schema.environmentOperations).values({
-    id: operationId,
-    organizationId: input.organizationId,
-    environmentId: input.environmentId,
-    workspaceId: input.workspaceId,
-    requestedByUserId: input.actorUserId,
-    type: "workspace.restore",
-    status: "running",
-    stage: "workspace.restore.provisioning_replacement",
-    idempotencyKey: `workspace.restore:${input.backupId}:${operationId}`,
-    input: {
-      backupId: input.backupId,
-      ...(input.validationThreadId
-        ? { validationThreadId: input.validationThreadId }
-        : {}),
-    },
-    startedAt,
-    createdAt: startedAt,
-    updatedAt: startedAt,
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
+    );
+    await transaction.insert(schema.environmentOperations).values({
+      id: operationId,
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      workspaceId: input.workspaceId,
+      requestedByUserId: input.actorUserId,
+      type: "workspace.restore",
+      status: "running",
+      stage: "workspace.restore.provisioning_replacement",
+      idempotencyKey: `workspace.restore:${input.backupId}:${operationId}`,
+      input: {
+        backupId: input.backupId,
+        ...(input.validationThreadId
+          ? { validationThreadId: input.validationThreadId }
+          : {}),
+      },
+      startedAt,
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    });
   });
   let replacementVolumeId: string | null = null;
   let replacementMachineId: string | null = null;
@@ -699,6 +712,22 @@ export async function restoreWorkspaceBackup(input: {
         : {}),
     });
     replacementVolumeId = replacementVolume.id;
+    await knowledgeDb
+      .update(schema.environmentOperations)
+      .set({
+        result: {
+          backupId: backup.id,
+          ...(snapshotId ? { snapshotId, snapshotSourceVolumeId } : {}),
+          validationThreadId,
+          ...workspaceRestoreResourceIdentities({
+            oldMachineId,
+            oldVolumeId,
+            replacementVolumeId: replacementVolume.id,
+          }),
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.environmentOperations.id, operationId));
     const replacementMachine = await provider.createReplacementWorkspaceMachine(
       {
         appName: flyAppName,
@@ -726,6 +755,12 @@ export async function restoreWorkspaceBackup(input: {
       }
     );
     replacementMachineId = replacementMachine.id;
+    const resourceIdentities = workspaceRestoreResourceIdentities({
+      oldMachineId,
+      oldVolumeId,
+      replacementMachineId: replacementMachine.id,
+      replacementVolumeId: replacementVolume.id,
+    });
     await knowledgeDb
       .update(schema.environmentOperations)
       .set({
@@ -735,8 +770,7 @@ export async function restoreWorkspaceBackup(input: {
           ...(snapshotId
             ? { snapshotId, snapshotSourceVolumeId }
             : {}),
-          replacementMachineId: replacementMachine.id,
-          replacementVolumeId: replacementVolume.id,
+          ...resourceIdentities,
         },
         updatedAt: new Date(),
       })
@@ -874,10 +908,7 @@ export async function restoreWorkspaceBackup(input: {
                 : {}),
               validationThreadId,
               restoredSessionVersion: description.version,
-              oldMachineId,
-              oldVolumeId,
-              replacementMachineId: replacementMachine.id,
-              replacementVolumeId: replacementVolume.id,
+              ...resourceIdentities,
             },
             completedAt,
             updatedAt: completedAt,
@@ -907,6 +938,14 @@ export async function restoreWorkspaceBackup(input: {
               stage: "workspace.restore.post_cutover_validation_failed",
               errorCode: "WORKSPACE_RESTORE_POST_CUTOVER_FAILED",
               errorMessage,
+              result: {
+                backupId: backup.id,
+                ...(snapshotId
+                  ? { snapshotId, snapshotSourceVolumeId }
+                  : {}),
+                validationThreadId,
+                ...resourceIdentities,
+              },
               completedAt: failedAt,
               updatedAt: failedAt,
             })
@@ -937,10 +976,7 @@ export async function restoreWorkspaceBackup(input: {
               : {}),
             validationThreadId,
             restoredSessionVersion: validation.version,
-            oldMachineId,
-            oldVolumeId,
-            replacementMachineId: replacementMachine.id,
-            replacementVolumeId: replacementVolume.id,
+            ...resourceIdentities,
             cleanupPending: true,
           },
           updatedAt: new Date(),
@@ -984,6 +1020,17 @@ export async function restoreWorkspaceBackup(input: {
             error instanceof Error
               ? error.message.slice(0, 500)
               : "Workspace restore failed.",
+          result: {
+            backupId: backup.id,
+            ...(snapshotId ? { snapshotId, snapshotSourceVolumeId } : {}),
+            validationThreadId,
+            ...workspaceRestoreResourceIdentities({
+              oldMachineId,
+              oldVolumeId,
+              replacementMachineId,
+              replacementVolumeId,
+            }),
+          },
           completedAt: failedAt,
           updatedAt: failedAt,
         })

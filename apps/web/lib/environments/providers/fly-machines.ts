@@ -922,7 +922,55 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         }
       )
     );
-    return toMachine(updated);
+    const applied = machineConfigurationMatches(updated.config, {
+      runtimeImage: input.runtimeImage,
+      environment: nextEnvironment,
+      stopConfig: input.stopConfig,
+    })
+      ? updated
+      : await this.waitForMachineConfiguration({
+          appName: input.appName,
+          machineId: input.machineId,
+          runtimeImage: input.runtimeImage,
+          environment: nextEnvironment,
+          stopConfig: input.stopConfig,
+        });
+    return toMachine(applied);
+  }
+
+  private async waitForMachineConfiguration(input: {
+    appName: string;
+    machineId: string;
+    runtimeImage: string;
+    environment: Record<string, string>;
+    stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
+  }) {
+    const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
+    while (true) {
+      const machine = parseResponse(
+        machineSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
+          { method: "GET" }
+        )
+      );
+      if (
+        machineConfigurationMatches(machine.config, {
+          runtimeImage: input.runtimeImage,
+          environment: input.environment,
+          stopConfig: input.stopConfig,
+        })
+      ) {
+        return machine;
+      }
+      if (Date.now() >= deadline) {
+        throw new EnvironmentProviderError(
+          "FLY_RESOURCE_CONFLICT",
+          "Fly Machine did not persist the requested runtime configuration before the readiness deadline."
+        );
+      }
+      await this.sleepImpl(this.healthPollIntervalMs);
+    }
   }
 
   private async request(
@@ -1226,9 +1274,9 @@ function environmentsEqual(
 function parseFlyDurationNanoseconds(value: string) {
   const unitNanoseconds: Record<string, number> = {
     ns: 1,
-    us: 1_000,
-    "µs": 1_000,
-    "μs": 1_000,
+    us: 1000,
+    "µs": 1000,
+    "μs": 1000,
     ms: 1_000_000,
     s: 1_000_000_000,
     m: 60_000_000_000,
@@ -1261,6 +1309,31 @@ function stopConfigsEqual(
     !requested ||
     (current?.signal === requested.signal &&
       current.timeout === requested.timeout)
+  );
+}
+
+function machineConfigurationMatches(
+  current:
+    | {
+        image?: string | undefined;
+        env?: Record<string, string> | undefined;
+        stop_config?:
+          | { signal: string; timeout: number }
+          | null
+          | undefined;
+      }
+    | undefined,
+  requested: {
+    runtimeImage: string;
+    environment: Record<string, string>;
+    stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
+  }
+) {
+  return Boolean(
+    current?.image &&
+      sameImageDigest(current.image, requested.runtimeImage) &&
+      environmentsEqual(current.env ?? {}, requested.environment) &&
+      stopConfigsEqual(current.stop_config, requested.stopConfig)
   );
 }
 

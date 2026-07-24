@@ -5,6 +5,7 @@ import {
   resolveWorkspaceBackupSnapshotSourceVolumeId,
   selectWorkspaceBackupRecoverySource,
   WORKSPACE_RESTORE_ROUTE_CAPABILITIES,
+  workspaceRestoreResourceIdentities,
   WorkspaceRestoreCasConflictError,
   WorkspaceRestorePostCutoverError,
 } from "./restore-cutover";
@@ -140,6 +141,35 @@ contractTest("web.hermetic", "Workspace restore validation uses the existing ses
     "profile.read",
     "session.read",
   ]);
+});
+
+contractTest("web.hermetic", "Workspace restore operation results retain both resource sets", () => {
+  assert.deepEqual(
+    workspaceRestoreResourceIdentities({
+      oldMachineId: "machine-old",
+      oldVolumeId: "volume-old",
+      replacementMachineId: "machine-new",
+      replacementVolumeId: "volume-new",
+    }),
+    {
+      oldMachineId: "machine-old",
+      oldVolumeId: "volume-old",
+      replacementMachineId: "machine-new",
+      replacementVolumeId: "volume-new",
+    },
+  );
+  assert.deepEqual(
+    workspaceRestoreResourceIdentities({
+      oldMachineId: "machine-old",
+      oldVolumeId: "volume-old",
+      replacementVolumeId: "volume-new",
+    }),
+    {
+      oldMachineId: "machine-old",
+      oldVolumeId: "volume-old",
+      replacementVolumeId: "volume-new",
+    },
+  );
 });
 
 contractTest("web.hermetic", "Workspace restore validates before one CAS cutover and cleanup", async () => {

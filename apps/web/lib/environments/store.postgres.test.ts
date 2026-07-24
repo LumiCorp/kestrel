@@ -46,6 +46,7 @@ contractTest(
       auth,
       githubPolicy,
       { databaseEnvironmentProvisioningRepository },
+      lifecycleLocks,
     ] = await Promise.all([
       import("@/lib/db/runtime"),
       import("./store"),
@@ -53,6 +54,7 @@ contractTest(
       import("@lumi/kestrel-environment-auth"),
       import("@/lib/integrations/github-policy"),
       import("./provisioner"),
+      import("./lifecycle-lock"),
     ]);
     const sql = postgres(databaseUrl, { max: 1 });
     context.after(async () => {
@@ -460,6 +462,74 @@ contractTest(
       effectiveCapabilities: execution?.effectiveCapabilities,
     });
     assert.ok(execution?.effectiveCapabilities.includes("route:run.stream"));
+
+    const authorizationRaceOperationId = `authorization-race-${suffix}`;
+    const authorizationRaceRunId = `authorization-race-run-${suffix}`;
+    let lifecycleLockHeld!: () => void;
+    const lifecycleLockReady = new Promise<void>((resolve) => {
+      lifecycleLockHeld = resolve;
+    });
+    let insertLifecycleOperation!: () => void;
+    const insertLifecycleOperationNow = new Promise<void>((resolve) => {
+      insertLifecycleOperation = resolve;
+    });
+    const lifecycleInsertion = sql.begin(async (transaction) => {
+      await transaction`
+        SELECT pg_advisory_xact_lock(
+          hashtextextended(
+            ${lifecycleLocks.workspaceLifecycleLockKey(projectBinding.workspace.id)},
+            0
+          )
+        )
+      `;
+      lifecycleLockHeld();
+      await insertLifecycleOperationNow;
+      await transaction`
+        INSERT INTO "environment_operations" (
+          "id", "organization_id", "environment_id", "workspace_id",
+          "requested_by_user_id", "type", "status", "stage",
+          "idempotency_key", "created_at", "updated_at"
+        ) VALUES (
+          ${authorizationRaceOperationId}, ${organizationA},
+          ${createdEnvironment.environment.id}, ${projectBinding.workspace.id},
+          ${userA}, 'workspace.stop', 'queued',
+          'environment.machine.stopping', ${authorizationRaceOperationId},
+          now(), now()
+        )
+      `;
+    });
+    await lifecycleLockReady;
+    const racedAuthorization =
+      executionRoute.finalizeHostedEnvironmentExecutionAuthorization({
+        runId: authorizationRaceRunId,
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        threadId: projectThreadId,
+        actorUserId: userA,
+        agentId: "kestrel-one",
+        effectiveCapabilities: route.effectiveCapabilities,
+        reasoningPolicy: route.reasoningPolicy,
+        recordExecution: { projectContextRevisionId: revisionId },
+      });
+    insertLifecycleOperation();
+    await lifecycleInsertion;
+    assert.equal(await racedAuthorization, null);
+    const [racedExecution] = await sql<Array<{ count: number }>>`
+      SELECT count(*)::integer AS "count"
+      FROM "environment_run_executions"
+      WHERE "id" = ${authorizationRaceRunId}
+    `;
+    assert.equal(racedExecution?.count, 0);
+    await sql`
+      UPDATE "environment_operations"
+      SET
+        "status" = 'completed',
+        "stage" = 'environment.machine.stopped',
+        "completed_at" = now(),
+        "updated_at" = now()
+      WHERE "id" = ${authorizationRaceOperationId}
+    `;
 
     const idleAt = new Date("2026-07-13T12:00:00.000Z");
     const idleOperation = await environmentStore.requestWorkspaceIdleStop({

@@ -838,6 +838,49 @@ contractTest("web.hermetic", "Fly Workspace image updates repair missing gracefu
   );
 });
 
+contractTest("web.hermetic", "Fly Workspace image updates verify the persisted graceful stop configuration", async () => {
+  const methods: string[] = [];
+  const digest = `sha256:${"d".repeat(64)}`;
+  const currentConfig = {
+    image: `registry.fly.io/kestrel-one-runner@${digest}`,
+    env: { KESTREL_WORKSPACE_ID: "workspace-1" },
+  };
+  let getCount = 0;
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    healthPollIntervalMs: 0,
+    sleepImpl: async () => {},
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      if (method === "GET") getCount += 1;
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        instance_id: "instance-1",
+        config:
+          getCount >= 2
+            ? {
+                ...currentConfig,
+                stop_config: KESTREL_WORKSPACE_STOP_CONFIG,
+              }
+            : currentConfig,
+      });
+    }) as typeof fetch,
+  });
+
+  await client.updateMachineImage({
+    appName: "app-1",
+    machineId: "machine-1",
+    runtimeImage: `registry.fly.io/kestrel-one-runner@${digest}`,
+    stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
+  });
+
+  assert.deepEqual(methods, ["GET", "POST", "GET"]);
+});
+
 contractTest("web.hermetic", "Fly Workspace image updates accept canonical graceful stop durations", async () => {
   const requests: Array<{ method: string; body: unknown }> = [];
   const digest = `sha256:${"c".repeat(64)}`;

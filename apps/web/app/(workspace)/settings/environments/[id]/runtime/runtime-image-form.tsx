@@ -23,7 +23,10 @@ export function RuntimeImageForm({
       const response = await fetch(`/api/organization/environments/${environmentId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ runtimeImage: runtimeImage.trim() }),
+        body: JSON.stringify({
+          runtimeImage: runtimeImage.trim(),
+          reconcile: runtimeImage.trim() === savedRuntimeImage,
+        }),
       });
       if (!response.ok) {
         const payload = (await response.json()) as { error?: string };
@@ -47,13 +50,11 @@ export function RuntimeImageForm({
         value={runtimeImage}
       />
       <Button
-        disabled={
-          busy || !runtimeImage.trim() || runtimeImage.trim() === savedRuntimeImage
-        }
+        disabled={busy || !runtimeImage.trim()}
         onClick={() => void save()}
         variant="outline"
       >
-        {busy ? "Saving…" : "Update"}
+        {busy ? "Saving…" : "Update / reconcile"}
       </Button>
     </div>
   );
