@@ -26,6 +26,7 @@ import { getStripeBillingConfigStatus } from "@/lib/billing/config";
 import { deliverTransactionalEmail } from "@/lib/email/service";
 import { resolveKestrelAppUrl } from "./app-url";
 import { isDisallowedToolProviderSignIn } from "./auth-policy";
+import { resolveAuthSecurityPolicy } from "./auth-security-policy";
 import {
   assertInvitationSignupFromHeaders,
   INVITATION_EXPIRY_SECONDS,
@@ -47,34 +48,7 @@ const dialect = new PostgresDialect({
 const configuredAppUrl = resolveKestrelAppUrl(process.env);
 const baseURL: string | undefined =
   process.env.VERCEL === "1" ? configuredAppUrl : undefined;
-const cookieDomain: string | undefined =
-  process.env.VERCEL === "1"
-    ? new URL(configuredAppUrl).hostname
-    : undefined;
-
-const localDevOrigins = [3000, 3001, 3100, 43_103].flatMap((port) => [
-  `http://localhost:${port}`,
-  `http://127.0.0.1:${port}`,
-]);
-
-const mobileTrustedOrigins = (
-  process.env.KESTREL_ONE_MOBILE_TRUSTED_ORIGINS ?? "kestrelone://"
-)
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
-const trustedOrigins = Array.from(
-  new Set(
-    [
-      ...(process.env.NODE_ENV === "production" ? [] : ["exp://"]),
-      ...mobileTrustedOrigins,
-      "https://appleid.apple.com",
-      configuredAppUrl,
-      ...localDevOrigins,
-    ].filter((origin): origin is string => Boolean(origin)),
-  ),
-);
+const authSecurityPolicy = resolveAuthSecurityPolicy(process.env);
 
 const adminUserIds = (process.env.ADMIN_USER_IDS ?? "")
   .split(",")
@@ -301,11 +275,6 @@ export const auth = betterAuth({
     lastLoginMethod(),
     nextCookies(),
   ],
-  trustedOrigins,
-  advanced: {
-    crossSubDomainCookies: {
-      enabled: process.env.NODE_ENV === "production",
-      domain: cookieDomain,
-    },
-  },
+  trustedOrigins: authSecurityPolicy.trustedOrigins,
+  advanced: authSecurityPolicy.advanced,
 });

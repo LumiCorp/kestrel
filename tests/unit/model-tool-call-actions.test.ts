@@ -265,7 +265,6 @@ contractTest("runtime.hermetic", "switch_mode preserves the explicit requested m
         name: "kestrel_switch_mode",
         input: {
           mode: "plan",
-          message: "Switched to Plan mode.",
         },
       },
     ],
@@ -274,7 +273,6 @@ contractTest("runtime.hermetic", "switch_mode preserves the explicit requested m
   assert.deepEqual(normalized.action, {
     kind: "switch_mode",
     mode: "plan",
-    message: "Switched to Plan mode.",
   });
   assert.equal(normalized.assistantProgress, undefined);
 });

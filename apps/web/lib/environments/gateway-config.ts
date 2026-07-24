@@ -28,14 +28,20 @@ export async function reportEnvironmentGatewayNgrokStatus(input: {
   connectionId: string;
   status: "connected" | "degraded";
   failureCode?: string | undefined;
+  failureMessage?: string | undefined;
 }) {
   const environment = await knowledgeDb.query.environments.findFirst({
     where: (table, { eq: equals }) => equals(table.id, input.environmentId),
   });
-  if (!environment?.gatewayServiceTokenHash || !verifyEnvironmentServiceToken({
-    token: readBearer(input.authorization),
-    expectedHash: environment.gatewayServiceTokenHash,
-  })) {
+  if (
+    !(
+      environment?.gatewayServiceTokenHash &&
+      verifyEnvironmentServiceToken({
+        token: readBearer(input.authorization),
+        expectedHash: environment.gatewayServiceTokenHash,
+      })
+    )
+  ) {
     throw new EnvironmentGatewayConfigError("ENVIRONMENT_GATEWAY_UNAUTHORIZED", 401);
   }
   const connection = await knowledgeDb.query.appConnections.findFirst({
@@ -56,12 +62,40 @@ export async function reportEnvironmentGatewayNgrokStatus(input: {
       connectionId: connection.id,
     });
   } else {
-    await markAppConnectionDegraded({
-      organizationId: environment.organizationId,
-      environmentId: environment.id,
-      appKey: "ngrok",
-      connectionId: connection.id,
-      failureCode: input.failureCode ?? "NGROK_AGENT_ENDPOINT_FAILED",
+    const now = new Date();
+    await knowledgeDb.transaction(async (transaction) => {
+      await transaction
+        .update(schema.appConnections)
+        .set({
+          status: "degraded",
+          failureCode: input.failureCode ?? "NGROK_AGENT_ENDPOINT_FAILED",
+          failureMessage: input.failureMessage?.slice(0, 500) ?? null,
+          lastHealthAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.appConnections.id, connection.id),
+            eq(schema.appConnections.organizationId, environment.organizationId),
+            eq(schema.appConnections.environmentId, environment.id),
+            eq(schema.appConnections.appKey, "ngrok"),
+            inArray(schema.appConnections.status, ["connected", "degraded"]),
+          ),
+        );
+      await transaction
+        .update(schema.workspacePreviewLeases)
+        .set({
+          status: "failed",
+          failureCode: "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE",
+          closedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.workspacePreviewLeases.connectionId, connection.id),
+            eq(schema.workspacePreviewLeases.status, "provisioning"),
+          ),
+        );
     });
   }
 }
@@ -147,8 +181,11 @@ export async function resolveEnvironmentGatewayConfig(input: {
         ),
     ]);
 
+  const hasNgrokPreviews = previews.some(
+    (preview) => preview.ingressProvider === "ngrok",
+  );
   let ngrokCredential = null;
-  if (ngrokConnection) {
+  if (ngrokConnection && hasNgrokPreviews) {
     try {
       const resolved = await resolveEnvironmentAppCredential({
         organizationId: environment.organizationId,
@@ -167,7 +204,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
         appKey: "ngrok",
         connectionId: ngrokConnection.id,
         failureCode: "NGROK_CREDENTIAL_UNAVAILABLE",
-      }).catch(() => undefined);
+      }).catch(() => {});
     }
   }
 
@@ -203,7 +240,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
     environmentId: environment.id,
     revision: now.toISOString(),
     ngrok:
-      ngrokConnection && ngrokCredential
+      hasNgrokPreviews && ngrokConnection && ngrokCredential
         ? {
             connectionId: ngrokConnection.id,
             authtoken: ngrokCredential.authtoken,
@@ -234,6 +271,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
               workspaceId: preview.workspaceId,
               machineId: workspace.flyMachineId,
               hostname: preview.hostname,
+              ingress: preview.ingressProvider,
               port: preview.port,
               expiresAt: preview.expiresAt.toISOString(),
               relayTicket: signPreviewRelayTicket({

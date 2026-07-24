@@ -336,7 +336,11 @@ export class DevShellSupervisor {
       cwd,
       command: normalizedCommand,
       request: input.sourceWriteGuard,
-      internalStateRoots: [await realpath(this.baseDir).catch(() => resolve(this.baseDir))],
+      internalStateRoots: [
+        await realpath(this.baseDir).catch(() => resolve(this.baseDir)),
+        join(workspaceRoot, ".kestrel"),
+        join(workspaceRoot, ".local", "share", "kestrel"),
+      ],
     });
     assertSourceWriteAuthority({
       authority: input.sourceWriteAuthority,

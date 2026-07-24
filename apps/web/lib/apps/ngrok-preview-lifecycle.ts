@@ -13,7 +13,7 @@ const RESERVED_PORTS = new Set([43_104, 43_105]);
 
 type AuthorizedPolicy = Awaited<ReturnType<typeof authorizeAppRuntime>>;
 
-export async function handleNgrokPreviewLifecycle(input: {
+export async function handlePreviewLifecycle(input: {
   request: Request;
   path: string[];
   capability: string;
@@ -21,11 +21,19 @@ export async function handleNgrokPreviewLifecycle(input: {
   ticket: EnvironmentExecutionTicket;
   policy: AuthorizedPolicy;
 }) {
-  if (!(input.policy.connectionId && input.policy.connection)) {
+  const environment = await knowledgeDb.query.environments.findFirst({
+    where: (table, { eq: equals }) => equals(table.id, input.ticket.environmentId),
+    columns: { previewIngressProvider: true },
+  });
+  const ingressProvider = environment?.previewIngressProvider ?? "ngrok";
+  const ngrokCredential = input.policy.credential?.kind === "ngrok_agent"
+    ? input.policy.credential
+    : null;
+  if (ingressProvider === "ngrok" && !(input.policy.connectionId && input.policy.connection && ngrokCredential)) {
     throw new AppRuntimeError("NGROK_PREVIEW_CONNECTION_REQUIRED", 409);
   }
-  if (input.policy.credential?.kind !== "ngrok_agent") {
-    throw new AppRuntimeError("NGROK_PREVIEW_CREDENTIAL_INVALID", 503);
+  if (ingressProvider !== "ngrok" && ingressProvider !== "kestrel_edge") {
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE", 503);
   }
   switch (input.capability) {
     case "publish":
@@ -33,8 +41,12 @@ export async function handleNgrokPreviewLifecycle(input: {
         {
           preview: await publishPreview({
             ...input,
-            connectionId: input.policy.connectionId,
-            wildcardDomain: input.policy.credential.wildcardDomain,
+            ingressProvider,
+            connectionId: ingressProvider === "ngrok" ? input.policy.connectionId : null,
+            wildcardDomain:
+              ingressProvider === "ngrok"
+                ? ngrokCredential!.wildcardDomain
+                : edgePreviewHostSuffix(),
             body: await input.request.json().catch(() => null),
           }),
         },
@@ -63,11 +75,14 @@ export async function handleNgrokPreviewLifecycle(input: {
   }
 }
 
+export const handleNgrokPreviewLifecycle = handlePreviewLifecycle;
+
 async function publishPreview(input: {
   ticket: EnvironmentExecutionTicket;
   authorization: string;
-  connectionId: string;
+  connectionId: string | null;
   wildcardDomain: string;
+  ingressProvider: "ngrok" | "kestrel_edge";
   body: unknown;
 }) {
   const body = parsePublishBody(input.body);
@@ -84,7 +99,7 @@ async function publishPreview(input: {
       maximumExpiresAt.getTime()
     )
   );
-  const hostname = `p-${randomBytes(16).toString("hex")}.${input.wildcardDomain.slice(2)}`;
+  const hostname = `p-${randomBytes(16).toString("hex")}.${input.wildcardDomain.replace(/^\*\./u, "")}`;
   const projectId = await requireProjectId(input.ticket.threadId);
   let lease: typeof schema.workspacePreviewLeases.$inferSelect | undefined;
   try {
@@ -134,6 +149,7 @@ async function publishPreview(input: {
           runId: input.ticket.runId,
           actorId: input.ticket.actorId,
           connectionId: input.connectionId,
+          ingressProvider: input.ingressProvider,
           port: body.port,
           name: body.name,
           hostname,
@@ -174,13 +190,46 @@ async function activateLease(
   ticket: EnvironmentExecutionTicket,
   authorization: string
 ) {
-  await refreshGateway(ticket, authorization);
+  try {
+    await refreshGateway(ticket, authorization);
+  } catch (error) {
+    const now = new Date();
+    await knowledgeDb
+      .update(schema.workspacePreviewLeases)
+      .set({
+        status: "failed",
+        failureCode: "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE",
+        closedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.workspacePreviewLeases.id, lease.id),
+          eq(schema.workspacePreviewLeases.status, "provisioning"),
+        ),
+      );
+    throw error;
+  }
   const [active] = await knowledgeDb
     .update(schema.workspacePreviewLeases)
     .set({ status: "active", failureCode: null, updatedAt: new Date() })
-    .where(eq(schema.workspacePreviewLeases.id, lease.id))
+    .where(
+      and(
+        eq(schema.workspacePreviewLeases.id, lease.id),
+        eq(schema.workspacePreviewLeases.status, "provisioning"),
+      ),
+    )
     .returning();
-  return describe(active ?? lease);
+  if (!active) {
+    const concurrent = await knowledgeDb.query.workspacePreviewLeases.findFirst({
+      where: eq(schema.workspacePreviewLeases.id, lease.id),
+    });
+    if (concurrent?.status === "active") {
+      return describe(concurrent);
+    }
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE", 503);
+  }
+  return describe(active);
 }
 
 async function listPreviews(ticket: EnvironmentExecutionTicket) {
@@ -381,7 +430,22 @@ function describe(lease: typeof schema.workspacePreviewLeases.$inferSelect) {
     expiresAt: lease.expiresAt.toISOString(),
     maximumExpiresAt: lease.maximumExpiresAt.toISOString(),
     publicAccess: "anonymous_bearer_url" as const,
+    ingressProvider: lease.ingressProvider,
   };
+}
+
+function edgePreviewHostSuffix() {
+  const suffix =
+    process.env.KESTREL_PREVIEW_HOST_SUFFIX?.trim() ||
+    "preview.kestrelagents.dev";
+  if (
+    suffix.startsWith("*.") ||
+    suffix.length > 240 ||
+    !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u.test(suffix)
+  ) {
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE", 503);
+  }
+  return suffix;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

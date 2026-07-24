@@ -35,21 +35,39 @@ export async function createAdminEnvironment(input: {
     environment: input.environment,
     runtimeTemplate: infrastructure.defaultRuntimeTemplate,
   });
-  await logAdminEvent({
-    organizationId: input.organizationId,
-    actorUserId: input.actorUserId,
-    category: "environments",
-    action: "environment.create.requested",
-    targetType: "environment",
-    targetId: created.environment.id,
-    message: `Requested Environment ${created.environment.name}.`,
-    metadata: {
-      region: created.environment.region,
-      operationId: created.operation?.id,
-    },
-  });
-  await enqueueEnvironmentOperation(created.operation.id);
+  await recordEnvironmentCreationSideEffect("audit", async () =>
+    logAdminEvent({
+      organizationId: input.organizationId,
+      actorUserId: input.actorUserId,
+      category: "environments",
+      action: "environment.create.requested",
+      targetType: "environment",
+      targetId: created.environment.id,
+      message: `Requested Environment ${created.environment.name}.`,
+      metadata: {
+        region: created.environment.region,
+        operationId: created.operation?.id,
+      },
+    }),
+  );
+  await recordEnvironmentCreationSideEffect("dispatch", async () =>
+    enqueueEnvironmentOperation(created.operation.id),
+  );
   return created;
+}
+
+async function recordEnvironmentCreationSideEffect(
+  sideEffect: "audit" | "dispatch",
+  run: () => Promise<void>,
+) {
+  try {
+    await run();
+  } catch (error) {
+    console.error("Environment creation committed but post-commit work failed.", {
+      sideEffect,
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
 }
 
 export async function listAdminEnvironments(organizationId: string) {
@@ -325,6 +343,39 @@ export async function updateAdminEnvironmentReasoningPolicy(input: {
     targetId: input.environmentId,
     message: `Updated Environment ${environment.name} provider reasoning policy.`,
     metadata: { request: input.request, retention: input.retention },
+  });
+  return environment;
+}
+
+export async function updateAdminEnvironmentPreviewIngress(input: {
+  organizationId: string;
+  actorUserId: string;
+  environmentId: string;
+  previewIngressProvider: "ngrok" | "kestrel_edge";
+}) {
+  const [environment] = await knowledgeDb
+    .update(schema.environments)
+    .set({
+      previewIngressProvider: input.previewIngressProvider,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.environments.id, input.environmentId),
+        eq(schema.environments.organizationId, input.organizationId),
+      ),
+    )
+    .returning();
+  if (!environment) throw new Error("Environment not found.");
+  await logAdminEvent({
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    category: "environments",
+    action: "environment.preview_ingress.updated",
+    targetType: "environment",
+    targetId: input.environmentId,
+    message: `Selected ${input.previewIngressProvider} for new Workspace previews.`,
+    metadata: { previewIngressProvider: input.previewIngressProvider },
   });
   return environment;
 }

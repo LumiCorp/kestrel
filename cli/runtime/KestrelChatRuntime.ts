@@ -77,6 +77,7 @@ import type {
   ModelRequest,
 } from "../../src/kestrel/contracts/model-io.js";
 import type { SessionStore } from "../../src/kestrel/contracts/store.js";
+import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 import type { Microsoft365ServicePort } from "../../src/apps/microsoft365.js";
 import type { GoogleWorkspaceServicePort } from "../../src/apps/googleWorkspace.js";
@@ -180,6 +181,9 @@ interface RuntimeBootstrap {
   workspaceGitService?: WorkspaceGitService | undefined;
   workspaceGitReady?: Promise<void> | undefined;
   close: () => Promise<void>;
+  recoverOrphanedActiveRun?:
+    | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
+    | undefined;
   entryStepAgent: string;
   readFinalizedPayload?:
     | ((sessionId: string) => Promise<unknown | undefined>)
@@ -259,6 +263,9 @@ export interface KestrelChatRuntimeOptions {
 }
 
 export class KestrelChatRuntime {
+  readonly recoverOrphanedActiveRun:
+    | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
+    | undefined;
   private readonly kestrel: Kestrel;
   private readonly threadRuntime: ThreadRuntime | undefined;
   private readonly taskGraphStore: ProductTaskGraphStore | undefined;
@@ -388,6 +395,7 @@ export class KestrelChatRuntime {
     this.workspaceGitReady = bootstrap.workspaceGitReady ?? Promise.resolve();
     this.entryStepAgent = bootstrap.entryStepAgent;
     this.closePool = bootstrap.close;
+    this.recoverOrphanedActiveRun = bootstrap.recoverOrphanedActiveRun;
     this.readFinalizedPayload = bootstrap.readFinalizedPayload;
     this.prepareHostedMcpRuntime = bootstrap.prepareHostedMcpRuntime;
     this.releaseRuntimeAuthorization = bootstrap.releaseRuntimeAuthorization;
@@ -2566,6 +2574,13 @@ function createDefaultRuntime(
     onRunEvent,
     storeHandle.store,
     storeHandle.close,
+    undefined,
+    false,
+    false,
+    undefined,
+    storeHandle.driver === "sqlite"
+      ? (sessionId) => (storeHandle.store as PostgresSessionStore).recoverOrphanedActiveRun(sessionId)
+      : undefined,
   );
 }
 
@@ -2628,6 +2643,9 @@ function createRuntimeWithStore(
   enableUserTerminals = false,
   enableWorkspaceChanges = false,
   resolveAttachments?: RuntimeFactoryWithStoreOptions["resolveAttachments"],
+  recoverOrphanedActiveRun?:
+    | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
+    | undefined,
 ): RuntimeBootstrap {
   const runtimeEnv = environment?.runtimeEnv ?? process.env;
   const modelEnv = environment?.modelEnv ?? process.env;
@@ -2933,6 +2951,7 @@ function createRuntimeWithStore(
     ...(workspaceGitService !== undefined ? { workspaceGitService } : {}),
     ...(workspaceGitReady !== undefined ? { workspaceGitReady } : {}),
     entryStepAgent: registration.entryStepAgent,
+    ...(recoverOrphanedActiveRun !== undefined ? { recoverOrphanedActiveRun } : {}),
     reasoningPolicyReady,
     readFinalizedPayload: async (sessionId: string) => {
       const session = await kestrel.getSession(sessionId);

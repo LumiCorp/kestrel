@@ -693,7 +693,6 @@ export function buildReferenceReactCommandBatchFromAction(input: {
           name: "switch_mode",
           input: {
             mode: action.mode,
-            message: action.message,
           },
         },
       ],

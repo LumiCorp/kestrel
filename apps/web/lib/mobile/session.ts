@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import type { Session } from "@/lib/auth-types";
-import { getSessionCookie } from "better-auth/cookies";
+import { getKestrelSessionCookie } from "@/lib/auth-security-policy";
 import { ensureOrganizationDefaultEnvironment } from "@/lib/environments/store";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
@@ -150,7 +150,9 @@ export function mobileSessionFailureFacts(request: Request, error: unknown) {
     status,
     code,
     hasCookie: request.headers.has("cookie"),
-    hasBetterAuthSessionCookie: Boolean(getSessionCookie(request.headers)),
+    hasBetterAuthSessionCookie: Boolean(
+      getKestrelSessionCookie(request.headers)
+    ),
     hasAuthorization: request.headers.has("authorization"),
     hasApiKey: request.headers.has("x-api-key"),
   };

@@ -423,8 +423,31 @@ export async function updateThreadTitleForUser(input: {
   return thread ?? null;
 }
 
+export async function updateThreadInteractionModeForUser(input: {
+  id: string;
+  userId: string;
+  organizationId: string;
+  interactionMode: "chat" | "plan" | "build";
+}) {
+  const access = await getThreadAccessForUser(
+    input.id,
+    input.userId,
+    input.organizationId,
+  );
+  if (!access?.canManage) {
+    return null;
+  }
+  const [thread] = await knowledgeDb
+    .update(schema.threads)
+    .set({ interactionMode: input.interactionMode, updatedAt: new Date() })
+    .where(eq(schema.threads.id, input.id))
+    .returning();
+  return thread ?? null;
+}
+
 export async function saveThreadMessages(
-  messages: Array<Partial<DbThreadMessage>>
+  messages: Array<Partial<DbThreadMessage>>,
+  options?: { meterUsage?: boolean }
 ) {
   if (messages.length === 0) {
     return [];
@@ -489,14 +512,16 @@ export async function saveThreadMessages(
       .set({ updatedAt: new Date() })
       .where(inArray(schema.threads.id, threadIds));
   }
-  await meterPersistedModelMessages(result.map((message) => message.id)).catch(
-    (error) => {
-      console.error(
-        "Model usage metering will retry from the durable message ledger.",
-        { message: error instanceof Error ? error.message : "Unknown error" }
-      );
-    }
-  );
+  if (options?.meterUsage !== false) {
+    await meterPersistedModelMessages(result.map((message) => message.id)).catch(
+      (error) => {
+        console.error(
+          "Model usage metering will retry from the durable message ledger.",
+          { message: error instanceof Error ? error.message : "Unknown error" }
+        );
+      }
+    );
+  }
   return result;
 }
 

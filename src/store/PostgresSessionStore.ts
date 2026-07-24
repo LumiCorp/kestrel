@@ -802,6 +802,53 @@ export class PostgresSessionStore implements SessionStore {
     });
   }
 
+  async recoverOrphanedActiveRun(sessionId: string): Promise<{ runId?: string | undefined }> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const session = await this.getSessionLeaseStateForUpdate(sessionId, executor);
+      if (session === null || session.activeRunId === undefined) {
+        return {};
+      }
+
+      const activeRun = await this.getRunLeaseStateForUpdate(session.activeRunId, executor);
+      if (activeRun !== null && activeRun.sessionId !== session.sessionId) {
+        throw createRuntimeFailure(
+          "STORE_ACTIVE_RUN_SESSION_MISMATCH",
+          `Active run ${activeRun.runId} does not belong to session ${session.sessionId}.`,
+          {
+            sessionId: session.sessionId,
+            activeRunId: activeRun.runId,
+            activeRunSessionId: activeRun.sessionId,
+          },
+        );
+      }
+
+      if (activeRun !== null) {
+        await executor.query(
+          `UPDATE runs
+              SET status = 'FAILED',
+                  completed_at = COALESCE(completed_at, NOW()),
+                  error_json = $2::jsonb
+            WHERE run_id = $1`,
+          [
+            activeRun.runId,
+            stringifySanitizedJson({
+              code: "RUNNER_ORPHANED_ACTIVE_RUN",
+              message: "The process-owned runner no longer has a live execution for this persisted run.",
+              details: {
+                sessionId: session.sessionId,
+                runId: activeRun.runId,
+              },
+            }),
+          ],
+        );
+      }
+
+      await this.releaseActiveRunLeaseWithExecutor(executor, session.sessionId, session.activeRunId);
+      return { runId: session.activeRunId };
+    });
+  }
+
   async acquireRunLease(runId: string, sessionId: string): Promise<void> {
     await this.ensureSchemaV3();
     await this.withTransaction(async (executor) => {

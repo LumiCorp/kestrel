@@ -267,6 +267,40 @@ const ngrokAdapter: AppProviderAdapter = {
   },
 };
 
+const kestrelEdgePreviewAdapter: AppProviderAdapter = {
+  appKey: "built_in.previews",
+  authMethods: ["none"],
+  runtime: {
+    mode: "lifecycle",
+    capabilityKeys: ["publish", "list", "renew", "close"],
+    assertTarget(input) {
+      const [resource, previewId] = input.path;
+      const allowed =
+        resource === "previews" &&
+        ((input.capability === "publish" &&
+          input.method === "POST" &&
+          input.path.length === 1) ||
+          (input.capability === "list" &&
+            input.method === "GET" &&
+            input.path.length === 1) ||
+          (input.capability === "renew" &&
+            input.method === "POST" &&
+            input.path.length === 2 &&
+            Boolean(previewId)) ||
+          (input.capability === "close" &&
+            input.method === "DELETE" &&
+            input.path.length === 2 &&
+            Boolean(previewId)));
+      if (!allowed) {
+        throw new AppProviderRuntimeContractError(
+          "PREVIEW_TARGET_DENIED",
+          404,
+        );
+      }
+    },
+  },
+};
+
 const vercelAdapter: AppProviderAdapter = {
   appKey: "vercel",
   authMethods: ["api_key"],
@@ -325,7 +359,7 @@ const vercelAdapter: AppProviderAdapter = {
 };
 
 const PROVIDER_ADAPTERS = new Map(
-  [weatherAdapter, tavilyAdapter, ngrokAdapter, vercelAdapter].map(
+  [weatherAdapter, tavilyAdapter, ngrokAdapter, kestrelEdgePreviewAdapter, vercelAdapter].map(
     (adapter) => [adapter.appKey, adapter],
   ),
 );

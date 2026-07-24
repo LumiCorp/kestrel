@@ -124,6 +124,7 @@ contractTest("services.process", "a real Vite app serves documents and HMR WebSo
         workspaceId: scope.workspaceId,
         machineId: scope.machineId,
         hostname,
+        ingress: "ngrok",
         port: vitePort,
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         relayTicket,
