@@ -68,22 +68,33 @@ contractTest("web.hermetic", "Project skills have a first-class tab separate fro
   assert.doesNotMatch(workspaceSetup, /Agent skills/u);
 });
 
-contractTest("web.hermetic", "Project actions render only on Project Overview", () => {
+contractTest("web.hermetic", "Project header owns Environment choice and Thread actions", () => {
   const projectHome = readAppSource(
     "components/projects/project-home-client.tsx"
   );
-  const overviewGuard = projectHome.indexOf('activeTab === "overview"');
-  const overviewContent = projectHome.indexOf(
+  const headerIndex = projectHome.indexOf("<header");
+  const overviewIndex = projectHome.indexOf(
     '<TabsContent value="overview">'
   );
 
-  assert.ok(overviewGuard >= 0);
-  assert.ok(overviewContent > overviewGuard);
-  const guardedActions = projectHome.slice(overviewGuard, overviewContent);
-  assert.match(guardedActions, /New Thread/u);
-  assert.match(guardedActions, /Restore/u);
-  assert.match(guardedActions, /Delete permanently/u);
-  assert.match(guardedActions, /Archive/u);
+  assert.ok(headerIndex >= 0);
+  assert.ok(overviewIndex > headerIndex);
+  const header = projectHome.slice(headerIndex, overviewIndex);
+  assert.match(header, /Environment/u);
+  assert.match(header, /Project Environment/u);
+  assert.match(header, /New Thread/u);
+  assert.match(header, /Archive project/u);
+  assert.match(projectHome, /\/duplicate/u);
+  assert.match(projectHome, /Archive thread/u);
+});
+
+contractTest("web.hermetic", "Project Threads can duplicate conversation history without re-metering it", () => {
+  const duplicateRoute = readAppSource("app/api/threads/[id]/duplicate/route.ts");
+
+  assert.match(duplicateRoute, /source\?\.access\.canManage/u);
+  assert.match(duplicateRoute, /createThreadForUser\(/u);
+  assert.match(duplicateRoute, /saveThreadMessages\(/u);
+  assert.match(duplicateRoute, /meterUsage: false/u);
 });
 
 contractTest("web.hermetic", "Project skill catalog migration owns tenant-safe canonical state", () => {

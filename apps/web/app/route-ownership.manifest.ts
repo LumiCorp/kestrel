@@ -1341,6 +1341,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/threads/[id]/duplicate/route.ts",
+    "/api/threads/:id/duplicate",
+    "threads",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized
+  ),
+  api(
     "app/api/threads/[id]/share/route.ts",
     "/api/threads/:id/share",
     "threads",

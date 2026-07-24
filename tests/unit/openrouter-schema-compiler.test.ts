@@ -50,6 +50,34 @@ contractTest("runtime.hermetic", "OpenRouter schema compiler rejects unsupported
   );
 });
 
+contractTest("runtime.hermetic", "OpenRouter schema compiler rejects non-portable uniqueItems response schemas", () => {
+  assert.throws(
+    () =>
+      compileOpenRouterResponseSchema({
+        schemaName: "kestrel_test",
+        schema: {
+          type: "object",
+          properties: {
+            itemIds: {
+              type: "array",
+              items: { type: "string" },
+              uniqueItems: true,
+            },
+          },
+          required: ["itemIds"],
+        },
+      }),
+    (error: unknown) => {
+      const cast = error as { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "MODEL_PROVIDER_SCHEMA");
+      assert.equal(cast.details?.category, "provider_schema");
+      assert.equal(cast.details?.keyword, "uniqueItems");
+      assert.equal(cast.details?.schemaPath, "$.properties.itemIds");
+      return true;
+    },
+  );
+});
+
 contractTest("runtime.hermetic", "OpenRouter schema compiler converts open objects to object-or-json-string fallback", () => {
   const compiled = compileOpenRouterResponseSchema({
     schemaName: "kestrel_test",

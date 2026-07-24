@@ -446,7 +446,8 @@ export async function updateThreadInteractionModeForUser(input: {
 }
 
 export async function saveThreadMessages(
-  messages: Array<Partial<DbThreadMessage>>
+  messages: Array<Partial<DbThreadMessage>>,
+  options?: { meterUsage?: boolean }
 ) {
   if (messages.length === 0) {
     return [];
@@ -511,14 +512,16 @@ export async function saveThreadMessages(
       .set({ updatedAt: new Date() })
       .where(inArray(schema.threads.id, threadIds));
   }
-  await meterPersistedModelMessages(result.map((message) => message.id)).catch(
-    (error) => {
-      console.error(
-        "Model usage metering will retry from the durable message ledger.",
-        { message: error instanceof Error ? error.message : "Unknown error" }
-      );
-    }
-  );
+  if (options?.meterUsage !== false) {
+    await meterPersistedModelMessages(result.map((message) => message.id)).catch(
+      (error) => {
+        console.error(
+          "Model usage metering will retry from the durable message ledger.",
+          { message: error instanceof Error ? error.message : "Unknown error" }
+        );
+      }
+    );
+  }
   return result;
 }
 
