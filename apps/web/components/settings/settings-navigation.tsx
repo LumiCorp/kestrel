@@ -48,52 +48,52 @@ const organizationItems: SettingsItem[] = [
     label: "Setup",
   },
   {
-    href: "/settings/organization/members",
+    href: "/organization/people",
     icon: Building2,
     label: "Members",
   },
   {
-    href: "/settings/organization/billing",
+    href: "/organization/billing",
     icon: CreditCard,
     label: "Billing",
   },
   {
-    href: "/settings/organization/agent-defaults",
+    href: "/organization/connections",
     icon: Bot,
     label: "Agent defaults",
   },
   {
-    href: "/settings/organization/ai-providers",
+    href: "/organization/connections",
     icon: CloudCog,
     label: "AI providers",
   },
   {
-    href: "/settings/organization/environments",
+    href: "/organization",
     icon: HardDrive,
     label: "Environments",
   },
   {
-    href: "/settings/organization/inference",
+    href: "/organization/connections",
     icon: Server,
     label: "Inference",
   },
   {
-    href: "/settings/organization/email",
+    href: "/organization/email",
     icon: Mail,
     label: "Email",
   },
   {
-    href: "/settings/organization/api-keys",
+    href: "/organization/api-keys",
     icon: KeyRound,
     label: "API keys",
   },
   {
-    href: "/settings/organization/usage",
+    href: "/organization/billing",
     icon: Activity,
     label: "Costs & usage",
   },
   {
-    href: "/settings/organization/audit",
+    href: "/organization/audit",
     icon: ScrollText,
     label: "Audit",
   },
@@ -139,7 +139,7 @@ export function SettingsNavigation({
             items: showOrganizationSetup
               ? organizationItems
               : organizationItems.filter(
-                  (item) => item.href !== "/settings/organization/setup"
+                  (item) => item.href !== "/settings/organization/setup",
                 ),
           },
         ]
@@ -193,7 +193,7 @@ export function SettingsNavigation({
                       aria-current={active ? "page" : undefined}
                       className={cn(
                         "flex items-center gap-2 rounded-md px-2 py-2 font-medium text-muted-foreground text-sm transition-colors hover:bg-muted hover:text-foreground",
-                        active && "bg-muted text-foreground"
+                        active && "bg-muted text-foreground",
                       )}
                       href={item.href}
                       key={item.href}

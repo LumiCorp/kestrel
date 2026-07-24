@@ -62,7 +62,7 @@ function page(
   owner: KestrelOneRouteOwner,
   access: KestrelOneRouteAccess,
   unauthorized: KestrelOneUnauthorizedBehavior,
-  options?: { primaryNavigation?: boolean }
+  options?: { primaryNavigation?: boolean },
 ): KestrelOneRouteOwnershipEntry {
   return {
     file,
@@ -80,7 +80,7 @@ function api(
   route: string,
   owner: KestrelOneRouteOwner,
   access: KestrelOneRouteAccess,
-  unauthorized: KestrelOneUnauthorizedBehavior
+  unauthorized: KestrelOneUnauthorizedBehavior,
 ): KestrelOneRouteOwnershipEntry {
   return { file, route, kind: "api", owner, access, unauthorized };
 }
@@ -114,56 +114,56 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "/account/deletion/confirm",
     "mobile",
     "public",
-    "public"
+    "public",
   ),
   page(
     "app/(auth)/forget-password/page.tsx",
     "/forget-password",
     PUBLIC_AUTH_PAGE.owner,
     PUBLIC_AUTH_PAGE.access,
-    PUBLIC_AUTH_PAGE.unauthorized
+    PUBLIC_AUTH_PAGE.unauthorized,
   ),
   page(
     "app/(auth)/reset-password/page.tsx",
     "/reset-password",
     PUBLIC_AUTH_PAGE.owner,
     PUBLIC_AUTH_PAGE.access,
-    PUBLIC_AUTH_PAGE.unauthorized
+    PUBLIC_AUTH_PAGE.unauthorized,
   ),
   page(
     "app/(auth)/sign-in/page.tsx",
     "/sign-in",
     PUBLIC_AUTH_PAGE.owner,
     PUBLIC_AUTH_PAGE.access,
-    PUBLIC_AUTH_PAGE.unauthorized
+    PUBLIC_AUTH_PAGE.unauthorized,
   ),
   page(
     "app/(auth)/two-factor/otp/page.tsx",
     "/two-factor/otp",
     PUBLIC_AUTH_PAGE.owner,
     PUBLIC_AUTH_PAGE.access,
-    PUBLIC_AUTH_PAGE.unauthorized
+    PUBLIC_AUTH_PAGE.unauthorized,
   ),
   page(
     "app/(auth)/two-factor/page.tsx",
     "/two-factor",
     PUBLIC_AUTH_PAGE.owner,
     PUBLIC_AUTH_PAGE.access,
-    PUBLIC_AUTH_PAGE.unauthorized
+    PUBLIC_AUTH_PAGE.unauthorized,
   ),
   page(
     "app/accept-invitation/[id]/page.tsx",
     "/accept-invitation/:id",
     "auth",
     "public",
-    "public"
+    "public",
   ),
   page(
     "app/shared/[token]/page.tsx",
     "/shared/:token",
     "public",
     "public",
-    "public"
+    "public",
   ),
 
   page(
@@ -172,49 +172,49 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "threads",
     "authenticated",
     "redirect-sign-in",
-    { primaryNavigation: true }
+    { primaryNavigation: true },
   ),
   page(
     "app/(workspace)/threads/page.tsx",
     "/threads",
     "threads",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/threads/new/page.tsx",
     "/threads/new",
     "threads",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/threads/[id]/page.tsx",
     "/threads/:id",
     "threads",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/threads/[id]/workspace/page.tsx",
     "/threads/:id/workspace",
     "environments",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/projects/page.tsx",
     "/projects",
     "projects",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/projects/new/page.tsx",
     "/projects/new",
     "projects",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/apps/page.tsx",
@@ -222,112 +222,224 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "apps",
     "authenticated",
     "redirect-sign-in",
-    { primaryNavigation: true }
+    { primaryNavigation: true },
   ),
   page(
     "app/(workspace)/apps/[appKey]/page.tsx",
     "/apps/:appKey",
     "apps",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/model-deployments/page.tsx",
     "/model-deployments",
     "models",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/projects/[id]/page.tsx",
     "/projects/:id",
     "projects",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/projects/[id]/workspace/page.tsx",
     "/projects/:id/workspace",
     "environments",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/projects/[id]/threads/new/page.tsx",
     "/projects/:id/threads/new",
     "projects",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/search/page.tsx",
     "/search",
     "threads",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
+  ),
+  page(
+    "app/(workspace)/organization/page.tsx",
+    "/organization",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/environments/page.tsx",
+    "/organization/environments",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/environments/[id]/page.tsx",
+    "/organization/environments/:id",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/environments/[id]/runtime/page.tsx",
+    "/organization/environments/:id/runtime",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/environments/[id]/access/page.tsx",
+    "/organization/environments/:id/access",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/environments/[id]/workspaces/page.tsx",
+    "/organization/environments/:id/workspaces",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/environments/[id]/inference/page.tsx",
+    "/organization/environments/:id/inference",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/environments/[id]/apps/page.tsx",
+    "/organization/environments/:id/apps",
+    "apps",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/environments/[id]/activity/page.tsx",
+    "/organization/environments/:id/activity",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/people/page.tsx",
+    "/organization/people",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/billing/page.tsx",
+    "/organization/billing",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/connections/page.tsx",
+    "/organization/connections",
+    "models",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/email/page.tsx",
+    "/organization/email",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/api-keys/page.tsx",
+    "/organization/api-keys",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/audit/page.tsx",
+    "/organization/audit",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/danger/page.tsx",
+    "/organization/danger",
+    "admin",
+    "admin",
+    "admin-denied",
   ),
   page(
     "app/(workspace)/settings/organization/environments/page.tsx",
     "/settings/organization/environments",
     "environments",
     "authenticated",
-    "redirect-sign-in"
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/settings/organization/environments/[id]/page.tsx",
     "/settings/organization/environments/:id",
     "environments",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   page(
     "app/(workspace)/settings/organization/environments/[id]/runtime/page.tsx",
     "/settings/organization/environments/:id/runtime",
     "environments",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   page(
     "app/(workspace)/settings/organization/environments/[id]/access/page.tsx",
     "/settings/organization/environments/:id/access",
     "environments",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   page(
     "app/(workspace)/settings/organization/environments/[id]/workspaces/page.tsx",
     "/settings/organization/environments/:id/workspaces",
     "environments",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   page(
     "app/(workspace)/settings/organization/environments/[id]/inference/page.tsx",
     "/settings/organization/environments/:id/inference",
     "environments",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   page(
     "app/(workspace)/settings/organization/environments/[id]/apps/page.tsx",
     "/settings/organization/environments/:id/apps",
     "apps",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   page(
     "app/(workspace)/settings/organization/environments/[id]/apps/[appKey]/page.tsx",
     "/settings/organization/environments/:id/apps/:appKey",
     "apps",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   page(
     "app/(workspace)/settings/organization/environments/[id]/activity/page.tsx",
     "/settings/organization/environments/:id/activity",
     "environments",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   page(
     "app/dashboard/page.tsx",
@@ -335,7 +447,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "dashboard",
     "authenticated",
     "redirect-sign-in",
-    { primaryNavigation: true }
+    { primaryNavigation: true },
   ),
   page(
     "app/knowledge/page.tsx",
@@ -343,7 +455,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "knowledge",
     "authenticated",
     "redirect-sign-in",
-    { primaryNavigation: true }
+    { primaryNavigation: true },
   ),
   page(
     "app/admin/page.tsx",
@@ -353,28 +465,28 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_PAGE.unauthorized,
     {
       primaryNavigation: true,
-    }
+    },
   ),
   page(
     "app/admin/billing/page.tsx",
     "/admin/billing",
     ADMIN_PAGE.owner,
     ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
+    ADMIN_PAGE.unauthorized,
   ),
   page(
     "app/admin/docs/page.tsx",
     "/admin/docs",
     ADMIN_PAGE.owner,
     ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
+    ADMIN_PAGE.unauthorized,
   ),
   page(
     "app/admin/docs/[slug]/page.tsx",
     "/admin/docs/:slug",
     ADMIN_PAGE.owner,
     ADMIN_PAGE.access,
-    ADMIN_PAGE.unauthorized
+    ADMIN_PAGE.unauthorized,
   ),
   page("app/debug/page.tsx", "/debug", "debug", "admin", "admin-denied"),
 
@@ -384,539 +496,567 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "/api/auth/:path*",
     "auth",
     "public",
-    "public"
+    "public",
   ),
   api(
     "app/api/apps/route.ts",
     "/api/apps",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/apps/[appKey]/route.ts",
     "/api/apps/:appKey",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/apps/[appKey]/installation/route.ts",
     "/api/apps/:appKey/installation",
     "apps",
     "admin",
-    "api-unauthorized"
+    "api-unauthorized",
   ),
   api(
     "app/api/shared/[token]/route.ts",
     "/api/shared/:token",
     "public",
     "public",
-    "public"
+    "public",
   ),
   api(
     "app/api/dev/auto-login/route.ts",
     "/api/dev/auto-login",
     "dev",
     "dev-only",
-    "dev-not-found"
+    "dev-not-found",
   ),
   api(
     "app/api/webhooks/[platform]/route.ts",
     "/api/webhooks/:platform",
     "webhook",
     "webhook",
-    "webhook-validation"
+    "webhook-validation",
   ),
   api(
     "app/api/kestrel/tools/search-knowledge-documents/route.ts",
     "/api/kestrel/tools/search-knowledge-documents",
     "tool-boundary",
     "tool-boundary",
-    "bearer-or-session"
+    "bearer-or-session",
   ),
   api(
     "app/api/kestrel/gateway-credentials/lease/route.ts",
     "/api/kestrel/gateway-credentials/lease",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/environments/[environmentId]/gateway/config/route.ts",
     "/api/runtime/environments/:environmentId/gateway/config",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/github/action/route.ts",
     "/api/runtime/github/action",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/github/credentials/route.ts",
     "/api/runtime/github/credentials",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/github/git/[resourceId]/[...gitPath]/route.ts",
     "/api/runtime/github/git/[resourceId]/[...gitPath]",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/github/push/route.ts",
     "/api/runtime/github/push",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/cron/environments/reconcile/route.ts",
     "/api/cron/environments/reconcile",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/google-calendar/action/route.ts",
     "/api/runtime/google-calendar/action",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/microsoft-365/action/route.ts",
     "/api/runtime/microsoft-365/action",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/environments/idle/route.ts",
     "/api/runtime/environments/idle",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/previews/resolve/route.ts",
     "/api/runtime/previews/resolve",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/apps/tavily/[capability]/[approval]/[...path]/route.ts",
     "/api/runtime/apps/tavily/:capability/:approval/[...path]",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/runtime/apps/[appKey]/[capability]/[approval]/[...path]/route.ts",
     "/api/runtime/apps/:appKey/:capability/:approval/[...path]",
     "credential-boundary",
     "service-boundary",
-    "service-bearer"
+    "service-bearer",
   ),
   api(
     "app/api/organization/api-keys/route.ts",
     "/api/organization/api-keys",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/api-keys/[id]/route.ts",
     "/api/organization/api-keys/:id",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/organization/deletion/route.ts",
+    "/api/organization/deletion",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/route.ts",
     "/api/organization/environments",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/route.ts",
     "/api/organization/environments/:id",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/operations/route.ts",
     "/api/organization/environments/:id/operations",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/inference/route.ts",
     "/api/organization/environments/:id/inference",
     "environments",
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/inference/deployments/[deploymentId]/route.ts",
     "/api/organization/environments/:id/inference/deployments/:deploymentId",
     "environments",
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/inference/gateways/[gatewayId]/route.ts",
     "/api/organization/environments/:id/inference/gateways/:gatewayId",
     "environments",
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/inference/default/route.ts",
     "/api/organization/environments/:id/inference/default",
     "environments",
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/capabilities/subjects/route.ts",
     "/api/organization/environments/:id/capabilities/subjects",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/capabilities/route.ts",
     "/api/organization/environments/:id/capabilities",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/workspaces/route.ts",
     "/api/organization/environments/:id/workspaces",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/workspaces/[workspaceId]/backups/route.ts",
     "/api/organization/environments/:id/workspaces/:workspaceId/backups",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/organization/environments/[id]/workspaces/[workspaceId]/start/route.ts",
+    "/api/organization/environments/:id/workspaces/:workspaceId/start",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/organization/environments/[id]/workspaces/[workspaceId]/stop/route.ts",
+    "/api/organization/environments/:id/workspaces/:workspaceId/stop",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/organization/environments/[id]/workspaces/[workspaceId]/retire/route.ts",
+    "/api/organization/environments/:id/workspaces/:workspaceId/retire",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/workspaces/[workspaceId]/retry/route.ts",
     "/api/organization/environments/:id/workspaces/:workspaceId/retry",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/workspaces/[workspaceId]/backups/[backupId]/restore/route.ts",
     "/api/organization/environments/:id/workspaces/:workspaceId/backups/:backupId/restore",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/capabilities/[capabilityId]/route.ts",
     "/api/organization/environments/:id/mcp/capabilities/:capabilityId",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/credentials/route.ts",
     "/api/organization/environments/:id/mcp/credentials",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/credentials/[credentialId]/route.ts",
     "/api/organization/environments/:id/mcp/credentials/:credentialId",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/health/route.ts",
     "/api/organization/environments/:id/mcp/health",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/oauth/start/route.ts",
     "/api/organization/environments/:id/mcp/oauth/start",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/oauth/callback/route.ts",
     "/api/organization/environments/:id/mcp/oauth/callback",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/servers/route.ts",
     "/api/organization/environments/:id/mcp/servers",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/servers/[serverId]/route.ts",
     "/api/organization/environments/:id/mcp/servers/:serverId",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/servers/[serverId]/discover/route.ts",
     "/api/organization/environments/:id/mcp/servers/:serverId/discover",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/environments/[id]/mcp/servers/[serverId]/snapshots/[snapshotId]/route.ts",
     "/api/organization/environments/:id/mcp/servers/:serverId/snapshots/:snapshotId",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/ai/gateways/route.ts",
     "/api/organization/ai/gateways",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/infrastructure/connections/runpod/route.ts",
     "/api/organization/infrastructure/connections/runpod",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/runs/[runId]/reasoning/route.ts",
     "/api/organization/runs/:runId/reasoning",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/infrastructure/deployment-profiles/route.ts",
     "/api/organization/infrastructure/deployment-profiles",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/infrastructure/deployment-profiles/[id]/route.ts",
     "/api/organization/infrastructure/deployment-profiles/:id",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/infrastructure/deployments/route.ts",
     "/api/organization/infrastructure/deployments",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/ai/gateways/[id]/route.ts",
     "/api/organization/ai/gateways/:id",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/ai/gateways/[id]/models/route.ts",
     "/api/organization/ai/gateways/:id/models",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/ai/gateways/[id]/models/[modelId]/validate/route.ts",
     "/api/organization/ai/gateways/:id/models/:modelId/validate",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/ai/gateways/[id]/sync/route.ts",
     "/api/organization/ai/gateways/:id/sync",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/platform/email/route.ts",
     "/api/platform/email",
     "email-delivery",
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/platform/email/test/route.ts",
     "/api/platform/email/test",
     "email-delivery",
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/audit/route.ts",
     "/api/organization/audit",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/audit/count/route.ts",
     "/api/organization/audit/count",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/audit/stats/route.ts",
     "/api/organization/audit/stats",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/admin/users/route.ts",
     "/api/admin/users",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/admin/users/[id]/route.ts",
     "/api/admin/users/:id",
     ADMIN_API.owner,
     ADMIN_API.access,
-    ADMIN_API.unauthorized
+    ADMIN_API.unauthorized,
   ),
   api(
     "app/api/organization/agent-config/route.ts",
     "/api/organization/agent-config",
     "agent-config",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/organization/agent-config/reset/route.ts",
     "/api/organization/agent-config/reset",
     "agent-config",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/discord/gateway/route.ts",
     "/api/discord/gateway",
     "webhook",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/apps/github/route.ts",
     "/api/apps/github",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/apps/microsoft-365/route.ts",
     "/api/apps/microsoft-365",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/route.ts",
     "/api/environments/:environmentId/apps/:appKey",
     "apps",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/connections/route.ts",
     "/api/environments/:environmentId/apps/:appKey/connections",
     "apps",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/connections/[connectionId]/route.ts",
     "/api/environments/:environmentId/apps/:appKey/connections/:connectionId",
     "apps",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/oauth/start/route.ts",
     "/api/environments/:environmentId/apps/:appKey/oauth/start",
     "apps",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/oauth/callback/route.ts",
     "/api/environments/:environmentId/apps/:appKey/oauth/callback",
     "apps",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/capabilities/[capabilityKey]/route.ts",
     "/api/environments/:environmentId/apps/:appKey/capabilities/:capabilityKey",
     "apps",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/apps/github/connect/route.ts",
     "/api/apps/github/connect",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/apps/github/repositories/route.ts",
     "/api/apps/github/repositories",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/apps/github/sync/route.ts",
     "/api/apps/github/sync",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api("app/api/stats/route.ts", "/api/stats", "stats", "admin", "admin-denied"),
   api(
@@ -924,21 +1064,21 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "/api/organization/costs",
     "costs",
     "authenticated",
-    "api-unauthorized"
+    "api-unauthorized",
   ),
   api(
     "app/api/organization/costs/rates/route.ts",
     "/api/organization/costs/rates",
     "costs",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
   api(
     "app/api/organization/costs/settings/route.ts",
     "/api/organization/costs/settings",
     "costs",
     "admin",
-    "admin-denied"
+    "admin-denied",
   ),
 
   api(
@@ -946,639 +1086,795 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "/api/organization/agent-config/public",
     "agent-config",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/artifacts/[id]/route.ts",
     "/api/artifacts/:id",
     "artifacts",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/artifacts/[id]/suggestions/route.ts",
     "/api/artifacts/:id/suggestions",
     "artifacts",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/account/deletion-request/route.ts",
     "/api/mobile/v1/account/deletion-request",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/bootstrap/route.ts",
     "/api/mobile/v1/bootstrap",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/devices/route.ts",
     "/api/mobile/v1/devices",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/projects/route.ts",
     "/api/mobile/v1/projects",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/projects/[id]/route.ts",
     "/api/mobile/v1/projects/:id",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/threads/route.ts",
     "/api/mobile/v1/threads",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/threads/[id]/route.ts",
     "/api/mobile/v1/threads/:id",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/threads/[id]/turns/route.ts",
     "/api/mobile/v1/threads/:id/turns",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/threads/[id]/queue/resume/route.ts",
     "/api/mobile/v1/threads/:id/queue/resume",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/threads/[id]/interactions/[checkpointId]/route.ts",
     "/api/mobile/v1/threads/:id/interactions/:checkpointId",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/turns/[turnId]/route.ts",
     "/api/mobile/v1/turns/:turnId",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/turns/[turnId]/events/route.ts",
     "/api/mobile/v1/turns/:turnId/events",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v1/turns/[turnId]/stop/route.ts",
     "/api/mobile/v1/turns/:turnId/stop",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/account/deletion-request/route.ts",
     "/api/mobile/v2/account/deletion-request",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/bootstrap/route.ts",
     "/api/mobile/v2/bootstrap",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/devices/route.ts",
     "/api/mobile/v2/devices",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/projects/route.ts",
     "/api/mobile/v2/projects",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/projects/[id]/route.ts",
     "/api/mobile/v2/projects/:id",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/route.ts",
     "/api/mobile/v2/threads",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/[id]/route.ts",
     "/api/mobile/v2/threads/:id",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/[id]/turns/route.ts",
     "/api/mobile/v2/threads/:id/turns",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/[id]/queue/resume/route.ts",
     "/api/mobile/v2/threads/:id/queue/resume",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/[id]/queue/route.ts",
     "/api/mobile/v2/threads/:id/queue",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/[id]/messages/route.ts",
     "/api/mobile/v2/threads/:id/messages",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/[id]/outline/route.ts",
     "/api/mobile/v2/threads/:id/outline",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/[id]/read/route.ts",
     "/api/mobile/v2/threads/:id/read",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/[id]/branches/route.ts",
     "/api/mobile/v2/threads/:id/branches",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/threads/[id]/interactions/[checkpointId]/route.ts",
     "/api/mobile/v2/threads/:id/interactions/:checkpointId",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/turns/[turnId]/route.ts",
     "/api/mobile/v2/turns/:turnId",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/turns/[turnId]/events/route.ts",
     "/api/mobile/v2/turns/:turnId/events",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/turns/[turnId]/stop/route.ts",
     "/api/mobile/v2/turns/:turnId/stop",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/mobile/v2/turns/[turnId]/retry/route.ts",
     "/api/mobile/v2/turns/:turnId/retry",
     "mobile",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/route.ts",
     "/api/threads",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/route.ts",
     "/api/threads/:id",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/share/route.ts",
     "/api/threads/:id/share",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/stream/route.ts",
     "/api/threads/:id/stream",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/turns/route.ts",
     "/api/threads/:id/turns",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/turns/[turnId]/interrupt/route.ts",
     "/api/threads/:id/turns/:turnId/interrupt",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/environment/route.ts",
     "/api/threads/:id/environment",
     "environments",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/workspace/route.ts",
     "/api/threads/:id/workspace",
     "environments",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/mcp/interactions/route.ts",
     "/api/threads/:id/mcp/interactions",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/mcp/interactions/[checkpointId]/route.ts",
     "/api/threads/:id/mcp/interactions/:checkpointId",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/workspace/[...path]/route.ts",
     "/api/threads/:id/workspace/:path*",
     "environments",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/files/[...pathname]/route.ts",
     "/api/files/:path*",
     "files",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/knowledge/documents/route.ts",
     "/api/knowledge/documents",
     "knowledge",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/knowledge/documents/[id]/route.ts",
     "/api/knowledge/documents/:id",
     "knowledge",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/knowledge/documents/[id]/download/route.ts",
     "/api/knowledge/documents/:id/download",
     "knowledge",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/knowledge/documents/[id]/reindex/route.ts",
     "/api/knowledge/documents/:id/reindex",
     "knowledge",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/knowledge/documents/promote/route.ts",
     "/api/knowledge/documents/promote",
     "knowledge",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/knowledge/documents/search/route.ts",
     "/api/knowledge/documents/search",
     "knowledge",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/media/generate/route.ts",
     "/api/media/generate",
     "media",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/media/jobs/[id]/route.ts",
     "/api/media/jobs/:id",
     "media",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/messages/[id]/feedback/route.ts",
     "/api/messages/:id/feedback",
     "messages",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/messages/[id]/speech/route.ts",
     "/api/messages/:id/speech",
     "messages",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/models/approved/route.ts",
     "/api/models/approved",
     "models",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/model-deployments/route.ts",
     "/api/model-deployments",
     "models",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/model-deployments/[id]/route.ts",
     "/api/model-deployments/:id",
     "models",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/model-deployments/access/route.ts",
     "/api/model-deployments/access",
     "models",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/stats/me/route.ts",
     "/api/stats/me",
     "stats",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/stats/usage/route.ts",
     "/api/stats/usage",
     "stats",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/runtime/apps/route.ts",
     "/api/runtime/apps",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/uploads/route.ts",
     "/api/threads/:id/uploads",
     "files",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/route.ts",
     "/api/projects",
     "projects",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/active/route.ts",
     "/api/projects/active",
     "projects",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/route.ts",
     "/api/projects/:id",
     "projects",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/context/route.ts",
     "/api/projects/:id/context",
     "projects",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/files/route.ts",
     "/api/projects/:id/files",
     "projects",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/environment/route.ts",
     "/api/projects/:id/environment",
     "environments",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/workspace/route.ts",
     "/api/projects/:id/workspace",
     "environments",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/workspace/skills/route.ts",
     "/api/projects/:id/workspace/skills",
     "environments",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/workspace/skills/sync/route.ts",
     "/api/projects/:id/workspace/skills/sync",
     "environments",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/workspace/skills/[installationId]/route.ts",
     "/api/projects/:id/workspace/skills/:installationId",
     "environments",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/apps/route.ts",
     "/api/projects/:id/apps",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/apps/[appKey]/route.ts",
     "/api/projects/:id/apps/:appKey",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/apps/[appKey]/connections/[connectionId]/route.ts",
     "/api/projects/:id/apps/:appKey/connections/:connectionId",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/apps/[appKey]/capabilities/[capabilityKey]/route.ts",
     "/api/projects/:id/apps/:appKey/capabilities/:capabilityKey",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/apps/google/route.ts",
     "/api/projects/:id/apps/google",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/apps/google/connect/route.ts",
     "/api/projects/:id/apps/google/connect",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/apps/google/sync/route.ts",
     "/api/projects/:id/apps/google/sync",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/apps/google/sharing/route.ts",
     "/api/projects/:id/apps/google/sharing",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/apps/google/disconnect/route.ts",
     "/api/projects/:id/apps/google/disconnect",
     "apps",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/members/route.ts",
     "/api/projects/:id/members",
     "projects",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/projects/[id]/members/[memberId]/route.ts",
     "/api/projects/:id/members/:memberId",
     "projects",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/search/route.ts",
     "/api/search",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
-  page("app/(workspace)/settings/page.tsx", "/settings", "dashboard", "authenticated", "redirect-sign-in"),
-  page("app/(workspace)/welcome/page.tsx", "/welcome", "dashboard", "authenticated", "redirect-sign-in"),
-  page("app/(workspace)/settings/profile/page.tsx", "/settings/profile", "dashboard", "authenticated", "redirect-sign-in"),
-  page("app/(workspace)/settings/appearance/page.tsx", "/settings/appearance", "dashboard", "authenticated", "redirect-sign-in"),
-  page("app/(workspace)/settings/api-keys/page.tsx", "/settings/api-keys", "dashboard", "authenticated", "redirect-sign-in"),
-  page("app/(workspace)/settings/organization/page.tsx", "/settings/organization", "admin", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/setup/page.tsx", "/settings/organization/setup", "models", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/members/page.tsx", "/settings/organization/members", "admin", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/billing/page.tsx", "/settings/organization/billing", "admin", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/agent-defaults/page.tsx", "/settings/organization/agent-defaults", "agent-config", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/ai-providers/page.tsx", "/settings/organization/ai-providers", "models", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/inference/page.tsx", "/settings/organization/inference", "models", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/email/page.tsx", "/settings/organization/email", "email-delivery", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/api-keys/page.tsx", "/settings/organization/api-keys", "admin", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/usage/page.tsx", "/settings/organization/usage", "costs", "admin", "admin-denied"),
-  page("app/(workspace)/settings/organization/audit/page.tsx", "/settings/organization/audit", "admin", "admin", "admin-denied"),
-  page("app/(workspace)/settings/platform/page.tsx", "/settings/platform", "admin", "admin", "admin-denied"),
-  page("app/(workspace)/settings/platform/users/page.tsx", "/settings/platform/users", "admin", "admin", "admin-denied"),
-  page("app/(workspace)/settings/platform/email/page.tsx", "/settings/platform/email", "email-delivery", "admin", "admin-denied"),
-  api("app/api/organization/email/route.ts", "/api/organization/email", "email-delivery", "admin", "admin-denied"),
-  api("app/api/organization/email/test/route.ts", "/api/organization/email/test", "email-delivery", "admin", "admin-denied"),
-  api("app/api/organization/setup/route.ts", "/api/organization/setup", "models", "admin", "admin-denied"),
-  api("app/api/organization/infrastructure/connections/fly/route.ts", "/api/organization/infrastructure/connections/fly", "environments", "admin", "admin-denied"),
-  api("app/api/organization/infrastructure/runpod-policy/route.ts", "/api/organization/infrastructure/runpod-policy", "environments", "admin", "admin-denied"),
-  api("app/api/organization/infrastructure/settings/route.ts", "/api/organization/infrastructure/settings", "environments", "admin", "admin-denied"),
-  api("app/api/runtime/email/action/route.ts", "/api/runtime/email/action", "email-delivery", "service-boundary", "service-bearer"),
+  page(
+    "app/(workspace)/settings/page.tsx",
+    "/settings",
+    "dashboard",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  page(
+    "app/(workspace)/welcome/page.tsx",
+    "/welcome",
+    "dashboard",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  page(
+    "app/(workspace)/settings/profile/page.tsx",
+    "/settings/profile",
+    "dashboard",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  page(
+    "app/(workspace)/settings/appearance/page.tsx",
+    "/settings/appearance",
+    "dashboard",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  page(
+    "app/(workspace)/settings/api-keys/page.tsx",
+    "/settings/api-keys",
+    "dashboard",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  page(
+    "app/(workspace)/settings/organization/page.tsx",
+    "/settings/organization",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/setup/page.tsx",
+    "/settings/organization/setup",
+    "models",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/members/page.tsx",
+    "/settings/organization/members",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/billing/page.tsx",
+    "/settings/organization/billing",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/agent-defaults/page.tsx",
+    "/settings/organization/agent-defaults",
+    "agent-config",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/ai-providers/page.tsx",
+    "/settings/organization/ai-providers",
+    "models",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/inference/page.tsx",
+    "/settings/organization/inference",
+    "models",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/email/page.tsx",
+    "/settings/organization/email",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/api-keys/page.tsx",
+    "/settings/organization/api-keys",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/usage/page.tsx",
+    "/settings/organization/usage",
+    "costs",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/organization/audit/page.tsx",
+    "/settings/organization/audit",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/platform/page.tsx",
+    "/settings/platform",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/platform/users/page.tsx",
+    "/settings/platform/users",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/settings/platform/email/page.tsx",
+    "/settings/platform/email",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/email/route.ts",
+    "/api/organization/email",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/email/test/route.ts",
+    "/api/organization/email/test",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/setup/route.ts",
+    "/api/organization/setup",
+    "models",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/infrastructure/connections/fly/route.ts",
+    "/api/organization/infrastructure/connections/fly",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/infrastructure/runpod-policy/route.ts",
+    "/api/organization/infrastructure/runpod-policy",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/infrastructure/settings/route.ts",
+    "/api/organization/infrastructure/settings",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/runtime/email/action/route.ts",
+    "/api/runtime/email/action",
+    "email-delivery",
+    "service-boundary",
+    "service-bearer",
+  ),
 ] satisfies readonly KestrelOneRouteOwnershipEntry[];
 
 export const PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES =
   KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.filter(
-    (entry) => entry.primaryNavigation
+    (entry) => entry.primaryNavigation,
   );
