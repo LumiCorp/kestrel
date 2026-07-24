@@ -565,7 +565,6 @@ contractTest("runtime.hermetic", "Kestrel agent context builder owns compaction 
       items: { type: "string", enum: ["item-2", "item-3"] },
       minItems: 2,
       maxItems: 2,
-      uniqueItems: true,
     },
   );
   assert.equal(shouldCompactKestrelAgentContext({ transcript: { version: 1, windowId: 1, items: [] } }), false);
@@ -704,6 +703,37 @@ contractTest("runtime.hermetic", "Kestrel compaction fails closed when a replace
       coveredItemIds: [],
     },
   }), /does not preserve replaced item/u);
+});
+
+contractTest("runtime.hermetic", "Kestrel compaction fails closed when duplicate covered ids hide a replaced item", () => {
+  const transcript = {
+    version: 1,
+    windowId: 1,
+    items: Array.from({ length: 27 }, (_, index) => ({
+      id: `item-${index}`,
+      createdAt: `2026-07-22T00:00:${String(index).padStart(2, "0")}.000Z`,
+      kind: index === 0 ? "user" as const : "assistant_text" as const,
+      content: index === 0 ? "Active task" : `Evidence ${index}`,
+    })),
+  };
+
+  assert.throws(() => buildKestrelAgentCompactedTranscript({
+    transcript,
+    summary: {
+      version: 1,
+      activeTaskItemId: "item-0",
+      decisions: [],
+      constraints: [],
+      evidence: [{
+        text: "Only the first replaced item was preserved.",
+        sourceItemIds: ["item-1"],
+      }],
+      fileState: [],
+      blockers: [],
+      nextActions: [],
+      coveredItemIds: ["item-1", "item-1"],
+    },
+  }), /does not preserve replaced item 'item-2'/u);
 });
 
 contractTest("runtime.hermetic", "Kestrel compaction keeps paired tool provenance machine-only", () => {

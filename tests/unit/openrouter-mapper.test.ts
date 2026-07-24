@@ -523,6 +523,41 @@ contractTest("runtime.hermetic", "OpenRouter request builder fails fast on unsup
   );
 });
 
+contractTest("runtime.hermetic", "OpenRouter request builder rejects uniqueItems before a provider request is built", () => {
+  const request: ModelRequest = {
+    model: "openai/gpt-5.2-chat",
+    input: "hello",
+    responseFormat: "json",
+    responseSchema: {
+      type: "object",
+      properties: {
+        itemIds: {
+          type: "array",
+          items: { type: "string" },
+          uniqueItems: true,
+        },
+      },
+      required: ["itemIds"],
+    },
+  };
+
+  assert.throws(
+    () =>
+      buildOpenRouterHttpRequest(request, {
+        apiKey: "key",
+        model: "openai/gpt-5.2-chat",
+        baseUrl: "https://openrouter.ai",
+      }),
+    (error: unknown) => {
+      const cast = error as { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "MODEL_PROVIDER_SCHEMA");
+      assert.equal(cast.details?.keyword, "uniqueItems");
+      assert.equal(cast.details?.schemaPath, "$.properties.itemIds");
+      return true;
+    },
+  );
+});
+
 contractTest("runtime.hermetic", "OpenRouter preserves typed reasoning details outside assistant answer text", () => {
   const details = [
     { type: "reasoning.summary", summary: "Checked the evidence." },

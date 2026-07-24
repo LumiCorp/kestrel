@@ -41,6 +41,7 @@ const UNSUPPORTED_SCHEMA_KEYWORDS = new Set([
   "patternProperties",
   "contains",
   "prefixItems",
+  "uniqueItems",
 ]);
 
 const OPENROUTER_SUPPORTED_STRING_FORMATS = new Set([
