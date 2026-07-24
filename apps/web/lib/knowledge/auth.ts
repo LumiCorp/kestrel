@@ -27,12 +27,12 @@ export function parseAdminUserIds(): Set<string> {
     raw
       .split(",")
       .map((value) => value.trim())
-      .filter(Boolean)
+      .filter(Boolean),
   );
 }
 
 export function isAdminUser(
-  user: { id?: string | null; role?: string | null } | null | undefined
+  user: { id?: string | null; role?: string | null } | null | undefined,
 ) {
   if (!(user?.id || user?.role)) {
     return false;
@@ -60,7 +60,7 @@ export function getActiveOrganizationId(session: SessionLike): string | null {
 }
 
 async function getRequestedOrganizationId(
-  session: NonNullable<SessionLike>
+  session: NonNullable<SessionLike>,
 ): Promise<string | null> {
   const headerStore = await headers();
   const requestedOrganizationId =
@@ -75,7 +75,7 @@ async function getRequestedOrganizationId(
     where: (table, { and, eq }) =>
       and(
         eq(table.organizationId, requestedOrganizationId),
-        eq(table.userId, session.user.id)
+        eq(table.userId, session.user.id),
       ),
     columns: {
       id: true,
@@ -90,13 +90,26 @@ export async function requireActiveOrganization(request?: Request) {
     return requireMobileSession(request);
   }
   const session = await requireSession();
-  const organizationId =
+  const requestedOrganizationId =
     (await getRequestedOrganizationId(session)) ??
-    getActiveOrganizationId(session) ??
+    getActiveOrganizationId(session);
+  const requestedOrganization = requestedOrganizationId
+    ? await knowledgeDb.query.organizations.findFirst({
+        where: (table, { eq }) => eq(table.id, requestedOrganizationId),
+        columns: { id: true, lifecycleState: true },
+      })
+    : null;
+  const organizationId =
+    requestedOrganization?.id ??
     (await ensurePersonalOrganizationByUserId(session.user.id)).id;
 
   if (!organizationId) {
     throw new Error("Active organization required");
+  }
+  if (requestedOrganization?.lifecycleState === "deleting") {
+    throw Object.assign(new Error("Organization deletion is in progress."), {
+      code: "ORGANIZATION_DELETING",
+    });
   }
 
   const ensuredEnvironment = await ensureOrganizationDefaultEnvironment({
@@ -114,27 +127,37 @@ export async function requireActiveOrganization(request?: Request) {
 }
 
 export async function getActiveOrganizationSnapshot(
-  session: SessionLike
+  session: SessionLike,
 ): Promise<OrganizationSnapshot | null> {
   if (!session?.user?.id) {
     return null;
   }
 
-  const organizationId =
+  const requestedOrganizationId =
     (await getRequestedOrganizationId(session)) ??
-    getActiveOrganizationId(session) ??
+    getActiveOrganizationId(session);
+  const requestedOrganization = requestedOrganizationId
+    ? await knowledgeDb.query.organizations.findFirst({
+        where: (table, { eq }) => eq(table.id, requestedOrganizationId),
+        columns: { id: true, lifecycleState: true },
+      })
+    : null;
+  const organizationId =
+    requestedOrganization?.id ??
     (await ensurePersonalOrganizationByUserId(session.user.id)).id;
 
   if (!organizationId) {
     return null;
   }
 
-  const ensuredEnvironment = await ensureOrganizationDefaultEnvironment({
-    organizationId,
-    userId: session.user.id,
-  });
-  if (ensuredEnvironment.operation) {
-    await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
+  if (requestedOrganization?.lifecycleState !== "deleting") {
+    const ensuredEnvironment = await ensureOrganizationDefaultEnvironment({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (ensuredEnvironment.operation) {
+      await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
+    }
   }
 
   const organization = await knowledgeDb.query.organizations.findFirst({
@@ -192,7 +215,7 @@ export async function canManageOrganization(input: {
     where: (table, { and, eq }) =>
       and(
         eq(table.organizationId, input.organizationId),
-        eq(table.userId, input.userId)
+        eq(table.userId, input.userId),
       ),
     columns: { role: true },
   });
@@ -210,6 +233,38 @@ export async function requireOrganizationAdmin() {
     throw new Error("Forbidden");
   }
   return { organizationId, session };
+}
+
+export async function requireOrganizationOwner(options?: {
+  allowDeleting?: boolean;
+}) {
+  const session = await requireSession();
+  const organizationId =
+    (await getRequestedOrganizationId(session)) ??
+    getActiveOrganizationId(session) ??
+    (await ensurePersonalOrganizationByUserId(session.user.id)).id;
+  const [organization, membership] = await Promise.all([
+    knowledgeDb.query.organizations.findFirst({
+      where: (table, { eq }) => eq(table.id, organizationId),
+    }),
+    knowledgeDb.query.members.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, organizationId),
+          eq(table.userId, session.user.id),
+        ),
+      columns: { role: true },
+    }),
+  ]);
+  if (!(organization && membership?.role === "owner")) {
+    throw new Error("Forbidden");
+  }
+  if (organization.lifecycleState === "deleting" && !options?.allowDeleting) {
+    throw Object.assign(new Error("Organization deletion is in progress."), {
+      code: "ORGANIZATION_DELETING",
+    });
+  }
+  return { organizationId, session, organization };
 }
 
 export async function requireAuthenticatedShell(input?: {

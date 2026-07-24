@@ -25,7 +25,7 @@ export function OrganizationReadinessBanner({
       </div>
       {canManage ? (
         <Button asChild className="shrink-0" size="sm" variant="outline">
-          <Link href="/settings/organization/setup">Finish setup</Link>
+          <Link href="/organization/connections">Finish setup</Link>
         </Button>
       ) : null}
     </div>

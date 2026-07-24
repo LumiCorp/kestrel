@@ -1,6 +1,7 @@
 "use client";
 
-import { Building2, ChevronsUpDown, Plus } from "lucide-react";
+import { Building2, ChevronsUpDown, Plus, Settings2 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -39,7 +40,7 @@ export function TeamSwitcher({
   const organizations = useListOrganizations();
   const activeOrgData = useActiveOrganization();
   const [activeOrgId, setActiveOrgId] = useState<string | null>(
-    initialActiveOrganization?.id ?? activeOrgData.data?.id ?? null
+    initialActiveOrganization?.id ?? activeOrgData.data?.id ?? null,
   );
   const [pendingOrgId, setPendingOrgId] = useState<string | null>(null);
 
@@ -123,7 +124,7 @@ export function TeamSwitcher({
               <DropdownMenuItem
                 className={cn(
                   activeIsPersonal &&
-                    "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground focus:bg-sidebar-primary focus:text-sidebar-primary-foreground data-[highlighted]:bg-sidebar-primary data-[highlighted]:text-sidebar-primary-foreground"
+                    "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground focus:bg-sidebar-primary focus:text-sidebar-primary-foreground data-[highlighted]:bg-sidebar-primary data-[highlighted]:text-sidebar-primary-foreground",
                 )}
                 disabled={pendingOrgId !== null}
                 onClick={() => void handleSetActive(personalOrg.id)}
@@ -143,7 +144,7 @@ export function TeamSwitcher({
               <DropdownMenuItem
                 className={cn(
                   org.id === activeOrgId &&
-                    "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground focus:bg-sidebar-primary focus:text-sidebar-primary-foreground data-[highlighted]:bg-sidebar-primary data-[highlighted]:text-sidebar-primary-foreground"
+                    "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground focus:bg-sidebar-primary focus:text-sidebar-primary-foreground data-[highlighted]:bg-sidebar-primary data-[highlighted]:text-sidebar-primary-foreground",
                 )}
                 disabled={pendingOrgId !== null}
                 key={org.id}
@@ -160,6 +161,17 @@ export function TeamSwitcher({
                 )}
               </DropdownMenuItem>
             ))}
+            {activeOrg ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/organization">
+                    <Settings2 className="size-4" />
+                    Manage organization
+                  </Link>
+                </DropdownMenuItem>
+              </>
+            ) : null}
             <DropdownMenuSeparator />
             <CreateOrganizationDialog>
               <DropdownMenuItem

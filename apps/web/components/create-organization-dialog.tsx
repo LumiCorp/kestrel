@@ -64,7 +64,7 @@ export function CreateOrganizationDialog({
     if (!isValidOrganizationSlug(normalizedSlug)) {
       setShowSlug(true);
       setSlugError(
-        "Use lowercase letters, numbers, and hyphens, beginning and ending with a letter or number."
+        "Use lowercase letters, numbers, and hyphens, beginning and ending with a letter or number.",
       );
       return;
     }
@@ -78,7 +78,9 @@ export function CreateOrganizationDialog({
       }
       if (!availability.data?.status) {
         setShowSlug(true);
-        setSlugError("That organization slug is already in use. Choose another.");
+        setSlugError(
+          "That organization slug is already in use. Choose another.",
+        );
         return;
       }
       const created = await organization.create({
@@ -88,19 +90,23 @@ export function CreateOrganizationDialog({
       });
       if (created.error) throw new Error(created.error.message);
       if (!created.data?.id) {
-        throw new Error("Organization creation did not return an organization.");
+        throw new Error(
+          "Organization creation did not return an organization.",
+        );
       }
       const activated = await organization.setActive({
         organizationId: created.data.id,
       });
       if (activated.error) throw new Error(activated.error.message);
-      toast.success("Organization created. Let’s finish the minimum setup.");
+      toast.success("Organization created. Let’s configure it.");
       setOpen(false);
-      router.push("/settings/organization/setup");
+      router.push("/organization");
       router.refresh();
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Organization creation failed."
+        error instanceof Error
+          ? error.message
+          : "Organization creation failed.",
       );
     } finally {
       setLoading(false);
