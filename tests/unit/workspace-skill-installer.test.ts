@@ -275,6 +275,8 @@ contractTest("runtime.hermetic", "workspace skill reconciliation uses canonical 
   assert.equal(updated?.status, "ready");
   assert.deepEqual(await manager.reconcile([]), []);
   assert.deepEqual(await manager.list(), []);
+});
+
 contractTest("runtime.process", "managed worktree skill snapshots stay outside source-control evidence", async () => {
   const sourceWorkspaceRoot = await fixtureRoot("skill-source-");
   const targetWorkspaceRoot = await fixtureRoot("skill-target-");
