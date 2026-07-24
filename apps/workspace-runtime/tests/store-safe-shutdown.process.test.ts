@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +20,14 @@ contractTest(
     const root = await mkdtemp(
       path.join(os.tmpdir(), "kestrel-workspace-store-shutdown-")
     );
-    const sqlitePath = path.join(root, "runtime.db");
+    const sqlitePath = path.join(
+      root,
+      ".kestrel",
+      "runner",
+      "store",
+      "pglite",
+    );
+    await mkdir(path.dirname(sqlitePath), { recursive: true });
     const initial = new PGlite(sqlitePath);
     await initial.exec(
       "CREATE TABLE shutdown_sentinel (value TEXT PRIMARY KEY); " +
@@ -38,7 +45,6 @@ contractTest(
           ...process.env,
           HOME: root,
           KESTREL_HOME: path.join(root, ".local", "share", "kestrel"),
-          KESTREL_SQLITE_PATH: sqlitePath,
           KESTREL_STORE_MIGRATIONS_DIR: path.join(
             REPOSITORY_ROOT,
             "db/migrations"
