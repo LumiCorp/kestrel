@@ -35,21 +35,39 @@ export async function createAdminEnvironment(input: {
     environment: input.environment,
     runtimeTemplate: infrastructure.defaultRuntimeTemplate,
   });
-  await logAdminEvent({
-    organizationId: input.organizationId,
-    actorUserId: input.actorUserId,
-    category: "environments",
-    action: "environment.create.requested",
-    targetType: "environment",
-    targetId: created.environment.id,
-    message: `Requested Environment ${created.environment.name}.`,
-    metadata: {
-      region: created.environment.region,
-      operationId: created.operation?.id,
-    },
-  });
-  await enqueueEnvironmentOperation(created.operation.id);
+  await recordEnvironmentCreationSideEffect("audit", async () =>
+    logAdminEvent({
+      organizationId: input.organizationId,
+      actorUserId: input.actorUserId,
+      category: "environments",
+      action: "environment.create.requested",
+      targetType: "environment",
+      targetId: created.environment.id,
+      message: `Requested Environment ${created.environment.name}.`,
+      metadata: {
+        region: created.environment.region,
+        operationId: created.operation?.id,
+      },
+    }),
+  );
+  await recordEnvironmentCreationSideEffect("dispatch", async () =>
+    enqueueEnvironmentOperation(created.operation.id),
+  );
   return created;
+}
+
+async function recordEnvironmentCreationSideEffect(
+  sideEffect: "audit" | "dispatch",
+  run: () => Promise<void>,
+) {
+  try {
+    await run();
+  } catch (error) {
+    console.error("Environment creation committed but post-commit work failed.", {
+      sideEffect,
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
 }
 
 export async function listAdminEnvironments(organizationId: string) {

@@ -26,6 +26,7 @@ import {
 
 export type ProvisioningOperation = {
   id: string;
+  attempt: number;
   organizationId: string;
   environmentId: string;
   workspaceId: string | null;
@@ -66,15 +67,23 @@ export interface EnvironmentProvisioningRepository {
       flyVolumeId: string | null;
     }>
   >;
-  setEnvironmentProvisioning(environmentId: string): Promise<void>;
+  beginEnvironmentProvisioning(input: {
+    environmentId: string;
+    operationId: string;
+    attempt: number;
+  }): Promise<"prepared" | "superseded">;
   stageEnvironmentGatewayIdentity(input: {
     environmentId: string;
+    operationId?: string | undefined;
+    attempt?: number | undefined;
     appName: string;
     gatewayServiceTokenHash: string;
-  }): Promise<void>;
+  }): Promise<"staged" | "superseded">;
   setEnvironmentDeleting(environmentId: string): Promise<void>;
-  completeEnvironment(input: {
+  completeEnvironmentProvision(input: {
     environmentId: string;
+    operationId: string;
+    attempt: number;
     appName: string;
     networkName: string;
     gatewayMachineId: string;
@@ -82,12 +91,19 @@ export interface EnvironmentProvisioningRepository {
     routerImage: string;
     runtimeImage: string;
     gatewayServiceTokenHash: string;
-  }): Promise<void>;
+  }): Promise<"completed" | "superseded">;
   failEnvironment(input: {
     environmentId: string;
     code: string;
     message: string;
   }): Promise<void>;
+  failEnvironmentProvision(input: {
+    environmentId: string;
+    operationId: string;
+    attempt: number;
+    code: string;
+    message: string;
+  }): Promise<"failed" | "superseded">;
   degradeEnvironment(input: {
     environmentId: string;
     code: string;
@@ -129,6 +145,7 @@ export interface EnvironmentProvisioningRepository {
   }): Promise<void>;
   updateOperationStage(input: {
     operationId: string;
+    attempt?: number | undefined;
     stage: string;
     result?: Record<string, unknown> | undefined;
   }): Promise<void>;
@@ -145,7 +162,9 @@ export interface EnvironmentProvisioningRepository {
   }): Promise<void>;
   deferOperation(input: {
     operationId: string;
+    attempt?: number | undefined;
     stage: string;
+    code?: string | undefined;
     message: string;
   }): Promise<void>;
 }
@@ -253,11 +272,26 @@ export class EnvironmentProvisioner {
       }
       return "processed";
     } catch (error) {
+      if (
+        operation.type === "environment.provision" &&
+        error instanceof EnvironmentProvisioningPersistenceError
+      ) {
+        await this.repository.deferOperation({
+          operationId: operation.id,
+          attempt: operation.attempt,
+          stage: "environment.activation.reconciling",
+          code: error.code,
+          message: error.message,
+        });
+        return "deferred";
+      }
       const failure = safeFailure(error);
       if (failure.code === "ENVIRONMENT_NOT_READY") {
         await this.repository.deferOperation({
           operationId: operation.id,
+          attempt: operation.attempt,
           stage: "environment.runtime.connecting",
+          code: failure.code,
           message: failure.message,
         });
         return "deferred";
@@ -265,7 +299,9 @@ export class EnvironmentProvisioner {
       if (failure.retryable) {
         await this.repository.deferOperation({
           operationId: operation.id,
+          attempt: operation.attempt,
           stage: "environment.provider.retrying",
+          code: failure.code,
           message: failure.message,
         });
         return "deferred";
@@ -278,6 +314,15 @@ export class EnvironmentProvisioner {
         await this.repository.failOperation({
           operationId: operation.id,
           stage: "environment.deletion.blocked",
+          ...failure,
+        });
+        return "processed";
+      }
+      if (operation.type === "environment.provision") {
+        await this.repository.failEnvironmentProvision({
+          environmentId: operation.environmentId,
+          operationId: operation.id,
+          attempt: operation.attempt,
           ...failure,
         });
         return "processed";
@@ -308,8 +353,16 @@ export class EnvironmentProvisioner {
   }
 
   private async provisionEnvironment(operation: ProvisioningOperation) {
-    const environment = await this.repository.getEnvironment(
-      operation.environmentId
+    const begin = await this.persistEnvironmentProvisioning(() =>
+      this.repository.beginEnvironmentProvisioning({
+        environmentId: operation.environmentId,
+        operationId: operation.id,
+        attempt: operation.attempt,
+      }),
+    );
+    if (begin === "superseded") return;
+    const environment = await this.persistEnvironmentProvisioning(
+      () => this.repository.getEnvironment(operation.environmentId),
     );
     if (
       !environment ||
@@ -324,19 +377,24 @@ export class EnvironmentProvisioner {
       environmentStatusSchema.parse(environment.status),
       "provisioning"
     );
-    await this.repository.setEnvironmentProvisioning(environment.id);
     const appName =
       environment.flyAppName ?? flyEnvironmentAppName(environment.id);
     const networkName = flyEnvironmentNetworkName(environment.id);
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
-      stage: "environment.runtime.connecting",
-    });
+    await this.persistEnvironmentProvisioning(() =>
+      this.repository.updateOperationStage({
+        operationId: operation.id,
+        attempt: operation.attempt,
+        stage: "environment.runtime.connecting",
+      }),
+    );
     await this.provider.ensureEnvironmentApp({ appName, networkName });
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
-      stage: "environment.machine.starting",
-    });
+    await this.persistEnvironmentProvisioning(() =>
+      this.repository.updateOperationStage({
+        operationId: operation.id,
+        attempt: operation.attempt,
+        stage: "environment.machine.starting",
+      }),
+    );
     const gatewayServiceToken = createEnvironmentServiceToken();
     const gateway = await this.provider.ensureEnvironmentGateway({
       appName,
@@ -347,11 +405,16 @@ export class EnvironmentProvisioner {
       controlPlaneUrl: this.controlPlaneUrl,
       serviceToken: gatewayServiceToken,
     });
-    await this.repository.stageEnvironmentGatewayIdentity({
-      environmentId: environment.id,
-      appName,
-      gatewayServiceTokenHash: hashEnvironmentServiceToken(gateway.serviceToken),
-    });
+    const staged = await this.persistEnvironmentProvisioning(() =>
+      this.repository.stageEnvironmentGatewayIdentity({
+        environmentId: environment.id,
+        operationId: operation.id,
+        attempt: operation.attempt,
+        appName,
+        gatewayServiceTokenHash: hashEnvironmentServiceToken(gateway.serviceToken),
+      }),
+    );
+    if (staged === "superseded") return;
     if (gateway.state !== "started") {
       await this.provider.waitForMachine({
         appName,
@@ -360,38 +423,45 @@ export class EnvironmentProvisioner {
         timeoutSeconds: 60,
       });
     }
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
-      stage: "environment.health.checking",
-    });
+    await this.persistEnvironmentProvisioning(() =>
+      this.repository.updateOperationStage({
+        operationId: operation.id,
+        attempt: operation.attempt,
+        stage: "environment.health.checking",
+      }),
+    );
     await this.provider.waitForMachineHealth({
       appName,
       machineId: gateway.machineId,
       checkName: "gateway",
       timeoutSeconds: 60,
     });
-    await this.repository.completeEnvironment({
-      environmentId: environment.id,
-      appName,
-      networkName,
-      gatewayMachineId: gateway.machineId,
-      routerUrl: gateway.routerUrl,
-      routerImage: this.routerImage,
-      runtimeImage: this.runtimeImage,
-      gatewayServiceTokenHash: hashEnvironmentServiceToken(
-        gateway.serviceToken
-      ),
-    });
-    await this.repository.completeOperation({
-      operationId: operation.id,
-      stage: "environment.activation.ready",
-      result: {
+    await this.persistEnvironmentProvisioning(() =>
+      this.repository.completeEnvironmentProvision({
+        environmentId: environment.id,
+        operationId: operation.id,
+        attempt: operation.attempt,
         appName,
         networkName,
         gatewayMachineId: gateway.machineId,
         routerUrl: gateway.routerUrl,
-      },
-    });
+        routerImage: this.routerImage,
+        runtimeImage: this.runtimeImage,
+        gatewayServiceTokenHash: hashEnvironmentServiceToken(
+          gateway.serviceToken
+        ),
+      }),
+    );
+  }
+
+  private async persistEnvironmentProvisioning<T>(
+    persist: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await persist();
+    } catch (error) {
+      throw new EnvironmentProvisioningPersistenceError(error);
+    }
   }
 
   private async updateEnvironment(operation: ProvisioningOperation) {
@@ -1074,6 +1144,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         )
         .returning({
           id: schema.environmentOperations.id,
+          attempt: schema.environmentOperations.attempt,
           organizationId: schema.environmentOperations.organizationId,
           environmentId: schema.environmentOperations.environmentId,
           workspaceId: schema.environmentOperations.workspaceId,
@@ -1131,26 +1202,95 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         },
       });
     },
-    async setEnvironmentProvisioning(environmentId) {
-      await knowledgeDb
-        .update(schema.environments)
-        .set({
-          status: "provisioning",
-          failureCode: null,
-          failureMessage: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.environments.id, environmentId));
+    async beginEnvironmentProvisioning(input) {
+      const now = new Date();
+      return knowledgeDb.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
+        );
+        const [operation] = await transaction
+          .update(schema.environmentOperations)
+          .set({ updatedAt: now })
+          .where(
+            and(
+              eq(schema.environmentOperations.id, input.operationId),
+              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(schema.environmentOperations.status, "running"),
+              eq(schema.environmentOperations.attempt, input.attempt),
+            ),
+          )
+          .returning({ id: schema.environmentOperations.id });
+        if (!operation) return "superseded" as const;
+        const currentEnvironment = await transaction.query.environments.findFirst({
+          where: (table, { eq }) =>
+            eq(table.id, input.environmentId),
+          columns: { status: true },
+        });
+        if (
+          !(currentEnvironment &&
+            ["requested", "provisioning", "failed"].includes(
+              currentEnvironment.status,
+            ))
+        ) {
+          return "superseded" as const;
+        }
+        const [updatedEnvironment] = await transaction
+          .update(schema.environments)
+          .set({
+            status: "provisioning",
+            failureCode: null,
+            failureMessage: null,
+            updatedAt: now,
+          })
+          .where(eq(schema.environments.id, input.environmentId))
+          .returning({ id: schema.environments.id });
+        return updatedEnvironment
+          ? ("prepared" as const)
+          : ("superseded" as const);
+      });
     },
     async stageEnvironmentGatewayIdentity(input) {
-      await knowledgeDb
-        .update(schema.environments)
-        .set({
-          flyAppName: input.appName,
-          gatewayServiceTokenHash: input.gatewayServiceTokenHash,
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.environments.id, input.environmentId));
+      const { attempt, operationId } = input;
+      if (operationId === undefined || attempt === undefined) {
+        await knowledgeDb
+          .update(schema.environments)
+          .set({
+            flyAppName: input.appName,
+            gatewayServiceTokenHash: input.gatewayServiceTokenHash,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.environments.id, input.environmentId));
+        return "staged" as const;
+      }
+      const now = new Date();
+      return knowledgeDb.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
+        );
+        const [operation] = await transaction
+          .update(schema.environmentOperations)
+          .set({ updatedAt: now })
+          .where(
+            and(
+              eq(schema.environmentOperations.id, operationId),
+              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(schema.environmentOperations.status, "running"),
+              eq(schema.environmentOperations.attempt, attempt),
+            ),
+          )
+          .returning({ id: schema.environmentOperations.id });
+        if (!operation) return "superseded" as const;
+        const [environment] = await transaction
+          .update(schema.environments)
+          .set({
+            flyAppName: input.appName,
+            gatewayServiceTokenHash: input.gatewayServiceTokenHash,
+            updatedAt: now,
+          })
+          .where(eq(schema.environments.id, input.environmentId))
+          .returning({ id: schema.environments.id });
+        return environment ? ("staged" as const) : ("superseded" as const);
+      });
     },
     async setEnvironmentDeleting(environmentId) {
       await knowledgeDb.transaction(async (transaction) => {
@@ -1209,24 +1349,68 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         }
       });
     },
-    async completeEnvironment(input) {
-      await knowledgeDb
-        .update(schema.environments)
-        .set({
-          status: "ready",
-          flyAppName: input.appName,
-          flyNetworkName: input.networkName,
-          flyGatewayMachineId: input.gatewayMachineId,
-          routerUrl: input.routerUrl,
-          routerImage: input.routerImage,
-          runtimeImage: input.runtimeImage,
-          gatewayServiceTokenHash: input.gatewayServiceTokenHash,
-          lastHealthAt: new Date(),
-          failureCode: null,
-          failureMessage: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.environments.id, input.environmentId));
+    async completeEnvironmentProvision(input) {
+      const now = new Date();
+      return knowledgeDb.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
+        );
+        const [operation] = await transaction
+          .update(schema.environmentOperations)
+          .set({ updatedAt: now })
+          .where(
+            and(
+              eq(schema.environmentOperations.id, input.operationId),
+              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(schema.environmentOperations.status, "running"),
+              eq(schema.environmentOperations.attempt, input.attempt),
+            ),
+          )
+          .returning({ id: schema.environmentOperations.id });
+        if (!operation) return "superseded" as const;
+        const [environment] = await transaction
+          .update(schema.environments)
+          .set({
+            status: "ready",
+            flyAppName: input.appName,
+            flyNetworkName: input.networkName,
+            flyGatewayMachineId: input.gatewayMachineId,
+            routerUrl: input.routerUrl,
+            routerImage: input.routerImage,
+            runtimeImage: input.runtimeImage,
+            gatewayServiceTokenHash: input.gatewayServiceTokenHash,
+            lastHealthAt: now,
+            failureCode: null,
+            failureMessage: null,
+            updatedAt: now,
+          })
+          .where(eq(schema.environments.id, input.environmentId))
+          .returning({ id: schema.environments.id });
+        if (!environment) return "superseded" as const;
+        const [completed] = await transaction
+          .update(schema.environmentOperations)
+          .set({
+            status: "completed",
+            stage: "environment.activation.ready",
+            result: {
+              appName: input.appName,
+              networkName: input.networkName,
+              gatewayMachineId: input.gatewayMachineId,
+              routerUrl: input.routerUrl,
+            },
+            completedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(schema.environmentOperations.id, input.operationId),
+              eq(schema.environmentOperations.status, "running"),
+              eq(schema.environmentOperations.attempt, input.attempt),
+            ),
+          )
+          .returning({ id: schema.environmentOperations.id });
+        return completed ? ("completed" as const) : ("superseded" as const);
+      });
     },
     async failEnvironment(input) {
       await knowledgeDb
@@ -1238,6 +1422,57 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           updatedAt: new Date(),
         })
         .where(eq(schema.environments.id, input.environmentId));
+    },
+    async failEnvironmentProvision(input) {
+      const now = new Date();
+      return knowledgeDb.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
+        );
+        const [operation] = await transaction
+          .update(schema.environmentOperations)
+          .set({ updatedAt: now })
+          .where(
+            and(
+              eq(schema.environmentOperations.id, input.operationId),
+              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(schema.environmentOperations.status, "running"),
+              eq(schema.environmentOperations.attempt, input.attempt),
+            ),
+          )
+          .returning({ id: schema.environmentOperations.id });
+        if (!operation) return "superseded" as const;
+        const [environment] = await transaction
+          .update(schema.environments)
+          .set({
+            status: "failed",
+            failureCode: input.code,
+            failureMessage: input.message,
+            updatedAt: now,
+          })
+          .where(eq(schema.environments.id, input.environmentId))
+          .returning({ id: schema.environments.id });
+        if (!environment) return "superseded" as const;
+        const [failed] = await transaction
+          .update(schema.environmentOperations)
+          .set({
+            status: "failed",
+            stage: "environment.activation.failed",
+            errorCode: input.code,
+            errorMessage: input.message,
+            completedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(schema.environmentOperations.id, input.operationId),
+              eq(schema.environmentOperations.status, "running"),
+              eq(schema.environmentOperations.attempt, input.attempt),
+            ),
+          )
+          .returning({ id: schema.environmentOperations.id });
+        return failed ? ("failed" as const) : ("superseded" as const);
+      });
     },
     async degradeEnvironment(input) {
       await knowledgeDb
@@ -1449,7 +1684,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .where(
           and(
             eq(schema.environmentOperations.id, input.operationId),
-            eq(schema.environmentOperations.status, "running")
+            eq(schema.environmentOperations.status, "running"),
+            ...(input.attempt === undefined
+              ? []
+              : [eq(schema.environmentOperations.attempt, input.attempt)])
           )
         );
     },
@@ -1486,16 +1724,33 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .set({
           status: "queued",
           stage: input.stage,
-          errorCode: null,
+          errorCode: input.code ?? null,
           errorMessage: input.message,
           updatedAt: new Date(),
         })
-        .where(eq(schema.environmentOperations.id, input.operationId));
+        .where(
+          and(
+            eq(schema.environmentOperations.id, input.operationId),
+            eq(schema.environmentOperations.status, "running"),
+            ...(input.attempt === undefined
+              ? []
+              : [eq(schema.environmentOperations.attempt, input.attempt)]),
+          ),
+        );
     },
   };
 
 function operationError(code: string, message: string) {
   return Object.assign(new Error(message), { code });
+}
+
+class EnvironmentProvisioningPersistenceError extends Error {
+  readonly code = "ENVIRONMENT_CONTROL_PLANE_RETRYING";
+
+  constructor(_cause: unknown) {
+    super("Kestrel could not record Environment provisioning state. Retrying.");
+    this.name = "EnvironmentProvisioningPersistenceError";
+  }
 }
 
 async function cleanupFailedWorkspaceProvisioning(input: {
