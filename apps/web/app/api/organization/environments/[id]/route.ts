@@ -15,7 +15,10 @@ import { deleteEnvironmentInputSchema } from "@/lib/environments/contracts";
 const paramsSchema = z.object({ id: routeIdSchema });
 const patchSchema = z.union([
   z.object({ isDefault: z.literal(true) }),
-  z.object({ runtimeImage: z.string().trim().min(1).max(500) }),
+  z.object({
+    runtimeImage: z.string().trim().min(1).max(500),
+    reconcile: z.boolean().optional(),
+  }),
   z.object({
     reasoning: z.object({
       request: z.object({
@@ -76,6 +79,7 @@ export async function PATCH(
             actorUserId: session.user.id,
             environmentId: id,
             runtimeImage: patch.runtimeImage,
+            reconcile: patch.reconcile,
           })
         : await setAdminDefaultEnvironment({
             organizationId,

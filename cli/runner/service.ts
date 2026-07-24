@@ -22,9 +22,24 @@ async function main(): Promise<void> {
     authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN,
     ...(store === undefined
       ? {}
-      : { runtimeFactory: createHostedRunnerRuntimeFactory(store.store) }),
+      : {
+          runtimeFactory: createHostedRunnerRuntimeFactory(store.store),
+          runtimeStore: {
+            ready: store.ready,
+            probe: store.probe,
+            close: store.close,
+          },
+        }),
+    onRuntimeStoreEvent: (event) => {
+      process.stdout.write(
+        `${JSON.stringify({
+          ...event,
+          occurredAt: new Date().toISOString(),
+        })}\n`,
+      );
+    },
   }).catch(async (error: unknown) => {
-    await store?.close();
+    await store?.close().catch(() => {});
     throw error;
   });
 
@@ -35,12 +50,10 @@ async function main(): Promise<void> {
     port: server.port,
   })}\n`);
 
-  const shutdown = async () => {
-    try {
-      await server.close();
-    } finally {
-      await store?.close();
-    }
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = () => {
+    shutdownPromise ??= server.close();
+    return shutdownPromise;
   };
 
   process.on("SIGINT", () => {

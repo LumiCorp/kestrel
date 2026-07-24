@@ -4,7 +4,10 @@ import {
   flyEnvironmentAppName,
   flyEnvironmentNetworkName,
 } from "./fly-machines";
-import { EnvironmentProviderError } from "./contracts";
+import {
+  EnvironmentProviderError,
+  KESTREL_WORKSPACE_STOP_CONFIG,
+} from "./contracts";
 import { contractTest } from "../../../../../tests/helpers/contract-test.js";
 
 
@@ -795,6 +798,125 @@ contractTest("web.hermetic", "Fly image updates are idempotent across tag aliase
   );
 });
 
+contractTest("web.hermetic", "Fly Workspace image updates repair missing graceful stop configuration", async () => {
+  const requests: Array<{ method: string; body: unknown }> = [];
+  const digest = `sha256:${"b".repeat(64)}`;
+  const currentConfig = {
+    image: `registry.fly.io/kestrel-one-runner@${digest}`,
+    env: { KESTREL_WORKSPACE_ID: "workspace-1" },
+  };
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ method: init?.method ?? "GET", body });
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        instance_id: "instance-1",
+        config: body?.config ?? currentConfig,
+      });
+    }) as typeof fetch,
+  });
+
+  await client.updateMachineImage({
+    appName: "app-1",
+    machineId: "machine-1",
+    runtimeImage: `registry.fly.io/kestrel-one-runner@${digest}`,
+    stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
+  });
+
+  assert.deepEqual(requests.map(({ method }) => method), ["GET", "POST"]);
+  const update = requests[1]?.body as {
+    config?: { stop_config?: unknown };
+  };
+  assert.deepEqual(
+    update.config?.stop_config,
+    KESTREL_WORKSPACE_STOP_CONFIG,
+  );
+});
+
+contractTest("web.hermetic", "Fly Workspace image updates verify the persisted graceful stop configuration", async () => {
+  const methods: string[] = [];
+  const digest = `sha256:${"d".repeat(64)}`;
+  const currentConfig = {
+    image: `registry.fly.io/kestrel-one-runner@${digest}`,
+    env: { KESTREL_WORKSPACE_ID: "workspace-1" },
+  };
+  let getCount = 0;
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    healthPollIntervalMs: 0,
+    sleepImpl: async () => {},
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      if (method === "GET") getCount += 1;
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        instance_id: "instance-1",
+        config:
+          getCount >= 2
+            ? {
+                ...currentConfig,
+                stop_config: KESTREL_WORKSPACE_STOP_CONFIG,
+              }
+            : currentConfig,
+      });
+    }) as typeof fetch,
+  });
+
+  await client.updateMachineImage({
+    appName: "app-1",
+    machineId: "machine-1",
+    runtimeImage: `registry.fly.io/kestrel-one-runner@${digest}`,
+    stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
+  });
+
+  assert.deepEqual(methods, ["GET", "POST", "GET"]);
+});
+
+contractTest("web.hermetic", "Fly Workspace image updates accept canonical graceful stop durations", async () => {
+  const requests: Array<{ method: string; body: unknown }> = [];
+  const digest = `sha256:${"c".repeat(64)}`;
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ method: init?.method ?? "GET", body });
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        instance_id: "instance-1",
+        config: {
+          image: `registry.fly.io/kestrel-one-runner@${digest}`,
+          env: { KESTREL_WORKSPACE_ID: "workspace-1" },
+          stop_config: {
+            signal: "SIGTERM",
+            timeout: "2m0s",
+          },
+        },
+      });
+    }) as typeof fetch,
+  });
+
+  await client.updateMachineImage({
+    appName: "app-1",
+    machineId: "machine-1",
+    runtimeImage: `registry.fly.io/kestrel-one-runner@${digest}`,
+    stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
+  });
+
+  assert.deepEqual(requests.map(({ method }) => method), ["GET"]);
+});
+
 contractTest("web.hermetic", "Fly workspace updates reconcile preview environment without replacing unrelated configuration", async () => {
   const requests: Array<{ method: string; body: unknown }> = [];
   const digest = `sha256:${"a".repeat(64)}`;
@@ -943,6 +1065,19 @@ contractTest("web.hermetic", "replacement resources are idempotently namespaced 
     fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
       requests.push({ url: String(url), init: init ?? {} });
       const pathname = new URL(String(url)).pathname;
+      if (init?.method === "GET" && pathname.endsWith("/machines")) {
+        return Response.json([
+          {
+            id: "old-machine-id",
+            state: "stopped",
+            region: "iad",
+            config: {
+              image: "registry.fly.io/runtime@sha256:old",
+              stop_config: null,
+            },
+          },
+        ]);
+      }
       if (init?.method === "GET") return Response.json([]);
       if (pathname.endsWith("/volumes")) {
         const body = JSON.parse(String(init?.body));
@@ -956,8 +1091,11 @@ contractTest("web.hermetic", "replacement resources are idempotently namespaced 
       }
       return Response.json({
         id: "replacement-machine-id",
-        state: "started",
-        region: "iad",
+        config: {
+          mounts: null,
+          services: null,
+          stop_config: null,
+        },
       });
     }) as typeof fetch,
   });
@@ -996,6 +1134,117 @@ contractTest("web.hermetic", "replacement resources are idempotently namespaced 
     "restore-operation-1"
   );
   assert.equal(machineBody.config.mounts[0].volume, "replacement-volume-id");
+  assert.deepEqual(
+    machineBody.config.stop_config,
+    KESTREL_WORKSPACE_STOP_CONFIG,
+  );
+});
+
+contractTest("web.hermetic", "Fly snapshot replacement volumes validate ownership and wait until created", async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    healthPollIntervalMs: 1,
+    sleepImpl: async () => {},
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ url: requestUrl, method, body });
+      const pathname = new URL(requestUrl).pathname;
+      if (pathname.endsWith("/volumes/source-volume/snapshots")) {
+        return Response.json([
+          { id: "snapshot-created", status: "created" },
+        ]);
+      }
+      if (pathname.endsWith("/volumes") && method === "GET") {
+        return Response.json([]);
+      }
+      if (pathname.endsWith("/volumes") && method === "POST") {
+        return Response.json(
+          {
+            id: "replacement-volume",
+            name: body.name,
+            region: "iad",
+            size_gb: 20,
+            encrypted: true,
+            state: "restoring",
+          },
+          { status: 202 },
+        );
+      }
+      return Response.json({
+        id: "replacement-volume",
+        name: "replacement-volume",
+        region: "iad",
+        size_gb: 20,
+        encrypted: true,
+        state: "created",
+      });
+    }) as typeof fetch,
+  });
+
+  const volume = await client.createReplacementWorkspaceVolume({
+    appName: "app-1",
+    workspaceId: "workspace-1",
+    region: "iad",
+    replacementId: "restore-operation-1",
+    sourceVolumeId: "source-volume",
+    snapshotId: "snapshot-created",
+  });
+
+  assert.equal(volume.id, "replacement-volume");
+  const create = requests.find(
+    (request) =>
+      request.method === "POST" &&
+      new URL(request.url).pathname.endsWith("/volumes"),
+  );
+  assert.equal(
+    (create?.body as { snapshot_id?: string }).snapshot_id,
+    "snapshot-created",
+  );
+  assert.equal(
+    requests.some((request) =>
+      new URL(request.url).pathname.endsWith("/volumes/replacement-volume"),
+    ),
+    true,
+  );
+});
+
+contractTest("web.hermetic", "Fly snapshot replacement rejects foreign or incomplete snapshots", async () => {
+  const createClient = (snapshots: unknown) =>
+    new FlyMachinesClient({
+      token: "test-token",
+      organizationSlug: "kestrel-test",
+      fetchImpl: (async () =>
+        Response.json(snapshots)) as unknown as typeof fetch,
+    });
+  const input = {
+    appName: "app-1",
+    workspaceId: "workspace-1",
+    region: "iad",
+    replacementId: "restore-operation-1",
+    sourceVolumeId: "source-volume",
+    snapshotId: "snapshot-requested",
+  };
+
+  await assert.rejects(
+    createClient([
+      { id: "snapshot-from-another-volume", status: "created" },
+    ]).createReplacementWorkspaceVolume(input),
+    (error: unknown) =>
+      error instanceof EnvironmentProviderError &&
+      error.code === "FLY_RESOURCE_CONFLICT",
+  );
+  await assert.rejects(
+    createClient([
+      { id: "snapshot-requested", status: "preparing" },
+    ]).createReplacementWorkspaceVolume(input),
+    (error: unknown) =>
+      error instanceof EnvironmentProviderError &&
+      error.code === "FLY_RESOURCE_CONFLICT",
+  );
 });
 
 contractTest("web.hermetic", "Fly inventory preserves exact Workspace ownership metadata", async () => {

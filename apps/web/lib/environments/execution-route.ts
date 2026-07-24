@@ -3,7 +3,7 @@ import {
   signEnvironmentExecutionTicket,
   WORKSPACE_READINESS_TIMEOUT_MS,
 } from "@lumi/kestrel-environment-auth";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
 import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -18,7 +18,14 @@ import {
   requestWorkspaceStart,
   resolveOrCreateThreadExecutionBinding,
 } from "./store";
-import { hasActiveWorkspaceLifecycleOperation } from "./lifecycle-operations";
+import {
+  findActiveWorkspaceLifecycleOperation,
+  hasActiveWorkspaceLifecycleOperation,
+} from "./lifecycle-operations";
+import {
+  environmentLifecycleLockKey,
+  workspaceLifecycleLockKey,
+} from "./lifecycle-lock";
 
 export type EnvironmentActivationProgress = {
   stage:
@@ -132,90 +139,199 @@ export async function resolveEnvironmentExecutionRoute(input: {
       await enqueueEnvironmentOperation(operation.id);
     }
   }
-  const { environment, workspace } = await waitForExecutionResources({
-    organizationId: input.organizationId,
-    environmentId: resolved.binding.environmentId,
-    workspaceId: resolved.binding.workspaceId,
-    actorUserId: input.actorUserId,
-    owningLifecycleOperationIds: input.owningLifecycleOperationIds,
-    onProgress: input.onProgress,
-  });
-  const now = Math.floor(Date.now() / 1000);
-  const runId = crypto.randomUUID();
-  const effectiveCapabilities = await snapshotEffectiveCapabilities({
-    organizationId: input.organizationId,
-    environmentId: environment.id,
-    threadId: input.threadId,
-    actorId: input.actorUserId,
-    agentId: input.agentId ?? "kestrel-one-ui",
-  });
-  const reasoningPolicy = await readEnvironmentReasoningPolicy({
-    organizationId: input.organizationId,
-    environmentId: environment.id,
-  });
-  let mcpContext;
-  let projectId: string | null | undefined;
-  if (input.recordExecution) {
-    projectId = await recordEnvironmentExecution({
-      id: runId,
+  let authorization:
+    | Awaited<ReturnType<typeof finalizeHostedEnvironmentExecutionAuthorization>>
+    | null = null;
+  while (!authorization) {
+    const { environment, workspace } = await waitForExecutionResources({
+      organizationId: input.organizationId,
+      environmentId: resolved.binding.environmentId,
+      workspaceId: resolved.binding.workspaceId,
+      actorUserId: input.actorUserId,
+      owningLifecycleOperationIds: input.owningLifecycleOperationIds,
+      onProgress: input.onProgress,
+    });
+    const effectiveCapabilities = await snapshotEffectiveCapabilities({
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+      threadId: input.threadId,
+      actorId: input.actorUserId,
+      agentId: input.agentId ?? "kestrel-one-ui",
+    });
+    const reasoningPolicy = await readEnvironmentReasoningPolicy({
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+    });
+    authorization = await finalizeHostedEnvironmentExecutionAuthorization({
+      runId: crypto.randomUUID(),
       organizationId: input.organizationId,
       environmentId: environment.id,
       workspaceId: workspace.id,
       threadId: input.threadId,
-      actorId: input.actorUserId,
-      runtimeImage: workspace.runtimeImage,
-      routeCapabilities: [...ROUTE_CAPABILITIES],
+      actorUserId: input.actorUserId,
+      agentId: input.agentId ?? "kestrel-one-ui",
       effectiveCapabilities,
       reasoningPolicy,
-      projectContextRevisionId: input.recordExecution.projectContextRevisionId,
-      durableTurnId: input.recordExecution.durableTurnId,
+      recordExecution: input.recordExecution,
+      owningLifecycleOperationIds: input.owningLifecycleOperationIds,
     });
+  }
+  let mcpContext;
+  if (input.recordExecution) {
     mcpContext = await issueHostedMcpRunContext({
-      runExecutionId: runId,
+      runExecutionId: authorization.runId,
       organizationId: input.organizationId,
-      environmentId: environment.id,
-      projectId,
+      environmentId: authorization.environmentId,
+      projectId: authorization.projectId ?? null,
       threadId: input.threadId,
     });
   }
-  const privateKey = process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "";
-  const token = signEnvironmentExecutionTicket({
-    privateKey,
-    ticket: {
-      version: 1,
-      audience: ENVIRONMENT_ROUTER_AUDIENCE,
-      organizationId: input.organizationId,
-      environmentId: environment.id,
-      workspaceId: workspace.id,
-      threadId: input.threadId,
-      runId,
-      actorId: input.actorUserId,
-      agentId: input.agentId ?? "kestrel-one-ui",
-      flyAppName: environment.flyAppName,
-      flyMachineId: workspace.flyMachineId,
-      capabilities: [...ROUTE_CAPABILITIES],
-      issuedAt: now,
-      expiresAt: now + 300,
-      nonce: crypto.randomUUID(),
-    },
-  });
   input.onProgress?.({
     stage: "environment.activation.ready",
     detail: "Environment ready.",
     status: "ready",
   });
   return {
-    baseUrl: environment.routerUrl,
-    authToken: token,
-    executionTicket: token,
-    runId,
-    environmentId: environment.id,
-    workspaceId: workspace.id,
-    projectId,
-    effectiveCapabilities,
-    reasoningPolicy,
+    baseUrl: authorization.baseUrl,
+    authToken: authorization.executionTicket,
+    executionTicket: authorization.executionTicket,
+    runId: authorization.runId,
+    environmentId: authorization.environmentId,
+    workspaceId: authorization.workspaceId,
+    projectId: authorization.projectId,
+    effectiveCapabilities: authorization.effectiveCapabilities,
+    reasoningPolicy: authorization.reasoningPolicy,
     ...(mcpContext ? { mcpContext } : {}),
   };
+}
+
+export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
+  runId: string;
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  threadId: string;
+  actorUserId: string;
+  agentId: string;
+  effectiveCapabilities: string[];
+  reasoningPolicy: Awaited<ReturnType<typeof readEnvironmentReasoningPolicy>>;
+  recordExecution?:
+    | {
+        projectContextRevisionId?: string | undefined;
+        durableTurnId?: string | undefined;
+      }
+    | undefined;
+  owningLifecycleOperationIds?: readonly string[] | undefined;
+}) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
+    );
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
+    );
+    const [environment, workspace, activeLifecycleOperation] =
+      await Promise.all([
+        transaction.query.environments.findFirst({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.id, input.environmentId),
+              eq(table.organizationId, input.organizationId),
+              eq(table.status, "ready"),
+              isNull(table.archivedAt),
+            ),
+          columns: {
+            id: true,
+            flyAppName: true,
+            routerUrl: true,
+            flyGatewayMachineId: true,
+          },
+        }),
+        transaction.query.environmentWorkspaces.findFirst({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.id, input.workspaceId),
+              eq(table.organizationId, input.organizationId),
+              eq(table.environmentId, input.environmentId),
+              eq(table.status, "ready"),
+              isNull(table.deletedAt),
+            ),
+          columns: {
+            id: true,
+            flyMachineId: true,
+            runtimeImage: true,
+          },
+        }),
+        findActiveWorkspaceLifecycleOperation(transaction, {
+          organizationId: input.organizationId,
+          environmentId: input.environmentId,
+          workspaceId: input.workspaceId,
+          excludedOperationIds: input.owningLifecycleOperationIds,
+        }),
+      ]);
+    if (
+      !(
+        environment?.flyAppName &&
+        environment.routerUrl &&
+        environment.flyGatewayMachineId &&
+        workspace?.flyMachineId &&
+        workspace.runtimeImage
+      ) ||
+      activeLifecycleOperation
+    ) {
+      return null;
+    }
+
+    const projectId = input.recordExecution
+      ? await recordEnvironmentExecutionInTransaction(transaction, {
+          id: input.runId,
+          organizationId: input.organizationId,
+          environmentId: environment.id,
+          workspaceId: workspace.id,
+          threadId: input.threadId,
+          actorId: input.actorUserId,
+          runtimeImage: workspace.runtimeImage,
+          routeCapabilities: [...ROUTE_CAPABILITIES],
+          effectiveCapabilities: input.effectiveCapabilities,
+          reasoningPolicy: input.reasoningPolicy,
+          projectContextRevisionId:
+            input.recordExecution.projectContextRevisionId,
+          durableTurnId: input.recordExecution.durableTurnId,
+        })
+      : undefined;
+    const now = Math.floor(Date.now() / 1000);
+    const executionTicket = signEnvironmentExecutionTicket({
+      privateKey:
+        process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
+      ticket: {
+        version: 1,
+        audience: ENVIRONMENT_ROUTER_AUDIENCE,
+        organizationId: input.organizationId,
+        environmentId: environment.id,
+        workspaceId: workspace.id,
+        threadId: input.threadId,
+        runId: input.runId,
+        actorId: input.actorUserId,
+        agentId: input.agentId,
+        flyAppName: environment.flyAppName,
+        flyMachineId: workspace.flyMachineId,
+        capabilities: [...ROUTE_CAPABILITIES],
+        issuedAt: now,
+        expiresAt: now + 300,
+        nonce: crypto.randomUUID(),
+      },
+    });
+    return {
+      baseUrl: environment.routerUrl,
+      executionTicket,
+      runId: input.runId,
+      environmentId: environment.id,
+      workspaceId: workspace.id,
+      projectId,
+      effectiveCapabilities: input.effectiveCapabilities,
+      reasoningPolicy: input.reasoningPolicy,
+    };
+  });
 }
 
 async function resolveLocalEnvironmentExecutionRoute(input: {
@@ -628,7 +744,11 @@ export function createEnvironmentMachineRoute(input: {
   return { baseUrl: input.routerUrl, authToken, runId };
 }
 
-async function recordEnvironmentExecution(input: {
+type EnvironmentExecutionTransaction = Parameters<
+  Parameters<typeof knowledgeDb.transaction>[0]
+>[0];
+
+type EnvironmentExecutionRecordInput = {
   id: string;
   organizationId: string;
   environmentId: string;
@@ -647,73 +767,84 @@ async function recordEnvironmentExecution(input: {
     };
     retention: { mode: "live_only" | "provider_visible"; days: number };
   };
-}) {
-  return knowledgeDb.transaction(async (transaction) => {
-    const thread = await transaction.query.threads.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.id, input.threadId),
-          eq(table.organizationId, input.organizationId),
-        ),
-      columns: { projectId: true },
-    });
-    if (!thread)
-      throw new Error("Environment execution Thread is unavailable.");
-    if (input.projectContextRevisionId) {
-      const revision = thread.projectId
-        ? await transaction.query.projectContextRevisions.findFirst({
-            where: (table, { and, eq }) =>
-              and(
-                eq(table.id, input.projectContextRevisionId!),
-                eq(table.projectId, thread.projectId!),
-              ),
-            columns: { id: true },
-          })
-        : null;
-      if (!revision) {
-        throw new Error(
-          "Environment execution Project context is unavailable.",
-        );
-      }
-    }
-    await transaction.insert(schema.environmentRunExecutions).values({
-      id: input.id,
-      organizationId: input.organizationId,
-      environmentId: input.environmentId,
-      workspaceId: input.workspaceId,
-      threadId: input.threadId,
-      projectId: thread.projectId,
-      projectContextRevisionId: input.projectContextRevisionId ?? null,
-      actorId: input.actorId,
-      runtimeImage: input.runtimeImage,
-      effectiveCapabilities: [
-        ...input.routeCapabilities.map((capability) => `route:${capability}`),
-        ...input.effectiveCapabilities,
-      ].sort(),
-      reasoningPolicySnapshot: input.reasoningPolicy,
-      reasoningKeyReady: false,
-    });
-    if (input.durableTurnId) {
-      const [bound] = await transaction
-        .update(schema.threadTurns)
-        .set({ environmentExecutionId: input.id, updatedAt: new Date() })
-        .where(
-          and(
-            eq(schema.threadTurns.id, input.durableTurnId),
-            eq(schema.threadTurns.organizationId, input.organizationId),
-            eq(schema.threadTurns.threadId, input.threadId),
-            eq(schema.threadTurns.status, "running"),
-          ),
-        )
-        .returning({ id: schema.threadTurns.id });
-      if (!bound) {
-        throw new Error(
-          "Durable turn could not be bound to its Environment execution.",
-        );
-      }
-    }
-    return thread.projectId;
+};
+
+async function recordEnvironmentExecution(
+  input: EnvironmentExecutionRecordInput,
+) {
+  return knowledgeDb.transaction((transaction) =>
+    recordEnvironmentExecutionInTransaction(transaction, input),
+  );
+}
+
+async function recordEnvironmentExecutionInTransaction(
+  transaction: EnvironmentExecutionTransaction,
+  input: EnvironmentExecutionRecordInput,
+) {
+  const thread = await transaction.query.threads.findFirst({
+    where: (table, { and, eq }) =>
+      and(
+        eq(table.id, input.threadId),
+        eq(table.organizationId, input.organizationId),
+      ),
+    columns: { projectId: true },
   });
+  if (!thread)
+    throw new Error("Environment execution Thread is unavailable.");
+  if (input.projectContextRevisionId) {
+    const revision = thread.projectId
+      ? await transaction.query.projectContextRevisions.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.id, input.projectContextRevisionId!),
+              eq(table.projectId, thread.projectId!),
+            ),
+          columns: { id: true },
+        })
+      : null;
+    if (!revision) {
+      throw new Error(
+        "Environment execution Project context is unavailable.",
+      );
+    }
+  }
+  await transaction.insert(schema.environmentRunExecutions).values({
+    id: input.id,
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+    workspaceId: input.workspaceId,
+    threadId: input.threadId,
+    projectId: thread.projectId,
+    projectContextRevisionId: input.projectContextRevisionId ?? null,
+    actorId: input.actorId,
+    runtimeImage: input.runtimeImage,
+    effectiveCapabilities: [
+      ...input.routeCapabilities.map((capability) => `route:${capability}`),
+      ...input.effectiveCapabilities,
+    ].sort(),
+    reasoningPolicySnapshot: input.reasoningPolicy,
+    reasoningKeyReady: false,
+  });
+  if (input.durableTurnId) {
+    const [bound] = await transaction
+      .update(schema.threadTurns)
+      .set({ environmentExecutionId: input.id, updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.threadTurns.id, input.durableTurnId),
+          eq(schema.threadTurns.organizationId, input.organizationId),
+          eq(schema.threadTurns.threadId, input.threadId),
+          eq(schema.threadTurns.status, "running"),
+        ),
+      )
+      .returning({ id: schema.threadTurns.id });
+    if (!bound) {
+      throw new Error(
+        "Durable turn could not be bound to its Environment execution.",
+      );
+    }
+  }
+  return thread.projectId;
 }
 
 async function readEnvironmentReasoningPolicy(input: {

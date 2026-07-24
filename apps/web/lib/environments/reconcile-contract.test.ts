@@ -7,6 +7,7 @@ import {
   assessWorkspaceMachineReadiness,
   assessWorkspaceVolumeBinding,
   mountedVolumeIdsFromInventory,
+  retainedFailedRestoreResourceIds,
   selectOrphanVolumeIds,
 } from "./reconcile-contract";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
@@ -131,6 +132,38 @@ contractTest("web.hermetic", "Workspace reconciliation accepts an unchanged exac
       inventory: inventory(),
     }),
     { status: "matched", volumeId: "volume-new" }
+  );
+});
+
+contractTest("web.hermetic", "Workspace reconciliation accepts an exactly bound recovery Volume", () => {
+  const recoveryVolumeName = `${expectedVolumeName}_r_restore`;
+  assert.deepEqual(
+    assessWorkspaceVolumeBinding({
+      workspaceId,
+      environmentRegion: "iad",
+      expectedVolumeName,
+      recordedVolumeId: "volume-new",
+      machine: machine({
+        mounts: [
+          {
+            volumeId: "volume-new",
+            name: recoveryVolumeName,
+            path: "/workspace",
+          },
+        ],
+      }),
+      inventory: inventory({
+        volumes: [
+          {
+            id: "volume-new",
+            name: recoveryVolumeName,
+            region: "iad",
+            attachedMachineId: "machine-1",
+          },
+        ],
+      }),
+    }),
+    { status: "matched", volumeId: "volume-new" },
   );
 });
 
@@ -273,4 +306,19 @@ contractTest("web.hermetic", "orphan cleanup excludes mounted Volumes even when 
     }),
     ["volume-unmounted"]
   );
+});
+
+contractTest("web.hermetic", "post-cutover failures retain both old resource identities", () => {
+  const retained = retainedFailedRestoreResourceIds([
+    {
+      oldMachineId: "machine-old",
+      oldVolumeId: "volume-old",
+      replacementMachineId: "machine-new",
+      replacementVolumeId: "volume-new",
+    },
+    null,
+    {},
+  ]);
+  assert.deepEqual([...retained.machineIds], ["machine-old"]);
+  assert.deepEqual([...retained.volumeIds], ["volume-old"]);
 });

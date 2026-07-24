@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { logAdminEvent } from "@/lib/admin/logs";
 import {
   getHostedEnvironmentsRollout,
@@ -16,6 +16,7 @@ import {
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { getOrganizationInfrastructureSettings } from "@/lib/environments/organization-infrastructure-settings";
+import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
 
 export async function createAdminEnvironment(input: {
   organizationId: string;
@@ -166,6 +167,7 @@ export async function updateAdminEnvironmentRuntime(input: {
   actorUserId: string;
   environmentId: string;
   runtimeImage: string;
+  reconcile?: boolean | undefined;
 }) {
   const environment = await getOrganizationEnvironment({
     organizationId: input.organizationId,
@@ -190,7 +192,8 @@ export async function updateAdminEnvironmentRuntime(input: {
   }
   if (
     environment.runtimeImage === input.runtimeImage &&
-    environment.routerImage === routerImage
+    environment.routerImage === routerImage &&
+    input.reconcile !== true
   ) {
     return environment;
   }
@@ -202,6 +205,9 @@ export async function updateAdminEnvironmentRuntime(input: {
     input.runtimeImage,
   ].join(":");
   const operation = await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
+    );
     const existing = await transaction.query.environmentOperations.findFirst({
       where: (table, { and, eq }) =>
         and(
@@ -210,23 +216,29 @@ export async function updateAdminEnvironmentRuntime(input: {
         ),
     });
     if (existing) {
-      if (existing.status === "failed" || existing.status === "cancelled") {
-        const [reset] = await transaction
-          .update(schema.environmentOperations)
-          .set({
-            status: "queued",
-            stage: "requested",
-            requestedByUserId: input.actorUserId,
-            errorCode: null,
-            errorMessage: null,
-            completedAt: null,
-            updatedAt: now,
-          })
-          .where(eq(schema.environmentOperations.id, existing.id))
-          .returning();
-        return reset ?? existing;
+      if (existing.status === "queued" || existing.status === "running") {
+        return existing;
       }
-      return existing;
+      if (existing.status === "completed" && input.reconcile !== true) {
+        return existing;
+      }
+      const [reset] = await transaction
+        .update(schema.environmentOperations)
+        .set({
+          status: "queued",
+          stage: "requested",
+          requestedByUserId: input.actorUserId,
+          providerRequestId: null,
+          result: null,
+          errorCode: null,
+          errorMessage: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: now,
+        })
+        .where(eq(schema.environmentOperations.id, existing.id))
+        .returning();
+      return reset ?? existing;
     }
     const [created] = await transaction
       .insert(schema.environmentOperations)

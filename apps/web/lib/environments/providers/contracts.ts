@@ -3,6 +3,15 @@ export const KESTREL_WORKSPACE_SERVICE_PORT = 43_104;
 export const KESTREL_WORKSPACE_VOLUME_GB = 20;
 export const KESTREL_WORKSPACE_MEMORY_MB = 4096;
 export const KESTREL_WORKSPACE_CPUS = 2;
+export const KESTREL_WORKSPACE_STOP_CONFIG = {
+  signal: "SIGTERM",
+  timeout: 120_000_000_000,
+} as const;
+
+export type EnvironmentProviderMachineStopConfig = {
+  signal: string;
+  timeout: number;
+};
 
 export type EnvironmentProviderApp = {
   id: string;
@@ -110,7 +119,14 @@ export interface EnvironmentInfrastructureProvider {
     workspaceId: string;
     region: string;
     replacementId: string;
+    snapshotId?: string | undefined;
+    sourceVolumeId?: string | undefined;
   }): Promise<EnvironmentProviderVolume>;
+  isWorkspaceSnapshotUsable(input: {
+    appName: string;
+    sourceVolumeId: string;
+    snapshotId: string;
+  }): Promise<boolean>;
   createReplacementWorkspaceMachine(
     input: WorkspaceMachineProvisioningInput & { replacementId: string }
   ): Promise<EnvironmentProviderMachine>;
@@ -147,6 +163,7 @@ export interface EnvironmentInfrastructureProvider {
     machineId: string;
     runtimeImage: string;
     envPatch?: Record<string, string | undefined> | undefined;
+    stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
   }): Promise<EnvironmentProviderMachine>;
 }
 

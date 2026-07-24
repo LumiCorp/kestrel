@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
 import {
   type EnvironmentInfrastructureProvider,
   type EnvironmentProviderApp,
@@ -12,7 +13,9 @@ import {
   KESTREL_WORKSPACE_CPUS,
   KESTREL_WORKSPACE_MEMORY_MB,
   KESTREL_WORKSPACE_SERVICE_PORT,
+  KESTREL_WORKSPACE_STOP_CONFIG,
   KESTREL_WORKSPACE_VOLUME_GB,
+  type EnvironmentProviderMachineStopConfig,
   type WorkspaceMachineProvisioningInput,
 } from "./contracts";
 
@@ -43,8 +46,22 @@ const volumeSchema = z.object({
   region: z.string().min(1),
   size_gb: z.number().int().positive(),
   encrypted: z.boolean(),
+  state: z.string().min(1).optional(),
   attached_machine_id: z.string().min(1).nullable().optional(),
 });
+
+const volumeSnapshotSchema = z.object({
+  id: z.string().min(1),
+  status: z.string().min(1).optional(),
+  state: z.string().min(1).optional(),
+});
+
+const volumeSnapshotsSchema = z
+  .union([
+    z.array(volumeSnapshotSchema),
+    z.object({ snapshots: z.array(volumeSnapshotSchema) }),
+  ])
+  .transform((value) => (Array.isArray(value) ? value : value.snapshots));
 
 const machineMountSchema = z
   .object({
@@ -58,7 +75,7 @@ const machineSchema = z.object({
   id: z.string().min(1),
   state: z.string().min(1),
   region: z.string().min(1),
-  instance_id: z.string().min(1).optional(),
+  instance_id: z.string().min(1).nullable().optional(),
   checks: z
     .array(
       z.object({
@@ -76,6 +93,20 @@ const machineSchema = z.object({
       metadata: z.record(z.string(), z.string()).optional(),
       mounts: z.array(machineMountSchema).optional(),
       services: z.array(z.unknown()).optional(),
+      stop_config: z
+        .object({
+          signal: z.string().min(1),
+          timeout: z.preprocess(
+            (value) =>
+              typeof value === "string"
+                ? parseFlyDurationNanoseconds(value) ?? value
+                : value,
+            z.number().int().nonnegative()
+          ),
+        })
+        .passthrough()
+        .nullable()
+        .optional(),
       guest: z
         .object({
           cpu_kind: z.string().min(1).optional(),
@@ -88,6 +119,12 @@ const machineSchema = z.object({
     .passthrough()
     .optional(),
 });
+
+const machineCreateResponseSchema = z
+  .object({
+    id: z.string().min(1),
+  })
+  .passthrough();
 
 const snapshotResponseSchema = z.object({
   Msg: z.object({
@@ -371,7 +408,28 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     workspaceId: string;
     region: string;
     replacementId: string;
+    snapshotId?: string | undefined;
+    sourceVolumeId?: string | undefined;
   }): Promise<EnvironmentProviderVolume> {
+    if (input.snapshotId) {
+      if (!input.sourceVolumeId) {
+        throw new EnvironmentProviderError(
+          "FLY_RESPONSE_INVALID",
+          "A source Fly Volume is required for snapshot restoration."
+        );
+      }
+      const usable = await this.isWorkspaceSnapshotUsable({
+        appName: input.appName,
+        sourceVolumeId: input.sourceVolumeId,
+        snapshotId: input.snapshotId,
+      });
+      if (!usable) {
+        throw new EnvironmentProviderError(
+          "FLY_RESOURCE_CONFLICT",
+          "The requested Fly snapshot does not belong to the source Volume or is not ready for restoration."
+        );
+      }
+    }
     const name = replacementWorkspaceVolumeName(
       input.workspaceId,
       input.replacementId
@@ -399,11 +457,55 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               snapshot_retention: 30,
               auto_backup_enabled: true,
               require_unique_zone: false,
+              ...(input.snapshotId ? { snapshot_id: input.snapshotId } : {}),
             }),
           }
         )
       );
-    return checkedVolume(volume, input.region);
+    const createdVolume =
+      volume.state && volume.state !== "created"
+        ? await this.waitForVolumeCreated(input.appName, volume.id)
+        : volume;
+    return checkedVolume(createdVolume, input.region);
+  }
+
+  async isWorkspaceSnapshotUsable(input: {
+    appName: string;
+    sourceVolumeId: string;
+    snapshotId: string;
+  }): Promise<boolean> {
+    const snapshots = parseResponse(
+      volumeSnapshotsSchema,
+      await this.request(
+        `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.sourceVolumeId)}/snapshots`,
+        { method: "GET" }
+      )
+    );
+    const snapshot = snapshots.find(
+      (candidate) => candidate.id === input.snapshotId
+    );
+    return (snapshot?.status ?? snapshot?.state) === "created";
+  }
+
+  private async waitForVolumeCreated(appName: string, volumeId: string) {
+    const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
+    while (true) {
+      const volume = parseResponse(
+        volumeSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(appName)}/volumes/${encodeURIComponent(volumeId)}`,
+          { method: "GET" }
+        )
+      );
+      if (!volume.state || volume.state === "created") return volume;
+      if (Date.now() >= deadline) {
+        throw new EnvironmentProviderError(
+          "FLY_PROVIDER_UNAVAILABLE",
+          "Fly replacement Volume was not created before the readiness deadline."
+        );
+      }
+      await this.sleepImpl(this.healthPollIntervalMs);
+    }
   }
 
   async ensureWorkspaceMachine(
@@ -480,7 +582,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     replacementId?: string
   ) {
     const machine = parseResponse(
-      machineSchema,
+      machineCreateResponseSchema,
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/machines`,
         {
@@ -494,7 +596,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         }
       )
     );
-    return toMachine(machine);
+    return {
+      id: machine.id,
+      state: "created",
+      region: input.region,
+    };
   }
 
   private async reconcileWorkspaceServiceToken(input: {
@@ -771,6 +877,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     machineId: string;
     runtimeImage: string;
     envPatch?: Record<string, string | undefined> | undefined;
+    stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
   }) {
     const current = parseResponse(
       machineSchema,
@@ -791,7 +898,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     );
     if (
       sameImageDigest(current.config.image, input.runtimeImage) &&
-      environmentsEqual(current.config.env ?? {}, nextEnvironment)
+      environmentsEqual(current.config.env ?? {}, nextEnvironment) &&
+      stopConfigsEqual(current.config.stop_config, input.stopConfig)
     ) {
       return toMachine(current);
     }
@@ -806,6 +914,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               ...current.config,
               image: input.runtimeImage,
               env: nextEnvironment,
+              ...(input.stopConfig ? { stop_config: input.stopConfig } : {}),
             },
             current_version: current.instance_id,
             skip_launch: current.state !== "started",
@@ -813,7 +922,55 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         }
       )
     );
-    return toMachine(updated);
+    const applied = machineConfigurationMatches(updated.config, {
+      runtimeImage: input.runtimeImage,
+      environment: nextEnvironment,
+      stopConfig: input.stopConfig,
+    })
+      ? updated
+      : await this.waitForMachineConfiguration({
+          appName: input.appName,
+          machineId: input.machineId,
+          runtimeImage: input.runtimeImage,
+          environment: nextEnvironment,
+          stopConfig: input.stopConfig,
+        });
+    return toMachine(applied);
+  }
+
+  private async waitForMachineConfiguration(input: {
+    appName: string;
+    machineId: string;
+    runtimeImage: string;
+    environment: Record<string, string>;
+    stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
+  }) {
+    const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
+    while (true) {
+      const machine = parseResponse(
+        machineSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
+          { method: "GET" }
+        )
+      );
+      if (
+        machineConfigurationMatches(machine.config, {
+          runtimeImage: input.runtimeImage,
+          environment: input.environment,
+          stopConfig: input.stopConfig,
+        })
+      ) {
+        return machine;
+      }
+      if (Date.now() >= deadline) {
+        throw new EnvironmentProviderError(
+          "FLY_RESOURCE_CONFLICT",
+          "Fly Machine did not persist the requested runtime configuration before the readiness deadline."
+        );
+      }
+      await this.sleepImpl(this.healthPollIntervalMs);
+    }
   }
 
   private async request(
@@ -848,7 +1005,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         response.status
       );
     }
-    if (response.status === 202 || response.status === 204) {
+    if (response.status === 204) {
       return {};
     }
     return response.json().catch(() => ({}));
@@ -926,6 +1083,7 @@ function workspaceMachineConfig(
     },
     mounts: [{ volume: input.volumeId, path: "/workspace" }],
     restart: { policy: "on-failure", max_retries: 3 },
+    stop_config: KESTREL_WORKSPACE_STOP_CONFIG,
     checks: {
       workspace: {
         type: "http",
@@ -1113,12 +1271,80 @@ function environmentsEqual(
   return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
 }
 
+function parseFlyDurationNanoseconds(value: string) {
+  const unitNanoseconds: Record<string, number> = {
+    ns: 1,
+    us: 1000,
+    "µs": 1000,
+    "μs": 1000,
+    ms: 1_000_000,
+    s: 1_000_000_000,
+    m: 60_000_000_000,
+    h: 3_600_000_000_000,
+  };
+  const components = value.matchAll(
+    /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/gu
+  );
+  let cursor = 0;
+  let total = 0;
+  for (const component of components) {
+    if (component.index !== cursor) return null;
+    const amount = Number(component[1]);
+    const multiplier = unitNanoseconds[component[2] ?? ""];
+    if (!Number.isFinite(amount) || multiplier === undefined) return null;
+    total += amount * multiplier;
+    cursor += component[0].length;
+  }
+  return cursor === value.length && Number.isSafeInteger(total) ? total : null;
+}
+
+function stopConfigsEqual(
+  current:
+    | { signal: string; timeout: number }
+    | null
+    | undefined,
+  requested: EnvironmentProviderMachineStopConfig | undefined
+) {
+  return (
+    !requested ||
+    (current?.signal === requested.signal &&
+      current.timeout === requested.timeout)
+  );
+}
+
+function machineConfigurationMatches(
+  current:
+    | {
+        image?: string | undefined;
+        env?: Record<string, string> | undefined;
+        stop_config?:
+          | { signal: string; timeout: number }
+          | null
+          | undefined;
+      }
+    | undefined,
+  requested: {
+    runtimeImage: string;
+    environment: Record<string, string>;
+    stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
+  }
+) {
+  return Boolean(
+    current?.image &&
+      sameImageDigest(current.image, requested.runtimeImage) &&
+      environmentsEqual(current.env ?? {}, requested.environment) &&
+      stopConfigsEqual(current.stop_config, requested.stopConfig)
+  );
+}
+
 function parseResponse<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path.length ? issue.path.join(".") : "root";
     throw new EnvironmentProviderError(
       "FLY_RESPONSE_INVALID",
-      "Fly Machines API returned an invalid response."
+      `Fly Machines API returned an invalid response at ${path} (${issue?.code ?? "unknown"}).`
     );
   }
   return parsed.data;
