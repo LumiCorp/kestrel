@@ -11,7 +11,7 @@ contractTest(
   () => {
     assert.deepEqual(
       listAppProviderAdapters().map((adapter) => adapter.appKey),
-      ["built_in.weather", "tavily", "ngrok", "vercel"],
+      ["built_in.weather", "tavily", "ngrok", "built_in.previews", "vercel"],
     );
     const adapter = getAppProviderAdapter("tavily");
     assert.ok(adapter?.runtime);

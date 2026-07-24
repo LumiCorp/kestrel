@@ -87,6 +87,8 @@ async function runFullValidation() {
       "--filter",
       "@kestrel/environment-router",
       "--filter",
+      "@kestrel/preview-edge",
+      "--filter",
       "@kestrel/workspace-runtime",
       "--filter",
       "@kestrel/mcp-service",
@@ -201,7 +203,7 @@ function executionRoot(file) {
       prefix: ["--import", "./scripts/register-server-only.mjs"],
     };
   const match = file.match(
-    /^(apps\/(?:desktop|docs|environment-router|workspace-runtime|mcp-service)|packages\/[^/]+)\//u,
+    /^(apps\/(?:desktop|docs|environment-router|preview-edge|workspace-runtime|mcp-service)|packages\/[^/]+)\//u,
   );
   if (match)
     return {

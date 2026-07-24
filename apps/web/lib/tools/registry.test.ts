@@ -13,6 +13,12 @@ contractTest("web.hermetic", "tool registry includes seeded built-in and externa
   assert.ok(
     providers.some((provider) => provider.key === "ngrok")
   );
+  const previews = getToolProviderDefinition("built_in.previews");
+  assert.equal(previews?.app.connectionRequirement, "none");
+  assert.deepEqual(
+    previews?.capabilities.map((capability) => capability.key),
+    ["publish", "list", "renew", "close"],
+  );
   assert.ok(providers.some((provider) => provider.key === "built_in.time"));
   assert.ok(
     providers.some((provider) => provider.key === "built_in.geocoding")

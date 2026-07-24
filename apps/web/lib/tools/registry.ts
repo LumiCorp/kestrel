@@ -82,6 +82,62 @@ const WORKFLOW_APP_MANIFESTS = [
 
 export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
   {
+    key: "built_in.previews",
+    displayName: "Kestrel Edge Previews",
+    description:
+      "Publish anonymous HTTPS URLs for HTTP apps through the Kestrel Edge ingress.",
+    type: "built_in",
+    authType: "system",
+    app: {
+      category: "engineering",
+      connectionModel: "none",
+      connectionRequirement: "none",
+      authMethods: ["none"],
+      delivery: "lifecycle",
+      installMode: "inherited",
+      icon: "external-link",
+    },
+    metadata: {
+      icon: "external-link",
+      category: "built_in",
+      provider: "kestrel_edge",
+    },
+    capabilities: [
+      createCapability({
+        key: "publish",
+        runtimeName: "workspace.preview.publish",
+        displayName: "Publish preview",
+        description: "Expose a listening local HTTP port at a public URL.",
+        accessMode: "write",
+        defaultPolicy: { loggingMode: "metadata_only", rateLimitMode: "off" },
+      }),
+      createCapability({
+        key: "list",
+        runtimeName: "workspace.preview.list",
+        displayName: "List previews",
+        description: "List active public Workspace previews.",
+        accessMode: "status",
+        defaultPolicy: { loggingMode: "metadata_only", rateLimitMode: "off" },
+      }),
+      createCapability({
+        key: "renew",
+        runtimeName: "workspace.preview.renew",
+        displayName: "Renew preview",
+        description: "Extend a preview within its maximum lifetime.",
+        accessMode: "write",
+        defaultPolicy: { loggingMode: "metadata_only", rateLimitMode: "off" },
+      }),
+      createCapability({
+        key: "close",
+        runtimeName: "workspace.preview.close",
+        displayName: "Close preview",
+        description: "Permanently close a public preview URL.",
+        accessMode: "write",
+        defaultPolicy: { loggingMode: "metadata_only", rateLimitMode: "off" },
+      }),
+    ],
+  },
+  {
     key: "ngrok",
     displayName: "ngrok Previews",
     description:

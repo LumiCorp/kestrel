@@ -149,6 +149,9 @@ contractTest("web.hermetic", "the durable worker records requested and effective
   );
   assert.match(workerRuntime, /type: "runtime\.started"/u);
   assert.match(workerRuntime, /appendDurableTurnEvent\(/u);
+  assert.match(workerRuntime, /if \(event\.type === "run\.started"\)/u);
+  assert.match(workerRuntime, /runtimeRunId: runtimeStartedEvent\.runtimeRunId/u);
+  assert.doesNotMatch(workerRuntime, /runtimeStartedEventId \?\? event\.id/u);
 });
 
 contractTest("web.hermetic", "durable replay binds the cutoff through the timestamp column encoder", () => {

@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
   ENVIRONMENT_TOOL_CREDENTIAL_AUDIENCE,
+  PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
+  PREVIEW_EDGE_ROUTE_TICKET_VERSION,
   PREVIEW_RELAY_TICKET_AUDIENCE,
   PREVIEW_RELAY_TICKET_VERSION,
   signEnvironmentExecutionTicket,
   signEnvironmentToolCredential,
+  signPreviewEdgeRouteTicket,
   signPreviewRelayTicket,
   verifyEnvironmentExecutionTicket,
   verifyEnvironmentToolCredential,
+  verifyPreviewEdgeRouteTicket,
   verifyPreviewRelayTicket,
   WORKSPACE_READINESS_TIMEOUT_MS,
   WORKSPACE_READINESS_TIMEOUT_SECONDS,
@@ -88,6 +92,94 @@ contractTest("packages.hermetic", "preview relay tickets bind one hostname, Work
   assert.throws(() => verifyPreviewRelayTicket({ token: `${token}x`, publicKey, now: 1050 }));
   assert.throws(() => verifyPreviewRelayTicket({ token, publicKey, now: 1120 }));
 });
+
+contractTest(
+  "packages.hermetic",
+  "Preview Edge route tickets bind one public hostname to one Environment gateway",
+  () => {
+    const edgeTicket = {
+      version: PREVIEW_EDGE_ROUTE_TICKET_VERSION,
+      audience: PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
+      organizationId: "org-1",
+      environmentId: "environment-1",
+      workspaceId: "workspace-1",
+      flyAppName: "kestrel-env-1",
+      previewId: "preview-1",
+      hostname: "p-one.preview.kestrelagents.dev",
+      issuedAt: 1000,
+      expiresAt: 1300,
+      nonce: "edge-nonce",
+    } as const;
+    const token = signPreviewEdgeRouteTicket({
+      ticket: edgeTicket,
+      privateKey,
+    });
+
+    assert.deepEqual(
+      verifyPreviewEdgeRouteTicket({ token, publicKey, now: 1030 }),
+      edgeTicket
+    );
+    assert.throws(() =>
+      verifyPreviewEdgeRouteTicket({
+        token: `${token}x`,
+        publicKey,
+        now: 1030,
+      })
+    );
+    assert.throws(() =>
+      verifyPreviewEdgeRouteTicket({ token, publicKey, now: 1300 })
+    );
+    assert.throws(() =>
+      signPreviewEdgeRouteTicket({
+        ticket: { ...edgeTicket, hostname: "UPPER.preview.kestrelagents.dev" },
+        privateKey,
+      })
+    );
+  }
+);
+
+contractTest(
+  "packages.hermetic",
+  "Preview Edge tickets reject malformed runtime payload types and unknown fields",
+  () => {
+    const edgeTicket = {
+      version: PREVIEW_EDGE_ROUTE_TICKET_VERSION,
+      audience: PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
+      organizationId: "org-1",
+      environmentId: "environment-1",
+      workspaceId: "workspace-1",
+      flyAppName: "kestrel-env-1",
+      previewId: "preview-1",
+      hostname: "p-one.preview.kestrelagents.dev",
+      issuedAt: 1000,
+      expiresAt: 1300,
+      nonce: "edge-nonce",
+    };
+    const header = Buffer.from(
+      JSON.stringify({ algorithm: "EdDSA", type: "KPE", version: 1 })
+    ).toString("base64url");
+    const signPayload = (payload: unknown) => {
+      const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+      const signingInput = `${header}.${encoded}`;
+      const signature = sign(null, Buffer.from(signingInput), privateKey).toString("base64url");
+      return `${signingInput}.${signature}`;
+    };
+    for (const malformed of [
+      { ...edgeTicket, issuedAt: "1000" },
+      { ...edgeTicket, expiresAt: 1300.5 },
+      { ...edgeTicket, organizationId: 42 },
+      { ...edgeTicket, unexpected: true },
+    ]) {
+      assert.throws(() =>
+        verifyPreviewEdgeRouteTicket({
+          token: signPayload(malformed),
+          publicKey,
+          now: 1030,
+        })
+      );
+    }
+  }
+);
 
 contractTest("packages.hermetic", "execution tickets reject tampering, expiration, and excessive lifetime", () => {
   const token = signEnvironmentExecutionTicket({ ticket, privateKey });

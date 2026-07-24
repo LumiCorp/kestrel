@@ -47,7 +47,9 @@ export async function POST(
     if (
       typeof body.connectionId !== "string" ||
       (body.status !== "connected" && body.status !== "degraded") ||
-      (body.failureCode !== undefined && typeof body.failureCode !== "string")
+      (body.failureCode !== undefined && typeof body.failureCode !== "string") ||
+      (body.failureMessage !== undefined &&
+        (typeof body.failureMessage !== "string" || body.failureMessage.length > 500))
     ) {
       return NextResponse.json({ error: { code: "ENVIRONMENT_NGROK_STATUS_INVALID" } }, { status: 400, headers: NO_STORE_HEADERS });
     }
@@ -57,6 +59,7 @@ export async function POST(
       connectionId: body.connectionId,
       status: body.status,
       ...(typeof body.failureCode === "string" ? { failureCode: body.failureCode } : {}),
+      ...(typeof body.failureMessage === "string" ? { failureMessage: body.failureMessage } : {}),
     });
     return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });
   } catch (error) {

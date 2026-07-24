@@ -25,7 +25,7 @@ export function createToolConsoleBridge(input: {
   sequence: () => number;
 }): {
   sink: ToolConsoleSink | undefined;
-  emitStatus: (status: "started" | "completed", result?: unknown) => Promise<void>;
+  emitStatus: (status: "started" | "completed" | "failed", result?: unknown) => Promise<void>;
 } {
   if (input.consoleReporter === undefined || isDevShellConsoleTool(input.toolName) === false) {
     return {

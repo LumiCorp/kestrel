@@ -6,9 +6,14 @@ import { ToolJobQueue } from "../../src/engine/ToolJobQueue.js";
 import { projectEconomicsLedger, selectToolsForEconomicsPolicyV1 } from "../../src/economics/index.js";
 import type { HarnessEconomicsPolicyV1 } from "../../src/economics/index.js";
 import type { RunEventType } from "../../src/kestrel/contracts/base.js";
-import type { ProgressUpdateV1, RunEvent } from "../../src/kestrel/contracts/events.js";
+import type {
+  ProgressUpdateV1,
+  RunConsoleUpdateV1,
+  RunEvent,
+} from "../../src/kestrel/contracts/events.js";
 import type { ModelGatewayCallOptions, ModelRequest, ModelUsage, ToolGateway } from "../../src/kestrel/contracts/model-io.js";
 import type { RuntimeStore } from "../../src/kestrel/contracts/store.js";
+import { buildAgentToolFailedOutputResult } from "../../tools/toolResult.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -386,6 +391,37 @@ contractTest("runtime.hermetic", "RuntimeIO does not enforce estimated tool-sche
   assert.equal(providerCalled, true);
 });
 
+contractTest("runtime.hermetic", "RuntimeIO projects returned structured tool failures as failed activity", async () => {
+  const emitted: string[] = [];
+  const consoleUpdates: RunConsoleUpdateV1[] = [];
+  const failedResult = buildAgentToolFailedOutputResult({
+    toolName: "dev.shell.run",
+    input: { command: "false" },
+    output: {
+      status: "FAILED",
+      exitCode: 1,
+      stderr: "command failed\n",
+      errorCode: "DEV_SHELL_COMMAND_FAILED",
+    },
+  });
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted,
+    consoleUpdates,
+    toolCall: async () => failedResult,
+  });
+
+  const result = await io.tool("dev.shell.run", { command: "false" });
+
+  assert.equal(result, failedResult);
+  assert.ok(emitted.includes("TOOL_CALL_FAILED"));
+  assert.ok(emitted.includes("run.tool.failed"));
+  assert.equal(emitted.includes("TOOL_CALL_DONE"), false);
+  assert.equal(emitted.includes("run.tool.completed"), false);
+  assert.equal(consoleUpdates.at(-1)?.status, "failed");
+  assert.equal(consoleUpdates.at(-1)?.exitCode, 1);
+});
+
 function createRuntimeIO(input: {
   signal: AbortSignal;
   emitted: string[];
@@ -397,6 +433,7 @@ function createRuntimeIO(input: {
   runEvents?: RunEvent[] | undefined;
   modelRequests?: ModelRequest[] | undefined;
   runtimeMetadata?: Record<string, unknown> | undefined;
+  consoleUpdates?: RunConsoleUpdateV1[] | undefined;
 }): RuntimeIO {
   let seq = 0;
   const store = {
@@ -420,7 +457,13 @@ function createRuntimeIO(input: {
         },
       },
       toolGateway,
-      consoleReporter: undefined,
+      consoleReporter: input.consoleUpdates === undefined
+        ? undefined
+        : {
+            emit: async (update) => {
+              input.consoleUpdates?.push(structuredClone(update));
+            },
+          },
     },
     guardrailConfig: {
       ...guardrailConfig,

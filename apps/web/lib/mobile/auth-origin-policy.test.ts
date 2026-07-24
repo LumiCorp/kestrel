@@ -5,8 +5,11 @@ import { fileURLToPath } from "node:url";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-const authSource = fs.readFileSync(
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../auth.ts"),
+const authSecurityPolicySource = fs.readFileSync(
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../auth-security-policy.ts"
+  ),
   "utf8"
 );
 const authRouteSource = fs.readFileSync(
@@ -18,11 +21,14 @@ const authRouteSource = fs.readFileSync(
 );
 
 contractTest("web.hermetic", "native Kestrel One origins are explicit and Expo development origins are not trusted in production", () => {
-  assert.match(authSource, /KESTREL_ONE_MOBILE_TRUSTED_ORIGINS/u);
-  assert.match(authSource, /"kestrelone:\/\/"/u);
   assert.match(
-    authSource,
-    /process\.env\.NODE_ENV === "production" \? \[\] : \["exp:\/\/"\]/u
+    authSecurityPolicySource,
+    /KESTREL_ONE_MOBILE_TRUSTED_ORIGINS/u
+  );
+  assert.match(authSecurityPolicySource, /"kestrelone:\/\/"/u);
+  assert.match(
+    authSecurityPolicySource,
+    /isProduction \? \[\] : \["exp:\/\/"\]/u
   );
 });
 
