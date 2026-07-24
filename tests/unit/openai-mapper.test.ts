@@ -336,6 +336,36 @@ contractTest("runtime.hermetic", "OpenAI Responses requests provider summaries w
   assert.deepEqual(mapped.body.include, ["reasoning.encrypted_content"]);
 });
 
+contractTest("runtime.hermetic", "OpenAI request builder rejects uniqueItems before a provider request is built", () => {
+  const request: ModelRequest = {
+    model: "gpt-5.2",
+    input: "hello",
+    responseFormat: "json",
+    responseSchema: {
+      type: "object",
+      properties: {
+        itemIds: {
+          type: "array",
+          items: { type: "string" },
+          uniqueItems: true,
+        },
+      },
+      required: ["itemIds"],
+    },
+  };
+
+  assert.throws(
+    () => buildOpenAiHttpRequest(request, env),
+    (error: unknown) => {
+      const cast = error as { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "MODEL_PROVIDER_SCHEMA");
+      assert.equal(cast.details?.keyword, "uniqueItems");
+      assert.equal(cast.details?.schemaPath, "$.properties.itemIds");
+      return true;
+    },
+  );
+});
+
 contractTest("runtime.hermetic", "OpenAI Responses maps summaries separately and keeps encrypted state opaque", () => {
   const encryptedItem = {
     type: "reasoning",

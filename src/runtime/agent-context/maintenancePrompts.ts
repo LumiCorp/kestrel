@@ -113,7 +113,6 @@ export function buildKestrelCompactionSummarySchema(
         items: { type: "string", enum: replacedItemIds },
         minItems: replacedItemIds.length,
         maxItems: replacedItemIds.length,
-        uniqueItems: true,
       };
   return {
     ...KESTREL_COMPACTION_SUMMARY_SCHEMA,
