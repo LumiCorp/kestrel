@@ -7,6 +7,7 @@ import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { EnvironmentDeleteAction } from "@/app/(workspace)/settings/environments/[id]/environment-delete-action";
 import { EnvironmentOverviewActions } from "@/app/(workspace)/settings/environments/[id]/environment-overview-actions";
+import { PreviewIngressSelector } from "@/app/(workspace)/settings/environments/[id]/preview-ingress-selector";
 
 export default async function EnvironmentOverviewPage({
   params,
@@ -54,6 +55,12 @@ export default async function EnvironmentOverviewPage({
             <EnvironmentOverviewActions
               environmentId={environment.id}
               initialIsDefault={environment.isDefault}
+            />
+          </SettingsRow>
+          <SettingsRow label="Preview ingress">
+            <PreviewIngressSelector
+              environmentId={environment.id}
+              initialProvider={environment.previewIngressProvider}
             />
           </SettingsRow>
         </SettingsRows>

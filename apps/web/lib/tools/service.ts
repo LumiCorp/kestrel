@@ -260,7 +260,21 @@ const environmentManagedAdapter: ToolProviderAdapter = {
   },
 };
 
+const kestrelEdgePreviewAdapter: ToolProviderAdapter = {
+  async getConnectionStatus() {
+    return {
+      authSource: "none",
+      status: "connected",
+      isReady: true,
+      label: "Platform managed",
+      lastError: null,
+      metadata: { connectionModel: "none", provider: "kestrel_edge" },
+    };
+  },
+};
+
 const providerAdapters = new Map<ToolProviderKey, ToolProviderAdapter>([
+  ["built_in.previews", kestrelEdgePreviewAdapter],
   ["ngrok", environmentManagedAdapter],
   ["built_in.weather", builtInSystemAdapter],
   ["built_in.time", builtInSystemAdapter],

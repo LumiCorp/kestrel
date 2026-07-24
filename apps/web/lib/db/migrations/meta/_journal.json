@@ -351,6 +351,20 @@
       "when": 1784836800000,
       "tag": "0049_reconcile_fly_provider_constraint",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1784840400000,
+      "tag": "0050_thread_sticky_interaction_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1784844000000,
+      "tag": "0051_preview_ingress_ownership",
+      "breakpoints": true
     }
   ]
 }

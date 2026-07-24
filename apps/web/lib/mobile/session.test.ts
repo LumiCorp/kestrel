@@ -69,7 +69,7 @@ async function assertValidCredential(headers: HeadersInit) {
 }
 
 contractTest("web.hermetic", "accepts a valid Better Auth cookie through the incoming request headers", () =>
-  assertValidCredential({ cookie: "better-auth.session_token=signed-cookie" }));
+  assertValidCredential({ cookie: "kestrel.session_token=signed-cookie" }));
 
 contractTest("web.hermetic", "accepts a valid signed-session Bearer through the incoming request headers", () =>
   assertValidCredential({ authorization: "Bearer signed-session" }));
@@ -142,7 +142,7 @@ contractTest("web.hermetic", "failure telemetry records only safe authentication
     {
       headers: {
         authorization: "Bearer signed-session-secret",
-        cookie: "better-auth.session_token=cookie-secret",
+        cookie: "kestrel.session_token=cookie-secret",
         "x-api-key": "personal-api-key-secret",
       },
     }

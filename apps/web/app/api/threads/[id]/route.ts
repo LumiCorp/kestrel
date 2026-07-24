@@ -20,6 +20,7 @@ import {
   getThreadWithMessagesForUser,
   permanentlyDeleteThreadForUser,
   saveThreadMessages,
+  updateThreadInteractionModeForUser,
   updateThreadTitleForUser,
 } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
@@ -66,12 +67,14 @@ const patchBodySchema = z
     archived: z.boolean().optional(),
     projectId: routeIdSchema.optional(),
     disclosureAccepted: z.boolean().optional(),
+    interactionMode: z.enum(KESTREL_ONE_INTERACTION_MODES).optional(),
   })
   .refine(
     (body) =>
       body.title !== undefined ||
       body.archived !== undefined ||
-      body.projectId !== undefined
+      body.projectId !== undefined ||
+      body.interactionMode !== undefined
   );
 
 export async function GET(
@@ -111,6 +114,7 @@ export async function GET(
       organizationId: thread.organizationId,
       projectId: thread.projectId,
       mode: thread.mode,
+      interactionMode: thread.interactionMode,
       origin: thread.origin,
       visibility: thread.isPublic ? "public" : "private",
       shareToken: thread.shareToken,
@@ -378,6 +382,14 @@ export async function PATCH(
         userId: session.user.id,
         organizationId,
         disclosureAccepted: body.disclosureAccepted === true,
+      });
+    }
+    if (body.interactionMode !== undefined) {
+      thread = await updateThreadInteractionModeForUser({
+        id: params.id,
+        userId: session.user.id,
+        organizationId,
+        interactionMode: body.interactionMode,
       });
     }
     return thread

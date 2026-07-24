@@ -305,17 +305,12 @@ function normalizeControlToolCall(input: {
   }
   if (input.canonicalName === "kestrel.switch_mode") {
     const mode = asString(input.input.mode);
-    const message = asString(input.input.message);
     if (mode !== "chat" && mode !== "plan" && mode !== "build") {
       throw invalidControlInput(input, "kestrel.switch_mode mode is invalid.", "mode");
-    }
-    if (message === undefined || message.trim().length === 0) {
-      throw invalidControlInput(input, "kestrel.switch_mode requires a non-empty message.", "message");
     }
     return {
       kind: "switch_mode",
       mode,
-      message,
     };
   }
   throw new ModelToolCallActionError(`Unsupported control tool '${input.canonicalName}'.`, {

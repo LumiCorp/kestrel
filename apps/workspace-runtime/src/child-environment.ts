@@ -27,6 +27,7 @@ export function workspaceRunnerEnvironment(input: {
     HOME: input.home,
     KESTREL_HOME: input.home,
     KESTREL_RUNNER_STORE_DIR: input.storeDir,
+    KESTREL_CORE_HOME: `${input.home}/.kestrel/runtime`,
     KESTREL_WORKSPACE_SERVICE_TOKEN: input.workspaceServiceToken,
     KESTREL_WORKSPACE_RUNTIME_URL: input.runtimeUrl,
     KESTREL_RUNNER_SERVICE_HOST: "127.0.0.1",

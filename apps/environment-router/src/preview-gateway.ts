@@ -2,10 +2,16 @@ import { createHash } from "node:crypto";
 import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect as connectTcp } from "node:net";
 import type { Duplex } from "node:stream";
-import type { EnvironmentGatewayConfig, EnvironmentGatewayPreviewRoute } from "@lumi/kestrel-environment-auth";
+import {
+  type EnvironmentGatewayConfig,
+  type EnvironmentGatewayPreviewRoute,
+  PREVIEW_EDGE_AUTHORIZATION_HEADER,
+  verifyPreviewEdgeRouteTicket,
+} from "@lumi/kestrel-environment-auth";
 import { type Session, SessionBuilder } from "@ngrok/ngrok";
 
 const MAX_CONNECTIONS_PER_PREVIEW = 100;
+const MAX_FAILURE_MESSAGE_LENGTH = 500;
 
 export class PreviewGateway {
   private routes = new Map<string, EnvironmentGatewayPreviewRoute>();
@@ -21,9 +27,15 @@ export class PreviewGateway {
       port: number;
       expectedAppName: string;
       environmentId: string;
+      ticketPublicKey?: string | undefined;
       workspaceAddress?: ((route: EnvironmentGatewayPreviewRoute) => { host: string; port: number }) | undefined;
       openEndpoint?: ((input: { authtoken: string; wildcardDomain: string; targetUrl: string; environmentId: string }) => Promise<{ close(): Promise<void> }>) | undefined;
-      reportStatus?: ((input: { connectionId: string; status: "connected" | "degraded"; failureCode?: string | undefined }) => Promise<void>) | undefined;
+      reportStatus?: ((input: {
+        connectionId: string;
+        status: "connected" | "degraded";
+        failureCode?: string | undefined;
+        failureMessage?: string | undefined;
+      }) => Promise<void>) | undefined;
     }
   ) {}
 
@@ -47,6 +59,18 @@ export class PreviewGateway {
   async handleHttp(request: IncomingMessage, response: ServerResponse) {
     const route = this.routeFor(request.headers.host);
     if (!route) return false;
+    if (!this.authorizeIngress(route, request.headers)) {
+      response.writeHead(403, {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          error: { code: "PREVIEW_EDGE_AUTHORIZATION_DENIED" },
+        })
+      );
+      return true;
+    }
     if (!this.acquire(route.id)) {
       response.writeHead(503, { "content-type": "application/json", "retry-after": "1" });
       response.end(JSON.stringify({ error: { code: "PREVIEW_CONNECTION_LIMIT" } }));
@@ -65,6 +89,12 @@ export class PreviewGateway {
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
     const route = this.routeFor(request.headers.host);
     if (!route) return false;
+    if (!this.authorizeIngress(route, request.headers)) {
+      socket.end(
+        "HTTP/1.1 403 Forbidden\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+      );
+      return true;
+    }
     if (!this.acquire(route.id)) {
       socket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       return true;
@@ -119,6 +149,7 @@ export class PreviewGateway {
         connectionId: config.ngrok.connectionId,
         status: "degraded",
         failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
+        failureMessage: safeNgrokFailureMessage(error, config.ngrok.authtoken),
       }).catch(() => {});
       throw error;
     }
@@ -152,6 +183,34 @@ export class PreviewGateway {
     };
   }
 
+  private authorizeIngress(
+    route: EnvironmentGatewayPreviewRoute,
+    headers: IncomingHttpHeaders
+  ) {
+    if (route.ingress === "ngrok") return true;
+    const rawAuthorization = headers[PREVIEW_EDGE_AUTHORIZATION_HEADER];
+    const authorization = Array.isArray(rawAuthorization)
+      ? rawAuthorization[0]
+      : rawAuthorization;
+    const token = authorization?.match(/^Bearer ([^\s]+)$/u)?.[1];
+    if (!(token && this.input.ticketPublicKey)) return false;
+    try {
+      const ticket = verifyPreviewEdgeRouteTicket({
+        token,
+        publicKey: this.input.ticketPublicKey,
+      });
+      return (
+        ticket.environmentId === this.input.environmentId &&
+        ticket.workspaceId === route.workspaceId &&
+        ticket.flyAppName === this.input.expectedAppName &&
+        ticket.previewId === route.id &&
+        ticket.hostname === route.hostname
+      );
+    } catch {
+      return false;
+    }
+  }
+
   private acquire(previewId: string) {
     const count = this.connections.get(previewId) ?? 0;
     if (count >= MAX_CONNECTIONS_PER_PREVIEW) return false;
@@ -164,6 +223,15 @@ export class PreviewGateway {
     if (count <= 1) this.connections.delete(previewId);
     else this.connections.set(previewId, count - 1);
   }
+}
+
+function safeNgrokFailureMessage(error: unknown, authtoken: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  const redacted = authtoken.length > 0
+    ? message.split(authtoken).join("[REDACTED]")
+    : message;
+  return (redacted.trim() || "Ngrok endpoint reconciliation failed.")
+    .slice(0, MAX_FAILURE_MESSAGE_LENGTH);
 }
 
 function endpointIdentity(config: NonNullable<EnvironmentGatewayConfig["ngrok"]>) {
@@ -259,6 +327,7 @@ function sanitizedHeaders(headers: IncomingHttpHeaders) {
   for (const name of [
     "connection", "proxy-authorization", "proxy-authenticate", "forwarded",
     "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+    PREVIEW_EDGE_AUTHORIZATION_HEADER,
   ]) delete result[name];
   return result;
 }

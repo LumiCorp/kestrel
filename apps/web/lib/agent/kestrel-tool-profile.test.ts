@@ -78,9 +78,9 @@ contractTest("web.hermetic", "Workspace preview tools follow Environment App app
       ],
     },
     effectiveCapabilities: [
-      "app:ngrok.publish:auto",
-      "app:ngrok.list:auto",
-      "app:ngrok.close:ask",
+      "app:built_in.previews.publish:auto",
+      "app:built_in.previews.list:auto",
+      "app:built_in.previews.close:ask",
     ],
   });
   assert.deepEqual(restricted.toolAllowlist, [

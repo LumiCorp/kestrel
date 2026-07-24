@@ -41,6 +41,7 @@ const previewGateway = new PreviewGateway({
   port,
   expectedAppName,
   environmentId,
+  ticketPublicKey: publicKey,
   reportStatus: (status) => gatewayConfig.reportNgrokStatus(status),
 });
 gatewayConfig.subscribe((config) => previewGateway.reconcile(config));

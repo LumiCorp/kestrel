@@ -115,6 +115,7 @@ export type KestrelOneAgentResponsePersistMeta = {
   interaction: KestrelInteractionPresentation | null;
   assistantMessageId: string;
   runId: string | null;
+  selectedInteractionMode: KestrelOneInteractionMode | null;
   telemetry: RunnerTelemetry | null;
 };
 
@@ -348,7 +349,8 @@ export function createKestrelOneAgentResponseFromAgent(
         interaction: streamResult.interaction,
         assistantMessageId: streamResult.message.id,
         runId: streamResult.message.metadata?.kestrelRunId ?? null,
-        telemetry: streamResult.telemetry ?? null,
+        selectedInteractionMode: requestedInteractionMode,
+        telemetry: null,
       });
     },
     onError: (error) => {

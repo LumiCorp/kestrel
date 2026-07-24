@@ -3,7 +3,7 @@ import { connect } from "node:tls";
 import { once } from "node:events";
 
 // Run with a current hosted execution ticket for a Project whose Environment has
-// an attached ngrok connection. The ticket must include the normal terminal,
+// an Environment configured for Kestrel Edge. The ticket must include the normal terminal,
 // preview-port, App invocation, and gateway refresh route capabilities.
 const gatewayUrl = secureUrl(required("KESTREL_PREVIEW_CANARY_GATEWAY_URL"));
 const controlPlaneUrl = secureUrl(
@@ -65,7 +65,7 @@ try {
 } finally {
   if (previewId) {
     await controlPlaneRequest(
-      `/api/runtime/apps/ngrok/close/confirmed/previews/${encodeURIComponent(previewId)}`,
+      `/api/runtime/apps/built_in.previews/close/confirmed/previews/${encodeURIComponent(previewId)}`,
       { method: "DELETE" }
     ).then((response) => {
       if (!response.ok) {
@@ -84,7 +84,7 @@ async function publishWhenReady() {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const response = await controlPlaneRequest(
-      "/api/runtime/apps/ngrok/publish/auto/previews",
+      "/api/runtime/apps/built_in.previews/publish/auto/previews",
       {
         method: "POST",
         headers: { "content-type": "application/json" },

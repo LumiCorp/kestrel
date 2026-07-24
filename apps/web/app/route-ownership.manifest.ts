@@ -506,6 +506,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer"
   ),
   api(
+    "app/api/runtime/previews/resolve/route.ts",
+    "/api/runtime/previews/resolve",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer"
+  ),
+  api(
     "app/api/runtime/apps/tavily/[capability]/[approval]/[...path]/route.ts",
     "/api/runtime/apps/tavily/:capability/:approval/[...path]",
     "credential-boundary",

@@ -567,6 +567,11 @@ export const threads = pgTable(
     mode: text("mode", { enum: ["chat", "admin"] })
       .notNull()
       .default("chat"),
+    interactionMode: text("interaction_mode", {
+      enum: ["chat", "plan", "build"],
+    })
+      .notNull()
+      .default("chat"),
     activeStreamId: text("active_stream_id"),
     isPublic: boolean("is_public").notNull().default(false),
     shareToken: text("share_token"),
@@ -1286,6 +1291,11 @@ export const environments = pgTable(
       .notNull()
       .default("kestrel-standard-v1"),
     runtimeImage: text("runtime_image"),
+    previewIngressProvider: text("preview_ingress_provider", {
+      enum: ["ngrok", "kestrel_edge"],
+    })
+      .notNull()
+      .default("ngrok"),
     idleTimeoutMinutes: integer("idle_timeout_minutes").notNull().default(15),
     reasoningRequestMode: text("reasoning_request_mode", {
       enum: ["off", "summary", "provider_visible"],
@@ -2361,9 +2371,14 @@ export const workspacePreviewLeases = pgTable(
       .notNull()
       .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
     actorId: text("actor_id").notNull(),
-    connectionId: text("connection_id")
+    connectionId: text("connection_id").references(() => appConnections.id, {
+      onDelete: "restrict",
+    }),
+    ingressProvider: text("ingress_provider", {
+      enum: ["ngrok", "kestrel_edge"],
+    })
       .notNull()
-      .references(() => appConnections.id, { onDelete: "restrict" }),
+      .default("ngrok"),
     port: integer("port").notNull(),
     name: text("name"),
     hostname: text("hostname").notNull(),
@@ -2423,6 +2438,14 @@ export const workspacePreviewLeases = pgTable(
     check(
       "workspace_preview_leases_expiry_check",
       sql`${table.expiresAt} <= ${table.maximumExpiresAt}`
+    ),
+    check(
+      "workspace_preview_leases_ingress_check",
+      sql`(
+        (${table.ingressProvider} = 'kestrel_edge' and ${table.connectionId} is null)
+        or
+        (${table.ingressProvider} = 'ngrok' and (${table.status} not in ('provisioning', 'active', 'closing') or ${table.connectionId} is not null))
+      )`
     ),
   ]
 );
