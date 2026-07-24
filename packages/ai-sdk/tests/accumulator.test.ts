@@ -7,6 +7,7 @@ import type {
 import {
   KESTREL_PRESENTATION_DATA_PART_KEYS,
   createKestrelPresentationAccumulator,
+  writeKestrelFailureToUIMessage,
   writeKestrelRunnerStreamToUIMessage,
   type KestrelPresentationDataParts,
   type KestrelUIMessage,
@@ -140,6 +141,36 @@ contractTest("packages.hermetic", "empty completed output becomes a visible cont
       (part) =>
         part.type === "data-kestrel-status" &&
         part.data.status === "contract_failure",
+    ),
+    true,
+  );
+});
+
+contractTest("packages.hermetic", "upstream activation failures remain runtime failures", async () => {
+  const chunks: Array<Record<string, unknown>> = [];
+  const writer = {
+    write(chunk: unknown) {
+      chunks.push(chunk as Record<string, unknown>);
+    },
+    merge() {},
+    onError: undefined,
+  } as UIMessageStreamWriter<KestrelUIMessage>;
+
+  const snapshot = await writeKestrelFailureToUIMessage({
+    writer,
+    error: new Error("Environment activation timed out."),
+    assistantMessageId: "assistant-activation-timeout",
+    textPartId: "text-activation-timeout",
+  });
+
+  assert.equal(snapshot.terminalStatus, "failed");
+  assert.equal(snapshot.errorMessage, "Environment activation timed out.");
+  assert.equal(snapshot.message.metadata?.kestrelContractFailure, undefined);
+  assert.equal(
+    chunks.some(
+      (chunk) =>
+        chunk.type === "data-kestrel-status" &&
+        (chunk.data as { status?: string } | undefined)?.status === "failed",
     ),
     true,
   );

@@ -65,8 +65,8 @@ export function finalizeRuntimeAssistantResponse(input: {
     };
   }
 
-  const explicitText = normalizeAssistantText(input.assistantText);
   if (output.status === "COMPLETED") {
+    const explicitText = normalizeAssistantText(input.assistantText);
     if (explicitText === null) {
       throw createRuntimeFailure(
         "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
@@ -84,10 +84,10 @@ export function finalizeRuntimeAssistantResponse(input: {
     (interaction.kind === "user_input" || interaction.kind === "approval")
   ) {
     const prompt = normalizeAssistantText(interaction.prompt);
-    if (prompt === null || explicitText !== prompt) {
+    if (prompt === null) {
       throw createRuntimeFailure(
         "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
-        "A user-facing waiting turn must return assistantText equal to its interaction prompt.",
+        "A user-facing waiting turn must provide a non-empty interaction prompt.",
         {
           runId: output.runId,
           requestId: interaction.requestId,
@@ -95,6 +95,10 @@ export function finalizeRuntimeAssistantResponse(input: {
         },
       );
     }
+
+    // The interaction prompt owns the user-visible waiting response. Raw runtime
+    // state may be stale or differently formatted, but it must never override a
+    // valid durable interaction or turn that wait into a failed response.
     return { output, assistantText: prompt };
   }
 

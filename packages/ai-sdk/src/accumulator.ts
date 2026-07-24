@@ -103,15 +103,16 @@ export function createKestrelPresentationAccumulator(input: {
 
   const fail = (error: unknown) => {
     const message = error instanceof Error ? error.message : "The Kestrel presentation contract failed.";
-    terminalStatus = "contract_failure";
+    const contractFailure = error instanceof KestrelPresentationContractError;
+    terminalStatus = contractFailure ? "contract_failure" : "failed";
     errorMessage = message;
     return appendPart({
       type: "data-kestrel-status",
       id: "status:contract",
       data: {
-        status: "contract_failure",
+        status: terminalStatus,
         ...(runId !== undefined ? { runId } : {}),
-        errorCode: error instanceof KestrelPresentationContractError ? error.code : CONTRACT_FAILURE_CODE,
+        ...(contractFailure ? { errorCode: error.code } : {}),
         errorMessage: message,
       },
     });
