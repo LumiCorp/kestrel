@@ -15,6 +15,14 @@ export function resolveKestrelAppUrl(
     return KESTREL_APP_ORIGIN;
   }
 
+  if (
+    environment.VERCEL === "1" &&
+    environment.VERCEL_ENV === "preview" &&
+    environment.VERCEL_URL
+  ) {
+    return `https://${environment.VERCEL_URL}`;
+  }
+
   return (
     environment.NEXT_PUBLIC_APP_URL?.trim() ||
     environment.BETTER_AUTH_URL?.trim() ||

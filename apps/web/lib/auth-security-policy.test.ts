@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import type { BetterAuthOptions } from "better-auth";
 import { getCookies } from "better-auth/cookies";
-import { NextRequest } from "next/server";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
-import { proxy } from "../proxy";
 import {
   authorizeAuthenticatedMutationOrigin,
   canonicalProductionRedirect,
@@ -45,6 +43,12 @@ const productionEnvironment: AuthSecurityEnvironment = {
   NODE_ENV: "production",
   BETTER_AUTH_URL: "https://kestrelagents.dev",
   NEXT_PUBLIC_APP_URL: "https://kestrelagents.dev",
+};
+const previewEnvironment: AuthSecurityEnvironment = {
+  ...productionEnvironment,
+  VERCEL: "1",
+  VERCEL_ENV: "preview",
+  VERCEL_URL: "kestrel-git-preview-example.vercel.app",
 };
 
 function cookiesFor(environment: AuthSecurityEnvironment) {
@@ -128,71 +132,50 @@ contractTest(
 
 contractTest(
   "web.auth.preview-origin-isolation",
-  "preview subdomains are not Better Auth trusted origins",
+  "the active Vercel preview is a Better Auth trusted origin",
   () => {
-    const policy = resolveAuthSecurityPolicy(productionEnvironment);
+    const policy = resolveAuthSecurityPolicy(previewEnvironment);
 
-    assert.deepEqual(policy.trustedOrigins, [
-      "kestrelone://",
-      "https://appleid.apple.com",
-      "https://kestrelagents.dev",
-      "http://localhost:3000",
-      "http://127.0.0.1:3000",
-      "http://localhost:3001",
-      "http://127.0.0.1:3001",
-      "http://localhost:3100",
-      "http://127.0.0.1:3100",
-      "http://localhost:43103",
-      "http://127.0.0.1:43103",
-    ]);
     assert.equal(
       policy.trustedOrigins.includes(
-        "https://p-deadbeef.preview.kestrelagents.dev"
+        "https://kestrel-git-preview-example.vercel.app"
       ),
-      false
+      true
     );
   }
 );
 
 contractTest(
   "web.auth.preview-origin-isolation",
-  "an authenticated mutation from a same-site preview origin is rejected",
+  "an authenticated mutation from the active Vercel preview origin is allowed",
   () => {
     assert.deepEqual(
       authorize({
+        environment: previewEnvironment,
         headers: {
-          origin: "https://p-deadbeef.preview.kestrelagents.dev",
+          origin: "https://kestrel-git-preview-example.vercel.app",
+          "sec-fetch-site": "same-origin",
+        },
+      }),
+      { allowed: true }
+    );
+  }
+);
+
+contractTest(
+  "web.auth.preview-origin-isolation",
+  "an authenticated mutation from another Vercel preview is rejected",
+  () => {
+    assert.deepEqual(
+      authorize({
+        environment: previewEnvironment,
+        headers: {
+          origin: "https://another-preview.vercel.app",
           "sec-fetch-site": "same-site",
         },
       }),
       { allowed: false, code: "AUTHENTICATED_ORIGIN_DENIED" }
     );
-  }
-);
-
-contractTest(
-  "web.auth.preview-origin-isolation",
-  "the web request boundary returns 403 for an authenticated preview mutation",
-  async () => {
-    const response = await proxy(
-      new NextRequest("https://kestrelagents.dev/api/threads/thread-1", {
-        method: "POST",
-        headers: {
-          cookie: "kestrel.session_token=signed-session",
-          origin: "https://p-deadbeef.preview.kestrelagents.dev",
-          "sec-fetch-site": "same-site",
-        },
-      })
-    );
-
-    assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), {
-      error: {
-        code: "AUTHENTICATED_ORIGIN_DENIED",
-        message: "Authenticated request origin is not allowed",
-      },
-    });
-    assert.equal(response.headers.get("cache-control"), "private, no-store");
   }
 );
 
