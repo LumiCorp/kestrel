@@ -986,6 +986,43 @@ contractTest("runtime.hermetic", "Kestrel agent context builder owns tool-result
   assert.equal(genericContext.text.match(/- status:/gu)?.length, 1);
 });
 
+contractTest("runtime.hermetic", "Workspace preview results keep complete public URLs model-visible", () => {
+  const publicUrl =
+    "https://p-f8b2b1d3e4a5968778695a4b3c2d1e0f.preview.kestrelagents.dev";
+  const context = buildKestrelAgentToolModelContext({
+    toolName: "workspace.preview.list",
+    toolInput: {},
+    toolOutput: {
+      previews: [
+        {
+          createdAt: "2026-07-24T12:00:00.000Z",
+          expiresAt: "2026-07-24T13:00:00.000Z",
+          id: "preview-1",
+          ingressProvider: "kestrel_edge",
+          maximumExpiresAt: "2026-07-24T16:00:00.000Z",
+          name: "cincinnati-reds-fan-site",
+          port: 5173,
+          protocol: "http",
+          publicAccess: "anonymous_bearer_url",
+          status: "available",
+          url: publicUrl,
+        },
+      ],
+      warning:
+        "This is an anonymous bearer URL. Anyone with the URL can access the application until the preview closes or expires.",
+    },
+    rawOutputRef: "tool-output:workspace-preview",
+    status: "OK",
+  });
+
+  assert.match(context.text, /- previewCount: 1/u);
+  assert.match(context.text, /name: cincinnati-reds-fan-site/u);
+  assert.match(context.text, new RegExp(`url \\(exact complete public URL\\): ${publicUrl}`, "u"));
+  assert.doesNotMatch(context.text, /https:\/\/p-f8\.\.\./u);
+  assert.match(context.text, /status: available/u);
+  assert.match(context.text, /port: 5173/u);
+});
+
 contractTest("runtime.hermetic", "agent evidence resolves relative process cwd from the recorded workspace root", () => {
   const runningResult = {
     kind: "tool",
