@@ -632,11 +632,25 @@ contractTest(
       recoveryEvents
         .map((event) => event.type)
         .filter((type) => type !== "ui.message"),
-      ["turn.queued", "turn.running", "turn.activity", "turn.failed"],
+      [
+        "turn.queued",
+        "turn.running",
+        "turn.activity",
+        "turn.activity",
+        "turn.failed",
+      ],
     );
     assert.deepEqual(
-      recoveryEvents.find((event) => event.type === "turn.activity")?.data,
-      { message: "Reading context", stage: "reading_context" },
+      recoveryEvents
+        .filter((event) => event.type === "turn.activity")
+        .map((event) => event.data),
+      [
+        { message: "Reading context", stage: "reading_context" },
+        {
+          code: "TITLE_GENERATION_FAILED",
+          stage: "thread.title.failed",
+        },
+      ],
     );
 
     await Promise.all([

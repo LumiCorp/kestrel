@@ -807,7 +807,7 @@ contractTest(
 
     await sql`
       UPDATE "workspace_preview_leases"
-      SET "expires_at" = ${new Date(Date.now() - 1_000)}
+      SET "expires_at" = ${new Date(Date.now() - 1000)}
       WHERE "id" = ${activePreviews[4]!.id}
     `;
     const listed = await invokePreview({
@@ -1031,7 +1031,11 @@ contractTest(
 
     await sql`
       UPDATE "app_connections" connection
-      SET "status" = 'degraded'
+      SET
+        "status" = 'connected',
+        "failure_code" = NULL,
+        "failure_message" = NULL,
+        "disconnected_at" = NULL
       WHERE connection."id" = ${ngrokConnection.id}
     `;
     await sql`
@@ -1049,12 +1053,39 @@ contractTest(
         "gateway_service_token_hash" = ${environmentServiceTokens.hashEnvironmentServiceToken("gateway-service-token")}
       WHERE "id" = ${environmentId}
     `;
-    const configWithoutBrokenNgrok =
+    const configWithoutActiveNgrokPreview =
       await environmentGatewayConfig.resolveEnvironmentGatewayConfig({
         environmentId,
         authorization: "Bearer gateway-service-token",
       });
-    assert.equal(configWithoutBrokenNgrok.ngrok, null);
+    assert.equal(configWithoutActiveNgrokPreview.ngrok, null);
+    const [unusedBrokenNgrok] = await sql<
+      Array<{ status: string; failureCode: string | null }>
+    >`
+      SELECT "status", "failure_code" AS "failureCode"
+      FROM "app_connections"
+      WHERE "id" = ${ngrokConnection.id}
+    `;
+    assert.deepEqual(unusedBrokenNgrok, {
+      status: "connected",
+      failureCode: null,
+    });
+    await sql`
+      UPDATE "workspace_preview_leases"
+      SET
+        "status" = 'active',
+        "ingress_provider" = 'ngrok',
+        "failure_code" = NULL,
+        "closed_at" = NULL,
+        "expires_at" = "maximum_expires_at"
+      WHERE "id" = ${samePortBodies[0]!.preview.id}
+    `;
+    const configWithBrokenNgrok =
+      await environmentGatewayConfig.resolveEnvironmentGatewayConfig({
+        environmentId,
+        authorization: "Bearer gateway-service-token",
+      });
+    assert.equal(configWithBrokenNgrok.ngrok, null);
     const [degradedBrokenNgrok] = await sql<
       Array<{ status: string; failureCode: string | null }>
     >`
