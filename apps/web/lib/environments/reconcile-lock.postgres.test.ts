@@ -83,7 +83,7 @@ contractTest(
         environmentId: "environment-b",
         run: async () => "different-environment",
       }),
-      { acquired: true, result: "different-operation" }
+      { acquired: true, result: "different-environment" }
     );
 
     releaseFirst();

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import postgres from "postgres";
+import type { TestContext } from "node:test";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
-contractTest(
-  "web.postgres",
-  "queued Workspace backup claim defers while an execution owns the Workspace",
-  async (context) => {
+async function verifyBackupClaimDefers(
+  context: TestContext,
+  owner: "execution" | "activating_turn",
+) {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
@@ -27,6 +28,7 @@ contractTest(
     const operationId = `operation-backup-guard-${suffix}`;
     const backupId = `backup-guard-${suffix}`;
     const executionId = `execution-backup-guard-${suffix}`;
+    const turnId = `turn-backup-guard-${suffix}`;
     const now = new Date();
 
     context.after(async () => {
@@ -116,18 +118,42 @@ contractTest(
           ${new Date(now.getTime() + 86_400_000)}, ${now}, ${now}
         )
       `;
-      await transaction`
-        INSERT INTO "environment_run_executions" (
-          "id", "organization_id", "environment_id", "workspace_id",
-          "thread_id", "actor_id", "runtime_image",
-          "effective_capabilities", "status", "started_at",
-          "created_at", "updated_at"
-        ) VALUES (
-          ${executionId}, ${organizationId}, ${environmentId}, ${workspaceId},
-          ${threadId}, ${userId}, 'registry.example/runner@sha256:test',
-          ${transaction.json([])}, 'running', ${now}, ${now}, ${now}
-        )
-      `;
+      if (owner === "execution") {
+        await transaction`
+          INSERT INTO "environment_run_executions" (
+            "id", "organization_id", "environment_id", "workspace_id",
+            "thread_id", "actor_id", "runtime_image",
+            "effective_capabilities", "status", "started_at",
+            "created_at", "updated_at"
+          ) VALUES (
+            ${executionId}, ${organizationId}, ${environmentId}, ${workspaceId},
+            ${threadId}, ${userId}, 'registry.example/runner@sha256:test',
+            ${transaction.json([])}, 'running', ${now}, ${now}, ${now}
+          )
+        `;
+      } else {
+        await transaction`
+          INSERT INTO "thread_turns" (
+            "id", "organization_id", "thread_id", "author_user_id",
+            "approval_id", "approval_approved", "requested_environment_id",
+            "idempotency_key", "sequence", "queue_ordinal", "status",
+            "started_at", "created_at", "updated_at"
+          ) VALUES (
+            ${turnId}, ${organizationId}, ${threadId}, ${userId},
+            ${`approval-${suffix}`}, true, ${environmentId},
+            ${`turn-backup-guard-${suffix}`}, 1, 1, 'running',
+            ${now}, ${now}, ${now}
+          )
+        `;
+        await transaction`
+          INSERT INTO "thread_turn_queue_state" (
+            "thread_id", "active_turn_id", "next_sequence", "state",
+            "version", "updated_at"
+          ) VALUES (
+            ${threadId}, ${turnId}, 2, 'running', 1, ${now}
+          )
+        `;
+      }
     });
 
     assert.equal(
@@ -169,5 +195,20 @@ contractTest(
       operationStartedAt: null,
       backupStatus: "queued",
     });
+}
+
+contractTest(
+  "web.postgres",
+  "queued Workspace backup claim defers while an execution owns the Workspace",
+  async (context) => {
+    await verifyBackupClaimDefers(context, "execution");
+  },
+);
+
+contractTest(
+  "web.postgres",
+  "queued Workspace backup claim defers while a durable turn is activating",
+  async (context) => {
+    await verifyBackupClaimDefers(context, "activating_turn");
   },
 );

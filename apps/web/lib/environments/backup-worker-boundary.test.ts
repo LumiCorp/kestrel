@@ -26,6 +26,11 @@ contractTest(
       backupSource,
       /inArray\(table\.status,\s*\["routed",\s*"running"\]\)/u,
     );
+    assert.match(backupSource, /threadTurnQueueState\.activeTurnId/u);
+    assert.match(
+      backupSource,
+      /inArray\(schema\.threadTurns\.status,\s*\["queued",\s*"running"\]\)/u,
+    );
     assert.match(backupSource, /input\.attempt\?\.canRetry === true/u);
     assert.match(reconcileSource, /workspaceDailyBackupIdempotencyKey/u);
     assert.match(reconcileSource, /gte\(table\.createdAt,\s*dayStart\)/u);
