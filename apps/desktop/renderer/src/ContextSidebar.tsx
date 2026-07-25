@@ -1,292 +1,80 @@
-import { Folder, Plus, RefreshCw } from "lucide-react";
-import { getKestrelStandardAppManifest } from "@kestrel-agents/protocol";
+import { Activity, CircleAlert, Inbox } from "lucide-react";
 import React, { type PointerEvent as ReactPointerEvent } from "react";
 
 import type {
-  DesktopBridgeInfo,
-  DesktopCapabilityView,
-  DesktopRendererSettings,
-  DesktopRuntimeHealth,
+  DesktopCapabilityId,
+  DesktopOperatorInboxItem,
 } from "../../src/contracts";
 import type { RendererThread } from "./state";
-import {
-  DESKTOP_WEATHER_APP_ID,
-  isPublishedStandardAppId,
-} from "../../../../src/desktopShell/configuration";
 
 export function ContextSidebar(props: {
-  surface: string;
   thread: RendererThread;
-  settings: DesktopRendererSettings;
-  runtimeHealth?: DesktopRuntimeHealth | undefined;
-  bridgeInfo?: DesktopBridgeInfo | undefined;
-  capabilities?: DesktopCapabilityView | undefined;
-  locked: boolean;
-  projectPath?: string | undefined;
-  projectLabel: string;
-  projectLocked: boolean;
-  onModelConfigurationChange: (id: string, revision: number) => void;
-  onAppToggle: (id: string, enabled: boolean) => void;
-  onProjectChange: (path: string | undefined) => void;
-  onNewConversationForProject: () => void;
-  onAddProject: () => void;
-  onRestartRuntime: () => void;
+  activeRun: boolean;
+  inboxItems: DesktopOperatorInboxItem[];
+  activity: string;
+  error?: string | undefined;
+  errorCapability?: DesktopCapabilityId | undefined;
+  onOpenSettings: (target?: DesktopCapabilityId | undefined) => void;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
-  const activeConfiguration = props.settings.modelConfigurations.find(
-    (configuration) => configuration.id === props.thread.modelConfigurationId,
-  );
-  const activeRevision = activeConfiguration?.revisions.find(
-    (revision) => revision.revision === props.thread.modelConfigurationRevision,
-  );
-  const providerReadiness = props.settings.providerReadiness.find(
-    (entry) => entry.provider === activeRevision?.policy.provider,
-  );
-  const enabledApps = new Set(props.thread.enabledAppIds);
-  const selectedExecutableApps = new Set(
-    props.settings.apps
-      .filter((app) => app.toolNames.length > 0 && enabledApps.has(app.id))
-      .map((app) => app.id),
-  );
-  const weatherCapability = props.capabilities?.capabilities.find(
-    (entry) => entry.id === "tools.weather",
-  );
-  const healthState = props.runtimeHealth?.state ?? "degraded";
+  const actionableItems = props.inboxItems.filter((item) => item.actionable);
 
   return (
-    <aside
-      className="inspector contextual-sidebar"
-      aria-label="Context sidebar"
-    >
+    <aside id="context-sidebar" className="inspector contextual-sidebar" aria-label="Conversation context">
       <div
         className="sidebar-resize-handle"
         onPointerDown={props.onResizeStart}
         aria-hidden="true"
       />
       <div className="context-sidebar-scroll">
-        {props.surface === "chat" ? (
-          <>
-            <section className="inspector-section compact-section">
-              <div className="section-heading">
-                <span>Model</span>
-              </div>
-              <select
-                aria-label="Model configuration"
-                disabled={props.locked}
-                value={`${props.thread.modelConfigurationId}@${props.thread.modelConfigurationRevision}`}
-                onChange={(event) => {
-                  const separator = event.target.value.lastIndexOf("@");
-                  const id = event.target.value.slice(0, separator);
-                  const revisionValue = event.target.value.slice(separator + 1);
-                  const configuration = props.settings.modelConfigurations.find(
-                    (entry) => entry.id === id,
-                  );
-                  const revision = Number(revisionValue);
-                  if (
-                    configuration !== undefined &&
-                    Number.isSafeInteger(revision)
-                  ) {
-                    props.onModelConfigurationChange(
-                      configuration.id,
-                      revision,
-                    );
-                  }
-                }}
-              >
-                {activeConfiguration !== undefined &&
-                (activeConfiguration.archivedAt !== undefined ||
-                  activeConfiguration.currentRevision !==
-                    props.thread.modelConfigurationRevision) ? (
-                  <option
-                    value={`${activeConfiguration.id}@${props.thread.modelConfigurationRevision}`}
-                  >
-                    {activeConfiguration.name} · revision{" "}
-                    {props.thread.modelConfigurationRevision}
-                  </option>
-                ) : null}
-                {props.settings.modelConfigurations
-                  .filter(
-                    (configuration) => configuration.archivedAt === undefined,
-                  )
-                  .map((configuration) => (
-                    <option
-                      key={configuration.id}
-                      value={`${configuration.id}@${configuration.currentRevision}`}
-                    >
-                      {configuration.name}
-                    </option>
-                  ))}
-              </select>
-              {activeRevision !== undefined ? (
-                <p
-                  className="provider-model"
-                  title={activeRevision.policy.model}
-                >
-                  {activeRevision.policy.model}
-                </p>
-              ) : null}
-              {providerReadiness !== undefined ? (
-                <p
-                  className={`provider-status ${providerReadiness.configured ? "" : "needs-credential"}`}
-                >
-                  <span aria-hidden="true" />
-                  {providerReadiness.configured
-                    ? "Provider ready"
-                    : "Credential required"}
-                </p>
-              ) : null}
-              {props.locked ? (
-                <p className="compact-note">
-                  Locked while this conversation is active.
-                </p>
-              ) : null}
-            </section>
-
-            <section className="inspector-section compact-section">
-              <div className="section-heading">
-                <span>Apps</span>
-              </div>
-              <div className="compact-check-list">
-                {props.settings.apps.map((app) => {
-                  const manifest = isPublishedStandardAppId(app.id)
-                    ? getKestrelStandardAppManifest(app.id)
-                    : undefined;
-                  const missingWorkflowRoles =
-                    manifest?.category === "workflow"
-                      ? (manifest.dependencies ?? [])
-                          .filter(
-                            (dependency) =>
-                              dependency.appIds.filter((appId) =>
-                                selectedExecutableApps.has(appId),
-                              ).length < dependency.minimum,
-                          )
-                          .map((dependency) => dependency.role)
-                      : [];
-                  return (
-                    <label key={app.id}>
-                      <span>
-                        <strong>{app.label}</strong>
-                        <small>
-                          {missingWorkflowRoles.length > 0
-                            ? `Needs selected Apps for ${missingWorkflowRoles.join(", ")}`
-                            : app.description}
-                        </small>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={enabledApps.has(app.id)}
-                        disabled={
-                          props.locked ||
-                          (!enabledApps.has(app.id) &&
-                            missingWorkflowRoles.length > 0)
-                        }
-                        onChange={(event) =>
-                          props.onAppToggle(app.id, event.target.checked)
-                        }
-                      />
-                    </label>
-                  );
-                })}
-              </div>
-              {enabledApps.has(DESKTOP_WEATHER_APP_ID) ? (
-                <p
-                  className={`provider-status ${weatherCapability?.readiness === "ready" ? "" : "needs-credential"}`}
-                >
-                  <span aria-hidden="true" />
-                  {weatherCapability?.readiness === "ready"
-                    ? "Weather fallback ready"
-                    : "Weather free provider"}
-                </p>
-              ) : null}
-            </section>
-          </>
-        ) : (
-          <section className="inspector-section compact-section">
-            <div className="section-heading">
-              <span>Context</span>
-            </div>
-            <p className="context-title">{surfaceLabel(props.surface)}</p>
-            <p className="compact-note">{surfaceDescription(props.surface)}</p>
-          </section>
-        )}
-
         <section className="inspector-section compact-section">
           <div className="section-heading">
-            <span>Project</span>
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="Add project"
-              title="Add project"
-              onClick={props.onAddProject}
-            >
-              <Plus size={15} />
-            </button>
+            <span>Conversation</span>
           </div>
-          {props.projectLocked ? (
-            <div className="project-binding-readonly">
-              <span className="project-binding-badge" title={props.projectPath}><Folder size={14} />{props.projectLabel}</span>
-              <button type="button" onClick={props.onNewConversationForProject}>New conversation in another project</button>
-            </div>
-          ) : (
-            <label className="compact-select-row">
-              <Folder size={14} />
-              <select
-                aria-label="Conversation project"
-                disabled={props.locked}
-                value={props.projectPath ?? ""}
-                onChange={(event) => props.onProjectChange(event.target.value.length > 0 ? event.target.value : undefined)}
-              >
-                <option value="">No project</option>
-                {props.settings.projects.map((project) => (
-                  <option key={project.path} value={project.path}>
-                    {project.label}
-                  </option>
-                ))}
-                <option value="__add_project__">Add Project…</option>
-              </select>
-            </label>
-          )}
+          <p className="context-title">{props.thread.title}</p>
+          <p className="compact-note">{props.activeRun ? "A run is in progress." : "No run in progress."}</p>
         </section>
-      </div>
 
-      <section className="global-status-strip">
-        <span
-          className={`status-dot health-${healthState}`}
-          aria-hidden="true"
-        />
-        <span>
-          <strong>{healthState}</strong>
-          <small>Bridge v{props.bridgeInfo?.version ?? "–"}</small>
-        </span>
-        <button
-          className="icon-button"
-          type="button"
-          title="Restart runtime"
-          aria-label="Restart runtime"
-          onClick={props.onRestartRuntime}
-        >
-          <RefreshCw size={14} />
-        </button>
-      </section>
+        <section className="inspector-section compact-section" aria-live="polite">
+          <div className="section-heading">
+            <Activity size={14} aria-hidden="true" />
+            <span>Activity</span>
+          </div>
+          <p className="context-title">{props.activity}</p>
+          {props.error !== undefined ? (
+            <div className="context-exception" role="alert">
+              <CircleAlert size={15} aria-hidden="true" />
+              <div>
+                <strong>Attention needed</strong>
+                <p>{props.error}</p>
+                {props.errorCapability !== undefined ? (
+                  <button type="button" onClick={() => props.onOpenSettings(props.errorCapability)}>
+                    Open Settings
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </section>
+
+        {actionableItems.length > 0 ? (
+          <section className="inspector-section compact-section">
+            <div className="section-heading">
+              <Inbox size={14} aria-hidden="true" />
+              <span>Needs your input</span>
+              <small>{actionableItems.length}</small>
+            </div>
+            <div className="context-inbox-list">
+              {actionableItems.map((item) => (
+                <article key={item.itemId} className="context-inbox-item">
+                  <strong>{item.title}</strong>
+                  {item.detail !== undefined ? <p>{item.detail}</p> : null}
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </div>
     </aside>
   );
-}
-
-function surfaceLabel(surface: string): string {
-  if (surface === "mission-control") return "Mission control";
-  if (surface === "projects") return "Projects";
-  if (surface === "mcp") return "Apps";
-  if (surface === "settings") return "Settings";
-  return "Diagnostics";
-}
-
-function surfaceDescription(surface: string): string {
-  if (surface === "mission-control")
-    return "Run and task context for the active conversation.";
-  if (surface === "projects")
-    return "Files and actions for the selected project.";
-  if (surface === "mcp") return "Built-in, standard, and custom Apps.";
-  if (surface === "settings") return "Application-wide configuration.";
-  return "Runtime health and support information.";
 }

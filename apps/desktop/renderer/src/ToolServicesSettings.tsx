@@ -9,7 +9,7 @@ import {
   LockKeyhole,
   Network,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   DesktopCapability,
@@ -24,9 +24,15 @@ const EXA_CONNECTOR_URL = "https://mcp.exa.ai/mcp";
 const EXA_CONNECTOR_DOCS_URL = "https://exa.ai/mcp";
 const TAVILY_DOCS_URL = "https://docs.tavily.com/documentation/quickstart";
 
+export interface ToolServicesNavigationRequest {
+  capabilityId: DesktopCapability["id"];
+  requestId: number;
+}
+
 interface ToolServicesSettingsProps {
   capabilities: DesktopCapability[];
   credentialStoreAvailable: boolean;
+  navigationRequest?: ToolServicesNavigationRequest | undefined;
   onCapabilitiesChange: (view: DesktopCapabilityView) => void;
   onNotice: (message: string) => void;
   onOpenMcp: () => void;
@@ -36,6 +42,7 @@ interface ToolServicesSettingsProps {
 export function ToolServicesSettings({
   capabilities,
   credentialStoreAvailable,
+  navigationRequest,
   onCapabilitiesChange,
   onNotice,
   onOpenMcp,
@@ -47,6 +54,9 @@ export function ToolServicesSettings({
   const [draft, setDraft] = useState<Record<string, string | boolean>>({});
   const [busy, setBusy] = useState(false);
   const [inlineError, setInlineError] = useState<string>();
+  const selectedConnectorRef = useRef<HTMLButtonElement>(null);
+  const handledNavigationRequestRef = useRef<number | undefined>(undefined);
+  const pendingFocusRequestRef = useRef<number | undefined>(undefined);
 
   const selectedCapability = capabilities.find((capability) => capability.id === selectedId);
   const exaServer = mcpResult?.servers.find((server) => server.id === EXA_CONNECTOR_ID);
@@ -69,6 +79,29 @@ export function ToolServicesSettings({
     });
     return () => { disposed = true; };
   }, []);
+
+  useEffect(() => {
+    if (
+      navigationRequest !== undefined
+      && navigationRequest.requestId !== handledNavigationRequestRef.current
+      && capabilities.some((capability) => capability.id === navigationRequest.capabilityId)
+    ) {
+      handledNavigationRequestRef.current = navigationRequest.requestId;
+      pendingFocusRequestRef.current = navigationRequest.requestId;
+      setSelectedId(navigationRequest.capabilityId);
+    }
+  }, [capabilities, navigationRequest]);
+
+  useEffect(() => {
+    if (
+      navigationRequest !== undefined
+      && pendingFocusRequestRef.current === navigationRequest.requestId
+      && selectedId === navigationRequest.capabilityId
+    ) {
+      selectedConnectorRef.current?.focus({ preventScroll: true });
+      pendingFocusRequestRef.current = undefined;
+    }
+  }, [navigationRequest, selectedId]);
 
   useEffect(() => {
     setCredential("");
@@ -135,6 +168,7 @@ export function ToolServicesSettings({
               description="Search, news, extraction, images, and research"
               icon={Globe2}
               name="Tavily"
+              buttonRef={selectedId === "tools.internet.tavily" ? selectedConnectorRef : undefined}
               status={capabilityStatus(capabilities.find((capability) => capability.id === "tools.internet.tavily"))}
               onSelect={() => setSelectedId("tools.internet.tavily")}
             />
@@ -143,6 +177,7 @@ export function ToolServicesSettings({
               description="Search, contents, code context, and research"
               icon={Globe2}
               name="Exa"
+              buttonRef={selectedId === EXA_CONNECTOR_ID ? selectedConnectorRef : undefined}
               status={exaConnected ? "Connected and verified" : "Not connected"}
               onSelect={() => setSelectedId(EXA_CONNECTOR_ID)}
             />
@@ -157,6 +192,7 @@ export function ToolServicesSettings({
                   icon={capability.id === "tools.weather" ? CloudSun : Network}
                   key={capability.id}
                   name={toolServiceName(capability)}
+                  buttonRef={selectedId === capability.id ? selectedConnectorRef : undefined}
                   status={capabilityStatus(capability)}
                   onSelect={() => setSelectedId(capability.id)}
                 />
@@ -202,6 +238,7 @@ export function ToolServicesSettings({
 
 function ConnectorRow({
   active,
+  buttonRef,
   description,
   icon: Icon,
   name,
@@ -209,6 +246,7 @@ function ConnectorRow({
   onSelect,
 }: {
   active: boolean;
+  buttonRef?: React.RefObject<HTMLButtonElement | null> | undefined;
   description: string;
   icon: typeof Globe2;
   name: string;
@@ -218,7 +256,7 @@ function ConnectorRow({
   const ready = status === "Connected and verified" || status === "Ready";
   return (
     <div role="listitem">
-      <button className={`connector-row ${active ? "active" : ""}`} type="button" onClick={onSelect}>
+      <button ref={buttonRef} className={`connector-row ${active ? "active" : ""}`} type="button" onClick={onSelect}>
         <span className="connector-row-icon"><Icon size={20} aria-hidden="true" /></span>
         <span className="connector-row-copy">
           <strong>{name}</strong>

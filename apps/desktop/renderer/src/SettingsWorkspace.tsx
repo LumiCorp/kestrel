@@ -15,7 +15,10 @@ import {
   createDesktopModelConfiguration,
 } from "../../../../src/desktopShell/configuration";
 import { keepFocusInsideDialog } from "./dialogFocus";
-import { ToolServicesSettings } from "./ToolServicesSettings";
+import {
+  ToolServicesSettings,
+  type ToolServicesNavigationRequest,
+} from "./ToolServicesSettings";
 
 const CATEGORY_ORDER: DesktopCapabilityCategory[] = [
   "models",
@@ -66,6 +69,7 @@ export function SettingsWorkspace({
   const [notice, setNotice] = useState<string>();
   const [confirmingCredentialRemoval, setConfirmingCredentialRemoval] = useState(false);
   const [openedTarget, setOpenedTarget] = useState<DesktopCapabilityId>();
+  const [toolServicesNavigationRequest, setToolServicesNavigationRequest] = useState<ToolServicesNavigationRequest>();
   const [selectedId, setSelectedId] = useState(settings.defaultModelConfigurationId);
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<DesktopModelProvider>("openrouter");
@@ -77,11 +81,16 @@ export function SettingsWorkspace({
   const [catalog, setCatalog] = useState<string[]>([]);
   const dialogRef = useRef<HTMLFormElement>(null);
   const savingRef = useRef(false);
+  const refreshVersionRef = useRef(0);
   const grouped = useMemo(() => new Map(CATEGORY_ORDER.map((category) => [
     category,
     view?.capabilities.filter((capability) => capability.category === category) ?? [],
   ])), [view]);
   const readinessSummary = useMemo(() => summarizeReadiness(view?.capabilities ?? []), [view]);
+  const attentionCapabilities = useMemo(
+    () => getDesktopCapabilityAttentionQueue(view?.capabilities ?? []),
+    [view],
+  );
   const selected = useMemo(
     () => settings.modelConfigurations.find((entry) => entry.id === selectedId),
     [settings.modelConfigurations, selectedId],
@@ -138,17 +147,28 @@ export function SettingsWorkspace({
   }, [editing?.id]);
 
   async function refresh(): Promise<void> {
+    const refreshVersion = ++refreshVersionRef.current;
     setLoading(true);
     onError(undefined);
     try {
       const nextView = await window.kestrelDesktop.getCapabilities();
+      if (refreshVersion !== refreshVersionRef.current) return;
       setView(nextView);
       onCapabilitiesChange?.(nextView);
     } catch (error) {
+      if (refreshVersion !== refreshVersionRef.current) return;
       onError(errorMessage(error));
     } finally {
-      setLoading(false);
+      if (refreshVersion === refreshVersionRef.current) setLoading(false);
     }
+  }
+
+  function commitCapabilityView(nextView: DesktopCapabilityView): void {
+    // An apply result is newer than any readiness request already in flight.
+    // Ignore a late probe response rather than repainting the previous state.
+    refreshVersionRef.current += 1;
+    setView(nextView);
+    onCapabilitiesChange?.(nextView);
   }
 
   async function runAction(action: (() => void | Promise<void>) | undefined): Promise<void> {
@@ -169,6 +189,16 @@ export function SettingsWorkspace({
     if (capability.id === "data.workspace") return onAddProject;
     if (capability.id === "permission.microphone") return onRequestMicrophone;
     return;
+  }
+
+  function attentionActionFor(capability: DesktopCapability): (() => void | Promise<void>) | undefined {
+    if (capability.category === "tools_services") {
+      return () => {
+        setToolServicesNavigationRequest((current) => createToolServicesNavigationRequest(capability.id, current));
+        document.getElementById("settings-tools_services")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+    }
+    return actionFor(capability);
   }
 
   function openEditor(capability: DesktopCapability): void {
@@ -211,8 +241,7 @@ export function SettingsWorkspace({
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
         ...(credential.trim().length > 0 ? { credential: credential.trim() } : {}),
       });
-      setView(result.view);
-      onCapabilitiesChange?.(result.view);
+      commitCapabilityView(result.view);
       setNotice(`${editing.name} was verified and applied${result.runtimeRestarted ? "; the runtime restarted with the new configuration" : ""}.`);
       closeEditor();
     } catch (error) {
@@ -232,8 +261,7 @@ export function SettingsWorkspace({
         capabilityId: editing.id,
         credential: null,
       });
-      setView(result.view);
-      onCapabilitiesChange?.(result.view);
+      commitCapabilityView(result.view);
       setNotice(`${capabilityName} credential removed.`);
       closeEditor();
     } catch (error) {
@@ -332,6 +360,46 @@ export function SettingsWorkspace({
             <span><CircleAlert size={15} aria-hidden="true" /><strong>{readinessSummary.attention}</strong> need attention</span>
             <span><Circle size={15} aria-hidden="true" /><strong>{readinessSummary.inactive}</strong> inactive or optional</span>
           </div>
+          <p className="capability-summary-time">Readiness last checked {new Date(view.refreshedAt).toLocaleString()}.</p>
+          {attentionCapabilities.length > 0 ? (
+            <section className="capability-attention-queue" aria-labelledby="capability-attention-title">
+              <div className="capability-attention-heading">
+                <div>
+                  <span className="surface-kicker">Next to resolve</span>
+                  <h2 id="capability-attention-title">{attentionCapabilities.length} {attentionCapabilities.length === 1 ? "capability" : "capabilities"} need attention</h2>
+                </div>
+                <p>These are the current setup or recovery blockers. Resolve them here, then refresh readiness to confirm the effective Desktop state.</p>
+              </div>
+              <div className="capability-attention-list">
+                {attentionCapabilities.map((capability) => {
+                  const action = attentionActionFor(capability);
+                  const CapabilityIcon = readinessIcon(capability.readiness);
+                  return (
+                    <article className="capability-attention-item" data-readiness={capability.readiness} key={capability.id}>
+                      <div>
+                        <div className="capability-attention-title">
+                          <CapabilityIcon size={16} aria-hidden="true" />
+                          <h3>{capability.name}</h3>
+                          <span className={`capability-readiness readiness-${capability.readiness}`}>{readinessLabel(capability.readiness)}</span>
+                        </div>
+                        <p>{capability.detail}</p>
+                      </div>
+                      {action !== undefined ? (
+                        <button className="secondary-button" type="button" onClick={() => void runAction(action)}>
+                          {actionLabel(capability)}
+                        </button>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ) : (
+            <section className="capability-attention-queue capability-attention-clear" aria-label="Capability readiness">
+              <CheckCircle2 size={18} aria-hidden="true" />
+              <p><strong>No setup blockers.</strong> Enabled Desktop capabilities are ready to use.</p>
+            </section>
+          )}
           <nav className="settings-category-nav" aria-label="Settings categories">
             {CATEGORY_ORDER.map((category) => (
               <a href={`#settings-${category}`} key={category}>{CATEGORY_LABELS[category]}</a>
@@ -350,10 +418,10 @@ export function SettingsWorkspace({
               <ToolServicesSettings
                 capabilities={capabilities}
                 credentialStoreAvailable={view.credentialStore.available}
+                navigationRequest={toolServicesNavigationRequest}
                 key={category}
                 onCapabilitiesChange={(nextView) => {
-                  setView(nextView);
-                  onCapabilitiesChange?.(nextView);
+                  commitCapabilityView(nextView);
                 }}
                 onNotice={setNotice}
                 onOpenMcp={onOpenMcp}
@@ -415,7 +483,7 @@ export function SettingsWorkspace({
         <div className="settings-section-heading">
           <div>
             <h2 id="model-configurations-title">Conversation model configurations</h2>
-            <p>Named, revisioned model choices used by the contextual sidebar.</p>
+            <p>Named, revisioned model choices available in the conversation composer.</p>
           </div>
         </div>
         <div className="settings-content model-settings-grid">
@@ -465,7 +533,8 @@ export function SettingsWorkspace({
         <div className="settings-section-heading"><h2 id="desktop-preferences-title">Desktop preferences</h2></div>
         <div className="settings-content settings-card">
           <div className="settings-form">
-            <strong>Default Apps for new conversations</strong>
+            <strong>Enabled Apps</strong>
+            <p className="compact-note">Available to every conversation. Changes affect the next run; an active run keeps its submitted tools.</p>
             {settings.apps.map((app) => (
               <label className="settings-check" key={app.id}>
                 <input
@@ -622,6 +691,22 @@ function summarizeReadiness(capabilities: DesktopCapability[]): { ready: number;
     else summary.inactive += 1;
     return summary;
   }, { ready: 0, attention: 0, inactive: 0 });
+}
+
+export function getDesktopCapabilityAttentionQueue(capabilities: DesktopCapability[]): DesktopCapability[] {
+  return capabilities.filter((capability) => capability.readiness === "setup_required"
+    || capability.readiness === "verification_failed"
+    || capability.readiness === "unavailable");
+}
+
+export function createToolServicesNavigationRequest(
+  capabilityId: DesktopCapabilityId,
+  previous?: ToolServicesNavigationRequest | undefined,
+): ToolServicesNavigationRequest {
+  return {
+    capabilityId,
+    requestId: (previous?.requestId ?? 0) + 1,
+  };
 }
 
 function summarizeTools(toolNames: string[]): string {

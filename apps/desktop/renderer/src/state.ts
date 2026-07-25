@@ -538,8 +538,9 @@ export function serializeDesktopRendererState(
 export function toDesktopExecutionSelection(
   thread: RendererThread,
   apps: readonly { id: string; contractVersion: number }[],
+  enabledAppIds: readonly string[],
 ): DesktopExecutionSelection {
-  const enabled = new Set(thread.enabledAppIds);
+  const enabled = new Set(enabledAppIds);
   return {
     modelConfiguration: {
       id: thread.modelConfigurationId,

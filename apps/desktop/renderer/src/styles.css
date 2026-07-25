@@ -328,14 +328,20 @@ button:disabled {
 
 .workspace {
   display: grid;
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   height: calc(100% - var(--titlebar-height));
 }
 
+.workspace.with-conversation-rail {
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+}
+
 .workspace.with-inspector {
-  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(
-      --inspector-width
-    );
+  grid-template-columns: minmax(0, 1fr) var(--inspector-width);
+}
+
+.workspace.with-conversation-rail.with-inspector {
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--inspector-width);
 }
 .inspector-resizer {
   cursor: col-resize;
@@ -2128,6 +2134,44 @@ button:disabled {
   white-space: nowrap;
 }
 
+.composer-model-selector {
+  display: grid;
+  grid-template-columns: auto minmax(0, 150px);
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.composer-model-selector select {
+  min-width: 0;
+  height: 27px;
+  padding: 0 24px 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.composer-model-selector small {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
 .composer-steer-button {
   min-width: 72px;
   height: 32px;
@@ -2222,6 +2266,42 @@ button:disabled {
 .compact-section .section-heading {
   min-height: 32px;
 }
+
+.context-exception {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 9px;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface-raised));
+  color: var(--danger);
+  font-size: 10px;
+}
+
+.context-exception div { min-width: 0; }
+.context-exception p { margin: 3px 0 0; color: var(--text); line-height: 1.4; }
+.context-exception button {
+  margin-top: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.context-inbox-list { display: grid; gap: 6px; }
+.context-inbox-item {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  font-size: 10px;
+}
+.context-inbox-item p { margin: 3px 0 0; color: var(--muted); line-height: 1.35; }
 
 .compact-note,
 .context-title,
@@ -5005,6 +5085,121 @@ button:disabled {
   color: var(--text);
 }
 
+.capability-summary-time {
+  margin: -3px 24px 12px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.capability-attention-queue {
+  margin: 0 24px 16px;
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 5%, var(--surface));
+  padding: 15px;
+}
+
+.capability-attention-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr);
+  align-items: end;
+  gap: 20px;
+  padding-bottom: 14px;
+}
+
+.capability-attention-heading .surface-kicker {
+  color: var(--warning);
+}
+
+.capability-attention-heading h2,
+.capability-attention-heading p,
+.capability-attention-item h3,
+.capability-attention-item p,
+.capability-attention-clear p {
+  margin: 0;
+}
+
+.capability-attention-heading h2 {
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+.capability-attention-heading p,
+.capability-attention-item p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.capability-attention-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.capability-attention-item {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.capability-attention-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.capability-attention-title > svg {
+  flex: none;
+  color: var(--warning);
+}
+
+.capability-attention-title h3 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capability-attention-title .capability-readiness {
+  margin-left: auto;
+}
+
+.capability-attention-item p {
+  margin-top: 7px;
+}
+
+.capability-attention-item .secondary-button {
+  flex: none;
+}
+
+.capability-attention-clear {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.capability-attention-clear > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.capability-attention-clear strong {
+  color: var(--text);
+}
+
 .settings-category-nav {
   position: sticky;
   z-index: 3;
@@ -5616,6 +5811,11 @@ button:disabled {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .capability-attention-heading,
+  .capability-attention-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .tool-services-shell {
     grid-template-columns: minmax(240px, 0.7fr) minmax(380px, 1.3fr);
   }
@@ -5640,6 +5840,8 @@ button:disabled {
 @media (max-width: 760px) {
   .settings-authority-note,
   .capability-summary,
+  .capability-summary-time,
+  .capability-attention-queue,
   .settings-notice {
     margin-inline: 14px;
   }

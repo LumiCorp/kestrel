@@ -9,6 +9,8 @@ import {
   MessageSquare,
   Moon,
   MonitorPlay,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
@@ -33,9 +35,7 @@ import {
 } from "react";
 
 import type {
-  DesktopBridgeInfo,
   DesktopCapabilityId,
-  DesktopCapabilityView,
   DesktopReadinessItemId,
   DesktopAttachmentMetadata,
   DesktopFollowUpQueueEntry,
@@ -88,7 +88,6 @@ import {
   getRendererThreadArchiveBlockReason,
   getTerminalWaitEventType,
   getTerminalWaitingPrompt,
-  isRendererThreadProjectLocked,
   readDesktopRendererState,
   renameRendererThread,
   resolveRendererThreadProjectPath,
@@ -141,13 +140,12 @@ type DesktopSurface =
 const SURFACE_STATE_KEY = "kestrel:desktop:surface:v1" as const;
 const INSPECTOR_STATE_KEY = "kestrel:desktop:inspector-open:v1" as const;
 const INSPECTOR_WIDTH_KEY = "kestrel:desktop:inspector-width:v1" as const;
+const CONVERSATION_RAIL_STATE_KEY = "kestrel:desktop:conversation-rail-open:v1" as const;
 
 export function DesktopApp() {
   const [state, setState] = useState<DesktopRendererState>();
   const [settings, setSettings] = useState<DesktopRendererSettings>();
   const [runtimeHealth, setRuntimeHealth] = useState<DesktopRuntimeHealth>();
-  const [bridgeInfo, setBridgeInfo] = useState<DesktopBridgeInfo>();
-  const [capabilities, setCapabilities] = useState<DesktopCapabilityView>();
   const [authorityCaches, setAuthorityCaches] = useState<DesktopAuthorityCaches>({
     activeRuns: {},
     threadViews: {},
@@ -161,8 +159,9 @@ export function DesktopApp() {
   const [threadFeedback, setThreadFeedback] = useState<Record<string, DesktopThreadFeedback>>({});
   const [surfaceErrors, setSurfaceErrors] = useState<Partial<Record<DesktopSurface, string>>>({});
   const [systemError, setSystemError] = useState<string>();
-  const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [inspectorWidth, setInspectorWidth] = useState(288);
+  const [conversationRailOpen, setConversationRailOpen] = useState(() => readDesktopSidebarState(CONVERSATION_RAIL_STATE_KEY, true));
+  const [inspectorOpen, setInspectorOpen] = useState(() => readDesktopSidebarState(INSPECTOR_STATE_KEY, false));
+  const [inspectorWidth, setInspectorWidth] = useState(() => readDesktopSidebarWidth());
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
   const [missionControlRevision, setMissionControlRevision] = useState(0);
@@ -265,9 +264,7 @@ export function DesktopApp() {
       window.kestrelDesktop.getUiState(),
       window.kestrelDesktop.getSettings(),
       window.kestrelDesktop.getRuntimeHealth(),
-      window.kestrelDesktop.getBridgeInfo(),
-      window.kestrelDesktop.getCapabilities(),
-    ]).then(([uiState, nextSettings, health, info, nextCapabilities]) => {
+    ]).then(([uiState, nextSettings, health]) => {
       if (disposed) {
         return;
       }
@@ -295,8 +292,6 @@ export function DesktopApp() {
       setSettings(nextSettings);
       setSelectedProjectPath((current) => current ?? nextSettings.projects[0]?.path);
       setRuntimeHealth(health);
-      setBridgeInfo(info);
-      setCapabilities(nextCapabilities);
     }).catch((cause) => {
       if (disposed === false) {
         setSystemError(errorMessage(cause));
@@ -407,6 +402,22 @@ export function DesktopApp() {
         setSystemError(`Desktop state could not be saved: ${errorMessage(cause)}`);
       });
   }, [state]);
+
+  useEffect(() => {
+    writeDesktopSidebarState(CONVERSATION_RAIL_STATE_KEY, conversationRailOpen);
+  }, [conversationRailOpen]);
+
+  useEffect(() => {
+    writeDesktopSidebarState(INSPECTOR_STATE_KEY, inspectorOpen);
+  }, [inspectorOpen]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorWidth));
+    } catch {
+      // Sidebar preferences are optional; the workspace remains usable without them.
+    }
+  }, [inspectorWidth]);
 
   useEffect(() => {
     if (state?.theme !== "system") {
@@ -635,7 +646,11 @@ export function DesktopApp() {
           ? { workspaceSetup }
           : {}),
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
-        executionSelection: toDesktopExecutionSelection(activeThread, settings.apps),
+        executionSelection: toDesktopExecutionSelection(
+          activeThread,
+          settings.apps,
+          settings.defaultEnabledAppIds,
+        ),
       });
       const assistantText = extractTerminalMessage(terminal);
       const terminalFailure = extractTerminalFailure(terminal, settings?.selectedProvider);
@@ -1055,6 +1070,16 @@ export function DesktopApp() {
   }
 
   const healthState = runtimeHealth?.state ?? "degraded";
+  const archivedThreadSelected = activeThread.archivedAt !== undefined;
+  const activeModelConfiguration = settings?.modelConfigurations.find(
+    (configuration) => configuration.id === activeThread.modelConfigurationId,
+  );
+  const activeModelRevision = activeModelConfiguration?.revisions.find(
+    (revision) => revision.revision === activeThread.modelConfigurationRevision,
+  );
+  const modelSelectionLocked = archivedThreadSelected
+    || activeRun !== undefined
+    || activeThread.pendingWaitEventType !== undefined;
   const selectedProject =
     settings?.projects.find((project) => project.path === selectedProjectPath) ??
     settings?.projects[0];
@@ -1070,10 +1095,6 @@ export function DesktopApp() {
       : undefined;
   const conversationProjectLabel = threadProject?.label
     ?? (threadProjectPath === undefined ? "No project" : "Unavailable project");
-  const archivedThreadSelected = activeThread.archivedAt !== undefined;
-  const projectLocked = archivedThreadSelected
-    || activeRun !== undefined
-    || isRendererThreadProjectLocked(activeThread, activeThreadWorkspace !== undefined);
   const showInspector = surface === "chat" && inspectorOpen;
   return (
     <div className="desktop-app">
@@ -1097,6 +1118,17 @@ export function DesktopApp() {
           </span>
         </div>
         <div className="titlebar-actions">
+          <button
+            className="icon-button"
+            type="button"
+            title={conversationRailOpen ? "Close conversation rail" : "Open conversation rail"}
+            aria-label={conversationRailOpen ? "Close conversation rail" : "Open conversation rail"}
+            aria-controls="conversation-rail"
+            aria-expanded={conversationRailOpen}
+            onClick={() => setConversationRailOpen((open) => !open)}
+          >
+            {conversationRailOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
+          </button>
           <button
             className="icon-button"
             type="button"
@@ -1125,6 +1157,8 @@ export function DesktopApp() {
               type="button"
               title={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
               aria-label={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
+              aria-controls="context-sidebar"
+              aria-expanded={inspectorOpen}
               onClick={() => setInspectorOpen((open) => !open)}
             >
               <span className={`titlebar-status-dot health-${healthState}`} aria-hidden="true" />
@@ -1135,10 +1169,10 @@ export function DesktopApp() {
       </header>
 
       <div
-        className={`workspace ${showInspector ? "with-inspector" : ""}`}
+        className={`workspace ${conversationRailOpen ? "with-conversation-rail" : ""} ${showInspector ? "with-inspector" : ""}`}
         style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
       >
-        <aside className="conversation-rail" aria-label="Conversations">
+        {conversationRailOpen ? <aside id="conversation-rail" className="conversation-rail" aria-label="Conversations">
           <nav className="surface-tabs" aria-label="Kestrel views">
             <button
               className={surface === "chat" ? "active" : ""}
@@ -1368,7 +1402,7 @@ export function DesktopApp() {
               </p>
             </div>
           )}
-        </aside>
+        </aside> : null}
 
         {surface === "chat" ? (
           <main className="conversation-pane" id="app-main">
@@ -1497,6 +1531,44 @@ export function DesktopApp() {
             ) : null}
             <div className="composer-actions">
               <div className="composer-actions-left">
+                <label className="composer-model-selector">
+                  <span>Model</span>
+                  <select
+                    aria-label="Conversation model"
+                    disabled={modelSelectionLocked}
+                    value={`${activeThread.modelConfigurationId}@${activeThread.modelConfigurationRevision}`}
+                    onChange={(event) => {
+                      const separator = event.target.value.lastIndexOf("@");
+                      const id = event.target.value.slice(0, separator);
+                      const revision = Number(event.target.value.slice(separator + 1));
+                      const configuration = settings?.modelConfigurations.find((entry) => entry.id === id);
+                      if (configuration === undefined || Number.isSafeInteger(revision) === false) return;
+                      setState((current) => current === undefined
+                        ? current
+                        : updateRendererThread(current, activeThread.id, (thread) => ({
+                            ...thread,
+                            modelConfigurationId: configuration.id,
+                            modelConfigurationRevision: revision,
+                          })));
+                    }}
+                  >
+                    {activeModelConfiguration !== undefined &&
+                    (activeModelConfiguration.archivedAt !== undefined ||
+                      activeModelConfiguration.currentRevision !== activeThread.modelConfigurationRevision) ? (
+                      <option value={`${activeModelConfiguration.id}@${activeThread.modelConfigurationRevision}`}>
+                        {activeModelConfiguration.name} · revision {activeThread.modelConfigurationRevision}
+                      </option>
+                    ) : null}
+                    {settings?.modelConfigurations
+                      .filter((configuration) => configuration.archivedAt === undefined)
+                      .map((configuration) => (
+                        <option key={configuration.id} value={`${configuration.id}@${configuration.currentRevision}`}>
+                          {configuration.name}
+                        </option>
+                      ))}
+                  </select>
+                  {activeModelRevision !== undefined ? <small title={activeModelRevision.policy.model}>{activeModelRevision.policy.model}</small> : null}
+                </label>
                 <span className="composer-mode-label">{activeThread.mode === "build" ? "Safe build" : modeLabel(activeThread.mode)}</span>
                 <button className="icon-button" type="button" title="Attach files" aria-label="Attach files" disabled={activeThread.draftAttachmentIds.length >= 8} onClick={() => void selectAttachments()}>
                   <Paperclip size={16} />
@@ -1671,7 +1743,11 @@ export function DesktopApp() {
                 sessionId={activeThread.sessionId}
                 threadId={localCoreThreadId(activeThread.sessionId)}
                 defaultBaseRef={activeThread.workspaceBaseRef}
-                executionSelection={toDesktopExecutionSelection(activeThread, settings?.apps ?? [])}
+                executionSelection={toDesktopExecutionSelection(
+                  activeThread,
+                  settings?.apps ?? [],
+                  settings?.defaultEnabledAppIds ?? [],
+                )}
                 onError={(error) => setSurfaceError("git", error)}
               />
             ) : surface === "preview" ? (
@@ -1690,10 +1766,18 @@ export function DesktopApp() {
                 onSettings={async (update) => {
                   const saved = await window.kestrelDesktop.saveSettings(update);
                   setSettings(saved);
-                  setState((current) => current === undefined ? current : { ...current, theme: saved.appearanceTheme });
+                  setState((current) => current === undefined ? current : {
+                    ...current,
+                    theme: saved.appearanceTheme,
+                    ...(update.defaultEnabledAppIds === undefined ? {} : {
+                      threads: current.threads.map((thread) => ({
+                        ...thread,
+                        enabledAppIds: [...saved.defaultEnabledAppIds],
+                      })),
+                    }),
+                  });
                   return saved;
                 }}
-                onCapabilitiesChange={setCapabilities}
                 onOpenMcp={() => setSurface("mcp")}
                 onAddProject={async () => { await addProject(); }}
                 onRequestMicrophone={async () => { await window.kestrelDesktop.requestMicrophoneAccess(); }}
@@ -1712,46 +1796,13 @@ export function DesktopApp() {
 
         {showInspector && settings !== undefined ? (
           <ContextSidebar
-            surface={surface}
             thread={activeThread}
-            settings={settings}
-            runtimeHealth={runtimeHealth}
-            bridgeInfo={bridgeInfo}
-            capabilities={capabilities}
-            locked={archivedThreadSelected || activeRun !== undefined || activeThread.pendingWaitEventType !== undefined}
-            projectPath={threadProjectPath}
-            projectLabel={conversationProjectLabel}
-            projectLocked={projectLocked}
-            onModelConfigurationChange={(id, revision) => setState((current) => current === undefined
-              ? current
-              : updateRendererThread(current, activeThread.id, (thread) => ({
-                  ...thread,
-                  modelConfigurationId: id,
-                  modelConfigurationRevision: revision,
-                })))}
-            onAppToggle={(id, enabled) => setState((current) => current === undefined
-              ? current
-              : updateRendererThread(current, activeThread.id, (thread) => ({
-                  ...thread,
-                  enabledAppIds: enabled
-                    ? [...new Set([...thread.enabledAppIds, id])]
-                    : thread.enabledAppIds.filter((entry) => entry !== id),
-                })))}
-            onProjectChange={(path) => {
-              if (path === "__add_project__") {
-                void addProject().catch((cause) => setThreadFailure(activeThread.id, "Project not added", errorMessage(cause)));
-                return;
-              }
-              setState((current) => current === undefined
-                ? current
-                : updateRendererThread(current, activeThread.id, (thread) => ({
-                    ...thread,
-                    projectPath: path,
-                  })));
-            }}
-            onNewConversationForProject={() => newConversation(null)}
-            onAddProject={() => void addProject().catch((cause) => setThreadFailure(activeThread.id, "Project not added", errorMessage(cause)))}
-            onRestartRuntime={() => void restartRuntime()}
+            activeRun={activeRun !== undefined}
+            inboxItems={operatorInboxItems}
+            activity={activeThreadFeedback.activity}
+            error={activeThreadFeedback.error}
+            errorCapability={activeThreadFeedback.errorCapability}
+            onOpenSettings={openCapabilitySettings}
             onResizeStart={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId);
               const startX = event.clientX;
@@ -1994,6 +2045,32 @@ function clampInspectorWidth(value: number): number {
   return Number.isFinite(value)
     ? Math.max(240, Math.min(520, Math.round(value)))
     : 288;
+}
+
+function readDesktopSidebarState(key: string, fallback: boolean): boolean {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === null ? fallback : value === "true";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeDesktopSidebarState(key: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // Sidebar preferences are optional; the workspace remains usable without them.
+  }
+}
+
+function readDesktopSidebarWidth(): number {
+  try {
+    const storedWidth = window.localStorage.getItem(INSPECTOR_WIDTH_KEY);
+    return storedWidth === null ? 288 : clampInspectorWidth(Number(storedWidth));
+  } catch {
+    return 288;
+  }
 }
 
 function providerLabel(
