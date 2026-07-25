@@ -17,6 +17,7 @@ import {
 } from "./interaction-panel";
 import {
   displayLiveReasoning,
+  selectLiveRuntimePresentationForAssistant,
   type LiveRuntimePresentation,
 } from "./live-runtime-presentation";
 import {
@@ -136,38 +137,33 @@ function PureMessages({
   const renderMessage = (
     message: ChatMessage,
     options: { hideActivity: boolean; isLast: boolean }
-  ) => (
-    <PreviewMessage
-      addToolApprovalResponse={addToolApprovalResponse}
-      feedback={feedbackByMessageId[message.id]}
-      hideKestrelActivity={options.hideActivity}
-      isLoading={status === "streaming" && options.isLast}
-      isReadonly={isReadonly}
-      key={message.id}
-      liveActivityStatus={
-        liveRuntimePresentation?.assistantMessageId === message.id
-          ? [
-              liveRuntimePresentation.activityStatus,
-              liveRuntimePresentation.reasoningStatus,
-            ].filter((status) => status !== null)
-          : []
-      }
-      liveReasoning={
-        liveRuntimePresentation?.assistantMessageId === message.id
-          ? liveRuntimePresentation.reasoning
-          : null
-      }
-      message={message}
-      onFeedbackChange={onFeedbackChange}
-      regenerate={regenerate}
-      requiresScrollPadding={hasSentMessage && options.isLast}
-      selectedLanguageModelId={selectedModelId}
-      setMessages={setMessages}
-      shouldAutoplaySpeech={message.id === latestAssistantMessageId}
-      threadId={threadId}
-      ttsAvailable={Boolean(ttsAvailable)}
-    />
-  );
+  ) => {
+    const livePresentation = selectLiveRuntimePresentationForAssistant(
+      liveRuntimePresentation,
+      message.id,
+    );
+    return (
+      <PreviewMessage
+        addToolApprovalResponse={addToolApprovalResponse}
+        feedback={feedbackByMessageId[message.id]}
+        hideKestrelActivity={options.hideActivity}
+        isLoading={status === "streaming" && options.isLast}
+        isReadonly={isReadonly}
+        key={message.id}
+        liveActivityStatus={livePresentation.activityStatuses}
+        liveReasoning={livePresentation.reasoning}
+        message={message}
+        onFeedbackChange={onFeedbackChange}
+        regenerate={regenerate}
+        requiresScrollPadding={hasSentMessage && options.isLast}
+        selectedLanguageModelId={selectedModelId}
+        setMessages={setMessages}
+        shouldAutoplaySpeech={message.id === latestAssistantMessageId}
+        threadId={threadId}
+        ttsAvailable={Boolean(ttsAvailable)}
+      />
+    );
+  };
 
   const renderItem = (item: ProjectedConversationItem) => {
     if (item.kind === "standalone_message") {

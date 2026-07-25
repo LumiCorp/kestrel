@@ -11,6 +11,7 @@ import {
   createKestrelOneAgentResponse,
 } from "@/lib/agent/kestrel-runtime";
 import {
+  appendKestrelUiChunkIfDurable,
   isLiveOnlyKestrelUiChunk,
   prepareKestrelRuntimeMessagesForPersistence,
 } from "@/lib/agent/kestrel-runtime-persistence";
@@ -400,10 +401,12 @@ export async function processDurableThreadTurn(
           return;
         }
         eventWrites = eventWrites.then(() =>
-          appendDurableTurnEvent({
-            turnId: turn.id,
-            type: "ui.message",
-            data: chunk,
+          appendKestrelUiChunkIfDurable(chunk, async (durableChunk) => {
+            await appendDurableTurnEvent({
+              turnId: turn.id,
+              type: "ui.message",
+              data: durableChunk,
+            });
           }).then(() => {}),
         );
       },

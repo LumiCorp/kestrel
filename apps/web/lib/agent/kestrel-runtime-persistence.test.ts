@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  appendKestrelUiChunkIfDurable,
   isLiveOnlyKestrelUiChunk,
   prepareKestrelRuntimeMessagesForPersistence,
 } from "@/lib/agent/kestrel-runtime-persistence";
@@ -114,6 +115,47 @@ contractTest("web.hermetic", "live-only runtime chunks are rejected at the durab
     false,
   );
 });
+
+contractTest(
+  "web.hermetic",
+  "durable turn event writes exclude reasoning and live progress",
+  async () => {
+    const written: unknown[] = [];
+    const append = async (chunk: unknown) => {
+      written.push(chunk);
+    };
+
+    assert.equal(
+      await appendKestrelUiChunkIfDurable(
+        {
+          type: "data-kestrel-provider-reasoning",
+          data: { delta: "private reasoning" },
+        },
+        append,
+      ),
+      false,
+    );
+    assert.equal(
+      await appendKestrelUiChunkIfDurable(
+        {
+          type: "data-kestrel-progress",
+          data: { persist: false, code: "RUN_STILL_ACTIVE" },
+        },
+        append,
+      ),
+      false,
+    );
+    const retry = {
+      type: "data-kestrel-progress",
+      data: { persist: true, code: "MODEL_ATTEMPT_RETRYING" },
+    };
+    assert.equal(
+      await appendKestrelUiChunkIfDurable(retry, append),
+      true,
+    );
+    assert.deepEqual(written, [retry]);
+  },
+);
 
 contractTest("web.hermetic", "final message persistence removes live-only progress defense in depth", () => {
   const messages = prepareKestrelRuntimeMessagesForPersistence(

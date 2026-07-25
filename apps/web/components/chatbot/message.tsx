@@ -24,6 +24,7 @@ import { MessageEditor } from "./message-editor";
 import { MessageReasoning } from "./message-reasoning";
 import {
   displayLiveReasoning,
+  isKestrelActivityDetailPart,
   type LiveActivityStatus,
   type LiveProviderReasoning,
 } from "./live-runtime-presentation";
@@ -152,19 +153,6 @@ function turnActivityLabel(status: ThreadTurnView["status"] | undefined) {
   return "Activity details";
 }
 
-const shouldRenderActivityDetail = (part: ChatMessage["parts"][number]) => {
-  if (!isKestrelPresentationPart(part)) return false;
-  if (
-    part.type === "data-kestrel-agent-progress" ||
-    part.type === "data-kestrel-citation" ||
-    part.type === "data-kestrel-artifact" ||
-    part.type === "data-kestrel-provider-reasoning"
-  ) {
-    return false;
-  }
-  return true;
-};
-
 export function KestrelActivityTimeline({
   parts,
   isLoading,
@@ -179,7 +167,7 @@ export function KestrelActivityTimeline({
   const agentProgressParts = parts.filter(
     (part) => part.type === "data-kestrel-agent-progress",
   );
-  const detailParts = parts.filter(shouldRenderActivityDetail);
+  const detailParts = parts.filter(isKestrelActivityDetailPart);
   if (
     agentProgressParts.length === 0 &&
     detailParts.length === 0 &&

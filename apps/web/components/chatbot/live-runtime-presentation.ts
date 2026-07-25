@@ -32,6 +32,42 @@ export type LiveRuntimePresentation = {
   reasoningStatus: LiveActivityStatus | null;
 };
 
+export type SelectedLiveRuntimePresentation = {
+  activityStatuses: LiveActivityStatus[];
+  reasoning: LiveProviderReasoning | null;
+};
+
+export function isKestrelActivityDetailPart(part: { type: string }): boolean {
+  if (!part.type.startsWith("data-kestrel-")) {
+    return false;
+  }
+  return (
+    part.type !== "data-kestrel-agent-progress" &&
+    part.type !== "data-kestrel-citation" &&
+    part.type !== "data-kestrel-artifact" &&
+    part.type !== "data-kestrel-provider-reasoning"
+  );
+}
+
+export function selectLiveRuntimePresentationForAssistant(
+  current: LiveRuntimePresentation | null,
+  assistantMessageId: string,
+): SelectedLiveRuntimePresentation {
+  if (current?.assistantMessageId !== assistantMessageId) {
+    return {
+      activityStatuses: [],
+      reasoning: null,
+    };
+  }
+  return {
+    activityStatuses: [
+      current.activityStatus,
+      current.reasoningStatus,
+    ].filter((status) => status !== null),
+    reasoning: current.reasoning,
+  };
+}
+
 export function applyLiveProgress(
   current: LiveRuntimePresentation | null,
   progress: KestrelProgressPresentation,

@@ -114,6 +114,7 @@ import type {
 import {
   type DelegationTaskUpdate,
   KestrelChatRuntime,
+  type KestrelChatRuntimeOptions,
   type RunTurnInput,
   type RunTurnResult,
 } from "../runtime/KestrelChatRuntime.js";
@@ -452,7 +453,7 @@ export interface RunnerRuntime {
   close(): Promise<void>;
 }
 
-type RunnerRuntimeFactory = (
+export type RunnerRuntimeFactory = (
   profile: TuiProfile,
   onRunLog: (entry: RunLogEntry) => void,
   onProgress: (update: ProgressUpdateV1) => void,
@@ -468,6 +469,32 @@ export function createLiveOnlyProgressListener(
   return (update) => {
     if (update.persist === false) listener(update);
   };
+}
+
+export function createDefaultRunnerRuntimeFactory(
+  createRuntime: (
+    profile: TuiProfile,
+    options: KestrelChatRuntimeOptions,
+  ) => RunnerRuntime = (profile, options) =>
+    new KestrelChatRuntime(profile, undefined, options),
+): RunnerRuntimeFactory {
+  return (
+    profile,
+    onRunLog,
+    onProgress,
+    onConsole,
+    onReasoning,
+    onTaskUpdate,
+    onRunEvent,
+  ) =>
+    createRuntime(profile, {
+      onRunLog,
+      onProgress: createLiveOnlyProgressListener(onProgress),
+      onConsole,
+      onReasoning,
+      onTaskUpdate,
+      onRunEvent,
+    });
 }
 
 function normalizeFinalizedResultRunId(
@@ -520,23 +547,7 @@ export class RunnerHost {
 
   constructor(
     writer: RunnerEventSink,
-    runtimeFactory: RunnerRuntimeFactory = (
-      profile,
-      onRunLog,
-      onProgress,
-      onConsole,
-      onReasoning,
-      onTaskUpdate,
-      onRunEvent
-    ) =>
-      new KestrelChatRuntime(profile, undefined, {
-        onRunLog,
-        onProgress: createLiveOnlyProgressListener(onProgress),
-        onConsole,
-        onReasoning,
-        onTaskUpdate,
-        onRunEvent,
-      }),
+    runtimeFactory: RunnerRuntimeFactory = createDefaultRunnerRuntimeFactory(),
     profileProvider: RunnerProfileProvider = createDefaultProfileProvider(),
     options: {
       profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;

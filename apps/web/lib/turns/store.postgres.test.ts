@@ -667,3 +667,151 @@ contractTest(
     assert.ok(deliveryCount && deliveryCount.count >= 3);
   },
 );
+
+contractTest(
+  "web.worker-claim-recovery",
+  "live reasoning and heartbeats never enter thread_turn_events",
+  async (context) => {
+    assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.POSTGRES_URL = databaseUrl;
+
+    const [
+      { resetDbRuntimeForTests },
+      store,
+      runtimePersistence,
+    ] = await Promise.all([
+      import("@/lib/db/runtime"),
+      import("./store"),
+      import("@/lib/agent/kestrel-runtime-persistence"),
+    ]);
+    const sql = postgres(databaseUrl, { max: 2 });
+    const suffix = crypto.randomUUID();
+    const organizationId = `runtime-persistence-org-${suffix}`;
+    const userId = `runtime-persistence-user-${suffix}`;
+    const environmentId = `runtime-persistence-environment-${suffix}`;
+    const threadId = `runtime-persistence-thread-${suffix}`;
+    const now = new Date();
+
+    context.after(async () => {
+      await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await resetDbRuntimeForTests();
+      await sql.end({ timeout: 0 });
+    });
+
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "user" (
+          "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+        ) VALUES (
+          ${userId}, 'Runtime Persistence User', ${`${userId}@example.test`},
+          true, ${now}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+        VALUES (
+          ${organizationId}, 'Runtime Persistence Org',
+          ${`runtime-persistence-org-${suffix}`}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "environments" (
+          "id", "organization_id", "created_by_user_id", "name", "slug",
+          "region", "status", "is_default"
+        ) VALUES (
+          ${environmentId}, ${organizationId}, ${userId}, 'Default', 'default',
+          'iad', 'ready', true
+        )
+      `;
+      await transaction`
+        INSERT INTO "threads" (
+          "id", "title", "created_by_user_id", "organization_id", "origin"
+        ) VALUES (
+          ${threadId}, 'Runtime Persistence', ${userId},
+          ${organizationId}, 'mobile'
+        )
+      `;
+    });
+
+    const created = await store.createDurableThreadTurn({
+      threadId,
+      organizationId,
+      authorUserId: userId,
+      messageId: `runtime-persistence-message-${suffix}`,
+      messageParts: [{ type: "text", text: "Test persistence." }],
+      idempotencyKey: `runtime-persistence-idempotency-${suffix}`,
+      requestedEnvironmentId: environmentId,
+      source: "mobile",
+    });
+    const appendRuntimeChunk = (chunk: unknown) =>
+      runtimePersistence.appendKestrelUiChunkIfDurable(
+        chunk,
+        async (durableChunk) => {
+          await store.appendDurableTurnEvent({
+            turnId: created.turn.id,
+            type: "ui.message",
+            data: durableChunk,
+          });
+        },
+      );
+
+    assert.equal(
+      await appendRuntimeChunk({
+        type: "data-kestrel-provider-reasoning",
+        data: {
+          assistantMessageId: `assistant-reasoning-${suffix}`,
+          delta: `private-provider-reasoning-${suffix}`,
+        },
+      }),
+      false,
+    );
+    assert.equal(
+      await appendRuntimeChunk({
+        type: "data-kestrel-progress",
+        data: {
+          assistantMessageId: `assistant-reasoning-${suffix}`,
+          code: "RUN_STILL_ACTIVE",
+          persist: false,
+          text: `live-heartbeat-${suffix}`,
+        },
+      }),
+      false,
+    );
+    assert.equal(
+      await appendRuntimeChunk({
+        type: "data-kestrel-progress",
+        data: {
+          assistantMessageId: `assistant-reasoning-${suffix}`,
+          code: "MODEL_ATTEMPT_RETRYING",
+          persist: true,
+          text: `durable-retry-${suffix}`,
+        },
+      }),
+      true,
+    );
+
+    const persistedRuntimeEvents = await store.listDurableTurnEvents({
+      turnId: created.turn.id,
+    });
+    const persistedRuntimeData = JSON.stringify(
+      persistedRuntimeEvents.map((event) => event.data),
+    );
+    assert.equal(
+      persistedRuntimeData.includes(`private-provider-reasoning-${suffix}`),
+      false,
+      "provider reasoning must never enter thread_turn_events",
+    );
+    assert.equal(
+      persistedRuntimeData.includes(`live-heartbeat-${suffix}`),
+      false,
+      "non-persistent progress must never enter thread_turn_events",
+    );
+    assert.equal(
+      persistedRuntimeData.includes(`durable-retry-${suffix}`),
+      true,
+      "persistent retry progress must enter thread_turn_events",
+    );
+  },
+);

@@ -25,6 +25,17 @@ export function isLiveOnlyKestrelUiChunk(chunk: unknown): boolean {
   return (record.data as { persist?: unknown }).persist === false;
 }
 
+export async function appendKestrelUiChunkIfDurable<T>(
+  chunk: T,
+  append: (chunk: T) => Promise<void>,
+): Promise<boolean> {
+  if (isLiveOnlyKestrelUiChunk(chunk)) {
+    return false;
+  }
+  await append(chunk);
+  return true;
+}
+
 export function prepareKestrelRuntimeMessagesForPersistence(
   messages: UIMessage[],
   meta: KestrelRuntimePersistenceMeta

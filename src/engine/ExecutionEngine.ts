@@ -145,6 +145,28 @@ interface ProgressEmitOptions extends Omit<ProgressUpdateV1, "version" | "ts"> {
 
 type ProgressPersistGranularity = "full" | "compact";
 
+export function shouldPersistProgressUpdate(
+  update: ProgressUpdateV1,
+  granularity: ProgressPersistGranularity,
+): boolean {
+  if (granularity === "full") {
+    return true;
+  }
+  if (update.code.endsWith("FAILED")) {
+    return true;
+  }
+  return (
+    update.code === "RUN_STARTED" ||
+    update.code === "RUN_COMPLETED" ||
+    update.code === "RUN_TERMINAL" ||
+    update.code === "WAITING_FOR_EVENT" ||
+    update.code === "STEP_COMMITTED" ||
+    update.code === "TOOL_CALL_DONE" ||
+    update.code === "MODEL_CALL_DONE" ||
+    update.code === "MODEL_ATTEMPT_RETRYING"
+  );
+}
+
 export class ExecutionEngine {
   private readonly deps: RuntimeDependencies;
   private readonly guardrailConfig: GuardrailConfig;
@@ -2045,20 +2067,9 @@ export class ExecutionEngine {
   }
 
   private shouldPersistProgressEvent(update: ProgressUpdateV1): boolean {
-    if (this.progressPersistGranularity === "full") {
-      return true;
-    }
-    if (update.code.endsWith("FAILED")) {
-      return true;
-    }
-    return (
-      update.code === "RUN_STARTED" ||
-      update.code === "RUN_COMPLETED" ||
-      update.code === "RUN_TERMINAL" ||
-      update.code === "WAITING_FOR_EVENT" ||
-      update.code === "STEP_COMMITTED" ||
-      update.code === "TOOL_CALL_DONE" ||
-      update.code === "MODEL_CALL_DONE"
+    return shouldPersistProgressUpdate(
+      update,
+      this.progressPersistGranularity,
     );
   }
 

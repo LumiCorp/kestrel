@@ -46,6 +46,92 @@ contractTest("web.hermetic", "createKestrelOneRequestContext maps session and or
   });
 });
 
+contractTest(
+  "web.hermetic",
+  "live provider reasoning never enters outbound runner history",
+  async () => {
+    let capturedInput: KestrelOneAgentTurnInput | undefined;
+    const terminal = completedTerminal("Runtime answer", undefined);
+    const agent = fakeAgent({
+      terminal,
+      onStream(input) {
+        capturedInput = input;
+      },
+    });
+    const messages = [
+      {
+        id: "msg_user_previous",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Inspect the workspace." }],
+      },
+      {
+        id: "msg_assistant_previous",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "data-kestrel-provider-reasoning" as const,
+            data: {
+              id: "reasoning-private",
+              assistantMessageId: "msg_assistant_previous",
+              runId: "run-previous",
+              sequence: 1,
+              timestamp: "2026-07-24T12:00:00.000Z",
+              attempt: 1,
+              format: "summary" as const,
+              label: "Provider reasoning summary" as const,
+              event: "delta" as const,
+              contentState: "live" as const,
+              delta: "Private provider reasoning.",
+            },
+          },
+          { type: "text" as const, text: "Visible answer." },
+        ],
+      },
+      {
+        id: "msg_user_current",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Continue." }],
+      },
+    ] satisfies ChatMessage[];
+
+    const response = createKestrelOneAgentResponseFromAgent({
+      request: new Request("http://example.test/api/chats/chat_history", {
+        method: "POST",
+      }),
+      agent,
+      ownsAgent: false,
+      session,
+      organizationId: "org_123",
+      correlation: {
+        requestId: "req_history",
+        correlationId: "req_history",
+      },
+      threadId: "chat_history",
+      interactionMode: "build",
+      messages,
+    });
+
+    await response.text();
+
+    assert.deepEqual(
+      capturedInput?.history?.map((entry) => ({
+        role: entry.role,
+        text: entry.text,
+      })),
+      [
+        { role: "user", text: "Inspect the workspace." },
+        { role: "assistant", text: "Visible answer." },
+      ],
+    );
+    assert.equal(
+      JSON.stringify(capturedInput?.history).includes(
+        "Private provider reasoning.",
+      ),
+      false,
+    );
+  },
+);
+
 contractTest("web.hermetic", "createKestrelOneAgentResponse streams completed runner output and persists assistant text", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   let capturedContext: KestrelOneRequestContext | undefined;

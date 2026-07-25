@@ -1,23 +1,68 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
+import {
+  applyLiveProgress,
+  applyProviderReasoning,
+  isKestrelActivityDetailPart,
+  selectLiveRuntimePresentationForAssistant,
+} from "./live-runtime-presentation";
 
-contractTest("web.hermetic", "provider reasoning renders as a card and is excluded from Activity details", async () => {
-  const source = await readFile(
-    new URL("./message.tsx", import.meta.url),
-    "utf8",
-  );
+contractTest(
+  "web.hermetic",
+  "provider reasoning selects the reasoning card and is excluded from Activity details",
+  () => {
+    const withProgress = applyLiveProgress(null, {
+      id: "progress-1",
+      assistantMessageId: "assistant-1",
+      runId: "run-1",
+      sequence: 1,
+      timestamp: "2026-07-24T12:00:00.000Z",
+      source: "runtime",
+      phase: "chat",
+      code: "MODEL_ATTEMPT_STARTED",
+      text: "Provider attempt 1/2 started.",
+      severity: "info",
+      persist: false,
+    });
+    const state = applyProviderReasoning(withProgress, {
+      id: "reasoning-1",
+      assistantMessageId: "assistant-1",
+      runId: "run-1",
+      sequence: 2,
+      timestamp: "2026-07-24T12:00:00.001Z",
+      attempt: 1,
+      format: "summary",
+      label: "Provider reasoning summary",
+      event: "delta",
+      contentState: "live",
+      delta: "Inspecting the workspace.",
+    });
+    const selected = selectLiveRuntimePresentationForAssistant(
+      state,
+      "assistant-1",
+    );
 
-  assert.match(
-    source,
-    /part\.type === "data-kestrel-provider-reasoning"[\s\S]*return false;/u,
-  );
-  assert.match(
-    source,
-    /liveReasoning[\s\S]*<MessageReasoning[\s\S]*displayLiveReasoning/u,
-  );
-  assert.doesNotMatch(
-    source,
-    /part\.data\.event === "delta"[\s\S]*part\.data\.delta/u,
-  );
-});
+    assert.equal(selected.reasoning?.text, "Inspecting the workspace.");
+    assert.deepEqual(
+      selected.activityStatuses.map((status) => status.text),
+      ["Provider attempt 1/2 started."],
+    );
+    assert.equal(
+      isKestrelActivityDetailPart({
+        type: "data-kestrel-provider-reasoning",
+      }),
+      false,
+    );
+    assert.equal(
+      isKestrelActivityDetailPart({ type: "data-kestrel-progress" }),
+      true,
+    );
+    assert.deepEqual(
+      selectLiveRuntimePresentationForAssistant(state, "assistant-2"),
+      {
+        activityStatuses: [],
+        reasoning: null,
+      },
+    );
+  },
+);
