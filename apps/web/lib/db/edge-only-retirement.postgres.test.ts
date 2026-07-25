@@ -22,7 +22,7 @@ contractTest(
             (table_name = 'workspace_preview_leases' AND column_name IN ('ingress_provider', 'connection_id'))
           )
       `;
-      assert.deepEqual(columns, []);
+      assert.equal(columns.length, 0);
 
       const rows = await sql<Array<{ relation: string; count: string }>>`
         SELECT 'app_definitions' AS relation, count(*)::text AS count
@@ -35,7 +35,7 @@ contractTest(
         FROM "app_credentials" WHERE "kind" = ${`${retiredProviderKey}_agent`}
       `;
       assert.deepEqual(
-        rows,
+        rows.map((row) => ({ ...row })),
         [
           { relation: "app_definitions", count: "0" },
           { relation: "tool_providers", count: "0" },
