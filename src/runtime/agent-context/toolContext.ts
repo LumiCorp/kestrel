@@ -474,6 +474,8 @@ function renderToolFacts(
     facts = renderInternetFacts(toolName, record, status, error);
   } else if (toolName === "free.weather.current" || toolName === "free.weather.forecast") {
     facts = renderWeatherFacts(toolName, record, status, error);
+  } else if (toolName.startsWith("workspace.preview.")) {
+    facts = renderWorkspacePreviewFacts(toolName, record, status, error);
   } else {
     facts = renderGenericObjectFacts(record, status, error);
   }
@@ -933,6 +935,45 @@ function renderGenericObjectFacts(
   return [
     ...field("status", asString(output.status) ?? status),
     ...preview,
+    ...renderErrorFacts(error),
+  ];
+}
+
+function renderWorkspacePreviewFacts(
+  toolName: string,
+  output: Record<string, unknown>,
+  status: "OK" | "FAILED",
+  error: unknown,
+): string[] {
+  const previews = toolName === "workspace.preview.list"
+    ? asArray(output.previews).map(asRecord).filter((item): item is Record<string, unknown> => item !== undefined)
+    : asRecord(output.preview) !== undefined
+      ? [asRecord(output.preview) as Record<string, unknown>]
+      : [];
+  if (previews.length === 0) {
+    return renderGenericObjectFacts(output, status, error);
+  }
+  return [
+    ...field("status", asString(output.status) ?? status),
+    ...(toolName === "workspace.preview.list"
+      ? [`- previewCount: ${previews.length}`]
+      : []),
+    ...previews.flatMap((preview, index) => [
+      `- preview ${index + 1}:`,
+      `  name: ${asString(preview.name) ?? "(unnamed)"}`,
+      `  url (exact complete public URL): ${asString(preview.url) ?? "(unavailable)"}`,
+      `  status: ${asString(preview.status) ?? "unknown"}`,
+      ...(typeof preview.port === "number" && Number.isFinite(preview.port)
+        ? [`  port: ${Math.trunc(preview.port)}`]
+        : []),
+      ...(asString(preview.expiresAt) !== undefined
+        ? [`  expiresAt: ${asString(preview.expiresAt)}`]
+        : []),
+      ...(asString(preview.id) !== undefined
+        ? [`  id: ${asString(preview.id)}`]
+        : []),
+    ]),
+    ...field("warning", output.warning),
     ...renderErrorFacts(error),
   ];
 }
