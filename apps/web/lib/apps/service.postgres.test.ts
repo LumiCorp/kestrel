@@ -36,10 +36,7 @@ contractTest(
       projectAppService,
       tavilyRuntime,
       appRuntime,
-      ngrokPreviewLifecycle,
-      environmentGatewayConfig,
-      environmentServiceTokens,
-      environmentReconcile,
+      previewLifecycle,
       googleContract,
       googleOauth,
       googlePolicy,
@@ -56,10 +53,7 @@ contractTest(
       import("./project-service"),
       import("./tavily-runtime"),
       import("./runtime"),
-      import("./ngrok-preview-lifecycle"),
-      import("@/lib/environments/gateway-config"),
-      import("@/lib/environments/service-tokens"),
-      import("@/lib/environments/reconcile"),
+      import("./preview-lifecycle"),
       import("@/lib/integrations/google-calendar-contract"),
       import("@/lib/integrations/google-calendar-oauth"),
       import("@/lib/integrations/google-calendar-policy"),
@@ -648,33 +642,12 @@ contractTest(
     assert.equal(authorizedResearch.connectionId, primary.id);
     assert.equal(authorizedResearch.capability.approvalMode, "ask");
 
-    const ngrokConnection = await appService.saveEnvironmentAppConnection({
-      organizationId,
-      environmentId,
-      appKey: "ngrok",
-      actorUserId: userId,
-      connection: {
-        kind: "ngrok_agent",
-        name: "Environment previews",
-        authtoken: "ngrok-test-token",
-        wildcardDomain: `*.p-${suffix}.previews.example.test`,
-      },
-    });
     await projectAppService.setProjectAppEnabled({
       organizationId,
       projectId,
-      appKey: "ngrok",
+      appKey: "built_in.previews",
       actorUserId: userId,
       enabled: true,
-    });
-    await projectAppService.attachProjectAppConnection({
-      organizationId,
-      projectId,
-      appKey: "ngrok",
-      connectionId: ngrokConnection.id,
-      actorUserId: userId,
-      scope: "shared",
-      isDefault: true,
     });
     await sql`
       UPDATE "environments"
@@ -683,7 +656,7 @@ contractTest(
     `;
     const publishPolicy = await appRuntime.authorizeAppRuntime({
       ticket,
-      appKey: "ngrok",
+      appKey: "built_in.previews",
       capabilityKey: "publish",
       approval: "auto",
     });
@@ -693,7 +666,7 @@ contractTest(
       path: string[];
       body?: unknown;
     }) =>
-      ngrokPreviewLifecycle.handleNgrokPreviewLifecycle({
+      previewLifecycle.handlePreviewLifecycle({
         request: new Request("https://kestrel.example.test/runtime", {
           method: input.method,
           headers: { authorization: "Bearer workspace-ticket" },
@@ -760,6 +733,7 @@ contractTest(
     };
     assert.notEqual(recoveredActivationBody.preview.id, failedActivation?.id);
     assert.equal(recoveredActivationBody.preview.status, "available");
+    assert.equal("ingressProvider" in recoveredActivationBody.preview, false);
     await invokePreview({
       capability: "close",
       method: "DELETE",
@@ -912,191 +886,6 @@ contractTest(
         AND "status" IN ('provisioning', 'active', 'closing')
     `;
     assert.equal(samePortRows[0]?.count, "1");
-
-    await sql`
-      UPDATE "environments"
-      SET "gateway_service_token_hash" = ${environmentServiceTokens.hashEnvironmentServiceToken("gateway-service-token")}
-      WHERE "id" = ${environmentId}
-    `;
-    await sql`
-      UPDATE "workspace_preview_leases"
-      SET "status" = 'provisioning'
-      WHERE "id" = ${samePortBodies[0]!.preview.id}
-    `;
-    await environmentGatewayConfig.reportEnvironmentGatewayNgrokStatus({
-      environmentId,
-      authorization: "Bearer gateway-service-token",
-      connectionId: ngrokConnection.id,
-      status: "degraded",
-      failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
-      failureMessage: "authentication failed",
-    });
-    const [degradedConnection] = await sql<Array<{
-      status: string;
-      failureCode: string | null;
-      failureMessage: string | null;
-    }>>`
-      SELECT "status", "failure_code" AS "failureCode", "failure_message" AS "failureMessage"
-      FROM "app_connections"
-      WHERE "id" = ${ngrokConnection.id}
-    `;
-    assert.deepEqual(degradedConnection, {
-      status: "degraded",
-      failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
-      failureMessage: "authentication failed",
-    });
-    const [failedProvisioningLease] = await sql<Array<{
-      status: string;
-      failureCode: string | null;
-      closedAt: Date | null;
-    }>>`
-      SELECT "status", "failure_code" AS "failureCode", "closed_at" AS "closedAt"
-      FROM "workspace_preview_leases"
-      WHERE "id" = ${samePortBodies[0]!.preview.id}
-    `;
-    assert.equal(failedProvisioningLease?.status, "failed");
-    assert.equal(failedProvisioningLease?.failureCode, "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE");
-    assert.notEqual(failedProvisioningLease?.closedAt, null);
-    await environmentGatewayConfig.reportEnvironmentGatewayNgrokStatus({
-      environmentId,
-      authorization: "Bearer gateway-service-token",
-      connectionId: ngrokConnection.id,
-      status: "connected",
-    });
-    const [healthyConnection] = await sql<Array<{
-      status: string;
-      failureCode: string | null;
-      failureMessage: string | null;
-    }>>`
-      SELECT "status", "failure_code" AS "failureCode", "failure_message" AS "failureMessage"
-      FROM "app_connections"
-      WHERE "id" = ${ngrokConnection.id}
-    `;
-    assert.deepEqual(healthyConnection, {
-      status: "connected",
-      failureCode: null,
-      failureMessage: null,
-    });
-    const replacementPublish = await invokePreview({
-      capability: "publish",
-      method: "POST",
-      path: ["previews"],
-      body: { port: 41_100 },
-    });
-    const replacementBody = await replacementPublish.json() as {
-      preview: { id: string; status: string };
-    };
-    assert.notEqual(replacementBody.preview.id, samePortBodies[0]!.preview.id);
-    assert.equal(replacementBody.preview.status, "available");
-
-    failNextGatewayRefresh = true;
-    await assert.rejects(
-      appService.disconnectEnvironmentAppConnection({
-        organizationId,
-        environmentId,
-        appKey: "ngrok",
-        connectionId: ngrokConnection.id,
-      }),
-      /Environment gateway refresh failed \(503\)/u,
-    );
-    const previewsAwaitingDisconnect = await sql<Array<{ count: string }>>`
-      SELECT count(*)::text AS "count"
-      FROM "workspace_preview_leases"
-      WHERE "connection_id" = ${ngrokConnection.id}
-        AND "status" = 'closing'
-    `;
-    assert.equal(previewsAwaitingDisconnect[0]?.count, "4");
-    assert.equal(
-      await environmentReconcile.reconcileClosingWorkspacePreviews(),
-      4,
-    );
-    const remainingNgrokPreviews = await sql<Array<{ count: string }>>`
-      SELECT count(*)::text AS "count"
-      FROM "workspace_preview_leases"
-      WHERE "connection_id" = ${ngrokConnection.id}
-        AND "status" IN ('provisioning', 'active', 'closing')
-    `;
-    assert.equal(remainingNgrokPreviews[0]?.count, "0");
-    await appRuntime.markAppConnectionHealthy({
-      organizationId,
-      environmentId,
-      appKey: "ngrok",
-      connectionId: ngrokConnection.id,
-    });
-    const [disconnectedNgrok] = await sql<Array<{ status: string }>>`
-      SELECT "status" FROM "app_connections"
-      WHERE "id" = ${ngrokConnection.id}
-    `;
-    assert.equal(disconnectedNgrok?.status, "disconnected");
-
-    await sql`
-      UPDATE "app_connections" connection
-      SET
-        "status" = 'connected',
-        "failure_code" = NULL,
-        "failure_message" = NULL,
-        "disconnected_at" = NULL
-      WHERE connection."id" = ${ngrokConnection.id}
-    `;
-    await sql`
-      UPDATE "app_credentials" credential
-      SET "status" = 'active', "encrypted_payload" = 'kapp:v1:invalid',
-          "revoked_at" = NULL
-      FROM "app_connections" connection
-      WHERE connection."id" = ${ngrokConnection.id}
-        AND credential."id" = connection."credential_id"
-    `;
-    await sql`
-      UPDATE "environments"
-      SET
-        "fly_app_name" = 'apps-runtime-test',
-        "gateway_service_token_hash" = ${environmentServiceTokens.hashEnvironmentServiceToken("gateway-service-token")}
-      WHERE "id" = ${environmentId}
-    `;
-    const configWithoutActiveNgrokPreview =
-      await environmentGatewayConfig.resolveEnvironmentGatewayConfig({
-        environmentId,
-        authorization: "Bearer gateway-service-token",
-      });
-    assert.equal(configWithoutActiveNgrokPreview.ngrok, null);
-    const [unusedBrokenNgrok] = await sql<
-      Array<{ status: string; failureCode: string | null }>
-    >`
-      SELECT "status", "failure_code" AS "failureCode"
-      FROM "app_connections"
-      WHERE "id" = ${ngrokConnection.id}
-    `;
-    assert.deepEqual(unusedBrokenNgrok, {
-      status: "connected",
-      failureCode: null,
-    });
-    await sql`
-      UPDATE "workspace_preview_leases"
-      SET
-        "status" = 'active',
-        "ingress_provider" = 'ngrok',
-        "failure_code" = NULL,
-        "closed_at" = NULL,
-        "expires_at" = "maximum_expires_at"
-      WHERE "id" = ${samePortBodies[0]!.preview.id}
-    `;
-    const configWithBrokenNgrok =
-      await environmentGatewayConfig.resolveEnvironmentGatewayConfig({
-        environmentId,
-        authorization: "Bearer gateway-service-token",
-      });
-    assert.equal(configWithBrokenNgrok.ngrok, null);
-    const [degradedBrokenNgrok] = await sql<
-      Array<{ status: string; failureCode: string | null }>
-    >`
-      SELECT "status", "failure_code" AS "failureCode"
-      FROM "app_connections"
-      WHERE "id" = ${ngrokConnection.id}
-    `;
-    assert.deepEqual(degradedBrokenNgrok, {
-      status: "degraded",
-      failureCode: "NGROK_CREDENTIAL_UNAVAILABLE",
-    });
 
     await appService.setAppInstallation({
       organizationId,

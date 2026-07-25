@@ -603,7 +603,6 @@ contractTest("web.hermetic", "Workspace provisioning requests encrypted storage 
     machineBody.config.env.KESTREL_WORKSPACE_PREVIEWS_ENABLED,
     undefined
   );
-  assert.equal(machineBody.config.env.NGROK_AUTHTOKEN, undefined);
   assert.equal(
     machineBody.config.env.KESTREL_WORKSPACE_SERVICE_TOKEN,
     "workspace-service-token"
@@ -917,7 +916,7 @@ contractTest("web.hermetic", "Fly Workspace image updates accept canonical grace
   assert.deepEqual(requests.map(({ method }) => method), ["GET"]);
 });
 
-contractTest("web.hermetic", "Fly workspace updates reconcile preview environment without replacing unrelated configuration", async () => {
+contractTest("web.hermetic", "Fly workspace updates reconcile environment values without replacing unrelated configuration", async () => {
   const requests: Array<{ method: string; body: unknown }> = [];
   const digest = `sha256:${"a".repeat(64)}`;
   const currentConfig = {
@@ -925,7 +924,7 @@ contractTest("web.hermetic", "Fly workspace updates reconcile preview environmen
     env: {
       KESTREL_WORKSPACE_ID: "workspace-1",
       KESTREL_WORKSPACE_PREVIEWS_ENABLED: "true",
-      NGROK_AUTHTOKEN: "old-token",
+      KESTREL_RUNTIME_REVISION: "old-revision",
     },
   };
   const client = new FlyMachinesClient({
@@ -950,7 +949,7 @@ contractTest("web.hermetic", "Fly workspace updates reconcile preview environmen
     runtimeImage: `registry.fly.io/kestrel-one-runner:current@${digest}`,
     envPatch: {
       KESTREL_WORKSPACE_PREVIEWS_ENABLED: "true",
-      NGROK_AUTHTOKEN: "new-token",
+      KESTREL_RUNTIME_REVISION: "new-revision",
     },
   });
 
@@ -961,7 +960,7 @@ contractTest("web.hermetic", "Fly workspace updates reconcile preview environmen
   assert.deepEqual(update.config?.env, {
     KESTREL_WORKSPACE_ID: "workspace-1",
     KESTREL_WORKSPACE_PREVIEWS_ENABLED: "true",
-    NGROK_AUTHTOKEN: "new-token",
+    KESTREL_RUNTIME_REVISION: "new-revision",
   });
 
   await client.updateMachineImage({
@@ -970,7 +969,7 @@ contractTest("web.hermetic", "Fly workspace updates reconcile preview environmen
     runtimeImage: `registry.fly.io/kestrel-one-runner@${digest}`,
     envPatch: {
       KESTREL_WORKSPACE_PREVIEWS_ENABLED: undefined,
-      NGROK_AUTHTOKEN: undefined,
+      KESTREL_RUNTIME_REVISION: undefined,
     },
   });
   const disableUpdate = requests[3]?.body as {

@@ -614,6 +614,7 @@ export class RuntimeIO {
     event: ModelGatewayStreamEvent,
     model: { callId: string; provider?: string | undefined; model?: string | undefined },
   ): Promise<void> {
+    const progress = this.options.progress;
     if (event.type === "attempt.started") {
       await this.appendEconomicsEvent({
         kind: "model_attempt.started",
@@ -622,6 +623,18 @@ export class RuntimeIO {
         maxAttempts: event.maxAttempts,
         ...(model.provider !== undefined ? { provider: model.provider } : {}),
         ...(model.model !== undefined ? { model: model.model } : {}),
+      });
+      await this.options.emitProgressFromSequence({
+        runId: progress.runId,
+        sessionId: progress.sessionId,
+        seq: progress.sequence(),
+        kind: "stage",
+        phase: progress.phase,
+        code: "MODEL_ATTEMPT_STARTED",
+        message: `Provider attempt ${event.attempt}/${event.maxAttempts} started.`,
+        stepIndex: progress.stepIndex,
+        stepAgent: progress.stepAgent,
+        persist: false,
       });
     } else if (event.type === "attempt.completed") {
       await this.appendEconomicsEvent({
@@ -643,6 +656,24 @@ export class RuntimeIO {
         visibleOutputStarted: event.visibleOutputStarted,
         ...(event.retryDelayMs !== undefined ? { retryDelayMs: event.retryDelayMs } : {}),
       }, "WARN");
+      if (event.willRetry) {
+        const retryDelay =
+          event.retryDelayMs === undefined
+            ? ""
+            : ` in ${event.retryDelayMs} ms`;
+        await this.options.emitProgressFromSequence({
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          seq: progress.sequence(),
+          kind: "stage",
+          phase: progress.phase,
+          code: "MODEL_ATTEMPT_RETRYING",
+          message: `Provider attempt ${event.attempt}/${event.maxAttempts} failed; retrying${retryDelay}.`,
+          stepIndex: progress.stepIndex,
+          stepAgent: progress.stepAgent,
+          persist: true,
+        });
+      }
     }
     await this.emitModelReasoningEvent(event, model.provider, model.model);
   }

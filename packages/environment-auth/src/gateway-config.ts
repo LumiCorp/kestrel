@@ -1,11 +1,10 @@
-export const ENVIRONMENT_GATEWAY_CONFIG_VERSION = 1 as const;
+export const ENVIRONMENT_GATEWAY_CONFIG_VERSION = 2 as const;
 
 export type EnvironmentGatewayPreviewRoute = {
   id: string;
   workspaceId: string;
   machineId: string;
   hostname: string;
-  ingress: "ngrok" | "kestrel_edge";
   port: number;
   expiresAt: string;
   relayTicket: string;
@@ -33,11 +32,6 @@ export type EnvironmentGatewayConfig = {
   version: typeof ENVIRONMENT_GATEWAY_CONFIG_VERSION;
   environmentId: string;
   revision: string;
-  ngrok: {
-    connectionId: string;
-    authtoken: string;
-    wildcardDomain: string;
-  } | null;
   workspaces: Array<{
     id: string;
     machineId: string;

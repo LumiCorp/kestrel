@@ -9,8 +9,12 @@ import { join } from "node:path";
 import { once } from "node:events";
 import {
   ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+  PREVIEW_EDGE_AUTHORIZATION_HEADER,
+  PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
+  PREVIEW_EDGE_ROUTE_TICKET_VERSION,
   PREVIEW_RELAY_TICKET_AUDIENCE,
   PREVIEW_RELAY_TICKET_VERSION,
+  signPreviewEdgeRouteTicket,
   signPreviewRelayTicket,
 } from "@lumi/kestrel-environment-auth";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
@@ -18,7 +22,7 @@ import {
   handlePreviewRelayHttp,
   handlePreviewRelayUpgrade,
 } from "../../workspace-runtime/src/preview-relay.js";
-import { PreviewGateway } from "../src/preview-gateway.js";
+import { PreviewRelay } from "../src/preview-relay.js";
 
 contractTest("services.process", "a real Vite app serves documents and HMR WebSockets through the preview relay", async () => {
   const projectRoot = await mkdtemp(join(tmpdir(), "kestrel-vite-preview-"));
@@ -72,6 +76,22 @@ contractTest("services.process", "a real Vite app serves documents and HMR WebSo
       nonce: randomUUID(),
     },
   });
+  const edgeAuthorization = `Bearer ${signPreviewEdgeRouteTicket({
+    privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    ticket: {
+      version: PREVIEW_EDGE_ROUTE_TICKET_VERSION,
+      audience: PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
+      organizationId: scope.organizationId,
+      environmentId: scope.environmentId,
+      workspaceId: scope.workspaceId,
+      flyAppName: "kestrel-env-vite",
+      previewId,
+      hostname,
+      issuedAt: now,
+      expiresAt: now + 120,
+      nonce: randomUUID(),
+    },
+  })}`;
   const relayScope = {
     publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
     ...scope,
@@ -87,7 +107,7 @@ contractTest("services.process", "a real Vite app serves documents and HMR WebSo
   const relayAddress = relay.address();
   assert.ok(relayAddress && typeof relayAddress !== "string");
 
-  let gateway!: PreviewGateway;
+  let gateway!: PreviewRelay;
   const publicServer = createServer(async (request, response) => {
     if (!(await gateway.handleHttp(request, response))) response.writeHead(404).end();
   });
@@ -98,12 +118,11 @@ contractTest("services.process", "a real Vite app serves documents and HMR WebSo
   await once(publicServer, "listening");
   const publicAddress = publicServer.address();
   assert.ok(publicAddress && typeof publicAddress !== "string");
-  gateway = new PreviewGateway({
-    port: publicAddress.port,
+  gateway = new PreviewRelay({
     expectedAppName: "kestrel-env-vite",
     environmentId: scope.environmentId,
+    ticketPublicKey: relayScope.publicKey,
     workspaceAddress: () => ({ host: "127.0.0.1", port: relayAddress.port }),
-    openEndpoint: async () => ({ close: async () => {} }),
   });
 
   try {
@@ -112,11 +131,6 @@ contractTest("services.process", "a real Vite app serves documents and HMR WebSo
       version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
       environmentId: scope.environmentId,
       revision: "vite",
-      ngrok: {
-        connectionId: "connection-vite",
-        authtoken: "ngrok-test-token",
-        wildcardDomain: "*.previews.example.test",
-      },
       workspaces: [],
       modelGrants: [],
       previews: [{
@@ -124,13 +138,14 @@ contractTest("services.process", "a real Vite app serves documents and HMR WebSo
         workspaceId: scope.workspaceId,
         machineId: scope.machineId,
         hostname,
-        ingress: "ngrok",
         port: vitePort,
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         relayTicket,
       }],
     });
-    const document = await requestHost(publicAddress.port, hostname, "/");
+    const document = await requestHost(publicAddress.port, hostname, "/", {
+      [PREVIEW_EDGE_AUTHORIZATION_HEADER]: edgeAuthorization,
+    });
     assert.equal(document.status, 200);
     assert.match(document.body, /vite-preview-proof/u);
 
@@ -139,6 +154,7 @@ contractTest("services.process", "a real Vite app serves documents and HMR WebSo
     client.write([
       "GET / HTTP/1.1",
       `Host: ${hostname}`,
+      `${PREVIEW_EDGE_AUTHORIZATION_HEADER}: ${edgeAuthorization}`,
       "Connection: Upgrade",
       "Upgrade: websocket",
       "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
@@ -188,9 +204,14 @@ async function waitForVite(port: number, output: () => string) {
   throw new Error(`Vite did not start: ${output()}`);
 }
 
-function requestHost(port: number, host: string, path: string) {
+function requestHost(
+  port: number,
+  host: string,
+  path: string,
+  headers: Record<string, string>,
+) {
   return new Promise<{ status: number; body: string }>((resolve, reject) => {
-    const request = httpRequest({ host: "127.0.0.1", port, path, headers: { host } }, (response) => {
+    const request = httpRequest({ host: "127.0.0.1", port, path, headers: { host, ...headers } }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
       response.once("end", () => resolve({

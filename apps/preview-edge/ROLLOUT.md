@@ -44,5 +44,5 @@ build.
 The infrastructure rollout creates the dedicated Fly App from
 `fly.toml.example`, provisions `KESTREL_CONTROL_PLANE_URL` and
 `KESTREL_PREVIEW_EDGE_SERVICE_TOKEN`, attaches the wildcard certificate, and
-runs an isolated canary hostname. Existing ngrok preview publication remains
-authoritative until a later lifecycle rollout emits `kestrel_edge` routes.
+runs an isolated canary hostname. Complete the Environment Router and Workspace
+Runtime cutover in the same maintenance window before accepting preview traffic.

@@ -146,7 +146,7 @@ function previewPresentation(displayName: string) {
   return {
     displayName,
     aliases: ["public preview", "preview link"],
-    keywords: ["workspace", "preview", "port", "tunnel", "ngrok"],
+    keywords: ["workspace", "preview", "port", "tunnel", "edge"],
     provider: "kestrel-one",
     toolFamily: "workspace-preview",
   };
@@ -177,7 +177,7 @@ async function requestPreview(
     context.kestrelOne?.appApprovalModes?.[runtimeName] === "ask"
       ? "confirmed"
       : "auto";
-  const pathname = `/api/runtime/apps/ngrok/${capability}/${approval}/${path
+  const pathname = `/api/runtime/apps/built_in.previews/${capability}/${approval}/${path
     .map(encodeURIComponent)
     .join("/")}`;
   const response = await (context.fetchImpl ?? fetch)(new URL(pathname, baseUrl), {

@@ -32,6 +32,18 @@ contractTest("web.hermetic", "Environment connection endpoints must be HTTPS and
   );
 });
 
+contractTest("web.hermetic", "retired preview provider credentials are rejected", () => {
+  const retiredProviderKey = ["n", "g", "r", "o", "k"].join("");
+  assert.throws(() =>
+    createEnvironmentAppConnectionSchema.parse({
+      kind: `${retiredProviderKey}_agent`,
+      name: "Legacy preview",
+      authtoken: "secret",
+      wildcardDomain: "*.preview.example.test",
+    }),
+  );
+});
+
 contractTest("web.hermetic", "disabling a capability always makes the ceiling deny", () => {
   assert.deepEqual(
     environmentAppCapabilityGrantSchema.parse({

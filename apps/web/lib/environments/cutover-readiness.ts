@@ -103,17 +103,17 @@ export async function inspectHostedEnvironmentSchemaReadiness(input: {
           AND column_name = required_columns."column"
       )
       UNION ALL
-      SELECT 'app_definitions.ngrok'
+      SELECT 'app_definitions.built_in.previews'
       WHERE NOT EXISTS (
-        SELECT 1 FROM "app_definitions" WHERE "key" = 'ngrok' AND "published" = true
+        SELECT 1 FROM "app_definitions" WHERE "key" = 'built_in.previews' AND "published" = true
       )
       UNION ALL
-      SELECT 'app_capabilities.ngrok.' || required_capabilities."capability"
+      SELECT 'app_capabilities.built_in.previews.' || required_capabilities."capability"
       FROM required_capabilities
       WHERE NOT EXISTS (
         SELECT 1
         FROM "app_capabilities"
-        WHERE "app_key" = 'ngrok'
+        WHERE "app_key" = 'built_in.previews'
           AND "key" = required_capabilities."capability"
       )
       ORDER BY "requirement"

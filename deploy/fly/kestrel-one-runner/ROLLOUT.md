@@ -1,10 +1,12 @@
 # Hosted Environment runtime rollout
 
-This runbook upgrades the public Environment gateway and its private Workspace
-Machines without interrupting model access for Workspaces that still run the
-previous image. Each Environment is upgraded through Kestrel One's
-`environment.update` operation. The Workspace Runtime and Environment Router
-are distinct images.
+This runbook performs the maintenance-window cutover to Kestrel Edge-only
+previews. Retirement migration 0053 invalidates every existing preview lease
+and removes the retired provider contract, so the control plane,
+Preview Edge, Environment Router, and Workspace Runtime must move to one
+committed revision as a unit. Each Environment is upgraded through Kestrel
+One's `environment.update` operation. The Workspace Runtime and Environment
+Router are distinct images.
 The `kestrel-one-runner` Fly App is only their existing private registry/build
 target; do not deploy its legacy Dockerfile or use one cross-role digest as a
 substitute for those images.
@@ -14,15 +16,13 @@ substitute for those images.
 1. Start from a committed revision with a clean worktree. The image revision
    label and the source revision must identify the same code.
 2. Run `pnpm validate` and `pnpm validate:postgres`.
-3. Confirm the control-plane deployment still serves
-   `/api/kestrel/gateway-credentials/lease`. That compatibility route must remain
-   available until every existing Workspace has been upgraded.
-4. Confirm the production secret set contains the Environment ticket keys, Fly
-   authority, App credential keyring, and the temporary
-   `KESTREL_ONE_CREDENTIAL_BROKER_TOKEN`. Do not copy ngrok or model-provider
-   credentials into a Fly Machine.
-5. Back up the production database and verify the rollback target before applying
-   migrations.
+3. Confirm the production secret set contains the Environment ticket keys, Fly
+   authority, App credential keyring, and Preview Edge service token. Do not
+   copy model-provider credentials into a Fly Machine.
+4. Record the current Kestrel One, Preview Edge, Environment Router, and
+   Workspace Runtime image digests.
+5. Create and verify the normal encrypted production database backup. The
+   database backup and all prior image digests are one rollback unit.
 
 ## Build and publish the immutable runtime
 
@@ -79,65 +79,57 @@ and `KESTREL_ENVIRONMENT_ROUTER_IMAGE` must reference the Environment Router
 digest. Both must use immutable `registry.fly.io/...@sha256:...` references,
 never a mutable tag or the same cross-role image.
 
-## Deploy the compatibility control plane first
+## Enter maintenance and cut over the control plane
 
-1. Apply the additive database migrations, including the Environment gateway
-   identity and Workspace preview lease relations.
-2. Deploy the reviewed Kestrel One control plane while its configured runtime
-   images still point at the previous digest.
-3. Verify an unauthenticated request to
+1. Begin the maintenance window. Preview publication and Environment upgrades
+   remain unavailable until the hosted canary passes.
+2. Apply retirement migration 0053. This intentionally deletes every existing
+   preview lease and all retired provider state.
+3. Deploy the reviewed Kestrel One control plane with the recorded immutable
+   Workspace Runtime and Environment Router digests, then deploy the Preview
+   Edge image built from the same revision.
+4. Verify an unauthenticated request to
    `/api/runtime/environments/<environment-id>/gateway/config` returns `401`, not
-   `404`. This proves the new gateway configuration route is live without
-   disclosing configuration.
-4. Run `pnpm --dir apps/web preflight:environment:hosted -- --prepare` against
+   `404`, and confirm the returned authenticated contract is version 2.
+5. Run `pnpm --dir apps/web preflight:environment:hosted -- --prepare` against
    the production configuration.
 
-At this point old Workspace Machines continue to lease model credentials through
-the legacy route, while the control plane is able to provision the scoped
-gateway and Workspace identities required by the new runtime.
+After migration 0053, old Environment Routers cannot consume the version 2
+contract. Do not end maintenance until every Environment has completed its
+owned update.
 
-## Promote and upgrade one Environment
+## Upgrade every Environment
 
-1. Configure the control-plane deployment with the recorded immutable digest for
-   both runtime image variables, then promote that deployment.
-2. In **Settings -> Environments -> Runtime**, submit the immutable digest for one
-   canary Environment. This queues the owned `environment.update` operation; do
-   not patch individual Machines manually.
-3. Wait for the operation to complete `backing_up`, `gateway`, `workspaces`, and
+1. In **Settings -> Environments -> Runtime**, submit the immutable digests for
+   one canary Environment. This queues the owned `environment.update` operation;
+   do not patch individual Machines manually.
+2. Wait for the operation to complete `backing_up`, `gateway`, `workspaces`, and
    `verifying`, ending in `ready`.
-4. Inspect Fly Machine configuration by key name only. The gateway must have
+3. Inspect Fly Machine configuration by key name only. The gateway must have
    `KESTREL_CONTROL_PLANE_URL`, `KESTREL_ENVIRONMENT_ID`, and
    `KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN`. Each upgraded Workspace must have
-   `KESTREL_ENVIRONMENT_GATEWAY_URL` and `KESTREL_WORKSPACE_SERVICE_TOKEN`, and
-   must no longer have `KESTREL_ONE_CREDENTIAL_BROKER_TOKEN`.
-5. Verify the gateway health response reports `configurationReady: true`.
-6. Run the existing Workspace post-cutover canary, then run
+   `KESTREL_ENVIRONMENT_GATEWAY_URL` and `KESTREL_WORKSPACE_SERVICE_TOKEN`.
+4. Verify the gateway health response reports `configurationReady: true`.
+5. Run the existing Workspace post-cutover canary, then run
    `pnpm --dir apps/web canary:environment:preview` with a current Project
-   execution ticket and an Environment-scoped ngrok connection.
-7. Close the returned preview and verify its URL no longer resolves through the
+   execution ticket. Kestrel Edge is the only public preview ingress.
+6. Close the returned preview and verify its URL no longer resolves through the
    gateway before accepting the canary.
 
 Upgrade the remaining Environments one at a time only after the canary passes.
-Keep the legacy credential route and its control-plane secret until Fly inventory
-shows that no Workspace Machine is running the previous image.
+After the last update, remove retired provider secret keys from all Fly Machines,
+deployment configuration, and CI. Verify only key names; never print values.
+Query the production database to prove that no retired provider rows or
+pre-cutover preview leases remain, then end maintenance.
 
 ## Failure and rollback boundaries
 
-- If the compatibility control plane fails before any Environment update, roll
-  back only the control-plane deployment. Existing Workspaces remain on the old
-  image and route.
-- If an Environment update fails before its gateway is healthy, leave the
-  previous image configured and retry the durable operation. The update path
-  preserves the previous runtime identity until health succeeds.
-- If the gateway succeeds but a Workspace upgrade fails, do not remove the
-  legacy route or broker secret. Retry or roll back that Environment before
-  continuing to another one.
-- A failed ngrok endpoint must degrade only preview service. Model relay,
+- After migration 0053 is applied, code-only or per-Environment rollback is
+  unsupported.
+- Rollback restores the encrypted database backup and all recorded prior image
+  digests together while maintenance remains active.
+- If an Environment update fails, retry the durable operation. If it cannot be
+  completed before acceptance, restore the complete rollback unit.
+- A failed preview relay must degrade only preview service. Model relay,
   Workspace routing, Tavily, and gateway health remain release gates and must
   continue to work.
-- Do not delete preview leases to force recovery. Closing leases are reconciled
-  after the gateway acknowledges route removal.
-
-Remove the compatibility route and `KESTREL_ONE_CREDENTIAL_BROKER_TOKEN` only in
-a later release, after the complete Fly inventory and hosted canaries prove that
-all Workspaces use scoped service identities.

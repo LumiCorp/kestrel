@@ -89,8 +89,14 @@ export function createKestrelPresentationAccumulator(input: {
     return [part];
   };
 
-  const appendProgress = (progress: KestrelProgressPresentation) =>
-    appendPart({ type: "data-kestrel-progress", id: progress.id, data: progress });
+  const appendProgress = (progress: KestrelProgressPresentation) => {
+    const part = {
+      type: "data-kestrel-progress" as const,
+      id: progress.id,
+      data: progress,
+    };
+    return progress.persist === false ? [part] : appendPart(part);
+  };
 
   const appendAgentProgress = (progress: KestrelAgentProgressPresentation) =>
     appendPart({ type: "data-kestrel-agent-progress", id: progress.id, data: progress });
@@ -177,6 +183,7 @@ export function createKestrelPresentationAccumulator(input: {
           const code = requireNonEmptyString(update.code, `${event.type}.payload.update.code`);
           return appendProgress({
             id: `progress:${event.id}`,
+            assistantMessageId: input.assistantMessageId,
             runId: requireNonEmptyString(update.runId, `${event.type}.payload.update.runId`),
             sequence: requireFiniteNumber(update.seq, `${event.type}.payload.update.seq`),
             timestamp: requireNonEmptyString(update.ts, `${event.type}.payload.update.ts`),
@@ -185,6 +192,7 @@ export function createKestrelPresentationAccumulator(input: {
             code,
             text: requireNonEmptyString(update.message, `${event.type}.payload.update.message`),
             severity: code.endsWith("FAILED") ? "error" : "info",
+            persist: update.persist !== false,
           });
         }
         if (event.type === "run.agent_progress") {
@@ -216,6 +224,7 @@ export function createKestrelPresentationAccumulator(input: {
             : undefined;
           return transientProviderReasoning({
             id: `provider-reasoning:${event.id}`,
+            assistantMessageId: input.assistantMessageId,
             runId: requireNonEmptyString(update.runId, `${event.type}.payload.update.runId`),
             sequence: requireFiniteNumber(update.seq, `${event.type}.payload.update.seq`),
             timestamp: requireNonEmptyString(update.ts, `${event.type}.payload.update.ts`),

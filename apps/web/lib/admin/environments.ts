@@ -346,36 +346,3 @@ export async function updateAdminEnvironmentReasoningPolicy(input: {
   });
   return environment;
 }
-
-export async function updateAdminEnvironmentPreviewIngress(input: {
-  organizationId: string;
-  actorUserId: string;
-  environmentId: string;
-  previewIngressProvider: "ngrok" | "kestrel_edge";
-}) {
-  const [environment] = await knowledgeDb
-    .update(schema.environments)
-    .set({
-      previewIngressProvider: input.previewIngressProvider,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(schema.environments.id, input.environmentId),
-        eq(schema.environments.organizationId, input.organizationId),
-      ),
-    )
-    .returning();
-  if (!environment) throw new Error("Environment not found.");
-  await logAdminEvent({
-    organizationId: input.organizationId,
-    actorUserId: input.actorUserId,
-    category: "environments",
-    action: "environment.preview_ingress.updated",
-    targetType: "environment",
-    targetId: input.environmentId,
-    message: `Selected ${input.previewIngressProvider} for new Workspace previews.`,
-    metadata: { previewIngressProvider: input.previewIngressProvider },
-  });
-  return environment;
-}

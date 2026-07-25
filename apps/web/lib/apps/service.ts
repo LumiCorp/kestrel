@@ -876,32 +876,6 @@ export async function saveEnvironmentAppConnection(input: {
     input.appKey,
     input.connection,
   );
-  const ngrokWildcardDomain =
-    input.connection.kind === "ngrok_agent"
-      ? input.connection.wildcardDomain
-      : null;
-  if (ngrokWildcardDomain) {
-    const ngrokConnections = await knowledgeDb.query.appConnections.findMany({
-      where: (table, { and: all, eq: equals, inArray: includes }) =>
-        all(
-          equals(table.appKey, "ngrok"),
-          equals(table.ownerType, "environment"),
-          includes(table.status, ["connected", "degraded"]),
-        ),
-    });
-    const conflict = ngrokConnections.find(
-      (connection) =>
-        connection.environmentId !== input.environmentId &&
-        record(connection.deliveryConfig).wildcardDomain ===
-          ngrokWildcardDomain,
-    );
-    if (conflict) {
-      throw new AppServiceError(
-        "APP_CONNECTION_CONFLICT",
-        "This ngrok wildcard domain is already assigned to another Environment.",
-      );
-    }
-  }
   const now = health.checkedAt;
   return knowledgeDb.transaction(async (transaction) => {
     const existing = await transaction.query.appConnections.findFirst({
@@ -911,9 +885,7 @@ export async function saveEnvironmentAppConnection(input: {
           equals(table.environmentId, input.environmentId),
           equals(table.appKey, input.appKey),
           equals(table.ownerType, "environment"),
-          ...(ngrokWildcardDomain
-            ? []
-            : [equals(table.name, input.connection.name)]),
+          equals(table.name, input.connection.name),
         ),
     });
     if (existing?.credentialId) {
@@ -946,7 +918,6 @@ export async function saveEnvironmentAppConnection(input: {
         ...(health.status === "connected"
           ? { verifiedAt: now.toISOString() }
           : { validationRequestedAt: now.toISOString() }),
-        ...(ngrokWildcardDomain ? { wildcardDomain: ngrokWildcardDomain } : {}),
       },
       createdAt: now,
       updatedAt: now,
@@ -962,9 +933,7 @@ export async function saveEnvironmentAppConnection(input: {
             failureMessage: health.failureMessage ?? null,
             lastHealthAt: now,
             disconnectedAt: null,
-            deliveryConfig: ngrokWildcardDomain
-              ? { wildcardDomain: ngrokWildcardDomain }
-              : existing.deliveryConfig,
+            deliveryConfig: existing.deliveryConfig,
             updatedAt: now,
           })
           .where(eq(schema.appConnections.id, existing.id))
@@ -981,9 +950,7 @@ export async function saveEnvironmentAppConnection(input: {
             status: health.status,
             failureCode: health.failureCode ?? null,
             failureMessage: health.failureMessage ?? null,
-            deliveryConfig: ngrokWildcardDomain
-              ? { wildcardDomain: ngrokWildcardDomain }
-              : null,
+            deliveryConfig: null,
             lastHealthAt: now,
             createdAt: now,
             updatedAt: now,
@@ -1102,21 +1069,6 @@ export async function disconnectEnvironmentAppConnection(input: {
       .returning();
     if (!disconnected)
       throw new Error("App connection could not be disconnected.");
-    if (input.appKey === "ngrok") {
-      await transaction
-        .update(schema.workspacePreviewLeases)
-        .set({ status: "closing", updatedAt: now })
-        .where(
-          and(
-            eq(schema.workspacePreviewLeases.connectionId, connection.id),
-            inArray(schema.workspacePreviewLeases.status, [
-              "provisioning",
-              "active",
-              "closing",
-            ]),
-          ),
-        );
-    }
     if (definition.delivery === "mcp") {
       await transaction
         .update(schema.mcpServers)
@@ -1131,21 +1083,6 @@ export async function disconnectEnvironmentAppConnection(input: {
     }
     return connectionSummary(disconnected, "");
   });
-  if (input.appKey === "ngrok") {
-    const { refreshEnvironmentGateway } =
-      await import("@/lib/environments/gateway-refresh");
-    await refreshEnvironmentGateway(input);
-    const now = new Date();
-    await knowledgeDb
-      .update(schema.workspacePreviewLeases)
-      .set({ status: "closed", closedAt: now, updatedAt: now })
-      .where(
-        and(
-          eq(schema.workspacePreviewLeases.connectionId, input.connectionId),
-          eq(schema.workspacePreviewLeases.status, "closing"),
-        ),
-      );
-  }
   return result;
 }
 

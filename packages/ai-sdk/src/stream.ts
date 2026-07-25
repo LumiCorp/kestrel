@@ -38,7 +38,10 @@ export async function writeKestrelRunnerStreamToUIMessage(input: {
       }
       input.onPart?.(part);
       if (part.type.startsWith("data-")) {
-        const chunk = part.type === "data-kestrel-provider-reasoning"
+        const chunk =
+          part.type === "data-kestrel-provider-reasoning" ||
+          (part.type === "data-kestrel-progress" &&
+            part.data.persist === false)
           ? { ...part, transient: true }
           : part;
         input.writer.write(chunk as Parameters<typeof input.writer.write>[0]);

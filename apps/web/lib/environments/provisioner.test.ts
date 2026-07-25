@@ -308,14 +308,14 @@ contractTest("web.hermetic", "Environment updates preserve Workspaces, update in
   );
   assert.equal(await provisioner.process("operation-id"), "processed");
   assert.deepEqual(calls, [
-    "operation:stage:environment.update.backing_up",
-    "backup:workspace-id",
     "operation:stage:environment.update.gateway",
     "provider:image:gateway-machine-id",
     "environment:gateway-token-staged",
     "provider:wait",
     "provider:health",
     "environment:gateway-updated",
+    "operation:stage:environment.update.backing_up",
+    "backup:workspace-id",
     "operation:stage:environment.update.workspaces",
     "workspace:starting",
     "provider:image:workspace-machine-id",
@@ -397,19 +397,61 @@ contractTest("web.hermetic", "Environment updates recover an incompatible stoppe
     state: "created",
   });
   assert.deepEqual(calls.slice(0, 12), [
+    "operation:stage:environment.update.gateway",
+    "provider:image:gateway-machine-id",
+    "environment:gateway-token-staged",
+    "provider:wait",
+    "provider:health",
+    "environment:gateway-updated",
     "operation:stage:environment.update.backing_up",
     "backup:workspace-id",
     "provider:snapshot:workspace-volume-id",
     "workspace:starting",
     "provider:image:workspace-machine-id",
     "provider:wait",
-    "provider:start",
-    "provider:wait",
-    "provider:health",
-    "workspace:rebuilt",
-    "backup:workspace-id",
-    "operation:stage:environment.update.gateway",
   ]);
+});
+
+contractTest("web.hermetic", "operator-authorized maintenance updates can skip Workspace retention", async () => {
+  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+    skipWorkspaceBackups: true,
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "workspace-id",
+      flyMachineId: "workspace-machine-id",
+      flyVolumeId: "workspace-volume-id",
+    },
+  ];
+  provider.updateMachineImage = async (input) => {
+    calls.push(`provider:image:${input.machineId}`);
+    return { id: input.machineId, state: "started", region: "iad" };
+  };
+  let backupCount = 0;
+  let completionResult: Record<string, unknown> | undefined;
+  repository.completeOperation = async (input) => {
+    completionResult = input.result;
+    calls.push("operation:completed");
+  };
+  const provisioner = createProvisioner(
+    repository,
+    provider,
+    async () => {
+      backupCount += 1;
+    },
+  );
+
+  assert.equal(await provisioner.process("operation-id"), "processed");
+  assert.equal(backupCount, 0);
+  assert.ok(
+    calls.includes("operation:stage:environment.update.backups_skipped"),
+  );
+  assert.equal(completionResult?.workspaceBackupsSkipped, true);
+  assert.ok(calls.includes("provider:image:workspace-machine-id"));
 });
 
 contractTest("web.hermetic", "Environment updates report Workspaces that require provisioning recovery", async () => {

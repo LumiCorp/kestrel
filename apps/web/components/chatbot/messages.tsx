@@ -16,10 +16,16 @@ import {
   type RuntimeInteractionResponse,
 } from "./interaction-panel";
 import {
+  displayLiveReasoning,
+  selectLiveRuntimePresentationForAssistant,
+  type LiveRuntimePresentation,
+} from "./live-runtime-presentation";
+import {
   KestrelActivityTimeline,
   PreviewMessage,
   ThinkingMessage,
 } from "./message";
+import { MessageReasoning } from "./message-reasoning";
 
 type MessagesProps = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
@@ -31,6 +37,7 @@ type MessagesProps = {
     feedback: "positive" | "negative" | null
   ) => void;
   messages: ChatMessage[];
+  liveRuntimePresentation: LiveRuntimePresentation | null;
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   regenerate: UseChatHelpers<ChatMessage>["regenerate"];
   isReadonly: boolean;
@@ -51,6 +58,7 @@ function PureMessages({
   feedbackByMessageId,
   onFeedbackChange,
   messages,
+  liveRuntimePresentation,
   setMessages,
   regenerate,
   isReadonly,
@@ -115,29 +123,47 @@ function PureMessages({
     () => projectThreadConversation({ messages, conversationState }),
     [conversationState, messages]
   );
+  const hasLiveAssistantMessage = messages.some(
+    (message) =>
+      message.id === liveRuntimePresentation?.assistantMessageId
+  );
+  const standaloneLiveStatuses = liveRuntimePresentation
+    ? [
+        liveRuntimePresentation.activityStatus,
+        liveRuntimePresentation.reasoningStatus,
+      ].filter((liveStatus) => liveStatus !== null)
+    : [];
 
   const renderMessage = (
     message: ChatMessage,
     options: { hideActivity: boolean; isLast: boolean }
-  ) => (
-    <PreviewMessage
-      addToolApprovalResponse={addToolApprovalResponse}
-      feedback={feedbackByMessageId[message.id]}
-      hideKestrelActivity={options.hideActivity}
-      isLoading={status === "streaming" && options.isLast}
-      isReadonly={isReadonly}
-      key={message.id}
-      message={message}
-      onFeedbackChange={onFeedbackChange}
-      regenerate={regenerate}
-      requiresScrollPadding={hasSentMessage && options.isLast}
-      selectedLanguageModelId={selectedModelId}
-      setMessages={setMessages}
-      shouldAutoplaySpeech={message.id === latestAssistantMessageId}
-      threadId={threadId}
-      ttsAvailable={Boolean(ttsAvailable)}
-    />
-  );
+  ) => {
+    const livePresentation = selectLiveRuntimePresentationForAssistant(
+      liveRuntimePresentation,
+      message.id,
+    );
+    return (
+      <PreviewMessage
+        addToolApprovalResponse={addToolApprovalResponse}
+        feedback={feedbackByMessageId[message.id]}
+        hideKestrelActivity={options.hideActivity}
+        isLoading={status === "streaming" && options.isLast}
+        isReadonly={isReadonly}
+        key={message.id}
+        liveActivityStatus={livePresentation.activityStatuses}
+        liveReasoning={livePresentation.reasoning}
+        message={message}
+        onFeedbackChange={onFeedbackChange}
+        regenerate={regenerate}
+        requiresScrollPadding={hasSentMessage && options.isLast}
+        selectedLanguageModelId={selectedModelId}
+        setMessages={setMessages}
+        shouldAutoplaySpeech={message.id === latestAssistantMessageId}
+        threadId={threadId}
+        ttsAvailable={Boolean(ttsAvailable)}
+      />
+    );
+  };
 
   const renderItem = (item: ProjectedConversationItem) => {
     if (item.kind === "standalone_message") {
@@ -155,6 +181,15 @@ function PureMessages({
     );
     const isTurnLoading =
       item.turn?.status === "queued" || item.turn?.status === "running";
+    const liveActivityStatuses = item.messages.some(
+      (message) =>
+        message.id === liveRuntimePresentation?.assistantMessageId
+    )
+      ? [
+          liveRuntimePresentation?.activityStatus ?? null,
+          liveRuntimePresentation?.reasoningStatus ?? null,
+        ].filter((status) => status !== null)
+      : [];
     return (
       <section
         aria-label={
@@ -169,10 +204,13 @@ function PureMessages({
       >
         {item.messages.map((message, index) => (
           <Fragment key={message.id}>
-            {index === firstAssistantIndex && presentationParts.length > 0 ? (
+            {index === firstAssistantIndex &&
+            (presentationParts.length > 0 ||
+              liveActivityStatuses.length > 0) ? (
               <div className="pl-10 md:pl-11">
                 <KestrelActivityTimeline
                   isLoading={isTurnLoading}
+                  liveStatuses={liveActivityStatuses}
                   parts={presentationParts}
                   turnStatus={item.turn?.status}
                 />
@@ -213,6 +251,34 @@ function PureMessages({
           {messages.length === 0 && <Greeting />}
 
           {projection.items.map(renderItem)}
+
+          {liveRuntimePresentation &&
+          !hasLiveAssistantMessage &&
+          (liveRuntimePresentation.reasoning ||
+            standaloneLiveStatuses.length > 0) ? (
+            <div
+              className="space-y-2 pl-10 md:pl-11"
+              data-testid="standalone-live-runtime-presentation"
+            >
+              {standaloneLiveStatuses.length > 0 ? (
+                <KestrelActivityTimeline
+                  isLoading={status === "streaming"}
+                  liveStatuses={standaloneLiveStatuses}
+                  parts={[]}
+                />
+              ) : null}
+              {liveRuntimePresentation.reasoning ? (
+                <MessageReasoning
+                  isLoading={
+                    liveRuntimePresentation.reasoning.isStreaming
+                  }
+                  reasoning={displayLiveReasoning(
+                    liveRuntimePresentation.reasoning
+                  )}
+                />
+              ) : null}
+            </div>
+          ) : null}
 
           {projection.issues.length > 0 ? (
             <div

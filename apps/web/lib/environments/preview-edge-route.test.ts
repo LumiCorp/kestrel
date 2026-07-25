@@ -29,7 +29,6 @@ function dependencies(input?: {
     environmentId: string;
     workspaceId: string;
     hostname: string;
-    ingressProvider: "ngrok" | "kestrel_edge";
     expiresAt: Date;
   } | null;
   routerUrl?: string | null;
@@ -47,7 +46,6 @@ function dependencies(input?: {
             environmentId: "environment-1",
             workspaceId: "workspace-1",
             hostname,
-            ingressProvider: "kestrel_edge" as const,
             expiresAt: new Date(now.getTime() + 600_000),
           }
         : input.lease;
@@ -146,7 +144,6 @@ contractTest(
           environmentId: "environment-1",
           workspaceId: "workspace-1",
           hostname,
-          ingressProvider: "kestrel_edge",
           expiresAt: leaseExpiresAt,
         },
       })

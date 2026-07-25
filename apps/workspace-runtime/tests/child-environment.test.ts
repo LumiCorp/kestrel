@@ -13,7 +13,6 @@ contractTest(
       workspaceChildEnvironment({
         PATH: "/usr/bin",
         KESTREL_ONE_APP_URL: "https://kestrel.example",
-        NGROK_AUTHTOKEN: "ngrok-secret",
         KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "broker-secret",
         KESTREL_WORKSPACE_SERVICE_TOKEN: "workspace-secret",
         KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "ticket-secret",
@@ -36,7 +35,6 @@ contractTest(
         source: {
           PATH: "/usr/bin",
           KESTREL_ONE_APP_URL: "https://kestrel.example",
-          NGROK_AUTHTOKEN: "ngrok-secret",
           KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "ambient-broker-secret",
           KESTREL_WORKSPACE_SERVICE_TOKEN: "ambient-workspace-secret",
           KESTREL_HOME: "/ambient/kestrel-home",

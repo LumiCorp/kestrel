@@ -71,22 +71,24 @@ contractTest(
     });
     await firstEntered;
 
-    assert.deepEqual(
-      await withEnvironmentOperationLock({
-        environmentId: "environment-a",
-        run: async () => "same-environment",
-      }),
-      { acquired: false, result: null }
-    );
-    assert.deepEqual(
-      await withEnvironmentOperationLock({
-        environmentId: "environment-b",
-        run: async () => "different-environment",
-      }),
-      { acquired: true, result: "different-environment" }
-    );
-
-    releaseFirst();
+    try {
+      assert.deepEqual(
+        await withEnvironmentOperationLock({
+          environmentId: "environment-a",
+          run: async () => "same-environment",
+        }),
+        { acquired: false, result: null }
+      );
+      assert.deepEqual(
+        await withEnvironmentOperationLock({
+          environmentId: "environment-b",
+          run: async () => "different-environment",
+        }),
+        { acquired: true, result: "different-environment" }
+      );
+    } finally {
+      releaseFirst();
+    }
     assert.deepEqual(await first, { acquired: true, result: "first" });
   }
 );

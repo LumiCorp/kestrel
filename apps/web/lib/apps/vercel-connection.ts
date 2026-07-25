@@ -3,9 +3,6 @@ import type { CreateEnvironmentAppConnectionInput } from "./contracts";
 export async function validateVercelConnection(
   input: CreateEnvironmentAppConnectionInput
 ) {
-  if (input.kind === "ngrok_agent") {
-    throw new Error("Vercel requires an API-key credential.");
-  }
   if (input.baseUrl) {
     throw new Error("Vercel connections use Vercel's managed API endpoint.");
   }

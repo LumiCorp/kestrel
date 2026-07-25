@@ -48,7 +48,6 @@ contractTest("services.process", "model relay enforces workspace run and model w
       version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
       environmentId,
       revision: new Date().toISOString(),
-      ngrok: null,
       workspaces: [{
         id: workspaceId,
         machineId: "machine-1",

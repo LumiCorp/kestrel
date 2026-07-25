@@ -12,6 +12,7 @@ export type KestrelTerminalStatus =
 
 export interface KestrelProgressPresentation {
   id: string;
+  assistantMessageId?: string | undefined;
   runId?: string | undefined;
   sequence?: number | undefined;
   timestamp: string;
@@ -20,6 +21,7 @@ export interface KestrelProgressPresentation {
   code: string;
   text: string;
   severity: "info" | "error";
+  persist?: boolean | undefined;
 }
 
 export interface KestrelAgentProgressPresentation {
@@ -34,6 +36,7 @@ export interface KestrelAgentProgressPresentation {
 
 export interface KestrelProviderReasoningPresentation {
   id: string;
+  assistantMessageId?: string | undefined;
   runId: string;
   sequence: number;
   timestamp: string;

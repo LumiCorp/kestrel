@@ -64,6 +64,13 @@ import {
   InteractionPanel,
   type RuntimeInteractionResponse,
 } from "./interaction-panel";
+import {
+  applyLiveProgress,
+  applyProviderRetry,
+  applyProviderReasoning,
+  finishLiveRuntimePresentation,
+  type LiveRuntimePresentation,
+} from "./live-runtime-presentation";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
 import { getThreadHistoryPaginationKey } from "./sidebar-history";
@@ -264,6 +271,9 @@ function useChatCallbacks(input: {
   setThreadTitle: (title: string) => void;
   threadId: string;
   setInteractionMode: (mode: KestrelOneInteractionMode) => void;
+  setLiveRuntimePresentation: Dispatch<
+    SetStateAction<LiveRuntimePresentation | null>
+  >;
   setShowCreditCardAlert: Dispatch<SetStateAction<boolean>>;
 }) {
   return {
@@ -323,9 +333,38 @@ function useChatCallbacks(input: {
         return;
       }
 
+      if (dataPart.type === "data-kestrel-provider-reasoning") {
+        input.setLiveRuntimePresentation((current) =>
+          applyProviderReasoning(current, dataPart.data)
+        );
+        return;
+      }
+
+      if (
+        dataPart.type === "data-kestrel-progress" &&
+        dataPart.data.code === "MODEL_ATTEMPT_RETRYING"
+      ) {
+        input.setLiveRuntimePresentation((current) =>
+          applyProviderRetry(current, dataPart.data)
+        );
+      }
+
+      if (
+        dataPart.type === "data-kestrel-progress" &&
+        dataPart.data.persist === false
+      ) {
+        input.setLiveRuntimePresentation((current) =>
+          applyLiveProgress(current, dataPart.data)
+        );
+        return;
+      }
+
       input.setDataStream((current) => [...current, dataPart]);
     },
     onFinish: () => {
+      input.setLiveRuntimePresentation((current) =>
+        finishLiveRuntimePresentation(current)
+      );
       input.mutate(`/api/threads/${input.threadId}`);
       input.mutate("/api/threads?limit=30");
       input.mutate("/api/threads?limit=100");
@@ -334,6 +373,9 @@ function useChatCallbacks(input: {
     },
     onError: (error: unknown) => {
       input.setDataStream([]);
+      input.setLiveRuntimePresentation((current) =>
+        finishLiveRuntimePresentation(current)
+      );
 
       if (
         error instanceof Error &&
@@ -374,6 +416,7 @@ function ChatShell({
   interactionMode,
   isReadonly,
   messages,
+  liveRuntimePresentation,
   onFeedbackChange,
   onModelChange,
   onInteractionModeChange,
@@ -411,6 +454,7 @@ function ChatShell({
   interactionMode: KestrelOneInteractionMode;
   isReadonly: boolean;
   messages: ChatMessage[];
+  liveRuntimePresentation: LiveRuntimePresentation | null;
   onFeedbackChange: (
     messageId: string,
     feedback: "positive" | "negative" | null
@@ -468,6 +512,7 @@ function ChatShell({
           feedbackByMessageId={feedbackByMessageId}
           isArtifactVisible={isArtifactVisible}
           isReadonly={isReadonly}
+          liveRuntimePresentation={liveRuntimePresentation}
           messages={messages}
           onFeedbackChange={onFeedbackChange}
           onRefreshConversationState={onRefreshConversationState}
@@ -672,6 +717,7 @@ export function BootstrapChat({
         input={shared.input}
         interactionMode={shared.interactionMode}
         isReadonly={false}
+        liveRuntimePresentation={null}
         messages={[]}
         modelScopeQuery={
           projectId ? `&projectId=${encodeURIComponent(projectId)}` : undefined
@@ -762,6 +808,8 @@ export function Chat({
   const [conversationState, setConversationState] = useState(
     initialConversationState
   );
+  const [liveRuntimePresentation, setLiveRuntimePresentation] =
+    useState<LiveRuntimePresentation | null>(null);
   const resumeTurnIdRef = useRef<string | null>(null);
   const streamedTurnIdRef = useRef<string | null>(
     initialConversationState.turns.find(
@@ -791,6 +839,7 @@ export function Chat({
     resetArtifact();
     setMetadata(null);
     setDataStream([]);
+    setLiveRuntimePresentation(null);
     // Reset scoped ephemeral state when navigating to a different chat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -844,6 +893,7 @@ export function Chat({
     setThreadTitle: setLiveThreadTitle,
     threadId: id,
     setInteractionMode: shared.setInteractionMode,
+    setLiveRuntimePresentation,
     setShowCreditCardAlert: shared.setShowCreditCardAlert,
   });
 
@@ -896,6 +946,12 @@ export function Chat({
     transport: chatTransport,
     ...callbacks,
   });
+
+  useEffect(() => {
+    if (controller.status === "submitted") {
+      setLiveRuntimePresentation(null);
+    }
+  }, [controller.status]);
 
   const hasActiveWork = Boolean(conversationState.queue.activeTurnId);
   useEffect(() => {
@@ -1048,6 +1104,7 @@ export function Chat({
       nextQueued.message.metadata ?? {};
     resumeTurnIdRef.current = nextQueued.turnId;
     streamedTurnIdRef.current = nextQueued.turnId;
+    setLiveRuntimePresentation(null);
     controller.setMessages((current) => [
       ...current,
       { ...nextQueued.message, metadata },
@@ -1232,6 +1289,7 @@ export function Chat({
         input={shared.input}
         interactionMode={shared.interactionMode}
         isReadonly={isReadonly}
+        liveRuntimePresentation={liveRuntimePresentation}
         messages={displayMessages}
         modelScopeQuery={`&threadId=${encodeURIComponent(id)}`}
         newTurnDisabledReason={newTurnDisabledReason}

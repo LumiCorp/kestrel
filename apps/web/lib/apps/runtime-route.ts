@@ -8,7 +8,7 @@ import { errorResponse } from "@/lib/knowledge/http";
 import { enrichUsageEvent, recordUsageEvent } from "@/lib/costs/store";
 import { getAppProviderAdapter } from "./provider-adapter";
 import { appProviderHealthTransition } from "./provider-health";
-import { handlePreviewLifecycle } from "./ngrok-preview-lifecycle";
+import { handlePreviewLifecycle } from "./preview-lifecycle";
 import {
   AppRuntimeError,
   authorizeAppRuntime,
@@ -70,7 +70,7 @@ export async function handleAppRuntimeRequest(input: {
     });
     connectionId = policy.connectionId;
     if (runtime.mode === "lifecycle") {
-      if (input.appKey !== "ngrok" && input.appKey !== "built_in.previews") {
+      if (input.appKey !== "built_in.previews") {
         throw new AppRuntimeError("APP_RUNTIME_PROVIDER_NOT_FOUND", 404);
       }
       const response = await handlePreviewLifecycle({

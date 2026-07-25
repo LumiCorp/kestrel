@@ -4,9 +4,17 @@ import { PassThrough } from "node:stream";
 import type { TuiProfile } from "../../cli/contracts.js";
 import { CommandRouter } from "../../cli/runner/CommandRouter.js";
 import { EventWriter } from "../../cli/runner/EventWriter.js";
-import { RunnerHost, type RunnerRuntime } from "../../cli/runner/RunnerHost.js";
+import {
+  createDefaultRunnerRuntimeFactory,
+  createLiveOnlyProgressListener,
+  RunnerHost,
+  type RunnerRuntime,
+} from "../../cli/runner/RunnerHost.js";
 import type { RunTurnResult } from "../../cli/runtime/KestrelChatRuntime.js";
-import { buildPersistedRuntimeEventFromToolUpdate } from "../../src/events/RuntimeEventProjections.js";
+import {
+  buildPersistedRuntimeEventFromProgressUpdate,
+  buildPersistedRuntimeEventFromToolUpdate,
+} from "../../src/events/RuntimeEventProjections.js";
 import type {
   ProgressUpdateV1,
   ModelReasoningUpdateV1,
@@ -24,6 +32,146 @@ const profile: TuiProfile = {
   agent: "reference-react",
   sessionPrefix: "reference",
 };
+
+contractTest("runtime.process", "default runner progress callback forwards only live-only updates", () => {
+  const forwarded: ProgressUpdateV1[] = [];
+  const listener = createLiveOnlyProgressListener((update) => {
+    forwarded.push(update);
+  });
+  const base: Omit<ProgressUpdateV1, "persist"> = {
+    version: "v1",
+    runId: "run-live-progress",
+    sessionId: "session-live-progress",
+    ts: new Date().toISOString(),
+    seq: 1,
+    kind: "heartbeat",
+    phase: "chat",
+    code: "RUN_STILL_ACTIVE",
+    message: "Still working on model response...",
+  };
+
+  listener({ ...base, persist: true });
+  listener({ ...base, seq: 2, persist: false });
+
+  assert.deepEqual(forwarded.map((update) => update.seq), [2]);
+});
+
+contractTest(
+  "runtime.process",
+  "default runner factory streams reasoning before completion and emits persistent progress once",
+  async () => {
+    const output = new PassThrough();
+    const writer = new EventWriter(output);
+    let releaseCompletion!: () => void;
+    const completionGate = new Promise<void>((resolve) => {
+      releaseCompletion = resolve;
+    });
+    let runCompleted = false;
+    const runtimeFactory = createDefaultRunnerRuntimeFactory(
+      (_runtimeProfile, options) => ({
+        runTurn: async (turn) => {
+          const retry: ProgressUpdateV1 = {
+            version: "v1",
+            runId: "run-default-factory",
+            sessionId: turn.sessionId,
+            ts: "2026-07-24T12:00:00.000Z",
+            seq: 1,
+            kind: "stage",
+            phase: "chat",
+            code: "MODEL_ATTEMPT_RETRYING",
+            message: "Provider attempt 1/2 failed; retrying in 250 ms.",
+            persist: true,
+          };
+          options.onProgress?.(retry);
+          options.onRunEvent?.(
+            buildPersistedRuntimeEventFromProgressUpdate(retry),
+          );
+          options.onReasoning?.({
+            version: "v1",
+            runId: "run-default-factory",
+            sessionId: turn.sessionId,
+            ts: "2026-07-24T12:00:00.001Z",
+            seq: 2,
+            event: "delta",
+            attempt: 2,
+            format: "summary",
+            delta: "Reasoning reached the runner.",
+            contentState: "live",
+          });
+          await completionGate;
+          runCompleted = true;
+          return {
+            assistantText: "Done.",
+            output: {
+              status: "COMPLETED",
+              sessionId: turn.sessionId,
+              runId: "run-default-factory",
+              errors: [],
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 1,
+                durationMs: 1,
+              },
+            },
+          };
+        },
+        close: async () => {},
+      }),
+    );
+    const host = new RunnerHost(writer, runtimeFactory);
+    const router = new CommandRouter(host, writer);
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const rl = readline.createInterface({ input: output, terminal: false });
+    rl.on("line", (line) => {
+      events.push(
+        JSON.parse(line) as { type: string; payload: Record<string, unknown> },
+      );
+    });
+
+    const run = router.acceptLine(
+      JSON.stringify({
+        id: "cmd-default-factory",
+        type: "run.start",
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-default-factory",
+            message: "hello",
+            eventType: "user.message",
+          },
+        },
+      }),
+    );
+
+    await waitForCondition(
+      () =>
+        events.some(
+          (event) => event.type === "run.model.reasoning.delta",
+        ),
+      1_000,
+    );
+    assert.equal(runCompleted, false);
+    assert.equal(
+      events.filter((event) => event.type === "run.progress").length,
+      1,
+    );
+    releaseCompletion();
+    await run;
+    await tick();
+
+    assert.equal(runCompleted, true);
+    assert.equal(events.at(-1)?.type, "run.completed");
+    rl.close();
+    await host.close();
+  },
+);
 
 contractTest("runtime.process", "CommandRouter emits runner.error for invalid command JSON", async () => {
   const output = new PassThrough();
