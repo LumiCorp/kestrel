@@ -499,44 +499,6 @@ export class EnvironmentProvisioner {
     );
     await this.repository.updateOperationStage({
       operationId: operation.id,
-      stage: "environment.update.backing_up",
-    });
-    for (const workspace of workspaces) {
-      if (!(workspace.flyMachineId && workspace.flyVolumeId)) continue;
-      const backupInput = {
-        organizationId: operation.organizationId,
-        environmentId: environment.id,
-        workspaceId: workspace.id,
-        actorUserId: operation.requestedByUserId,
-        reason: "pre_destructive",
-        idempotencyKey: `environment.update:${operation.id}:backup:${workspace.id}`,
-        parentLifecycleOperationId: operation.id,
-      } as const;
-      try {
-        await this.backupWorkspace(backupInput);
-      } catch (error) {
-        if (!hasErrorCode(error, "ENVIRONMENT_ACTIVATION_TIMEOUT")) throw error;
-        const preDestructiveSnapshot = await this.provider.createVolumeSnapshot(
-          {
-            appName: environment.flyAppName,
-            volumeId: workspace.flyVolumeId,
-          },
-        );
-        await this.updateWorkspaceRuntime({
-          appName: environment.flyAppName,
-          workspaceId: workspace.id,
-          machineId: workspace.flyMachineId,
-          runtimeImage,
-          forceStart: true,
-        });
-        await this.backupWorkspace({
-          ...backupInput,
-          preDestructiveSnapshot,
-        });
-      }
-    }
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
       stage: "environment.update.gateway",
     });
     const gatewayServiceToken = createEnvironmentServiceToken();
@@ -616,6 +578,44 @@ export class EnvironmentProvisioner {
       routerImage,
       gatewayServiceTokenHash: hashEnvironmentServiceToken(gatewayServiceToken),
     });
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.update.backing_up",
+    });
+    for (const workspace of workspaces) {
+      if (!(workspace.flyMachineId && workspace.flyVolumeId)) continue;
+      const backupInput = {
+        organizationId: operation.organizationId,
+        environmentId: environment.id,
+        workspaceId: workspace.id,
+        actorUserId: operation.requestedByUserId,
+        reason: "pre_destructive",
+        idempotencyKey: `environment.update:${operation.id}:backup:${workspace.id}`,
+        parentLifecycleOperationId: operation.id,
+      } as const;
+      try {
+        await this.backupWorkspace(backupInput);
+      } catch (error) {
+        if (!hasErrorCode(error, "ENVIRONMENT_ACTIVATION_TIMEOUT")) throw error;
+        const preDestructiveSnapshot = await this.provider.createVolumeSnapshot(
+          {
+            appName: environment.flyAppName,
+            volumeId: workspace.flyVolumeId,
+          },
+        );
+        await this.updateWorkspaceRuntime({
+          appName: environment.flyAppName,
+          workspaceId: workspace.id,
+          machineId: workspace.flyMachineId,
+          runtimeImage,
+          forceStart: true,
+        });
+        await this.backupWorkspace({
+          ...backupInput,
+          preDestructiveSnapshot,
+        });
+      }
+    }
     await this.repository.updateOperationStage({
       operationId: operation.id,
       stage: "environment.update.workspaces",

@@ -308,14 +308,14 @@ contractTest("web.hermetic", "Environment updates preserve Workspaces, update in
   );
   assert.equal(await provisioner.process("operation-id"), "processed");
   assert.deepEqual(calls, [
-    "operation:stage:environment.update.backing_up",
-    "backup:workspace-id",
     "operation:stage:environment.update.gateway",
     "provider:image:gateway-machine-id",
     "environment:gateway-token-staged",
     "provider:wait",
     "provider:health",
     "environment:gateway-updated",
+    "operation:stage:environment.update.backing_up",
+    "backup:workspace-id",
     "operation:stage:environment.update.workspaces",
     "workspace:starting",
     "provider:image:workspace-machine-id",
@@ -397,18 +397,18 @@ contractTest("web.hermetic", "Environment updates recover an incompatible stoppe
     state: "created",
   });
   assert.deepEqual(calls.slice(0, 12), [
+    "operation:stage:environment.update.gateway",
+    "provider:image:gateway-machine-id",
+    "environment:gateway-token-staged",
+    "provider:wait",
+    "provider:health",
+    "environment:gateway-updated",
     "operation:stage:environment.update.backing_up",
     "backup:workspace-id",
     "provider:snapshot:workspace-volume-id",
     "workspace:starting",
     "provider:image:workspace-machine-id",
     "provider:wait",
-    "provider:start",
-    "provider:wait",
-    "provider:health",
-    "workspace:rebuilt",
-    "backup:workspace-id",
-    "operation:stage:environment.update.gateway",
   ]);
 });
 
