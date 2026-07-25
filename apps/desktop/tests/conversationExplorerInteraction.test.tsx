@@ -6,7 +6,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { ConversationExplorer } from "../renderer/src/ConversationExplorer.js";
 import { ContextSidebar } from "../renderer/src/ContextSidebar.js";
 import { createRendererThread } from "../renderer/src/state.js";
-import type { DesktopRendererSettings } from "../src/contracts.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 function installDom(): { root: Root; container: HTMLDivElement } {
@@ -92,48 +91,32 @@ contractTest("desktop.hermetic", "conversation rename dialog owns focus and Esca
   await act(async () => root.unmount());
 });
 
-contractTest("desktop.hermetic", "conversation project selection locks during submission and becomes read-only after binding", async () => {
+contractTest("desktop.hermetic", "conversation context exposes active work and routes a capability exception to Settings", async () => {
   const { root, container } = installDom();
-  const thread = createRendererThread({
-    modelConfigurationId: "model-default",
-    modelConfigurationRevision: 1,
-  });
-  const settings = {
-    projects: [{ path: "/project", label: "Project" }],
-    apps: [],
-    providerReadiness: [],
-    modelConfigurations: [{
-      id: "model-default",
-      name: "Default",
-      currentRevision: 1,
-      revisions: [{ revision: 1, policy: { provider: "openai", model: "model" } }],
-    }],
-  } as unknown as DesktopRendererSettings;
-  const renderSidebar = async (locked: boolean, projectLocked: boolean) => {
-    await act(async () => root.render(<ContextSidebar
-      surface="chat"
-      thread={thread}
-      settings={settings}
-      locked={locked}
-      projectPath="/project"
-      projectLabel="Project"
-      projectLocked={projectLocked}
-      onModelConfigurationChange={() => {}}
-      onAppToggle={() => {}}
-      onProjectChange={() => {}}
-      onNewConversationForProject={() => {}}
-      onAddProject={() => {}}
-      onRestartRuntime={() => {}}
-      onResizeStart={() => {}}
-    />));
-  };
+  let openedCapability: string | undefined;
+  await act(async () => root.render(<ContextSidebar
+    thread={createRendererThread({ projectPath: "/project" })}
+    activeRun={true}
+    activity="Waiting for approval"
+    error="The configured provider needs attention."
+    errorCapability="model.openai"
+    inboxItems={[{
+      itemId: "approval-1",
+      kind: "approval_request",
+      threadId: "thread-1",
+      sessionId: "session-1",
+      title: "Approve the file change",
+      actionable: true,
+      createdAt: new Date().toISOString(),
+    }]}
+    onOpenSettings={(capability) => { openedCapability = capability; }}
+    onResizeStart={() => {}}
+  />));
 
-  await renderSidebar(false, false);
-  assert.equal(container.querySelector<HTMLSelectElement>('[aria-label="Conversation project"]')?.disabled, false);
-  await renderSidebar(true, false);
-  assert.equal(container.querySelector<HTMLSelectElement>('[aria-label="Conversation project"]')?.disabled, true);
-  await renderSidebar(true, true);
+  assert.match(container.textContent ?? "", /A run is in progress/u);
+  assert.match(container.textContent ?? "", /Approve the file change/u);
   assert.equal(container.querySelector('[aria-label="Conversation project"]'), null);
-  assert.match(container.textContent ?? "", /New conversation in another project/u);
+  await act(async () => container.querySelector<HTMLButtonElement>(".context-exception button")?.click());
+  assert.equal(openedCapability, "model.openai");
   await act(async () => root.unmount());
 });

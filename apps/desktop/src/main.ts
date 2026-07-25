@@ -153,7 +153,10 @@ import {
   prepareDesktopMcpVerification,
 } from "./mcpVerification.js";
 import { DesktopProjectFileIndex } from "./projectFileIndex.js";
-import { toDesktopRendererSettings } from "./rendererSettings.js";
+import {
+  getEffectiveDesktopEnabledAppIds,
+  toDesktopRendererSettings,
+} from "./rendererSettings.js";
 import { probeDesktopCapabilities } from "./capabilityProbes.js";
 import { verifyDesktopModelCapability } from "./modelProviderVerification.js";
 import { verifyDesktopToolProvider } from "./toolProviderVerification.js";
@@ -1078,17 +1081,30 @@ function registerIpcHandlers(
       executionSelection,
       ...turnRequest
     } = request;
+    const globalExecutionSelection = {
+      ...executionSelection,
+      apps: getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap((id) => {
+        const definition = getDesktopAppDefinition(
+          id,
+          undefined,
+          desktopSettings.mcpServers,
+        );
+        return definition === undefined
+          ? []
+          : [{ id: definition.id, contractVersion: definition.contractVersion }];
+      }),
+    };
     const executionProfile =
       await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) =>
           await client.resolveExecutionProfile({
             client: "desktop",
-            selection: executionSelection,
+            selection: globalExecutionSelection,
           }),
       );
     const runProfile = executionProfile.resolvedProfile;
     const workflows = resolveDesktopWorkflowSelections(
-      executionSelection,
+      globalExecutionSelection,
       desktopSettings.mcpServers,
     );
     const unavailableWorkflow = workflows.find((workflow) => !workflow.ready);
@@ -1178,7 +1194,7 @@ function registerIpcHandlers(
             ? { systemInstructions: [workflowInstructions] }
             : {}),
           workspace,
-          metadata: { desktopExecutionSelection: executionSelection },
+          metadata: { desktopExecutionSelection: globalExecutionSelection },
         },
         {
           onEvent() {},
@@ -3938,7 +3954,7 @@ async function prepareDefaultDesktopRunnerAdapter(
       message: "Desktop has no default model configuration.",
     });
   }
-  const apps = desktopSettings.defaultEnabledAppIds.flatMap((id) => {
+  const apps = getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap((id) => {
     const definition = getDesktopAppDefinition(
       id,
       undefined,

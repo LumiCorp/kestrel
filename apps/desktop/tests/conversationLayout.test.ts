@@ -9,6 +9,7 @@ const stylesPath = path.join(testDir, "..", "renderer", "src", "styles.css");
 const appPath = path.join(testDir, "..", "renderer", "src", "DesktopApp.tsx");
 const explorerPath = path.join(testDir, "..", "renderer", "src", "ConversationExplorer.tsx");
 const contextSidebarPath = path.join(testDir, "..", "renderer", "src", "ContextSidebar.tsx");
+const mainPath = path.join(testDir, "..", "src", "main.ts");
 
 contractTest("desktop.hermetic", "thread messages and composer share the conversation width", async () => {
   const source = await readFile(stylesPath, "utf8");
@@ -32,7 +33,11 @@ contractTest("desktop.hermetic", "context sidebar occupies its width without an 
 
   assert.match(
     styles,
-    /\.workspace\.with-inspector\s*\{[^}]*grid-template-columns:\s*var\(--rail-width\) minmax\(0,\s*1fr\) var\(\s*--inspector-width\s*\);/su,
+    /\.workspace\.with-inspector\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) var\(--inspector-width\);/su,
+  );
+  assert.match(
+    styles,
+    /\.workspace\.with-conversation-rail\.with-inspector\s*\{[^}]*grid-template-columns:\s*var\(--rail-width\) minmax\(0,\s*1fr\) var\(--inspector-width\);/su,
   );
   assert.doesNotMatch(
     styles,
@@ -124,12 +129,45 @@ contractTest("desktop.hermetic", "archived conversations are read-only and threa
   assert.match(app, /if \(activeThread\?\.archivedAt !== undefined\) setSurface\("chat"\)/u);
 });
 
-contractTest("desktop.hermetic", "conversation header shows stable project context and established threads use a read-only binding", async () => {
-  const app = await readFile(appPath, "utf8");
+contractTest("desktop.hermetic", "conversation header keeps project context visible without sidebar reassignment", async () => {
+  const [app, sidebar] = await Promise.all([readFile(appPath, "utf8"), readFile(contextSidebarPath, "utf8")]);
   assert.match(app, /className="titlebar-thread-context"[\s\S]*\{conversationProjectLabel\}/u);
-  assert.match(app, /projectLocked=\{projectLocked\}/u);
-  assert.match(app, /projectPath=\{threadProjectPath\}/u);
+  assert.doesNotMatch(app, /onProjectChange=/u);
+  assert.doesNotMatch(sidebar, /Conversation project/u);
   assert.doesNotMatch(app, /activeProjectPath/u);
+});
+
+contractTest("desktop.hermetic", "composer selects configured models while Apps remain globally settings-owned", async () => {
+  const [app, state, settings, sidebar, main] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(path.join(testDir, "..", "renderer", "src", "state.ts"), "utf8"),
+    readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8"),
+    readFile(contextSidebarPath, "utf8"),
+    readFile(mainPath, "utf8"),
+  ]);
+
+  assert.match(app, /aria-label="Conversation model"/u);
+  assert.match(app, /settings\.defaultEnabledAppIds/u);
+  assert.match(state, /toDesktopExecutionSelection\([\s\S]*enabledAppIds: readonly string\[\]/u);
+  assert.match(state, /const enabled = new Set\(enabledAppIds\);/u);
+  assert.doesNotMatch(state, /const enabled = new Set\(thread\.enabledAppIds\);/u);
+  assert.match(settings, /<strong>Enabled Apps<\/strong>/u);
+  assert.doesNotMatch(sidebar, /aria-label="Model configuration"/u);
+  assert.doesNotMatch(sidebar, /<span>Apps<\/span>/u);
+  assert.match(main, /getEffectiveDesktopEnabledAppIds\(desktopSettings\)\.flatMap/u);
+  assert.match(main, /selection: globalExecutionSelection/u);
+});
+
+contractTest("desktop.hermetic", "both sidebar controls persist a calm, reopenable layout", async () => {
+  const [app, styles] = await Promise.all([readFile(appPath, "utf8"), readFile(stylesPath, "utf8")]);
+
+  assert.match(app, /CONVERSATION_RAIL_STATE_KEY/u);
+  assert.match(app, /readDesktopSidebarState\(INSPECTOR_STATE_KEY, false\)/u);
+  assert.match(app, /aria-label=\{conversationRailOpen \? "Close conversation rail" : "Open conversation rail"\}/u);
+  assert.match(app, /aria-label=\{inspectorOpen \? "Close context sidebar" : "Open context sidebar"\}/u);
+  assert.match(app, /conversationRailOpen \? <aside id="conversation-rail"/u);
+  assert.match(styles, /\.workspace\.with-conversation-rail\s*\{/u);
+  assert.match(app, /storedWidth === null \? 288 : clampInspectorWidth\(Number\(storedWidth\)\)/u);
 });
 
 contractTest("desktop.hermetic", "archive blocking covers runs, waits, and actionable operator requests", async () => {

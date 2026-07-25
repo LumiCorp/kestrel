@@ -27,6 +27,13 @@ contractTest("desktop.hermetic", "Desktop Tools and services uses a cardless gui
   assert.match(toolServicesSource, /<SetupStep number=\{3\}/u);
 });
 
+contractTest("desktop.hermetic", "guided recovery requests select and focus the requested connector", async () => {
+  const toolServicesSource = await readFile(path.join(rendererDirectory, "ToolServicesSettings.tsx"), "utf8");
+
+  assert.match(toolServicesSource, /navigationRequest\.requestId !== handledNavigationRequestRef\.current/u);
+  assert.match(toolServicesSource, /selectedConnectorRef\.current\?\.focus\(\{ preventScroll: true \}\)/u);
+});
+
 contractTest("desktop.hermetic", "the prebuilt Exa connector uses the official credential-free hosted MCP endpoint", () => {
   const input = buildExaMcpMutationInput();
 

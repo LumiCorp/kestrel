@@ -8,6 +8,19 @@ import type {
   DesktopSettings,
 } from "./contracts.js";
 
+export function getEffectiveDesktopEnabledAppIds(
+  settings: Pick<DesktopSettings, "defaultEnabledAppIds" | "mcpServers">,
+): string[] {
+  return [
+    ...new Set([
+      ...settings.defaultEnabledAppIds,
+      ...settings.mcpServers
+        .filter((server) => server.enabled)
+        .map((server) => desktopAppIdForServer(server)),
+    ]),
+  ];
+}
+
 export function toDesktopRendererSettings(
   settings: DesktopSettings,
   configuredProviders: ReadonlySet<DesktopSettings["selectedProvider"]> = new Set(
@@ -42,14 +55,7 @@ export function toDesktopRendererSettings(
       })),
     })),
     defaultModelConfigurationId: settings.defaultModelConfigurationId,
-    defaultEnabledAppIds: [
-      ...new Set([
-        ...settings.defaultEnabledAppIds,
-        ...settings.mcpServers
-          .filter((server) => server.enabled)
-          .map((server) => desktopAppIdForServer(server)),
-      ]),
-    ],
+    defaultEnabledAppIds: getEffectiveDesktopEnabledAppIds(settings),
     appearanceTheme: settings.appearanceTheme,
     apps: listDesktopAppDefinitions(settings.mcpServers),
     providerReadiness: providers.map((provider) => ({

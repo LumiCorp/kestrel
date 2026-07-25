@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 
-import { toDesktopRendererSettings } from "../src/rendererSettings.js";
+import {
+  getEffectiveDesktopEnabledAppIds,
+  toDesktopRendererSettings,
+} from "../src/rendererSettings.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
@@ -68,4 +71,5 @@ contractTest("desktop.hermetic", "Desktop projects standard capabilities under t
     toolNames: ["mcp.linear-local.create_issue"],
   });
   assert.ok(projected.defaultEnabledAppIds.includes("linear"));
+  assert.deepEqual(getEffectiveDesktopEnabledAppIds(settings), projected.defaultEnabledAppIds);
 });
