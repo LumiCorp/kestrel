@@ -10,7 +10,10 @@ function read(relativePath: string) {
 }
 
 const home = read("app/(workspace)/organization/page.tsx");
+const systemsMapPage = read("app/(workspace)/organization/systems/page.tsx");
 const homeUi = read("components/organization/organization-management-home.tsx");
+const systemsMapRoute = read("app/api/organization/systems-map/route.ts");
+const systemsMapService = read("lib/organizations/systems-map.ts");
 const environmentWorkspaces = read(
   "app/(workspace)/organization/environments/[id]/workspaces/page.tsx",
 );
@@ -35,6 +38,14 @@ contractTest(
     assert.match(teamSwitcher, /Manage organization/u);
     assert.match(teamSwitcher, /href="\/organization"/u);
     assert.match(home, /requireOrganizationAdmin/u);
+    assert.match(systemsMapPage, /requireOrganizationAdmin/u);
+    assert.match(systemsMapRoute, /requireOrganizationAdmin/u);
+    assert.match(homeUi, /Systems map/u);
+    assert.match(systemsMapService, /threadCount/u);
+    assert.doesNotMatch(systemsMapService, /title:\s*schema\.threads\.title/u);
+    assert.doesNotMatch(systemsMapService, /provider\.getMachine\(/u);
+    assert.match(systemsMapService, /eq\(schema\.members\.organizationId, input\.organizationId\)/u);
+    assert.match(systemsMapService, /eq\(schema\.threadTurns\.organizationId, input\.organizationId\)/u);
     assert.match(
       homeUi,
       /Manage the execution environments this organization owns/u,

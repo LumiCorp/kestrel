@@ -274,6 +274,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied",
   ),
   page(
+    "app/(workspace)/organization/systems/page.tsx",
+    "/organization/systems",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
     "app/(workspace)/organization/environments/page.tsx",
     "/organization/environments",
     "environments",
@@ -662,6 +669,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/organization/deletion/route.ts",
     "/api/organization/deletion",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/organization/systems-map/route.ts",
+    "/api/organization/systems-map",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized,

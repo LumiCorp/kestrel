@@ -1289,6 +1289,8 @@ contractTest("web.hermetic", "Fly inventory preserves exact Workspace ownership 
       machines: [
         {
           id: "machine-1",
+          state: "started",
+          region: "iad",
           workspaceId: "workspace-1",
           replacementId: "restore-1",
           mountedVolumeIds: ["volume-1"],

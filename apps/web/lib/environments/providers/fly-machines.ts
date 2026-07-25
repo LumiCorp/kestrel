@@ -751,6 +751,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       machines: parseResponse(z.array(machineSchema), machines).map(
         (machine) => ({
           id: machine.id,
+          state: machine.state,
+          region: machine.region,
           workspaceId: machine.config?.metadata?.kestrel_workspace_id ?? null,
           replacementId:
             machine.config?.metadata?.kestrel_replacement_id ?? null,

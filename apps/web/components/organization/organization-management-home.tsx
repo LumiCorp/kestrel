@@ -5,6 +5,7 @@ import {
   CreditCard,
   KeyRound,
   Mail,
+  Network,
   ScrollText,
   Users,
 } from "lucide-react";
@@ -22,6 +23,12 @@ import type { OrganizationManagementEnvironment } from "@/lib/organizations/mana
 import { CreateOrganizationEnvironmentDialog } from "@/components/organization/create-environment-dialog";
 
 const organizationSections = [
+  {
+    href: "/organization/systems",
+    icon: Network,
+    title: "Systems map",
+    description: "Kestrel-managed estate, provider state, and active work",
+  },
   {
     href: "/organization/people",
     icon: Users,
