@@ -149,6 +149,21 @@ contractTest("web.hermetic", "Environment updates expose the durable rollout sta
   );
 });
 
+contractTest("web.hermetic", "maintenance updates disclose skipped Workspace retention", () => {
+  assert.deepEqual(
+    describeEnvironmentOperation({
+      type: "environment.update",
+      status: "running",
+      stage: "environment.update.backups_skipped",
+    }),
+    {
+      label: "Environment update",
+      detail: "Workspace backups were skipped for this maintenance update.",
+      tone: "neutral",
+    }
+  );
+});
+
 contractTest("web.hermetic", "Environment updates surface provisioning recovery without a false success tone", () => {
   assert.deepEqual(
     describeEnvironmentOperation({

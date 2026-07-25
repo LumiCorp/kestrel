@@ -47,6 +47,8 @@ const STAGE_DETAILS: Record<string, string> = {
   "environment.activation.ready": "Environment ready.",
   "environment.update.backing_up":
     "Preserving every Workspace before the update…",
+  "environment.update.backups_skipped":
+    "Workspace backups were skipped for this maintenance update.",
   "environment.update.gateway": "Updating the Environment gateway…",
   "environment.update.workspaces": "Updating Workspace runtimes…",
   "environment.update.verifying": "Verifying the updated Environment…",
