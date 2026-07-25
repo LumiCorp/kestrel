@@ -2319,7 +2319,7 @@ contractTest("runtime.hermetic", "agent loop corrects missing compaction anchors
   assert.match(correctionMessage as string, /Previous rejected response/u);
 });
 
-contractTest("runtime.hermetic", "configured observe policy still verifies accepted compaction", async () => {
+contractTest("runtime.hermetic", "observe-mode compaction skips semantic verification", async () => {
   const requests: ModelRequest[] = [];
   const transcript = {
     ...compactionRetryTranscript(),
@@ -2346,12 +2346,10 @@ contractTest("runtime.hermetic", "configured observe policy still verifies accep
         } as ModelResponse<unknown>;
       }
       if (request.metadata?.phase === "agent.compaction.verify") {
-        return {
-          output: sufficientCompactionVerdict(),
-        } as ModelResponse<unknown>;
+        throw new Error("observe mode must not invoke semantic verification");
       }
       return modelResponse({
-        reason: "Continue after verified observe-mode compaction.",
+        reason: "Continue after locally validated observe-mode compaction.",
         nextAction: {
           kind: "tool",
           name: "fs.read_text",
@@ -2364,9 +2362,15 @@ contractTest("runtime.hermetic", "configured observe policy still verifies accep
   assert.equal(transition.status, "RUNNING");
   assert.equal(
     requests.filter(
-      (request) => request.metadata?.phase === "agent.compaction.verify",
+      (request) => request.metadata?.phase === "agent.compaction",
     ).length,
     1,
+  );
+  assert.equal(
+    requests.filter(
+      (request) => request.metadata?.phase === "agent.compaction.verify",
+    ).length,
+    0,
   );
 });
 

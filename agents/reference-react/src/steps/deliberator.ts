@@ -1227,7 +1227,7 @@ async function compactContextRequestIfNeeded(input: {
         failureSource: "summary_validation",
       });
     }
-    if (runtimeEconomics.policy !== undefined) {
+    if (runtimeEconomics.policy?.mode === "enforce") {
       const sufficiencyResponse = await input.io.useModel<
         ModelResponse<unknown>
       >({
