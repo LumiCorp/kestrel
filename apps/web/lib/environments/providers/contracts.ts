@@ -59,6 +59,8 @@ export type EnvironmentProviderGateway = {
 export type EnvironmentProviderInventory = {
   machines: Array<{
     id: string;
+    state?: string | undefined;
+    region?: string | undefined;
     workspaceId: string | null;
     replacementId: string | null;
     mountedVolumeIds?: string[] | undefined;
