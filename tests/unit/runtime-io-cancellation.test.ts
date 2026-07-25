@@ -77,6 +77,68 @@ contractTest("runtime.hermetic", "RuntimeIO.model does not emit completion when 
   assert.equal(emitted.includes("MODEL_CALL_DONE"), false);
 });
 
+contractTest("runtime.hermetic", "RuntimeIO projects typed provider attempts into live start and durable retry progress", async () => {
+  const emitted: string[] = [];
+  const progressUpdates: ProgressUpdateV1[] = [];
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted,
+    progressUpdates,
+    modelCall: async (options) => {
+      await options?.onEvent?.({
+        type: "attempt.started",
+        attempt: 1,
+        maxAttempts: 2,
+      });
+      await options?.onEvent?.({
+        type: "attempt.failed",
+        attempt: 1,
+        maxAttempts: 2,
+        latencyMs: 100,
+        retryable: true,
+        willRetry: true,
+        visibleOutputStarted: false,
+        retryDelayMs: 250,
+      });
+      await options?.onEvent?.({
+        type: "attempt.started",
+        attempt: 2,
+        maxAttempts: 2,
+      });
+      return { ok: true };
+    },
+  });
+
+  await io.model(modelRequest());
+
+  assert.deepEqual(
+    progressUpdates
+      .filter((update) => update.code.startsWith("MODEL_ATTEMPT_"))
+      .map((update) => ({
+        code: update.code,
+        persist: update.persist,
+        message: update.message,
+      })),
+    [
+      {
+        code: "MODEL_ATTEMPT_STARTED",
+        persist: false,
+        message: "Provider attempt 1/2 started.",
+      },
+      {
+        code: "MODEL_ATTEMPT_RETRYING",
+        persist: true,
+        message: "Provider attempt 1/2 failed; retrying in 250 ms.",
+      },
+      {
+        code: "MODEL_ATTEMPT_STARTED",
+        persist: false,
+        message: "Provider attempt 2/2 started.",
+      },
+    ],
+  );
+});
+
 contractTest("runtime.hermetic", "RuntimeIO.tool does not emit tool request events when already aborted", async () => {
   const controller = new AbortController();
   controller.abort();
@@ -434,6 +496,7 @@ function createRuntimeIO(input: {
   modelRequests?: ModelRequest[] | undefined;
   runtimeMetadata?: Record<string, unknown> | undefined;
   consoleUpdates?: RunConsoleUpdateV1[] | undefined;
+  progressUpdates?: ProgressUpdateV1[] | undefined;
 }): RuntimeIO {
   let seq = 0;
   const store = {
@@ -492,6 +555,11 @@ function createRuntimeIO(input: {
     runtimePayload: undefined,
     emitProgressFromSequence: async (update: Omit<ProgressUpdateV1, "version" | "ts">) => {
       input.emitted.push(update.code);
+      input.progressUpdates?.push({
+        ...update,
+        version: "v1",
+        ts: new Date().toISOString(),
+      });
     },
     appendRunEvent: async (
       _runId: string,

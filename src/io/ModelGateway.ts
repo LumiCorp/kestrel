@@ -130,6 +130,7 @@ export class RetryingModelGateway implements ModelGateway {
         await options.onEvent?.({
           type: "attempt.failed",
           attempt: attemptNumber,
+          maxAttempts,
           latencyMs: Date.now() - attemptStartedAtMs,
           ...(readFailureCode(error) !== undefined ? { failureCode: readFailureCode(error) } : {}),
           ...(readFailureClass(error) !== undefined ? { failureClass: readFailureClass(error) } : {}),

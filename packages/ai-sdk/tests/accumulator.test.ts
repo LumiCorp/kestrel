@@ -215,10 +215,35 @@ contractTest("packages.hermetic", "AI SDK stream and persisted message are emitt
     chunks.some((chunk) => chunk.type === "data-kestrel-progress"),
     true,
   );
+  const progressChunk = chunks.find(
+    (chunk) => chunk.type === "data-kestrel-progress",
+  ) as
+    | {
+        data?: {
+          assistantMessageId?: string;
+          persist?: boolean;
+        };
+      }
+    | undefined;
+  assert.equal(progressChunk?.data?.assistantMessageId, "assistant-stream");
+  assert.equal(progressChunk?.data?.persist, true);
   assert.equal(chunks.some((chunk) => chunk.type === "data-kestrel-tool"), true);
   assert.equal(
     chunks.some((chunk) => chunk.type === "data-kestrel-provider-reasoning" && chunk.transient === true),
     true,
+  );
+  const reasoningChunk = chunks.find(
+    (chunk) => chunk.type === "data-kestrel-provider-reasoning",
+  ) as
+    | {
+        data?: {
+          assistantMessageId?: string;
+        };
+      }
+    | undefined;
+  assert.equal(
+    reasoningChunk?.data?.assistantMessageId,
+    "assistant-stream",
   );
   assert.equal(chunks.some((chunk) => chunk.type === "data-kestrel-agent-progress"), true);
   assert.equal(
@@ -234,6 +259,63 @@ contractTest("packages.hermetic", "AI SDK stream and persisted message are emitt
   assert.equal(
     snapshot.message.parts.filter((part) => part.type.startsWith("data-")).length,
     chunks.filter((chunk) => String(chunk.type).startsWith("data-") && chunk.transient !== true).length,
+  );
+});
+
+contractTest("ai-sdk.hermetic", "live-only progress streams transiently and stays out of the snapshot", async () => {
+  const chunks: Array<Record<string, unknown>> = [];
+  const writer = {
+    write(chunk: unknown) {
+      chunks.push(chunk as Record<string, unknown>);
+    },
+    merge() {},
+    onError: undefined,
+  } as UIMessageStreamWriter<KestrelUIMessage>;
+
+  const liveProgress = progressEvent();
+  (
+    liveProgress.payload.update as {
+      persist: boolean;
+      code: string;
+      message: string;
+    }
+  ).persist = false;
+  (
+    liveProgress.payload.update as {
+      persist: boolean;
+      code: string;
+      message: string;
+    }
+  ).code = "RUN_STILL_ACTIVE";
+  (
+    liveProgress.payload.update as {
+      persist: boolean;
+      code: string;
+      message: string;
+    }
+  ).message = "Still working on model response...";
+
+  const snapshot = await writeKestrelRunnerStreamToUIMessage({
+    writer,
+    assistantMessageId: "assistant-live-progress",
+    textPartId: "text-live-progress",
+    events: events([liveProgress]),
+    terminalEvent: Promise.resolve(completedEvent("Done.")),
+  });
+
+  assert.equal(
+    chunks.some(
+      (chunk) =>
+        chunk.type === "data-kestrel-progress" &&
+        chunk.transient === true,
+    ),
+    true,
+  );
+  assert.equal(
+    snapshot.message.parts.some(
+      (part) => part.type === "data-kestrel-progress",
+    ),
+    false,
   );
 });
 

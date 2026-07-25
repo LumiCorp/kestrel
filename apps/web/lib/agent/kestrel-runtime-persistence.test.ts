@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
+import {
+  isLiveOnlyKestrelUiChunk,
+  prepareKestrelRuntimeMessagesForPersistence,
+} from "@/lib/agent/kestrel-runtime-persistence";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
@@ -81,6 +84,60 @@ contractTest("web.hermetic", "prepareKestrelRuntimeMessagesForPersistence never 
       errorMessage: null,
       failureVisible: false,
     }
+  );
+
+  assert.deepEqual(messages[0]?.parts, [
+    { type: "text", text: "Final answer." },
+  ]);
+});
+
+contractTest("web.hermetic", "live-only runtime chunks are rejected at the durable turn boundary", () => {
+  assert.equal(
+    isLiveOnlyKestrelUiChunk({
+      type: "data-kestrel-provider-reasoning",
+      data: { delta: "private" },
+    }),
+    true,
+  );
+  assert.equal(
+    isLiveOnlyKestrelUiChunk({
+      type: "data-kestrel-progress",
+      data: { persist: false, code: "RUN_STILL_ACTIVE" },
+    }),
+    true,
+  );
+  assert.equal(
+    isLiveOnlyKestrelUiChunk({
+      type: "data-kestrel-progress",
+      data: { persist: true, code: "MODEL_ATTEMPT_RETRYING" },
+    }),
+    false,
+  );
+});
+
+contractTest("web.hermetic", "final message persistence removes live-only progress defense in depth", () => {
+  const messages = prepareKestrelRuntimeMessagesForPersistence(
+    [
+      {
+        id: "assistant_live_progress",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "data-kestrel-progress",
+            data: {
+              persist: false,
+              code: "RUN_STILL_ACTIVE",
+              text: "Still working.",
+            },
+          },
+          { type: "text", text: "Final answer." },
+        ],
+      },
+    ] as Parameters<typeof prepareKestrelRuntimeMessagesForPersistence>[0],
+    {
+      errorMessage: null,
+      failureVisible: false,
+    },
   );
 
   assert.deepEqual(messages[0]?.parts, [

@@ -10,7 +10,10 @@ import {
   cancelInterruptedKestrelOneExecution,
   createKestrelOneAgentResponse,
 } from "@/lib/agent/kestrel-runtime";
-import { prepareKestrelRuntimeMessagesForPersistence } from "@/lib/agent/kestrel-runtime-persistence";
+import {
+  isLiveOnlyKestrelUiChunk,
+  prepareKestrelRuntimeMessagesForPersistence,
+} from "@/lib/agent/kestrel-runtime-persistence";
 import type { Session } from "@/lib/auth-types";
 import { generateTitleForOrganization } from "@/lib/chat/title";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -393,6 +396,9 @@ export async function processDurableThreadTurn(
         }
       },
       onUiChunk(chunk) {
+        if (isLiveOnlyKestrelUiChunk(chunk)) {
+          return;
+        }
         eventWrites = eventWrites.then(() =>
           appendDurableTurnEvent({
             turnId: turn.id,

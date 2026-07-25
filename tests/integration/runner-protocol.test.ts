@@ -4,7 +4,11 @@ import { PassThrough } from "node:stream";
 import type { TuiProfile } from "../../cli/contracts.js";
 import { CommandRouter } from "../../cli/runner/CommandRouter.js";
 import { EventWriter } from "../../cli/runner/EventWriter.js";
-import { RunnerHost, type RunnerRuntime } from "../../cli/runner/RunnerHost.js";
+import {
+  createLiveOnlyProgressListener,
+  RunnerHost,
+  type RunnerRuntime,
+} from "../../cli/runner/RunnerHost.js";
 import type { RunTurnResult } from "../../cli/runtime/KestrelChatRuntime.js";
 import { buildPersistedRuntimeEventFromToolUpdate } from "../../src/events/RuntimeEventProjections.js";
 import type {
@@ -24,6 +28,29 @@ const profile: TuiProfile = {
   agent: "reference-react",
   sessionPrefix: "reference",
 };
+
+contractTest("runtime.process", "default runner progress callback forwards only live-only updates", () => {
+  const forwarded: ProgressUpdateV1[] = [];
+  const listener = createLiveOnlyProgressListener((update) => {
+    forwarded.push(update);
+  });
+  const base: Omit<ProgressUpdateV1, "persist"> = {
+    version: "v1",
+    runId: "run-live-progress",
+    sessionId: "session-live-progress",
+    ts: new Date().toISOString(),
+    seq: 1,
+    kind: "heartbeat",
+    phase: "chat",
+    code: "RUN_STILL_ACTIVE",
+    message: "Still working on model response...",
+  };
+
+  listener({ ...base, persist: true });
+  listener({ ...base, seq: 2, persist: false });
+
+  assert.deepEqual(forwarded.map((update) => update.seq), [2]);
+});
 
 contractTest("runtime.process", "CommandRouter emits runner.error for invalid command JSON", async () => {
   const output = new PassThrough();

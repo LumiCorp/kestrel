@@ -22,6 +22,11 @@ import { SparklesIcon } from "./icons";
 import { MessageActions } from "./message-actions";
 import { MessageEditor } from "./message-editor";
 import { MessageReasoning } from "./message-reasoning";
+import {
+  displayLiveReasoning,
+  type LiveActivityStatus,
+  type LiveProviderReasoning,
+} from "./live-runtime-presentation";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather, type WeatherAtLocation } from "./weather";
 
@@ -152,33 +157,36 @@ const shouldRenderActivityDetail = (part: ChatMessage["parts"][number]) => {
   if (
     part.type === "data-kestrel-agent-progress" ||
     part.type === "data-kestrel-citation" ||
-    part.type === "data-kestrel-artifact"
+    part.type === "data-kestrel-artifact" ||
+    part.type === "data-kestrel-provider-reasoning"
   ) {
     return false;
   }
-  if (part.type !== "data-kestrel-provider-reasoning") return true;
-  return (
-    part.data.event === "unavailable" ||
-    (part.data.event === "delta" &&
-      part.data.contentState === "live" &&
-      Boolean(part.data.delta))
-  );
+  return true;
 };
 
 export function KestrelActivityTimeline({
   parts,
   isLoading,
+  liveStatuses = [],
   turnStatus,
 }: {
   parts: ChatMessage["parts"];
   isLoading: boolean;
+  liveStatuses?: LiveActivityStatus[];
   turnStatus?: ThreadTurnView["status"];
 }) {
   const agentProgressParts = parts.filter(
     (part) => part.type === "data-kestrel-agent-progress",
   );
   const detailParts = parts.filter(shouldRenderActivityDetail);
-  if (agentProgressParts.length === 0 && detailParts.length === 0) return null;
+  if (
+    agentProgressParts.length === 0 &&
+    detailParts.length === 0 &&
+    liveStatuses.length === 0
+  ) {
+    return null;
+  }
   return (
     <div className="space-y-2" data-testid="kestrel-activity-timeline">
       {agentProgressParts.length > 0 ? (
@@ -203,12 +211,28 @@ export function KestrelActivityTimeline({
         </section>
       ) : null}
 
-      {detailParts.length > 0 ? (
+      {detailParts.length > 0 || liveStatuses.length > 0 ? (
         <details className="rounded-lg border bg-muted/20">
           <summary className="cursor-pointer px-3 py-2 font-medium text-muted-foreground text-xs">
             {turnActivityLabel(turnStatus)}
           </summary>
           <ol className="space-y-2 border-t px-3 py-3 text-xs">
+            {liveStatuses.map((liveStatus) => (
+              <li
+                className={
+                  liveStatus.severity === "error"
+                    ? "text-destructive"
+                    : undefined
+                }
+                data-testid="kestrel-live-activity-status"
+                key={`${liveStatus.kind}:${liveStatus.assistantMessageId}`}
+              >
+                <span className="font-medium">{liveStatus.phase}</span>
+                <span className="ml-2 text-muted-foreground">
+                  {liveStatus.text}
+                </span>
+              </li>
+            ))}
             {detailParts.map((part, index) => {
               const key = `timeline-${index}`;
               if (part.type === "data-kestrel-progress") {
@@ -217,33 +241,6 @@ export function KestrelActivityTimeline({
                     <span className="font-medium">{part.data.phase}</span>
                     <span className="ml-2 text-muted-foreground">
                       {part.data.text}
-                    </span>
-                  </li>
-                );
-              }
-              if (part.type === "data-kestrel-provider-reasoning") {
-                if (part.data.event === "unavailable") {
-                  return (
-                    <li key={key}>
-                      <span className="font-medium">Provider reasoning</span>
-                      <span className="ml-2 text-muted-foreground">
-                        Unavailable for this model
-                      </span>
-                    </li>
-                  );
-                }
-                if (
-                  part.data.event !== "delta" ||
-                  part.data.contentState !== "live" ||
-                  !part.data.delta
-                ) {
-                  return null;
-                }
-                return (
-                  <li className="whitespace-pre-wrap" key={key}>
-                    <span className="font-medium">{part.data.label}</span>
-                    <span className="ml-2 text-muted-foreground">
-                      {part.data.delta}
                     </span>
                   </li>
                 );
@@ -443,6 +440,8 @@ const PurePreviewMessage = ({
   isReadonly,
   requiresScrollPadding: _requiresScrollPadding,
   hideKestrelActivity = false,
+  liveActivityStatus = [],
+  liveReasoning = null,
   shouldAutoplaySpeech = false,
   selectedLanguageModelId,
   ttsAvailable = true,
@@ -461,6 +460,8 @@ const PurePreviewMessage = ({
   isReadonly: boolean;
   requiresScrollPadding: boolean;
   hideKestrelActivity?: boolean;
+  liveActivityStatus?: LiveActivityStatus[];
+  liveReasoning?: LiveProviderReasoning | null;
   shouldAutoplaySpeech?: boolean;
   selectedLanguageModelId?: string;
   ttsAvailable?: boolean;
@@ -498,14 +499,15 @@ const PurePreviewMessage = ({
           className={cn("flex flex-col", {
             "gap-2 md:gap-4": message.parts?.some(
               (p) => p.type === "text" && p.text?.trim()
-            ),
+            ) || Boolean(liveReasoning),
             "w-full":
               (message.role === "assistant" &&
                 (message.parts?.some(
                   (p) => p.type === "text" && p.text?.trim()
                 ) ||
                   message.parts?.some((p) => isToolLikePart(p)) ||
-                  message.parts?.some((p) => isKestrelPresentationPart(p)))) ||
+                  message.parts?.some((p) => isKestrelPresentationPart(p)) ||
+                  liveReasoning)) ||
               mode === "edit",
             "max-w-[calc(100%-2.5rem)] sm:max-w-[min(fit-content,80%)]":
               message.role === "user" && mode !== "edit",
@@ -549,7 +551,16 @@ const PurePreviewMessage = ({
           {message.role === "assistant" && !hideKestrelActivity ? (
             <KestrelActivityTimeline
               isLoading={isLoading}
+              liveStatuses={liveActivityStatus}
               parts={kestrelPresentationParts}
+            />
+          ) : null}
+
+          {message.role === "assistant" && liveReasoning ? (
+            <MessageReasoning
+              isLoading={liveReasoning.isStreaming}
+              reasoning={displayLiveReasoning(liveReasoning)}
+              terminalStatus={message.metadata?.kestrelTerminalStatus}
             />
           ) : null}
 

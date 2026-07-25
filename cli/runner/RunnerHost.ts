@@ -462,6 +462,14 @@ type RunnerRuntimeFactory = (
   onRunEvent: (event: RunEvent) => void
 ) => RunnerRuntime;
 
+export function createLiveOnlyProgressListener(
+  listener: (update: ProgressUpdateV1) => void,
+): (update: ProgressUpdateV1) => void {
+  return (update) => {
+    if (update.persist === false) listener(update);
+  };
+}
+
 function normalizeFinalizedResultRunId(
   result: RunTurnResult,
   acceptedRunId: string | undefined
@@ -515,15 +523,17 @@ export class RunnerHost {
     runtimeFactory: RunnerRuntimeFactory = (
       profile,
       onRunLog,
-      _onProgress,
+      onProgress,
       onConsole,
-      _onReasoning,
+      onReasoning,
       onTaskUpdate,
       onRunEvent
     ) =>
       new KestrelChatRuntime(profile, undefined, {
         onRunLog,
+        onProgress: createLiveOnlyProgressListener(onProgress),
         onConsole,
+        onReasoning,
         onTaskUpdate,
         onRunEvent,
       }),
@@ -2857,6 +2867,10 @@ export class RunnerHost {
   }
 
   private onProgress(update: ProgressUpdateV1): void {
+    if (update.persist === false) {
+      this.emitProgressUpdate(update);
+      return;
+    }
     this.onRunEvent(buildPersistedRuntimeEventFromProgressUpdate(update));
   }
 
@@ -2893,6 +2907,7 @@ export class RunnerHost {
         runId: normalizedUpdate.runId,
         sessionId: normalizedUpdate.sessionId,
         ...(commandId !== undefined ? { commandId } : {}),
+        durability: normalizedUpdate.persist ? "durable" : "live_only",
       }
     );
     if (commandType === "job.run") {
@@ -2911,6 +2926,7 @@ export class RunnerHost {
           sessionId: normalizedUpdate.sessionId,
           threadId,
           ...(commandId !== undefined ? { commandId } : {}),
+          durability: normalizedUpdate.persist ? "durable" : "live_only",
         }
       );
     }

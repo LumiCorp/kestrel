@@ -108,6 +108,7 @@ export type ModelGatewayStreamEvent =
   | {
       type: "attempt.failed";
       attempt: number;
+      maxAttempts: number;
       latencyMs: number;
       failureCode?: string | undefined;
       failureClass?: string | undefined;
