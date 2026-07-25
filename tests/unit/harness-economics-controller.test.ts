@@ -31,6 +31,23 @@ contractTest("runtime.hermetic", "harness economics policy parser accepts the st
   });
 });
 
+contractTest("runtime.hermetic", "harness economics policy parser accepts one or two summary attempts", () => {
+  assert.equal(
+    parseHarnessEconomicsPolicyV1(policyFixture()).compaction.maxSummaryAttempts,
+    1,
+  );
+  assert.equal(
+    parseHarnessEconomicsPolicyV1({
+      ...policyFixture(),
+      compaction: {
+        requireStructuredAnchors: true,
+        maxSummaryAttempts: 2,
+      },
+    }).compaction.maxSummaryAttempts,
+    2,
+  );
+});
+
 contractTest("runtime.hermetic", "harness economics policy parser rejects unknown fields and unsafe compaction", () => {
   assert.throws(
     () => parseHarnessEconomicsPolicyV1({ ...policyFixture(), threshold: 0.8 }),
@@ -44,7 +61,29 @@ contractTest("runtime.hermetic", "harness economics policy parser rejects unknow
         maxSummaryAttempts: 2,
       },
     }),
-    /structured anchors and exactly one summary attempt/u,
+    /structured anchors and allow one or two summary attempts/u,
+  );
+  for (const maxSummaryAttempts of [0, 3, 1.5, "2"]) {
+    assert.throws(
+      () => parseHarnessEconomicsPolicyV1({
+        ...policyFixture(),
+        compaction: {
+          requireStructuredAnchors: true,
+          maxSummaryAttempts,
+        },
+      }),
+      /structured anchors and allow one or two summary attempts/u,
+    );
+  }
+  assert.throws(
+    () => parseHarnessEconomicsPolicyV1({
+      ...policyFixture(),
+      compaction: {
+        requireStructuredAnchors: false,
+        maxSummaryAttempts: 1,
+      },
+    }),
+    /structured anchors and allow one or two summary attempts/u,
   );
   assert.throws(
     () => parseHarnessEconomicsPolicyV1({

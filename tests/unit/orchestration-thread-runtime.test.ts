@@ -10,6 +10,7 @@ import {
   type TurnExecutor,
 } from "../../src/orchestration/index.js";
 import type { TuiProfile } from "../../cli/contracts.js";
+import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
 import { defaultSupervisionGroupId, fanInCheckpointId } from "../../src/orchestration/Supervision.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import {
@@ -4064,12 +4065,15 @@ contractTest("runtime.hermetic", "ThreadRuntime composes and injects a thread-sc
     },
   ]);
 
+  const profile = buildProfile({
+    toolAllowlist: ["fs.read_text", "web.search"],
+  });
+  const expectedBundleId =
+    `bundle:reference:${fingerprintResolvedProfile(profile)}`;
   const runtime = new ThreadRuntime({
     sessionStore,
     executor,
-    profile: buildProfile({
-      toolAllowlist: ["fs.read_text", "web.search"],
-    }),
+    profile,
   });
 
   await runtime.startThread({
@@ -4078,7 +4082,7 @@ contractTest("runtime.hermetic", "ThreadRuntime composes and injects a thread-sc
   });
 
   const status = await runtime.getThreadStatus("thread-assembly");
-  assert.equal(status?.activeAssembly?.bundleId, "bundle:reference:default");
+  assert.equal(status?.activeAssembly?.bundleId, expectedBundleId);
   assert.deepEqual(status?.assemblyBundle?.toolAllowlist, ["fs.read_text", "web.search"]);
 
   await runtime.submitTurn({
@@ -4098,13 +4102,13 @@ contractTest("runtime.hermetic", "ThreadRuntime composes and injects a thread-sc
     bundleId?: string | undefined;
     toolAllowlist?: string[] | undefined;
   };
-  assert.equal(runtimeAssembly.bundleId, "bundle:reference:default");
+  assert.equal(runtimeAssembly.bundleId, expectedBundleId);
   assert.equal(runtimeAssembly.agentProfileId, "reference");
   assert.equal(runtimeAssembly.agentProfileLabel, "Reference");
   assert.equal(runtimeAssembly.environmentShellKind, "web");
   assert.equal(runtimeAssembly.environmentPresetId, "web_balanced");
   assert.deepEqual(runtimeAssembly.environmentCapabilityPackIds, ["balanced"]);
-  assert.equal(runtimeAssembly.effectiveAssemblyId, "bundle:reference:default");
+  assert.equal(runtimeAssembly.effectiveAssemblyId, expectedBundleId);
   assert.equal(runtimeAssembly.effectiveAssemblyLabel, "Reference on web:web_balanced");
   assert.deepEqual(runtimeAssembly.toolAllowlist, ["fs.read_text", "web.search"]);
 
@@ -4112,7 +4116,7 @@ contractTest("runtime.hermetic", "ThreadRuntime composes and injects a thread-sc
   assert.equal(history.length >= 1, true);
   assert.equal(status?.thread.agentProfileId, "reference");
   assert.equal(status?.thread.environmentPresetId, "web_balanced");
-  assert.equal(status?.thread.effectiveAssemblyId, "bundle:reference:default");
+  assert.equal(status?.thread.effectiveAssemblyId, expectedBundleId);
   const replay = await sessionStore.getReplayStream({
     runId: "run-assembly-1",
   });

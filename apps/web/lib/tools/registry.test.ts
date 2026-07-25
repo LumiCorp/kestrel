@@ -20,6 +20,10 @@ contractTest("web.hermetic", "tool registry includes seeded built-in and externa
     previews?.capabilities.map((capability) => capability.key),
     ["publish", "list", "renew", "close"],
   );
+  assert.match(
+    previews?.capabilities[0]?.description ?? "",
+    /copy the returned preview\.url byte-for-byte/u,
+  );
   assert.ok(providers.some((provider) => provider.key === "built_in.time"));
   assert.ok(
     providers.some((provider) => provider.key === "built_in.geocoding")

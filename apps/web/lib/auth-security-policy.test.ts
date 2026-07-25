@@ -48,7 +48,8 @@ const previewEnvironment: AuthSecurityEnvironment = {
   ...productionEnvironment,
   VERCEL: "1",
   VERCEL_ENV: "preview",
-  VERCEL_URL: "kestrel-git-preview-example.vercel.app",
+  VERCEL_BRANCH_URL: "kestrel-one-git-preview-example.vercel.app",
+  VERCEL_URL: "kestrel-immutable-preview-example.vercel.app",
 };
 
 function cookiesFor(environment: AuthSecurityEnvironment) {
@@ -132,13 +133,19 @@ contractTest(
 
 contractTest(
   "web.auth.preview-origin-isolation",
-  "the active Vercel preview is a Better Auth trusted origin",
+  "the active Vercel branch alias and immutable deployment URL are Better Auth trusted origins",
   () => {
     const policy = resolveAuthSecurityPolicy(previewEnvironment);
 
     assert.equal(
       policy.trustedOrigins.includes(
-        "https://kestrel-git-preview-example.vercel.app"
+        "https://kestrel-one-git-preview-example.vercel.app"
+      ),
+      true
+    );
+    assert.equal(
+      policy.trustedOrigins.includes(
+        "https://kestrel-immutable-preview-example.vercel.app"
       ),
       true
     );
@@ -153,7 +160,7 @@ contractTest(
       authorize({
         environment: previewEnvironment,
         headers: {
-          origin: "https://kestrel-git-preview-example.vercel.app",
+          origin: "https://kestrel-one-git-preview-example.vercel.app",
           "sec-fetch-site": "same-origin",
         },
       }),

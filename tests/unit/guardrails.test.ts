@@ -84,7 +84,7 @@ contractTest("runtime.hermetic", "Guardrails count maintenance model calls separ
     maxToolCallsPerRun: 5,
     maxModelCallsPerRun: 1,
     maxStepVisits: 2,
-    maxMaintenanceModelCallsPerRun: 2,
+    maxMaintenanceModelCallsPerRun: 4,
     maxConcurrentToolJobsPerRun: 2,
     maxConcurrentToolJobsGlobal: 4,
     maxQueuedToolJobsPerRun: 10,
@@ -94,12 +94,14 @@ contractTest("runtime.hermetic", "Guardrails count maintenance model calls separ
 
   guardrails.onModelCall("maintenance");
   guardrails.onModelCall("maintenance");
+  guardrails.onModelCall("maintenance");
+  guardrails.onModelCall("maintenance");
   guardrails.onModelCall("action");
 
   const telemetry = guardrails.telemetry();
-  assert.equal(telemetry.modelCalls, 3);
+  assert.equal(telemetry.modelCalls, 5);
   assert.equal(telemetry.actionModelCalls, 1);
-  assert.equal(telemetry.maintenanceModelCalls, 2);
+  assert.equal(telemetry.maintenanceModelCalls, 4);
   assert.throws(
     () => guardrails.onModelCall("action"),
     (error) => error instanceof GuardrailViolationError && error.code === "MAX_MODEL_CALLS_EXCEEDED",

@@ -11,6 +11,10 @@ contractTest(
   "runtime.hermetic",
   "Workspace preview tools call the governed Kestrel Edge lifecycle with the signed execution ticket",
   async () => {
+    assert.match(
+      workspacePreviewPublishTool.definition.description,
+      /copy the returned preview\.url byte-for-byte/u,
+    );
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
     const fetchImpl: typeof fetch = async (input, init) => {
       requests.push({ url: String(input), init });
