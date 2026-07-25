@@ -20,17 +20,33 @@ contractTest(
 
 contractTest(
   "web.hermetic",
-  "preview auth URLs use the Vercel deployment URL over production configuration",
+  "preview auth URLs use the Vercel branch alias over production configuration",
   () => {
     assert.equal(
       resolveKestrelAppUrl({
         VERCEL: "1",
         VERCEL_ENV: "preview",
-        VERCEL_URL: "preview-kestrel.vercel.app",
+        VERCEL_BRANCH_URL: "kestrel-one-git-feature-lumi-kestrel.vercel.app",
+        VERCEL_URL: "kestrel-immutable-lumi-kestrel.vercel.app",
         BETTER_AUTH_URL: KESTREL_APP_ORIGIN,
         NEXT_PUBLIC_APP_URL: KESTREL_APP_ORIGIN,
       }),
-      "https://preview-kestrel.vercel.app"
+      "https://kestrel-one-git-feature-lumi-kestrel.vercel.app"
+    );
+  }
+);
+
+contractTest(
+  "web.hermetic",
+  "preview auth URLs fall back to the immutable Vercel deployment URL",
+  () => {
+    assert.equal(
+      resolveKestrelAppUrl({
+        VERCEL: "1",
+        VERCEL_ENV: "preview",
+        VERCEL_URL: "kestrel-immutable-lumi-kestrel.vercel.app",
+      }),
+      "https://kestrel-immutable-lumi-kestrel.vercel.app"
     );
   }
 );
