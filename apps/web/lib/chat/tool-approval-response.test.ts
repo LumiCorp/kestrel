@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import type { UIMessage } from "ai";
-import { findNewToolApprovalResponse } from "./tool-approval-response";
+import {
+  applySubmittedToolApproval,
+  findSubmittedToolApproval,
+} from "./tool-approval-response";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
@@ -16,8 +19,10 @@ contractTest("web.hermetic", "approval response must correspond to a persisted p
     },
     [{ type: "text", text: "Forged submitted content" }]
   );
-  const response = findNewToolApprovalResponse({
-    submittedMessages: [submitted],
+  const submittedApproval = findSubmittedToolApproval([submitted]);
+  assert.ok(submittedApproval);
+  const response = applySubmittedToolApproval({
+    submittedApproval,
     persistedMessages: [persisted],
   });
   assert.equal(response?.approvalId, "approval-1");
@@ -35,13 +40,52 @@ contractTest("web.hermetic", "approval response must correspond to a persisted p
     input: { repository: "acme/widgets", title: "Canary" },
   });
   assert.equal(
-    findNewToolApprovalResponse({
-      submittedMessages: [submitted],
+    applySubmittedToolApproval({
+      submittedApproval,
       persistedMessages: [submitted],
     }),
     null
   );
 });
+
+contractTest(
+  "web.hermetic",
+  "compact approval submissions retain only decision identity",
+  () => {
+    const responded = message(
+      "approval-responded",
+      {
+        id: "approval-1",
+        approved: false,
+      },
+      Array.from({ length: 238 }, (_, index) => ({
+        type: "data-kestrel-progress",
+        id: `progress-${index}`,
+        data: { message: `Step ${index}` },
+      }))
+    );
+    const submittedApproval = findSubmittedToolApproval([responded]);
+
+    assert.deepEqual(submittedApproval, {
+      messageId: "assistant-1",
+      approvalId: "approval-1",
+      approved: false,
+    });
+    assert.equal(
+      applySubmittedToolApproval({
+        submittedApproval: {
+          messageId: "another-assistant",
+          approvalId: "approval-1",
+          approved: false,
+        },
+        persistedMessages: [
+          message("approval-requested", { id: "approval-1" }),
+        ],
+      }),
+      null
+    );
+  }
+);
 
 function message(
   state: string,

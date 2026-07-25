@@ -1,16 +1,13 @@
-import type { UIMessage } from "ai";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { decideAppOperationApprovalIfPresent } from "@/lib/apps/app-operation-approvals";
-import {
-  findNewToolApprovalResponse,
-  hasToolApprovalResponse,
-} from "@/lib/chat/tool-approval-response";
+import { threadTurnBodySchema } from "@/lib/chat/thread-turn-request-contract";
+import { applySubmittedToolApproval } from "@/lib/chat/tool-approval-response";
 import { resolveThreadEnvironment } from "@/lib/environments/store";
 import { decideGitHubActionApproval } from "@/lib/integrations/github-action-approvals";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
-import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
+import { routeIdSchema } from "@/lib/knowledge/validation";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { organizationSetupRequiredTurnResponse } from "@/lib/organizations/turn-readiness";
 import {
@@ -35,32 +32,6 @@ import {
 import { convertToUIMessages } from "@/lib/utils";
 
 const paramsSchema = z.object({ id: routeIdSchema });
-const turnBodySchema = z
-  .object({
-    model: z.string().min(1).max(200).optional(),
-    interactionMode: z.enum(KESTREL_ONE_INTERACTION_MODES).default("chat"),
-    projectId: routeIdSchema.nullable().optional(),
-    messages: z
-      .array(uiMessageSchema as z.ZodType<UIMessage>)
-      .max(200)
-      .default([]),
-    interactionResponse: z
-      .object({
-        // Runtime request IDs are opaque protocol identities, not database IDs.
-        requestId: z.string().trim().min(1).max(200),
-        eventType: z.string().trim().min(1).max(200),
-        message: z.string().trim().min(1).max(20_000),
-        approved: z.boolean().optional(),
-        reason: z.string().trim().max(2000).optional(),
-        messageId: routeIdSchema.optional(),
-      })
-      .optional(),
-  })
-  .refine(
-    (body) =>
-      body.messages.length > 0 || body.interactionResponse !== undefined,
-    { message: "A user message or interaction response is required." }
-  );
 const patchBodySchema = z
   .object({
     title: z.string().trim().min(1).max(200).optional(),
@@ -143,29 +114,17 @@ export async function POST(
   try {
     const { session, organizationId } = await requireActiveOrganization();
     const params = paramsSchema.parse(await context.params);
-    const body = turnBodySchema.parse(await request.json());
+    const body = threadTurnBodySchema.parse(await request.json());
     const user = session.user as { id: string; role?: string | null };
-    const submittedUserMessage = [...body.messages]
-      .reverse()
-      .find((message) => message.role === "user");
-    if (
-      !(
-        submittedUserMessage ||
-        hasToolApprovalResponse(body.messages) ||
-        body.interactionResponse
-      )
-    ) {
-      return NextResponse.json(
-        { error: "A user message is required." },
-        { status: 400 }
-      );
-    }
 
     let thread = await getThreadWithMessagesForUser(
       params.id,
       user.id,
       organizationId
     );
+    if (!(thread || body.message)) {
+      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+    }
     if (!thread) {
       const createdThread = await createThreadForUser({
         id: params.id,
@@ -221,16 +180,16 @@ export async function POST(
     const persistedMessageIds = new Set(
       persistedMessages.map((message) => message.id)
     );
-    const newUserMessage = [...body.messages]
-      .reverse()
-      .find(
-        (message) =>
-          message.role === "user" && !persistedMessageIds.has(message.id)
-      );
-    const approvalResponse = findNewToolApprovalResponse({
-      submittedMessages: body.messages,
-      persistedMessages,
-    });
+    const newUserMessage =
+      body.message && !persistedMessageIds.has(body.message.id)
+        ? body.message
+        : null;
+    const approvalResponse = body.approvalResponse
+      ? applySubmittedToolApproval({
+          submittedApproval: body.approvalResponse,
+          persistedMessages,
+        })
+      : null;
     if (!(newUserMessage || approvalResponse)) {
       return NextResponse.json(
         { error: "A new user message or approval response is required." },

@@ -38,6 +38,7 @@ import {
   readChatFirstTurnHandoff,
   writeChatFirstTurnHandoff,
 } from "@/lib/chat/first-turn-handoff";
+import { buildThreadTurnRequestBody } from "@/lib/chat/thread-turn-request";
 import { ChatbotError } from "@/lib/errors";
 import {
   emptyThreadConversationState,
@@ -96,12 +97,12 @@ function createChatTransport(
     prepareSendMessagesRequest(request) {
       return {
         api: `/api/threads/${request.id}`,
-        body: {
+        body: buildThreadTurnRequestBody({
+          body: request.body,
+          messages: request.messages,
           model: currentModelIdRef.current,
           interactionMode: interactionModeRef.current,
-          messages: request.messages,
-          ...request.body,
-        },
+        }),
       };
     },
     prepareReconnectToStreamRequest({ id }) {

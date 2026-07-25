@@ -42,7 +42,7 @@ contractTest(
     const gate = read("lib/organizations/turn-readiness.ts");
     assert.match(
       mainRoute,
-      /!persistedMessageIds\.has\(message\.id\)[\s\S]*if \(newUserMessage\)[\s\S]*organizationSetupRequiredTurnResponse/u,
+      /body\.message && !persistedMessageIds\.has\(body\.message\.id\)[\s\S]*if \(newUserMessage\)[\s\S]*organizationSetupRequiredTurnResponse/u,
     );
     assert.doesNotMatch(
       mainRoute,

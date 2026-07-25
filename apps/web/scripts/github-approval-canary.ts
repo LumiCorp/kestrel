@@ -1,5 +1,9 @@
 import type { UIMessage } from "ai";
 import {
+  findSubmittedToolApproval,
+  type SubmittedToolApproval,
+} from "../lib/chat/tool-approval-response";
+import {
   findGithubIssueApprovalRequest,
   hasGithubApprovalDecision,
   respondToGithubApproval,
@@ -25,8 +29,8 @@ const body = `Kestrel One approval-ledger canary ${nonce}. This request must be 
 const thread = await requestJson<ThreadResponse>(`/api/threads/${threadId}`);
 assert(thread.id === threadId, "The designated canary Thread is unavailable.");
 
-await submitTurn([
-  {
+await submitTurn({
+  message: {
     id: crypto.randomUUID(),
     role: "user",
     parts: [
@@ -42,7 +46,7 @@ await submitTurn([
       },
     ],
   },
-]);
+});
 
 const pendingThread = await requestJson<ThreadResponse>(
   `/api/threads/${threadId}`
@@ -58,13 +62,15 @@ assert(
   "The agent did not produce the exact GitHub issue approval request."
 );
 
-await submitTurn([
+const approvalResponse = findSubmittedToolApproval([
   respondToGithubApproval({
     request: approvalRequest!,
     approved: false,
     reason: `Kestrel approval-ledger canary denial ${nonce}`,
   }),
 ]);
+assert(Boolean(approvalResponse), "The approval response could not be encoded.");
+await submitTurn({ approvalResponse: approvalResponse! });
 
 const deniedThread = await requestJson<ThreadResponse>(
   `/api/threads/${threadId}`
@@ -99,12 +105,16 @@ process.stdout.write(
   ) + "\n"
 );
 
-async function submitTurn(messages: UIMessage[]) {
+async function submitTurn(
+  action:
+    | { message: UIMessage; approvalResponse?: never }
+    | { message?: never; approvalResponse: SubmittedToolApproval }
+) {
   const response = await fetch(new URL(`/api/threads/${threadId}`, baseUrl), {
     method: "POST",
     headers: requestHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({
-      messages,
+      ...action,
       ...(model ? { model } : {}),
     }),
     redirect: "manual",

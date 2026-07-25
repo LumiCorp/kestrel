@@ -7,56 +7,69 @@ export type ToolApprovalResponse = {
   reason?: string | undefined;
 };
 
-export function findNewToolApprovalResponse(input: {
-  submittedMessages: UIMessage[];
-  persistedMessages: UIMessage[];
-}): ToolApprovalResponse | null {
-  for (const submitted of [...input.submittedMessages].reverse()) {
-    if (submitted.role !== "assistant") continue;
-    const persisted = input.persistedMessages.find(
-      (message) => message.id === submitted.id && message.role === "assistant"
-    );
-    if (!persisted) continue;
-    for (const part of [...submitted.parts].reverse()) {
+export type SubmittedToolApproval = {
+  messageId: string;
+  approvalId: string;
+  approved: boolean;
+  reason?: string | undefined;
+};
+
+export function findSubmittedToolApproval(
+  messages: UIMessage[]
+): SubmittedToolApproval | null {
+  for (const message of [...messages].reverse()) {
+    if (message.role !== "assistant") continue;
+    for (const part of [...message.parts].reverse()) {
       const response = readRespondedApproval(part);
       if (!response) continue;
-      const pendingPartIndex = persisted.parts.findIndex((candidate) =>
-        isPendingApproval(candidate, response.approvalId)
-      );
-      if (pendingPartIndex === -1) continue;
-      const pendingPart = persisted.parts[pendingPartIndex];
-      if (!pendingPart) continue;
-      const parts = [...persisted.parts];
-      parts[pendingPartIndex] = {
-        ...pendingPart,
-        state: "approval-responded",
-        approval: {
-          id: response.approvalId,
-          approved: response.approved,
-          ...(response.reason ? { reason: response.reason } : {}),
-        },
-      } as UIMessage["parts"][number];
-      return {
-        assistantMessage: { ...persisted, parts },
-        ...response,
-      };
+      return { messageId: message.id, ...response };
     }
   }
   return null;
+}
+
+export function applySubmittedToolApproval(input: {
+  submittedApproval: SubmittedToolApproval;
+  persistedMessages: UIMessage[];
+}): ToolApprovalResponse | null {
+  const persisted = input.persistedMessages.find(
+    (message) =>
+      message.id === input.submittedApproval.messageId &&
+      message.role === "assistant"
+  );
+  if (!persisted) return null;
+  const pendingPartIndex = persisted.parts.findIndex((candidate) =>
+    isPendingApproval(candidate, input.submittedApproval.approvalId)
+  );
+  if (pendingPartIndex === -1) return null;
+  const pendingPart = persisted.parts[pendingPartIndex];
+  if (!pendingPart) return null;
+  const parts = [...persisted.parts];
+  parts[pendingPartIndex] = {
+    ...pendingPart,
+    state: "approval-responded",
+    approval: {
+      id: input.submittedApproval.approvalId,
+      approved: input.submittedApproval.approved,
+      ...(input.submittedApproval.reason
+        ? { reason: input.submittedApproval.reason }
+        : {}),
+    },
+  } as UIMessage["parts"][number];
+  return {
+    assistantMessage: { ...persisted, parts },
+    approvalId: input.submittedApproval.approvalId,
+    approved: input.submittedApproval.approved,
+    ...(input.submittedApproval.reason
+      ? { reason: input.submittedApproval.reason }
+      : {}),
+  };
 }
 
 function isPendingApproval(part: unknown, approvalId: string) {
   const record = asRecord(part);
   const approval = asRecord(record?.approval);
   return record?.state === "approval-requested" && approval?.id === approvalId;
-}
-
-export function hasToolApprovalResponse(messages: UIMessage[]) {
-  return messages.some(
-    (message) =>
-      message.role === "assistant" &&
-      message.parts.some((part) => readRespondedApproval(part) !== null)
-  );
 }
 
 function readRespondedApproval(part: unknown) {
