@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { TuiProfile } from "../../cli/contracts.js";
+import type { HarnessEconomicsControlV1 } from "../economics/contracts.js";
 import { DEFAULT_ACT_SUBMODE, DEFAULT_INTERACTION_MODE } from "../mode/contracts.js";
 import {
   buildRuntimeIdentityMetadata,
@@ -75,6 +76,59 @@ export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.vercel_list_deployments",
   "kestrel_one.vercel_deployment_events",
 ] as const);
+
+export const KESTREL_ONE_HOSTED_HARNESS_ECONOMICS =
+  Object.freeze({
+    version: 1,
+    policy: {
+      version: 1,
+      policyId: "economics:kestrel-one:workspace-hosted:v2",
+      mode: "observe",
+      counting: {
+        estimatorVersion: "utf8-byte-upper-bound:v1",
+        allowEstimatedEnforcement: false,
+      },
+      context: {
+        outputReserveTokens: 8_000,
+        safetyReserveTokens: 2_000,
+        sections: [
+          { id: "active-task", priority: "required" },
+          { id: "transcript", priority: "required" },
+        ],
+      },
+      compaction: {
+        requireStructuredAnchors: true,
+        maxSummaryAttempts: 2,
+      },
+      tools: {
+        exposure: "assembly_allowlist",
+        modelContextMaxTokens: 4_000,
+        allowedFamiliesByPhase: {},
+      },
+      cache: {
+        mode: "provider_default",
+      },
+    },
+    modelProfiles: [
+      {
+        version: 1,
+        profileId: "openrouter:z-ai/glm-5.2:v1",
+        provider: "openrouter",
+        model: "z-ai/glm-5.2",
+        contextWindowTokens: 1_000_000,
+        maxOutputTokens: 64_000,
+        counting: {
+          counter: "utf8-byte-upper-bound",
+          counterVersion: "1",
+          method: "conservative_estimate",
+          confidence: "conservative",
+        },
+        cache: {
+          behavior: "provider_automatic",
+        },
+      },
+    ],
+  } satisfies HarnessEconomicsControlV1);
 
 const DEFAULT_TOOL_QUEUE = Object.freeze({
   perRunConcurrency: 8,
@@ -226,7 +280,13 @@ export function composeKestrelOneProfile(
       : {}),
     ...(input.overlay?.harnessEconomics !== undefined
       ? { harnessEconomics: input.overlay.harnessEconomics }
-      : {}),
+      : input.environmentPresetId === "workspace_hosted"
+        ? {
+            harnessEconomics: structuredClone(
+              KESTREL_ONE_HOSTED_HARNESS_ECONOMICS,
+            ),
+          }
+        : {}),
     ...(input.overlay?.agentStageConfig !== undefined
       ? { agentStageConfig: input.overlay.agentStageConfig }
       : {}),

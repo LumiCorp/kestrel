@@ -6,27 +6,34 @@ import {
   AssemblyPolicyEvaluator,
   RuntimeComposer,
 } from "../../src/orchestration/index.js";
-import { composeKestrelOneProfile } from "../../src/profile/kestrelOnePolicy.js";
+import {
+  composeKestrelOneProfile,
+  fingerprintResolvedProfile,
+} from "../../src/profile/kestrelOnePolicy.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
 
 contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, specialist, and context policy definitions", async () => {
   const store = new InMemorySessionStore();
+  const profile = {
+    ...buildProfile({ toolAllowlist: ["fs.read_text", "web.search"] }),
+    harnessEconomics: economicsControl(),
+  };
+  const profileFingerprint = fingerprintResolvedProfile(profile);
+  const bundleId = `bundle:reference:${profileFingerprint}`;
+  const contextPolicyId = `context-policy:reference:${profileFingerprint}`;
   const catalog = new AssemblyCatalog({
     store,
-    profile: {
-      ...buildProfile({ toolAllowlist: ["fs.read_text", "web.search"] }),
-      harnessEconomics: economicsControl(),
-    },
+    profile,
   });
 
   const defaults = await catalog.ensureDefaults();
-  const persistedBundle = await catalog.resolveBundle("bundle:reference:default");
+  const persistedBundle = await catalog.resolveBundle(bundleId);
 
-  assert.equal(defaults.defaultBundle?.bundleId, "bundle:reference:default");
+  assert.equal(defaults.defaultBundle?.bundleId, bundleId);
   assert.equal(defaults.defaultBundle?.label, "Reference on web:web_balanced");
-  assert.equal(defaults.defaultContextPolicy.contextPolicyId, "context-policy:reference:default");
+  assert.equal(defaults.defaultContextPolicy.contextPolicyId, contextPolicyId);
   assert.equal(defaults.defaultContextPolicy.economicsPolicy?.mode, "observe");
   assert.equal(defaults.specialists[0]?.specialistId, "specialist:reference:delegation");
   assert.deepEqual(persistedBundle?.toolAllowlist, ["fs.read_text", "web.search"]);
@@ -35,12 +42,181 @@ contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, speci
   assert.equal(persistedBundle?.metadata?.environmentShellKind, "web");
   assert.equal(persistedBundle?.metadata?.environmentPresetId, "web_balanced");
   assert.deepEqual(persistedBundle?.metadata?.environmentCapabilityPackIds, ["balanced"]);
-  assert.equal(persistedBundle?.metadata?.effectiveAssemblyId, "bundle:reference:default");
+  assert.equal(persistedBundle?.metadata?.effectiveAssemblyId, bundleId);
   assert.equal(persistedBundle?.metadata?.effectiveAssemblyLabel, "Reference on web:web_balanced");
   assert.equal(persistedBundle?.metadata?.modelProvider, "openrouter");
   assert.equal(persistedBundle?.metadata?.promptVariant, "reference-react:chat");
   assert.equal(persistedBundle?.metadata?.compatibilityProfile, "router.chat");
   assert.deepEqual(persistedBundle?.metadata?.harnessEconomics, economicsControl());
+});
+
+contractTest("runtime.hermetic", "AssemblyCatalog fingerprints profile revisions and keeps prior defaults available", async () => {
+  const store = new InMemorySessionStore();
+  const firstProfile = {
+    ...buildProfile({ toolAllowlist: ["fs.read_text"] }),
+    harnessEconomics: economicsControl(1),
+  };
+  const secondProfile = {
+    ...buildProfile({ toolAllowlist: ["fs.read_text"] }),
+    harnessEconomics: economicsControl(2),
+  };
+  const firstCatalog = new AssemblyCatalog({ store, profile: firstProfile });
+  const first = await firstCatalog.ensureDefaults();
+  const repeated = await firstCatalog.ensureDefaults();
+  const second = await new AssemblyCatalog({
+    store,
+    profile: secondProfile,
+  }).ensureDefaults();
+
+  assert.equal(first.defaultBundle?.bundleId, repeated.defaultBundle?.bundleId);
+  assert.notEqual(first.defaultBundle?.bundleId, second.defaultBundle?.bundleId);
+  assert.notEqual(
+    first.defaultContextPolicy.contextPolicyId,
+    second.defaultContextPolicy.contextPolicyId,
+  );
+  assert.equal(
+    (
+      await store.getAssemblyBundle(
+        first.defaultBundle?.bundleId ?? "missing",
+      )
+    )?.metadata?.harnessEconomics !== undefined,
+    true,
+  );
+  assert.equal(
+    second.defaultContextPolicy.economicsPolicy?.compaction
+      .maxSummaryAttempts,
+    2,
+  );
+});
+
+contractTest("runtime.hermetic", "AssemblyCatalog rejects a conflicting definition under the same profile fingerprint", async () => {
+  const store = new InMemorySessionStore();
+  const profile = buildProfile({ toolAllowlist: ["fs.read_text"] });
+  const profileFingerprint = fingerprintResolvedProfile(profile);
+  const bundleId = `bundle:reference:${profileFingerprint}`;
+  await store.upsertAssemblyBundle({
+    bundleId,
+    label: "Conflicting definition",
+    source: "profile_default",
+    toolAllowlist: ["web.search"],
+    specialistIds: [],
+    createdAt: "2026-07-24T00:00:00.000Z",
+    updatedAt: "2026-07-24T00:00:00.000Z",
+  });
+
+  await assert.rejects(
+    () => new AssemblyCatalog({ store, profile }).ensureDefaults(),
+    (error: unknown) => {
+      assert.equal(
+        (error as { code?: unknown }).code,
+        "ASSEMBLY_BUNDLE_IMMUTABLE",
+      );
+      assert.match(
+        String((error as { message?: unknown }).message),
+        /already has a different definition/u,
+      );
+      return true;
+    },
+  );
+});
+
+contractTest("runtime.hermetic", "AssemblyCatalog rejects a conflicting context policy under the same profile fingerprint", async () => {
+  const store = new InMemorySessionStore();
+  const profile = buildProfile({ toolAllowlist: ["fs.read_text"] });
+  const profileFingerprint = fingerprintResolvedProfile(profile);
+  const contextPolicyId =
+    `context-policy:reference:${profileFingerprint}`;
+  await store.upsertContextPolicyDefinition({
+    contextPolicyId,
+    label: "Conflicting context policy",
+    defaultAction: "compact",
+    metadata: { source: "conflicting" },
+    createdAt: "2026-07-24T00:00:00.000Z",
+    updatedAt: "2026-07-24T00:00:00.000Z",
+  });
+
+  await assert.rejects(
+    () => new AssemblyCatalog({ store, profile }).ensureDefaults(),
+    (error: unknown) => {
+      assert.equal(
+        (error as { code?: unknown }).code,
+        "CONTEXT_POLICY_IMMUTABLE",
+      );
+      assert.match(
+        String((error as { message?: unknown }).message),
+        /already has a different definition/u,
+      );
+      return true;
+    },
+  );
+});
+
+contractTest("runtime.hermetic", "RuntimeComposer keeps existing threads pinned until an operator applies a new profile revision", async () => {
+  const store = new InMemorySessionStore();
+  const firstCatalog = new AssemblyCatalog({
+    store,
+    profile: {
+      ...buildProfile({ toolAllowlist: ["fs.read_text"] }),
+      harnessEconomics: economicsControl(1),
+    },
+  });
+  const firstDefaults = await firstCatalog.ensureDefaults();
+  const firstComposer = new RuntimeComposer({
+    store,
+    catalog: firstCatalog,
+    policyEvaluator: new AssemblyPolicyEvaluator(),
+  });
+  const thread = buildThread("thread-pinned-revision");
+  await store.ensureSession(thread.sessionId);
+  await store.upsertThread(thread);
+  const initial = await firstComposer.composeThreadAssembly({
+    thread,
+    cause: "thread_start",
+  });
+
+  const secondCatalog = new AssemblyCatalog({
+    store,
+    profile: {
+      ...buildProfile({ toolAllowlist: ["fs.read_text"] }),
+      harnessEconomics: economicsControl(2),
+    },
+  });
+  const secondDefaults = await secondCatalog.ensureDefaults();
+  const secondComposer = new RuntimeComposer({
+    store,
+    catalog: secondCatalog,
+    policyEvaluator: new AssemblyPolicyEvaluator(),
+  });
+  const stillPinned = await secondComposer.composeThreadAssembly({
+    thread,
+    cause: "turn_start",
+  });
+
+  assert.equal(initial.record.bundleId, firstDefaults.defaultBundle?.bundleId);
+  assert.equal(
+    stillPinned.record.bundleId,
+    firstDefaults.defaultBundle?.bundleId,
+  );
+  assert.notEqual(
+    stillPinned.record.bundleId,
+    secondDefaults.defaultBundle?.bundleId,
+  );
+
+  const migrated = await secondComposer.proposeAssemblyChange({
+    thread,
+    requestedBundleId: secondDefaults.defaultBundle?.bundleId,
+    proposedBy: "operator",
+    reason: "Adopt the two-attempt compaction policy.",
+  });
+  assert.equal(migrated.decision.result, "ALLOWED");
+  assert.equal(
+    migrated.activeAssembly?.bundleId,
+    secondDefaults.defaultBundle?.bundleId,
+  );
+  assert.equal(
+    (await secondComposer.getActiveAssembly(thread.threadId))?.record.bundleId,
+    secondDefaults.defaultBundle?.bundleId,
+  );
 });
 
 contractTest("runtime.hermetic", "AssemblyPolicyEvaluator rejects unknown bundles and requires approval for model widening", () => {
@@ -444,10 +620,13 @@ function buildProfile(input?: { toolAllowlist?: string[] | undefined }): TuiProf
   };
 }
 
-function economicsPolicy(): NonNullable<TuiProfile["harnessEconomics"]>["policy"] {
+function economicsPolicy(
+  maxSummaryAttempts: 1 | 2 = 1,
+): NonNullable<TuiProfile["harnessEconomics"]>["policy"] {
   return {
     version: 1,
-    policyId: "economics:reference:observe:v1",
+    policyId:
+      `economics:reference:observe:v${maxSummaryAttempts}`,
     mode: "observe",
     counting: { estimatorVersion: "utf8-byte-upper-bound:v1", allowEstimatedEnforcement: false },
     context: {
@@ -455,7 +634,7 @@ function economicsPolicy(): NonNullable<TuiProfile["harnessEconomics"]>["policy"
       safetyReserveTokens: 2_000,
       sections: [{ id: "active-task", priority: "required" }],
     },
-    compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
+    compaction: { requireStructuredAnchors: true, maxSummaryAttempts },
     tools: {
       exposure: "assembly_allowlist",
       modelContextMaxTokens: 4_000,
@@ -483,8 +662,14 @@ function economicsModelProfile(): NonNullable<TuiProfile["harnessEconomics"]>["m
   };
 }
 
-function economicsControl(): NonNullable<TuiProfile["harnessEconomics"]> {
-  return { version: 1, policy: economicsPolicy(), modelProfiles: [economicsModelProfile()] };
+function economicsControl(
+  maxSummaryAttempts: 1 | 2 = 1,
+): NonNullable<TuiProfile["harnessEconomics"]> {
+  return {
+    version: 1,
+    policy: economicsPolicy(maxSummaryAttempts),
+    modelProfiles: [economicsModelProfile()],
+  };
 }
 
 function buildThread(

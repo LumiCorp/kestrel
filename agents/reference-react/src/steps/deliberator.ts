@@ -58,8 +58,13 @@ import {
   parseKestrelCompactionSummaryV1,
   parseKestrelCompactionSufficiencyVerdictV1,
   type KestrelAgentCannotSatisfyReasonCode,
+  type KestrelAgentCompactionCorrectionV1,
   type KestrelAgentFinalizeStatus,
 } from "../../../../src/runtime/KestrelAgentContextBuilder.js";
+import {
+  RuntimeFailure,
+  createRuntimeFailure,
+} from "../../../../src/runtime/RuntimeFailure.js";
 import {
   appendAssistantToolCallsToTranscript,
   appendCorrectionToTranscript,
@@ -1135,55 +1140,39 @@ async function compactContextRequestIfNeeded(input: {
       ? configuredMaintenanceModel
       : input.config.agentModel
     : configuredMaintenanceModel;
-  const response = await input.io.useModel<ModelResponse<unknown>>({
-    model: maintenanceModel,
-    input: {
-      version: "compaction-v1",
-      taskInstruction: readActiveTaskGoalFromTranscript(input.contextRequest.transcript) ?? input.goal,
-    },
-    messages: buildKestrelAgentCompactionMessages({
-      contextMessages: input.contextRequest.contextMessages,
-      activeTaskItemId,
-      replacedItemIds,
-      sourceItems: compactionSource.items,
-    }),
-    responseFormat: "json",
-    responseSchema: buildKestrelCompactionSummarySchema(activeTaskItemId, replacedItemIds),
-    reasoning: { mode: "off" },
-    providerOptions: {
-      openrouter: { endpoint: "chat", toolChoice: "none" },
-      openai: { toolChoice: "none" },
-      anthropic: { toolChoice: "none" },
-    },
-    metadata: {
-      phase: "agent.compaction",
-      stepAgent: "agent.loop",
-      requestedModel: maintenanceModel,
-      ...(input.config.agentProvider !== undefined ? { requestedProvider: input.config.agentProvider } : {}),
-      modelRole: "compaction",
-      modelBudgetClass: "maintenance",
-      reasoningRetentionScope: input.config.reasoningRetentionScope ?? "default",
-      contextBuilder: input.contextRequest.metadata.builder,
-      contextBuilderVersion: input.contextRequest.metadata.version,
-      contextSections: input.contextRequest.metadata.manifestSections,
-    },
-  });
-  const summary = response.output ?? response.text;
-  const parsedSummary = parseKestrelCompactionSummaryV1(summary);
-  const compactedTranscript = buildKestrelAgentCompactedTranscript({
-    transcript: input.contextRequest.transcript,
-    summary: parsedSummary,
-  });
-  if (runtimeEconomics.policy?.mode === "enforce") {
-    const sufficiencyResponse = await input.io.useModel<ModelResponse<unknown>>({
+  const maxSummaryAttempts =
+    runtimeEconomics.policy?.compaction.maxSummaryAttempts ?? 1;
+  let correction: KestrelAgentCompactionCorrectionV1 | undefined;
+  let compactedTranscript:
+    | ReturnType<typeof buildKestrelAgentCompactedTranscript>
+    | undefined;
+  for (
+    let compactionAttempt = 1;
+    compactionAttempt <= maxSummaryAttempts;
+    compactionAttempt += 1
+  ) {
+    const compactionAttemptKind =
+      compactionAttempt === 1 ? "initial" : "correction";
+    const response = await input.io.useModel<ModelResponse<unknown>>({
       model: maintenanceModel,
-      input: { version: "compaction-sufficiency-v1" },
-      messages: buildKestrelCompactionSufficiencyMessages({
+      input: {
+        version: "compaction-v1",
+        taskInstruction:
+          readActiveTaskGoalFromTranscript(input.contextRequest.transcript) ??
+          input.goal,
+      },
+      messages: buildKestrelAgentCompactionMessages({
+        contextMessages: input.contextRequest.contextMessages,
+        activeTaskItemId,
+        replacedItemIds,
         sourceItems: compactionSource.items,
-        proposedSummary: parsedSummary,
+        ...(correction !== undefined ? { correction } : {}),
       }),
       responseFormat: "json",
-      responseSchema: KESTREL_COMPACTION_SUFFICIENCY_SCHEMA as unknown as Record<string, unknown>,
+      responseSchema: buildKestrelCompactionSummarySchema(
+        activeTaskItemId,
+        replacedItemIds,
+      ),
       reasoning: { mode: "off" },
       providerOptions: {
         openrouter: { endpoint: "chat", toolChoice: "none" },
@@ -1191,16 +1180,131 @@ async function compactContextRequestIfNeeded(input: {
         anthropic: { toolChoice: "none" },
       },
       metadata: {
-        phase: "agent.compaction.verify",
+        phase: "agent.compaction",
         stepAgent: "agent.loop",
         requestedModel: maintenanceModel,
         ...(input.config.agentProvider !== undefined ? { requestedProvider: input.config.agentProvider } : {}),
-        modelRole: "compaction_sufficiency",
+        modelRole: "compaction",
         modelBudgetClass: "maintenance",
         reasoningRetentionScope: input.config.reasoningRetentionScope ?? "default",
+        contextBuilder: input.contextRequest.metadata.builder,
+        contextBuilderVersion: input.contextRequest.metadata.version,
+        contextSections: input.contextRequest.metadata.manifestSections,
+        compactionAttempt,
+        maxSummaryAttempts,
+        compactionAttemptKind,
       },
     });
-    parseKestrelCompactionSufficiencyVerdictV1(sufficiencyResponse.output ?? sufficiencyResponse.text);
+    const summary = response.output ?? response.text;
+    let parsedSummary: ReturnType<
+      typeof parseKestrelCompactionSummaryV1
+    >;
+    let proposedTranscript: ReturnType<
+      typeof buildKestrelAgentCompactedTranscript
+    >;
+    try {
+      parsedSummary = parseKestrelCompactionSummaryV1(summary);
+      proposedTranscript = buildKestrelAgentCompactedTranscript({
+        transcript: input.contextRequest.transcript,
+        summary: parsedSummary,
+      });
+    } catch (error) {
+      const failure = readCompactionFailure(error);
+      if (failure === undefined) {
+        throw error;
+      }
+      if (compactionAttempt < maxSummaryAttempts) {
+        correction = {
+          source: "summary_validation",
+          reason: failure.message,
+          rejectedResponse: summary,
+        };
+        continue;
+      }
+      throw annotateCompactionFailure(failure, {
+        compactionAttempt,
+        maxSummaryAttempts,
+        failureSource: "summary_validation",
+      });
+    }
+    if (runtimeEconomics.policy !== undefined) {
+      const sufficiencyResponse = await input.io.useModel<
+        ModelResponse<unknown>
+      >({
+        model: maintenanceModel,
+        input: { version: "compaction-sufficiency-v1" },
+        messages: buildKestrelCompactionSufficiencyMessages({
+          sourceItems: compactionSource.items,
+          proposedSummary: parsedSummary,
+        }),
+        responseFormat: "json",
+        responseSchema:
+          KESTREL_COMPACTION_SUFFICIENCY_SCHEMA as unknown as Record<
+            string,
+            unknown
+          >,
+        reasoning: { mode: "off" },
+        providerOptions: {
+          openrouter: { endpoint: "chat", toolChoice: "none" },
+          openai: { toolChoice: "none" },
+          anthropic: { toolChoice: "none" },
+        },
+        metadata: {
+          phase: "agent.compaction.verify",
+          stepAgent: "agent.loop",
+          requestedModel: maintenanceModel,
+          ...(input.config.agentProvider !== undefined
+            ? { requestedProvider: input.config.agentProvider }
+            : {}),
+          modelRole: "compaction_sufficiency",
+          modelBudgetClass: "maintenance",
+          reasoningRetentionScope:
+            input.config.reasoningRetentionScope ?? "default",
+          compactionAttempt,
+          maxSummaryAttempts,
+          compactionAttemptKind,
+        },
+      });
+      try {
+        parseKestrelCompactionSufficiencyVerdictV1(
+          sufficiencyResponse.output ?? sufficiencyResponse.text,
+        );
+      } catch (error) {
+        const failure = readCompactionFailure(error);
+        if (
+          failure === undefined ||
+          failure.details?.reason !== "semantic_verifier_rejected"
+        ) {
+          throw error;
+        }
+        if (compactionAttempt < maxSummaryAttempts) {
+          const verifierCategories = readVerifierCategories(failure);
+          correction = {
+            source: "semantic_verifier",
+            reason: failure.message,
+            rejectedResponse: parsedSummary,
+            ...(verifierCategories !== undefined
+              ? { verifierCategories }
+              : {}),
+          };
+          continue;
+        }
+        throw annotateCompactionFailure(failure, {
+          compactionAttempt,
+          maxSummaryAttempts,
+          failureSource: "semantic_verifier",
+        });
+      }
+    }
+    compactedTranscript = proposedTranscript;
+    break;
+  }
+  if (compactedTranscript === undefined) {
+    throw createRuntimeFailure(
+      "HARNESS_ECONOMICS_COMPACTION_INSUFFICIENT",
+      "Compaction attempts were exhausted without an accepted summary.",
+      { maxSummaryAttempts },
+    );
   }
   return buildContextRequest({
     reactState: {
@@ -1236,6 +1340,62 @@ async function compactContextRequestIfNeeded(input: {
         }
       : {}),
   });
+}
+
+function readCompactionFailure(error: unknown): RuntimeFailure | undefined {
+  return error instanceof RuntimeFailure &&
+    error.code === "HARNESS_ECONOMICS_COMPACTION_INSUFFICIENT"
+    ? error
+    : undefined;
+}
+
+function annotateCompactionFailure(
+  failure: RuntimeFailure,
+  input: {
+    compactionAttempt: number;
+    maxSummaryAttempts: number;
+    failureSource: KestrelAgentCompactionCorrectionV1["source"];
+  },
+): RuntimeFailure {
+  return createRuntimeFailure(failure.code, failure.message, {
+    ...(failure.details ?? {}),
+    compactionAttempt: input.compactionAttempt,
+    maxSummaryAttempts: input.maxSummaryAttempts,
+    failureSource: input.failureSource,
+    correctionExhausted:
+      input.compactionAttempt >= input.maxSummaryAttempts,
+  });
+}
+
+function readVerifierCategories(
+  failure: RuntimeFailure,
+):
+  | NonNullable<
+      KestrelAgentCompactionCorrectionV1["verifierCategories"]
+    >
+  | undefined {
+  const value = failure.details?.verifierCategories;
+  const record = asRecord(value);
+  if (record === undefined) {
+    return undefined;
+  }
+  const fields = [
+    "activeTask",
+    "decisions",
+    "constraints",
+    "evidence",
+    "fileState",
+    "blockers",
+    "nextActions",
+  ] as const;
+  if (fields.some((field) => typeof record[field] !== "boolean")) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    fields.map((field) => [field, record[field]]),
+  ) as NonNullable<
+    KestrelAgentCompactionCorrectionV1["verifierCategories"]
+  >;
 }
 
 function readDeliberatorPromptInput(input: Record<string, unknown>): {

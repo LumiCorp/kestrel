@@ -17,6 +17,7 @@ import { normalizeContinuationOffer, type ContinuationOfferV1 } from "../../src/
 import { createRuntimeContinuationState } from "../../src/runtime/continuationState.js";
 import { stringifySanitizedJson } from "../../src/runtime/jsonSanitizer.js";
 import { appendUserTurnToTranscript, readActiveTaskGoalFromTranscript } from "../../src/runtime/modelTranscript.js";
+import { planKestrelAgentCompaction } from "../../src/runtime/KestrelAgentContextBuilder.js";
 import { contractTest } from "../helpers/contract-test.js";
 
 
@@ -455,6 +456,127 @@ function phaseScopedEconomicsControl(mode: "observe" | "enforce") {
       },
       cache: { behavior: "none" as const },
     }],
+  };
+}
+
+function compactionRetryTranscript() {
+  return {
+    version: 1 as const,
+    windowId: 1,
+    items: Array.from({ length: 27 }, (_, index) => ({
+      id: `item-${index}`,
+      createdAt:
+        `2026-07-24T12:00:${String(index).padStart(2, "0")}.000Z`,
+      kind:
+        index === 0
+          ? "user" as const
+          : "assistant_text" as const,
+      content:
+        index === 0
+          ? "Preserve the active task while compacting."
+          : `Durable evidence ${index}.`,
+    })),
+  };
+}
+
+function compactionRetryContext(
+  transcript: ReturnType<typeof compactionRetryTranscript>,
+  maxSummaryAttempts: 1 | 2,
+  mode: "observe" | "enforce" = "enforce",
+): StepContext {
+  const ctx = context();
+  ctx.event.payload = {
+    runtimeAssembly: {
+      modelProvider: "test-provider",
+      model: "test/agent",
+      harnessEconomics: {
+        version: 1,
+        policy: {
+          ...phaseScopedEconomicsPolicy(mode),
+          policyId: `economics:test:compaction:${maxSummaryAttempts}`,
+          compaction: {
+            requireStructuredAnchors: true,
+            maxSummaryAttempts,
+          },
+        },
+        modelProfiles: [{
+          version: 1,
+          profileId: "test-provider:test-agent:v1",
+          provider: "test-provider",
+          model: "test/agent",
+          contextWindowTokens: 10_000,
+          maxOutputTokens: 1_000,
+          counting: {
+            counter: "tiktoken:o200k_base",
+            counterVersion: "1.0.21",
+            method: "model_tokenizer",
+            confidence: "model_compatible",
+          },
+          cache: { behavior: "none" },
+        }],
+      },
+    },
+  };
+  ctx.session.state.agent = {
+    goal: "Preserve the active task while compacting.",
+    modelTranscript: transcript,
+  };
+  return ctx;
+}
+
+function largeCompactionTool(): ModelToolSpec {
+  return {
+    ...READ_TEXT_TOOL,
+    description: "Read a text file. " + "schema ".repeat(10_000),
+  };
+}
+
+function compactionCapabilityManifest() {
+  return [{
+    name: "fs.read_text",
+    description: "Read a text file",
+    capabilityClasses: ["filesystem.read"],
+    executionClass: "read_only" as const,
+    toolFamily: "filesystem",
+  }];
+}
+
+function compactionSummary(
+  activeTaskItemId: string,
+  coveredItemIds: string[],
+  anchorItemIds: string[],
+  text = "Preserved durable evidence.",
+) {
+  return {
+    version: 1,
+    activeTaskItemId,
+    decisions: [],
+    constraints: [],
+    evidence:
+      anchorItemIds.length === 0
+        ? []
+        : [{ text, sourceItemIds: anchorItemIds }],
+    fileState: [],
+    blockers: [],
+    nextActions: [],
+    coveredItemIds,
+  };
+}
+
+function sufficientCompactionVerdict() {
+  return {
+    version: 1,
+    sufficient: true,
+    categories: {
+      activeTask: true,
+      decisions: true,
+      constraints: true,
+      evidence: true,
+      fileState: true,
+      blockers: true,
+      nextActions: true,
+    },
+    reason: "All required categories remain available.",
   };
 }
 
@@ -2117,6 +2239,435 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
   assert.match(JSON.stringify(finalRequest.messages), /Retry guidance: call a concrete tool/u);
   const agentPatch = transition.statePatch?.agent as Record<string, unknown>;
   assert.equal(readActiveTaskGoalFromTranscript(agentPatch.modelTranscript), originalTask);
+});
+
+contractTest("runtime.hermetic", "agent loop corrects missing compaction anchors with the same maintenance model", async () => {
+  const requests: ModelRequest[] = [];
+  const transcript = compactionRetryTranscript();
+  const plan = planKestrelAgentCompaction(transcript);
+  const missingAnchorItemId = plan.replacedItemIds.at(-1);
+  assert.ok(missingAnchorItemId);
+  const ctx = compactionRetryContext(transcript, 2);
+
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(ctx, {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        const attempt = request.metadata.compactionAttempt;
+        return {
+          output: compactionSummary(
+            plan.activeTaskItemId,
+            plan.replacedItemIds,
+            attempt === 1
+              ? plan.replacedItemIds.filter(
+                  (itemId) => itemId !== missingAnchorItemId,
+                )
+              : plan.replacedItemIds,
+          ),
+        } as ModelResponse<unknown>;
+      }
+      if (request.metadata?.phase === "agent.compaction.verify") {
+        return {
+          output: sufficientCompactionVerdict(),
+        } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue after corrected compaction.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  const compactionRequests = requests.filter(
+    (request) => request.metadata?.phase === "agent.compaction",
+  );
+  const verificationRequests = requests.filter(
+    (request) => request.metadata?.phase === "agent.compaction.verify",
+  );
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(compactionRequests.length, 2);
+  assert.equal(verificationRequests.length, 1);
+  assert.deepEqual(
+    compactionRequests.map((request) => [
+      request.metadata?.compactionAttempt,
+      request.metadata?.maxSummaryAttempts,
+      request.metadata?.compactionAttemptKind,
+      request.metadata?.modelBudgetClass,
+    ]),
+    [
+      [1, 2, "initial", "maintenance"],
+      [2, 2, "correction", "maintenance"],
+    ],
+  );
+  assert.deepEqual(
+    [...compactionRequests, ...verificationRequests].map(
+      (request) => request.model,
+    ),
+    ["test/agent", "test/agent", "test/agent"],
+  );
+  const correctionMessage = compactionRequests[1]?.messages?.at(-1)?.content;
+  assert.equal(typeof correctionMessage, "string");
+  assert.match(correctionMessage as string, /complete corrected replacement/u);
+  assert.match(correctionMessage as string, new RegExp(missingAnchorItemId, "u"));
+  assert.match(correctionMessage as string, /Previous rejected response/u);
+});
+
+contractTest("runtime.hermetic", "configured observe policy still verifies accepted compaction", async () => {
+  const requests: ModelRequest[] = [];
+  const transcript = {
+    ...compactionRetryTranscript(),
+    items: compactionRetryTranscript().items.map((item) => ({
+      ...item,
+      content: item.content.repeat(300),
+    })),
+  };
+  const plan = planKestrelAgentCompaction(transcript);
+
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(compactionRetryContext(transcript, 2, "observe"), {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        return {
+          output: compactionSummary(
+            plan.activeTaskItemId,
+            plan.replacedItemIds,
+            plan.replacedItemIds,
+          ),
+        } as ModelResponse<unknown>;
+      }
+      if (request.metadata?.phase === "agent.compaction.verify") {
+        return {
+          output: sufficientCompactionVerdict(),
+        } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue after verified observe-mode compaction.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(
+    requests.filter(
+      (request) => request.metadata?.phase === "agent.compaction.verify",
+    ).length,
+    1,
+  );
+});
+
+contractTest("runtime.hermetic", "agent loop corrects invalid JSON and unknown compaction provenance", async () => {
+  for (const scenario of [
+    {
+      name: "invalid-json",
+      firstResponse: () => "not-json",
+      expectedCorrection: /must be valid JSON/u,
+    },
+    {
+      name: "unknown-anchor",
+      firstResponse: (
+        activeTaskItemId: string,
+        replacedItemIds: string[],
+      ) => compactionSummary(
+        activeTaskItemId,
+        replacedItemIds,
+        [...replacedItemIds, "item-invented"],
+      ),
+      expectedCorrection: /unknown semantic anchor item ids.*item-invented/u,
+    },
+    {
+      name: "duplicate-coverage",
+      firstResponse: (
+        activeTaskItemId: string,
+        replacedItemIds: string[],
+      ) => compactionSummary(
+        activeTaskItemId,
+        [
+          ...replacedItemIds.slice(0, 1),
+          ...replacedItemIds.slice(0, 1),
+        ],
+        replacedItemIds.slice(0, 1),
+      ),
+      expectedCorrection: /coveredItemIds contains duplicate item ids/u,
+    },
+  ]) {
+    const requests: ModelRequest[] = [];
+    const transcript = compactionRetryTranscript();
+    const plan = planKestrelAgentCompaction(transcript);
+    const transition = await buildStep({
+      tools: [largeCompactionTool()],
+      capabilityManifest: compactionCapabilityManifest(),
+    })(compactionRetryContext(transcript, 2), {
+      useModel: async (request) => {
+        requests.push(request);
+        if (request.metadata?.phase === "agent.compaction") {
+          return {
+            output:
+              request.metadata.compactionAttempt === 1
+                ? scenario.firstResponse(
+                    plan.activeTaskItemId,
+                    plan.replacedItemIds,
+                  )
+                : compactionSummary(
+                    plan.activeTaskItemId,
+                    plan.replacedItemIds,
+                    plan.replacedItemIds,
+                  ),
+          } as ModelResponse<unknown>;
+        }
+        if (request.metadata?.phase === "agent.compaction.verify") {
+          return {
+            output: sufficientCompactionVerdict(),
+          } as ModelResponse<unknown>;
+        }
+        return modelResponse({
+          reason: `Continue after ${scenario.name} correction.`,
+          nextAction: {
+            kind: "tool",
+            name: "fs.read_text",
+            input: { path: "README.md" },
+          },
+        });
+      },
+    } satisfies StepIO);
+
+    assert.equal(transition.status, "RUNNING");
+    const compactionRequests = requests.filter(
+      (request) => request.metadata?.phase === "agent.compaction",
+    );
+    assert.equal(compactionRequests.length, 2);
+    assert.match(
+      String(compactionRequests[1]?.messages?.at(-1)?.content),
+      scenario.expectedCorrection,
+    );
+  }
+});
+
+contractTest("runtime.hermetic", "agent loop regenerates and reverifies a semantically rejected compaction", async () => {
+  const requests: ModelRequest[] = [];
+  const transcript = compactionRetryTranscript();
+  const plan = planKestrelAgentCompaction(transcript);
+  const ctx = compactionRetryContext(transcript, 2);
+
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(ctx, {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        return {
+          output: compactionSummary(
+            plan.activeTaskItemId,
+            plan.replacedItemIds,
+            plan.replacedItemIds,
+            request.metadata.compactionAttempt === 1
+              ? "Initial compact evidence."
+              : "Corrected compact evidence.",
+          ),
+        } as ModelResponse<unknown>;
+      }
+      if (request.metadata?.phase === "agent.compaction.verify") {
+        return {
+          output:
+            request.metadata.compactionAttempt === 1
+              ? {
+                  ...sufficientCompactionVerdict(),
+                  sufficient: false,
+                  categories: {
+                    ...sufficientCompactionVerdict().categories,
+                    evidence: false,
+                  },
+                  reason: "The evidence is too weak.",
+                }
+              : sufficientCompactionVerdict(),
+        } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue after verifier-approved compaction.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  const maintenanceRequests = requests.filter(
+    (request) => request.metadata?.modelBudgetClass === "maintenance",
+  );
+  assert.equal(transition.status, "RUNNING");
+  assert.deepEqual(
+    maintenanceRequests.map((request) => [
+      request.metadata?.phase,
+      request.metadata?.compactionAttempt,
+      request.metadata?.compactionAttemptKind,
+    ]),
+    [
+      ["agent.compaction", 1, "initial"],
+      ["agent.compaction.verify", 1, "initial"],
+      ["agent.compaction", 2, "correction"],
+      ["agent.compaction.verify", 2, "correction"],
+    ],
+  );
+  assert.equal(
+    maintenanceRequests.every((request) => request.model === "test/agent"),
+    true,
+  );
+  const correctionMessage = maintenanceRequests[2]?.messages?.at(-1)?.content;
+  assert.equal(typeof correctionMessage, "string");
+  assert.match(correctionMessage as string, /semantic_verifier/u);
+  assert.match(correctionMessage as string, /The evidence is too weak/u);
+  assert.match(correctionMessage as string, /"evidence":false/u);
+});
+
+contractTest("runtime.hermetic", "agent loop exhausts two invalid summaries without mutating the transcript", async () => {
+  const requests: ModelRequest[] = [];
+  const transcript = compactionRetryTranscript();
+  const originalTranscript = structuredClone(transcript);
+  const plan = planKestrelAgentCompaction(transcript);
+  const ctx = compactionRetryContext(transcript, 2);
+
+  await assert.rejects(
+    () => buildStep({
+      tools: [largeCompactionTool()],
+      capabilityManifest: compactionCapabilityManifest(),
+    })(ctx, {
+      useModel: async (request) => {
+        requests.push(request);
+        return {
+          output: compactionSummary(
+            plan.activeTaskItemId,
+            plan.replacedItemIds,
+            [],
+          ),
+        } as ModelResponse<unknown>;
+      },
+    } satisfies StepIO),
+    (error: unknown) => {
+      const failure = error as {
+        code?: unknown;
+        details?: Record<string, unknown>;
+      };
+      assert.equal(
+        failure.code,
+        "HARNESS_ECONOMICS_COMPACTION_INSUFFICIENT",
+      );
+      assert.equal(failure.details?.compactionAttempt, 2);
+      assert.equal(failure.details?.maxSummaryAttempts, 2);
+      assert.equal(failure.details?.correctionExhausted, true);
+      assert.deepEqual(
+        failure.details?.missingAnchorItemIds,
+        plan.replacedItemIds,
+      );
+      return true;
+    },
+  );
+
+  assert.equal(
+    requests.filter(
+      (request) => request.metadata?.phase === "agent.compaction",
+    ).length,
+    2,
+  );
+  assert.deepEqual(
+    (ctx.session.state.agent as Record<string, unknown>).modelTranscript,
+    originalTranscript,
+  );
+});
+
+contractTest("runtime.hermetic", "agent loop preserves one-attempt compaction policy behavior", async () => {
+  const requests: ModelRequest[] = [];
+  const transcript = compactionRetryTranscript();
+  const plan = planKestrelAgentCompaction(transcript);
+  await assert.rejects(
+    () => buildStep({
+      tools: [largeCompactionTool()],
+      capabilityManifest: compactionCapabilityManifest(),
+    })(compactionRetryContext(transcript, 1), {
+      useModel: async (request) => {
+        requests.push(request);
+        return {
+          output: compactionSummary(
+            plan.activeTaskItemId,
+            plan.replacedItemIds,
+            [],
+          ),
+        } as ModelResponse<unknown>;
+      },
+    } satisfies StepIO),
+    (error: unknown) => {
+      const details = (error as { details?: Record<string, unknown> }).details;
+      assert.equal(details?.compactionAttempt, 1);
+      assert.equal(details?.maxSummaryAttempts, 1);
+      assert.equal(details?.correctionExhausted, true);
+      return true;
+    },
+  );
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.metadata?.compactionAttemptKind, "initial");
+});
+
+contractTest("runtime.hermetic", "agent loop does not retry provider failures or malformed verifier responses", async () => {
+  const transcript = compactionRetryTranscript();
+  const plan = planKestrelAgentCompaction(transcript);
+  const providerRequests: ModelRequest[] = [];
+  const providerFailure = new Error("maintenance provider unavailable");
+  await assert.rejects(
+    () => buildStep({
+      tools: [largeCompactionTool()],
+      capabilityManifest: compactionCapabilityManifest(),
+    })(compactionRetryContext(transcript, 2), {
+      useModel: async (request) => {
+        providerRequests.push(request);
+        throw providerFailure;
+      },
+    } satisfies StepIO),
+    (error: unknown) => error === providerFailure,
+  );
+  assert.equal(providerRequests.length, 1);
+
+  const malformedRequests: ModelRequest[] = [];
+  await assert.rejects(
+    () => buildStep({
+      tools: [largeCompactionTool()],
+      capabilityManifest: compactionCapabilityManifest(),
+    })(compactionRetryContext(transcript, 2), {
+      useModel: async (request) => {
+        malformedRequests.push(request);
+        if (request.metadata?.phase === "agent.compaction") {
+          return {
+            output: compactionSummary(
+              plan.activeTaskItemId,
+              plan.replacedItemIds,
+              plan.replacedItemIds,
+            ),
+          } as ModelResponse<unknown>;
+        }
+        return { output: "not-json" } as ModelResponse<unknown>;
+      },
+    } satisfies StepIO),
+    /must be valid JSON/u,
+  );
+  assert.deepEqual(
+    malformedRequests.map((request) => request.metadata?.phase),
+    ["agent.compaction", "agent.compaction.verify"],
+  );
 });
 
 contractTest("runtime.hermetic", "enforced compaction verifies semantics and avoids an undersized maintenance model", async () => {

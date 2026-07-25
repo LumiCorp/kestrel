@@ -702,7 +702,7 @@ contractTest("runtime.hermetic", "Kestrel compaction fails closed when a replace
       nextActions: [],
       coveredItemIds: [],
     },
-  }), /does not preserve replaced item/u);
+  }), /replaced item ids missing from coveredItemIds/u);
 });
 
 contractTest("runtime.hermetic", "Kestrel compaction fails closed when duplicate covered ids hide a replaced item", () => {
@@ -733,7 +733,38 @@ contractTest("runtime.hermetic", "Kestrel compaction fails closed when duplicate
       nextActions: [],
       coveredItemIds: ["item-1", "item-1"],
     },
-  }), /does not preserve replaced item 'item-2'/u);
+  }), /coveredItemIds contains duplicate item ids \["item-1"\]/u);
+});
+
+contractTest("runtime.hermetic", "Kestrel compaction rejects unknown semantic anchor ids", () => {
+  const transcript = {
+    version: 1,
+    windowId: 1,
+    items: Array.from({ length: 27 }, (_, index) => ({
+      id: `item-${index}`,
+      createdAt: `2026-07-22T00:00:${String(index).padStart(2, "0")}.000Z`,
+      kind: index === 0 ? "user" as const : "assistant_text" as const,
+      content: index === 0 ? "Active task" : `Evidence ${index}`,
+    })),
+  };
+
+  assert.throws(() => buildKestrelAgentCompactedTranscript({
+    transcript,
+    summary: {
+      version: 1,
+      activeTaskItemId: "item-0",
+      decisions: [],
+      constraints: [],
+      evidence: [{
+        text: "Preserved evidence with invented provenance.",
+        sourceItemIds: ["item-1", "item-2", "item-invented"],
+      }],
+      fileState: [],
+      blockers: [],
+      nextActions: [],
+      coveredItemIds: ["item-1", "item-2"],
+    },
+  }), /unknown semantic anchor item ids \["item-invented"\]/u);
 });
 
 contractTest("runtime.hermetic", "Kestrel compaction keeps paired tool provenance machine-only", () => {
