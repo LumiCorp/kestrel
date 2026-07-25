@@ -536,6 +536,74 @@ type PreparedWorkspaceBackup =
       backupId: string;
     };
 
+type WorkspaceBackupTransaction = Parameters<
+  Parameters<typeof knowledgeDb.transaction>[0]
+>[0];
+
+async function hasActiveWorkspaceExecutionOwnership(
+  transaction: WorkspaceBackupTransaction,
+  input: {
+    organizationId: string;
+    environmentId: string;
+    workspaceId: string;
+  },
+) {
+  const activeExecution =
+    await transaction.query.environmentRunExecutions.findFirst({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.workspaceId, input.workspaceId),
+          inArray(table.status, ["routed", "running"]),
+        ),
+      columns: { id: true },
+    });
+  if (activeExecution) return true;
+
+  const [activeTurn] = await transaction
+    .select({ id: schema.threadTurns.id })
+    .from(schema.threadTurns)
+    .innerJoin(
+      schema.threadExecutionBindings,
+      and(
+        eq(
+          schema.threadExecutionBindings.threadId,
+          schema.threadTurns.threadId,
+        ),
+        eq(
+          schema.threadExecutionBindings.organizationId,
+          schema.threadTurns.organizationId,
+        ),
+      ),
+    )
+    .innerJoin(
+      schema.threadTurnQueueState,
+      and(
+        eq(
+          schema.threadTurnQueueState.threadId,
+          schema.threadTurns.threadId,
+        ),
+        eq(schema.threadTurnQueueState.activeTurnId, schema.threadTurns.id),
+        eq(schema.threadTurnQueueState.state, "running"),
+      ),
+    )
+    .where(
+      and(
+        eq(schema.threadTurns.organizationId, input.organizationId),
+        eq(schema.threadTurns.requestedEnvironmentId, input.environmentId),
+        inArray(schema.threadTurns.status, ["queued", "running"]),
+        eq(
+          schema.threadExecutionBindings.environmentId,
+          input.environmentId,
+        ),
+        eq(schema.threadExecutionBindings.workspaceId, input.workspaceId),
+      ),
+    )
+    .limit(1);
+  return Boolean(activeTurn);
+}
+
 async function prepareWorkspaceBackup(input: {
   organizationId: string;
   environmentId: string;
@@ -608,37 +676,29 @@ async function prepareWorkspaceBackup(input: {
         );
         if (
           input.executionOwnership === "queue" &&
-          input.initialStatus !== "queued"
+          input.initialStatus !== "queued" &&
+          (await hasActiveWorkspaceExecutionOwnership(transaction, {
+            organizationId: input.organizationId,
+            environmentId: input.environmentId,
+            workspaceId: input.workspaceId,
+          }))
         ) {
-          const activeExecution =
-            await transaction.query.environmentRunExecutions.findFirst({
-              where: (table, { and, eq, inArray }) =>
-                and(
-                  eq(table.organizationId, input.organizationId),
-                  eq(table.environmentId, input.environmentId),
-                  eq(table.workspaceId, input.workspaceId),
-                  inArray(table.status, ["routed", "running"]),
-                ),
-              columns: { id: true },
-            });
-          if (activeExecution) {
-            deferredForExecution = true;
-            await transaction
-              .update(schema.environmentOperations)
-              .set({
-                status: "queued",
-                stage: "workspace.backup.waiting_for_execution",
-                startedAt: null,
-                completedAt: null,
-                updatedAt: input.now,
-              })
-              .where(eq(schema.environmentOperations.id, existingOperation.id));
-            await transaction
-              .update(schema.workspaceBackups)
-              .set({ status: "queued", updatedAt: input.now })
-              .where(eq(schema.workspaceBackups.id, existingBackup.id));
-            return;
-          }
+          deferredForExecution = true;
+          await transaction
+            .update(schema.environmentOperations)
+            .set({
+              status: "queued",
+              stage: "workspace.backup.waiting_for_execution",
+              startedAt: null,
+              completedAt: null,
+              updatedAt: input.now,
+            })
+            .where(eq(schema.environmentOperations.id, existingOperation.id));
+          await transaction
+            .update(schema.workspaceBackups)
+            .set({ status: "queued", updatedAt: input.now })
+            .where(eq(schema.workspaceBackups.id, existingBackup.id));
+          return;
         }
         await transaction
           .update(schema.environmentOperations)
