@@ -1,5 +1,5 @@
 import { getSessionCookie } from "better-auth/cookies";
-import { resolveKestrelAppUrl } from "./app-url";
+import { resolveKestrelAppUrl, resolveVercelPreviewOrigins } from "./app-url";
 
 const LOCAL_DEV_ORIGINS = [3000, 3001, 3100, 43_103].flatMap((port) => [
   `http://localhost:${port}`,
@@ -14,6 +14,7 @@ export type AuthSecurityEnvironment = {
   NEXT_PUBLIC_APP_URL?: string;
   NODE_ENV?: string;
   VERCEL?: string;
+  VERCEL_BRANCH_URL?: string;
   VERCEL_ENV?: string;
   VERCEL_URL?: string;
 };
@@ -36,12 +37,7 @@ export function resolveAuthSecurityPolicy(
 ) {
   const isProduction = environment.NODE_ENV === "production";
   const configuredAppUrl = resolveKestrelAppUrl(environment);
-  const vercelPreviewOrigin =
-    environment.VERCEL === "1" &&
-    environment.VERCEL_ENV === "preview" &&
-    environment.VERCEL_URL
-      ? `https://${environment.VERCEL_URL}`
-      : undefined;
+  const vercelPreviewOrigins = resolveVercelPreviewOrigins(environment);
   const mobileTrustedOrigins = (
     environment.KESTREL_ONE_MOBILE_TRUSTED_ORIGINS ?? "kestrelone://"
   )
@@ -55,7 +51,7 @@ export function resolveAuthSecurityPolicy(
         ...mobileTrustedOrigins,
         "https://appleid.apple.com",
         configuredAppUrl,
-        vercelPreviewOrigin,
+        ...vercelPreviewOrigins,
         ...LOCAL_DEV_ORIGINS,
       ]
         .filter((origin): origin is string => Boolean(origin))
