@@ -36,6 +36,12 @@ export function resolveAuthSecurityPolicy(
 ) {
   const isProduction = environment.NODE_ENV === "production";
   const configuredAppUrl = resolveKestrelAppUrl(environment);
+  const vercelPreviewOrigin =
+    environment.VERCEL === "1" &&
+    environment.VERCEL_ENV === "preview" &&
+    environment.VERCEL_URL
+      ? `https://${environment.VERCEL_URL}`
+      : undefined;
   const mobileTrustedOrigins = (
     environment.KESTREL_ONE_MOBILE_TRUSTED_ORIGINS ?? "kestrelone://"
   )
@@ -49,6 +55,7 @@ export function resolveAuthSecurityPolicy(
         ...mobileTrustedOrigins,
         "https://appleid.apple.com",
         configuredAppUrl,
+        vercelPreviewOrigin,
         ...LOCAL_DEV_ORIGINS,
       ]
         .filter((origin): origin is string => Boolean(origin))
