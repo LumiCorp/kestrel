@@ -97,6 +97,26 @@ contractTest("web.hermetic", "queued Environment operations identify Kestrel One
   );
 });
 
+contractTest(
+  "web.hermetic",
+  "queued Workspace backup explains active-execution deferral",
+  () => {
+    assert.deepEqual(
+      describeEnvironmentOperation({
+        type: "workspace.backup",
+        status: "queued",
+        stage: "workspace.backup.waiting_for_execution",
+      }),
+      {
+        label: "Workspace backup",
+        detail:
+          "Waiting for active Workspace work to finish before backing it up…",
+        tone: "neutral",
+      },
+    );
+  },
+);
+
 contractTest("web.hermetic", "queued Environment persistence recovery explains the retry", () => {
   assert.deepEqual(
     describeEnvironmentOperation({

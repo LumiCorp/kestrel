@@ -109,6 +109,13 @@ export async function createWorkspaceBackup(input: {
     executionOwnership: input.executionOwnership ?? "parent_operation",
   });
   if (prepared.available) return prepared.available;
+  if (prepared.deferred) {
+    return {
+      backupId: prepared.backupId,
+      operationId: prepared.operationId,
+      status: "deferred" as const,
+    };
+  }
   const { operationId, backupId } = prepared;
   try {
     input.signal?.throwIfAborted();
@@ -392,7 +399,7 @@ export async function processQueuedWorkspaceBackup(input: {
     });
     return "interrupted" as const;
   }
-  await createWorkspaceBackup({
+  const result = await createWorkspaceBackup({
     organizationId: operation.organizationId,
     environmentId: operation.environmentId,
     workspaceId: backup.workspaceId,
@@ -403,6 +410,9 @@ export async function processQueuedWorkspaceBackup(input: {
     executionOwnership: "queue",
     workerAttempt: input.workerAttempt,
   });
+  if ("status" in result && result.status === "deferred") {
+    return "deferred" as const;
+  }
   return "processed" as const;
 }
 
@@ -511,8 +521,20 @@ type PreparedWorkspaceBackup =
         expiresAt: Date;
       };
     }
-  | { available: null; failed: false; operationId: string; backupId: string }
-  | { available: null; failed: true; operationId: string; backupId: string };
+  | {
+      available: null;
+      failed: false;
+      deferred: boolean;
+      operationId: string;
+      backupId: string;
+    }
+  | {
+      available: null;
+      failed: true;
+      deferred: false;
+      operationId: string;
+      backupId: string;
+    };
 
 async function prepareWorkspaceBackup(input: {
   organizationId: string;
@@ -574,14 +596,50 @@ async function prepareWorkspaceBackup(input: {
         return {
           available: null,
           failed: true,
+          deferred: false,
           operationId: existingOperation.id,
           backupId: existingBackup.id,
         };
       }
+      let deferredForExecution = false;
       await knowledgeDb.transaction(async (transaction) => {
         await transaction.execute(
           sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
         );
+        if (
+          input.executionOwnership === "queue" &&
+          input.initialStatus !== "queued"
+        ) {
+          const activeExecution =
+            await transaction.query.environmentRunExecutions.findFirst({
+              where: (table, { and, eq, inArray }) =>
+                and(
+                  eq(table.organizationId, input.organizationId),
+                  eq(table.environmentId, input.environmentId),
+                  eq(table.workspaceId, input.workspaceId),
+                  inArray(table.status, ["routed", "running"]),
+                ),
+              columns: { id: true },
+            });
+          if (activeExecution) {
+            deferredForExecution = true;
+            await transaction
+              .update(schema.environmentOperations)
+              .set({
+                status: "queued",
+                stage: "workspace.backup.waiting_for_execution",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: input.now,
+              })
+              .where(eq(schema.environmentOperations.id, existingOperation.id));
+            await transaction
+              .update(schema.workspaceBackups)
+              .set({ status: "queued", updatedAt: input.now })
+              .where(eq(schema.workspaceBackups.id, existingBackup.id));
+            return;
+          }
+        }
         await transaction
           .update(schema.environmentOperations)
           .set({
@@ -623,6 +681,7 @@ async function prepareWorkspaceBackup(input: {
       return {
         available: null,
         failed: false,
+        deferred: deferredForExecution,
         operationId: existingOperation.id,
         backupId: existingBackup.id,
       };
@@ -696,7 +755,13 @@ async function prepareWorkspaceBackup(input: {
   if (racedExistingOperation) {
     return prepareWorkspaceBackup(input);
   }
-  return { available: null, failed: false, operationId, backupId };
+  return {
+    available: null,
+    failed: false,
+    deferred: false,
+    operationId,
+    backupId,
+  };
 }
 
 async function persistWorkspaceBackupAttemptFailure(input: {

@@ -56,6 +56,8 @@ const STAGE_DETAILS: Record<string, string> = {
   "environment.deleted": "Environment deleted.",
   "workspace.deleted": "Workspace deleted.",
   "workspace.backup.queued": "Waiting to start the Workspace backup…",
+  "workspace.backup.waiting_for_execution":
+    "Waiting for active Workspace work to finish before backing it up…",
   "workspace.backup.exporting": "Encrypting and exporting the Workspace…",
   "workspace.backup.retrying":
     "The Workspace backup attempt failed and will be retried…",
@@ -91,7 +93,8 @@ export function describeEnvironmentOperation(
       label,
       detail:
         input.errorMessage?.trim() ||
-        (input.stage === "environment.activation.reconciling"
+        (input.stage === "environment.activation.reconciling" ||
+        input.stage === "workspace.backup.waiting_for_execution"
           ? STAGE_DETAILS[input.stage]
           : undefined) ||
         "Waiting for Kestrel One to start this operation.",

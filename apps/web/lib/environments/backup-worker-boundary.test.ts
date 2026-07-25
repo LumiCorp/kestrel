@@ -18,10 +18,21 @@ contractTest(
     assert.match(queueSource, /retryLimit:\s*job\.retryLimit/u);
     assert.match(queueSource, /job\.state === "failed"/u);
     assert.match(queueSource, /failExhaustedWorkspaceBackup/u);
+    assert.match(queueSource, /deferEnvironmentOperation/u);
+    assert.match(queueSource, /startAfter/u);
     assert.match(backupSource, /workspace\.backup\.retrying/u);
+    assert.match(backupSource, /workspace\.backup\.waiting_for_execution/u);
+    assert.match(
+      backupSource,
+      /inArray\(table\.status,\s*\["routed",\s*"running"\]\)/u,
+    );
     assert.match(backupSource, /input\.attempt\?\.canRetry === true/u);
     assert.match(reconcileSource, /workspaceDailyBackupIdempotencyKey/u);
     assert.match(reconcileSource, /gte\(table\.createdAt,\s*dayStart\)/u);
+    assert.match(
+      reconcileSource,
+      /environmentRunExecutions\.findMany/u,
+    );
   },
 );
 

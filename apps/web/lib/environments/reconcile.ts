@@ -716,7 +716,7 @@ async function createDueDailyBackup(now: Date) {
     orderBy: (table, { asc }) => [asc(table.lastActivityAt), asc(table.id)],
   });
   if (candidates.length === 0) return;
-  const [scheduledToday, active] = await Promise.all([
+  const [scheduledToday, activeBackups, activeExecutions] = await Promise.all([
     knowledgeDb.query.workspaceBackups.findMany({
       where: (table, { and, eq, gte, inArray }) =>
         and(
@@ -740,10 +740,23 @@ async function createDueDailyBackup(now: Date) {
         ),
       columns: { workspaceId: true },
     }),
+    knowledgeDb.query.environmentRunExecutions.findMany({
+      where: (table, { and, inArray }) =>
+        and(
+          inArray(
+            table.workspaceId,
+            candidates.map((candidate) => candidate.id),
+          ),
+          inArray(table.status, ["routed", "running"]),
+        ),
+      columns: { workspaceId: true },
+    }),
   ]);
   const candidate = selectDueDailyBackupCandidate(
     candidates,
-    [...scheduledToday, ...active].map((backup) => backup.workspaceId),
+    [...scheduledToday, ...activeBackups, ...activeExecutions].map(
+      (record) => record.workspaceId,
+    ),
   );
   if (!candidate) return;
   await queueWorkspaceBackup({
