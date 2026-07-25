@@ -6,7 +6,6 @@ import {
 } from "./tavily-contract";
 import { validateTavilyConnection } from "./tavily-connection";
 import { validateVisualCrossingConnection } from "./weather-connection";
-import { validateNgrokConnection } from "./ngrok-connection";
 import {
   assertVercelProxyTarget,
   createVercelApiUrl,
@@ -90,15 +89,9 @@ const tavilyAdapter: AppProviderAdapter = {
   appKey: "tavily",
   authMethods: ["api_key"],
   validateEnvironmentConnection(input) {
-    if (input.kind === "ngrok_agent") {
-      throw new Error("Tavily requires an API-key credential.");
-    }
     return validateTavilyConnection(input);
   },
   createEnvironmentCredential(input) {
-    if (input.kind === "ngrok_agent") {
-      throw new Error("Tavily requires an API-key credential.");
-    }
     return {
       kind: "api_key",
       apiKey: input.apiKey,
@@ -153,15 +146,9 @@ const weatherAdapter: AppProviderAdapter = {
   appKey: "built_in.weather",
   authMethods: ["api_key"],
   validateEnvironmentConnection(input) {
-    if (input.kind === "ngrok_agent") {
-      throw new Error("Visual Crossing requires an API-key credential.");
-    }
     return validateVisualCrossingConnection(input);
   },
   createEnvironmentCredential(input) {
-    if (input.kind === "ngrok_agent") {
-      throw new Error("Visual Crossing requires an API-key credential.");
-    }
     return {
       kind: "api_key",
       apiKey: input.apiKey,
@@ -222,51 +209,6 @@ const weatherAdapter: AppProviderAdapter = {
   },
 };
 
-const ngrokAdapter: AppProviderAdapter = {
-  appKey: "ngrok",
-  authMethods: ["agent_token"],
-  validateEnvironmentConnection: validateNgrokConnection,
-  createEnvironmentCredential(input) {
-    if (input.kind !== "ngrok_agent") {
-      throw new Error("Ngrok requires an agent credential.");
-    }
-    return {
-      kind: "ngrok_agent",
-      authtoken: input.authtoken,
-      wildcardDomain: input.wildcardDomain,
-    };
-  },
-  runtime: {
-    mode: "lifecycle",
-    capabilityKeys: ["publish", "list", "renew", "close"],
-    assertTarget(input) {
-      const [resource, previewId] = input.path;
-      const allowed =
-        resource === "previews" &&
-        ((input.capability === "publish" &&
-          input.method === "POST" &&
-          input.path.length === 1) ||
-          (input.capability === "list" &&
-            input.method === "GET" &&
-            input.path.length === 1) ||
-          (input.capability === "renew" &&
-            input.method === "POST" &&
-            input.path.length === 2 &&
-            Boolean(previewId)) ||
-          (input.capability === "close" &&
-            input.method === "DELETE" &&
-            input.path.length === 2 &&
-            Boolean(previewId)));
-      if (!allowed) {
-        throw new AppProviderRuntimeContractError(
-          "NGROK_PREVIEW_TARGET_DENIED",
-          404,
-        );
-      }
-    },
-  },
-};
-
 const kestrelEdgePreviewAdapter: AppProviderAdapter = {
   appKey: "built_in.previews",
   authMethods: ["none"],
@@ -306,9 +248,6 @@ const vercelAdapter: AppProviderAdapter = {
   authMethods: ["api_key"],
   validateEnvironmentConnection: validateVercelConnection,
   createEnvironmentCredential(input) {
-    if (input.kind === "ngrok_agent") {
-      throw new Error("Vercel requires an API-key credential.");
-    }
     return {
       kind: "api_key",
       apiKey: input.apiKey,
@@ -359,7 +298,7 @@ const vercelAdapter: AppProviderAdapter = {
 };
 
 const PROVIDER_ADAPTERS = new Map(
-  [weatherAdapter, tavilyAdapter, ngrokAdapter, kestrelEdgePreviewAdapter, vercelAdapter].map(
+  [weatherAdapter, tavilyAdapter, kestrelEdgePreviewAdapter, vercelAdapter].map(
     (adapter) => [adapter.appKey, adapter],
   ),
 );

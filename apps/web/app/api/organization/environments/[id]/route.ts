@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   requestAdminEnvironmentDeletion,
   setAdminDefaultEnvironment,
-  updateAdminEnvironmentPreviewIngress,
   updateAdminEnvironmentRuntime,
   updateAdminEnvironmentReasoningPolicy,
 } from "@/lib/admin/environments";
@@ -20,7 +19,6 @@ const patchSchema = z.union([
     runtimeImage: z.string().trim().min(1).max(500),
     reconcile: z.boolean().optional(),
   }),
-  z.object({ previewIngressProvider: z.enum(["ngrok", "kestrel_edge"]) }),
   z.object({
     reasoning: z.object({
       request: z.object({
@@ -82,13 +80,6 @@ export async function PATCH(
             environmentId: id,
             runtimeImage: patch.runtimeImage,
             reconcile: patch.reconcile,
-          })
-        : "previewIngressProvider" in patch
-        ? await updateAdminEnvironmentPreviewIngress({
-            organizationId,
-            actorUserId: session.user.id,
-            environmentId: id,
-            previewIngressProvider: patch.previewIngressProvider,
           })
         : await setAdminDefaultEnvironment({
             organizationId,

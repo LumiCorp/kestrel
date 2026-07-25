@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect as connectTcp } from "node:net";
 import type { Duplex } from "node:stream";
@@ -8,34 +7,21 @@ import {
   PREVIEW_EDGE_AUTHORIZATION_HEADER,
   verifyPreviewEdgeRouteTicket,
 } from "@lumi/kestrel-environment-auth";
-import { type Session, SessionBuilder } from "@ngrok/ngrok";
 
 const MAX_CONNECTIONS_PER_PREVIEW = 100;
-const MAX_FAILURE_MESSAGE_LENGTH = 500;
 
-export class PreviewGateway {
+export class PreviewRelay {
   private routes = new Map<string, EnvironmentGatewayPreviewRoute>();
   private connections = new Map<string, number>();
-  private session: Session | null = null;
-  private listener: { close(): Promise<void> } | null = null;
-  private identity = "";
-  private wildcardBase = "";
+  private revision = "";
   private reconciling = Promise.resolve();
 
   constructor(
     private readonly input: {
-      port: number;
       expectedAppName: string;
       environmentId: string;
       ticketPublicKey?: string | undefined;
       workspaceAddress?: ((route: EnvironmentGatewayPreviewRoute) => { host: string; port: number }) | undefined;
-      openEndpoint?: ((input: { authtoken: string; wildcardDomain: string; targetUrl: string; environmentId: string }) => Promise<{ close(): Promise<void> }>) | undefined;
-      reportStatus?: ((input: {
-        connectionId: string;
-        status: "connected" | "degraded";
-        failureCode?: string | undefined;
-        failureMessage?: string | undefined;
-      }) => Promise<void>) | undefined;
     }
   ) {}
 
@@ -46,14 +32,13 @@ export class PreviewGateway {
 
   async close() {
     await this.reconciling.catch(() => {});
-    await this.closeEndpoint();
+    this.routes.clear();
+    this.connections.clear();
+    this.revision = "";
   }
 
   isReady(config: EnvironmentGatewayConfig) {
-    if (!config.ngrok) return this.listener === null;
-    return Boolean(
-      this.listener && this.identity === endpointIdentity(config.ngrok)
-    );
+    return this.revision === config.revision;
   }
 
   async handleHttp(request: IncomingMessage, response: ServerResponse) {
@@ -80,10 +65,8 @@ export class PreviewGateway {
     return true;
   }
 
-  isManagedPublicHost(host: string | undefined) {
-    if (!(host && this.wildcardBase)) return false;
-    const hostname = normalizeHost(host);
-    return hostname.endsWith(`.${this.wildcardBase}`);
+  isPreviewRequest(headers: IncomingHttpHeaders) {
+    return PREVIEW_EDGE_AUTHORIZATION_HEADER in headers;
   }
 
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
@@ -109,60 +92,7 @@ export class PreviewGateway {
         .filter((preview) => new Date(preview.expiresAt).getTime() > Date.now())
         .map((preview) => [preview.hostname.toLowerCase(), preview])
     );
-    this.wildcardBase = config.ngrok?.wildcardDomain.startsWith("*.")
-      ? config.ngrok.wildcardDomain.slice(2).toLowerCase()
-      : "";
-    const identity = config.ngrok ? endpointIdentity(config.ngrok) : "";
-    if (identity === this.identity && this.listener) return;
-    await this.closeEndpoint();
-    this.identity = identity;
-    if (!identity || !config.ngrok) return;
-    try {
-      if (this.input.openEndpoint) {
-        const endpoint = await this.input.openEndpoint({
-          authtoken: config.ngrok.authtoken,
-          wildcardDomain: config.ngrok.wildcardDomain,
-          targetUrl: `http://127.0.0.1:${this.input.port}`,
-          environmentId: this.input.environmentId,
-        });
-        this.listener = endpoint;
-        await this.input.reportStatus?.({ connectionId: config.ngrok.connectionId, status: "connected" });
-        return;
-      }
-      const session = await new SessionBuilder()
-        .authtoken(config.ngrok.authtoken)
-        .clientInfo("kestrel-environment-gateway", "1")
-        .metadata(JSON.stringify({ environmentId: this.input.environmentId }))
-        .connect();
-      this.session = session;
-      const listener = await session
-        .httpEndpoint()
-        .domain(config.ngrok.wildcardDomain)
-        .metadata(JSON.stringify({ environmentId: this.input.environmentId }))
-        .listenAndForward(`http://127.0.0.1:${this.input.port}`);
-      this.listener = listener;
-      await this.input.reportStatus?.({ connectionId: config.ngrok.connectionId, status: "connected" });
-    } catch (error) {
-      await this.closeEndpoint();
-      this.identity = "";
-      await this.input.reportStatus?.({
-        connectionId: config.ngrok.connectionId,
-        status: "degraded",
-        failureCode: "NGROK_AGENT_ENDPOINT_FAILED",
-        failureMessage: safeNgrokFailureMessage(error, config.ngrok.authtoken),
-      }).catch(() => {});
-      throw error;
-    }
-  }
-
-  private async closeEndpoint() {
-    const listener = this.listener;
-    const session = this.session;
-    this.listener = null;
-    this.session = null;
-    this.identity = "";
-    await listener?.close().catch(() => {});
-    await session?.close().catch(() => {});
+    this.revision = config.revision;
   }
 
   private routeFor(host: string | undefined) {
@@ -187,7 +117,6 @@ export class PreviewGateway {
     route: EnvironmentGatewayPreviewRoute,
     headers: IncomingHttpHeaders
   ) {
-    if (route.ingress === "ngrok") return true;
     const rawAuthorization = headers[PREVIEW_EDGE_AUTHORIZATION_HEADER];
     const authorization = Array.isArray(rawAuthorization)
       ? rawAuthorization[0]
@@ -223,21 +152,6 @@ export class PreviewGateway {
     if (count <= 1) this.connections.delete(previewId);
     else this.connections.set(previewId, count - 1);
   }
-}
-
-function safeNgrokFailureMessage(error: unknown, authtoken: string) {
-  const message = error instanceof Error ? error.message : String(error);
-  const redacted = authtoken.length > 0
-    ? message.split(authtoken).join("[REDACTED]")
-    : message;
-  return (redacted.trim() || "Ngrok endpoint reconciliation failed.")
-    .slice(0, MAX_FAILURE_MESSAGE_LENGTH);
-}
-
-function endpointIdentity(config: NonNullable<EnvironmentGatewayConfig["ngrok"]>) {
-  return createHash("sha256")
-    .update(`${config.connectionId}\0${config.wildcardDomain}\0${config.authtoken}`)
-    .digest("base64url");
 }
 
 function proxyHttp(

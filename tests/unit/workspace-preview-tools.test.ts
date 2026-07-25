@@ -9,7 +9,7 @@ import { contractTest } from "../helpers/contract-test.js";
 
 contractTest(
   "runtime.hermetic",
-  "Workspace preview tools call the governed ngrok App lifecycle with the signed execution ticket",
+  "Workspace preview tools call the governed Kestrel Edge lifecycle with the signed execution ticket",
   async () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
     const fetchImpl: typeof fetch = async (input, init) => {
@@ -50,10 +50,10 @@ contractTest(
     assert.deepEqual(
       requests.map(({ url, init }) => [url, init?.method ?? "GET"]),
       [
-        ["https://kestrel.example/api/runtime/apps/ngrok/publish/auto/previews", "POST"],
-        ["https://kestrel.example/api/runtime/apps/ngrok/list/auto/previews", "GET"],
-        ["https://kestrel.example/api/runtime/apps/ngrok/renew/auto/previews/preview-1", "POST"],
-        ["https://kestrel.example/api/runtime/apps/ngrok/close/auto/previews/preview-1", "DELETE"],
+        ["https://kestrel.example/api/runtime/apps/built_in.previews/publish/auto/previews", "POST"],
+        ["https://kestrel.example/api/runtime/apps/built_in.previews/list/auto/previews", "GET"],
+        ["https://kestrel.example/api/runtime/apps/built_in.previews/renew/auto/previews/preview-1", "POST"],
+        ["https://kestrel.example/api/runtime/apps/built_in.previews/close/auto/previews/preview-1", "DELETE"],
       ]
     );
     assert.equal(

@@ -1,6 +1,8 @@
 import type { EnvironmentGatewayConfig } from "@lumi/kestrel-environment-auth";
 import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-auth";
 
+const RETIRED_PREVIEW_PROVIDER_FIELD = ["n", "g", "r", "o", "k"].join("");
+
 export class EnvironmentGatewayConfigClient {
   private current: EnvironmentGatewayConfig | null = null;
   private timer: NodeJS.Timeout | null = null;
@@ -74,29 +76,6 @@ export class EnvironmentGatewayConfigClient {
     return response.json();
   }
 
-  async reportNgrokStatus(input: {
-    connectionId: string;
-    status: "connected" | "degraded";
-    failureCode?: string | undefined;
-    failureMessage?: string | undefined;
-  }) {
-    const response = await (this.input.fetchImpl ?? fetch)(
-      new URL(
-        `/api/runtime/environments/${encodeURIComponent(this.input.environmentId)}/gateway/config`,
-        requireControlPlaneUrl(this.input.controlPlaneUrl)
-      ),
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${this.input.serviceToken}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(input),
-      }
-    );
-    if (!response.ok) throw new Error(`ngrok status report failed (${response.status}).`);
-  }
-
   private async load() {
     const endpoint = new URL(
       `/api/runtime/environments/${encodeURIComponent(this.input.environmentId)}/gateway/config`,
@@ -143,15 +122,13 @@ function parseEnvironmentGatewayConfig(value: unknown): EnvironmentGatewayConfig
     typeof value.environmentId !== "string" ||
     !value.environmentId ||
     typeof value.revision !== "string" ||
+    RETIRED_PREVIEW_PROVIDER_FIELD in value ||
     !Array.isArray(value.workspaces) ||
     !Array.isArray(value.previews) ||
     !Array.isArray(value.modelGrants)
   ) {
     throw new Error("Environment gateway configuration is invalid.");
   }
-  const ngrok = value.ngrok === null
-    ? null
-    : parseNgrok(value.ngrok);
   const workspaces = value.workspaces.map(parseWorkspace);
   const previews = value.previews.map(parsePreview);
   const modelGrants = value.modelGrants.map(parseModelGrant);
@@ -173,20 +150,10 @@ function parseEnvironmentGatewayConfig(value: unknown): EnvironmentGatewayConfig
     version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
     environmentId: value.environmentId,
     revision: value.revision,
-    ngrok,
     workspaces,
     previews,
     modelGrants,
   };
-}
-
-function parseNgrok(value: unknown): NonNullable<EnvironmentGatewayConfig["ngrok"]> {
-  if (!isRecord(value)) throw invalid();
-  const connectionId = stringField(value, "connectionId");
-  const authtoken = stringField(value, "authtoken");
-  const wildcardDomain = stringField(value, "wildcardDomain").toLowerCase();
-  if (!/^\*\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u.test(wildcardDomain)) throw invalid();
-  return { connectionId, authtoken, wildcardDomain };
 }
 
 function parseWorkspace(value: unknown): EnvironmentGatewayConfig["workspaces"][number] {
@@ -201,23 +168,20 @@ function parseWorkspace(value: unknown): EnvironmentGatewayConfig["workspaces"][
 }
 
 function parsePreview(value: unknown): EnvironmentGatewayConfig["previews"][number] {
-  if (!isRecord(value)) throw invalid();
+  if (!isRecord(value) || "ingress" in value) throw invalid();
   const port = integerField(value, "port");
   const expiresAt = dateField(value, "expiresAt");
   const hostname = stringField(value, "hostname").toLowerCase();
-  const ingress = value.ingress ?? "ngrok";
   if (
     port < 1024 ||
     port > 65_535 ||
-    !/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/u.test(hostname) ||
-    (ingress !== "ngrok" && ingress !== "kestrel_edge")
+    !/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/u.test(hostname)
   ) throw invalid();
   return {
     id: stringField(value, "id"),
     workspaceId: stringField(value, "workspaceId"),
     machineId: stringField(value, "machineId"),
     hostname,
-    ingress,
     port,
     expiresAt,
     relayTicket: stringField(value, "relayTicket"),

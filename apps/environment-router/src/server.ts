@@ -12,7 +12,7 @@ import { proxyWorkspaceRequest } from "./proxy.js";
 import { EnvironmentGatewayConfigClient } from "./gateway-config.js";
 import { authorizeConfigRefreshToken } from "./config-refresh-auth.js";
 import { handleModelRelay } from "./model-relay.js";
-import { PreviewGateway } from "./preview-gateway.js";
+import { PreviewRelay } from "./preview-relay.js";
 import { handleWorkspaceIdle } from "./workspace-idle.js";
 
 const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = 2;
@@ -37,14 +37,12 @@ const gatewayConfig = new EnvironmentGatewayConfigClient({
     "KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN"
   ),
 });
-const previewGateway = new PreviewGateway({
-  port,
+const previewRelay = new PreviewRelay({
   expectedAppName,
   environmentId,
   ticketPublicKey: publicKey,
-  reportStatus: (status) => gatewayConfig.reportNgrokStatus(status),
 });
-gatewayConfig.subscribe((config) => previewGateway.reconcile(config));
+gatewayConfig.subscribe((config) => previewRelay.reconcile(config));
 void gatewayConfig.start().catch((error) => {
   process.stdout.write(
     `${JSON.stringify({
@@ -57,8 +55,8 @@ void gatewayConfig.start().catch((error) => {
 });
 
 const server = createServer(async (request, response) => {
-  if (await previewGateway.handleHttp(request, response)) return;
-  if (previewGateway.isManagedPublicHost(request.headers.host)) {
+  if (await previewRelay.handleHttp(request, response)) return;
+  if (previewRelay.isPreviewRequest(request.headers)) {
     response.writeHead(404, { "content-type": "application/json" });
     response.end(JSON.stringify({ error: { code: "PREVIEW_NOT_FOUND" } }));
     return;
@@ -93,7 +91,7 @@ const server = createServer(async (request, response) => {
     }
     try {
       const refreshed = await gatewayConfig.refreshLatest();
-      if (!previewGateway.isReady(refreshed)) {
+      if (!previewRelay.isReady(refreshed)) {
         response.writeHead(503, {
           "cache-control": "no-store",
           "content-type": "application/json",
@@ -161,13 +159,13 @@ const server = createServer(async (request, response) => {
   await applyDecision(request, response, decision, body.raw);
 });
 server.on("upgrade", (request, socket, head) => {
-  if (!previewGateway.handleUpgrade(request, socket, head)) socket.destroy();
+  if (!previewRelay.handleUpgrade(request, socket, head)) socket.destroy();
 });
 server.listen(port);
 
 const shutdown = () => {
   gatewayConfig.stop();
-  void previewGateway.close().finally(() => server.close());
+  void previewRelay.close().finally(() => server.close());
 };
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);

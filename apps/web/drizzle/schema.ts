@@ -1337,11 +1337,6 @@ export const environments = pgTable(
       .notNull()
       .default("kestrel-standard-v1"),
     runtimeImage: text("runtime_image"),
-    previewIngressProvider: text("preview_ingress_provider", {
-      enum: ["ngrok", "kestrel_edge"],
-    })
-      .notNull()
-      .default("ngrok"),
     idleTimeoutMinutes: integer("idle_timeout_minutes").notNull().default(15),
     reasoningRequestMode: text("reasoning_request_mode", {
       enum: ["off", "summary", "provider_visible"],
@@ -2273,7 +2268,7 @@ export const appCredentials = pgTable(
       .references(() => appDefinitions.key, { onDelete: "restrict" }),
     name: text("name").notNull(),
     kind: text("kind", {
-      enum: ["api_key", "oauth", "secret_headers", "ngrok_agent"],
+      enum: ["api_key", "oauth", "secret_headers"],
     }).notNull(),
     encryptedPayload: text("encrypted_payload").notNull(),
     envelopeVersion: text("envelope_version").notNull().default("kapp:v1"),
@@ -2308,6 +2303,10 @@ export const appCredentials = pgTable(
     check(
       "app_credentials_encrypted_payload_check",
       sql`${table.encryptedPayload} like 'kapp:v1:%' or ${table.encryptedPayload} like 'kmcp:v1:%'`,
+    ),
+    check(
+      "app_credentials_kind_check",
+      sql`${table.kind} in ('api_key', 'oauth', 'secret_headers')`,
     ),
   ],
 );
@@ -2380,11 +2379,6 @@ export const appConnections = pgTable(
     uniqueIndex("app_connections_environment_name_idx")
       .on(table.environmentId, table.appKey, table.name)
       .where(sql`${table.ownerType} in ('environment', 'deployment_managed')`),
-    uniqueIndex("app_connections_ngrok_wildcard_domain_idx")
-      .on(sql`(${table.deliveryConfig} ->> 'wildcardDomain')`)
-      .where(
-        sql`${table.appKey} = 'ngrok' and ${table.ownerType} = 'environment' and ${table.status} in ('connected', 'degraded')`,
-      ),
     index("app_connections_org_app_status_idx").on(
       table.organizationId,
       table.appKey,
@@ -2429,14 +2423,6 @@ export const workspacePreviewLeases = pgTable(
       .notNull()
       .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
     actorId: text("actor_id").notNull(),
-    connectionId: text("connection_id").references(() => appConnections.id, {
-      onDelete: "restrict",
-    }),
-    ingressProvider: text("ingress_provider", {
-      enum: ["ngrok", "kestrel_edge"],
-    })
-      .notNull()
-      .default("ngrok"),
     port: integer("port").notNull(),
     name: text("name"),
     hostname: text("hostname").notNull(),
@@ -2494,14 +2480,6 @@ export const workspacePreviewLeases = pgTable(
     check(
       "workspace_preview_leases_expiry_check",
       sql`${table.expiresAt} <= ${table.maximumExpiresAt}`,
-    ),
-    check(
-      "workspace_preview_leases_ingress_check",
-      sql`(
-        (${table.ingressProvider} = 'kestrel_edge' and ${table.connectionId} is null)
-        or
-        (${table.ingressProvider} = 'ngrok' and (${table.status} not in ('provisioning', 'active', 'closing') or ${table.connectionId} is not null))
-      )`,
     ),
   ],
 );

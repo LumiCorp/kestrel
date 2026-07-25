@@ -7,8 +7,6 @@ import {
 } from "@lumi/kestrel-environment-auth";
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { issueGatewayCredentialLease } from "@/lib/ai/gateway-credential-lease";
-import { markAppConnectionDegraded, markAppConnectionHealthy } from "@/lib/apps/runtime";
-import { resolveEnvironmentAppCredential } from "@/lib/apps/service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { verifyEnvironmentServiceToken } from "./service-tokens";
 
@@ -19,84 +17,6 @@ export class EnvironmentGatewayConfigError extends Error {
   ) {
     super(code);
     this.name = "EnvironmentGatewayConfigError";
-  }
-}
-
-export async function reportEnvironmentGatewayNgrokStatus(input: {
-  environmentId: string;
-  authorization: string | null;
-  connectionId: string;
-  status: "connected" | "degraded";
-  failureCode?: string | undefined;
-  failureMessage?: string | undefined;
-}) {
-  const environment = await knowledgeDb.query.environments.findFirst({
-    where: (table, { eq: equals }) => equals(table.id, input.environmentId),
-  });
-  if (
-    !(
-      environment?.gatewayServiceTokenHash &&
-      verifyEnvironmentServiceToken({
-        token: readBearer(input.authorization),
-        expectedHash: environment.gatewayServiceTokenHash,
-      })
-    )
-  ) {
-    throw new EnvironmentGatewayConfigError("ENVIRONMENT_GATEWAY_UNAUTHORIZED", 401);
-  }
-  const connection = await knowledgeDb.query.appConnections.findFirst({
-    where: (table, { and: all, eq: equals, inArray: includes }) => all(
-      equals(table.id, input.connectionId),
-      equals(table.organizationId, environment.organizationId),
-      equals(table.environmentId, environment.id),
-      equals(table.appKey, "ngrok"),
-      includes(table.status, ["connected", "degraded"])
-    ),
-  });
-  if (!connection) throw new EnvironmentGatewayConfigError("ENVIRONMENT_NGROK_CONNECTION_NOT_FOUND", 404);
-  if (input.status === "connected") {
-    await markAppConnectionHealthy({
-      organizationId: environment.organizationId,
-      environmentId: environment.id,
-      appKey: "ngrok",
-      connectionId: connection.id,
-    });
-  } else {
-    const now = new Date();
-    await knowledgeDb.transaction(async (transaction) => {
-      await transaction
-        .update(schema.appConnections)
-        .set({
-          status: "degraded",
-          failureCode: input.failureCode ?? "NGROK_AGENT_ENDPOINT_FAILED",
-          failureMessage: input.failureMessage?.slice(0, 500) ?? null,
-          lastHealthAt: now,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(schema.appConnections.id, connection.id),
-            eq(schema.appConnections.organizationId, environment.organizationId),
-            eq(schema.appConnections.environmentId, environment.id),
-            eq(schema.appConnections.appKey, "ngrok"),
-            inArray(schema.appConnections.status, ["connected", "degraded"]),
-          ),
-        );
-      await transaction
-        .update(schema.workspacePreviewLeases)
-        .set({
-          status: "failed",
-          failureCode: "WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE",
-          closedAt: now,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(schema.workspacePreviewLeases.connectionId, connection.id),
-            eq(schema.workspacePreviewLeases.status, "provisioning"),
-          ),
-        );
-    });
   }
 }
 
@@ -130,18 +50,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
     );
   }
 
-  const [ngrokConnection, workspaces, previews, modelGrants] =
-    await Promise.all([
-      knowledgeDb.query.appConnections.findFirst({
-        where: (table, { and: all, eq: equals, inArray: includes }) =>
-          all(
-            equals(table.organizationId, environment.organizationId),
-            equals(table.environmentId, environment.id),
-            equals(table.appKey, "ngrok"),
-            equals(table.ownerType, "environment"),
-            includes(table.status, ["connected", "degraded"])
-          ),
-      }),
+  const [workspaces, previews, modelGrants] = await Promise.all([
       knowledgeDb.query.environmentWorkspaces.findMany({
         where: and(
           eq(schema.environmentWorkspaces.environmentId, environment.id),
@@ -181,33 +90,6 @@ export async function resolveEnvironmentGatewayConfig(input: {
         ),
     ]);
 
-  const hasNgrokPreviews = previews.some(
-    (preview) => preview.ingressProvider === "ngrok",
-  );
-  let ngrokCredential = null;
-  if (ngrokConnection && hasNgrokPreviews) {
-    try {
-      const resolved = await resolveEnvironmentAppCredential({
-        organizationId: environment.organizationId,
-        environmentId: environment.id,
-        appKey: "ngrok",
-        connectionId: ngrokConnection.id,
-      });
-      if (resolved.kind !== "ngrok_agent") {
-        throw new Error("Ngrok credential kind is invalid.");
-      }
-      ngrokCredential = resolved;
-    } catch {
-      await markAppConnectionDegraded({
-        organizationId: environment.organizationId,
-        environmentId: environment.id,
-        appKey: "ngrok",
-        connectionId: ngrokConnection.id,
-        failureCode: "NGROK_CREDENTIAL_UNAVAILABLE",
-      }).catch(() => {});
-    }
-  }
-
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
   const relayIssuedAt = Math.floor(now.getTime() / 1000);
   const relayPrivateKey =
@@ -239,14 +121,6 @@ export async function resolveEnvironmentGatewayConfig(input: {
     version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
     environmentId: environment.id,
     revision: now.toISOString(),
-    ngrok:
-      hasNgrokPreviews && ngrokConnection && ngrokCredential
-        ? {
-            connectionId: ngrokConnection.id,
-            authtoken: ngrokCredential.authtoken,
-            wildcardDomain: ngrokCredential.wildcardDomain,
-          }
-        : null,
     workspaces: workspaces.flatMap((workspace) =>
       workspace.flyMachineId && workspace.serviceTokenHash
         ? [
@@ -271,7 +145,6 @@ export async function resolveEnvironmentGatewayConfig(input: {
               workspaceId: preview.workspaceId,
               machineId: workspace.flyMachineId,
               hostname: preview.hostname,
-              ingress: preview.ingressProvider,
               port: preview.port,
               expiresAt: preview.expiresAt.toISOString(),
               relayTicket: signPreviewRelayTicket({

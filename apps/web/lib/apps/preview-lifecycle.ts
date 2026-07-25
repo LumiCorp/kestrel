@@ -21,32 +21,13 @@ export async function handlePreviewLifecycle(input: {
   ticket: EnvironmentExecutionTicket;
   policy: AuthorizedPolicy;
 }) {
-  const environment = await knowledgeDb.query.environments.findFirst({
-    where: (table, { eq: equals }) => equals(table.id, input.ticket.environmentId),
-    columns: { previewIngressProvider: true },
-  });
-  const ingressProvider = environment?.previewIngressProvider ?? "ngrok";
-  const ngrokCredential = input.policy.credential?.kind === "ngrok_agent"
-    ? input.policy.credential
-    : null;
-  if (ingressProvider === "ngrok" && !(input.policy.connectionId && input.policy.connection && ngrokCredential)) {
-    throw new AppRuntimeError("NGROK_PREVIEW_CONNECTION_REQUIRED", 409);
-  }
-  if (ingressProvider !== "ngrok" && ingressProvider !== "kestrel_edge") {
-    throw new AppRuntimeError("WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE", 503);
-  }
   switch (input.capability) {
     case "publish":
       return NextResponse.json(
         {
           preview: await publishPreview({
             ...input,
-            ingressProvider,
-            connectionId: ingressProvider === "ngrok" ? input.policy.connectionId : null,
-            wildcardDomain:
-              ingressProvider === "ngrok"
-                ? ngrokCredential!.wildcardDomain
-                : edgePreviewHostSuffix(),
+            hostSuffix: edgePreviewHostSuffix(),
             body: await input.request.json().catch(() => null),
           }),
         },
@@ -71,18 +52,14 @@ export async function handlePreviewLifecycle(input: {
       });
       return NextResponse.json({ ok: true });
     default:
-      throw new AppRuntimeError("NGROK_PREVIEW_CAPABILITY_DENIED", 404);
+      throw new AppRuntimeError("WORKSPACE_PREVIEW_CAPABILITY_DENIED", 404);
   }
 }
-
-export const handleNgrokPreviewLifecycle = handlePreviewLifecycle;
 
 async function publishPreview(input: {
   ticket: EnvironmentExecutionTicket;
   authorization: string;
-  connectionId: string | null;
-  wildcardDomain: string;
-  ingressProvider: "ngrok" | "kestrel_edge";
+  hostSuffix: string;
   body: unknown;
 }) {
   const body = parsePublishBody(input.body);
@@ -99,7 +76,7 @@ async function publishPreview(input: {
       maximumExpiresAt.getTime()
     )
   );
-  const hostname = `p-${randomBytes(16).toString("hex")}.${input.wildcardDomain.replace(/^\*\./u, "")}`;
+  const hostname = `p-${randomBytes(16).toString("hex")}.${input.hostSuffix}`;
   const projectId = await requireProjectId(input.ticket.threadId);
   let lease: typeof schema.workspacePreviewLeases.$inferSelect | undefined;
   try {
@@ -148,8 +125,6 @@ async function publishPreview(input: {
           threadId: input.ticket.threadId,
           runId: input.ticket.runId,
           actorId: input.ticket.actorId,
-          connectionId: input.connectionId,
-          ingressProvider: input.ingressProvider,
           port: body.port,
           name: body.name,
           hostname,
@@ -430,7 +405,6 @@ function describe(lease: typeof schema.workspacePreviewLeases.$inferSelect) {
     expiresAt: lease.expiresAt.toISOString(),
     maximumExpiresAt: lease.maximumExpiresAt.toISOString(),
     publicAccess: "anonymous_bearer_url" as const,
-    ingressProvider: lease.ingressProvider,
   };
 }
 

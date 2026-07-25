@@ -37,8 +37,8 @@ contractTest("web.hermetic", "hosted preparation requires the trusted preview ga
     "environment_model_grants",
     "gateway_service_token_hash",
     "service_token_hash",
-    "app_definitions.ngrok",
-    "app_capabilities.ngrok.",
+    "app_definitions.built_in.previews",
+    "app_capabilities.built_in.previews.",
   ]) {
     assert.match(source, new RegExp(requirement, "u"));
   }

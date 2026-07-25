@@ -173,12 +173,12 @@ export async function backfillAuthoritativeUsage(input?: { since?: Date }) {
       threadId: lease.threadId,
       runId: lease.runId,
       category: "services",
-      provider: "ngrok",
+      provider: "kestrel_edge",
       service: "preview_lease",
       meter: "lease_hours",
       quantity: hours,
       unit: "hour",
-      sourceKind: "ngrok_preview_lease",
+      sourceKind: "workspace_preview_lease",
       sourceId: lease.id,
       occurredAt: lease.createdAt,
       intervalStartedAt: lease.createdAt,
@@ -201,7 +201,7 @@ export async function backfillAuthoritativeUsage(input?: { since?: Date }) {
     modelEvents,
     runPodEvents: runPodRows.length,
     mcpEvents: mcpRows.length,
-    ngrokEvents: leaseRows.length,
+    previewEvents: leaseRows.length,
     emailEvents: emailRows.length,
   };
 }

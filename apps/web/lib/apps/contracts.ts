@@ -22,27 +22,8 @@ const apiKeyEnvironmentConnectionSchema = z.object({
   baseUrl: httpsUrl.optional(),
 });
 
-const wildcardDomain = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .max(253)
-  .regex(
-    /^\*\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u,
-    "Wildcard domains must look like *.previews.example.com."
-  );
-
-const ngrokEnvironmentConnectionSchema = z.object({
-  kind: z.literal("ngrok_agent"),
-  name: z.string().trim().min(1).max(120),
-  authtoken: z.string().trim().min(1).max(16_384),
-  wildcardDomain,
-});
-
-export const createEnvironmentAppConnectionSchema = z.union([
-  apiKeyEnvironmentConnectionSchema,
-  ngrokEnvironmentConnectionSchema,
-]);
+export const createEnvironmentAppConnectionSchema =
+  apiKeyEnvironmentConnectionSchema;
 
 export const environmentAppCapabilityGrantSchema = z
   .object({

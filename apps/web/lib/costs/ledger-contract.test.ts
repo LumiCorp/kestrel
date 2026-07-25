@@ -38,6 +38,13 @@ contractTest("web.hermetic", "billable app effects are metered before upstream f
   assert.match(runtime, /App usage outcome enrichment failed/u);
 });
 
+contractTest("web.hermetic", "preview lease usage is attributed to Kestrel Edge", () => {
+  const metering = read("lib/costs/metering.ts");
+  assert.match(metering, /provider: "kestrel_edge"/u);
+  assert.match(metering, /sourceKind: "workspace_preview_lease"/u);
+  assert.match(metering, /previewEvents: leaseRows\.length/u);
+});
+
 contractTest("web.hermetic", "cost workers stay in the durable environment worker", () => {
   const queue = read("lib/knowledge/queue.ts");
   const worker = queue.slice(queue.indexOf("startEnvironmentLifecycleWorker"));

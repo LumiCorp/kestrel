@@ -30,9 +30,6 @@ export async function connectOfficialRemoteTokenApp(input: {
 }) {
   const app = getOfficialRemoteTokenApp(input.appKey);
   if (!app) return null;
-  if (input.connection.kind === "ngrok_agent") {
-    throw new Error(`${app.displayName} requires an API-key credential.`);
-  }
   const credential = await createEnvironmentMcpCredential({
     organizationId: input.organizationId,
     environmentId: input.environmentId,
