@@ -16,6 +16,14 @@ export interface KestrelAgentCompactionBuildInput {
   activeTaskItemId: string;
   replacedItemIds: string[];
   sourceItems?: ModelTranscriptItem[] | undefined;
+  correction?: KestrelAgentCompactionCorrectionV1 | undefined;
+}
+
+export interface KestrelAgentCompactionCorrectionV1 {
+  source: "summary_validation" | "semantic_verifier";
+  reason: string;
+  rejectedResponse: unknown;
+  verifierCategories?: KestrelCompactionSufficiencyVerdictV1["categories"] | undefined;
 }
 
 export interface KestrelAgentCompactionPlan {
@@ -165,7 +173,7 @@ export const KESTREL_COMPACTION_SUFFICIENCY_SCHEMA = {
 export function buildKestrelAgentCompactionMessages(
   input: KestrelAgentCompactionBuildInput,
 ): ModelMessage[] {
-  return [
+  const messages: ModelMessage[] = [
     {
       role: "system",
       content: [
@@ -203,6 +211,23 @@ export function buildKestrelAgentCompactionMessages(
           ].join("\n"),
     },
   ];
+  if (input.correction !== undefined) {
+    messages.push({
+      role: "user",
+      content: [
+        "Your previous compaction summary was rejected.",
+        "Return a complete corrected replacement, not a patch or explanation.",
+        `Rejection source: ${input.correction.source}`,
+        `Rejection reason: ${input.correction.reason}`,
+        ...(input.correction.verifierCategories !== undefined
+          ? [`Verifier categories: ${JSON.stringify(input.correction.verifierCategories)}`]
+          : []),
+        "Previous rejected response:",
+        stringifyCorrectionValue(input.correction.rejectedResponse),
+      ].join("\n"),
+    });
+  }
+  return messages;
 }
 
 export function buildKestrelCompactionSufficiencyMessages(input: {
@@ -332,16 +357,33 @@ export function parseKestrelCompactionSufficiencyVerdictV1(value: unknown): Kest
   const parsed = typeof value === "string" ? parseJson(value) : value;
   const record = requireRecord(parsed, "compaction sufficiency verdict");
   rejectUnknown(record, SUFFICIENCY_FIELDS, "compaction sufficiency verdict");
-  if (record.version !== 1 || typeof record.sufficient !== "boolean") throw compactionFailure("Compaction sufficiency verdict is invalid.");
+  if (record.version !== 1 || typeof record.sufficient !== "boolean") {
+    throw compactionFailure(
+      "Compaction sufficiency verdict is invalid.",
+      { reason: "verifier_response_invalid" },
+    );
+  }
   const categoriesRecord = requireRecord(record.categories, "compaction sufficiency verdict categories");
   rejectUnknown(categoriesRecord, SUFFICIENCY_CATEGORY_FIELDS, "compaction sufficiency verdict categories");
   const categories = Object.fromEntries([...SUFFICIENCY_CATEGORY_FIELDS].map((field) => {
-    if (typeof categoriesRecord[field] !== "boolean") throw compactionFailure(`Compaction sufficiency category '${field}' must be boolean.`);
+    if (typeof categoriesRecord[field] !== "boolean") {
+      throw compactionFailure(
+        `Compaction sufficiency category '${field}' must be boolean.`,
+        { reason: "verifier_response_invalid" },
+      );
+    }
     return [field, categoriesRecord[field]];
   })) as KestrelCompactionSufficiencyVerdictV1["categories"];
   const verdict = { version: 1 as const, sufficient: record.sufficient, categories, reason: requireString(record.reason, "reason") };
   if (!verdict.sufficient || Object.values(verdict.categories).some((covered) => !covered)) {
-    throw compactionFailure(`Maintenance verifier rejected compaction: ${verdict.reason}`);
+    throw compactionFailure(
+      `Maintenance verifier rejected compaction: ${verdict.reason}`,
+      {
+        reason: "semantic_verifier_rejected",
+        verifierReason: verdict.reason,
+        verifierCategories: verdict.categories,
+      },
+    );
   }
   return verdict;
 }
@@ -361,7 +403,10 @@ export function parseKestrelCompactionSummaryV1(value: unknown): KestrelCompacti
     fileState: parseAnchors(record.fileState, "fileState"),
     blockers: parseAnchors(record.blockers, "blockers"),
     nextActions: parseAnchors(record.nextActions, "nextActions"),
-    coveredItemIds: parseStringArray(record.coveredItemIds, "coveredItemIds"),
+    coveredItemIds: parseUniqueStringArray(
+      record.coveredItemIds,
+      "coveredItemIds",
+    ),
   };
 }
 
@@ -372,20 +417,59 @@ function validateCompactionSufficiency(
 ): void {
   const activeTaskItemId = readActiveTaskItemIdFromTranscript(transcript);
   if (activeTaskItemId === undefined || summary.activeTaskItemId !== activeTaskItemId) {
-    throw compactionFailure("Compaction summary does not identify the retained active task item.");
+    throw compactionFailure(
+      "Compaction summary does not identify the retained active task item.",
+      {
+        reason: "active_task_mismatch",
+        expectedActiveTaskItemId: activeTaskItemId,
+        actualActiveTaskItemId: summary.activeTaskItemId,
+      },
+    );
   }
   const knownIds = new Set(transcript.items.map((item) => item.id));
   const replacedIds = new Set(plan.replacedItems.map((item) => item.id));
   const coveredIds = new Set(summary.coveredItemIds);
   const anchorIds = new Set(allAnchors(summary).flatMap((anchor) => anchor.sourceItemIds));
-  for (const id of coveredIds) {
-    if (knownIds.has(id) === false) throw compactionFailure(`Compaction summary references unknown item '${id}'.`);
-    if (anchorIds.has(id) === false) throw compactionFailure(`Compaction summary covers '${id}' without a semantic anchor.`);
-  }
-  for (const id of replacedIds) {
-    if (coveredIds.has(id) === false || anchorIds.has(id) === false) {
-      throw compactionFailure(`Compaction summary does not preserve replaced item '${id}'.`);
-    }
+  const unknownItemIds = [...coveredIds].filter((id) => knownIds.has(id) === false);
+  const unknownAnchorItemIds = [...anchorIds].filter((id) => knownIds.has(id) === false);
+  const missingAnchorItemIds = [...coveredIds].filter((id) => anchorIds.has(id) === false);
+  const missingCoveredItemIds = [...replacedIds].filter((id) => coveredIds.has(id) === false);
+  const missingReplacedAnchorItemIds = [...replacedIds].filter((id) => anchorIds.has(id) === false);
+  if (
+    unknownItemIds.length > 0 ||
+    unknownAnchorItemIds.length > 0 ||
+    missingAnchorItemIds.length > 0 ||
+    missingCoveredItemIds.length > 0 ||
+    missingReplacedAnchorItemIds.length > 0
+  ) {
+    const failures = [
+      ...(unknownItemIds.length > 0
+        ? [`unknown item ids ${JSON.stringify(unknownItemIds)}`]
+        : []),
+      ...(unknownAnchorItemIds.length > 0
+        ? [`unknown semantic anchor item ids ${JSON.stringify(unknownAnchorItemIds)}`]
+        : []),
+      ...(missingAnchorItemIds.length > 0
+        ? [`covered item ids without semantic anchors ${JSON.stringify(missingAnchorItemIds)}`]
+        : []),
+      ...(missingCoveredItemIds.length > 0
+        ? [`replaced item ids missing from coveredItemIds ${JSON.stringify(missingCoveredItemIds)}`]
+        : []),
+      ...(missingReplacedAnchorItemIds.length > 0
+        ? [`replaced item ids without semantic anchors ${JSON.stringify(missingReplacedAnchorItemIds)}`]
+        : []),
+    ];
+    throw compactionFailure(
+      `Compaction summary is insufficient: ${failures.join("; ")}.`,
+      {
+        reason: "summary_provenance_incomplete",
+        unknownItemIds,
+        unknownAnchorItemIds,
+        missingAnchorItemIds,
+        missingCoveredItemIds,
+        missingReplacedAnchorItemIds,
+      },
+    );
   }
 }
 
@@ -434,6 +518,37 @@ function parseStringArray(value: unknown, field: string): string[] {
   return [...new Set(value.map((entry) => requireString(entry, `${field} item`)))];
 }
 
+function parseUniqueStringArray(value: unknown, field: string): string[] {
+  if (Array.isArray(value) === false) {
+    throw compactionFailure(`Compaction summary ${field} must be an array.`);
+  }
+  const parsed = value.map((entry) =>
+    requireString(entry, `${field} item`),
+  );
+  const seen = new Set<string>();
+  const duplicateItemIds = [
+    ...new Set(
+      parsed.filter((itemId) => {
+        if (seen.has(itemId)) {
+          return true;
+        }
+        seen.add(itemId);
+        return false;
+      }),
+    ),
+  ];
+  if (duplicateItemIds.length > 0) {
+    throw compactionFailure(
+      `Compaction summary ${field} contains duplicate item ids ${JSON.stringify(duplicateItemIds)}.`,
+      {
+        reason: "summary_coverage_duplicate",
+        duplicateItemIds,
+      },
+    );
+  }
+  return parsed;
+}
+
 function parseJson(value: string): unknown {
   try {
     return JSON.parse(value);
@@ -461,8 +576,26 @@ function rejectUnknown(record: Record<string, unknown>, fields: ReadonlySet<stri
   if (unknown !== undefined) throw compactionFailure(`Compaction summary ${label} contains unknown field '${unknown}'.`);
 }
 
-function compactionFailure(message: string): Error {
-  return createRuntimeFailure("HARNESS_ECONOMICS_COMPACTION_INSUFFICIENT", message);
+function compactionFailure(
+  message: string,
+  details?: Record<string, unknown>,
+): Error {
+  return createRuntimeFailure(
+    "HARNESS_ECONOMICS_COMPACTION_INSUFFICIENT",
+    message,
+    details,
+  );
+}
+
+function stringifyCorrectionValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function anchorArraySchema() {

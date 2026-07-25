@@ -107,7 +107,8 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
         key: "publish",
         runtimeName: "workspace.preview.publish",
         displayName: "Publish preview",
-        description: "Expose a listening local HTTP port at a public URL.",
+        description:
+          "Expose a listening local HTTP port at a public URL. In the final response, copy the returned preview.url byte-for-byte; never infer, normalize, shorten, or replace its hostname.",
         accessMode: "write",
         defaultPolicy: { loggingMode: "metadata_only", rateLimitMode: "off" },
       }),

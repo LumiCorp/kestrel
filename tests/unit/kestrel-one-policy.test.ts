@@ -5,6 +5,7 @@ import {
   composeKestrelOneProfile,
   KESTREL_ONE_DIALOG_TOOL_NAMES,
   KESTREL_ONE_ENVIRONMENT_PRESETS,
+  KESTREL_ONE_HOSTED_HARNESS_ECONOMICS,
   KESTREL_ONE_POLICY,
 } from "../../src/profile/kestrelOnePolicy.js";
 import { contractTest } from "../helpers/contract-test.js";
@@ -67,12 +68,23 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy composes isolated
     ),
     true,
   );
+  assert.equal(cli.profile.harnessEconomics, undefined);
+  assert.equal(desktop.profile.harnessEconomics, undefined);
+  assert.equal(
+    hosted.profile.harnessEconomics?.policy.compaction.maxSummaryAttempts,
+    2,
+  );
+  assert.equal(
+    hosted.profile.harnessEconomics?.policy.policyId,
+    "economics:kestrel-one:workspace-hosted:v2",
+  );
 });
 
 contractTest("runtime.hermetic", "canonical Kestrel One policy and presets are immutable versioned definitions", () => {
   assert.equal(Object.isFrozen(KESTREL_ONE_POLICY), true);
   assert.equal(Object.isFrozen(KESTREL_ONE_POLICY.requiredModelToolNames), true);
   assert.equal(Object.isFrozen(KESTREL_ONE_ENVIRONMENT_PRESETS), true);
+  assert.equal(Object.isFrozen(KESTREL_ONE_HOSTED_HARNESS_ECONOMICS), true);
   assert.equal(
     Object.values(KESTREL_ONE_ENVIRONMENT_PRESETS).every(
       (preset) => Object.isFrozen(preset) && preset.version === 1,

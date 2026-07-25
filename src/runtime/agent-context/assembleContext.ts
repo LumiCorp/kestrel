@@ -57,6 +57,7 @@ export {
   type KestrelCompactionSummaryV1,
   type KestrelAgentCompactedTranscriptInput,
   type KestrelAgentCompactionBuildInput,
+  type KestrelAgentCompactionCorrectionV1,
   type KestrelAgentCompactionPlan,
   type KestrelAgentCompactionPolicyInput,
   type KestrelTerminalBenchRepairPromptInput,

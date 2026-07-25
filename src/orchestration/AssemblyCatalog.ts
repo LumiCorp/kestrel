@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type { TuiProfile } from "../../cli/contracts.js";
 import type {
   AssemblyBundleRecord,
@@ -10,6 +12,8 @@ import {
   buildRuntimeIdentityMetadata,
   formatRuntimeAssemblyLabel,
 } from "../profile/runtimeProfile.js";
+import { fingerprintResolvedProfile } from "../profile/kestrelOnePolicy.js";
+import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
 export class AssemblyCatalog {
   private readonly store: OrchestrationStore;
@@ -29,8 +33,14 @@ export class AssemblyCatalog {
     specialists: SpecialistDefinitionRecord[];
   }> {
     const now = new Date().toISOString();
-    const contextPolicy: ContextPolicyDefinitionRecord = {
-      contextPolicyId: `context-policy:${this.profile?.id ?? "default"}:default`,
+    const profileId = this.profile?.id ?? "default";
+    const profileFingerprint =
+      this.profile === undefined
+        ? "default"
+        : fingerprintResolvedProfile(this.profile);
+    let contextPolicy: ContextPolicyDefinitionRecord = {
+      contextPolicyId:
+        `context-policy:${profileId}:${profileFingerprint}`,
       label: `${this.profile?.label ?? "Default"} context policy`,
       defaultAction: "continue",
       ...(this.profile?.harnessEconomics !== undefined
@@ -42,7 +52,36 @@ export class AssemblyCatalog {
       createdAt: now,
       updatedAt: now,
     };
-    await this.store.upsertContextPolicyDefinition(contextPolicy);
+    const existingContextPolicy =
+      this.store.getContextPolicyDefinition !== undefined
+        ? await this.store.getContextPolicyDefinition(
+            contextPolicy.contextPolicyId,
+          )
+        : (await this.store.listContextPolicyDefinitions()).find(
+            (record) =>
+              record.contextPolicyId === contextPolicy.contextPolicyId,
+          ) ?? null;
+    if (
+      existingContextPolicy !== null &&
+      sameContextPolicyDefinition(
+        existingContextPolicy,
+        contextPolicy,
+      ) === false
+    ) {
+      throw createRuntimeFailure(
+        "CONTEXT_POLICY_IMMUTABLE",
+        `Context policy '${contextPolicy.contextPolicyId}' already has a different definition. Create a new profile revision instead.`,
+        {
+          contextPolicyId: contextPolicy.contextPolicyId,
+          profileFingerprint,
+        },
+      );
+    }
+    if (existingContextPolicy === null) {
+      await this.store.upsertContextPolicyDefinition(contextPolicy);
+    } else {
+      contextPolicy = existingContextPolicy;
+    }
 
     const specialists: SpecialistDefinitionRecord[] = [];
     if (this.profile?.delegation?.allowAgentSpawn === true) {
@@ -64,7 +103,7 @@ export class AssemblyCatalog {
 
     let defaultBundle: AssemblyBundleRecord | undefined;
     if (this.profile !== undefined) {
-      const bundleId = `bundle:${this.profile.id}:default`;
+      const bundleId = `bundle:${this.profile.id}:${profileFingerprint}`;
       const runtimeIdentity = buildRuntimeIdentityMetadata({
         agentProfileId: this.profile.agentProfileId ?? this.profile.id,
         agentProfileLabel: this.profile.agentProfileLabel ?? this.profile.label,
@@ -120,7 +159,22 @@ export class AssemblyCatalog {
         createdAt: now,
         updatedAt: now,
       };
-      await this.store.upsertAssemblyBundle(defaultBundle);
+      const existingBundle = await this.store.getAssemblyBundle(bundleId);
+      if (
+        existingBundle !== null &&
+        sameAssemblyBundleDefinition(existingBundle, defaultBundle) === false
+      ) {
+        throw createRuntimeFailure(
+          "ASSEMBLY_BUNDLE_IMMUTABLE",
+          `Assembly bundle '${bundleId}' already has a different definition. Create a new profile revision instead.`,
+          { bundleId, profileFingerprint },
+        );
+      }
+      if (existingBundle === null) {
+        await this.store.upsertAssemblyBundle(defaultBundle);
+      } else {
+        defaultBundle = existingBundle;
+      }
     }
 
     return {
@@ -133,4 +187,40 @@ export class AssemblyCatalog {
   async resolveBundle(bundleId: string): Promise<AssemblyBundleRecord | null> {
     return this.store.getAssemblyBundle(bundleId);
   }
+}
+
+function sameAssemblyBundleDefinition(
+  left: AssemblyBundleRecord,
+  right: AssemblyBundleRecord,
+): boolean {
+  return isDeepStrictEqual(
+    assemblyBundleDefinition(left),
+    assemblyBundleDefinition(right),
+  );
+}
+
+function sameContextPolicyDefinition(
+  left: ContextPolicyDefinitionRecord,
+  right: ContextPolicyDefinitionRecord,
+): boolean {
+  return isDeepStrictEqual(
+    contextPolicyDefinition(left),
+    contextPolicyDefinition(right),
+  );
+}
+
+function contextPolicyDefinition(
+  record: ContextPolicyDefinitionRecord,
+): Omit<ContextPolicyDefinitionRecord, "createdAt" | "updatedAt"> {
+  const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } =
+    record;
+  return definition;
+}
+
+function assemblyBundleDefinition(
+  record: AssemblyBundleRecord,
+): Omit<AssemblyBundleRecord, "createdAt" | "updatedAt"> {
+  const { createdAt: _createdAt, updatedAt: _updatedAt, ...definition } =
+    record;
+  return definition;
 }

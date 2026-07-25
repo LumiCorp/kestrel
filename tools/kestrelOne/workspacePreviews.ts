@@ -17,7 +17,7 @@ export const workspacePreviewPublishTool: SharedToolModule = {
   definition: {
     name: "workspace.preview.publish",
     description:
-      "Publish an HTTP app that is already listening on a local Workspace port. Returns a short-lived anonymous public HTTPS URL that supports streaming and WebSockets. Start the app first with a shell or process tool.",
+      "Publish an HTTP app that is already listening on a local Workspace port. Returns a short-lived anonymous public HTTPS URL that supports streaming and WebSockets. Start the app first with a shell or process tool. In the final response, copy the returned preview.url byte-for-byte; never infer, normalize, shorten, or replace its hostname.",
     inputSchema: {
       type: "object",
       properties: {

@@ -38,7 +38,7 @@ export interface HarnessEconomicsPolicyV1 {
   };
   compaction: {
     requireStructuredAnchors: true;
-    maxSummaryAttempts: 1;
+    maxSummaryAttempts: 1 | 2;
   };
   tools: {
     exposure: "assembly_allowlist" | "phase_scoped";

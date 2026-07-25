@@ -106,10 +106,13 @@ export function parseHarnessEconomicsPolicyV1(value: unknown): HarnessEconomicsP
   const cache = requireRecord(root.cache, "Harness economics policy cache");
   rejectUnknownFields(cache, CACHE_FIELDS, "Harness economics policy cache");
 
-  if (compaction.requireStructuredAnchors !== true || compaction.maxSummaryAttempts !== 1) {
+  if (
+    compaction.requireStructuredAnchors !== true ||
+    (compaction.maxSummaryAttempts !== 1 && compaction.maxSummaryAttempts !== 2)
+  ) {
     throw createRuntimeFailure(
       "HARNESS_ECONOMICS_COMPACTION_POLICY_INVALID",
-      "Harness economics policy compaction must require structured anchors and exactly one summary attempt.",
+      "Harness economics policy compaction must require structured anchors and allow one or two summary attempts.",
     );
   }
 
@@ -143,7 +146,7 @@ export function parseHarnessEconomicsPolicyV1(value: unknown): HarnessEconomicsP
     },
     compaction: {
       requireStructuredAnchors: true,
-      maxSummaryAttempts: 1,
+      maxSummaryAttempts: compaction.maxSummaryAttempts,
     },
     tools: {
       exposure: requireEnum(
