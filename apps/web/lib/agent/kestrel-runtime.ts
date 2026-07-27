@@ -31,6 +31,7 @@ import {
   isKestrelOneManagedRuntimeModel,
   toKestrelOneRuntimeModelSelection,
   type DesktopLocalRuntimeModelSelection,
+  type EnvironmentRuntimeModelSelection,
   type KestrelOneRuntimeModelSelection,
 } from "@/lib/agent/kestrel-runtime-model";
 import {
@@ -591,7 +592,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     effectiveCapabilities: string[];
     reasoningPolicy?: RunnerProfile["reasoning"] | undefined;
   };
-  runtimeModel?: KestrelOneRuntimeModelSelection | undefined;
+  runtimeModel?: EnvironmentRuntimeModelSelection | undefined;
 }) {
   const toolConfiguration = resolveKestrelOneToolProfileConfiguration({
     availableToolNames: [...KESTREL_ONE_HOSTED_RUNTIME_TOOL_NAMES],
@@ -617,15 +618,19 @@ export async function resolveHostedKestrelExecutionProfile(input: {
                   "agent.loop": input.runtimeModel.model,
                 },
               },
-              modelCredential: {
-                source: "kestrel-one",
-                runId: input.route.runId,
-                gatewayId: input.runtimeModel.gatewayId,
-                organizationId: input.runtimeModel.organizationId,
-                environmentId: input.runtimeModel.environmentId,
-                rawModelId: input.runtimeModel.model,
-                provider: input.runtimeModel.provider,
-              },
+              ...(isKestrelOneManagedRuntimeModel(input.runtimeModel)
+                ? {
+                    modelCredential: {
+                      source: "kestrel-one",
+                      runId: input.route.runId,
+                      gatewayId: input.runtimeModel.gatewayId,
+                      organizationId: input.runtimeModel.organizationId,
+                      environmentId: input.runtimeModel.environmentId,
+                      rawModelId: input.runtimeModel.model,
+                      provider: input.runtimeModel.provider,
+                    },
+                  }
+                : {}),
               default: false,
             }
           : {}),

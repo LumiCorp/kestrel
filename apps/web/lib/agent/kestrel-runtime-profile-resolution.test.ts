@@ -132,3 +132,73 @@ contractTest(
     assert.equal("profile" in calls[0]!.input, false);
   },
 );
+
+contractTest(
+  "web.hermetic",
+  "hosted Kestrel resolves desktop-local model profiles without hosted credentials",
+  async () => {
+    const calls: Array<{
+      input: ExecutionProfileResolveCommandPayload;
+      context: KestrelRequestContext;
+    }> = [];
+    const context: KestrelRequestContext = {
+      tenantId: "org_123",
+      actor: {
+        actorId: "user_123",
+        actorType: "end_user",
+        tenantId: "org_123",
+      },
+    };
+
+    await resolveHostedKestrelExecutionProfile({
+      client: {
+        async resolveExecutionProfile(input, requestContext) {
+          calls.push({ input, context: requestContext });
+          return {
+            version: 1,
+            profileId: `kestrel:workspace_hosted:${"b".repeat(64)}`,
+            fingerprint: "b".repeat(64),
+            policy: { id: "kestrel", version: 2 },
+            environmentPreset: { id: "workspace_hosted", version: 1 },
+            resolvedProfile: {
+              id: `kestrel:workspace_hosted:${"b".repeat(64)}`,
+              label: "Kestrel One",
+              agent: "reference-react",
+              sessionPrefix: "kestrel",
+              agentProfileId: "kestrel",
+            },
+          } satisfies ExecutionProfileResolvedEventPayload;
+        },
+      },
+      context,
+      route: {
+        runId: "exec_123",
+        environmentId: "env_123",
+        effectiveCapabilities: [],
+      },
+      runtimeModel: {
+        desktopLocal: true,
+        id: "desktop_local_model",
+        provider: "ollama",
+        model: "llama3.2",
+        organizationId: "org_123",
+        environmentId: "env_123",
+      },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0]?.input.managedConfiguration, {
+      label: "Kestrel One",
+      additionalToolNames: [],
+      kestrelOneAppApprovalModes: {},
+      modelProvider: "ollama",
+      model: "llama3.2",
+      agentStageConfig: {
+        modelByStage: {
+          "agent.loop": "llama3.2",
+        },
+      },
+      default: false,
+    });
+  },
+);
