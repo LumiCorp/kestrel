@@ -6,7 +6,7 @@ import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const migration = fs.readFileSync(
-  path.join(root, "migrations/0053_desktop_environments.sql"),
+  path.join(root, "migrations/0054_desktop_environments.sql"),
   "utf8",
 );
 const journal = fs.readFileSync(
@@ -52,6 +52,6 @@ contractTest(
       /ADD COLUMN "target_provider" text DEFAULT 'fly' NOT NULL/u,
     );
     assert.match(migration, /"source_type" IN \('blank', 'github', 'desktop'\)/u);
-    assert.match(journal, /0053_desktop_environments/u);
+    assert.match(journal, /0054_desktop_environments/u);
   },
 );

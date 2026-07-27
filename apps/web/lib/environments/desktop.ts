@@ -240,7 +240,6 @@ export async function approveDesktopEnrollment(input: {
         isDefault,
         runtimeTemplate: "desktop-local-v1",
         runtimeImage: "desktop-local",
-        previewIngressProvider: "kestrel_edge",
         lastHealthAt: now,
         createdAt: now,
         updatedAt: now,

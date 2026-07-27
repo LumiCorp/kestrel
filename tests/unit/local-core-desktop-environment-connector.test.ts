@@ -148,7 +148,7 @@ contractTest(
   "runtime.hermetic",
   "Desktop Environment runner events redact registered local workspace roots before upload",
   () => {
-    const workspacePath = "/Users/gregasher/Projects/private-client";
+    const workspacePath = "/workspace/private-client";
     const event = {
       id: "event-1",
       type: "run.tool.completed",

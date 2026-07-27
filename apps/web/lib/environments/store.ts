@@ -1551,13 +1551,14 @@ export async function createOrConfigureProjectWorkspace(input: {
         "Project or Environment is unavailable.",
       );
     }
+    const projectId = project.id;
     const source = input.source;
     async function assertProjectHasNoActiveWork() {
       const activeExecution =
         await transaction.query.environmentRunExecutions.findFirst({
           where: (table, { and, eq, inArray }) =>
             and(
-              eq(table.projectId, project.id),
+              eq(table.projectId, projectId),
               inArray(table.status, ["routed", "running"]),
             ),
           columns: { id: true },
@@ -1577,7 +1578,7 @@ export async function createOrConfigureProjectWorkspace(input: {
         )
         .where(
           and(
-            eq(schema.threads.projectId, project.id),
+            eq(schema.threads.projectId, projectId),
             inArray(schema.threadTurns.status, [
               "queued",
               "running",
