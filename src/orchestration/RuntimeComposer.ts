@@ -513,7 +513,7 @@ function shouldMigrateLegacyDesktopAssembly(
     "environmentPresetId",
   );
   return (
-    canonicalAgentProfileId === "kestrel-one" &&
+    canonicalAgentProfileId === "kestrel" &&
     canonicalEnvironment === "desktop_dev_local" &&
     existingEnvironment === "desktop_dev_local" &&
     (existingAgentProfileId === "local-core-desktop" ||

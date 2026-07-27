@@ -52,6 +52,8 @@ import {
 import { readDatabaseUrlSource } from "../localCoreEnv.js";
 import type {
   JobRunCommandPayload,
+  ExecutionProfileResolveCommandPayload,
+  ExecutionProfileResolvedEventPayload,
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
   OperatorControlCommandPayload,
@@ -112,6 +114,18 @@ import type {
   WorkspaceManagedSetupRetryCommandPayload,
 } from "../protocol/contracts.js";
 import {
+  LocalCoreExecutionProfileRegistry,
+  type ExecutionProfileRevisionProvenance,
+} from "../../src/localCore/executionProfileRegistry.js";
+import {
+  composeKestrelProfile,
+  KESTREL_ONE_ENVIRONMENT_PRESETS,
+  KESTREL_POLICY_ID,
+  KESTREL_POLICY_VERSION,
+  LEGACY_KESTREL_ONE_POLICY_ID,
+  type KestrelOneProfileOverlay,
+} from "../../src/profile/kestrelOnePolicy.js";
+import {
   type DelegationTaskUpdate,
   KestrelChatRuntime,
   type KestrelChatRuntimeOptions,
@@ -150,6 +164,9 @@ interface ActiveRunEntry {
 export interface RunnerProfileProvider {
   listProfiles(): Promise<TuiProfile[]>;
   getProfile(profileId: string): Promise<TuiProfile | undefined>;
+  resolveExecutionProfile?(
+    payload: ExecutionProfileResolveCommandPayload,
+  ): Promise<ExecutionProfileResolvedEventPayload>;
 }
 
 export type RunnerProfileSourcePolicy =
@@ -588,6 +605,20 @@ export class RunnerHost {
       return;
     }
     this.writer.emit("profile.loaded", { profile }, { commandId });
+  }
+
+  async executionProfileResolve(
+    commandId: string,
+    payload: ExecutionProfileResolveCommandPayload,
+  ): Promise<void> {
+    if (this.profileProvider.resolveExecutionProfile === undefined) {
+      throw new Error(
+        "execution-profile.resolve is not supported by this runner profile provider.",
+      );
+    }
+    const resolution =
+      await this.profileProvider.resolveExecutionProfile(payload);
+    this.writer.emit("execution-profile.resolved", resolution, { commandId });
   }
 
   runStart(
@@ -3240,7 +3271,9 @@ function resolveIssuedBy(
 }
 
 function createDefaultProfileProvider(): RunnerProfileProvider {
-  const store = new ProfileStore(resolveKestrelHome());
+  const homePath = resolveKestrelHome();
+  const store = new ProfileStore(homePath);
+  const registry = new LocalCoreExecutionProfileRegistry(homePath);
   return {
     async listProfiles(): Promise<TuiProfile[]> {
       return store.load();
@@ -3249,5 +3282,121 @@ function createDefaultProfileProvider(): RunnerProfileProvider {
       const profiles = await store.load();
       return store.findById(profiles, profileId);
     },
+    async resolveExecutionProfile(
+      payload: ExecutionProfileResolveCommandPayload,
+    ): Promise<ExecutionProfileResolvedEventPayload> {
+      const profile = await resolveDefaultExecutionProfile(
+        store,
+        payload,
+      );
+      const provenance = buildDefaultExecutionProfileProvenance(
+        profile,
+        payload,
+      );
+      const registered = await registry.register(
+        profile,
+        payload.environmentPresetId,
+        provenance,
+      );
+      return {
+        version: 1,
+        profileId: registered.profileId,
+        fingerprint: registered.fingerprint,
+        policy: provenance.policy,
+        environmentPreset: {
+          id: payload.environmentPresetId,
+          version: provenance.environmentPreset.version,
+        },
+        resolvedProfile: registered.profile,
+      };
+    },
+  };
+}
+
+async function resolveDefaultExecutionProfile(
+  store: ProfileStore,
+  payload: ExecutionProfileResolveCommandPayload,
+): Promise<TuiProfile> {
+  const managedConfiguration = payload.managedConfiguration as
+    | KestrelOneProfileOverlay
+    | undefined;
+  if (payload.authoringProfileId === undefined) {
+    return composeKestrelProfile({
+      environmentPresetId: payload.environmentPresetId,
+      overlay: managedConfiguration,
+    }).profile;
+  }
+
+  const profiles = await store.load();
+  const selected = store.findById(profiles, payload.authoringProfileId);
+  if (selected === undefined) {
+    throw new Error(
+      `Profile '${payload.authoringProfileId}' was not found.`,
+    );
+  }
+  if (
+    selected.id === KESTREL_POLICY_ID ||
+    selected.id === LEGACY_KESTREL_ONE_POLICY_ID ||
+    selected.agentProfileId === KESTREL_POLICY_ID ||
+    selected.agentProfileId === LEGACY_KESTREL_ONE_POLICY_ID
+  ) {
+    return composeKestrelProfile({
+      environmentPresetId: payload.environmentPresetId,
+      overlay: {
+        label: selected.label,
+        modelProvider: selected.modelProvider,
+        model: selected.model,
+        modelCredential: selected.modelCredential,
+        modelCapabilities: selected.modelCapabilities,
+        agentStageConfig: selected.agentStageConfig,
+        modelTimeoutMs: selected.modelTimeoutMs,
+        approvalPolicyPackId: selected.approvalPolicyPackId,
+        additionalToolNames: selected.toolAllowlist,
+        mcpServers: selected.mcpServers,
+        toolQueue: selected.toolQueue,
+        codeMode: selected.codeMode,
+        devShell: selected.devShell,
+        delegationLimits: selected.delegation,
+        reasoning: selected.reasoning,
+        theme: selected.theme,
+        default: selected.default,
+        ...(managedConfiguration ?? {}),
+      },
+    }).profile;
+  }
+  if (managedConfiguration !== undefined) {
+    throw new Error(
+      "execution-profile.resolve cannot apply Kestrel managed configuration to a custom profile.",
+    );
+  }
+  return selected;
+}
+
+function buildDefaultExecutionProfileProvenance(
+  profile: TuiProfile,
+  payload: ExecutionProfileResolveCommandPayload,
+): ExecutionProfileRevisionProvenance {
+  const isKestrelProfile =
+    profile.agentProfileId === KESTREL_POLICY_ID ||
+    profile.agentProfileId === LEGACY_KESTREL_ONE_POLICY_ID ||
+    profile.id === KESTREL_POLICY_ID ||
+    profile.id === LEGACY_KESTREL_ONE_POLICY_ID;
+  return {
+    policy: {
+      id: isKestrelProfile ? KESTREL_POLICY_ID : (profile.agentProfileId ?? profile.id),
+      version: isKestrelProfile ? KESTREL_POLICY_VERSION : 1,
+    },
+    environmentPreset: {
+      id: payload.environmentPresetId,
+      version: KESTREL_ONE_ENVIRONMENT_PRESETS[payload.environmentPresetId].version,
+    },
+    ...(payload.authoringProfileId !== undefined
+      ? {
+          authoringProfile: {
+            id: payload.authoringProfileId,
+            revision: "registered-resolution-v1",
+          },
+        }
+      : {}),
   };
 }

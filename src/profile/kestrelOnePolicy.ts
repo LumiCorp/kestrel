@@ -10,19 +10,32 @@ import {
   type ShellPresetId,
 } from "./runtimeProfile.js";
 
-export const KESTREL_ONE_POLICY_ID = "kestrel-one";
+export const KESTREL_POLICY_ID = "kestrel";
+export const KESTREL_POLICY_LABEL = "Kestrel";
+export const KESTREL_POLICY_VERSION = 2;
+export const KESTREL_PROMPT_POLICY_ID = "kestrel";
+
+export const LEGACY_KESTREL_ONE_POLICY_ID = "kestrel-one";
+export const LEGACY_KESTREL_ONE_PROMPT_POLICY_ID = "kestrel-one";
+
+/** @deprecated Use KESTREL_POLICY_ID. */
+export const KESTREL_ONE_POLICY_ID = KESTREL_POLICY_ID;
 export const KESTREL_ONE_POLICY_LABEL = "Kestrel One";
-export const KESTREL_ONE_POLICY_VERSION = 1;
-export const KESTREL_ONE_PROMPT_POLICY_ID = "kestrel-one";
+/** @deprecated Use KESTREL_POLICY_VERSION. */
+export const KESTREL_ONE_POLICY_VERSION = KESTREL_POLICY_VERSION;
+/** @deprecated Use KESTREL_PROMPT_POLICY_ID. */
+export const KESTREL_ONE_PROMPT_POLICY_ID = KESTREL_PROMPT_POLICY_ID;
 
 export interface KestrelOnePolicyDefinition {
-  id: typeof KESTREL_ONE_POLICY_ID;
-  version: typeof KESTREL_ONE_POLICY_VERSION;
-  promptPolicyId: typeof KESTREL_ONE_PROMPT_POLICY_ID;
+  id: typeof KESTREL_POLICY_ID;
+  version: typeof KESTREL_POLICY_VERSION;
+  promptPolicyId: typeof KESTREL_PROMPT_POLICY_ID;
   agent: TuiProfile["agent"];
   requiredModelToolNames: readonly string[];
   allowNestedCollaborators: false;
 }
+
+export type KestrelPolicyDefinition = KestrelOnePolicyDefinition;
 
 export const KESTREL_ONE_DIALOG_TOOL_NAMES = Object.freeze([
   "dialog.open",
@@ -32,13 +45,15 @@ export const KESTREL_ONE_DIALOG_TOOL_NAMES = Object.freeze([
 
 export const KESTREL_ONE_POLICY: Readonly<KestrelOnePolicyDefinition> =
   Object.freeze({
-    id: KESTREL_ONE_POLICY_ID,
-    version: KESTREL_ONE_POLICY_VERSION,
-    promptPolicyId: KESTREL_ONE_PROMPT_POLICY_ID,
+    id: KESTREL_POLICY_ID,
+    version: KESTREL_POLICY_VERSION,
+    promptPolicyId: KESTREL_PROMPT_POLICY_ID,
     agent: "reference-react",
     requiredModelToolNames: KESTREL_ONE_DIALOG_TOOL_NAMES,
     allowNestedCollaborators: false,
   });
+
+export const KESTREL_POLICY = KESTREL_ONE_POLICY;
 
 export const KESTREL_ONE_INTERNAL_DELEGATION_TOOL_NAMES = Object.freeze([
   "agent.spawn",
@@ -77,12 +92,12 @@ export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.vercel_deployment_events",
 ] as const);
 
-export const KESTREL_ONE_HOSTED_HARNESS_ECONOMICS =
+export const KESTREL_HARNESS_ECONOMICS =
   Object.freeze({
     version: 1,
     policy: {
       version: 1,
-      policyId: "economics:kestrel-one:workspace-hosted:v2",
+      policyId: "economics:kestrel:v1",
       mode: "observe",
       counting: {
         estimatorVersion: "utf8-byte-upper-bound:v1",
@@ -130,6 +145,10 @@ export const KESTREL_ONE_HOSTED_HARNESS_ECONOMICS =
     ],
   } satisfies HarnessEconomicsControlV1);
 
+/** @deprecated Use KESTREL_HARNESS_ECONOMICS. */
+export const KESTREL_ONE_HOSTED_HARNESS_ECONOMICS =
+  KESTREL_HARNESS_ECONOMICS;
+
 const DEFAULT_TOOL_QUEUE = Object.freeze({
   perRunConcurrency: 8,
   globalConcurrency: 24,
@@ -139,9 +158,9 @@ const DEFAULT_TOOL_QUEUE = Object.freeze({
 });
 
 export interface KestrelOnePolicyProvenance {
-  policyId: typeof KESTREL_ONE_POLICY_ID;
-  policyVersion: typeof KESTREL_ONE_POLICY_VERSION;
-  promptPolicyId: typeof KESTREL_ONE_PROMPT_POLICY_ID;
+  policyId: typeof KESTREL_POLICY_ID;
+  policyVersion: typeof KESTREL_POLICY_VERSION;
+  promptPolicyId: typeof KESTREL_PROMPT_POLICY_ID;
   environmentPresetId: Exclude<ShellPresetId, "web_balanced">;
   environmentPresetVersion: number;
   fingerprint: string;
@@ -172,6 +191,7 @@ export interface KestrelOneProfileOverlay {
   model?: string | undefined;
   modelCredential?: TuiProfile["modelCredential"] | undefined;
   modelCapabilities?: TuiProfile["modelCapabilities"] | undefined;
+  /** @deprecated Harness economics is policy-owned and rejected by composition. */
   harnessEconomics?: TuiProfile["harnessEconomics"] | undefined;
   agentStageConfig?: TuiProfile["agentStageConfig"] | undefined;
   modelTimeoutMs?: number | undefined;
@@ -194,6 +214,11 @@ export interface KestrelOneProfileOverlay {
   default?: boolean | undefined;
 }
 
+export type KestrelManagedConfiguration = Omit<
+  KestrelOneProfileOverlay,
+  "harnessEconomics"
+>;
+
 export interface ComposeKestrelOneProfileInput {
   environmentPresetId: Exclude<ShellPresetId, "web_balanced">;
   overlay?: KestrelOneProfileOverlay | undefined;
@@ -208,6 +233,7 @@ export interface ComposedKestrelOneProfile {
 export function composeKestrelOneProfile(
   input: ComposeKestrelOneProfileInput,
 ): ComposedKestrelOneProfile {
+  assertNoPolicyControlledOverlay(input.overlay);
   const environmentPreset =
     KESTREL_ONE_ENVIRONMENT_PRESETS[input.environmentPresetId];
   const shellKind = shellKindForPreset(input.environmentPresetId);
@@ -218,16 +244,13 @@ export function composeKestrelOneProfile(
     devShell: input.overlay?.devShell,
   });
   const runtimeIdentity = buildRuntimeIdentityMetadata({
-    agentProfileId: KESTREL_ONE_POLICY_ID,
+    agentProfileId: KESTREL_POLICY_ID,
     agentProfileLabel: KESTREL_ONE_POLICY_LABEL,
     shellKind,
     presetId: input.environmentPresetId,
     capabilityPacks: resolvedEnvironment.capabilityPacks,
   });
   const additionalToolNames = [
-    ...(input.environmentPresetId === "workspace_hosted"
-      ? KESTREL_ONE_WORKSPACE_TOOL_NAMES
-      : []),
     ...(input.overlay?.additionalToolNames ?? []),
   ];
   const toolAllowlist = normalizeKestrelOneToolAllowlist([
@@ -249,9 +272,7 @@ export function composeKestrelOneProfile(
   });
   const profileId =
     input.resolvedProfileId ??
-    (input.environmentPresetId === "workspace_hosted"
-      ? KESTREL_ONE_POLICY_ID
-      : `${KESTREL_ONE_POLICY_ID}:${input.environmentPresetId}:${fingerprint}`);
+    `${KESTREL_POLICY_ID}:${input.environmentPresetId}:${fingerprint}`;
   const delegationLimits = input.overlay?.delegationLimits;
   const profile: TuiProfile = {
     id: profileId,
@@ -278,15 +299,7 @@ export function composeKestrelOneProfile(
     ...(input.overlay?.modelCapabilities !== undefined
       ? { modelCapabilities: input.overlay.modelCapabilities }
       : {}),
-    ...(input.overlay?.harnessEconomics !== undefined
-      ? { harnessEconomics: input.overlay.harnessEconomics }
-      : input.environmentPresetId === "workspace_hosted"
-        ? {
-            harnessEconomics: structuredClone(
-              KESTREL_ONE_HOSTED_HARNESS_ECONOMICS,
-            ),
-          }
-        : {}),
+    harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
     ...(input.overlay?.agentStageConfig !== undefined
       ? { agentStageConfig: input.overlay.agentStageConfig }
       : {}),
@@ -349,6 +362,8 @@ export function composeKestrelOneProfile(
   };
 }
 
+export const composeKestrelProfile = composeKestrelOneProfile;
+
 export function normalizeKestrelOneToolAllowlist(
   toolNames: readonly string[],
 ): string[] {
@@ -399,6 +414,31 @@ function fingerprintKestrelOneComposition(value: unknown): string {
   return createHash("sha256")
     .update(stableJson(value))
     .digest("hex");
+}
+
+function assertNoPolicyControlledOverlay(
+  overlay: KestrelOneProfileOverlay | undefined,
+): void {
+  if (overlay === undefined) return;
+  const record = overlay as Record<string, unknown>;
+  const rejected = [
+    "agent",
+    "agentProfileId",
+    "agentProfileLabel",
+    "defaultInteractionMode",
+    "defaultActSubmode",
+    "guardrails",
+    "harnessEconomics",
+    "modeSystemV2Enabled",
+    "promptPolicyId",
+    "sessionPrefix",
+    "toolAllowlist",
+  ].filter((field) => record[field] !== undefined);
+  if (rejected.length > 0) {
+    throw new Error(
+      `Kestrel policy composition rejects policy-controlled field(s): ${rejected.join(", ")}.`,
+    );
+  }
 }
 
 function stableJson(value: unknown): string {

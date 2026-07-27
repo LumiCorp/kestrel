@@ -208,7 +208,7 @@ contractTest(
   () => {
     const runtime = readAppSource("lib/agent/kestrel-runtime.ts");
     const synchronizeIndex = runtime.indexOf("synchronizeProjectSkills({");
-    const runIndex = runtime.indexOf("client.streamRunWithProfile(");
+    const runIndex = runtime.indexOf("client.streamRun(");
 
     assert.ok(synchronizeIndex >= 0);
     assert.ok(runIndex > synchronizeIndex);

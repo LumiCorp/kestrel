@@ -19,6 +19,11 @@ export type * from "@kestrel-agents/protocol";
 export interface KestrelRequestContext {
   actor: RunnerActorMetadata;
   tenantId?: string | undefined;
+  /**
+   * @deprecated Managed runners resolve immutable execution profiles and pass
+   * profileId on commands. Inline context profiles are for unmanaged/custom
+   * runner compatibility only.
+   */
   profile?: RunnerProfile | undefined;
   durability?: RunnerDurability | undefined;
 }

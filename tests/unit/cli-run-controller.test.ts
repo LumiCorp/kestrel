@@ -124,7 +124,7 @@ function createRunHarness(input: {
 
   const commands: Array<{ type: string; payload: Record<string, unknown> }> = [];
   const registeredProfileId =
-    "kestrel-one:cli_dev_local:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    "kestrel:cli_dev_local:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const history: Array<{
     role: string;
     text: string;
@@ -186,10 +186,12 @@ function createRunHarness(input: {
           profileId: registeredProfileId,
           fingerprint:
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          policy: { id: "kestrel", version: 2 },
+          environmentPreset: { id: "cli_dev_local", version: 1 },
           resolvedProfile: {
             ...activeProfile,
             id: registeredProfileId,
-            agentProfileId: "kestrel-one",
+            agentProfileId: "kestrel",
           },
         };
       },

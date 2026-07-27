@@ -302,7 +302,16 @@ export interface ProfilesFileV5 {
   };
 }
 
-export type ProfilesFile = ProfilesFileV4 | ProfilesFileV5;
+export interface ProfilesFileV6 {
+  version: 6;
+  profiles: TuiProfile[];
+  managedProfileOverlays: {
+    "kestrel@cli_dev_local"?: KestrelOneManagedProfileOverlay | undefined;
+    "kestrel@workspace_hosted"?: KestrelOneManagedProfileOverlay | undefined;
+  };
+}
+
+export type ProfilesFile = ProfilesFileV4 | ProfilesFileV5 | ProfilesFileV6;
 
 export interface TuiSessionMeta {
   name: string;

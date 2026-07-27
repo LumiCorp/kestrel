@@ -3,7 +3,12 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { applyProfileDefaults, parseProfilesFile, ProfileStore } from "../../cli/config/ProfileStore.js";
+import {
+  applyProfileDefaults,
+  parseKestrelManagedConfiguration,
+  parseProfilesFile,
+  ProfileStore,
+} from "../../cli/config/ProfileStore.js";
 import { MODEL_POLICY_FILE_NAME } from "../../src/profile/modelPolicy.js";
 import { FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
 import { contractTest } from "../helpers/contract-test.js";
@@ -17,7 +22,7 @@ contractTest("runtime.hermetic", "ProfileStore bootstraps default profile when f
   const profileIds = profiles.map((profile) => profile.id);
 
   assert.equal(profiles.length >= 1, true);
-  assert.deepEqual(profileIds, ["reference", "kestrel-one"]);
+  assert.deepEqual(profileIds, ["reference", "kestrel"]);
   assert.equal(profiles[0]?.agent, "reference-react");
   assert.equal(profiles[0]?.shellKind, "cli");
   assert.equal(profiles[0]?.presetId, "cli_dev_local");
@@ -89,7 +94,7 @@ contractTest("runtime.hermetic", "ProfileStore keeps hosted tools out of the loc
 
   const profiles = await store.load();
   const reference = profiles.find((profile) => profile.id === "reference");
-  const kestrelOne = profiles.find((profile) => profile.id === "kestrel-one");
+  const kestrelOne = profiles.find((profile) => profile.id === "kestrel");
 
   assert.equal(reference?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents"), false);
   assert.equal(kestrelOne?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents"), false);
@@ -154,7 +159,7 @@ contractTest("runtime.hermetic", "ProfileStore reconciles persisted Kestrel-One 
   const secondLoad = await store.load();
   const secondPersisted = await readFile(filePath, "utf8");
   const reference = secondLoad.find((profile) => profile.id === "reference");
-  const kestrelOne = secondLoad.find((profile) => profile.id === "kestrel-one");
+  const kestrelOne = secondLoad.find((profile) => profile.id === "kestrel");
 
   assert.equal(reference?.delegation?.allowAgentSpawn, false);
   assert.equal(reference?.delegation?.maxConcurrentChildSessions, 4);
@@ -173,19 +178,14 @@ contractTest("runtime.hermetic", "ProfileStore reconciles persisted Kestrel-One 
   );
   assert.deepEqual(firstLoad, secondLoad);
   assert.equal(firstPersisted, secondPersisted);
-  assert.equal(JSON.parse(firstPersisted).version, 5);
+  assert.equal(JSON.parse(firstPersisted).version, 6);
   assert.equal(
     JSON.parse(firstPersisted).profiles.some(
       (profile: { id?: string }) => profile.id === "kestrel-one",
     ),
     false,
   );
-  assert.equal(
-    (await readFile(`${filePath}.v4.bak`, "utf8")).includes(
-      '"version": 4',
-    ),
-    true,
-  );
+  assert.equal((await readFile(`${filePath}.v4.bak`, "utf8")).includes('"version": 4'), true);
 });
 
 contractTest("runtime.hermetic", "ProfileStore resolves legacy provider-specific profile ids to the canonical reference profile", async () => {
@@ -196,6 +196,7 @@ contractTest("runtime.hermetic", "ProfileStore resolves legacy provider-specific
 
   assert.equal(store.findById(profiles, "reference-openai")?.id, "reference");
   assert.equal(store.findById(profiles, "reference-anthropic")?.id, "reference");
+  assert.equal(store.findById(profiles, "kestrel-one")?.id, "kestrel");
 });
 
 contractTest("runtime.hermetic", "ProfileStore adds Kestrel-One profile to existing profile files", async () => {
@@ -223,7 +224,7 @@ contractTest("runtime.hermetic", "ProfileStore adds Kestrel-One profile to exist
   const store = new ProfileStore(tempDir);
   const profiles = await store.load();
   const reference = profiles.find((profile) => profile.id === "reference");
-  const kestrelOne = profiles.find((profile) => profile.id === "kestrel-one");
+  const kestrelOne = profiles.find((profile) => profile.id === "kestrel");
 
   assert.equal(reference?.default, true);
   assert.equal(kestrelOne?.default, true);
@@ -233,10 +234,10 @@ contractTest("runtime.hermetic", "ProfileStore adds Kestrel-One profile to exist
   );
 
   const saved = parseProfilesFile(await readFile(filePath, "utf8"));
-  assert.equal(saved.sourceVersion, 5);
-  assert.equal(saved.profiles.some((profile) => profile.id === "kestrel-one"), false);
+  assert.equal(saved.sourceVersion, 6);
+  assert.equal(saved.profiles.some((profile) => profile.id === "kestrel"), false);
   assert.equal(
-    saved.managedProfileOverlays?.["kestrel-one@cli_dev_local"]?.default,
+    saved.managedProfileOverlays?.["kestrel@cli_dev_local"]?.default,
     true,
   );
 });
@@ -258,6 +259,16 @@ contractTest("runtime.hermetic", "ProfileStore preserves a version-5 managed ove
             maxConcurrentChildSessions: 6,
             maxDepth: 1,
           },
+          theme: {
+            brandAlt: "#123456",
+          },
+        },
+        "kestrel-one@workspace_hosted": {
+          approvalPolicyPackId: "ci_bot",
+          reasoning: {
+            request: { mode: "summary", effort: "medium" },
+            retention: { mode: "provider_visible", days: 5 },
+          },
         },
       },
     }, null, 2)}\n`,
@@ -265,12 +276,90 @@ contractTest("runtime.hermetic", "ProfileStore preserves a version-5 managed ove
   );
 
   const profiles = await new ProfileStore(tempDir).load();
-  const managed = profiles.find((profile) => profile.id === "kestrel-one");
+  const managed = profiles.find((profile) => profile.id === "kestrel");
 
   assert.equal(profiles.length, 1);
   assert.equal(managed?.approvalPolicyPackId, "production");
   assert.equal(managed?.delegation?.maxConcurrentChildSessions, 6);
   assert.equal(managed?.delegation?.maxDepth, 1);
+  assert.equal(managed?.theme?.brandAlt, "#123456");
+  const saved = JSON.parse(await readFile(filePath, "utf8"));
+  assert.equal(
+    saved.managedProfileOverlays["kestrel@cli_dev_local"].approvalPolicyPackId,
+    "production",
+  );
+  assert.equal(
+    saved.managedProfileOverlays["kestrel@cli_dev_local"].theme.brandAlt,
+    "#123456",
+  );
+  assert.equal(
+    saved.managedProfileOverlays["kestrel@workspace_hosted"]
+      .approvalPolicyPackId,
+    "ci_bot",
+  );
+  assert.equal(
+    saved.managedProfileOverlays["kestrel@workspace_hosted"].reasoning
+      .retention.days,
+    5,
+  );
+  assert.equal(
+    (await readFile(`${filePath}.v5.bak`, "utf8")).includes('"version": 5'),
+    true,
+  );
+});
+
+contractTest("runtime.hermetic", "Kestrel managed configuration parser validates SDK supplied overlays", () => {
+  const parsed = parseKestrelManagedConfiguration({
+    label: "Kestrel One",
+    modelProvider: "openai",
+    model: "gpt-5.1",
+    modelCredential: {
+      source: "kestrel-one",
+      runId: "run_123",
+      gatewayId: "gateway_123",
+      organizationId: "org_123",
+      environmentId: "env_123",
+      rawModelId: "gpt-5.1",
+      provider: "openai",
+    },
+    modelCapabilities: { visionInputEnabled: true },
+    agentStageConfig: { modelByStage: { "agent.loop": "gpt-5.1" } },
+    modelTimeoutMs: 120_000,
+    storeDriver: "postgres",
+    kestrelOneAppApprovalModes: {
+      "kestrel_one.search_knowledge_documents": "auto",
+    },
+    additionalToolNames: ["kestrel_one.search_knowledge_documents"],
+    reasoning: {
+      request: { mode: "summary", effort: "high" },
+      retention: { mode: "provider_visible", days: 7 },
+    },
+    default: false,
+  });
+
+  assert.equal(parsed.modelProvider, "openai");
+  assert.equal(parsed.modelCredential?.gatewayId, "gateway_123");
+  assert.equal(parsed.modelCapabilities?.visionInputEnabled, true);
+  assert.equal(
+    parsed.kestrelOneAppApprovalModes?.[
+      "kestrel_one.search_knowledge_documents"
+    ],
+    "auto",
+  );
+  assert.throws(
+    () =>
+      parseKestrelManagedConfiguration({
+        additionalToolNames: "kestrel_one.search_knowledge_documents",
+      }),
+    /additionalToolNames must be an array of strings/u,
+  );
+  assert.throws(
+    () =>
+      parseKestrelManagedConfiguration({
+        harnessEconomics: { policy: {} },
+      }),
+    /unsupported field 'harnessEconomics'/u,
+  );
 });
 
 contractTest("runtime.hermetic", "ProfileStore never persists transient gateway credential references", async () => {

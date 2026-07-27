@@ -152,6 +152,12 @@ export interface ProfileGetCommandPayload {
   profileId: string;
 }
 
+export interface ExecutionProfileResolveCommandPayload {
+  environmentPresetId: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+  managedConfiguration?: Record<string, unknown> | undefined;
+  authoringProfileId?: string | undefined;
+}
+
 export interface RunCancelCommandPayload {
   sessionId: string;
   runId?: string | undefined;
@@ -452,6 +458,7 @@ export type McpRefreshCommandPayload = TuiProfileReference;
 export interface RunnerCommandPayloadByType {
   "profile.list": ProfileListCommandPayload;
   "profile.get": ProfileGetCommandPayload;
+  "execution-profile.resolve": ExecutionProfileResolveCommandPayload;
   "job.run": JobRunCommandPayload;
   "run.start": RunStartCommandPayload;
   "run.cancel": RunCancelCommandPayload;
@@ -751,6 +758,21 @@ export interface ProfileLoadedEventPayload {
   profile: TuiProfile;
 }
 
+export interface ExecutionProfileResolvedEventPayload {
+  version: 1;
+  profileId: string;
+  fingerprint: string;
+  policy: {
+    id: string;
+    version: number;
+  };
+  environmentPreset: {
+    id: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+    version: number;
+  };
+  resolvedProfile: TuiProfile;
+}
+
 export interface TaskUpdatedEventPayload {
   task: DelegationTaskMeta;
   kind: "spawned" | "waiting" | "completed" | "failed";
@@ -844,6 +866,7 @@ export interface McpRefreshedEventPayload {
 export interface RunnerEventPayloadByType {
   "profile.listed": ProfileListedEventPayload;
   "profile.loaded": ProfileLoadedEventPayload;
+  "execution-profile.resolved": ExecutionProfileResolvedEventPayload;
   "job.started": JobStartedEventPayload;
   "job.progress": JobProgressEventPayload;
   "job.completed": JobCompletedEventPayload;

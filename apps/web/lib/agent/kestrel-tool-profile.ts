@@ -103,6 +103,16 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
   ],
 ]);
 
+export const KESTREL_ONE_HOSTED_RUNTIME_TOOL_NAMES = Object.freeze([
+  ...GOOGLE_CALENDAR_TOOL_CAPABILITIES.keys(),
+  ...MICROSOFT_365_TOOL_CAPABILITIES.keys(),
+  ...GITHUB_TOOL_CAPABILITIES.keys(),
+  ...EMAIL_TOOL_CAPABILITIES.keys(),
+  ...TAVILY_TOOL_CAPABILITIES.keys(),
+  ...VERCEL_TOOL_CAPABILITIES.keys(),
+  ...BUILT_IN_TOOL_CAPABILITIES.keys(),
+]);
+
 function appApprovalModes(effectiveCapabilities: string[], appKey: string) {
   const prefix = `app:${appKey}.`;
   return new Map<string, "auto" | "ask">(
@@ -124,6 +134,24 @@ export function restrictKestrelOneProfileTools(input: {
   profile: RunnerProfile;
   effectiveCapabilities: string[];
 }): RunnerProfile {
+  const configuration = resolveKestrelOneToolProfileConfiguration({
+    availableToolNames: input.profile.toolAllowlist ?? [],
+    effectiveCapabilities: input.effectiveCapabilities,
+  });
+  return {
+    ...input.profile,
+    kestrelOneAppApprovalModes: configuration.kestrelOneAppApprovalModes,
+    toolAllowlist: configuration.additionalToolNames,
+  };
+}
+
+export function resolveKestrelOneToolProfileConfiguration(input: {
+  availableToolNames: string[];
+  effectiveCapabilities: string[];
+}): {
+  additionalToolNames: string[];
+  kestrelOneAppApprovalModes: Record<string, "auto" | "ask">;
+} {
   const googleApprovalByCapability = appApprovalModes(
     input.effectiveCapabilities,
     "google_workspace",
@@ -197,9 +225,8 @@ export function restrictKestrelOneProfileTools(input: {
     ),
   ]);
   return {
-    ...input.profile,
     kestrelOneAppApprovalModes,
-    toolAllowlist: (input.profile.toolAllowlist ?? []).filter((toolName) => {
+    additionalToolNames: input.availableToolNames.filter((toolName) => {
       const requiredCapability =
         GOOGLE_CALENDAR_TOOL_CAPABILITIES.get(toolName);
       if (

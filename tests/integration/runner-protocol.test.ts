@@ -1688,6 +1688,55 @@ contractTest("runtime.process", "CommandRouter emits runner.error for invalid jo
   await host.close();
 });
 
+contractTest("runtime.process", "CommandRouter rejects invalid execution profile managed configuration", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+
+  const events: Array<{
+    type: string;
+    payload: { code?: string; message?: string };
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(
+      JSON.parse(line) as {
+        type: string;
+        payload: { code?: string; message?: string };
+      },
+    );
+  });
+
+  await router.acceptLine(
+    JSON.stringify({
+      id: "cmd-execution-profile-invalid",
+      type: "execution-profile.resolve",
+      payload: {
+        environmentPresetId: "workspace_hosted",
+        managedConfiguration: {
+          additionalToolNames: "kestrel_one.search_knowledge_documents",
+        },
+      },
+    }),
+  );
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.equal(events[0]?.payload.code, "RUNNER_RUNTIME_ERROR");
+  assert.match(
+    events[0]?.payload.message ?? "",
+    /additionalToolNames must be an array of strings/u,
+  );
+  rl.close();
+  await host.close();
+});
+
 contractTest("runtime.process", "workspace checkpoint commands dispatch through CommandRouter", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
