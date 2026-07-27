@@ -10,7 +10,10 @@ export const LOCAL_CORE_CREDENTIAL_IDS = Object.freeze([
 export type LocalCoreBuiltInCredentialId = (typeof LOCAL_CORE_CREDENTIAL_IDS)[number];
 export type LocalCoreCredentialId =
   | LocalCoreBuiltInCredentialId
-  | `mcp.${string}`;
+  | `mcp.${string}`
+  | "kestrel_one.account"
+  | `kestrel_one.enrollment.${string}`
+  | `kestrel_one.environment.${string}`;
 
 export type LocalCoreCredentialStoreBackend =
   | "memory"
@@ -66,6 +69,8 @@ export function parseLocalCoreCredentialId(value: unknown): LocalCoreCredentialI
     || (
       LOCAL_CORE_CREDENTIAL_IDS.includes(value as LocalCoreBuiltInCredentialId) === false
       && /^mcp\.[a-zA-Z0-9._-]{1,128}$/u.test(value) === false
+      && value !== "kestrel_one.account"
+      && /^kestrel_one\.(?:enrollment|environment)\.[a-zA-Z0-9_-]{1,128}$/u.test(value) === false
     )
   ) {
     throw new LocalCoreCredentialValidationError(

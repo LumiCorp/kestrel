@@ -920,6 +920,199 @@ function registerIpcHandlers(
     async () => await readDesktopRendererSettings(),
   );
   ipcMain.handle(
+    "desktop:get-kestrel-one-account",
+    async () =>
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.kestrelOneAccount(),
+      ),
+  );
+  ipcMain.handle(
+    "desktop:start-kestrel-one-authorization",
+    async (_event, input: unknown) => {
+      const baseUrl = parseDesktopKestrelOneAuthorization(input);
+      const session = await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.startKestrelOneAuthorization({ baseUrl }),
+      );
+      if (session.authorizationUrl) {
+        await shell.openExternal(session.authorizationUrl);
+      }
+      return session;
+    },
+  );
+  ipcMain.handle(
+    "desktop:get-kestrel-one-authorization-status",
+    async (_event, sessionId: unknown) => {
+      if (typeof sessionId !== "string" || !sessionId.trim()) {
+        throw new Error("Kestrel One authorization session ID is required.");
+      }
+      return await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.kestrelOneAuthorizationStatus(sessionId),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:sign-out-kestrel-one-account",
+    async () =>
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.signOutKestrelOneAccount(),
+      ),
+  );
+  ipcMain.handle(
+    "desktop:get-kestrel-one-thread",
+    async (_event, threadId: unknown) => {
+      if (typeof threadId !== "string" || !threadId.trim()) {
+        throw new Error("Kestrel One Thread ID is required.");
+      }
+      return await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.kestrelOneThread(threadId.trim()),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:submit-kestrel-one-turn",
+    async (_event, input: unknown) => {
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        throw new Error("Kestrel One turn submission must be an object.");
+      }
+      const record = input as Record<string, unknown>;
+      const interactionMode = record.interactionMode;
+      if (
+        typeof record.threadId !== "string" ||
+        !record.threadId.trim() ||
+        typeof record.text !== "string" ||
+        !record.text.trim() ||
+        (interactionMode !== "chat" &&
+          interactionMode !== "plan" &&
+          interactionMode !== "build")
+      ) {
+        throw new Error("Kestrel One turn submission is invalid.");
+      }
+      const threadId = record.threadId.trim();
+      const text = record.text.trim();
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.submitKestrelOneTurn({
+            threadId,
+            text,
+            interactionMode,
+            ...(typeof record.model === "string" && record.model.trim()
+              ? { model: record.model.trim() }
+              : {}),
+          }),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:publish-kestrel-one-preview",
+    async (_event, input: unknown) => {
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        throw new Error("Kestrel One preview publication must be an object.");
+      }
+      const record = input as Record<string, unknown>;
+      for (const field of [
+        "projectId",
+        "connectionId",
+        "localRunRef",
+        "localUrl",
+      ] as const) {
+        if (typeof record[field] !== "string" || !record[field].trim()) {
+          throw new Error(`Kestrel One preview ${field} is required.`);
+        }
+      }
+      const projectId = (record.projectId as string).trim();
+      const connectionId = (record.connectionId as string).trim();
+      const localRunRef = (record.localRunRef as string).trim();
+      const localUrl = (record.localUrl as string).trim();
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.publishKestrelOnePreview({
+            projectId,
+            connectionId,
+            localRunRef,
+            localUrl,
+            ...(typeof record.name === "string" && record.name.trim()
+              ? { name: record.name.trim() }
+              : {}),
+          }),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:renew-kestrel-one-preview",
+    async (_event, previewId: unknown) => {
+      if (typeof previewId !== "string" || !previewId.trim()) {
+        throw new Error("Kestrel One preview ID is required.");
+      }
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.renewKestrelOnePreview(previewId.trim()),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:unpublish-kestrel-one-preview",
+    async (_event, previewId: unknown) => {
+      if (typeof previewId !== "string" || !previewId.trim()) {
+        throw new Error("Kestrel One preview ID is required.");
+      }
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.unpublishKestrelOnePreview(previewId.trim()),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:get-kestrel-one-environments",
+    async () =>
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.kestrelOneEnvironments(),
+      ),
+  );
+  ipcMain.handle(
+    "desktop:start-kestrel-one-enrollment",
+    async (_event, input: unknown) => {
+      const enrollment = parseDesktopKestrelOneEnrollment(input);
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.startKestrelOneEnrollment(enrollment),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:refresh-kestrel-one-enrollments",
+    async () =>
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.refreshKestrelOneEnrollments(),
+      ),
+  );
+  ipcMain.handle(
+    "desktop:set-kestrel-one-capacity",
+    async (_event, capacity: unknown) => {
+      if (
+        typeof capacity !== "number" ||
+        !Number.isInteger(capacity) ||
+        capacity < 1 ||
+        capacity > 16
+      ) {
+        throw new Error("Desktop remote-task capacity must be from 1 to 16.");
+      }
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.setKestrelOneCapacity(capacity),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:disconnect-kestrel-one-environment",
+    async (_event, connectionId: unknown) => {
+      if (typeof connectionId !== "string" || !connectionId.trim()) {
+        throw new Error("Desktop Environment connection ID is required.");
+      }
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.disconnectKestrelOneEnvironment(connectionId),
+      );
+    },
+  );
+  ipcMain.handle(
     "desktop:get-capabilities",
     async () => await readDesktopCapabilityView(),
   );
@@ -1384,10 +1577,7 @@ function registerIpcHandlers(
   );
   ipcMain.handle(
     "desktop:import-attachment",
-    async (
-      _event,
-      input: unknown,
-    ): Promise<DesktopAttachmentMetadata> => {
+    async (_event, input: unknown): Promise<DesktopAttachmentMetadata> => {
       const attachment = parseDesktopAttachmentImportInput(input);
       return await requireLocalCoreConnectionManager().executeOnce(
         async (client) => await client.importDesktopAttachment(attachment),
@@ -1532,10 +1722,27 @@ function registerIpcHandlers(
       const nextProjects = update.projects ?? desktopSettings.projects;
       const preparedProjects =
         await prepareDesktopSettingsProjectRegistrations(nextProjects);
+      const nextProjectPaths = new Set(
+        preparedProjects.map((project) => path.resolve(project.path)),
+      );
+      const removedAt = new Date().toISOString();
       const normalized = normalizeDesktopSettings(
         {
           ...desktopSettings,
           projects: preparedProjects,
+          projectTombstones: [
+            ...desktopSettings.projectTombstones,
+            ...desktopSettings.projects
+              .filter(
+                (project) => !nextProjectPaths.has(path.resolve(project.path)),
+              )
+              .map((project) => ({
+                id: project.id!,
+                path: path.resolve(project.path),
+                label: project.label,
+                removedAt,
+              })),
+          ],
           modelConfigurations:
             update.modelConfigurations ?? desktopSettings.modelConfigurations,
           defaultModelConfigurationId:
@@ -1548,12 +1755,20 @@ function registerIpcHandlers(
         },
         { fallbackModelPolicy: desktopModelPolicy },
       );
-      return persistDesktopRendererConfiguration(runnerTransport, {
-        settings: normalized,
-        restartRuntime: false,
-        resetRunnerProfile: false,
-        restartMessage: "Applying project settings…",
-      });
+      const persisted = await persistDesktopRendererConfiguration(
+        runnerTransport,
+        {
+          settings: normalized,
+          restartRuntime: false,
+          resetRunnerProfile: false,
+          restartMessage: "Applying project settings…",
+        },
+      );
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.syncKestrelOneProjects(normalized.projects),
+      );
+      return persisted;
     },
   );
   ipcMain.handle("desktop:pick-workspace", async () => {
@@ -3178,6 +3393,39 @@ function setOptionalEnv(name: string, value: string | undefined): void {
   delete process.env[name];
 }
 
+function parseDesktopKestrelOneEnrollment(value: unknown): {
+  baseUrl: string;
+  desktopName: string;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Kestrel One enrollment must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.baseUrl !== "string" ||
+    !record.baseUrl.trim() ||
+    typeof record.desktopName !== "string" ||
+    !record.desktopName.trim()
+  ) {
+    throw new Error("Kestrel One URL and Desktop name are required.");
+  }
+  return {
+    baseUrl: record.baseUrl.trim(),
+    desktopName: record.desktopName.trim(),
+  };
+}
+
+function parseDesktopKestrelOneAuthorization(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Kestrel One authorization must be an object.");
+  }
+  const baseUrl = (value as Record<string, unknown>).baseUrl;
+  if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+    throw new Error("Kestrel One URL is required.");
+  }
+  return baseUrl.trim();
+}
+
 function applyDesktopProfileOverride(settings: DesktopSettings): void {
   desktopProfileOverrideVersion += 1;
   globalThis.__kestrelDesktopProfileOverride = {
@@ -4071,6 +4319,14 @@ async function refreshDesktopCoreState(): Promise<void> {
   projectFileIndex.retainRoots(
     desktopSettings.projects.map((project) => project.path),
   );
+  await requireLocalCoreConnectionManager()
+    .executeOnce(
+      async (client) =>
+        await client.syncKestrelOneProjects(desktopSettings.projects),
+    )
+    .catch(() => {
+      // Kestrel One enrollment is optional and must not block Desktop startup.
+    });
 }
 
 async function migrateDesktopCredentialsToLocalCore(): Promise<void> {

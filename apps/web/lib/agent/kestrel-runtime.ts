@@ -28,12 +28,15 @@ import {
 } from "@/lib/agent/kestrel-runtime-core";
 import {
   applyKestrelOneModelToProfile,
+  isKestrelOneManagedRuntimeModel,
   toKestrelOneRuntimeModelSelection,
+  type DesktopLocalRuntimeModelSelection,
 } from "@/lib/agent/kestrel-runtime-model";
 import { restrictKestrelOneProfileTools } from "@/lib/agent/kestrel-tool-profile";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
+import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   persistRuntimeDialogMessage,
   readRuntimeDialogMessage,
@@ -353,7 +356,8 @@ function createModelAwareKestrelOneAgent(input: {
           });
           executionId = route.runId;
           await input.onExecutionRouted?.(executionId);
-          const projectSkills = route.projectId
+          const projectSkills =
+            route.provider !== "desktop" && route.projectId
             ? await synchronizeProjectSkills({
                 organizationId: input.organizationId,
                 projectId: route.projectId,
@@ -364,7 +368,10 @@ function createModelAwareKestrelOneAgent(input: {
                 },
               })
             : null;
-          if (runtimeModel) {
+          if (
+            runtimeModel &&
+            isKestrelOneManagedRuntimeModel(runtimeModel)
+          ) {
             await activateEnvironmentModelGrant({
               organizationId: input.organizationId,
               environmentId: route.environmentId,
@@ -375,34 +382,44 @@ function createModelAwareKestrelOneAgent(input: {
               rawModelId: runtimeModel.model,
             });
           }
-          await updateEnvironmentExecutionStatus({
-            organizationId: input.organizationId,
-            executionId,
-            status: "running",
-          });
+          if (route.provider !== "desktop") {
+            await updateEnvironmentExecutionStatus({
+              organizationId: input.organizationId,
+              executionId,
+              status: "running",
+            });
+          }
           client = new KestrelOneRunnerClient({
             target: {
               kind: "remote",
               baseUrl: route.baseUrl,
               authToken: route.authToken,
+              ...(route.provider === "desktop"
+                ? { fetchImpl: route.fetchImpl }
+                : {}),
             },
           });
           clients.add(client);
-          const dialogEvents = client.subscribe(
-            { threadId: input.threadId, eventTypes: ["task.updated"] },
-            context,
-            { signal: dialogAbort.signal },
-          );
-          dialogDrain = (async () => {
-            try {
-              for await (const event of dialogEvents)
-                await handleDialogEvent(event);
-            } catch (error) {
-              if (!dialogAbort.signal.aborted) {
-                console.error("Collaborator dialog subscription failed", error);
+          if (route.provider !== "desktop") {
+            const dialogEvents = client.subscribe(
+              { threadId: input.threadId, eventTypes: ["task.updated"] },
+              context,
+              { signal: dialogAbort.signal },
+            );
+            dialogDrain = (async () => {
+              try {
+                for await (const event of dialogEvents)
+                  await handleDialogEvent(event);
+              } catch (error) {
+                if (!dialogAbort.signal.aborted) {
+                  console.error(
+                    "Collaborator dialog subscription failed",
+                    error,
+                  );
+                }
               }
-            }
-          })();
+            })();
+          }
           const { signal, resumeRequestId, ...turn } = turnInput;
           const eventType = turn.eventType || "user.message";
           const normalizedTurn = {
@@ -626,6 +643,9 @@ export async function generateKestrelOneExternalReply(input: {
       kind: "remote",
       baseUrl: route.baseUrl,
       authToken: route.authToken,
+      ...(route.provider === "desktop"
+        ? { fetchImpl: route.fetchImpl }
+        : {}),
     },
   });
   const context: KestrelRequestContext = {
@@ -634,7 +654,8 @@ export async function generateKestrelOneExternalReply(input: {
   };
 
   try {
-    const projectSkills = route.projectId
+    const projectSkills =
+      route.provider !== "desktop" && route.projectId
       ? await synchronizeProjectSkills({
           organizationId: input.organizationId,
           projectId: route.projectId,
@@ -645,11 +666,13 @@ export async function generateKestrelOneExternalReply(input: {
           },
         })
       : null;
-    await updateEnvironmentExecutionStatus({
-      organizationId: input.organizationId,
-      executionId: route.runId,
-      status: "running",
-    });
+    if (route.provider !== "desktop") {
+      await updateEnvironmentExecutionStatus({
+        organizationId: input.organizationId,
+        executionId: route.runId,
+        status: "running",
+      });
+    }
     const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
       organizationId: input.organizationId,
       environmentId: route.environmentId,
@@ -752,12 +775,21 @@ export async function generateKestrelOneExternalReply(input: {
 export async function createKestrelOneAgentResponse(
   input: KestrelOneAgentResponseInput,
 ) {
-  const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
-    selection: input.modelId,
-    organizationId: input.organizationId,
-    environmentId: input.environmentId,
-  });
-  if (!resolvedModel) {
+  const desktopLocalModel = input.modelId
+    ? await resolveDesktopLocalRuntimeModel({
+        selection: input.modelId,
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+      })
+    : null;
+  const resolvedModel = desktopLocalModel
+    ? null
+    : await getResolvedKestrelRuntimeExecutionModel({
+        selection: input.modelId,
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+      });
+  if (!(desktopLocalModel || resolvedModel)) {
     throw new Error(
       getGatewayResolutionFailureMessage({
         surface: "chat",
@@ -766,11 +798,13 @@ export async function createKestrelOneAgentResponse(
     );
   }
 
-  const runtimeModel = toKestrelOneRuntimeModelSelection({
-    ...resolvedModel.model,
-    organizationId: input.organizationId,
-    environmentId: input.environmentId,
-  });
+  const runtimeModel =
+    desktopLocalModel ??
+    toKestrelOneRuntimeModelSelection({
+      ...resolvedModel!.model,
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+    });
   const agent = input.agent;
   const runtimeAgent = agent
     ? adaptKestrelAgentForKestrelOne(agent)
@@ -796,7 +830,7 @@ export async function createKestrelOneAgentResponse(
     messages: input.messages,
     approvalDecision: input.approvalDecision,
     interactionResponse: input.interactionResponse,
-    modelId: resolvedModel.model.id,
+    modelId: desktopLocalModel?.id ?? resolvedModel!.model.id,
     interactionMode: input.interactionMode,
     runtimeModel,
     projectContext: input.projectContext,
@@ -814,6 +848,59 @@ function terminalExecutionStatus(
   if (terminal.type === "run.cancelled") return "cancelled";
   if (terminal.type === "run.failed") return "failed";
   return "completed";
+}
+
+async function resolveDesktopLocalRuntimeModel(input: {
+  selection: string;
+  organizationId: string;
+  environmentId: string;
+}): Promise<DesktopLocalRuntimeModelSelection | null> {
+  if (!input.selection.startsWith("desktop-local:")) return null;
+  const match = input.selection.match(
+    /^desktop-local:(openai|openrouter|anthropic|ollama|lmstudio):(.+)$/u,
+  );
+  if (!match?.[1] || !match[2]) {
+    throw new Error("The selected Desktop-local model ID is invalid.");
+  }
+  let model: string;
+  try {
+    model = decodeURIComponent(match[2]);
+  } catch {
+    throw new Error("The selected Desktop-local model ID is invalid.");
+  }
+  if (!model || model.length > 200 || encodeURIComponent(model) !== match[2]) {
+    throw new Error("The selected Desktop-local model ID is invalid.");
+  }
+  const provider = match[1] as DesktopLocalRuntimeModelSelection["provider"];
+  const connection =
+    await knowledgeDb.query.desktopEnvironmentConnections.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.status, "active"),
+        ),
+      columns: { advertisedModels: true },
+    });
+  const advertised = connection?.advertisedModels.some(
+    (candidate) =>
+      candidate.provider === provider &&
+      candidate.model === model &&
+      candidate.health === "ready",
+  );
+  if (!advertised) {
+    throw new Error(
+      `Desktop-local model '${provider}/${model}' is unavailable. No fallback was selected.`,
+    );
+  }
+  return {
+    desktopLocal: true,
+    id: input.selection,
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+    provider,
+    model,
+  };
 }
 
 function externalFailureExecutionStatus(

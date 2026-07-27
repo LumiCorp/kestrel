@@ -110,6 +110,128 @@ const AUTHENTICATED_API = {
 
 export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
+    "app/desktop/auth/authorize/route.ts",
+    "/desktop/auth/authorize",
+    "auth",
+    "public",
+    "public",
+  ),
+  page(
+    "app/desktop/enroll/[id]/page.tsx",
+    "/desktop/enroll/:id",
+    "environments",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  api(
+    "app/api/desktop/v1/enrollments/route.ts",
+    "/api/desktop/v1/enrollments",
+    "environments",
+    "public",
+    "public",
+  ),
+  api(
+    "app/api/desktop/v1/enrollments/[id]/route.ts",
+    "/api/desktop/v1/enrollments/:id",
+    "environments",
+    "public",
+    "public",
+  ),
+  api(
+    "app/api/desktop/v1/oauth/token/route.ts",
+    "/api/desktop/v1/oauth/token",
+    "auth",
+    "public",
+    "public",
+  ),
+  ...[
+    ["app/api/desktop/v1/account/route.ts", "/api/desktop/v1/account"],
+    [
+      "app/api/desktop/v1/threads/[threadId]/route.ts",
+      "/api/desktop/v1/threads/:threadId",
+    ],
+    [
+      "app/api/desktop/v1/threads/[threadId]/turns/route.ts",
+      "/api/desktop/v1/threads/:threadId/turns",
+    ],
+    ["app/api/desktop/v1/previews/route.ts", "/api/desktop/v1/previews"],
+    [
+      "app/api/desktop/v1/previews/[id]/route.ts",
+      "/api/desktop/v1/previews/:id",
+    ],
+  ].map(([file, route]) =>
+    api(
+      file!,
+      route!,
+      "credential-boundary",
+      "service-boundary",
+      "service-bearer",
+    ),
+  ),
+  api(
+    "app/api/organization/desktop-enrollments/[id]/approve/route.ts",
+    "/api/organization/desktop-enrollments/:id/approve",
+    "environments",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/organization/environments/[id]/desktop/route.ts",
+    "/api/organization/environments/:id/desktop",
+    "environments",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/previews/[id]/access/route.ts",
+    "/api/previews/:id/access",
+    "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  ...[
+    [
+      "app/api/runtime/desktop-environments/[connectionId]/presence/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/presence",
+    ],
+    [
+      "app/api/runtime/desktop-environments/[connectionId]/catalog/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/catalog",
+    ],
+    [
+      "app/api/runtime/desktop-environments/[connectionId]/disconnect/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/disconnect",
+    ],
+    [
+      "app/api/runtime/desktop-environments/[connectionId]/commands/claim/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/commands/claim",
+    ],
+    [
+      "app/api/runtime/desktop-environments/[connectionId]/commands/[commandId]/events/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/commands/:commandId/events",
+    ],
+    [
+      "app/api/runtime/desktop-environments/[connectionId]/commands/[commandId]/lease/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/commands/:commandId/lease",
+    ],
+    [
+      "app/api/runtime/desktop-environments/[connectionId]/commands/[commandId]/complete/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/commands/:commandId/complete",
+    ],
+    [
+      "app/api/runtime/previews/tunnels/authorize/route.ts",
+      "/api/runtime/previews/tunnels/authorize",
+    ],
+  ].map(([file, route]) =>
+    api(
+      file!,
+      route!,
+      "credential-boundary",
+      "service-boundary",
+      "service-bearer",
+    ),
+  ),
+  api(
     "app/account/deletion/confirm/route.ts",
     "/account/deletion/confirm",
     "mobile",
@@ -1373,7 +1495,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "/api/threads/:id/duplicate",
     "threads",
     AUTHENTICATED_API.access,
-    AUTHENTICATED_API.unauthorized
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/threads/[id]/share/route.ts",

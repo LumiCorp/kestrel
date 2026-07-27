@@ -25,7 +25,7 @@ import {
   type UIMessageStreamWriter,
 } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
-import type { KestrelOneRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
+import type { EnvironmentRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
 import type { Session } from "@/lib/auth-types";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
@@ -78,7 +78,7 @@ export type KestrelOneAgent = {
   stream: (
     input: KestrelOneAgentTurnInput,
     context: KestrelOneRequestContext,
-    runtimeModel?: KestrelOneRuntimeModelSelection
+    runtimeModel?: EnvironmentRuntimeModelSelection
   ) => KestrelOneRunnerStream | Promise<KestrelOneRunnerStream>;
   close: () => Promise<void>;
 };
@@ -147,7 +147,7 @@ export type KestrelOneAgentResponseInput = {
     | undefined;
   modelId?: string;
   interactionMode: KestrelOneInteractionMode;
-  runtimeModel?: KestrelOneRuntimeModelSelection;
+  runtimeModel?: EnvironmentRuntimeModelSelection;
   projectContext?: {
     projectId: string;
     contextRevisionId: string;

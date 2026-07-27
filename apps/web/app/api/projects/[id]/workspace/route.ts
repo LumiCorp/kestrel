@@ -8,6 +8,7 @@ import {
   getProjectEnvironmentBinding,
   listOrganizationEnvironments,
 } from "@/lib/environments/store";
+import { listVisibleProjectDesktopWorkspaceCatalog } from "@/lib/environments/desktop";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { errorResponse } from "@/lib/knowledge/http";
@@ -21,12 +22,12 @@ const inputSchema = z.object({
 
 export async function GET(
   _request: Request,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { organizationId, session } = await requireActiveOrganization();
     const { id } = await context.params;
-    await requireProjectRole({
+    const access = await requireProjectRole({
       projectId: id,
       organizationId,
       userId: session.user.id,
@@ -43,7 +44,7 @@ export async function GET(
               and(
                 eq(table.environmentId, binding.environmentId),
                 eq(table.projectId, id),
-                isNull(table.deletedAt)
+                isNull(table.deletedAt),
               ),
           })
         : Promise.resolve(null),
@@ -57,15 +58,15 @@ export async function GET(
           schema.appConnections,
           eq(
             schema.appConnections.id,
-            schema.projectAppConnections.connectionId
-          )
+            schema.projectAppConnections.connectionId,
+          ),
         )
         .innerJoin(
           schema.appConnectionResources,
           eq(
             schema.appConnectionResources.connectionId,
-            schema.appConnections.id
-          )
+            schema.appConnections.id,
+          ),
         )
         .where(
           and(
@@ -79,12 +80,12 @@ export async function GET(
             eq(schema.appConnections.userId, session.user.id),
             eq(schema.appConnections.status, "connected"),
             eq(schema.appConnectionResources.resourceType, "repository"),
-            eq(schema.appConnectionResources.enabled, true)
-          )
+            eq(schema.appConnectionResources.enabled, true),
+          ),
         )
         .orderBy(schema.appConnectionResources.label)
         .then((rows) =>
-          rows.flatMap((row) => (row.permissions?.pull ? [row.resource] : []))
+          rows.flatMap((row) => (row.permissions?.pull ? [row.resource] : [])),
         ),
       environments.length > 0
         ? knowledgeDb.query.environmentAppCapabilityGrants.findMany({
@@ -92,22 +93,28 @@ export async function GET(
               and(
                 inArray(
                   table.environmentId,
-                  environments.map((environment) => environment.id)
+                  environments.map((environment) => environment.id),
                 ),
                 eq(table.appKey, "github"),
                 eq(table.capabilityKey, "repository.read"),
                 eq(table.enabled, true),
-                notInArray(table.approvalMode, ["deny"])
+                notInArray(table.approvalMode, ["deny"]),
               ),
           })
         : Promise.resolve([]),
     ]);
+    const desktopCatalog = await listVisibleProjectDesktopWorkspaceCatalog({
+      organizationId,
+      role: access.role,
+      desktopCatalogId: workspace?.desktopCatalogId,
+    });
     return NextResponse.json({
       binding,
       environments,
       workspace,
       repositories,
       grants,
+      desktopCatalog,
     });
   } catch (error) {
     return errorResponse(error, 400);
@@ -116,7 +123,7 @@ export async function GET(
 
 export async function PUT(
   request: Request,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { organizationId, session } = await requireActiveOrganization();

@@ -153,7 +153,9 @@ export function OrganizationManagementHome({
                         {environment.name}
                       </CardTitle>
                       <CardDescription>
-                        {environment.region} · {environment.runtimeTemplate}
+                        {environment.provider === "desktop"
+                          ? `Desktop · ${environment.connectionState ?? "offline"}`
+                          : `${environment.region} · ${environment.runtimeTemplate}`}
                       </CardDescription>
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
@@ -163,6 +165,17 @@ export function OrganizationManagementHome({
                       <Badge variant={statusTone(environment.status)}>
                         {environment.status}
                       </Badge>
+                      {environment.connectionState ? (
+                        <Badge
+                          variant={
+                            environment.connectionState === "online"
+                              ? "default"
+                              : "outline"
+                          }
+                        >
+                          {environment.connectionState}
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
                   {environment.failureMessage ? (

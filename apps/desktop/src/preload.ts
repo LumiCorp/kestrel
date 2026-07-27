@@ -48,6 +48,57 @@ const desktopBridge: DesktopBridge = {
   getSettings() {
     return ipcRenderer.invoke("desktop:get-settings");
   },
+  getKestrelOneAccount() {
+    return ipcRenderer.invoke("desktop:get-kestrel-one-account");
+  },
+  startKestrelOneAuthorization(input) {
+    return ipcRenderer.invoke("desktop:start-kestrel-one-authorization", input);
+  },
+  getKestrelOneAuthorizationStatus(sessionId) {
+    return ipcRenderer.invoke(
+      "desktop:get-kestrel-one-authorization-status",
+      sessionId,
+    );
+  },
+  signOutKestrelOneAccount() {
+    return ipcRenderer.invoke("desktop:sign-out-kestrel-one-account");
+  },
+  getKestrelOneThread(threadId) {
+    return ipcRenderer.invoke("desktop:get-kestrel-one-thread", threadId);
+  },
+  submitKestrelOneTurn(input) {
+    return ipcRenderer.invoke("desktop:submit-kestrel-one-turn", input);
+  },
+  publishKestrelOnePreview(input) {
+    return ipcRenderer.invoke("desktop:publish-kestrel-one-preview", input);
+  },
+  renewKestrelOnePreview(previewId) {
+    return ipcRenderer.invoke("desktop:renew-kestrel-one-preview", previewId);
+  },
+  unpublishKestrelOnePreview(previewId) {
+    return ipcRenderer.invoke(
+      "desktop:unpublish-kestrel-one-preview",
+      previewId,
+    );
+  },
+  getKestrelOneEnvironments() {
+    return ipcRenderer.invoke("desktop:get-kestrel-one-environments");
+  },
+  startKestrelOneEnrollment(input) {
+    return ipcRenderer.invoke("desktop:start-kestrel-one-enrollment", input);
+  },
+  refreshKestrelOneEnrollments() {
+    return ipcRenderer.invoke("desktop:refresh-kestrel-one-enrollments");
+  },
+  setKestrelOneCapacity(capacity) {
+    return ipcRenderer.invoke("desktop:set-kestrel-one-capacity", capacity);
+  },
+  disconnectKestrelOneEnvironment(connectionId) {
+    return ipcRenderer.invoke(
+      "desktop:disconnect-kestrel-one-environment",
+      connectionId,
+    );
+  },
   saveSettings(settings: DesktopRendererSettingsUpdate) {
     return ipcRenderer.invoke("desktop:save-settings", settings);
   },
@@ -86,7 +137,9 @@ const desktopBridge: DesktopBridge = {
   submitOperatorControl(request) {
     return ipcRenderer.invoke("desktop:operator-control", request);
   },
-  cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunCancellationResult> {
+  cancelRun(
+    request: DesktopRunCancelRequest,
+  ): Promise<DesktopRunCancellationResult> {
     return ipcRenderer.invoke("desktop:cancel-run", request);
   },
   onRunnerEvent(listener) {
@@ -274,16 +327,29 @@ const desktopBridge: DesktopBridge = {
     return ipcRenderer.invoke("desktop:list-workspace-skills", projectPath);
   },
   installWorkspaceSkill(projectPath, source) {
-    return ipcRenderer.invoke("desktop:install-workspace-skill", projectPath, source);
+    return ipcRenderer.invoke(
+      "desktop:install-workspace-skill",
+      projectPath,
+      source,
+    );
   },
   updateWorkspaceSkill(projectPath, installationId, source) {
-    return ipcRenderer.invoke("desktop:update-workspace-skill", projectPath, installationId, source);
+    return ipcRenderer.invoke(
+      "desktop:update-workspace-skill",
+      projectPath,
+      installationId,
+      source,
+    );
   },
   syncWorkspaceSkills(projectPath) {
     return ipcRenderer.invoke("desktop:sync-workspace-skills", projectPath);
   },
   removeWorkspaceSkill(projectPath, installationId) {
-    return ipcRenderer.invoke("desktop:remove-workspace-skill", projectPath, installationId);
+    return ipcRenderer.invoke(
+      "desktop:remove-workspace-skill",
+      projectPath,
+      installationId,
+    );
   },
   listProjectRuns() {
     return ipcRenderer.invoke("desktop:list-project-runs");

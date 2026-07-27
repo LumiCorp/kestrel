@@ -1,5 +1,6 @@
 import path from "node:path";
 import {
+  getFlyEnvironmentExecutionTarget,
   verifyEnvironmentExecutionTicket,
   type EnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
@@ -25,11 +26,12 @@ export function authorizeWorkspaceRequest(input: {
   } catch {
     throw new WorkspaceRequestError(401, "WORKSPACE_TICKET_INVALID");
   }
+  const target = getFlyEnvironmentExecutionTarget(ticket);
   if (
     ticket.workspaceId !== input.workspaceId ||
     ticket.organizationId !== input.organizationId ||
     ticket.environmentId !== input.environmentId ||
-    ticket.flyMachineId !== input.machineId
+    target?.machineId !== input.machineId
   ) {
     throw new WorkspaceRequestError(403, "WORKSPACE_SCOPE_MISMATCH");
   }

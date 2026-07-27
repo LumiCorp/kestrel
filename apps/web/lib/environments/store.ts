@@ -775,7 +775,13 @@ export async function resolveThreadEnvironment(input: {
         isNull(table.archivedAt),
         notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES]),
       ),
-    columns: { id: true, name: true, slug: true, status: true },
+    columns: {
+      id: true,
+      name: true,
+      slug: true,
+      status: true,
+      provider: true,
+    },
   });
 }
 
@@ -790,7 +796,13 @@ export async function getDefaultOrganizationEnvironment(
         isNull(table.archivedAt),
         notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES]),
       ),
-    columns: { id: true, name: true, slug: true, status: true },
+    columns: {
+      id: true,
+      name: true,
+      slug: true,
+      status: true,
+      provider: true,
+    },
   });
 }
 
@@ -967,6 +979,33 @@ async function resolveWorkspaceSourceForActor(
       sourceResourceId: null,
       sourceRepository: null,
       sourceDefaultBranch: null,
+      desktopCatalogId: null,
+    };
+  }
+  if (input.source.type === "desktop") {
+    const catalogId = input.source.catalogId;
+    const catalog =
+      await transaction.query.desktopEnvironmentWorkspaceCatalog.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.id, catalogId),
+            eq(table.organizationId, input.organizationId),
+            eq(table.environmentId, input.environmentId),
+            eq(table.availability, "available"),
+          ),
+      });
+    if (!catalog) {
+      throw new EnvironmentContractError(
+        "WORKSPACE_SOURCE_FORBIDDEN",
+        "The Desktop workspace is unavailable in this Environment.",
+      );
+    }
+    return {
+      sourceType: "desktop" as const,
+      sourceResourceId: null,
+      sourceRepository: null,
+      sourceDefaultBranch: null,
+      desktopCatalogId: catalog.id,
     };
   }
   const resourceId = input.source.resourceId;
@@ -1021,6 +1060,7 @@ async function resolveWorkspaceSourceForActor(
       typeof metadata.defaultBranch === "string"
         ? metadata.defaultBranch
         : null,
+    desktopCatalogId: null,
   };
 }
 
@@ -1511,13 +1551,96 @@ export async function createOrConfigureProjectWorkspace(input: {
         "Project or Environment is unavailable.",
       );
     }
+    const projectId = project.id;
+    const source = input.source;
+    async function assertProjectHasNoActiveWork() {
+      const activeExecution =
+        await transaction.query.environmentRunExecutions.findFirst({
+          where: (table, { and, eq, inArray }) =>
+            and(
+              eq(table.projectId, projectId),
+              inArray(table.status, ["routed", "running"]),
+            ),
+          columns: { id: true },
+        });
+      if (activeExecution) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "Project Workspace cannot change while a run is active.",
+        );
+      }
+      const activeTurn = await transaction
+        .select({ id: schema.threadTurns.id })
+        .from(schema.threadTurns)
+        .innerJoin(
+          schema.threads,
+          eq(schema.threads.id, schema.threadTurns.threadId),
+        )
+        .where(
+          and(
+            eq(schema.threads.projectId, projectId),
+            inArray(schema.threadTurns.status, [
+              "queued",
+              "running",
+              "waiting_for_input",
+            ]),
+          ),
+        )
+        .limit(1);
+      if (activeTurn.length > 0) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "Project Workspace cannot change while a Thread turn is active.",
+        );
+      }
+    }
     if (project.environmentId !== input.environmentId) {
+      if (!(environment.provider === "desktop" && source.type === "desktop")) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "Move the Project to this Environment before configuring its Workspace.",
+        );
+      }
+      const now = new Date();
+      await assertProjectHasNoActiveWork();
+      await transaction
+        .delete(schema.threadExecutionBindings)
+        .where(
+          inArray(
+            schema.threadExecutionBindings.threadId,
+            transaction
+              .select({ id: schema.threads.id })
+              .from(schema.threads)
+              .where(eq(schema.threads.projectId, project.id)),
+          ),
+        );
+      await transaction
+        .update(schema.projects)
+        .set({ environmentId: environment.id, updatedAt: now })
+        .where(eq(schema.projects.id, project.id));
+      await transaction.insert(schema.projectAuditEvents).values({
+        id: crypto.randomUUID(),
+        projectId: project.id,
+        actorUserId: input.userId,
+        action: "project.environment.moved",
+        targetType: "environment",
+        targetId: environment.id,
+        metadata: {
+          previousEnvironmentId: project.environmentId,
+          environmentId: environment.id,
+        },
+        createdAt: now,
+      });
+    }
+    if (
+      (environment.provider === "desktop" && source.type !== "desktop") ||
+      (environment.provider === "fly" && source.type === "desktop")
+    ) {
       throw new EnvironmentContractError(
-        "ENVIRONMENT_UNAVAILABLE",
-        "Move the Project to this Environment before configuring its Workspace.",
+        "WORKSPACE_SOURCE_FORBIDDEN",
+        "Workspace source must match the Environment provider.",
       );
     }
-    const source = input.source;
     const [sourceResourceRow] =
       source.type === "github"
         ? await transaction
@@ -1607,25 +1730,35 @@ export async function createOrConfigureProjectWorkspace(input: {
         );
       }
     }
-    const sourceValues = sourceResource
-      ? {
-          sourceType: "github" as const,
-          sourceResourceId: sourceResource.id,
-          sourceRepository: sourceResource.label,
-          sourceDefaultBranch:
-            sourceResource.metadata &&
-            typeof sourceResource.metadata === "object" &&
-            "defaultBranch" in sourceResource.metadata &&
-            typeof sourceResource.metadata.defaultBranch === "string"
-              ? sourceResource.metadata.defaultBranch
-              : null,
-        }
-      : {
-          sourceType: "blank" as const,
-          sourceResourceId: null,
-          sourceRepository: null,
-          sourceDefaultBranch: null,
-        };
+    const sourceValues =
+      source.type === "desktop"
+        ? await resolveWorkspaceSourceForActor(transaction, {
+            organizationId: input.organizationId,
+            environmentId: input.environmentId,
+            userId: input.userId,
+            source,
+          })
+        : sourceResource
+          ? {
+              sourceType: "github" as const,
+              sourceResourceId: sourceResource.id,
+              sourceRepository: sourceResource.label,
+              sourceDefaultBranch:
+                sourceResource.metadata &&
+                typeof sourceResource.metadata === "object" &&
+                "defaultBranch" in sourceResource.metadata &&
+                typeof sourceResource.metadata.defaultBranch === "string"
+                  ? sourceResource.metadata.defaultBranch
+                  : null,
+              desktopCatalogId: null,
+            }
+          : {
+              sourceType: "blank" as const,
+              sourceResourceId: null,
+              sourceRepository: null,
+              sourceDefaultBranch: null,
+              desktopCatalogId: null,
+            };
     await transaction
       .insert(schema.projectEnvironmentBindings)
       .values({
@@ -1651,11 +1784,18 @@ export async function createOrConfigureProjectWorkspace(input: {
           isNull(table.deletedAt),
         ),
     });
-    if (existing && existing.status !== "requested") {
+    if (
+      existing &&
+      existing.status !== "requested" &&
+      environment.provider !== "desktop"
+    ) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
         "Workspace source cannot change after provisioning has started.",
       );
+    }
+    if (existing && environment.provider === "desktop") {
+      await assertProjectHasNoActiveWork();
     }
     const now = new Date();
     const workspaceId = existing?.id ?? crypto.randomUUID();
@@ -1682,21 +1822,29 @@ export async function createOrConfigureProjectWorkspace(input: {
               createdByUserId: input.userId,
               name: project.name,
               kind: "project",
-              status: "requested",
+              status:
+                environment.provider === "desktop" ? "ready" : "requested",
+              runtimeImage:
+                environment.provider === "desktop"
+                  ? "desktop-local"
+                  : undefined,
               createdAt: now,
               ...values,
             })
             .returning()
         )[0];
     if (!workspace) throw new Error("Project Workspace creation failed.");
-    let operation = await transaction.query.environmentOperations.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.workspaceId, workspace.id),
-          eq(table.type, "workspace.provision"),
-        ),
-    });
-    if (!operation) {
+    let operation =
+      environment.provider === "desktop"
+        ? null
+        : await transaction.query.environmentOperations.findFirst({
+            where: (table, { and, eq }) =>
+              and(
+                eq(table.workspaceId, workspace.id),
+                eq(table.type, "workspace.provision"),
+              ),
+          });
+    if (!operation && environment.provider === "fly") {
       [operation] = await transaction
         .insert(schema.environmentOperations)
         .values({

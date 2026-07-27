@@ -31,14 +31,17 @@ export async function OrganizationEnvironmentLayout({
   });
   if (!environment) notFound();
   const base = `/organization/environments/${environment.id}`;
-  const tabs = isEnvironmentPrivateInferenceEnabled()
-    ? [
-        baseTabs[0],
-        baseTabs[1],
-        ["Private inference", "/inference"] as const,
-        ...baseTabs.slice(2),
-      ]
-    : baseTabs;
+  const tabs =
+    environment.provider === "desktop"
+      ? [baseTabs[0], ...baseTabs.slice(2)]
+      : isEnvironmentPrivateInferenceEnabled()
+        ? [
+            baseTabs[0],
+            baseTabs[1],
+            ["Private inference", "/inference"] as const,
+            ...baseTabs.slice(2),
+          ]
+        : baseTabs;
   return (
     <SettingsPage>
       <div className="space-y-3">
@@ -56,7 +59,9 @@ export async function OrganizationEnvironmentLayout({
           <Badge variant="outline">{environment.status}</Badge>
         </div>
         <p className="text-muted-foreground text-sm">
-          {environment.region} · {environment.runtimeTemplate}
+          {environment.provider === "desktop"
+            ? "Kestrel Desktop · Local Core"
+            : `${environment.region} · ${environment.runtimeTemplate}`}
         </p>
       </div>
       <EnvironmentTabs base={base} tabs={tabs} />

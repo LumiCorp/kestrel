@@ -22,6 +22,7 @@ import {
   findActiveWorkspaceLifecycleOperation,
   hasActiveWorkspaceLifecycleOperation,
 } from "./lifecycle-operations";
+import { createDesktopEnvironmentRunnerFetch } from "./desktop-runner-fetch";
 import {
   environmentLifecycleLockKey,
   workspaceLifecycleLockKey,
@@ -110,6 +111,22 @@ export async function resolveEnvironmentExecutionRoute(input: {
       "Thread Environment changed after this turn was queued. Submit a new turn in the active Environment.",
     );
   }
+  const selectedEnvironment = await knowledgeDb.query.environments.findFirst({
+    where: (table, { and, eq, isNull }) =>
+      and(
+        eq(table.id, resolved.binding.environmentId),
+        eq(table.organizationId, input.organizationId),
+        isNull(table.archivedAt),
+      ),
+    columns: { provider: true },
+  });
+  if (selectedEnvironment?.provider === "desktop") {
+    return resolveDesktopEnvironmentExecutionRoute({
+      ...input,
+      binding: resolved.binding,
+      workspace: resolved.workspace,
+    });
+  }
   if (resolved.created && resolved.operation?.status === "queued") {
     await enqueueEnvironmentOperation(resolved.operation.id);
   }
@@ -192,6 +209,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     status: "ready",
   });
   return {
+    provider: "fly" as const,
     baseUrl: authorization.baseUrl,
     authToken: authorization.executionTicket,
     executionTicket: authorization.executionTicket,
@@ -201,6 +219,137 @@ export async function resolveEnvironmentExecutionRoute(input: {
     projectId: authorization.projectId,
     effectiveCapabilities: authorization.effectiveCapabilities,
     reasoningPolicy: authorization.reasoningPolicy,
+    ...(mcpContext ? { mcpContext } : {}),
+  };
+}
+
+async function resolveDesktopEnvironmentExecutionRoute(input: {
+  organizationId: string;
+  threadId: string;
+  actorUserId: string;
+  agentId?: string | undefined;
+  recordExecution?: {
+    projectContextRevisionId?: string | undefined;
+    durableTurnId?: string | undefined;
+  };
+  onProgress?: (progress: EnvironmentActivationProgress) => void;
+  binding: {
+    environmentId: string;
+    workspaceId: string;
+  };
+  workspace: {
+    id: string;
+    status: string;
+    runtimeImage: string | null;
+    desktopCatalogId: string | null;
+  };
+}) {
+  if (
+    input.workspace.status !== "ready" ||
+    !input.workspace.desktopCatalogId
+  ) {
+    throw new Error("The bound Desktop workspace is unavailable.");
+  }
+  const [environment, connection, catalog] = await Promise.all([
+    knowledgeDb.query.environments.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.id, input.binding.environmentId),
+          eq(table.organizationId, input.organizationId),
+          eq(table.provider, "desktop"),
+          eq(table.status, "ready"),
+          isNull(table.archivedAt),
+        ),
+    }),
+    knowledgeDb.query.desktopEnvironmentConnections.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.environmentId, input.binding.environmentId),
+          eq(table.organizationId, input.organizationId),
+          eq(table.status, "active"),
+        ),
+    }),
+    knowledgeDb.query.desktopEnvironmentWorkspaceCatalog.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.id, input.workspace.desktopCatalogId!),
+          eq(table.environmentId, input.binding.environmentId),
+          eq(table.availability, "available"),
+        ),
+    }),
+  ]);
+  if (!(environment && connection && catalog)) {
+    throw new Error(
+      "Desktop Environment was revoked or its workspace is unavailable.",
+    );
+  }
+  const runId = crypto.randomUUID();
+  const effectiveCapabilities = await snapshotEffectiveCapabilities({
+    organizationId: input.organizationId,
+    environmentId: environment.id,
+    threadId: input.threadId,
+    actorId: input.actorUserId,
+    agentId: input.agentId ?? "kestrel-one-ui",
+  });
+  const reasoningPolicy = await readEnvironmentReasoningPolicy({
+    organizationId: input.organizationId,
+    environmentId: environment.id,
+  });
+  let projectId: string | null | undefined;
+  let mcpContext;
+  if (input.recordExecution) {
+    projectId = await recordEnvironmentExecution({
+      id: runId,
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+      workspaceId: input.workspace.id,
+      threadId: input.threadId,
+      actorId: input.actorUserId,
+      runtimeImage: input.workspace.runtimeImage ?? "desktop-local",
+      routeCapabilities: [...ROUTE_CAPABILITIES],
+      effectiveCapabilities,
+      reasoningPolicy,
+      projectContextRevisionId: input.recordExecution.projectContextRevisionId,
+      durableTurnId: input.recordExecution.durableTurnId,
+    });
+    mcpContext = await issueHostedMcpRunContext({
+      runExecutionId: runId,
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+      projectId,
+      threadId: input.threadId,
+    });
+  }
+  const online =
+    connection.lastSeenAt &&
+    Date.now() - connection.lastSeenAt.getTime() <= 90_000;
+  input.onProgress?.({
+    stage: online
+      ? "environment.activation.ready"
+      : "environment.runtime.connecting",
+    detail: online
+      ? "Desktop Environment ready."
+      : "Desktop Environment offline. This turn will remain queued.",
+    status: online ? "ready" : "pending",
+  });
+  return {
+    provider: "desktop" as const,
+    baseUrl: "https://desktop-environment.invalid",
+    authToken: "desktop-internal",
+    fetchImpl: createDesktopEnvironmentRunnerFetch({
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+      workspaceId: input.workspace.id,
+      executionId: runId,
+      actorUserId: input.actorUserId,
+    }),
+    executionTicket: undefined,
+    runId,
+    environmentId: environment.id,
+    workspaceId: input.workspace.id,
+    projectId,
+    effectiveCapabilities,
+    reasoningPolicy,
     ...(mcpContext ? { mcpContext } : {}),
   };
 }
@@ -302,9 +451,9 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
     const now = Math.floor(Date.now() / 1000);
     const executionTicket = signEnvironmentExecutionTicket({
       privateKey:
-        process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
+      process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
       ticket: {
-        version: 1,
+        version: 2,
         audience: ENVIRONMENT_ROUTER_AUDIENCE,
         organizationId: input.organizationId,
         environmentId: environment.id,
@@ -313,8 +462,11 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
         runId: input.runId,
         actorId: input.actorUserId,
         agentId: input.agentId,
-        flyAppName: environment.flyAppName,
-        flyMachineId: workspace.flyMachineId,
+        target: {
+          provider: "fly",
+          appName: environment.flyAppName,
+          machineId: workspace.flyMachineId,
+        },
         capabilities: [...ROUTE_CAPABILITIES],
         issuedAt: now,
         expiresAt: now + 300,
@@ -407,6 +559,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     status: "ready",
   });
   return {
+    provider: "local" as const,
     baseUrl: process.env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL ?? "",
     authToken: process.env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN ?? "",
     executionTicket: undefined,
@@ -681,7 +834,7 @@ export async function resolveEnvironmentExecutionCancellationRoute(input: {
   const authToken = signEnvironmentExecutionTicket({
     privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
     ticket: {
-      version: 1,
+      version: 2,
       audience: ENVIRONMENT_ROUTER_AUDIENCE,
       organizationId: input.organizationId,
       environmentId: route.environmentId,
@@ -690,8 +843,11 @@ export async function resolveEnvironmentExecutionCancellationRoute(input: {
       runId: input.executionId,
       actorId: route.actorId,
       agentId: "kestrel-one-turn-worker",
-      flyAppName: route.flyAppName,
-      flyMachineId: route.flyMachineId,
+      target: {
+        provider: "fly",
+        appName: route.flyAppName,
+        machineId: route.flyMachineId,
+      },
       capabilities: [...ROUTE_CAPABILITIES],
       issuedAt: now,
       expiresAt: now + 300,
@@ -724,7 +880,7 @@ export function createEnvironmentMachineRoute(input: {
   const authToken = signEnvironmentExecutionTicket({
     privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
     ticket: {
-      version: 1,
+      version: 2,
       audience: ENVIRONMENT_ROUTER_AUDIENCE,
       organizationId: input.organizationId,
       environmentId: input.environmentId,
@@ -733,8 +889,11 @@ export function createEnvironmentMachineRoute(input: {
       runId,
       actorId: input.actorId,
       agentId: input.agentId ?? "kestrel-control-plane",
-      flyAppName: input.flyAppName,
-      flyMachineId: input.flyMachineId,
+      target: {
+        provider: "fly",
+        appName: input.flyAppName,
+        machineId: input.flyMachineId,
+      },
       capabilities: input.capabilities ?? [...ROUTE_CAPABILITIES],
       issuedAt: now,
       expiresAt: now + 300,

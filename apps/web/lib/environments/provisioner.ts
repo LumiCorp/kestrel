@@ -1218,7 +1218,26 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             sourceDefaultBranch: true,
           },
         })
-        .then((value) => value ?? null);
+        .then((value) => {
+          if (!value) return null;
+          if (value?.sourceType === "desktop") {
+            throw new Error(
+              "Desktop workspaces are not provisioned by the Fly lifecycle worker.",
+            );
+          }
+          return {
+            id: value.id,
+            organizationId: value.organizationId,
+            environmentId: value.environmentId,
+            status: value.status,
+            flyMachineId: value.flyMachineId,
+            flyVolumeId: value.flyVolumeId,
+            sourceType: value.sourceType,
+            sourceResourceId: value.sourceResourceId,
+            sourceRepository: value.sourceRepository,
+            sourceDefaultBranch: value.sourceDefaultBranch,
+          };
+        });
     },
     listEnvironmentWorkspaces(environmentId) {
       return knowledgeDb.query.environmentWorkspaces.findMany({

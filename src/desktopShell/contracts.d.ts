@@ -378,6 +378,7 @@ export interface DesktopRuntimeStoreReset {
     resetAt: string;
 }
 export interface DesktopProjectRegistration {
+    id?: string | undefined;
     path: string;
     label: string;
 }

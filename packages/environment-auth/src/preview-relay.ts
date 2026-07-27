@@ -2,16 +2,14 @@ import { sign, verify } from "node:crypto";
 
 export const PREVIEW_RELAY_TICKET_AUDIENCE = "kestrel-preview-relay" as const;
 export const PREVIEW_RELAY_TICKET_VERSION = 1 as const;
+export const PREVIEW_RELAY_TICKET_V2_VERSION = 2 as const;
 export const PREVIEW_RELAY_TICKET_MAX_TTL_SECONDS = 300;
 
-export type PreviewRelayTicket = {
-  version: typeof PREVIEW_RELAY_TICKET_VERSION;
+type PreviewRelayTicketCommon = {
   audience: typeof PREVIEW_RELAY_TICKET_AUDIENCE;
   organizationId: string;
   environmentId: string;
   workspaceId: string;
-  flyAppName: string;
-  flyMachineId: string;
   previewId: string;
   hostname: string;
   port: number;
@@ -19,6 +17,47 @@ export type PreviewRelayTicket = {
   expiresAt: number;
   nonce: string;
 };
+
+export type PreviewRelayTicketV1 = PreviewRelayTicketCommon & {
+  version: typeof PREVIEW_RELAY_TICKET_VERSION;
+  flyAppName: string;
+  flyMachineId: string;
+};
+
+export type PreviewRelayTicketV2 = PreviewRelayTicketCommon & {
+  version: typeof PREVIEW_RELAY_TICKET_V2_VERSION;
+  target:
+    | {
+        provider: "fly";
+        appName: string;
+        machineId: string;
+      }
+    | {
+        provider: "desktop";
+        connectionId: string;
+        workspaceRef: string;
+      };
+};
+
+export type PreviewRelayTicket = PreviewRelayTicketV1 | PreviewRelayTicketV2;
+
+export function getFlyPreviewRelayTarget(ticket: PreviewRelayTicket) {
+  if (ticket.version === 1) {
+    return { appName: ticket.flyAppName, machineId: ticket.flyMachineId };
+  }
+  return ticket.target.provider === "fly"
+    ? { appName: ticket.target.appName, machineId: ticket.target.machineId }
+    : undefined;
+}
+
+export function getDesktopPreviewRelayTarget(ticket: PreviewRelayTicket) {
+  return ticket.version === 2 && ticket.target.provider === "desktop"
+    ? {
+        connectionId: ticket.target.connectionId,
+        workspaceRef: ticket.target.workspaceRef,
+      }
+    : undefined;
+}
 
 export function signPreviewRelayTicket(input: {
   ticket: PreviewRelayTicket;
@@ -67,13 +106,12 @@ export function verifyPreviewRelayTicket(input: {
 
 function validatePreviewRelayTicket(ticket: PreviewRelayTicket, now: number) {
   if (
-    ticket.version !== PREVIEW_RELAY_TICKET_VERSION ||
+    (ticket.version !== PREVIEW_RELAY_TICKET_VERSION &&
+      ticket.version !== PREVIEW_RELAY_TICKET_V2_VERSION) ||
     ticket.audience !== PREVIEW_RELAY_TICKET_AUDIENCE ||
     !ticket.organizationId ||
     !ticket.environmentId ||
     !ticket.workspaceId ||
-    !ticket.flyAppName ||
-    !ticket.flyMachineId ||
     !ticket.previewId ||
     !ticket.hostname ||
     !Number.isInteger(ticket.port) ||
@@ -84,6 +122,36 @@ function validatePreviewRelayTicket(ticket: PreviewRelayTicket, now: number) {
     ticket.issuedAt > now + 30 ||
     ticket.expiresAt <= now ||
     !ticket.nonce
+  ) {
+    throw invalid();
+  }
+  if (ticket.version === 1) {
+    if (
+      !ticket.flyAppName ||
+      !ticket.flyMachineId ||
+      "target" in ticket
+    ) {
+      throw invalid();
+    }
+    return;
+  }
+  if ("flyAppName" in ticket || "flyMachineId" in ticket) throw invalid();
+  const target = ticket.target;
+  if (
+    !target ||
+    (target.provider === "fly"
+      ? !target.appName ||
+        !target.machineId ||
+        Object.keys(target).some(
+          (key) => !["provider", "appName", "machineId"].includes(key),
+        )
+      : target.provider === "desktop"
+        ? !target.connectionId ||
+          !target.workspaceRef ||
+          Object.keys(target).some(
+            (key) => !["provider", "connectionId", "workspaceRef"].includes(key),
+          )
+        : true)
   ) {
     throw invalid();
   }

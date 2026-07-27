@@ -1,4 +1,5 @@
 import {
+  getFlyEnvironmentExecutionTarget,
   verifyEnvironmentExecutionTicket,
   verifyEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
@@ -16,9 +17,10 @@ export function authorizeConfigRefreshToken(input: {
       publicKey: input.publicKey,
       ...(input.now === undefined ? {} : { now: input.now }),
     });
+    const target = getFlyEnvironmentExecutionTarget(ticket);
     if (
       ticket.environmentId === input.environmentId &&
-      ticket.flyAppName === input.expectedAppName &&
+      target?.appName === input.expectedAppName &&
       ticket.capabilities.includes("gateway.config.refresh")
     ) return;
   } catch {}

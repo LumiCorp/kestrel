@@ -15,6 +15,7 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { getProjectDetail } from "@/lib/projects/store";
 import { getThreadForUser } from "@/lib/threads/store";
+import { knowledgeDb } from "@/lib/knowledge/db";
 
 const querySchema = z.object({
   modality: z.enum(GATEWAY_MODALITIES).optional(),
@@ -74,13 +75,47 @@ export async function GET(request: NextRequest) {
         organizationId,
         environment.id
       );
+      const desktopConnection =
+        environment.provider === "desktop"
+          ? await knowledgeDb.query.desktopEnvironmentConnections.findFirst({
+              where: (table, { and, eq }) =>
+                and(
+                  eq(table.organizationId, organizationId),
+                  eq(table.environmentId, environment.id),
+                  eq(table.status, "active"),
+                ),
+              columns: { advertisedModels: true },
+            })
+          : null;
+      const desktopModels = (desktopConnection?.advertisedModels ?? [])
+        .filter((model) => model.health === "ready")
+        .map((model) => {
+          const id = `desktop-local:${model.provider}:${encodeURIComponent(model.model)}`;
+          return {
+            gatewayModelId: id,
+            id,
+            name: `${model.provider}/${model.model} on this Desktop`,
+            provider: model.provider,
+            description:
+              "Uses this Desktop Environment's local credential and model provider.",
+            alias: null,
+            rawModelId: model.model,
+            modality: "language",
+            gatewayId: null,
+            gatewayProvider: model.provider,
+            isDefault: false,
+            environmentId: environment.id,
+            scope: "environment",
+            metadata: { desktopLocal: true },
+          };
+        });
       const pairedSpeech = await getSpeechModelForLanguageSelection(
         query.pairedWith,
         organizationId,
         environment.id
       );
       return NextResponse.json({
-        models: languageModels,
+        models: [...languageModels, ...desktopModels],
         pairedSpeechModel: pairedSpeech,
         environment,
       });

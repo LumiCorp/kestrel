@@ -19,6 +19,7 @@ import {
   type PreviewEdgeRoute,
   type PreviewEdgeRouteResolver,
 } from "./route-resolver.js";
+import { DesktopPreviewTunnelRegistry } from "./desktop-tunnels.js";
 
 const UPSTREAM_TIMEOUT_MS = 15_000;
 const MAX_UPSTREAM_HEADER_BYTES = 16 * 1024;
@@ -69,6 +70,7 @@ export class PreviewEdge {
     private readonly input: {
       hostSuffix: string;
       resolver: Pick<PreviewEdgeRouteResolver, "resolve">;
+      desktopTunnels?: DesktopPreviewTunnelRegistry | undefined;
       requestUpstream?: UpstreamRequest | undefined;
       connectUpstream?: UpstreamConnector | undefined;
       log?: ((event: PreviewEdgeLogEvent) => void) | undefined;
@@ -86,15 +88,41 @@ export class PreviewEdge {
         request.headers.host,
         this.input.hostSuffix
       );
-      const resolved = await this.input.resolver.resolve(hostname);
+      const access = previewAccess(request);
+      const resolved = await this.input.resolver.resolve(hostname, access.token);
       cacheOutcome = resolved.cacheOutcome;
-      const outcome = await proxyHttp({
-        request,
-        response,
-        route: resolved.route,
-        requestUpstream: this.input.requestUpstream ?? defaultUpstreamRequest,
-        timeoutMs: this.input.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS,
-      });
+      if (access.fromQuery) {
+        setPreviewAccessCookie(response, access.token);
+        response.writeHead(303, { location: stripPreviewAccess(request.url) });
+        response.end();
+        this.log({
+          type: "preview.edge.request.completed",
+          requestId,
+          hostnameId,
+          transport: "http",
+          cacheOutcome,
+          status: 303,
+          durationMs: Date.now() - startedAt,
+        });
+        return;
+      }
+      const target = normalizedRouteTarget(resolved.route);
+      const outcome =
+        target.provider === "desktop"
+          ? await proxyDesktopHttp({
+              tunnels: this.input.desktopTunnels,
+              previewId: target.previewId,
+              request,
+              response,
+            })
+          : await proxyHttp({
+              request,
+              response,
+              route: resolved.route,
+              requestUpstream:
+                this.input.requestUpstream ?? defaultUpstreamRequest,
+              timeoutMs: this.input.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS,
+            });
       this.log({
         type: "preview.edge.request.completed",
         requestId,
@@ -132,9 +160,24 @@ export class PreviewEdge {
         request.headers.host,
         this.input.hostSuffix
       );
-      const resolved = await this.input.resolver.resolve(hostname);
+      const access = previewAccess(request);
+      const resolved = await this.input.resolver.resolve(hostname, access.token);
       cacheOutcome = resolved.cacheOutcome;
-      const target = new URL(resolved.route.targetUrl);
+      const routeTarget = normalizedRouteTarget(resolved.route);
+      if (routeTarget.provider === "desktop") {
+        if (!this.input.desktopTunnels) {
+          throw new Error("Desktop preview tunnel service is unavailable.");
+        }
+        this.input.desktopTunnels.proxyWebSocket({
+          previewId: routeTarget.previewId,
+          request,
+          socket: client,
+          head,
+          path: stripPreviewAccess(request.url),
+        });
+        return;
+      }
+      const target = new URL(routeTarget.targetUrl);
       const connectedUpstream = await (
         this.input.connectUpstream ?? defaultUpstreamConnector
       )(target, this.input.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS);
@@ -299,7 +342,11 @@ function proxyHttp(input: {
         if (timeout) clearTimeout(timeout);
         resolve(outcome);
       };
-      const target = new URL(input.route.targetUrl);
+      const routeTarget = normalizedRouteTarget(input.route);
+      if (routeTarget.provider !== "fly") {
+        throw new Error("Fly preview route is invalid.");
+      }
+      const target = new URL(routeTarget.targetUrl);
       const upstream = input.requestUpstream(
         {
           target,
@@ -410,7 +457,11 @@ function upstreamHeaders(
 ) {
   const result = sanitizedRequestHeaders(headers);
   result.host = route.hostname;
-  result[PREVIEW_EDGE_AUTHORIZATION_HEADER] = route.authorization;
+  const target = normalizedRouteTarget(route);
+  if (target.provider !== "fly") {
+    throw new Error("Fly preview route is invalid.");
+  }
+  result[PREVIEW_EDGE_AUTHORIZATION_HEADER] = target.authorization;
   if (upgrade) {
     result.connection = "Upgrade";
     result.upgrade = headers.upgrade ?? "websocket";
@@ -480,6 +531,63 @@ function requestPath(value: string | undefined) {
     throw new PreviewEdgeRouteError("PREVIEW_NOT_FOUND", 404);
   }
   return value;
+}
+
+async function proxyDesktopHttp(input: {
+  tunnels: DesktopPreviewTunnelRegistry | undefined;
+  previewId: string;
+  request: IncomingMessage;
+  response: ServerResponse;
+}): Promise<{ status: number; errorCode?: string | undefined }> {
+  if (!input.tunnels) throw new Error("Desktop preview tunnel is unavailable.");
+  await input.tunnels.proxyHttp({
+    previewId: input.previewId,
+    request: input.request,
+    response: input.response,
+    path: stripPreviewAccess(input.request.url),
+  });
+  return { status: input.response.statusCode || 200 };
+}
+
+function normalizedRouteTarget(route: PreviewEdgeRoute) {
+  if (route.target) return route.target;
+  if (route.targetUrl && route.authorization) {
+    return {
+      provider: "fly" as const,
+      targetUrl: route.targetUrl,
+      authorization: route.authorization,
+    };
+  }
+  throw new Error("Preview route target is unavailable.");
+}
+
+function previewAccess(request: IncomingMessage) {
+  const url = new URL(request.url ?? "/", "https://preview.invalid");
+  const queryToken = url.searchParams.get("kestrel_preview_access");
+  if (queryToken) return { token: queryToken, fromQuery: true };
+  const cookie = request.headers.cookie
+    ?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("kestrel_preview_access="))
+    ?.slice("kestrel_preview_access=".length);
+  return {
+    token: cookie ? decodeURIComponent(cookie) : null,
+    fromQuery: false,
+  };
+}
+
+function stripPreviewAccess(value: string | undefined) {
+  const url = new URL(requestPath(value), "https://preview.invalid");
+  url.searchParams.delete("kestrel_preview_access");
+  return `${url.pathname}${url.search}`;
+}
+
+function setPreviewAccessCookie(response: ServerResponse, token: string | null) {
+  if (!token) return;
+  response.setHeader(
+    "set-cookie",
+    `kestrel_preview_access=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+  );
 }
 
 function publicFailure(error: unknown): {

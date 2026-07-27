@@ -65,6 +65,29 @@ contractTest(
 
 contractTest(
   "desktop.hermetic",
+  "Desktop project tombstones restore a registration UUID after re-adding a folder",
+  () => {
+    const projectId = "a310bc8e-b8fb-4d57-81de-27e58f6d48b1";
+    const projectPath = path.resolve("/tmp/kestrel-restored-project");
+    const settings = normalizeDesktopSettings({
+      projects: [{ path: projectPath, label: "Restored" }],
+      projectTombstones: [
+        {
+          id: projectId,
+          path: projectPath,
+          label: "Previous label",
+          removedAt: "2026-07-26T12:00:00.000Z",
+        },
+      ],
+    });
+
+    assert.equal(settings.projects[0]?.id, projectId);
+    assert.equal(settings.projectTombstones[0]?.path, projectPath);
+  },
+);
+
+contractTest(
+  "desktop.hermetic",
   "persisted Desktop connections cannot spoof a standard App identity",
   () => {
     const base = {
@@ -275,10 +298,18 @@ contractTest(
       "sandbox_code",
       "desktop_host",
     ]);
-    assert.deepEqual(saved.projects, [
-      { path: path.resolve("../workspace-a"), label: "Workspace A" },
-      { path: "/tmp/workspace-b", label: "workspace-b" },
-    ]);
+    assert.deepEqual(
+      saved.projects.map(({ id: _id, ...project }) => project),
+      [
+        { path: path.resolve("../workspace-a"), label: "Workspace A" },
+        { path: "/tmp/workspace-b", label: "workspace-b" },
+      ],
+    );
+    assert.ok(
+      saved.projects.every((project) =>
+        /^[0-9a-f-]{36}$/u.test(project.id ?? ""),
+      ),
+    );
     assert.equal(saved.openrouterApiKey, undefined);
     assert.equal(saved.openrouterModel, "openai/gpt-5.2");
     assert.equal(saved.openrouterBaseUrl, "https://openrouter.ai");

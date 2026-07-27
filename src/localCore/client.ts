@@ -9,6 +9,7 @@ import {
   type DesktopManagedProjectRun,
   type DesktopPackageManager,
   type DesktopProjectLauncherDescriptor,
+  type DesktopProjectRegistration,
 } from "../desktopShell/contracts.js";
 import type { ResolvedModelPolicy } from "../profile/modelPolicy.js";
 import type {
@@ -56,6 +57,14 @@ import {
   type LocalCoreMcpOAuthSessionView,
 } from "./mcpOAuthSessions.js";
 import type { LocalCoreExternalDatabaseVerificationResult } from "./externalDatabaseVerification.js";
+import type { DesktopEnvironmentStatusProjection } from "./desktopEnvironmentConnector.js";
+import type {
+  KestrelOneAccountStatus,
+  KestrelOneAuthorizationSessionView,
+  KestrelOneDesktopPreview,
+  KestrelOneSubmittedTurn,
+  KestrelOneThreadSnapshot,
+} from "./kestrelOneAccount.js";
 import type { Microsoft365Pack } from "../apps/microsoft365.js";
 import type { GoogleWorkspacePack } from "../apps/googleWorkspace.js";
 
@@ -96,6 +105,160 @@ export class LocalCoreClient {
 
   async patchSettings(patch: Record<string, unknown>): Promise<unknown> {
     return await this.patch("/v1/settings", patch);
+  }
+
+  async kestrelOneEnvironments(): Promise<DesktopEnvironmentStatusProjection> {
+    return readObjectField<DesktopEnvironmentStatusProjection>(
+      await this.get("/v1/kestrel-one/environments"),
+      "kestrelOne",
+      "Kestrel One Desktop Environments",
+    );
+  }
+
+  async kestrelOneAccount(): Promise<KestrelOneAccountStatus> {
+    return readObjectField<KestrelOneAccountStatus>(
+      await this.get("/v1/kestrel-one/account"),
+      "account",
+      "Kestrel One account",
+    );
+  }
+
+  async startKestrelOneAuthorization(input: {
+    baseUrl: string;
+  }): Promise<KestrelOneAuthorizationSessionView> {
+    return readObjectField<KestrelOneAuthorizationSessionView>(
+      await this.post("/v1/kestrel-one/account/authorization", input),
+      "session",
+      "Kestrel One authorization session",
+    );
+  }
+
+  async kestrelOneAuthorizationStatus(
+    sessionId: string,
+  ): Promise<KestrelOneAuthorizationSessionView> {
+    return readObjectField<KestrelOneAuthorizationSessionView>(
+      await this.get(
+        `/v1/kestrel-one/account/authorization/${encodeURIComponent(sessionId)}`,
+      ),
+      "session",
+      "Kestrel One authorization session",
+    );
+  }
+
+  async signOutKestrelOneAccount(): Promise<KestrelOneAccountStatus> {
+    return readObjectField<KestrelOneAccountStatus>(
+      await this.delete("/v1/kestrel-one/account"),
+      "account",
+      "Kestrel One account",
+    );
+  }
+
+  async submitKestrelOneTurn(input: {
+    threadId: string;
+    text: string;
+    interactionMode: "chat" | "plan" | "build";
+    model?: string | undefined;
+  }): Promise<KestrelOneSubmittedTurn> {
+    return readObjectField<KestrelOneSubmittedTurn>(
+      await this.post(
+        `/v1/kestrel-one/threads/${encodeURIComponent(input.threadId)}/turns`,
+        input,
+      ),
+      "turn",
+      "Kestrel One turn",
+    );
+  }
+
+  async kestrelOneThread(threadId: string): Promise<KestrelOneThreadSnapshot> {
+    return readObjectField<KestrelOneThreadSnapshot>(
+      await this.get(`/v1/kestrel-one/threads/${encodeURIComponent(threadId)}`),
+      "thread",
+      "Kestrel One Thread",
+    );
+  }
+
+  async publishKestrelOnePreview(input: {
+    projectId: string;
+    connectionId: string;
+    localRunRef: string;
+    localUrl: string;
+    name?: string | undefined;
+  }): Promise<KestrelOneDesktopPreview> {
+    return readObjectField<KestrelOneDesktopPreview>(
+      await this.post("/v1/kestrel-one/previews", input),
+      "preview",
+      "Kestrel One Desktop preview",
+    );
+  }
+
+  async renewKestrelOnePreview(
+    previewId: string,
+  ): Promise<KestrelOneDesktopPreview> {
+    return readObjectField<KestrelOneDesktopPreview>(
+      await this.patch(
+        `/v1/kestrel-one/previews/${encodeURIComponent(previewId)}`,
+        {},
+      ),
+      "preview",
+      "Kestrel One Desktop preview",
+    );
+  }
+
+  async unpublishKestrelOnePreview(previewId: string): Promise<void> {
+    await this.delete(
+      `/v1/kestrel-one/previews/${encodeURIComponent(previewId)}`,
+    );
+  }
+
+  async startKestrelOneEnrollment(input: {
+    baseUrl: string;
+    desktopName: string;
+  }): Promise<DesktopEnvironmentStatusProjection> {
+    return readObjectField<DesktopEnvironmentStatusProjection>(
+      await this.post("/v1/kestrel-one/enrollments", input),
+      "kestrelOne",
+      "Kestrel One Desktop Environment enrollment",
+    );
+  }
+
+  async refreshKestrelOneEnrollments(): Promise<DesktopEnvironmentStatusProjection> {
+    return readObjectField<DesktopEnvironmentStatusProjection>(
+      await this.post("/v1/kestrel-one/enrollments/refresh", {}),
+      "kestrelOne",
+      "Kestrel One Desktop Environment enrollment refresh",
+    );
+  }
+
+  async syncKestrelOneProjects(
+    projects: DesktopProjectRegistration[],
+  ): Promise<DesktopEnvironmentStatusProjection> {
+    return readObjectField<DesktopEnvironmentStatusProjection>(
+      await this.put("/v1/kestrel-one/projects", { projects }),
+      "kestrelOne",
+      "Kestrel One Desktop project synchronization",
+    );
+  }
+
+  async setKestrelOneCapacity(
+    capacity: number,
+  ): Promise<DesktopEnvironmentStatusProjection> {
+    return readObjectField<DesktopEnvironmentStatusProjection>(
+      await this.put("/v1/kestrel-one/capacity", { capacity }),
+      "kestrelOne",
+      "Kestrel One Desktop Environment capacity",
+    );
+  }
+
+  async disconnectKestrelOneEnvironment(
+    connectionId: string,
+  ): Promise<DesktopEnvironmentStatusProjection> {
+    return readObjectField<DesktopEnvironmentStatusProjection>(
+      await this.delete(
+        `/v1/kestrel-one/environments/${encodeURIComponent(connectionId)}`,
+      ),
+      "kestrelOne",
+      "Kestrel One Desktop Environment disconnect",
+    );
   }
 
   async runtimeConfiguration(): Promise<LocalCoreRuntimeConfigurationV1> {
@@ -154,9 +317,7 @@ export class LocalCoreClient {
     );
   }
 
-  async deleteCredential(
-    id: LocalCoreCredentialId,
-  ): Promise<{
+  async deleteCredential(id: LocalCoreCredentialId): Promise<{
     deleted: boolean;
     credentials: LocalCoreCredentialStoreStatus;
   }> {
@@ -214,37 +375,90 @@ export class LocalCoreClient {
     clientId: string;
     packs: Microsoft365Pack[];
   }): Promise<LocalCoreMcpOAuthSessionView> {
-    const response = await this.post("/v1/apps/microsoft-365/oauth/start", input);
+    const response = await this.post(
+      "/v1/apps/microsoft-365/oauth/start",
+      input,
+    );
     return parseLocalCoreMcpOAuthSessionView(
-      readObjectField(response, "session", "Microsoft 365 authorization session"),
+      readObjectField(
+        response,
+        "session",
+        "Microsoft 365 authorization session",
+      ),
     );
   }
 
-  async microsoft365OAuthStatus(sessionId: string): Promise<LocalCoreMcpOAuthSessionView> {
-    const response = await this.get(`/v1/apps/microsoft-365/oauth/sessions/${encodeURIComponent(sessionId)}`);
+  async microsoft365OAuthStatus(
+    sessionId: string,
+  ): Promise<LocalCoreMcpOAuthSessionView> {
+    const response = await this.get(
+      `/v1/apps/microsoft-365/oauth/sessions/${encodeURIComponent(sessionId)}`,
+    );
     return parseLocalCoreMcpOAuthSessionView(
-      readObjectField(response, "session", "Microsoft 365 authorization session"),
+      readObjectField(
+        response,
+        "session",
+        "Microsoft 365 authorization session",
+      ),
     );
   }
 
-  async verifyMicrosoft365(packs: Microsoft365Pack[]): Promise<{ verifiedAt: string }> {
-    const response = await this.post("/v1/apps/microsoft-365/verify", { packs });
-    return readObjectField<{ verifiedAt: string }>(response, "verification", "Microsoft 365 verification");
+  async verifyMicrosoft365(
+    packs: Microsoft365Pack[],
+  ): Promise<{ verifiedAt: string }> {
+    const response = await this.post("/v1/apps/microsoft-365/verify", {
+      packs,
+    });
+    return readObjectField<{ verifiedAt: string }>(
+      response,
+      "verification",
+      "Microsoft 365 verification",
+    );
   }
 
-  async startGoogleWorkspaceOAuth(input: { clientId: string; packs: GoogleWorkspacePack[] }): Promise<LocalCoreMcpOAuthSessionView> {
-    const response = await this.post("/v1/apps/google-workspace/oauth/start", input);
-    return parseLocalCoreMcpOAuthSessionView(readObjectField(response, "session", "Google Workspace authorization session"));
+  async startGoogleWorkspaceOAuth(input: {
+    clientId: string;
+    packs: GoogleWorkspacePack[];
+  }): Promise<LocalCoreMcpOAuthSessionView> {
+    const response = await this.post(
+      "/v1/apps/google-workspace/oauth/start",
+      input,
+    );
+    return parseLocalCoreMcpOAuthSessionView(
+      readObjectField(
+        response,
+        "session",
+        "Google Workspace authorization session",
+      ),
+    );
   }
 
-  async googleWorkspaceOAuthStatus(sessionId: string): Promise<LocalCoreMcpOAuthSessionView> {
-    const response = await this.get(`/v1/apps/google-workspace/oauth/sessions/${encodeURIComponent(sessionId)}`);
-    return parseLocalCoreMcpOAuthSessionView(readObjectField(response, "session", "Google Workspace authorization session"));
+  async googleWorkspaceOAuthStatus(
+    sessionId: string,
+  ): Promise<LocalCoreMcpOAuthSessionView> {
+    const response = await this.get(
+      `/v1/apps/google-workspace/oauth/sessions/${encodeURIComponent(sessionId)}`,
+    );
+    return parseLocalCoreMcpOAuthSessionView(
+      readObjectField(
+        response,
+        "session",
+        "Google Workspace authorization session",
+      ),
+    );
   }
 
-  async verifyGoogleWorkspace(packs: GoogleWorkspacePack[]): Promise<{ verifiedAt: string }> {
-    const response = await this.post("/v1/apps/google-workspace/verify", { packs });
-    return readObjectField<{ verifiedAt: string }>(response, "verification", "Google Workspace verification");
+  async verifyGoogleWorkspace(
+    packs: GoogleWorkspacePack[],
+  ): Promise<{ verifiedAt: string }> {
+    const response = await this.post("/v1/apps/google-workspace/verify", {
+      packs,
+    });
+    return readObjectField<{ verifiedAt: string }>(
+      response,
+      "verification",
+      "Google Workspace verification",
+    );
   }
 
   async verifyExternalDatabase(
@@ -560,7 +774,7 @@ export class LocalCoreClient {
           }
         });
         response.on("error", (error) => {
-          reportDisconnect(error);
+          reportDisconnect(normalizeLocalCoreStreamDisconnect(error));
         });
         response.on("end", () => {
           reportDisconnect(createLocalCoreStreamClosedError());
@@ -571,7 +785,7 @@ export class LocalCoreClient {
       },
     );
     req.on("error", (error) => {
-      reportDisconnect(error);
+      reportDisconnect(normalizeLocalCoreStreamDisconnect(error));
     });
     req.end();
     return () => {
@@ -877,6 +1091,13 @@ function createLocalCoreStreamClosedError(): NodeJS.ErrnoException {
     new Error("Local Core project run event stream closed."),
     { code: "ECONNRESET" },
   );
+}
+
+function normalizeLocalCoreStreamDisconnect(error: Error): Error {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EPIPE" || code === "ECONNRESET"
+    ? createLocalCoreStreamClosedError()
+    : error;
 }
 
 function parseRunnerCommandEnvelope(line: string): {

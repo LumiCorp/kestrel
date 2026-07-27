@@ -7,6 +7,7 @@ import {
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   PREVIEW_EDGE_RESOLVED_ROUTE_VERSION,
+  PREVIEW_EDGE_RESOLVED_ROUTE_V2_VERSION,
   PreviewEdgeRouteError,
   resolvePreviewEdgeRoute,
 } from "./preview-edge-route";
@@ -30,6 +31,7 @@ function dependencies(input?: {
     workspaceId: string;
     hostname: string;
     expiresAt: Date;
+    targetProvider?: "fly" | "desktop";
   } | null;
   routerUrl?: string | null;
 }): import("./preview-edge-route").PreviewEdgeRouteDependencies {
@@ -61,6 +63,7 @@ function dependencies(input?: {
       };
     },
     nonce: () => "preview-edge-route-nonce",
+    authorizeDesktopViewer: async () => true,
   };
 }
 
@@ -103,6 +106,40 @@ contractTest(
       nonce: "preview-edge-route-nonce",
     });
   }
+);
+
+contractTest(
+  "web.preview-edge.route-resolution",
+  "a Project-authorized Desktop lease resolves to an opaque tunnel target",
+  async () => {
+    const previewId = "11111111-1111-4111-8111-111111111111";
+    const route = await resolvePreviewEdgeRoute(
+      {
+        authorization: "Bearer preview-edge-service-token",
+        hostname,
+        accessToken: "member-access",
+        now,
+      },
+      dependencies({
+        lease: {
+          id: previewId,
+          organizationId: "organization-1",
+          environmentId: "environment-1",
+          workspaceId: "workspace-1",
+          hostname,
+          ingressProvider: "kestrel_edge",
+          targetProvider: "desktop",
+          expiresAt: new Date(now.getTime() + 600_000),
+        },
+      }),
+    );
+    assert.deepEqual(route, {
+      version: PREVIEW_EDGE_RESOLVED_ROUTE_V2_VERSION,
+      hostname,
+      target: { provider: "desktop", previewId },
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    });
+  },
 );
 
 contractTest(

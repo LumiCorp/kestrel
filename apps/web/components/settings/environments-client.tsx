@@ -239,6 +239,20 @@ export function EnvironmentsAdminClient({
 
       <FlyWorkspaceProviderClient />
 
+      <SettingsSection
+        description="Desktop Environments are enrolled from Kestrel Desktop and approved once by an organization admin."
+        title="Kestrel Desktop provider"
+      >
+        <SettingsRows>
+          <SettingsRow label="Enrollment">
+            <p className="text-muted-foreground text-sm">
+              Open Desktop Settings → Kestrel One Environments to enroll a machine.
+              Approved machines appear below automatically; no per-task approval is required.
+            </p>
+          </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+
       <RuntimePolicySettingsClient initialSettings={initialRuntimePolicy} />
 
       <SettingsSection
@@ -289,7 +303,8 @@ export function EnvironmentsAdminClient({
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Environment</TableHead>
-                <TableHead>Region</TableHead>
+                <TableHead>Provider</TableHead>
+                <TableHead>Location</TableHead>
                 <TableHead>Runtime</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Updated</TableHead>
@@ -314,10 +329,19 @@ export function EnvironmentsAdminClient({
                       ) : null}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {environment.region}
+                      <Badge variant="outline">
+                        {environment.provider === "desktop" ? "Desktop" : "Fly"}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {environment.runtimeTemplate}
+                      {environment.provider === "desktop"
+                        ? "Enrolled machine"
+                        : environment.region}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {environment.provider === "desktop"
+                        ? "Local Core"
+                        : environment.runtimeTemplate}
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">
