@@ -9,20 +9,32 @@ const stylesPath = path.join(testDir, "..", "renderer", "src", "styles.css");
 const appPath = path.join(testDir, "..", "renderer", "src", "DesktopApp.tsx");
 const explorerPath = path.join(testDir, "..", "renderer", "src", "ConversationExplorer.tsx");
 const contextSidebarPath = path.join(testDir, "..", "renderer", "src", "ContextSidebar.tsx");
+const timelinePath = path.join(testDir, "..", "renderer", "src", "ConversationTimeline.tsx");
 const mainPath = path.join(testDir, "..", "src", "main.ts");
 
-contractTest("desktop.hermetic", "thread messages and composer share the conversation width", async () => {
+contractTest("desktop.hermetic", "conversation timeline and composer share the conversation width", async () => {
   const source = await readFile(stylesPath, "utf8");
 
   assert.match(source, /--conversation-content-width:\s*880px;/u);
-  assert.match(source, /\.transcript\s*\{[^}]*padding:\s*28px var\(--conversation-gutter\) 18px;/su);
-  assert.match(source, /\.message\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),\s*100%\);/su);
-  assert.match(
-    source,
-    /\.message-user\s*\{[^}]*margin-right:\s*max\(0px,\s*calc\(\(100% - var\(--conversation-content-width\)\) \/ 2\)\);/su,
-  );
-  assert.match(source, /\.activity-line\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),/su);
+  assert.match(source, /\.conversation-timeline\s*\{[^}]*padding:\s*28px var\(--conversation-gutter\) 18px;/su);
+  assert.match(source, /\.conversation-timeline-list\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),\s*100%\);/su);
+  assert.match(source, /\.conversation-timeline-list::before\s*\{[^}]*width:\s*1px;/su);
+  assert.doesNotMatch(source, /\.activity-line\s*\{/u);
   assert.match(source, /\.composer\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),/su);
+});
+
+contractTest("desktop.hermetic", "conversation work is a semantic timeline with collapsed operational detail", async () => {
+  const [app, timeline] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(timelinePath, "utf8"),
+  ]);
+
+  assert.match(app, /<ConversationTimeline/u);
+  assert.doesNotMatch(app, /className="activity-shell"/u);
+  assert.match(timeline, /className=\{`conversation-timeline-list/u);
+  assert.match(timeline, /<details className="timeline-details">/u);
+  assert.match(timeline, /entry\.item\.kind !== "assistant"/u);
+  assert.match(timeline, /aria-live="polite"/u);
 });
 
 contractTest("desktop.hermetic", "context sidebar joins the full-width work canvas without an empty resizer column", async () => {
@@ -85,7 +97,7 @@ contractTest("desktop.hermetic", "active runs suppress stale stalled-attention c
   assert.match(app, /operatorActionCardItems\.map\(\(item\) => \(/u);
 });
 
-contractTest("desktop.hermetic", "user-input requests are composer-owned and do not render action cards", async () => {
+contractTest("desktop.hermetic", "user-input requests are timeline-visible and composer-owned", async () => {
   const app = await readFile(appPath, "utf8");
 
   assert.match(app, /inboxItems:\s*operatorInboxItems/u);
@@ -94,6 +106,8 @@ contractTest("desktop.hermetic", "user-input requests are composer-owned and do 
     /const operatorActionCardItems = operatorInboxItems\.filter\(\s*\(item\) => item\.kind !== "user_input_request",?\s*\);/su,
   );
   assert.match(app, /operatorActionCardItems\.map\(\(item\) => \(/u);
+  assert.match(app, /Kestrel needs your input/u);
+  assert.match(app, /composerPolicy\.mode === "reply_to_request"/u);
 });
 
 contractTest("desktop.hermetic", "find work drawer groups conversations and keeps row selection separate from actions", async () => {
@@ -137,7 +151,8 @@ contractTest("desktop.hermetic", "conversation menus and rename dialog expose ke
 contractTest("desktop.hermetic", "archived conversations are read-only and thread-scoped surfaces are disabled", async () => {
   const app = await readFile(appPath, "utf8");
   assert.match(app, /const archivedThreadSelected = activeThread\.archivedAt !== undefined/u);
-  assert.match(app, /<section className="archived-conversation-banner"/u);
+  assert.match(app, /className="timeline-entry timeline-entry-archived"/u);
+  assert.match(app, /className="timeline-entry-content archived-conversation-banner"/u);
   assert.match(app, /This transcript is read-only\./u);
   assert.match(app, /disabled=\{archivedThreadSelected\}/u);
   assert.match(app, /if \(activeThread\?\.archivedAt !== undefined\) setSurface\("chat"\)/u);

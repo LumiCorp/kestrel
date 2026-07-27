@@ -64,7 +64,17 @@ export function projectDesktopRunStream(
   }
 
   if (event.type === "run.progress") {
-    return [...current];
+    const message = readString(update.message);
+    if (message === undefined) return [...current];
+    return appendDistinct(current, {
+      id: `status:${event.id}`,
+      kind: "status",
+      label: "Runtime",
+      text: message,
+      timestamp: readString(update.ts) ?? event.ts,
+      status:
+        readString(update.phase) === "failed" ? "failed" : "completed",
+    });
   }
 
   if (event.type.startsWith("run.model.reasoning.")) {

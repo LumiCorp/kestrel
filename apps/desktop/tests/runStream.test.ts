@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { ConversationTimeline } from "../renderer/src/ConversationTimeline.js";
 import {
   describeDesktopRunnerActivity,
   projectDesktopConversationTimeline,
@@ -140,21 +144,31 @@ contractTest("desktop.hermetic", "Desktop starts each accepted run with an empty
   })), []);
 });
 
-contractTest("desktop.hermetic", "Desktop keeps runtime progress updates out of the conversation stream", () => {
+contractTest("desktop.hermetic", "Desktop retains runtime progress as operational timeline detail", () => {
   const projected = projectDesktopRunStream([], event("run.progress", {
     update: baseUpdate({
       kind: "stage",
       phase: "engine",
       code: "STEP_STARTED",
-      message: "Run update that belongs in the activity line.",
+      message: "Run update that belongs in activity details.",
       persist: false,
     }),
   }));
 
-  assert.deepEqual(projected, []);
+  assert.deepEqual(projected.map((item) => [
+    item.kind,
+    item.label,
+    item.text,
+    item.status,
+  ]), [[
+    "status",
+    "Runtime",
+    "Run update that belongs in activity details.",
+    "completed",
+  ]]);
 });
 
-contractTest("desktop.hermetic", "Desktop surfaces the current runtime progress message in the live activity line", () => {
+contractTest("desktop.hermetic", "Desktop describes the current runtime progress message for transient feedback", () => {
   const progress = event("run.progress", {
     update: baseUpdate({
       kind: "stage",
@@ -239,6 +253,34 @@ contractTest("desktop.hermetic", "Desktop preserves durable transcript order whe
     "Previous response.",
     "Next request.",
   ]);
+});
+
+contractTest("desktop.hermetic", "Desktop renders a stopped transition when cancellation has no assistant response", () => {
+  const items = projectDesktopConversationTimeline(
+    [{
+      role: "user",
+      text: "Stop the work.",
+      timestamp: "2026-07-20T12:00:00.000Z",
+    }],
+    [{
+      id: "tool:tool-1",
+      kind: "tool",
+      label: "Tool",
+      text: "Running exec_command",
+      timestamp: "2026-07-20T12:00:01.000Z",
+      status: "active",
+    }],
+  );
+
+  const html = renderToStaticMarkup(React.createElement(ConversationTimeline, {
+    items,
+    active: false,
+    activity: "Cancelled",
+    endRef: { current: null },
+  }));
+
+  assert.match(html, /Run stopped/u);
+  assert.match(html, /state-cancelled/u);
 });
 
 function event(type: DesktopRunnerEvent["type"], payload: Record<string, unknown>): DesktopRunnerEvent {
