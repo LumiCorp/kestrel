@@ -109,13 +109,13 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
     assert.equal(JSON.stringify(supportBundle).includes("sk-redact-me"), false);
     const executionProfile = await client.resolveExecutionProfile({
       client: "cli",
-      profileId: "kestrel-one",
+      profileId: "kestrel",
     });
     assert.match(
       executionProfile.profileId,
-      /^kestrel-one:cli_dev_local:[a-f0-9]{64}$/u,
+      /^kestrel:cli_dev_local:[a-f0-9]{64}$/u,
     );
-    assert.equal(executionProfile.resolvedProfile.agentProfileId, "kestrel-one");
+    assert.equal(executionProfile.resolvedProfile.agentProfileId, "kestrel");
     assert.equal(
       executionProfile.resolvedProfile.presetId,
       "cli_dev_local",

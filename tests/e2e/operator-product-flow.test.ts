@@ -93,15 +93,17 @@ async function createHarness(): Promise<{
         });
         const fingerprint =
           "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        const profileId = `kestrel-one:cli_dev_local:${fingerprint}`;
+        const profileId = `kestrel:cli_dev_local:${fingerprint}`;
         return {
           version: 1,
           profileId,
           fingerprint,
+          policy: { id: "kestrel", version: 2 },
+          environmentPreset: { id: "cli_dev_local", version: 1 },
           resolvedProfile: {
             ...activeProfile,
             id: profileId,
-            agentProfileId: "kestrel-one",
+            agentProfileId: "kestrel",
           },
         };
       },
@@ -156,7 +158,7 @@ contractTest("runtime.process", "operator shell deterministic journey e2e covers
       if (type === "mcp.status") {
         assert.equal(
           payload.profileId,
-          "kestrel-one:cli_dev_local:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kestrel:cli_dev_local:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         );
         assert.equal("profile" in payload, false);
         return {

@@ -90,6 +90,9 @@ export type DeliberatorPromptVariant =
   | "reference-react:chat"
   | "reference-react:plan"
   | "reference-react:build"
+  | "kestrel:chat"
+  | "kestrel:plan"
+  | "kestrel:build"
   | "kestrel-one:chat"
   | "kestrel-one:plan"
   | "kestrel-one:build";
@@ -109,6 +112,9 @@ const PROMPT_BY_VARIANT: Record<DeliberatorPromptVariant, string> = {
   "reference-react:chat": CHAT_MODE_DELIBERATOR_PROMPT,
   "reference-react:plan": PLAN_MODE_DELIBERATOR_PROMPT,
   "reference-react:build": BUILD_MODE_DELIBERATOR_PROMPT,
+  "kestrel:chat": CHAT_MODE_DELIBERATOR_PROMPT,
+  "kestrel:plan": PLAN_MODE_DELIBERATOR_PROMPT,
+  "kestrel:build": BUILD_MODE_DELIBERATOR_PROMPT,
   "kestrel-one:chat": CHAT_MODE_DELIBERATOR_PROMPT,
   "kestrel-one:plan": PLAN_MODE_DELIBERATOR_PROMPT,
   "kestrel-one:build": BUILD_MODE_DELIBERATOR_PROMPT,
@@ -159,6 +165,9 @@ export function isDeliberatorPromptVariant(
   return value === "reference-react:chat" ||
     value === "reference-react:plan" ||
     value === "reference-react:build" ||
+    value === "kestrel:chat" ||
+    value === "kestrel:plan" ||
+    value === "kestrel:build" ||
     value === "kestrel-one:chat" ||
     value === "kestrel-one:plan" ||
     value === "kestrel-one:build";

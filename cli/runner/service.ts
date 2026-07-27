@@ -30,6 +30,7 @@ async function main(): Promise<void> {
             close: store.close,
           },
         }),
+    profileSourcePolicy: "registered-only",
     onRuntimeStoreEvent: (event) => {
       process.stdout.write(
         `${JSON.stringify({

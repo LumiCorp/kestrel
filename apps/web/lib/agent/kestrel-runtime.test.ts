@@ -227,11 +227,11 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse streams completed ru
       terminalStatus: persistedMeta.terminalStatus,
     },
     {
-    model: "kestrel-one",
-    title: null,
-    errorMessage: null,
-    failureVisible: false,
-    terminalStatus: "completed",
+      model: "kestrel",
+      title: null,
+      errorMessage: null,
+      failureVisible: false,
+      terminalStatus: "completed",
     }
   );
   assert.equal(typeof (persistedMeta as { assistantMessageId?: unknown })?.assistantMessageId, "string");

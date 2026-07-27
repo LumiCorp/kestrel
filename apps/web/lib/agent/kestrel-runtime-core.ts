@@ -30,7 +30,7 @@ import type { Session } from "@/lib/auth-types";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 
-const DEFAULT_PROFILE_ID = "kestrel-one";
+const DEFAULT_PROFILE_ID = "kestrel";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
 
 export type KestrelOneRequestCorrelation = {

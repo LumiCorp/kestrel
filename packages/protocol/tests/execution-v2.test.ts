@@ -114,6 +114,13 @@ const reasoningUpdate = (
 const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "profile.list": {},
   "profile.get": { profileId: "reference" },
+  "execution-profile.resolve": {
+    environmentPresetId: "workspace_hosted",
+    managedConfiguration: {
+      modelProvider: "openrouter",
+      model: "z-ai/glm-5.2",
+    },
+  },
   "job.run": {
     profileId: "reference",
     input: {
@@ -218,6 +225,18 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
 const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "profile.listed": { profiles: [profile] },
   "profile.loaded": { profile },
+  "execution-profile.resolved": {
+    version: 1,
+    profileId: `kestrel:workspace_hosted:${"a".repeat(64)}`,
+    fingerprint: "a".repeat(64),
+    policy: { id: "kestrel", version: 2 },
+    environmentPreset: { id: "workspace_hosted", version: 1 },
+    resolvedProfile: {
+      ...profile,
+      id: `kestrel:workspace_hosted:${"a".repeat(64)}`,
+      agentProfileId: "kestrel",
+    },
+  },
   "job.started": {
     sessionId: "session-1",
     threadId: "thread-1",

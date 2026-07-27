@@ -5,12 +5,12 @@ import {
   composeKestrelOneProfile,
   KESTREL_ONE_DIALOG_TOOL_NAMES,
   KESTREL_ONE_ENVIRONMENT_PRESETS,
-  KESTREL_ONE_HOSTED_HARNESS_ECONOMICS,
+  KESTREL_HARNESS_ECONOMICS,
   KESTREL_ONE_POLICY,
 } from "../../src/profile/kestrelOnePolicy.js";
 import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "canonical Kestrel One policy composes isolated product environments", () => {
+contractTest("runtime.hermetic", "canonical Kestrel policy composes parity across product environments", () => {
   const cli = composeKestrelOneProfile({
     environmentPresetId: "cli_dev_local",
   });
@@ -22,7 +22,10 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy composes isolated
   });
 
   for (const composed of [cli, desktop, hosted]) {
-    assert.equal(composed.profile.agentProfileId, "kestrel-one");
+    assert.equal(composed.profile.agentProfileId, "kestrel");
+    assert.equal(composed.provenance.policyId, "kestrel");
+    assert.equal(composed.provenance.policyVersion, 2);
+    assert.equal(composed.provenance.promptPolicyId, "kestrel");
     assert.equal(
       composed.provenance.environmentPresetVersion,
       KESTREL_ONE_ENVIRONMENT_PRESETS[
@@ -30,6 +33,15 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy composes isolated
       ].version,
     );
     assert.equal(composed.profile.delegation?.allowAgentSpawn, true);
+    assert.equal(
+      composed.profile.harnessEconomics?.policy.compaction
+        .maxSummaryAttempts,
+      2,
+    );
+    assert.equal(
+      composed.profile.harnessEconomics?.policy.policyId,
+      "economics:kestrel:v1",
+    );
     assert.deepEqual(
       composed.profile.toolAllowlist?.filter(
         (name) =>
@@ -66,17 +78,7 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy composes isolated
     hosted.profile.toolAllowlist?.includes(
       "kestrel_one.search_knowledge_documents",
     ),
-    true,
-  );
-  assert.equal(cli.profile.harnessEconomics, undefined);
-  assert.equal(desktop.profile.harnessEconomics, undefined);
-  assert.equal(
-    hosted.profile.harnessEconomics?.policy.compaction.maxSummaryAttempts,
-    2,
-  );
-  assert.equal(
-    hosted.profile.harnessEconomics?.policy.policyId,
-    "economics:kestrel-one:workspace-hosted:v2",
+    false,
   );
 });
 
@@ -84,7 +86,7 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy and presets are i
   assert.equal(Object.isFrozen(KESTREL_ONE_POLICY), true);
   assert.equal(Object.isFrozen(KESTREL_ONE_POLICY.requiredModelToolNames), true);
   assert.equal(Object.isFrozen(KESTREL_ONE_ENVIRONMENT_PRESETS), true);
-  assert.equal(Object.isFrozen(KESTREL_ONE_HOSTED_HARNESS_ECONOMICS), true);
+  assert.equal(Object.isFrozen(KESTREL_HARNESS_ECONOMICS), true);
   assert.equal(
     Object.values(KESTREL_ONE_ENVIRONMENT_PRESETS).every(
       (preset) => Object.isFrozen(preset) && preset.version === 1,
@@ -92,6 +94,45 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy and presets are i
     true,
   );
   assert.equal(KESTREL_ONE_POLICY.allowNestedCollaborators, false);
+});
+
+contractTest("runtime.hermetic", "canonical Kestrel policy accepts explicit hosted capability tools", () => {
+  const hosted = composeKestrelOneProfile({
+    environmentPresetId: "workspace_hosted",
+    overlay: {
+      additionalToolNames: ["kestrel_one.search_knowledge_documents"],
+    },
+  });
+
+  assert.equal(
+    hosted.profile.toolAllowlist?.includes(
+      "kestrel_one.search_knowledge_documents",
+    ),
+    true,
+  );
+});
+
+contractTest("runtime.hermetic", "canonical Kestrel policy rejects policy-owned overrides", () => {
+  assert.throws(
+    () =>
+      composeKestrelOneProfile({
+        environmentPresetId: "cli_dev_local",
+        overlay: {
+          harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
+        },
+      }),
+    /policy-controlled field\(s\): harnessEconomics/u,
+  );
+  assert.throws(
+    () =>
+      composeKestrelOneProfile({
+        environmentPresetId: "cli_dev_local",
+        overlay: {
+          guardrails: { maxStepVisits: 1 },
+        } as never,
+      }),
+    /policy-controlled field\(s\): guardrails/u,
+  );
 });
 
 contractTest("runtime.hermetic", "canonical Kestrel One policy fingerprints normalized overlays deterministically", () => {
