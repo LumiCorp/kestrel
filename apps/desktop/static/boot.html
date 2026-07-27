@@ -317,7 +317,7 @@
         </div>
         <div id="quick-actions" class="actions"></div>
         <div class="utility-actions" aria-hidden="true">
-          <button id="restart" type="button">Restart runtime</button>
+          <button id="restart" type="button">Restart Kestrel</button>
           <button id="diagnostics" type="button">Open diagnostics</button>
           <button id="copy-help-packet" type="button">Copy help packet</button>
           <button id="reset-store" type="button" hidden>Reset Runtime Store</button>
@@ -488,7 +488,7 @@
 
       async function runReadinessAction(command) {
         if (command === "restart_runtime") {
-          await restartRuntime();
+          await restartKestrel();
           return;
         }
         if (command === "open_logs") {
@@ -553,20 +553,20 @@
         window.addEventListener("beforeunload", release, { once: true });
       }
 
-      async function restartRuntime() {
+      async function restartKestrel() {
         try {
           if (desktopBridge === undefined) {
             details.textContent = "Desktop bridge is not available in this preview.";
             return;
           }
-          const status = await desktopBridge.restartRuntime();
-          details.textContent = status.running ? `Runtime pid ${status.pid ?? "starting"} is active.` : "Runtime is not active.";
+          details.textContent = "Restarting Kestrel…";
+          await desktopBridge.restartApp();
         } catch (error) {
           details.textContent = error instanceof Error ? error.message : String(error);
         }
       }
 
-      restart.addEventListener("click", restartRuntime);
+      restart.addEventListener("click", restartKestrel);
       diagnostics.addEventListener("click", () => {
         void desktopBridge?.openDiagnostics();
       });

@@ -142,6 +142,7 @@ import {
 } from "./databaseController.js";
 import { archiveRuntimeStore } from "./runtimeStoreReset.js";
 import { ensureDesktopRunnerResponsive } from "./runnerHandshake.js";
+import { startDesktopStartup } from "./startupSequence.js";
 import { buildDesktopSupportBundle } from "./supportBundle.js";
 import {
   ensureDesktopProjectGitBootstrap,
@@ -349,7 +350,29 @@ async function main(): Promise<void> {
   if (desktopLibexecRoot !== undefined) {
     process.env.KESTREL_CLI_LIBEXEC = desktopLibexecRoot;
   }
-  const localCoreConfig = desktopConfig;
+
+  configureEmbeddedPreviewSecurity();
+  registerBootIpcHandlers();
+  installApplicationMenu();
+  installDesktopLifecycleHandlers();
+  await startDesktopStartup({
+    showBootWindow: async () => {
+      await ensureMainWindow();
+    },
+    startServices: startDesktopServices,
+    reportFailure: reportDesktopStartupFailure,
+  });
+}
+
+async function startDesktopServices(): Promise<void> {
+  const localCoreConfig = requireDesktopConfig();
+  updateBootState(
+    {
+      phase: "starting_runtime",
+      message: "Connecting to Kestrel Local Core…",
+    },
+    mainWindow?.webContents,
+  );
   const ready = await ensureDesktopLocalCoreReady(localCoreConfig);
   localCoreStatus = ready.status;
   localCoreConnectionManager = new LocalCoreConnectionManager({
@@ -361,9 +384,30 @@ async function main(): Promise<void> {
       subscribeToCoreProjectRuns(connection.client);
     },
   });
+  updateBootState(
+    {
+      phase: "starting_runtime",
+      message: "Loading Desktop settings…",
+    },
+    mainWindow?.webContents,
+  );
   await refreshDesktopCoreState();
+  updateBootState(
+    {
+      phase: "starting_runtime",
+      message: "Migrating Desktop credentials…",
+    },
+    mainWindow?.webContents,
+  );
   await migrateDesktopCredentialsToLocalCore();
   if (desktopSettings.selectedProvider !== desktopModelPolicy.provider) {
+    updateBootState(
+      {
+        phase: "starting_runtime",
+        message: "Applying Desktop model policy…",
+      },
+      mainWindow?.webContents,
+    );
     await saveDesktopCoreSettings({
       ...desktopSettings,
       selectedProvider: desktopModelPolicy.provider,
@@ -374,10 +418,17 @@ async function main(): Promise<void> {
   }
   syncDesktopWebEnvironment(desktopSettings);
   applyDesktopProfileOverride(desktopSettings);
+  updateBootState(
+    {
+      phase: "starting_database",
+      message: "Configuring Kestrel Local Core database…",
+    },
+    mainWindow?.webContents,
+  );
   await reconfigureDatabaseController(desktopSettings);
   runnerTransport = new LocalCoreRunnerTransport({
-    connectionManager: localCoreConnectionManager,
-    logPath: desktopConfig.runtimeLogPath,
+    connectionManager: requireLocalCoreConnectionManager(),
+    logPath: localCoreConfig.runtimeLogPath,
   });
   runnerTransport.observe({
     onLine(line) {
@@ -394,6 +445,13 @@ async function main(): Promise<void> {
       }
     },
   });
+  updateBootState(
+    {
+      phase: "starting_runtime",
+      message: "Resolving Desktop execution profile…",
+    },
+    mainWindow?.webContents,
+  );
   await prepareDefaultDesktopRunnerAdapter(runnerTransport);
   subscribeToCoreProjectRuns();
   globalThis.__kestrelDesktopRunnerTransportFactory = () => {
@@ -406,11 +464,11 @@ async function main(): Promise<void> {
     return runnerTransport;
   };
 
-  configureEmbeddedPreviewSecurity();
   registerIpcHandlers(runnerTransport);
-  installApplicationMenu();
-  await ensureMainWindow();
+  await bootDesktop({ config: localCoreConfig, runnerTransport });
+}
 
+function installDesktopLifecycleHandlers(): void {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       void ensureMainWindow();
@@ -442,6 +500,36 @@ async function main(): Promise<void> {
   );
 }
 
+async function reportDesktopStartupFailure(error: unknown): Promise<void> {
+  if (databaseController !== undefined) {
+    databaseStatus = await databaseController
+      .getStatus()
+      .catch(() => databaseStatus);
+  }
+  updateBootState(
+    {
+      phase: "failed",
+      message: "Desktop startup failed.",
+      ...(readDesktopErrorCode(error) !== undefined
+        ? { code: readDesktopErrorCode(error) }
+        : {}),
+      details: error instanceof Error ? error.message : String(error),
+      database: databaseStatus,
+    },
+    mainWindow?.webContents,
+  );
+}
+
+function requireDesktopConfig(): ReturnType<typeof resolveDesktopPathConfig> {
+  if (desktopConfig === undefined) {
+    throw createDesktopError({
+      code: "desktop.config_unavailable",
+      message: "Desktop app configuration is unavailable.",
+    });
+  }
+  return desktopConfig;
+}
+
 if (shouldStartDesktopMain) {
   app.on("second-instance", () => {
     if (mainWindow === undefined || mainWindow.isDestroyed()) {
@@ -462,27 +550,22 @@ if (shouldStartDesktopMain) {
   });
 }
 
-async function ensureMainWindow(): Promise<void> {
-  if (desktopConfig === undefined || runnerTransport === undefined) {
-    throw createDesktopError({
-      code: "desktop.config_unavailable",
-      message: "Desktop app configuration is unavailable.",
-    });
-  }
+async function ensureMainWindow(): Promise<BrowserWindow> {
+  const config = requireDesktopConfig();
   if (mainWindow !== undefined && mainWindow.isDestroyed() === false) {
     if (bootState.phase === "ready") {
-      await mainWindow.loadFile(desktopConfig.rendererHtmlPath);
+      await mainWindow.loadFile(config.rendererHtmlPath);
     }
-    return;
+    return mainWindow;
   }
   const window = new BrowserWindow({
-    icon: desktopConfig.iconPath,
+    icon: config.iconPath,
     width: 1440,
     height: 980,
     minWidth: 1100,
     minHeight: 720,
     backgroundColor: "#101315",
-    show: false,
+    show: true,
     title: "Kestrel",
     webPreferences: {
       preload: preloadPath,
@@ -510,9 +593,6 @@ async function ensureMainWindow(): Promise<void> {
       delete webPreferences.preload;
     },
   );
-  window.on("ready-to-show", () => {
-    window.show();
-  });
   ensureMediaPermissionHandler(window);
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -520,7 +600,7 @@ async function ensureMainWindow(): Promise<void> {
     }
   });
   mainWindow = window;
-  await window.loadFile(desktopConfig.bootHtmlPath);
+  await window.loadFile(config.bootHtmlPath);
 
   if (bootState.phase === "ready") {
     updateBootState(
@@ -530,15 +610,9 @@ async function ensureMainWindow(): Promise<void> {
       },
       window.webContents,
     );
-    await window.loadFile(desktopConfig.rendererHtmlPath);
-    return;
+    await window.loadFile(config.rendererHtmlPath);
   }
-
-  void bootDesktop({
-    config: desktopConfig,
-    window,
-    runnerTransport,
-  });
+  return window;
 }
 
 function configureEmbeddedPreviewSecurity(): void {
@@ -618,73 +692,53 @@ function sendPreviewDiagnostic(input: {
 
 async function bootDesktop(input: {
   config: ReturnType<typeof resolveDesktopPathConfig>;
-  window: BrowserWindow;
   runnerTransport: DesktopRunnerControlTransport;
 }): Promise<void> {
-  try {
-    if (databaseController === undefined) {
-      throw createDesktopError({
-        code: "desktop.database_controller_unavailable",
-        message: "Kestrel Local Core database controller is unavailable.",
-      });
-    }
-    updateBootState(
-      {
-        phase: "starting_database",
-        message: "Checking Kestrel Local Core database…",
-        database: databaseStatus,
-      },
-      input.window.webContents,
-    );
-    const database = await databaseController.prepare();
-    currentDatabaseUrl = database.databaseUrl;
-    databaseStatus = database.status;
-    updateBootState(
-      {
-        phase: "starting_runtime",
-        message: "Starting Kestrel runtime…",
-        database: databaseStatus,
-      },
-      input.window.webContents,
-    );
-    await ensureDesktopRunnerResponsive(input.runnerTransport);
-
-    updateBootState(
-      {
-        phase: "starting_web",
-        message: "Opening desktop renderer…",
-        database: databaseStatus,
-      },
-      input.window.webContents,
-    );
-    updateBootState(
-      {
-        phase: "ready",
-        message: "Desktop ready.",
-        database: databaseStatus,
-      },
-      input.window.webContents,
-    );
-    await input.window.loadFile(input.config.rendererHtmlPath);
-  } catch (error) {
-    if (databaseController !== undefined) {
-      databaseStatus = await databaseController
-        .getStatus()
-        .catch(() => databaseStatus);
-    }
-    updateBootState(
-      {
-        phase: "failed",
-        message: "Desktop startup failed.",
-        ...(readDesktopErrorCode(error) !== undefined
-          ? { code: readDesktopErrorCode(error) }
-          : {}),
-        details: error instanceof Error ? error.message : String(error),
-        database: databaseStatus,
-      },
-      input.window.webContents,
-    );
+  if (databaseController === undefined) {
+    throw createDesktopError({
+      code: "desktop.database_controller_unavailable",
+      message: "Kestrel Local Core database controller is unavailable.",
+    });
   }
+  updateBootState(
+    {
+      phase: "starting_database",
+      message: "Checking Kestrel Local Core database…",
+      database: databaseStatus,
+    },
+    mainWindow?.webContents,
+  );
+  const database = await databaseController.prepare();
+  currentDatabaseUrl = database.databaseUrl;
+  databaseStatus = database.status;
+  updateBootState(
+    {
+      phase: "starting_runtime",
+      message: "Starting Kestrel runtime…",
+      database: databaseStatus,
+    },
+    mainWindow?.webContents,
+  );
+  await ensureDesktopRunnerResponsive(input.runnerTransport);
+
+  const window = await ensureMainWindow();
+  updateBootState(
+    {
+      phase: "starting_web",
+      message: "Opening desktop renderer…",
+      database: databaseStatus,
+    },
+    window.webContents,
+  );
+  updateBootState(
+    {
+      phase: "ready",
+      message: "Desktop ready.",
+      database: databaseStatus,
+    },
+    window.webContents,
+  );
+  await window.loadFile(input.config.rendererHtmlPath);
 }
 
 function installApplicationMenu(): void {
@@ -787,9 +841,7 @@ async function sendDesktopCommand(command: DesktopShellCommand): Promise<void> {
   mainWindow?.webContents.send("desktop:command", command);
 }
 
-function registerIpcHandlers(
-  runnerTransport: DesktopRunnerControlTransport,
-): void {
+function registerBootIpcHandlers(): void {
   ipcMain.handle("desktop:get-bridge-info", () => ({
     connected: true,
     version: DESKTOP_BRIDGE_VERSION,
@@ -800,36 +852,69 @@ function registerIpcHandlers(
     version: app.getVersion(),
     isPackaged: app.isPackaged,
   }));
-  ipcMain.handle("desktop:get-support-bundle", async () => {
-    const manager = requireLocalCoreConnectionManager();
-    const coreBundle = await manager
-      .executeIdempotent(async (client) => await client.supportBundle())
-      .catch((error) => ({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      }));
-    return buildDesktopSupportBundle({
-      generatedAt: new Date().toISOString(),
-      appInfo: {
-        name: app.getName(),
-        version: app.getVersion(),
-        isPackaged: app.isPackaged,
-      },
-      bootState,
-      runtimeHealth,
-      databaseStatus,
-      settings: desktopSettings,
-      projectRuns: await manager.executeIdempotent(
-        async (client) => await client.listDesktopProjectRuns(),
-      ),
-      runtimeStatus: runnerTransport.getStatus(),
-      paths: {
-        runtimeLogPath: runnerTransport.getStatus().logPath,
-      },
-      localCoreStatus,
-      coreSupportBundle: coreBundle,
-    });
+  ipcMain.handle("desktop:get-boot-state", () => bootState);
+  ipcMain.handle(
+    "desktop:get-support-bundle",
+    async () => await buildCurrentDesktopSupportBundle(),
+  );
+  ipcMain.handle("desktop:restart-app", async () => {
+    app.relaunch();
+    app.exit(0);
   });
+  ipcMain.handle("desktop:open-diagnostics", async () => {
+    const runtimeLogPath =
+      runnerTransport?.getStatus().logPath ?? desktopConfig?.runtimeLogPath;
+    if (runtimeLogPath !== undefined) {
+      shell.showItemInFolder(runtimeLogPath);
+    }
+  });
+}
+
+async function buildCurrentDesktopSupportBundle() {
+  const manager = localCoreConnectionManager;
+  const coreSupportBundle =
+    manager === undefined
+      ? undefined
+      : await manager
+          .executeIdempotent(async (client) => await client.supportBundle())
+          .catch((error) => ({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          }));
+  const projectRuns =
+    manager === undefined
+      ? []
+      : await manager
+          .executeIdempotent(
+            async (client) => await client.listDesktopProjectRuns(),
+          )
+          .catch(() => []);
+  const runtimeStatus = runnerTransport?.getStatus();
+  return buildDesktopSupportBundle({
+    generatedAt: new Date().toISOString(),
+    appInfo: {
+      name: app.getName(),
+      version: app.getVersion(),
+      isPackaged: app.isPackaged,
+    },
+    bootState,
+    runtimeHealth,
+    databaseStatus,
+    settings: desktopSettings,
+    projectRuns,
+    ...(runtimeStatus !== undefined ? { runtimeStatus } : {}),
+    paths: {
+      runtimeLogPath:
+        runtimeStatus?.logPath ?? desktopConfig?.runtimeLogPath,
+    },
+    ...(localCoreStatus !== undefined ? { localCoreStatus } : {}),
+    ...(coreSupportBundle !== undefined ? { coreSupportBundle } : {}),
+  });
+}
+
+function registerIpcHandlers(
+  runnerTransport: DesktopRunnerControlTransport,
+): void {
   ipcMain.handle(
     "desktop:get-settings",
     async () => await readDesktopRendererSettings(),
@@ -1471,7 +1556,6 @@ function registerIpcHandlers(
       });
     },
   );
-  ipcMain.handle("desktop:get-boot-state", () => bootState);
   ipcMain.handle("desktop:pick-workspace", async () => {
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory", "createDirectory"],
@@ -1673,14 +1757,6 @@ function registerIpcHandlers(
       );
       throw error;
     }
-  });
-  ipcMain.handle("desktop:restart-app", async () => {
-    app.relaunch();
-    app.exit(0);
-  });
-  ipcMain.handle("desktop:open-diagnostics", async () => {
-    const status = runnerTransport.getStatus();
-    shell.showItemInFolder(status.logPath);
   });
   ipcMain.handle("desktop:get-runtime-status", async () =>
     runnerTransport.getStatus(),
