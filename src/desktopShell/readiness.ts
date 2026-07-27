@@ -318,8 +318,16 @@ function runnerAction(
   const state = runtimeState(runtimeHealth, bootState);
   if (state === "blocked" || state === "degraded") {
     return {
-      label: runtimeHealth?.code === "STORE_SQLITE_INIT_FAILED" ? "Copy Help Packet" : "Restart Runtime",
-      command: runtimeHealth?.code === "STORE_SQLITE_INIT_FAILED" ? "copy_help_packet" : "restart_runtime",
+      label: runtimeHealth?.code === "STORE_SQLITE_INIT_FAILED"
+        ? "Copy Help Packet"
+        : runtimeHealth?.code === "desktop.local_core_execution_profile_incompatible"
+          ? "Update Kestrel"
+          : "Restart Runtime",
+      command: runtimeHealth?.code === "STORE_SQLITE_INIT_FAILED"
+        ? "copy_help_packet"
+        : runtimeHealth?.code === "desktop.local_core_execution_profile_incompatible"
+          ? "reinstall_desktop"
+          : "restart_runtime",
     };
   }
   return ;

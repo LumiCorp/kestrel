@@ -28,6 +28,9 @@ export function ConversationTimeline(props: {
   error?: string | undefined;
   systemError?: string | undefined;
   errorAction?: ReactNode;
+  messageSupplement?: (
+    entry: Extract<DesktopConversationTimelineItem, { type: "transcript" }>,
+  ) => ReactNode;
   tail?: ReactNode;
   endRef: RefObject<HTMLDivElement | null>;
   showNewActivity?: boolean | undefined;
@@ -135,7 +138,10 @@ export function ConversationTimeline(props: {
           return (
             <Fragment key={entry.id}>
               {transition}
-              <MessageEntry entry={entry} />
+              <MessageEntry
+                entry={entry}
+                supplement={props.messageSupplement?.(entry)}
+              />
             </Fragment>
           );
         })}
@@ -200,8 +206,10 @@ export function ConversationTimeline(props: {
 
 function MessageEntry({
   entry,
+  supplement,
 }: {
   entry: Extract<DesktopConversationTimelineItem, { type: "transcript" }>;
+  supplement?: ReactNode;
 }) {
   const sender =
     entry.line.dialog?.sender === "collaborator"
@@ -235,6 +243,7 @@ function MessageEntry({
           </time>
         </div>
         <MessageContent messageRole={entry.line.role} text={entry.line.text} />
+        {supplement}
       </article>
     </li>
   );
