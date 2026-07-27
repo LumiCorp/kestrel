@@ -54,6 +54,7 @@ import { buildRuntimeReplayBundle } from "../replay/RuntimeReplayBundle.js";
 import type {
   DesktopManagedProjectRun,
   DesktopPackageManager,
+  DesktopProjectRegistration,
 } from "../desktopShell/contracts.js";
 import {
   DESKTOP_UI_STATE_MAX_BYTES,
@@ -73,6 +74,9 @@ import {
   createLocalCoreConnectionDescriptor,
   type LocalCoreConnectionDescriptor,
 } from "./connection.js";
+import { LocalCoreClient } from "./client.js";
+import { LocalCoreDesktopEnvironmentManager } from "./desktopEnvironmentConnector.js";
+import { LocalCoreKestrelOneAccountManager } from "./kestrelOneAccount.js";
 import {
   createDesktopProjectRunLedger,
   DesktopProjectRunRegistry,
@@ -235,8 +239,20 @@ export async function startLocalCoreApiServer(
       })
     : undefined;
   const googleWorkspaceOAuthSessions = options.credentialStore?.available
-    ? new LocalCoreGoogleWorkspaceOAuthSessionManager({ credentialStore: options.credentialStore })
+    ? new LocalCoreGoogleWorkspaceOAuthSessionManager({
+        credentialStore: options.credentialStore,
+      })
     : undefined;
+  const desktopEnvironments = new LocalCoreDesktopEnvironmentManager({
+    homePath: home.homePath,
+    credentialStore:
+      options.credentialStore ?? new UnavailableLocalCoreCredentialStore(),
+    coreVersion: options.coreVersion,
+  });
+  const kestrelOneAccount = new LocalCoreKestrelOneAccountManager({
+    credentialStore:
+      options.credentialStore ?? new UnavailableLocalCoreCredentialStore(),
+  });
 
   try {
     await new DesktopAttachmentStore(home.homePath).cleanup();
@@ -604,11 +620,24 @@ export async function startLocalCoreApiServer(
           mcpOAuthSessions,
           microsoft365OAuthSessions,
           googleWorkspaceOAuthSessions,
+          desktopEnvironments,
+          kestrelOneAccount,
         });
       });
     });
 
     await listenOnSocket(server, paths.apiSocketPath);
+    const connection = createLocalCoreConnectionDescriptor({
+      socketPath: paths.apiSocketPath,
+      authToken: token,
+    });
+    await desktopEnvironments.start(
+      new LocalCoreClient({
+        socketPath: paths.apiSocketPath,
+        token,
+        timeoutMs: 120_000,
+      }),
+    );
 
     heartbeat = setInterval(() => {
       void writeCoreLockHeartbeat({
@@ -631,6 +660,8 @@ export async function startLocalCoreApiServer(
         await mcpOAuthSessions?.close();
         await microsoft365OAuthSessions?.close();
         await googleWorkspaceOAuthSessions?.close();
+        await kestrelOneAccount.close();
+        await desktopEnvironments.close();
         const activeExecution = executionBundle;
         executionBundle = undefined;
         await closeServer({
@@ -672,10 +703,6 @@ export async function startLocalCoreApiServer(
     };
     scheduleIdleTimeout();
 
-    const connection = createLocalCoreConnectionDescriptor({
-      socketPath: paths.apiSocketPath,
-      authToken: token,
-    });
     return {
       get status() {
         return status;
@@ -690,6 +717,8 @@ export async function startLocalCoreApiServer(
     await mcpOAuthSessions?.close();
     await microsoft365OAuthSessions?.close();
     await googleWorkspaceOAuthSessions?.close();
+    await kestrelOneAccount.close();
+    await desktopEnvironments.close();
     if (idleTimeout !== undefined) {
       clearTimeout(idleTimeout);
     }
@@ -799,9 +828,9 @@ function assertLocalCoreApiOwnership(
   authorityId: string,
 ): void {
   if (
-    status.lock.state === "live"
-    && status.lock.lock.ownerPid === process.pid
-    && status.lock.lock.authorityId === authorityId
+    status.lock.state === "live" &&
+    status.lock.lock.ownerPid === process.pid &&
+    status.lock.lock.authorityId === authorityId
   ) {
     return;
   }
@@ -973,8 +1002,14 @@ async function handleRequest(input: {
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
   mcpOAuthSessions?: LocalCoreMcpOAuthSessionManager | undefined;
-  microsoft365OAuthSessions?: LocalCoreMicrosoft365OAuthSessionManager | undefined;
-  googleWorkspaceOAuthSessions?: LocalCoreGoogleWorkspaceOAuthSessionManager | undefined;
+  microsoft365OAuthSessions?:
+    | LocalCoreMicrosoft365OAuthSessionManager
+    | undefined;
+  googleWorkspaceOAuthSessions?:
+    | LocalCoreGoogleWorkspaceOAuthSessionManager
+    | undefined;
+  desktopEnvironments: LocalCoreDesktopEnvironmentManager;
+  kestrelOneAccount: LocalCoreKestrelOneAccountManager;
 }): Promise<void> {
   try {
     const method = input.request.method ?? "GET";
@@ -998,6 +1033,212 @@ async function handleRequest(input: {
 
     if (method === "GET" && url.pathname === "/v1/status") {
       writeJson(input.response, 200, { ok: true, status: input.status });
+      return;
+    }
+    if (method === "GET" && url.pathname === "/v1/kestrel-one/account") {
+      writeJson(input.response, 200, {
+        ok: true,
+        account: await input.kestrelOneAccount.account(),
+      });
+      return;
+    }
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/kestrel-one/account/authorization"
+    ) {
+      const body = await readJsonBody(input.request);
+      writeJson(input.response, 201, {
+        ok: true,
+        session: await input.kestrelOneAccount.start({
+          baseUrl: normalizeRequiredStringField(body, "baseUrl"),
+        }),
+      });
+      return;
+    }
+    const kestrelOneAccountAuthorization = url.pathname.match(
+      /^\/v1\/kestrel-one\/account\/authorization\/([^/]+)$/u,
+    );
+    if (method === "GET" && kestrelOneAccountAuthorization) {
+      const session = input.kestrelOneAccount.status(
+        decodeURIComponent(kestrelOneAccountAuthorization[1] ?? ""),
+      );
+      if (!session) {
+        throw new LocalCoreApiRequestError(
+          404,
+          "KESTREL_ONE_AUTHORIZATION_NOT_FOUND",
+          "Kestrel One authorization session not found.",
+        );
+      }
+      writeJson(input.response, 200, { ok: true, session });
+      return;
+    }
+    if (method === "DELETE" && url.pathname === "/v1/kestrel-one/account") {
+      writeJson(input.response, 200, {
+        ok: true,
+        account: await input.kestrelOneAccount.signOut(),
+      });
+      return;
+    }
+    const kestrelOneThread = url.pathname.match(
+      /^\/v1\/kestrel-one\/threads\/([^/]+)$/u,
+    );
+    if (method === "GET" && kestrelOneThread) {
+      writeJson(input.response, 200, {
+        ok: true,
+        thread: await input.kestrelOneAccount.thread(
+          decodeURIComponent(kestrelOneThread[1] ?? ""),
+        ),
+      });
+      return;
+    }
+    const kestrelOneThreadTurn = url.pathname.match(
+      /^\/v1\/kestrel-one\/threads\/([^/]+)\/turns$/u,
+    );
+    if (method === "POST" && kestrelOneThreadTurn) {
+      const body = await readJsonBody(input.request);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "KESTREL_ONE_TURN_INVALID",
+          "Kestrel One turn submission must be an object.",
+        );
+      }
+      const record = body as Record<string, unknown>;
+      const interactionMode = normalizeRequiredStringField(
+        record,
+        "interactionMode",
+      );
+      if (
+        interactionMode !== "chat" &&
+        interactionMode !== "plan" &&
+        interactionMode !== "build"
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "KESTREL_ONE_INTERACTION_MODE_INVALID",
+          "Kestrel One interaction mode is invalid.",
+        );
+      }
+      writeJson(input.response, 202, {
+        ok: true,
+        turn: await input.kestrelOneAccount.submitTurn({
+          threadId: decodeURIComponent(kestrelOneThreadTurn[1] ?? ""),
+          text: normalizeRequiredStringField(record, "text"),
+          interactionMode,
+          ...(typeof record.model === "string" && record.model.trim()
+            ? { model: record.model.trim() }
+            : {}),
+        }),
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/kestrel-one/previews") {
+      const rawBody = await readJsonBody(input.request);
+      if (
+        typeof rawBody !== "object" ||
+        rawBody === null ||
+        Array.isArray(rawBody)
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "KESTREL_ONE_PREVIEW_INVALID",
+          "Kestrel One preview publication must be an object.",
+        );
+      }
+      const body = rawBody as Record<string, unknown>;
+      writeJson(input.response, 201, {
+        ok: true,
+        preview: await input.kestrelOneAccount.publishPreview({
+          projectId: normalizeRequiredStringField(body, "projectId"),
+          connectionId: normalizeRequiredStringField(body, "connectionId"),
+          localRunRef: normalizeRequiredStringField(body, "localRunRef"),
+          localUrl: normalizeRequiredStringField(body, "localUrl"),
+          ...(typeof body.name === "string" && body.name.trim()
+            ? { name: body.name.trim() }
+            : {}),
+        }),
+      });
+      return;
+    }
+    const kestrelOnePreview = url.pathname.match(
+      /^\/v1\/kestrel-one\/previews\/([^/]+)$/u,
+    );
+    if (method === "PATCH" && kestrelOnePreview) {
+      writeJson(input.response, 200, {
+        ok: true,
+        preview: await input.kestrelOneAccount.renewPreview(
+          decodeURIComponent(kestrelOnePreview[1] ?? ""),
+        ),
+      });
+      return;
+    }
+    if (method === "DELETE" && kestrelOnePreview) {
+      await input.kestrelOneAccount.unpublishPreview(
+        decodeURIComponent(kestrelOnePreview[1] ?? ""),
+      );
+      writeJson(input.response, 200, { ok: true });
+      return;
+    }
+    if (method === "GET" && url.pathname === "/v1/kestrel-one/environments") {
+      writeJson(input.response, 200, {
+        ok: true,
+        kestrelOne: await input.desktopEnvironments.snapshot(),
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/kestrel-one/enrollments") {
+      const body = await readJsonBody(input.request);
+      writeJson(input.response, 201, {
+        ok: true,
+        kestrelOne: await input.desktopEnvironments.startEnrollment({
+          baseUrl: normalizeRequiredStringField(body, "baseUrl"),
+          desktopName: normalizeRequiredStringField(body, "desktopName"),
+        }),
+      });
+      return;
+    }
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/kestrel-one/enrollments/refresh"
+    ) {
+      writeJson(input.response, 200, {
+        ok: true,
+        kestrelOne: await input.desktopEnvironments.refreshEnrollments(),
+      });
+      return;
+    }
+    if (method === "PUT" && url.pathname === "/v1/kestrel-one/projects") {
+      const body = await readJsonBody(input.request);
+      const projects = normalizeArrayField<DesktopProjectRegistration>(
+        body,
+        "projects",
+      );
+      writeJson(input.response, 200, {
+        ok: true,
+        kestrelOne: await input.desktopEnvironments.setProjects(projects),
+      });
+      return;
+    }
+    if (method === "PUT" && url.pathname === "/v1/kestrel-one/capacity") {
+      const body = await readJsonBody(input.request);
+      writeJson(input.response, 200, {
+        ok: true,
+        kestrelOne: await input.desktopEnvironments.setCapacity(
+          normalizeRequiredIntegerField(body, "capacity"),
+        ),
+      });
+      return;
+    }
+    const desktopEnvironmentDisconnect = url.pathname.match(
+      /^\/v1\/kestrel-one\/environments\/([^/]+)$/u,
+    );
+    if (method === "DELETE" && desktopEnvironmentDisconnect) {
+      writeJson(input.response, 200, {
+        ok: true,
+        kestrelOne: await input.desktopEnvironments.disconnect(
+          decodeURIComponent(desktopEnvironmentDisconnect[1] ?? ""),
+        ),
+      });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/settings") {
@@ -1168,61 +1409,167 @@ async function handleRequest(input: {
       writeJson(input.response, 200, { ok: true, session });
       return;
     }
-    if (method === "POST" && url.pathname === "/v1/apps/microsoft-365/oauth/start") {
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/apps/microsoft-365/oauth/start"
+    ) {
       if (input.microsoft365OAuthSessions === undefined) {
-        throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE",
+          "Secure App authorization storage is unavailable.",
+        );
       }
-      const body = await readJsonBody(input.request) as Record<string, unknown>;
+      const body = (await readJsonBody(input.request)) as Record<
+        string,
+        unknown
+      >;
       const session = await input.microsoft365OAuthSessions.start({
         clientId: body.clientId as string,
-        packs: body.packs as import("../apps/microsoft365.js").Microsoft365Pack[],
+        packs:
+          body.packs as import("../apps/microsoft365.js").Microsoft365Pack[],
       });
       writeJson(input.response, 200, { ok: true, session });
       return;
     }
-    if (method === "POST" && url.pathname === "/v1/apps/google-workspace/oauth/start") {
-      if (input.googleWorkspaceOAuthSessions === undefined) throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
-      const body = await readJsonBody(input.request) as Record<string, unknown>;
-      const session = await input.googleWorkspaceOAuthSessions.start({ clientId: body.clientId as string, packs: body.packs as import("../apps/googleWorkspace.js").GoogleWorkspacePack[] });
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/apps/google-workspace/oauth/start"
+    ) {
+      if (input.googleWorkspaceOAuthSessions === undefined)
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE",
+          "Secure App authorization storage is unavailable.",
+        );
+      const body = (await readJsonBody(input.request)) as Record<
+        string,
+        unknown
+      >;
+      const session = await input.googleWorkspaceOAuthSessions.start({
+        clientId: body.clientId as string,
+        packs:
+          body.packs as import("../apps/googleWorkspace.js").GoogleWorkspacePack[],
+      });
       writeJson(input.response, 200, { ok: true, session });
       return;
     }
-    if (method === "POST" && url.pathname === "/v1/apps/google-workspace/verify") {
-      const credentialStore = input.ensureOptions.credentialStore ?? new UnavailableLocalCoreCredentialStore();
-      if (!credentialStore.available) throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
-      const body = await readJsonBody(input.request) as Record<string, unknown>;
-      if (!Array.isArray(body.packs) || body.packs.length !== 1 || body.packs[0] !== "calendar") throw new LocalCoreApiRequestError(400, "LOCAL_CORE_GOOGLE_WORKSPACE_CAPABILITIES_INVALID", "Choose valid Google Workspace capabilities before connecting.");
-      const verification = await new LocalCoreGoogleWorkspaceService({ credentialStore }).verify(["calendar"]);
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/apps/google-workspace/verify"
+    ) {
+      const credentialStore =
+        input.ensureOptions.credentialStore ??
+        new UnavailableLocalCoreCredentialStore();
+      if (!credentialStore.available)
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE",
+          "Secure App authorization storage is unavailable.",
+        );
+      const body = (await readJsonBody(input.request)) as Record<
+        string,
+        unknown
+      >;
+      if (
+        !Array.isArray(body.packs) ||
+        body.packs.length !== 1 ||
+        body.packs[0] !== "calendar"
+      )
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_GOOGLE_WORKSPACE_CAPABILITIES_INVALID",
+          "Choose valid Google Workspace capabilities before connecting.",
+        );
+      const verification = await new LocalCoreGoogleWorkspaceService({
+        credentialStore,
+      }).verify(["calendar"]);
       writeJson(input.response, 200, { ok: true, verification });
       return;
     }
-    if (method === "GET" && url.pathname.startsWith("/v1/apps/google-workspace/oauth/sessions/")) {
-      if (input.googleWorkspaceOAuthSessions === undefined) throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
-      const session = input.googleWorkspaceOAuthSessions.status(decodeURIComponent(url.pathname.slice("/v1/apps/google-workspace/oauth/sessions/".length)));
-      if (session === undefined) throw new LocalCoreApiRequestError(404, "LOCAL_CORE_APP_AUTHORIZATION_NOT_FOUND", "The App authorization session was not found.");
+    if (
+      method === "GET" &&
+      url.pathname.startsWith("/v1/apps/google-workspace/oauth/sessions/")
+    ) {
+      if (input.googleWorkspaceOAuthSessions === undefined)
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE",
+          "Secure App authorization storage is unavailable.",
+        );
+      const session = input.googleWorkspaceOAuthSessions.status(
+        decodeURIComponent(
+          url.pathname.slice(
+            "/v1/apps/google-workspace/oauth/sessions/".length,
+          ),
+        ),
+      );
+      if (session === undefined)
+        throw new LocalCoreApiRequestError(
+          404,
+          "LOCAL_CORE_APP_AUTHORIZATION_NOT_FOUND",
+          "The App authorization session was not found.",
+        );
       writeJson(input.response, 200, { ok: true, session });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/apps/microsoft-365/verify") {
-      const credentialStore = input.ensureOptions.credentialStore ?? new UnavailableLocalCoreCredentialStore();
-      if (!credentialStore.available) throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
-      const body = await readJsonBody(input.request) as Record<string, unknown>;
+      const credentialStore =
+        input.ensureOptions.credentialStore ??
+        new UnavailableLocalCoreCredentialStore();
+      if (!credentialStore.available)
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE",
+          "Secure App authorization storage is unavailable.",
+        );
+      const body = (await readJsonBody(input.request)) as Record<
+        string,
+        unknown
+      >;
       const packs = body.packs;
-      if (!Array.isArray(packs) || packs.length === 0 || packs.some((pack) => pack !== "outlook" && pack !== "teams" && pack !== "sharepoint")) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_MICROSOFT_365_CAPABILITIES_INVALID", "Choose valid Microsoft 365 capabilities before connecting.");
+      if (
+        !Array.isArray(packs) ||
+        packs.length === 0 ||
+        packs.some(
+          (pack) =>
+            pack !== "outlook" && pack !== "teams" && pack !== "sharepoint",
+        )
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_MICROSOFT_365_CAPABILITIES_INVALID",
+          "Choose valid Microsoft 365 capabilities before connecting.",
+        );
       }
-      const verification = await new LocalCoreMicrosoft365Service({ credentialStore }).verify(
-        packs as import("../apps/microsoft365.js").Microsoft365Pack[],
-      );
+      const verification = await new LocalCoreMicrosoft365Service({
+        credentialStore,
+      }).verify(packs as import("../apps/microsoft365.js").Microsoft365Pack[]);
       writeJson(input.response, 200, { ok: true, verification });
       return;
     }
-    if (method === "GET" && url.pathname.startsWith("/v1/apps/microsoft-365/oauth/sessions/")) {
+    if (
+      method === "GET" &&
+      url.pathname.startsWith("/v1/apps/microsoft-365/oauth/sessions/")
+    ) {
       if (input.microsoft365OAuthSessions === undefined) {
-        throw new LocalCoreApiRequestError(503, "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE", "Secure App authorization storage is unavailable.");
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_CREDENTIAL_STORE_UNAVAILABLE",
+          "Secure App authorization storage is unavailable.",
+        );
       }
-      const session = input.microsoft365OAuthSessions.status(decodeURIComponent(url.pathname.slice("/v1/apps/microsoft-365/oauth/sessions/".length)));
-      if (session === undefined) throw new LocalCoreApiRequestError(404, "LOCAL_CORE_APP_AUTHORIZATION_NOT_FOUND", "The App authorization session was not found.");
+      const session = input.microsoft365OAuthSessions.status(
+        decodeURIComponent(
+          url.pathname.slice("/v1/apps/microsoft-365/oauth/sessions/".length),
+        ),
+      );
+      if (session === undefined)
+        throw new LocalCoreApiRequestError(
+          404,
+          "LOCAL_CORE_APP_AUTHORIZATION_NOT_FOUND",
+          "The App authorization session was not found.",
+        );
       writeJson(input.response, 200, { ok: true, session });
       return;
     }
@@ -1287,7 +1634,10 @@ async function handleRequest(input: {
       });
       return;
     }
-    if (method === "POST" && url.pathname === "/v1/execution-profiles/resolve") {
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/execution-profiles/resolve"
+    ) {
       let request;
       try {
         request = parseLocalCoreExecutionProfileResolveRequest(
@@ -2003,7 +2353,8 @@ async function handleRequest(input: {
       requestError?.statusCode ?? 500,
       errorBody(
         requestError?.code ??
-          (runtimeConfigurationError?.code ?? "LOCAL_CORE_API_ERROR"),
+          runtimeConfigurationError?.code ??
+          "LOCAL_CORE_API_ERROR",
         error instanceof Error ? error.message : String(error),
       ),
     );
@@ -2097,6 +2448,28 @@ function normalizeNumberField(value: unknown, field: string): number {
     throw new Error(`Request body field '${field}' must be a number.`);
   }
   return Math.floor(candidate);
+}
+
+function normalizeRequiredStringField(value: unknown, field: string): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Request body must be an object with '${field}'.`);
+  }
+  const candidate = normalizeString((value as Record<string, unknown>)[field]);
+  if (candidate === undefined) {
+    throw new Error(`Request body field '${field}' must be a string.`);
+  }
+  return candidate;
+}
+
+function normalizeRequiredIntegerField(value: unknown, field: string): number {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Request body must be an object with '${field}'.`);
+  }
+  const candidate = (value as Record<string, unknown>)[field];
+  if (typeof candidate !== "number" || !Number.isInteger(candidate)) {
+    throw new Error(`Request body field '${field}' must be an integer.`);
+  }
+  return candidate;
 }
 
 function normalizeReplayQueryBody(value: unknown): ReplayQuery {

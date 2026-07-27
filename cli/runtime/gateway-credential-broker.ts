@@ -83,7 +83,7 @@ export class GatewayCredentialLeaseCache {
     Promise<GatewayCredentialLease>
   >();
   private readonly load: (
-    reference: GatewayCredentialReference
+    reference: GatewayCredentialReference,
   ) => Promise<GatewayCredentialLease>;
   private readonly now: () => number;
   private readonly random: () => number;
@@ -92,7 +92,7 @@ export class GatewayCredentialLeaseCache {
 
   constructor(input: {
     load: (
-      reference: GatewayCredentialReference
+      reference: GatewayCredentialReference,
     ) => Promise<GatewayCredentialLease>;
     now?: (() => number) | undefined;
     random?: (() => number) | undefined;
@@ -107,7 +107,7 @@ export class GatewayCredentialLeaseCache {
   }
 
   async get(
-    reference: GatewayCredentialReference
+    reference: GatewayCredentialReference,
   ): Promise<GatewayCredentialLease> {
     const key = credentialCacheKey(reference);
     const now = this.now();
@@ -151,7 +151,7 @@ export class GatewayCredentialLeaseCache {
 
   private async loadAndStore(
     reference: GatewayCredentialReference,
-    key: string
+    key: string,
   ) {
     const lease = await this.load(reference);
     const now = this.now();
@@ -159,16 +159,16 @@ export class GatewayCredentialLeaseCache {
     if (!Number.isFinite(leaseExpiresAt) || leaseExpiresAt <= now) {
       throw new GatewayCredentialBrokerError(
         "GATEWAY_CREDENTIAL_LEASE_EXPIRED",
-        "Gateway credential broker returned an expired lease."
+        "Gateway credential broker returned an expired lease.",
       );
     }
     const boundedExpiresAt = Math.min(
       leaseExpiresAt,
-      now + GATEWAY_CREDENTIAL_CACHE_TTL_MS
+      now + GATEWAY_CREDENTIAL_CACHE_TTL_MS,
     );
     const jitterMs = Math.floor(
       Math.max(0, Math.min(1, this.random())) *
-        GATEWAY_CREDENTIAL_CACHE_JITTER_MS
+        GATEWAY_CREDENTIAL_CACHE_JITTER_MS,
     );
     const cacheUntilMs = Math.max(now, boundedExpiresAt - jitterMs);
     this.entries.set(key, { lease, cacheUntilMs, touchedAtMs: now });
@@ -201,7 +201,7 @@ export class BrokeredModelGateway implements ModelGateway {
   private readonly reference: GatewayCredentialReference;
   private readonly cache: GatewayCredentialLeaseCache;
   private readonly createProvider: (
-    lease: GatewayCredentialLease
+    lease: GatewayCredentialLease,
   ) => ModelGateway;
   private readonly onEvent: (event: GatewayCredentialCacheEvent) => void;
   private provider: { leaseId: string; gateway: ModelGateway } | undefined;
@@ -222,7 +222,7 @@ export class BrokeredModelGateway implements ModelGateway {
 
   async call<T>(
     request: ModelRequest,
-    options: { signal?: AbortSignal | undefined } = {}
+    options: { signal?: AbortSignal | undefined } = {},
   ): Promise<T> {
     const lease = await this.cache.get(this.reference);
     const governedRequest = { ...request, model: lease.rawModelId };
@@ -239,7 +239,7 @@ export class BrokeredModelGateway implements ModelGateway {
       try {
         return await this.getProvider(refreshed).call<T>(
           { ...request, model: refreshed.rawModelId },
-          options
+          options,
         );
       } catch (retryError) {
         throw toSecretFreeProviderError(retryError);
@@ -259,15 +259,36 @@ export class BrokeredModelGateway implements ModelGateway {
 }
 
 let defaultCredentialCache: GatewayCredentialLeaseCache | undefined;
+const localEmbeddedLeases = new Map<
+  string,
+  { lease: GatewayCredentialLease; timer: NodeJS.Timeout }
+>();
+
+export function registerEmbeddedGatewayCredentialLease(input: {
+  reference: GatewayCredentialReference;
+  lease: GatewayCredentialLease;
+}) {
+  const lease = validateEmbeddedGatewayCredentialLease(
+    input.reference,
+    input.lease,
+  );
+  const key = credentialCacheKey(input.reference);
+  const existing = localEmbeddedLeases.get(key);
+  if (existing) clearTimeout(existing.timer);
+  const delay = Math.max(1, Date.parse(lease.expiresAt) - Date.now());
+  const timer = setTimeout(() => localEmbeddedLeases.delete(key), delay);
+  timer.unref();
+  localEmbeddedLeases.set(key, { lease, timer });
+}
 
 export function createGatewayManagedModelGateway(
-  profile: Pick<TuiProfile, "modelCredential">
+  profile: Pick<TuiProfile, "modelCredential">,
 ) {
   const reference = profile.modelCredential;
   if (!reference || reference.source !== "kestrel-one") {
     throw new GatewayCredentialBrokerError(
       "GATEWAY_CREDENTIAL_REFERENCE_REQUIRED",
-      "Gateway-managed model profile is missing its credential reference."
+      "Gateway-managed model profile is missing its credential reference.",
     );
   }
   const cache = getDefaultCredentialCache();
@@ -281,39 +302,95 @@ export function createGatewayManagedModelGateway(
 export function resetDefaultGatewayCredentialCacheForTests() {
   defaultCredentialCache?.clear();
   defaultCredentialCache = undefined;
+  for (const embedded of localEmbeddedLeases.values()) {
+    clearTimeout(embedded.timer);
+  }
+  localEmbeddedLeases.clear();
+}
+
+export function getDefaultGatewayCredentialCacheForTests() {
+  return getDefaultCredentialCache();
 }
 
 function getDefaultCredentialCache() {
   if (defaultCredentialCache) {
     return defaultCredentialCache;
   }
-  const gatewayUrl = requireSecureGatewayUrl(
-    requireNonEmpty(
-      process.env.KESTREL_ENVIRONMENT_GATEWAY_URL,
-      "KESTREL_ENVIRONMENT_GATEWAY_URL"
-    )
-  );
-  const workspaceToken = requireNonEmpty(
-    process.env.KESTREL_WORKSPACE_SERVICE_TOKEN,
-    "KESTREL_WORKSPACE_SERVICE_TOKEN"
-  );
   defaultCredentialCache = new GatewayCredentialLeaseCache({
-    load: async (reference) => ({
-      version: GATEWAY_CREDENTIAL_LEASE_VERSION,
-      leaseId: `${reference.runId}:${reference.gatewayId}`,
-      gatewayId: reference.gatewayId,
-      organizationId: reference.organizationId,
-      environmentId: reference.environmentId,
-      rawModelId: reference.rawModelId,
-      provider: reference.provider,
-      protocol: reference.provider === "anthropic" ? "anthropic" : "openai",
-      baseUrl: `${gatewayUrl}/internal/models/${encodeURIComponent(reference.runId)}`,
-      apiKey: workspaceToken,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    }),
+    load: async (reference) => {
+      const embedded = localEmbeddedLeases.get(credentialCacheKey(reference));
+      if (embedded) {
+        return validateEmbeddedGatewayCredentialLease(
+          reference,
+          embedded.lease,
+        );
+      }
+      const gatewayUrl = requireSecureGatewayUrl(
+        requireNonEmpty(
+          process.env.KESTREL_ENVIRONMENT_GATEWAY_URL,
+          "KESTREL_ENVIRONMENT_GATEWAY_URL",
+        ),
+      );
+      const workspaceToken = requireNonEmpty(
+        process.env.KESTREL_WORKSPACE_SERVICE_TOKEN,
+        "KESTREL_WORKSPACE_SERVICE_TOKEN",
+      );
+      return {
+        version: GATEWAY_CREDENTIAL_LEASE_VERSION,
+        leaseId: `${reference.runId}:${reference.gatewayId}`,
+        gatewayId: reference.gatewayId,
+        organizationId: reference.organizationId,
+        environmentId: reference.environmentId,
+        rawModelId: reference.rawModelId,
+        provider: reference.provider,
+        protocol: reference.provider === "anthropic" ? "anthropic" : "openai",
+        baseUrl: `${gatewayUrl}/internal/models/${encodeURIComponent(reference.runId)}`,
+        apiKey: workspaceToken,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      };
+    },
     onEvent: logCredentialCacheEvent,
   });
   return defaultCredentialCache;
+}
+
+function validateEmbeddedGatewayCredentialLease(
+  reference: GatewayCredentialReference,
+  lease: GatewayCredentialLease,
+): GatewayCredentialLease {
+  if (
+    lease.version !== GATEWAY_CREDENTIAL_LEASE_VERSION ||
+    lease.gatewayId !== reference.gatewayId ||
+    lease.organizationId !== reference.organizationId ||
+    lease.environmentId !== reference.environmentId ||
+    lease.rawModelId !== reference.rawModelId ||
+    !embeddedLeaseProviderMatchesReference(
+      lease.provider,
+      reference.provider,
+    ) ||
+    (lease.protocol !== "openai" && lease.protocol !== "anthropic") ||
+    (lease.baseUrl !== null && typeof lease.baseUrl !== "string") ||
+    (lease.apiKey !== null && typeof lease.apiKey !== "string") ||
+    !Number.isFinite(Date.parse(lease.expiresAt)) ||
+    Date.parse(lease.expiresAt) <= Date.now()
+  ) {
+    throw new GatewayCredentialBrokerError(
+      "GATEWAY_CREDENTIAL_LEASE_INVALID",
+      "The embedded Desktop model credential lease is invalid.",
+    );
+  }
+  return lease;
+}
+
+function embeddedLeaseProviderMatchesReference(
+  leaseProvider: GatewayCredentialLease["provider"],
+  referenceProvider: GatewayCredentialReference["provider"],
+) {
+  return (
+    leaseProvider === referenceProvider ||
+    (referenceProvider === "openai" &&
+      (leaseProvider === "lumi" || leaseProvider === "runpod"))
+  );
 }
 
 function requireSecureGatewayUrl(value: string) {
@@ -321,7 +398,7 @@ function requireSecureGatewayUrl(value: string) {
   if (url.protocol !== "https:" && !isLoopbackHostname(url.hostname)) {
     throw new GatewayCredentialBrokerError(
       "MODEL_RELAY_INSECURE",
-      "The Environment model relay requires HTTPS outside loopback development."
+      "The Environment model relay requires HTTPS outside loopback development.",
     );
   }
   return url.toString().replace(/\/+$/u, "");
@@ -329,7 +406,7 @@ function requireSecureGatewayUrl(value: string) {
 
 export function createProviderGatewayForLease(
   lease: GatewayCredentialLease,
-  options: { fetchImpl?: typeof fetch | undefined } = {}
+  options: { fetchImpl?: typeof fetch | undefined } = {},
 ): ModelGateway {
   if (lease.protocol === "anthropic") {
     if (!lease.apiKey) {
@@ -430,14 +507,14 @@ function toSecretFreeProviderError(error: unknown): Error {
   return new GatewayCredentialBrokerError(
     normalizedCode,
     `Gateway-managed provider ${action}${status ? ` (${status})` : ""}.`,
-    status
+    status,
   );
 }
 
 function missingLeaseCredential(lease: GatewayCredentialLease) {
   return new GatewayCredentialBrokerError(
     "GATEWAY_CREDENTIAL_MISSING",
-    `Gateway '${lease.gatewayId}' lease does not contain a provider credential.`
+    `Gateway '${lease.gatewayId}' lease does not contain a provider credential.`,
   );
 }
 
@@ -447,7 +524,7 @@ function logCredentialCacheEvent(event: GatewayCredentialCacheEvent) {
       event: `kestrel.${event.type}`,
       gatewayId: event.gatewayId,
       rawModelId: event.rawModelId,
-    })
+    }),
   );
 }
 
@@ -456,7 +533,7 @@ function requireNonEmpty(value: string | undefined, label: string) {
   if (!normalized) {
     throw new GatewayCredentialBrokerError(
       "GATEWAY_CREDENTIAL_BROKER_NOT_CONFIGURED",
-      `${label} is required for gateway-managed model execution.`
+      `${label} is required for gateway-managed model execution.`,
     );
   }
   return normalized;

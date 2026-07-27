@@ -49,7 +49,7 @@ contractTest("web.hermetic", "environment creation requires an explicit provider
       name: "Development",
       region: "iad",
     }),
-    { name: "Development", region: "iad" }
+    { provider: "fly", name: "Development", region: "iad" }
   );
   assert.equal(
     createEnvironmentInputSchema.safeParse({

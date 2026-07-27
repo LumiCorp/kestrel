@@ -1,5 +1,6 @@
 import {
   EnvironmentTicketError,
+  getFlyEnvironmentExecutionTarget,
   verifyEnvironmentExecutionTicket,
   type EnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
@@ -133,10 +134,11 @@ function verifyBearer(input: {
       publicKey: input.publicKey,
       ...(input.now === undefined ? {} : { now: input.now }),
     });
-    if (
-      input.expectedAppName &&
-      ticket.flyAppName !== input.expectedAppName
-    ) {
+    const target = getFlyEnvironmentExecutionTarget(ticket);
+    if (!target) {
+      return { status: 403, code: "ENVIRONMENT_PROVIDER_MISMATCH" };
+    }
+    if (input.expectedAppName && target.appName !== input.expectedAppName) {
       return { status: 403, code: "ENVIRONMENT_APP_MISMATCH" };
     }
     return { ticket };
@@ -152,7 +154,11 @@ function verifyBearer(input: {
 }
 
 function workspaceTarget(ticket: EnvironmentExecutionTicket) {
-  const host = `${ticket.flyMachineId}.vm.${ticket.flyAppName}.internal`;
+  const target = getFlyEnvironmentExecutionTarget(ticket);
+  if (!target) {
+    throw new Error("Environment Router requires a Fly execution target.");
+  }
+  const host = `${target.machineId}.vm.${target.appName}.internal`;
   return `http://${host}:43104`;
 }
 

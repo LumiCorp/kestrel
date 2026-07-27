@@ -164,7 +164,7 @@ contractTest(
       if (entry.access === "service-boundary") {
         assert.match(
           source,
-          /\b(?:authorizeEnvironmentReconcileCron|authorizeWorkspaceIdleNotification|authorizeGatewayCredentialBroker|resolveEnvironmentGatewayConfig|resolvePreviewEdgeRoute|verifyEnvironmentExecutionTicket|verifyEnvironmentServiceToken|verifyEnvironmentToolCredential|handleAppRuntimeRequest)\b/,
+          /\b(?:authorizeDesktopConnector|authorizeDesktopPreviewTunnel|authorizeDesktopUser|getDesktopAccountProjection|revokeDesktopUserCredentials|publishDesktopPreview|renewDesktopPreview|unpublishDesktopPreview|authorizeEnvironmentReconcileCron|authorizeWorkspaceIdleNotification|authorizeGatewayCredentialBroker|resolveEnvironmentGatewayConfig|reportEnvironmentGatewayNgrokStatus|resolvePreviewEdgeRoute|verifyEnvironmentExecutionTicket|verifyEnvironmentServiceToken|verifyEnvironmentToolCredential|handleAppRuntimeRequest)\b/,
           `${entry.file} must validate its service credential`,
         );
         continue;

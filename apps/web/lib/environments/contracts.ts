@@ -61,6 +61,7 @@ export type EnvironmentOperationType = z.infer<
 >;
 
 export const createEnvironmentInputSchema = z.object({
+  provider: z.literal("fly").default("fly"),
   name: z.string().trim().min(1).max(120),
   slug: z
     .string()
@@ -78,9 +79,15 @@ export const createEnvironmentInputSchema = z.object({
     .refine(isFlyRegionCode, "Select a supported Fly region."),
   isDefault: z.boolean().optional(),
 });
-export type CreateEnvironmentInput = z.infer<
+type ParsedCreateEnvironmentInput = z.infer<
   typeof createEnvironmentInputSchema
 >;
+export type CreateEnvironmentInput = Omit<
+  ParsedCreateEnvironmentInput,
+  "provider"
+> & {
+  provider?: "fly" | undefined;
+};
 
 export const deleteEnvironmentInputSchema = z.object({
   confirmationName: z.string().min(1).max(120),
@@ -98,9 +105,15 @@ const githubWorkspaceSourceSchema = z.object({
   resourceId: z.string().uuid(),
 });
 
+const desktopWorkspaceSourceSchema = z.object({
+  type: z.literal("desktop"),
+  catalogId: z.string().uuid(),
+});
+
 export const workspaceSourceSchema = z.discriminatedUnion("type", [
   blankWorkspaceSourceSchema,
   githubWorkspaceSourceSchema,
+  desktopWorkspaceSourceSchema,
 ]);
 export type WorkspaceSource = z.infer<typeof workspaceSourceSchema>;
 
@@ -250,3 +263,5 @@ export function selectDefaultEnvironmentRecoveryAction(input: {
   }
   return "unsupported" as const;
 }
+export const environmentProviderSchema = z.enum(["fly", "desktop"]);
+export type EnvironmentProvider = z.infer<typeof environmentProviderSchema>;

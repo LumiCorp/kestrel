@@ -16,6 +16,19 @@ export type KestrelOneRuntimeModelSelection = {
   provider: RunnerModelProvider;
 };
 
+export type DesktopLocalRuntimeModelSelection = {
+  desktopLocal: true;
+  id: string;
+  organizationId: string;
+  environmentId: string;
+  model: string;
+  provider: RunnerModelProvider;
+};
+
+export type EnvironmentRuntimeModelSelection =
+  | KestrelOneRuntimeModelSelection
+  | DesktopLocalRuntimeModelSelection;
+
 export function toKestrelOneRuntimeModelSelection(input: {
   id: string;
   gatewayId: string | null;
@@ -56,13 +69,13 @@ export function toKestrelOneRuntimeModelSelection(input: {
 
 export function applyKestrelOneModelToProfile(
   profile: RunnerProfile,
-  selection: KestrelOneRuntimeModelSelection,
+  selection: EnvironmentRuntimeModelSelection,
   runId: string
 ): RunnerProfile {
   const agentStageConfig = asRecord(profile.agentStageConfig);
   const modelByStage = asRecord(agentStageConfig.modelByStage);
 
-  return {
+  const selected: RunnerProfile = {
     ...profile,
     id: `${profile.id}:model:${encodeURIComponent(selection.id)}:run:${encodeURIComponent(runId)}`,
     label: `${profile.label} · ${selection.id}`,
@@ -75,6 +88,14 @@ export function applyKestrelOneModelToProfile(
         "agent.loop": selection.model,
       },
     },
+    default: false,
+  };
+  if ("desktopLocal" in selection) {
+    const { modelCredential: _modelCredential, ...local } = selected;
+    return local;
+  }
+  return {
+    ...selected,
     modelCredential: {
       source: "kestrel-one",
       runId,
@@ -84,8 +105,13 @@ export function applyKestrelOneModelToProfile(
       rawModelId: selection.model,
       provider: selection.provider,
     },
-    default: false,
   };
+}
+
+export function isKestrelOneManagedRuntimeModel(
+  selection: EnvironmentRuntimeModelSelection,
+): selection is KestrelOneRuntimeModelSelection {
+  return !("desktopLocal" in selection);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

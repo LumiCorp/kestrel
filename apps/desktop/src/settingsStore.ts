@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { applyKestrelLocalEnvDefaults } from "./localDev.js";
@@ -89,6 +89,7 @@ type DesktopSettingsFileBase = {
   defaultModelConfigurationId?: string | undefined;
   defaultEnabledAppIds?: string[] | undefined;
   appearanceTheme?: DesktopSettings["appearanceTheme"] | undefined;
+  projectTombstones?: DesktopSettings["projectTombstones"] | undefined;
 };
 
 type DesktopSettingsFileV1 = {
@@ -194,6 +195,7 @@ export function createDefaultDesktopSettings(
     presetId: "desktop_dev_local",
     capabilityPacks: [...DESKTOP_PRESET_CAPABILITY_PACKS],
     projects: [],
+    projectTombstones: [],
     mcpServers: [],
     capabilityVerifications: {},
     developerShellEnvMode: "inherit",
@@ -407,7 +409,13 @@ export function normalizeDesktopSettings(
     databaseMode,
     presetId: "desktop_dev_local",
     capabilityPacks: normalizeDesktopCapabilityPacks(settings?.capabilityPacks),
-    projects: normalizeDesktopProjects(settings?.projects),
+    projectTombstones: normalizeDesktopProjectTombstones(
+      settings?.projectTombstones,
+    ),
+    projects: normalizeDesktopProjects(
+      settings?.projects,
+      settings?.projectTombstones,
+    ),
     mcpServers,
     capabilityVerifications: normalizeCapabilityVerifications(
       settings?.capabilityVerifications,
@@ -786,8 +794,13 @@ export async function readDesktopSettings(
       )
         ? parsed.capabilityPacks
         : undefined;
+    const projectTombstones = normalizeDesktopProjectTombstones(
+      Array.isArray(parsed.projectTombstones)
+        ? (parsed.projectTombstones as DesktopSettings["projectTombstones"])
+        : undefined,
+    );
     const projects = Array.isArray(parsed.projects)
-      ? normalizeDesktopProjects(parsed.projects)
+      ? normalizeDesktopProjects(parsed.projects, projectTombstones)
       : undefined;
     const mcpServers = Array.isArray(parsed.mcpServers)
       ? normalizeDesktopMcpServers(parsed.mcpServers)
@@ -800,6 +813,7 @@ export async function readDesktopSettings(
         ...(presetId !== undefined ? { presetId } : {}),
         ...(capabilityPacks !== undefined ? { capabilityPacks } : {}),
         ...(projects !== undefined ? { projects } : {}),
+        projectTombstones,
         ...(mcpServers !== undefined ? { mcpServers } : {}),
         capabilityVerifications,
         ...(selectedProvider !== undefined ? { selectedProvider } : {}),
@@ -873,6 +887,9 @@ export async function writeDesktopSettings(
     presetId: normalized.presetId,
     capabilityPacks: [...normalized.capabilityPacks],
     projects: [...normalized.projects],
+    projectTombstones: normalized.projectTombstones.map((tombstone) => ({
+      ...tombstone,
+    })),
     mcpServers: normalized.mcpServers.map((server) => ({
       ...server,
       args: server.args !== undefined ? [...server.args] : undefined,
@@ -1015,6 +1032,9 @@ function normalizeDatabaseMode(value: unknown): DesktopDatabaseMode {
 
 function normalizeDesktopProjects(
   projects: readonly DesktopProjectRegistration[] | undefined,
+  tombstones:
+    | DesktopSettings["projectTombstones"]
+    | undefined = undefined,
 ): DesktopProjectRegistration[] {
   if (Array.isArray(projects) === false) {
     return [];
@@ -1035,6 +1055,15 @@ function normalizeDesktopProjects(
     }
     seen.add(resolvedPath);
     normalized.push({
+      id:
+        typeof project.id === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+          project.id,
+        )
+          ? project.id
+          : normalizeDesktopProjectTombstones(tombstones).find(
+                (tombstone) => tombstone.path === resolvedPath,
+              )?.id ?? randomUUID(),
       path: resolvedPath,
       label:
         typeof project.label === "string" && project.label.trim().length > 0
@@ -1043,6 +1072,37 @@ function normalizeDesktopProjects(
     });
   }
   return normalized;
+}
+
+function normalizeDesktopProjectTombstones(
+  tombstones: DesktopSettings["projectTombstones"] | undefined,
+): DesktopSettings["projectTombstones"] {
+  if (!Array.isArray(tombstones)) return [];
+  const normalized = new Map<string, DesktopSettings["projectTombstones"][number]>();
+  for (const tombstone of tombstones) {
+    if (
+      typeof tombstone?.id !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+        tombstone.id,
+      ) ||
+      typeof tombstone.path !== "string" ||
+      !tombstone.path.trim() ||
+      typeof tombstone.label !== "string" ||
+      !tombstone.label.trim() ||
+      typeof tombstone.removedAt !== "string" ||
+      Number.isNaN(Date.parse(tombstone.removedAt))
+    ) {
+      continue;
+    }
+    const resolvedPath = path.resolve(tombstone.path);
+    normalized.set(resolvedPath, {
+      id: tombstone.id,
+      path: resolvedPath,
+      label: tombstone.label.trim(),
+      removedAt: new Date(tombstone.removedAt).toISOString(),
+    });
+  }
+  return [...normalized.values()];
 }
 
 function normalizeDesktopMcpServers(

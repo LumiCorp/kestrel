@@ -3,6 +3,7 @@
 import {
   Archive,
   Copy,
+  ExternalLink,
   MessageSquare,
   Plus,
   RotateCcw,
@@ -11,7 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { ProjectApps } from "@/components/projects/project-apps";
@@ -72,8 +73,16 @@ export type ProjectHomeData = {
     id: string;
     name: string;
     region: string;
+    provider: "fly" | "desktop";
     status: string;
   }>;
+  desktopCatalog: Array<{
+    id: string;
+    environmentId: string;
+    label: string;
+    availability: "available" | "missing";
+  }>;
+  desktopCatalogId: string | null;
   role: Role;
   contextRevision: { instructions: string } | null;
   documents: DocumentItem[];
@@ -106,6 +115,11 @@ export type ProjectHomeData = {
     archivedAt: string | null;
     canManage: boolean;
   }>;
+  previews: Array<{
+    id: string;
+    name: string;
+    expiresAt: string;
+  }>;
 };
 
 export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
@@ -115,16 +129,16 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const canEdit = initial.role === "owner" || initial.role === "editor";
   const [name, setName] = useState(initial.project.name);
   const [description, setDescription] = useState(
-    initial.project.description ?? ""
+    initial.project.description ?? "",
   );
   const [instructions, setInstructions] = useState(
-    initial.contextRevision?.instructions ?? ""
+    initial.contextRevision?.instructions ?? "",
   );
   const [revision, setRevision] = useState(
-    initial.project.currentContextRevision
+    initial.project.currentContextRevision,
   );
   const [selectedDocumentIds, setSelectedDocumentIds] = useState(() =>
-    initial.documents.map((document) => document.id)
+    initial.documents.map((document) => document.id),
   );
   const [members, setMembers] = useState(initial.members);
   const [candidateId, setCandidateId] = useState("");
@@ -133,9 +147,16 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const [uploading, setUploading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [environmentId, setEnvironmentId] = useState(
-    initial.project.environmentId
+    initial.project.environmentId,
   );
   const [movingEnvironment, setMovingEnvironment] = useState(false);
+  const [desktopCatalogId, setDesktopCatalogId] = useState(
+    initial.desktopCatalogId ?? "",
+  );
+  const committedBindingRef = useRef({
+    environmentId: initial.project.environmentId,
+    desktopCatalogId: initial.desktopCatalogId ?? "",
+  });
   const [threadActionId, setThreadActionId] = useState<string | null>(null);
   const activeTab = resolveProjectTab({
     tab: searchParams.get("tab"),
@@ -153,16 +174,34 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   }, [initial.documents, initial.organizationDocuments]);
   const memberIds = useMemo(
     () => new Set(members.map((member) => member.organizationMemberId)),
-    [members]
+    [members],
   );
   const candidates = initial.organizationMembers.filter(
-    (member) => !memberIds.has(member.organizationMemberId)
+    (member) => !memberIds.has(member.organizationMemberId),
   );
 
   async function changeEnvironment(nextEnvironmentId: string) {
     if (nextEnvironmentId === environmentId) return;
-    const previousEnvironmentId = environmentId;
     setEnvironmentId(nextEnvironmentId);
+    const nextEnvironment = initial.environments.find(
+      (environment) => environment.id === nextEnvironmentId,
+    );
+    if (nextEnvironment?.provider === "desktop") {
+      const candidates = initial.desktopCatalog.filter(
+        (workspace) => workspace.environmentId === nextEnvironmentId,
+      );
+      setDesktopCatalogId("");
+      setMovingEnvironment(false);
+      if (candidates.length === 1) {
+        await bindDesktopWorkspace(nextEnvironmentId, candidates[0]!.id);
+      } else if (candidates.length === 0) {
+        restoreCommittedBinding();
+        toast.error(
+          "This Desktop Environment has no available synced projects.",
+        );
+      }
+      return;
+    }
     setMovingEnvironment(true);
     try {
       const response = await fetch(
@@ -171,7 +210,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ environmentId: nextEnvironmentId }),
-        }
+        },
       );
       const result = (await response.json()) as {
         binding?: { environmentId: string };
@@ -179,22 +218,77 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
       };
       if (!(response.ok && result.binding)) {
         throw new Error(
-          result.error ?? "Project Environment could not be changed."
+          result.error ?? "Project Environment could not be changed.",
         );
       }
       setEnvironmentId(result.binding.environmentId);
+      setDesktopCatalogId("");
+      committedBindingRef.current = {
+        environmentId: result.binding.environmentId,
+        desktopCatalogId: "",
+      };
       toast.success("Project Environment changed. New Threads will use it.");
       router.refresh();
     } catch (error) {
-      setEnvironmentId(previousEnvironmentId);
+      restoreCommittedBinding();
       toast.error(
         error instanceof Error
           ? error.message
-          : "Project Environment could not be changed."
+          : "Project Environment could not be changed.",
       );
     } finally {
       setMovingEnvironment(false);
     }
+  }
+
+  async function bindDesktopWorkspace(
+    nextEnvironmentId: string,
+    catalogId: string,
+  ) {
+    setMovingEnvironment(true);
+    try {
+      const response = await fetch(
+        `/api/projects/${initial.project.id}/workspace`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            environmentId: nextEnvironmentId,
+            source: { type: "desktop", catalogId },
+          }),
+        },
+      );
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(
+          result.error ?? "Desktop workspace could not be bound.",
+        );
+      }
+      setEnvironmentId(nextEnvironmentId);
+      setDesktopCatalogId(catalogId);
+      committedBindingRef.current = {
+        environmentId: nextEnvironmentId,
+        desktopCatalogId: catalogId,
+      };
+      toast.success(
+        "Desktop workspace bound. Project members can now run tasks there.",
+      );
+      router.refresh();
+    } catch (error) {
+      restoreCommittedBinding();
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Desktop workspace could not be bound.",
+      );
+    } finally {
+      setMovingEnvironment(false);
+    }
+  }
+
+  function restoreCommittedBinding() {
+    setEnvironmentId(committedBindingRef.current.environmentId);
+    setDesktopCatalogId(committedBindingRef.current.desktopCatalogId);
   }
 
   async function setThreadArchived(threadId: string, archived: boolean) {
@@ -213,7 +307,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
       router.refresh();
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Thread could not be updated."
+        error instanceof Error ? error.message : "Thread could not be updated.",
       );
     } finally {
       setThreadActionId(null);
@@ -239,7 +333,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Thread could not be duplicated."
+          : "Thread could not be duplicated.",
       );
     } finally {
       setThreadActionId(null);
@@ -261,7 +355,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
             instructions,
             documentIds: selectedDocumentIds,
           }),
-        }
+        },
       );
       const result = (await response.json()) as {
         contextRevision?: { revision: number };
@@ -272,14 +366,14 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
       }
       setRevision(result.contextRevision.revision);
       toast.success(
-        `Project context revision ${result.contextRevision.revision} saved`
+        `Project context revision ${result.contextRevision.revision} saved`,
       );
       router.refresh();
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Project context could not be saved."
+          : "Project context could not be saved.",
       );
     } finally {
       setSaving(false);
@@ -293,19 +387,19 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
       formData.set("file", file);
       const response = await fetch(
         `/api/projects/${initial.project.id}/files`,
-        { method: "POST", body: formData }
+        { method: "POST", body: formData },
       );
       const result = (await response.json()) as { error?: string };
       if (!response.ok) {
         throw new Error(result.error || "File upload failed.");
       }
       toast.success(
-        "Project file uploaded and added to a new context revision"
+        "Project file uploaded and added to a new context revision",
       );
       router.refresh();
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "File upload failed."
+        error instanceof Error ? error.message : "File upload failed.",
       );
     } finally {
       setUploading(false);
@@ -323,7 +417,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
           organizationMemberId: candidateId,
           role: candidateRole,
         }),
-      }
+      },
     );
     const result = (await response.json()) as { error?: string };
     if (!response.ok) {
@@ -341,7 +435,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ organizationMemberId, role }),
-      }
+      },
     );
     const result = (await response.json()) as { error?: string };
     if (!response.ok) {
@@ -352,8 +446,8 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
       current.map((member) =>
         member.organizationMemberId === organizationMemberId
           ? { ...member, role }
-          : member
-      )
+          : member,
+      ),
     );
     toast.success("Member role updated");
   }
@@ -361,7 +455,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   async function removeMember(organizationMemberId: string) {
     const response = await fetch(
       `/api/projects/${initial.project.id}/members/${organizationMemberId}`,
-      { method: "DELETE" }
+      { method: "DELETE" },
     );
     const result = (await response.json()) as { error?: string };
     if (!response.ok) {
@@ -370,8 +464,8 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
     }
     setMembers((current) =>
       current.filter(
-        (member) => member.organizationMemberId !== organizationMemberId
-      )
+        (member) => member.organizationMemberId !== organizationMemberId,
+      ),
     );
     toast.success("Project member removed");
   }
@@ -414,12 +508,29 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
     router.refresh();
   }
 
+  async function openProtectedPreview(previewId: string) {
+    const popup = window.open("about:blank", "_blank");
+    if (popup) popup.opener = null;
+    const response = await fetch(`/api/previews/${previewId}/access`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      popup?.close();
+      toast.error("Preview access could not be authorized.");
+      return;
+    }
+    const result = (await response.json()) as { publicUrl: string };
+    if (popup) popup.location.href = result.publicUrl;
+    else window.location.href = result.publicUrl;
+  }
+
   return (
     <>
       <header className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="text-muted-foreground text-sm capitalize">
-            {initial.role} · context revision {initial.project.currentContextRevision}
+            {initial.role} · context revision{" "}
+            {initial.project.currentContextRevision}
           </p>
           <h1 className="font-semibold text-3xl">{initial.project.name}</h1>
           <p className="mt-1 text-muted-foreground">
@@ -428,35 +539,97 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
         </div>
         <div className="flex flex-wrap items-end gap-2 sm:justify-end">
           <div className="grid gap-1.5">
-            <Label className="text-muted-foreground text-xs" htmlFor="project-environment">
+            <Label
+              className="text-muted-foreground text-xs"
+              htmlFor="project-environment"
+            >
               Environment
             </Label>
             <Select
-              disabled={!canEdit || movingEnvironment || Boolean(initial.project.archivedAt)}
+              disabled={
+                !canEdit ||
+                movingEnvironment ||
+                Boolean(initial.project.archivedAt)
+              }
               onValueChange={(value) => void changeEnvironment(value)}
               value={environmentId}
             >
-              <SelectTrigger aria-label="Project Environment" id="project-environment" className="w-[180px]">
+              <SelectTrigger
+                aria-label="Project Environment"
+                id="project-environment"
+                className="w-[180px]"
+              >
                 <SelectValue placeholder="Select Environment" />
               </SelectTrigger>
               <SelectContent>
                 {initial.environments.map((environment) => (
                   <SelectItem
-                    disabled={environment.status !== "ready" && environment.id !== environmentId}
+                    disabled={
+                      environment.status !== "ready" &&
+                      environment.id !== environmentId
+                    }
                     key={environment.id}
                     value={environment.id}
                   >
-                    {environment.name} · {environment.region}
-                    {environment.status === "ready" ? "" : ` · ${environment.status}`}
+                    {environment.name} ·{" "}
+                    {environment.provider === "desktop"
+                      ? "Desktop"
+                      : environment.region}
+                    {environment.status === "ready"
+                      ? ""
+                      : ` · ${environment.status}`}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
+          {initial.environments.find(
+            (environment) => environment.id === environmentId,
+          )?.provider === "desktop" ? (
+            <div className="grid gap-1.5">
+              <Label
+                className="text-muted-foreground text-xs"
+                htmlFor="project-desktop-workspace"
+              >
+                Desktop workspace
+              </Label>
+              <Select
+                disabled={
+                  !canEdit ||
+                  movingEnvironment ||
+                  Boolean(initial.project.archivedAt)
+                }
+                onValueChange={(value) =>
+                  void bindDesktopWorkspace(environmentId, value)
+                }
+                value={desktopCatalogId}
+              >
+                <SelectTrigger
+                  id="project-desktop-workspace"
+                  className="w-[220px]"
+                >
+                  <SelectValue placeholder="Select synced project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {initial.desktopCatalog
+                    .filter(
+                      (workspace) => workspace.environmentId === environmentId,
+                    )
+                    .map((workspace) => (
+                      <SelectItem key={workspace.id} value={workspace.id}>
+                        {workspace.label}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
           {!initial.project.archivedAt && (
             <Button
               disabled={movingEnvironment}
-              onClick={() => router.push(`/projects/${initial.project.id}/threads/new`)}
+              onClick={() =>
+                router.push(`/projects/${initial.project.id}/threads/new`)
+              }
             >
               <Plus className="size-4" /> New Thread
             </Button>
@@ -464,7 +637,10 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
           {initial.role === "owner" &&
             (initial.project.archivedAt ? (
               <>
-                <Button onClick={() => void setArchived(false)} variant="outline">
+                <Button
+                  onClick={() => void setArchived(false)}
+                  variant="outline"
+                >
                   <RotateCcw className="size-4" /> Restore project
                 </Button>
                 <Button
@@ -486,8 +662,8 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
           router.push(
             projectTabHref(
               initial.project.id,
-              resolveProjectTab({ tab: value, hasGoogle: false })
-            )
+              resolveProjectTab({ tab: value, hasGoogle: false }),
+            ),
           )
         }
         value={activeTab}
@@ -504,62 +680,100 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
         </div>
 
         <TabsContent value="overview">
-          <section className="mt-6">
-            <div className="divide-y border-y">
-            {initial.threads.map((thread) => (
-              <div className="group flex items-center gap-3 py-3 text-sm" key={thread.id}>
-                <Link
-                  className="flex min-w-0 flex-1 items-center gap-3 transition-colors hover:text-primary"
-                  href={`/threads/${thread.id}`}
-                >
-                  <MessageSquare className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
-                  <span className="min-w-0 flex-1 truncate font-medium">
-                    {thread.title || "New thread"}
-                  </span>
-                  <span className="shrink-0 text-muted-foreground text-xs">
-                    {thread.archivedAt ? "Archived" : "Updated"}{" "}
-                    {new Date(
-                      thread.archivedAt || thread.updatedAt
-                    ).toLocaleString()}
-                  </span>
-                </Link>
-                {thread.canManage ? (
-                  <div className="flex shrink-0 items-center gap-1">
+          {initial.previews.length > 0 ? (
+            <section className="mt-6 rounded-lg border p-4">
+              <h2 className="font-medium">Published Desktop previews</h2>
+              <p className="mt-1 text-muted-foreground text-sm">
+                Access is checked against current Project membership.
+              </p>
+              <div className="mt-3 divide-y">
+                {initial.previews.map((preview) => (
+                  <div
+                    className="flex items-center justify-between gap-3 py-3"
+                    key={preview.id}
+                  >
+                    <div>
+                      <p className="font-medium text-sm">{preview.name}</p>
+                      <p className="text-muted-foreground text-xs">
+                        Expires {new Date(preview.expiresAt).toLocaleString()}
+                      </p>
+                    </div>
                     <Button
-                      aria-label={`Duplicate ${thread.title}`}
-                      disabled={threadActionId !== null}
-                      onClick={() => void duplicateThread(thread.id)}
-                      size="icon-sm"
-                      title="Duplicate thread"
-                      variant="ghost"
+                      onClick={() => void openProtectedPreview(preview.id)}
+                      size="sm"
+                      variant="outline"
                     >
-                      <Copy className="size-4" />
-                    </Button>
-                    <Button
-                      aria-label={`${thread.archivedAt ? "Restore" : "Archive"} ${thread.title}`}
-                      disabled={threadActionId !== null}
-                      onClick={() =>
-                        void setThreadArchived(thread.id, !thread.archivedAt)
-                      }
-                      size="icon-sm"
-                      title={thread.archivedAt ? "Restore thread" : "Archive thread"}
-                      variant="ghost"
-                    >
-                      {thread.archivedAt ? (
-                        <RotateCcw className="size-4" />
-                      ) : (
-                        <Archive className="size-4" />
-                      )}
+                      <ExternalLink className="size-4" />
+                      Open
                     </Button>
                   </div>
-                ) : null}
+                ))}
               </div>
-            ))}
-            {!initial.threads.length && (
-              <p className="py-10 text-center text-muted-foreground text-sm">
-                No Project Threads yet.
-              </p>
-            )}
+            </section>
+          ) : null}
+          <section className="mt-6">
+            <div className="divide-y border-y">
+              {initial.threads.map((thread) => (
+                <div
+                  className="group flex items-center gap-3 py-3 text-sm"
+                  key={thread.id}
+                >
+                  <Link
+                    className="flex min-w-0 flex-1 items-center gap-3 transition-colors hover:text-primary"
+                    href={`/threads/${thread.id}`}
+                  >
+                    <MessageSquare className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
+                    <span className="min-w-0 flex-1 truncate font-medium">
+                      {thread.title || "New thread"}
+                    </span>
+                    <span className="shrink-0 text-muted-foreground text-xs">
+                      {thread.archivedAt ? "Archived" : "Updated"}{" "}
+                      {new Date(
+                        thread.archivedAt || thread.updatedAt,
+                      ).toLocaleString()}
+                    </span>
+                  </Link>
+                  {thread.canManage ? (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Button
+                        aria-label={`Duplicate ${thread.title}`}
+                        disabled={threadActionId !== null}
+                        onClick={() => void duplicateThread(thread.id)}
+                        size="icon-sm"
+                        title="Duplicate thread"
+                        variant="ghost"
+                      >
+                        <Copy className="size-4" />
+                      </Button>
+                      <Button
+                        aria-label={`${thread.archivedAt ? "Restore" : "Archive"} ${thread.title}`}
+                        disabled={threadActionId !== null}
+                        onClick={() =>
+                          void setThreadArchived(thread.id, !thread.archivedAt)
+                        }
+                        size="icon-sm"
+                        title={
+                          thread.archivedAt
+                            ? "Restore thread"
+                            : "Archive thread"
+                        }
+                        variant="ghost"
+                      >
+                        {thread.archivedAt ? (
+                          <RotateCcw className="size-4" />
+                        ) : (
+                          <Archive className="size-4" />
+                        )}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+              {!initial.threads.length && (
+                <p className="py-10 text-center text-muted-foreground text-sm">
+                  No Project Threads yet.
+                </p>
+              )}
             </div>
           </section>
         </TabsContent>
@@ -596,13 +810,13 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
               <Label className="sr-only" htmlFor="project-instructions">
                 Project instructions
               </Label>
-                <Textarea
-                  disabled={!canEdit}
-                  id="project-instructions"
-                  onChange={(event) => setInstructions(event.target.value)}
-                  rows={12}
-                  value={instructions}
-                />
+              <Textarea
+                disabled={!canEdit}
+                id="project-instructions"
+                onChange={(event) => setInstructions(event.target.value)}
+                rows={12}
+                value={instructions}
+              />
               {canEdit && (
                 <Button
                   disabled={saving || !name.trim()}
@@ -631,7 +845,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                       setSelectedDocumentIds((current) =>
                         checked
                           ? [...new Set([...current, document.id])]
-                          : current.filter((id) => id !== document.id)
+                          : current.filter((id) => id !== document.id),
                       )
                     }
                   />
@@ -654,21 +868,21 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                 </p>
               )}
             </div>
-              {canEdit && (
-                <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed p-3 text-sm hover:bg-muted">
-                  <Upload className="size-4" />
-                  {uploading ? "Uploading…" : "Upload private Project file"}
-                  <input
-                    className="sr-only"
-                    disabled={uploading}
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) void uploadFile(file);
-                    }}
-                    type="file"
-                  />
-                </label>
-              )}
+            {canEdit && (
+              <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed p-3 text-sm hover:bg-muted">
+                <Upload className="size-4" />
+                {uploading ? "Uploading…" : "Upload private Project file"}
+                <input
+                  className="sr-only"
+                  disabled={uploading}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void uploadFile(file);
+                  }}
+                  type="file"
+                />
+              </label>
+            )}
           </SettingsSection>
         </TabsContent>
 
@@ -725,44 +939,44 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
                 </div>
               ))}
             </div>
-              {initial.role === "owner" && candidates.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-4">
-                  <Select onValueChange={setCandidateId} value={candidateId}>
-                    <SelectTrigger className="min-w-64">
-                      <SelectValue placeholder="Choose organization member" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {candidates.map((member) => (
-                        <SelectItem
-                          key={member.organizationMemberId}
-                          value={member.organizationMemberId}
-                        >
-                          {member.name} · {member.email}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    onValueChange={(role: Role) => setCandidateRole(role)}
-                    value={candidateRole}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="owner">Owner</SelectItem>
-                      <SelectItem value="editor">Editor</SelectItem>
-                      <SelectItem value="member">Member</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    disabled={!candidateId}
-                    onClick={() => void addMember()}
-                  >
-                    <Plus className="size-4" /> Add
-                  </Button>
-                </div>
-              )}
+            {initial.role === "owner" && candidates.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-4">
+                <Select onValueChange={setCandidateId} value={candidateId}>
+                  <SelectTrigger className="min-w-64">
+                    <SelectValue placeholder="Choose organization member" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {candidates.map((member) => (
+                      <SelectItem
+                        key={member.organizationMemberId}
+                        value={member.organizationMemberId}
+                      >
+                        {member.name} · {member.email}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  onValueChange={(role: Role) => setCandidateRole(role)}
+                  value={candidateRole}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="owner">Owner</SelectItem>
+                    <SelectItem value="editor">Editor</SelectItem>
+                    <SelectItem value="member">Member</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  disabled={!candidateId}
+                  onClick={() => void addMember()}
+                >
+                  <Plus className="size-4" /> Add
+                </Button>
+              </div>
+            )}
           </SettingsSection>
         </TabsContent>
 

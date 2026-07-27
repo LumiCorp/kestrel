@@ -1331,6 +1331,7 @@ export interface DesktopRuntimeStoreReset {
 }
 
 export interface DesktopProjectRegistration {
+  id?: string | undefined;
   path: string;
   label: string;
 }
@@ -1635,6 +1636,12 @@ export interface DesktopSettings {
   presetId: DesktopShellPresetId;
   capabilityPacks: DesktopCapabilityPackId[];
   projects: DesktopProjectRegistration[];
+  projectTombstones: Array<{
+    id: string;
+    path: string;
+    label: string;
+    removedAt: string;
+  }>;
   mcpServers: DesktopMcpServerConfig[];
   capabilityVerifications: Partial<Record<DesktopCapabilityId, string>>;
   developerShellPath?: string | undefined;

@@ -1312,6 +1312,9 @@ export const environments = pgTable(
     }),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
+    provider: text("provider", { enum: ["fly", "desktop"] })
+      .notNull()
+      .default("fly"),
     region: text("region").notNull(),
     status: text("status", {
       enum: [
@@ -1383,9 +1386,272 @@ export const environments = pgTable(
       sql`${table.idleTimeoutMinutes} > 0`,
     ),
     check(
+      "environments_provider_check",
+      sql`${table.provider} in ('fly', 'desktop')`,
+    ),
+    check(
       "environments_reasoning_retention_days_check",
       sql`${table.reasoningRetentionDays} between 1 and 30`,
     ),
+    check(
+      "environments_provider_identity_check",
+      sql`(
+        (${table.provider} = 'fly')
+        or
+        (
+          ${table.provider} = 'desktop'
+          and ${table.flyAppName} is null
+          and ${table.flyNetworkName} is null
+          and ${table.flyGatewayMachineId} is null
+        )
+      )`,
+    ),
+  ],
+);
+
+export const desktopEnvironmentConnections = pgTable(
+  "desktop_environment_connections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    publicKey: text("public_key").notNull(),
+    encryptionPublicKey: text("encryption_public_key").notNull(),
+    credentialHash: text("credential_hash").notNull(),
+    previousCredentialHash: text("previous_credential_hash"),
+    previousCredentialExpiresAt: timestamp("previous_credential_expires_at", {
+      withTimezone: true,
+    }),
+    credentialRotatedAt: timestamp("credential_rotated_at", {
+      withTimezone: true,
+    }),
+    status: text("status", {
+      enum: ["pending", "active", "revoked"],
+    })
+      .notNull()
+      .default("pending"),
+    capacity: integer("capacity").notNull().default(1),
+    activeRuns: integer("active_runs").notNull().default(0),
+    desktopName: text("desktop_name").notNull(),
+    desktopVersion: text("desktop_version"),
+    runtimeVersion: text("runtime_version"),
+    advertisedModels: jsonb("advertised_models")
+      .$type<
+        Array<{
+          provider: string;
+          model: string;
+          health: "ready" | "unavailable";
+        }>
+      >()
+      .notNull()
+      .default([]),
+    approvedByUserId: text("approved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("desktop_environment_connections_environment_idx").on(
+      table.environmentId,
+    ),
+    uniqueIndex("desktop_environment_connections_org_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    index("desktop_environment_connections_org_status_idx").on(
+      table.organizationId,
+      table.status,
+    ),
+    check(
+      "desktop_environment_connections_capacity_check",
+      sql`${table.capacity} between 1 and 16`,
+    ),
+    check(
+      "desktop_environment_connections_active_runs_check",
+      sql`${table.activeRuns} between 0 and 16`,
+    ),
+  ],
+);
+
+export const desktopEnvironmentEnrollmentRequests = pgTable(
+  "desktop_environment_enrollment_requests",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    secretHash: text("secret_hash").notNull(),
+    publicKey: text("public_key").notNull(),
+    encryptionPublicKey: text("encryption_public_key").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    desktopName: text("desktop_name").notNull(),
+    status: text("status", {
+      enum: ["pending", "approved", "rejected", "expired", "consumed"],
+    })
+      .notNull()
+      .default("pending"),
+    organizationId: text("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
+    environmentId: text("environment_id").references(() => environments.id, {
+      onDelete: "cascade",
+    }),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    approvedByUserId: text("approved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("desktop_environment_enrollment_fingerprint_idx").on(
+      table.fingerprint,
+      table.id,
+    ),
+    index("desktop_environment_enrollment_status_expiry_idx").on(
+      table.status,
+      table.expiresAt,
+    ),
+  ],
+);
+
+export const desktopUserAuthorizationCodes = pgTable(
+  "desktop_user_authorization_codes",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    secretHash: text("secret_hash").notNull(),
+    redirectUri: text("redirect_uri").notNull(),
+    codeChallenge: text("code_challenge").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("desktop_user_authorization_codes_expiry_idx").on(table.expiresAt),
+  ],
+);
+
+export const desktopUserCredentials = pgTable(
+  "desktop_user_credentials",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    familyId: text("family_id").notNull(),
+    kind: text("kind", { enum: ["access", "refresh"] }).notNull(),
+    secretHash: text("secret_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("desktop_user_credentials_family_idx").on(table.familyId, table.kind),
+    index("desktop_user_credentials_user_kind_idx").on(
+      table.userId,
+      table.kind,
+    ),
+    index("desktop_user_credentials_expiry_idx").on(table.expiresAt),
+  ],
+);
+
+export const desktopEnvironmentWorkspaceCatalog = pgTable(
+  "desktop_environment_workspace_catalog",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => desktopEnvironmentConnections.id, {
+        onDelete: "cascade",
+      }),
+    workspaceRef: text("workspace_ref").notNull(),
+    label: text("label").notNull(),
+    availability: text("availability", {
+      enum: ["available", "missing"],
+    })
+      .notNull()
+      .default("available"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("desktop_environment_workspace_catalog_ref_idx").on(
+      table.environmentId,
+      table.workspaceRef,
+    ),
+    uniqueIndex("desktop_environment_workspace_catalog_org_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    index("desktop_environment_workspace_catalog_environment_idx").on(
+      table.environmentId,
+      table.availability,
+    ),
+  ],
+);
+
+export const desktopEnvironmentRequestNonces = pgTable(
+  "desktop_environment_request_nonces",
+  {
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => desktopEnvironmentConnections.id, {
+        onDelete: "cascade",
+      }),
+    nonce: text("nonce").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.connectionId, table.nonce] }),
+    index("desktop_environment_request_nonces_expiry_idx").on(table.expiresAt),
   ],
 );
 
@@ -1413,7 +1679,9 @@ export const environmentWorkspaces = pgTable(
       .references(() => users.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
     kind: text("kind", { enum: ["project", "scratch"] }).notNull(),
-    sourceType: text("source_type", { enum: ["blank", "github"] })
+    sourceType: text("source_type", {
+      enum: ["blank", "github", "desktop"],
+    })
       .notNull()
       .default("blank"),
     sourceResourceId: text("source_resource_id").references(
@@ -1422,6 +1690,10 @@ export const environmentWorkspaces = pgTable(
     ),
     sourceRepository: text("source_repository"),
     sourceDefaultBranch: text("source_default_branch"),
+    desktopCatalogId: text("desktop_catalog_id").references(
+      () => desktopEnvironmentWorkspaceCatalog.id,
+      { onDelete: "restrict" },
+    ),
     status: text("status", {
       enum: [
         "requested",
@@ -1487,9 +1759,11 @@ export const environmentWorkspaces = pgTable(
     check(
       "environment_workspaces_source_check",
       sql`(
-        (${table.sourceType} = 'blank' and ${table.sourceResourceId} is null and ${table.sourceRepository} is null)
+        (${table.sourceType} = 'blank' and ${table.sourceResourceId} is null and ${table.sourceRepository} is null and ${table.desktopCatalogId} is null)
         or
-        (${table.sourceType} = 'github' and ${table.sourceResourceId} is not null and ${table.sourceRepository} is not null)
+        (${table.sourceType} = 'github' and ${table.sourceResourceId} is not null and ${table.sourceRepository} is not null and ${table.desktopCatalogId} is null)
+        or
+        (${table.sourceType} = 'desktop' and ${table.desktopCatalogId} is not null and ${table.sourceResourceId} is null and ${table.sourceRepository} is null)
       )`,
     ),
   ],
@@ -1623,6 +1897,89 @@ export const environmentRunExecutions = pgTable(
     index("environment_run_executions_org_created_idx").on(
       table.organizationId,
       table.createdAt,
+    ),
+  ],
+);
+
+export const desktopEnvironmentCommands = pgTable(
+  "desktop_environment_commands",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => environmentWorkspaces.id, { onDelete: "restrict" }),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
+    commandType: text("command_type", {
+      enum: ["run.start", "run.cancel"],
+    }).notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    status: text("status", {
+      enum: [
+        "queued",
+        "claimed",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    claimTokenHash: text("claim_token_hash"),
+    claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    cancelRequestedAt: timestamp("cancel_requested_at", {
+      withTimezone: true,
+    }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("desktop_environment_commands_execution_idx").on(
+      table.executionId,
+    ),
+    index("desktop_environment_commands_claim_idx").on(
+      table.environmentId,
+      table.status,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const desktopEnvironmentCommandEvents = pgTable(
+  "desktop_environment_command_events",
+  {
+    commandId: text("command_id")
+      .notNull()
+      .references(() => desktopEnvironmentCommands.id, {
+        onDelete: "cascade",
+      }),
+    sequence: integer("sequence").notNull(),
+    event: jsonb("event").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.commandId, table.sequence] }),
+    check(
+      "desktop_environment_command_events_sequence_check",
+      sql`${table.sequence} > 0`,
     ),
   ],
 );
@@ -2416,13 +2773,32 @@ export const workspacePreviewLeases = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    threadId: text("thread_id")
-      .notNull()
-      .references(() => threads.id, { onDelete: "cascade" }),
-    runId: text("run_id")
-      .notNull()
-      .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
+    threadId: text("thread_id").references(() => threads.id, {
+      onDelete: "cascade",
+    }),
+    runId: text("run_id").references(() => environmentRunExecutions.id, {
+      onDelete: "cascade",
+    }),
     actorId: text("actor_id").notNull(),
+    connectionId: text("connection_id").references(() => appConnections.id, {
+      onDelete: "restrict",
+    }),
+    ingressProvider: text("ingress_provider", {
+      enum: ["ngrok", "kestrel_edge"],
+    })
+      .notNull()
+      .default("ngrok"),
+    targetProvider: text("target_provider", {
+      enum: ["fly", "desktop"],
+    })
+      .notNull()
+      .default("fly"),
+    desktopConnectionId: text("desktop_connection_id").references(
+      () => desktopEnvironmentConnections.id,
+      { onDelete: "cascade" },
+    ),
+    desktopTunnelTokenHash: text("desktop_tunnel_token_hash"),
+    localRunRef: text("local_run_ref"),
     port: integer("port").notNull(),
     name: text("name"),
     hostname: text("hostname").notNull(),
@@ -2474,6 +2850,29 @@ export const workspacePreviewLeases = pgTable(
       table.expiresAt,
     ),
     check(
+      "workspace_preview_leases_target_check",
+      sql`(
+        (
+          ${table.targetProvider} = 'fly'
+          and ${table.threadId} is not null
+          and ${table.runId} is not null
+          and ${table.desktopConnectionId} is null
+          and ${table.desktopTunnelTokenHash} is null
+          and ${table.localRunRef} is null
+        )
+        or
+        (
+          ${table.targetProvider} = 'desktop'
+          and ${table.threadId} is null
+          and ${table.runId} is null
+          and ${table.desktopConnectionId} is not null
+          and ${table.desktopTunnelTokenHash} is not null
+          and ${table.localRunRef} is not null
+          and ${table.ingressProvider} = 'kestrel_edge'
+        )
+      )`,
+    ),
+    check(
       "workspace_preview_leases_port_check",
       sql`${table.port} between 1024 and 65535 and ${table.port} not in (43104, 43105)`,
     ),
@@ -2481,6 +2880,34 @@ export const workspacePreviewLeases = pgTable(
       "workspace_preview_leases_expiry_check",
       sql`${table.expiresAt} <= ${table.maximumExpiresAt}`,
     ),
+  ],
+);
+
+export const workspacePreviewAccessTokens = pgTable(
+  "workspace_preview_access_tokens",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    leaseId: text("lease_id")
+      .notNull()
+      .references(() => workspacePreviewLeases.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    secretHash: text("secret_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("workspace_preview_access_tokens_lease_idx").on(
+      table.leaseId,
+      table.expiresAt,
+    ),
+    index("workspace_preview_access_tokens_user_idx").on(table.userId),
   ],
 );
 
@@ -5075,8 +5502,26 @@ export type OrganizationToolConnection = InferSelectModel<
   typeof organizationToolConnections
 >;
 export type Environment = InferSelectModel<typeof environments>;
+export type DesktopEnvironmentConnection = InferSelectModel<
+  typeof desktopEnvironmentConnections
+>;
+export type DesktopEnvironmentEnrollmentRequest = InferSelectModel<
+  typeof desktopEnvironmentEnrollmentRequests
+>;
+export type DesktopEnvironmentWorkspaceCatalogEntry = InferSelectModel<
+  typeof desktopEnvironmentWorkspaceCatalog
+>;
+export type DesktopEnvironmentRequestNonce = InferSelectModel<
+  typeof desktopEnvironmentRequestNonces
+>;
 export type EnvironmentWorkspace = InferSelectModel<
   typeof environmentWorkspaces
+>;
+export type DesktopEnvironmentCommand = InferSelectModel<
+  typeof desktopEnvironmentCommands
+>;
+export type DesktopEnvironmentCommandEvent = InferSelectModel<
+  typeof desktopEnvironmentCommandEvents
 >;
 export type ProjectEnvironmentBinding = InferSelectModel<
   typeof projectEnvironmentBindings

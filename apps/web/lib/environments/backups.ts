@@ -968,6 +968,11 @@ export async function restoreWorkspaceBackup(input: {
   ) {
     throw new Error("Workspace replacement target is unavailable.");
   }
+  if (workspace.sourceType === "desktop") {
+    throw new Error(
+      "Desktop workspaces are restored on the enrolled Desktop Environment.",
+    );
+  }
   const flyAppName = environment.flyAppName;
   const routerUrl = environment.routerUrl;
   const oldMachineId = workspace.flyMachineId;

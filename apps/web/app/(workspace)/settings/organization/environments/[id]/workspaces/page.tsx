@@ -20,13 +20,30 @@ export default async function EnvironmentWorkspacesPage({
 }) {
   const { organizationId } = await requireOrganizationAdmin();
   const { id } = await params;
-  const workspaces = await knowledgeDb.query.environmentWorkspaces.findMany({
-    where: and(
-      eq(schema.environmentWorkspaces.organizationId, organizationId),
-      eq(schema.environmentWorkspaces.environmentId, id),
-      isNull(schema.environmentWorkspaces.deletedAt)
-    ),
-  });
+  const [environment, workspaces, desktopCatalog] = await Promise.all([
+    knowledgeDb.query.environments.findFirst({
+      where: and(
+        eq(schema.environments.organizationId, organizationId),
+        eq(schema.environments.id, id),
+      ),
+    }),
+    knowledgeDb.query.environmentWorkspaces.findMany({
+      where: and(
+        eq(schema.environmentWorkspaces.organizationId, organizationId),
+        eq(schema.environmentWorkspaces.environmentId, id),
+        isNull(schema.environmentWorkspaces.deletedAt),
+      ),
+    }),
+    knowledgeDb.query.desktopEnvironmentWorkspaceCatalog.findMany({
+      where: and(
+        eq(
+          schema.desktopEnvironmentWorkspaceCatalog.organizationId,
+          organizationId,
+        ),
+        eq(schema.desktopEnvironmentWorkspaceCatalog.environmentId, id),
+      ),
+    }),
+  ]);
   return (
     <SettingsSection
       description="Persistent working directories assigned to this execution plane."
@@ -54,17 +71,27 @@ export default async function EnvironmentWorkspacesPage({
                     {workspace.name}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {workspace.sourceType}
+                    {workspace.sourceType === "desktop"
+                      ? desktopCatalog.find(
+                          (catalog) => catalog.id === workspace.desktopCatalogId,
+                        )?.label ?? "Desktop project"
+                      : workspace.sourceType}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">{workspace.status}</Badge>
                   </TableCell>
                   <TableCell>
-                    <WorkspaceBackupActions
-                      environmentId={id}
-                      workspaceId={workspace.id}
-                      workspaceStatus={workspace.status}
-                    />
+                    {environment?.provider === "desktop" ? (
+                      <span className="text-muted-foreground text-xs">
+                        Managed on Desktop
+                      </span>
+                    ) : (
+                      <WorkspaceBackupActions
+                        environmentId={id}
+                        workspaceId={workspace.id}
+                        workspaceStatus={workspace.status}
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
