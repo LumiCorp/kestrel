@@ -1,5 +1,4 @@
 import {
-  Activity,
   Folder,
   GitPullRequest,
   KeyRound,
@@ -42,9 +41,12 @@ import type {
   DesktopThreadAuthorityResult,
 } from "../../src/contracts";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
+import {
+  ConversationTimeline,
+  TimelineMarker,
+} from "./ConversationTimeline";
 import { DiffWorkspace } from "./DiffWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
-import { MessageContent } from "./MessageContent";
 import { McpWorkspace } from "./McpWorkspace";
 import { MissionControlWorkspace } from "./MissionControlWorkspace";
 import { ProjectWorkspace } from "./ProjectWorkspace";
@@ -161,7 +163,9 @@ export function DesktopApp() {
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
   const [missionControlRevision, setMissionControlRevision] = useState(0);
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>();
+  const [timelineHasNewActivity, setTimelineHasNewActivity] = useState(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const timelineFollowingRef = useRef(true);
   const workNavigatorRef = useRef<HTMLElement>(null);
   const workNavigatorSearchRef = useRef<HTMLInputElement>(null);
   const workNavigatorTriggerRef = useRef<HTMLElement | null>(null);
@@ -445,8 +449,32 @@ export function DesktopApp() {
   }, [state?.theme]);
 
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ block: "end" });
+    if (timelineFollowingRef.current) {
+      transcriptEndRef.current?.scrollIntoView({ block: "end" });
+      setTimelineHasNewActivity(false);
+      return;
+    }
+    setTimelineHasNewActivity(true);
   }, [activeThread?.transcript.length, activeRunStream, activeThreadFeedback.activity]);
+
+  useEffect(() => {
+    const end = transcriptEndRef.current;
+    const root = end?.parentElement;
+    if (end === null || root === null || root === undefined) return;
+    timelineFollowingRef.current = true;
+    setTimelineHasNewActivity(false);
+    end.scrollIntoView({ block: "end" });
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const following = entry?.isIntersecting === true;
+        timelineFollowingRef.current = following;
+        if (following) setTimelineHasNewActivity(false);
+      },
+      { root, threshold: 1 },
+    );
+    observer.observe(end);
+    return () => observer.disconnect();
+  }, [activeThread?.id, surface]);
 
   useEffect(() => {
     if (activeThread === undefined) return;
@@ -1382,83 +1410,101 @@ export function DesktopApp() {
 
         {surface === "chat" ? (
           <main className="conversation-pane" id="app-main" inert={workNavigatorOpen ? true : undefined}>
-          <section className="transcript" aria-label="Conversation transcript">
-            {conversationTimeline.length === 0 ? (
-              <div className="empty-transcript">
-                <span className="brand-mark large">K</span>
-                <h1>New conversation</h1>
-              </div>
-            ) : conversationTimeline.map((entry) => entry.type === "transcript" ? (
-              <article className={`message message-${entry.line.role}`} key={entry.id}>
-                <div className="message-meta">
-                  <strong>{entry.line.dialog?.sender === "collaborator" ? entry.line.dialog.name : entry.line.dialog?.sender === "kestrel" ? "Kestrel" : entry.line.role === "user" ? "You" : entry.line.role === "assistant" ? "Kestrel" : "System"}</strong>
-                  <time>{formatMessageTime(entry.line.timestamp)}</time>
-                </div>
-                <MessageContent messageRole={entry.line.role} text={entry.line.text} />
-              </article>
-            ) : (
-              <article className={`run-stream-item run-stream-${entry.item.kind} run-stream-${entry.item.status}`} key={entry.id}>
-                <div className="message-meta">
-                  <strong>{entry.item.label}</strong>
-                  <time>{formatMessageTime(entry.item.timestamp)}</time>
-                </div>
-                <MessageContent messageRole="assistant" text={entry.item.text.length > 0 ? entry.item.text : "Reasoning…"} />
-              </article>
-            ))}
-            <div ref={transcriptEndRef} />
-          </section>
-
-          <div className="activity-shell">
-            <div className="activity-line" aria-live="polite" aria-atomic="true">
-              <Activity size={14} aria-hidden="true" />
-              <span>{activeThreadFeedback.activity}</span>
-              {activeThreadFeedback.error !== undefined ? <span className="activity-error">{activeThreadFeedback.error}</span> : null}
-              {systemError !== undefined ? <span className="activity-error">{systemError}</span> : null}
-              {activeThreadFeedback.errorCapability !== undefined ? <button className="secondary-button" type="button" onClick={() => openCapabilitySettings(activeThreadFeedback.errorCapability)}>Open capability settings</button> : null}
-            </div>
-          </div>
-
-          {!archivedThreadSelected && threadViews[activeThread.id]?.followUpQueue.items.length ? (
-            <section className="follow-up-queue" aria-label="Queued follow-ups">
-              <div className="queue-heading">
-                <strong>Queued follow-ups</strong>
-                {threadViews[activeThread.id]?.followUpQueue.state === "paused" ? (
-                  <button type="button" onClick={() => void submitOperatorAction("resume-queue", {
-                    action: "resume_follow_up_queue",
-                    threadId: localCoreThreadId(activeThread.sessionId),
-                  })}>Resume queue</button>
+          <ConversationTimeline
+            items={conversationTimeline}
+            active={activeRun !== undefined}
+            activity={activeThreadFeedback.activity}
+            error={activeThreadFeedback.error}
+            systemError={systemError}
+            errorAction={activeThreadFeedback.errorCapability !== undefined ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => openCapabilitySettings(activeThreadFeedback.errorCapability)}
+              >
+                Open capability settings
+              </button>
+            ) : undefined}
+            endRef={transcriptEndRef}
+            showNewActivity={timelineHasNewActivity}
+            onFollowNewActivity={() => {
+              timelineFollowingRef.current = true;
+              setTimelineHasNewActivity(false);
+              transcriptEndRef.current?.scrollIntoView({
+                block: "end",
+                behavior: "smooth",
+              });
+            }}
+            tail={(
+              <>
+                {!archivedThreadSelected && composerPolicy.mode === "reply_to_request" ? (
+                  <li
+                    className="timeline-entry timeline-entry-attention timeline-entry-user-request"
+                    aria-live="assertive"
+                  >
+                    <TimelineMarker kind="attention" />
+                    <section className="timeline-entry-content operator-action-card" aria-label={composerPolicy.item.title}>
+                      <div>
+                        <strong>Kestrel needs your input</strong>
+                        <p>{composerPolicy.item.title}</p>
+                        {composerPolicy.item.detail !== undefined ? <small>{composerPolicy.item.detail}</small> : null}
+                      </div>
+                    </section>
+                  </li>
                 ) : null}
-              </div>
-              {threadViews[activeThread.id]?.followUpQueue.items.map((item, index) => (
-                <QueuedFollowUpCard
-                  key={item.followUpId}
-                  item={item}
-                  index={index}
-                  threadId={localCoreThreadId(activeThread.sessionId)}
-                  pending={operatorActionPending[item.followUpId] === true}
-                  onAction={(request) => void submitOperatorAction(item.followUpId, request)}
-                />
-              ))}
-            </section>
-          ) : null}
 
-          {!archivedThreadSelected ? operatorActionCardItems.map((item) => (
-            <OperatorActionCard
-              key={item.itemId}
-              item={item}
-              pending={operatorActionPending[item.itemId] === true}
-              onAction={(request) => void submitOperatorAction(item.itemId, request)}
-            />
-          )) : null}
+                {!archivedThreadSelected && threadViews[activeThread.id]?.followUpQueue.items.length ? (
+                  <li className="timeline-entry timeline-entry-queue">
+                    <TimelineMarker kind="queue" />
+                    <section className="timeline-entry-content follow-up-queue" aria-label="Queued follow-ups">
+                      <div className="queue-heading">
+                        <strong>Queued follow-ups</strong>
+                        {threadViews[activeThread.id]?.followUpQueue.state === "paused" ? (
+                          <button type="button" onClick={() => void submitOperatorAction("resume-queue", {
+                            action: "resume_follow_up_queue",
+                            threadId: localCoreThreadId(activeThread.sessionId),
+                          })}>Resume queue</button>
+                        ) : null}
+                      </div>
+                      {threadViews[activeThread.id]?.followUpQueue.items.map((item, index) => (
+                        <QueuedFollowUpCard
+                          key={item.followUpId}
+                          item={item}
+                          index={index}
+                          threadId={localCoreThreadId(activeThread.sessionId)}
+                          pending={operatorActionPending[item.followUpId] === true}
+                          onAction={(request) => void submitOperatorAction(item.followUpId, request)}
+                        />
+                      ))}
+                    </section>
+                  </li>
+                ) : null}
 
-          {archivedThreadSelected ? (
-            <section className="archived-conversation-banner" aria-label="Archived conversation">
-              <div><strong>Archived conversation</strong><span>This transcript is read-only.</span></div>
-              <button className="primary-button" type="button" onClick={() => {
-                setState((current) => current === undefined ? current : restoreRendererThread(current, activeThread.id));
-              }}>Restore conversation</button>
-            </section>
-          ) : <form className="composer" onSubmit={(event) => void submitTurn(event)}>
+                {!archivedThreadSelected ? operatorActionCardItems.map((item) => (
+                  <OperatorActionCard
+                    key={item.itemId}
+                    item={item}
+                    pending={operatorActionPending[item.itemId] === true}
+                    onAction={(request) => void submitOperatorAction(item.itemId, request)}
+                  />
+                )) : null}
+
+                {archivedThreadSelected ? (
+                  <li className="timeline-entry timeline-entry-archived">
+                    <TimelineMarker kind="attention" />
+                    <section className="timeline-entry-content archived-conversation-banner" aria-label="Archived conversation">
+                      <div><strong>Archived conversation</strong><span>This transcript is read-only.</span></div>
+                      <button className="primary-button" type="button" onClick={() => {
+                        setState((current) => current === undefined ? current : restoreRendererThread(current, activeThread.id));
+                      }}>Restore conversation</button>
+                    </section>
+                  </li>
+                ) : null}
+              </>
+            )}
+          />
+
+          {archivedThreadSelected ? null : <form className="composer" onSubmit={(event) => void submitTurn(event)}>
             <div className="mode-segment" aria-label="Interaction mode">
               {(["chat", "plan", "build"] as const).map((mode) => (
                 <button
@@ -1857,38 +1903,45 @@ function OperatorActionCard({
   const proposalId = readString(item.metadata?.proposalId);
   const checkpointAction = isCheckpointAction(item.recommendedAction) ? item.recommendedAction : undefined;
   return (
-    <section className={`operator-action-card operator-action-${item.kind}`} aria-label={item.title}>
-      <div><strong>{operatorCardLabel(item.kind)}</strong><p>{item.title}</p>{item.detail !== undefined ? <small>{item.detail}</small> : null}</div>
-      <div className="operator-action-buttons">
-        {item.kind === "approval_request" && item.requestId !== undefined ? <>
-          <button type="button" disabled={pending} onClick={() => onAction({ action: "approve", ...base, requestId: item.requestId })}>Approve</button>
-          <button type="button" disabled={pending} onClick={() => onAction({ action: "reject", ...base, requestId: item.requestId })}>Reject</button>
-        </> : null}
-        {item.kind === "context_checkpoint" && item.checkpointId !== undefined && checkpointAction !== undefined ? (
-          <button type="button" disabled={pending} onClick={() => onAction({ action: "resolve_context_checkpoint", ...base, checkpointId: item.checkpointId, actionValue: checkpointAction })}>{checkpointAction.replaceAll("_", " ")}</button>
-        ) : null}
-        {item.kind === "assembly_change_proposal" && proposalId !== undefined ? <>
-          <button type="button" disabled={pending} onClick={() => onAction({ action: "approve_assembly_change", ...base, proposalId })}>Approve change</button>
-          <button type="button" disabled={pending} onClick={() => onAction({ action: "reject_assembly_change", ...base, proposalId })}>Reject change</button>
-        </> : null}
-        {item.kind === "child_thread_blocker" && item.childThreadId !== undefined ? (
-          <button type="button" disabled={pending} onClick={() => onAction({ action: "focus_thread", threadId: item.childThreadId! })}>Focus child</button>
-        ) : null}
-        {item.kind === "stalled_thread_attention" ? (
-          <>
-            <button type="button" disabled={pending} onClick={() => onAction({ action: "retry", ...base })}>Retry</button>
-            <button type="button" disabled={pending} onClick={() => onAction({ action: "continue_waiting", ...base })}>Continue waiting</button>
-          </>
-        ) : null}
-        {item.kind === "fan_in_checkpoint" && item.checkpointId !== undefined ? <>
-          <button type="button" disabled={pending} onClick={() => onAction({ action: "resolve_fan_in_checkpoint", ...base, checkpointId: item.checkpointId, actionValue: "accept" })}>Accept</button>
-          <button type="button" disabled={pending} onClick={() => onAction({ action: "resolve_fan_in_checkpoint", ...base, checkpointId: item.checkpointId, actionValue: "defer" })}>Defer</button>
-        </> : null}
-        {(item.kind === "child_outcome_review" || item.kind === "compatibility_downgrade_attention") ? (
-          <button type="button" disabled={pending} onClick={() => onAction({ action: "focus_thread", threadId: item.childThreadId ?? item.threadId })}>Focus thread</button>
-        ) : null}
-      </div>
-    </section>
+    <li
+      className={`timeline-entry timeline-entry-attention operator-action-${item.kind}`}
+      aria-label={item.title}
+      aria-live="assertive"
+    >
+      <TimelineMarker kind="attention" />
+      <section className="timeline-entry-content operator-action-card">
+        <div><strong>{operatorCardLabel(item.kind)}</strong><p>{item.title}</p>{item.detail !== undefined ? <small>{item.detail}</small> : null}</div>
+        <div className="operator-action-buttons">
+          {item.kind === "approval_request" && item.requestId !== undefined ? <>
+            <button type="button" disabled={pending} onClick={() => onAction({ action: "approve", ...base, requestId: item.requestId })}>Approve</button>
+            <button type="button" disabled={pending} onClick={() => onAction({ action: "reject", ...base, requestId: item.requestId })}>Reject</button>
+          </> : null}
+          {item.kind === "context_checkpoint" && item.checkpointId !== undefined && checkpointAction !== undefined ? (
+            <button type="button" disabled={pending} onClick={() => onAction({ action: "resolve_context_checkpoint", ...base, checkpointId: item.checkpointId, actionValue: checkpointAction })}>{checkpointAction.replaceAll("_", " ")}</button>
+          ) : null}
+          {item.kind === "assembly_change_proposal" && proposalId !== undefined ? <>
+            <button type="button" disabled={pending} onClick={() => onAction({ action: "approve_assembly_change", ...base, proposalId })}>Approve change</button>
+            <button type="button" disabled={pending} onClick={() => onAction({ action: "reject_assembly_change", ...base, proposalId })}>Reject change</button>
+          </> : null}
+          {item.kind === "child_thread_blocker" && item.childThreadId !== undefined ? (
+            <button type="button" disabled={pending} onClick={() => onAction({ action: "focus_thread", threadId: item.childThreadId! })}>Focus child</button>
+          ) : null}
+          {item.kind === "stalled_thread_attention" ? (
+            <>
+              <button type="button" disabled={pending} onClick={() => onAction({ action: "retry", ...base })}>Retry</button>
+              <button type="button" disabled={pending} onClick={() => onAction({ action: "continue_waiting", ...base })}>Continue waiting</button>
+            </>
+          ) : null}
+          {item.kind === "fan_in_checkpoint" && item.checkpointId !== undefined ? <>
+            <button type="button" disabled={pending} onClick={() => onAction({ action: "resolve_fan_in_checkpoint", ...base, checkpointId: item.checkpointId, actionValue: "accept" })}>Accept</button>
+            <button type="button" disabled={pending} onClick={() => onAction({ action: "resolve_fan_in_checkpoint", ...base, checkpointId: item.checkpointId, actionValue: "defer" })}>Defer</button>
+          </> : null}
+          {(item.kind === "child_outcome_review" || item.kind === "compatibility_downgrade_attention") ? (
+            <button type="button" disabled={pending} onClick={() => onAction({ action: "focus_thread", threadId: item.childThreadId ?? item.threadId })}>Focus thread</button>
+          ) : null}
+        </div>
+      </section>
+    </li>
   );
 }
 
@@ -2063,13 +2116,6 @@ function providerLabel(
     return "Anthropic";
   }
   return provider === "ollama" ? "Ollama" : "LM Studio";
-}
-
-function formatMessageTime(value: string): string {
-  return new Date(value).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function formatBytes(value: number): string {
