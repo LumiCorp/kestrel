@@ -1,5 +1,5 @@
 import { Archive, ChevronDown, MoreHorizontal, Plus, Search, X } from "lucide-react";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 
 import { keepFocusInsideDialog } from "./dialogFocus";
 import {
@@ -18,6 +18,7 @@ export function ConversationExplorer(props: {
   onArchive: (threadId: string) => Promise<{ status: "archived" } | { status: "blocked"; message: string }>;
   onUndoArchive: (threadId: string, removeReplacement: boolean) => void;
   onRestore: (threadId: string) => void;
+  searchInputRef?: RefObject<HTMLInputElement | null>;
 }) {
   const [view, setView] = useState<"active" | "archived">("active");
   const [query, setQuery] = useState("");
@@ -122,13 +123,26 @@ export function ConversationExplorer(props: {
     <section className="conversation-explorer" aria-label="Conversation explorer">
       <div className="explorer-heading">
         <strong>{view === "active" ? "Conversations" : "Archived"}</strong>
-        <button className="icon-button" type="button" title="New conversation" aria-label="New conversation" onClick={props.onNewConversation}>
-          <Plus size={17} />
-        </button>
+        <div className="explorer-heading-actions">
+          {archivedCount > 0 || view === "archived" ? (
+            <button
+              className={`archived-view-button ${view === "archived" ? "active" : ""}`}
+              type="button"
+              title={view === "active" ? `View ${archivedCount} archived conversations` : "Back to conversations"}
+              onClick={() => setView((current) => current === "active" ? "archived" : "active")}
+            >
+              <Archive size={14} aria-hidden="true" />
+              <span>{view === "active" ? `Archived (${archivedCount})` : "Back"}</span>
+            </button>
+          ) : null}
+          <button className="icon-button" type="button" title="New conversation" aria-label="New conversation" onClick={props.onNewConversation}>
+            <Plus size={17} />
+          </button>
+        </div>
       </div>
       <label className="explorer-search">
         <Search size={14} aria-hidden="true" />
-        <input aria-label="Search conversations" type="search" value={query} placeholder="Search conversations" onChange={(event) => setQuery(event.target.value)} />
+        <input ref={props.searchInputRef} aria-label="Search conversations" type="search" value={query} placeholder="Search conversations" onChange={(event) => setQuery(event.target.value)} />
         {query.length > 0 ? <button type="button" aria-label="Clear search" onClick={() => setQuery("")}><X size={13} /></button> : null}
       </label>
 
@@ -202,11 +216,6 @@ export function ConversationExplorer(props: {
         })}
         {groups.length === 0 ? <p className="rail-empty">{query.length > 0 ? "No matching conversations" : view === "archived" ? "No archived conversations" : "No conversations"}</p> : null}
       </div>
-
-      <button className={`archived-view-button ${view === "archived" ? "active" : ""}`} type="button" onClick={() => setView((current) => current === "active" ? "archived" : "active")}>
-        <Archive size={14} aria-hidden="true" />
-        <span>{view === "active" ? `Archived (${archivedCount})` : "Back to conversations"}</span>
-      </button>
 
       {renamingThread !== undefined ? (
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {

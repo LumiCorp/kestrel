@@ -261,3 +261,43 @@ The lifecycle status uses a polite live region. Output exposes expanded state an
 No actionable P0, P1, or P2 visual fidelity defects remain. The typed CSP warning is expected in the Electron development environment and correctly exercises the approved automatic Output-opening behavior.
 
 final result: passed
+
+
+---
+
+# Desktop focused-workspace QA
+
+**Comparison target**
+
+- Source visual truth: the provided populated-conversation reference image.
+- Implementation captures: wide workspace, Find Work, Details, narrow workspace, and narrow Find Work states.
+- Combined full-view comparison: the source and implementation captures were reviewed side by side.
+
+The source is a populated conversation at 1487 x 1058 pixels. The implementation's Vite preview was captured at 2000 x 1200 CSS pixels with a 1x capture, then inspected at 390 x 844 CSS pixels. The source and the clean-preview state have different content and aspect ratios, so the combined comparison preserves each image's aspect ratio on a white canvas rather than treating the conversation content as pixel-identical. The comparison is used for shell hierarchy, density, typography, and composition; it does not assert equivalence for generated conversation content.
+
+**Findings**
+
+- No actionable P0/P1/P2 differences in the focused-workspace scope.
+  - Fonts and typography: the implementation keeps the existing compact Inter-like shell hierarchy and improves scanability with one concise project control, a clearly labeled Find Work control, and a labeled Details control. At 390px, labels intentionally collapse to icons while the accessible names remain intact.
+  - Spacing and layout rhythm: the default 2000px canvas is now a single uninterrupted work region. Find Work is a bounded 400px overlay (366px at the 390px viewport) instead of a persistent column; its bottom aligns with the viewport and the narrow page has no horizontal overflow.
+  - Colors and tokens: the implementation uses the existing \`--surface\`, \`--border\`, \`--accent\`, and status tokens. The drawer scrim makes the temporary context mode clear without adding a competing visual system.
+  - Image quality and assets: no new raster, decorative, or substitute assets were introduced. Existing Kestrel and Lucide assets remain consistent with the application.
+  - Copy and affordances: "Find work" groups conversation discovery and expert surfaces; "Details" keeps activity and attention available without making them permanent chrome. Model selection remains directly available in the composer. Both controls, the escape/scrim close path, and the compact-width state were exercised in the live Vite preview.
+
+**Open Questions**
+
+- The source visual is a populated successful build, while the preview begins with an empty conversation. A later artifact-card pass should use a typed execution-artifact contract rather than infer files from assistant prose; that is outside this shell/navigation change.
+
+**Implementation Checklist**
+
+- [x] Default to a full-width conversation workspace.
+- [x] Move conversation discovery, project switching, and expert surfaces into Find Work.
+- [x] Keep model selection in the composer, project context in the header, Apps in Settings, and activity or attention behind Details.
+- [x] Verify the wide, Details, Find Work, and 390px narrow states in the renderer preview.
+- [x] Check browser console errors (none).
+
+**Follow-up Polish**
+
+- [P3] Once the runtime exposes typed file/output artifacts, add the compact outcome row shown in the source visual as a structured conversation component.
+
+final result: passed

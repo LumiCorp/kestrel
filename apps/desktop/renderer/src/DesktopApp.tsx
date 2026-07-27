@@ -1,23 +1,18 @@
 import {
   Activity,
   Folder,
-  FlaskConical,
-  GitCompareArrows,
   GitPullRequest,
   KeyRound,
   ListChecks,
   MessageSquare,
   Moon,
   MonitorPlay,
-  PanelLeftClose,
-  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
   Plug,
-  Plus,
+  Search,
   Send,
-  ShieldCheck,
   Settings,
   Square,
   Sun,
@@ -67,6 +62,7 @@ import {
 } from "./runStream";
 import { ContextSidebar } from "./ContextSidebar";
 import { ConversationExplorer } from "./ConversationExplorer";
+import { keepFocusInsideDialog } from "./dialogFocus";
 import { withoutDesktopActiveRun } from "./cancellationState";
 import {
   clearDesktopThreadError,
@@ -140,7 +136,6 @@ type DesktopSurface =
 const SURFACE_STATE_KEY = "kestrel:desktop:surface:v1" as const;
 const INSPECTOR_STATE_KEY = "kestrel:desktop:inspector-open:v1" as const;
 const INSPECTOR_WIDTH_KEY = "kestrel:desktop:inspector-width:v1" as const;
-const CONVERSATION_RAIL_STATE_KEY = "kestrel:desktop:conversation-rail-open:v1" as const;
 
 export function DesktopApp() {
   const [state, setState] = useState<DesktopRendererState>();
@@ -159,14 +154,18 @@ export function DesktopApp() {
   const [threadFeedback, setThreadFeedback] = useState<Record<string, DesktopThreadFeedback>>({});
   const [surfaceErrors, setSurfaceErrors] = useState<Partial<Record<DesktopSurface, string>>>({});
   const [systemError, setSystemError] = useState<string>();
-  const [conversationRailOpen, setConversationRailOpen] = useState(() => readDesktopSidebarState(CONVERSATION_RAIL_STATE_KEY, true));
   const [inspectorOpen, setInspectorOpen] = useState(() => readDesktopSidebarState(INSPECTOR_STATE_KEY, false));
+  const [workNavigatorOpen, setWorkNavigatorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(() => readDesktopSidebarWidth());
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
   const [missionControlRevision, setMissionControlRevision] = useState(0);
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>();
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const workNavigatorRef = useRef<HTMLElement>(null);
+  const workNavigatorSearchRef = useRef<HTMLInputElement>(null);
+  const workNavigatorTriggerRef = useRef<HTMLElement | null>(null);
+  const workNavigatorFallbackRef = useRef<HTMLButtonElement>(null);
   const threadsRef = useRef<DesktopRendererState["threads"]>([]);
   const pendingTurnSubmissionsRef = useRef<Record<string, PendingTurnSubmission>>({});
   const acceptedTurnSessionsRef = useRef(new Set<string>());
@@ -187,6 +186,22 @@ export function DesktopApp() {
   useEffect(() => {
     if (activeThread?.archivedAt !== undefined) setSurface("chat");
   }, [activeThread?.archivedAt]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        openWorkNavigator();
+        return;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (workNavigatorOpen) workNavigatorSearchRef.current?.focus();
+  }, [workNavigatorOpen]);
   const activeRun = activeThread === undefined
     ? undefined
     : activeRuns[activeThread.id] ?? (threadViews[activeThread.id]?.activeRun?.status === "RUNNING"
@@ -402,10 +417,6 @@ export function DesktopApp() {
         setSystemError(`Desktop state could not be saved: ${errorMessage(cause)}`);
       });
   }, [state]);
-
-  useEffect(() => {
-    writeDesktopSidebarState(CONVERSATION_RAIL_STATE_KEY, conversationRailOpen);
-  }, [conversationRailOpen]);
 
   useEffect(() => {
     writeDesktopSidebarState(INSPECTOR_STATE_KEY, inspectorOpen);
@@ -1047,6 +1058,25 @@ export function DesktopApp() {
     newConversation(projectPath);
   }
 
+  function openWorkSurface(nextSurface: DesktopSurface): void {
+    setSurface(nextSurface);
+    closeWorkNavigator();
+  }
+
+  function openWorkNavigator(trigger?: HTMLElement): void {
+    workNavigatorTriggerRef.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    setWorkNavigatorOpen(true);
+  }
+
+  function closeWorkNavigator(restoreFocus = true): void {
+    setWorkNavigatorOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => {
+      const trigger = workNavigatorTriggerRef.current;
+      if (trigger?.isConnected) trigger.focus();
+      else workNavigatorFallbackRef.current?.focus();
+    });
+  }
+
   function openCapabilitySettings(target?: DesktopCapabilityId): void {
     setSettingsTarget(target);
     setSurface("settings");
@@ -1098,13 +1128,22 @@ export function DesktopApp() {
   const showInspector = surface === "chat" && inspectorOpen;
   return (
     <div className="desktop-app">
-      <header className="titlebar">
+      <header className="titlebar" inert={workNavigatorOpen ? true : undefined}>
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">
             <img src={kestrelMarkUrl} alt="" />
           </span>
           <strong>Kestrel</strong>
         </div>
+        <button
+          className="project-switcher"
+          type="button"
+          title="Find work and switch projects"
+          onClick={(event) => openWorkNavigator(event.currentTarget)}
+        >
+          <Folder size={16} aria-hidden="true" />
+          <span>{conversationProjectLabel}</span>
+        </button>
         <div
           className="titlebar-context"
           title={`${activeThread.title} · ${conversationProjectLabel} · ${surfacePageTitle(surface)}`}
@@ -1113,21 +1152,19 @@ export function DesktopApp() {
             <strong className="titlebar-thread-title">{activeThread.title}</strong>
             <small>{conversationProjectLabel}</small>
           </span>
-          <span className="titlebar-page-title">
-            {surfacePageTitle(surface)}
-          </span>
+          {surface === "chat" ? null : <span className="titlebar-page-title">{surfacePageTitle(surface)}</span>}
         </div>
         <div className="titlebar-actions">
           <button
-            className="icon-button"
+            className="topbar-find"
+            ref={workNavigatorFallbackRef}
             type="button"
-            title={conversationRailOpen ? "Close conversation rail" : "Open conversation rail"}
-            aria-label={conversationRailOpen ? "Close conversation rail" : "Open conversation rail"}
-            aria-controls="conversation-rail"
-            aria-expanded={conversationRailOpen}
-            onClick={() => setConversationRailOpen((open) => !open)}
+            title="Find work (Command-K)"
+            onClick={(event) => openWorkNavigator(event.currentTarget)}
           >
-            {conversationRailOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
+            <Search size={16} aria-hidden="true" />
+            <span>Find work</span>
+            <kbd>⌘K</kbd>
           </button>
           <button
             className="icon-button"
@@ -1153,35 +1190,62 @@ export function DesktopApp() {
           </button>
           {surface === "chat" ? (
             <button
-              className="icon-button"
+              className="details-button"
               type="button"
-              title={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
-              aria-label={inspectorOpen ? "Close context sidebar" : "Open context sidebar"}
+              title={inspectorOpen ? "Close details" : "Open details"}
+              aria-label={inspectorOpen ? "Close details" : "Open details"}
               aria-controls="context-sidebar"
               aria-expanded={inspectorOpen}
               onClick={() => setInspectorOpen((open) => !open)}
             >
               <span className={`titlebar-status-dot health-${healthState}`} aria-hidden="true" />
               {inspectorOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+              <span>Details</span>
             </button>
           ) : null}
         </div>
       </header>
 
+      {workNavigatorOpen ? (
+        <button
+          className="work-navigator-scrim"
+          type="button"
+          aria-label="Close find work"
+          onClick={() => closeWorkNavigator()}
+        />
+      ) : null}
+
       <div
-        className={`workspace ${conversationRailOpen ? "with-conversation-rail" : ""} ${showInspector ? "with-inspector" : ""}`}
+        className={`workspace ${showInspector ? "with-inspector" : ""}`}
         style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
       >
-        {conversationRailOpen ? <aside id="conversation-rail" className="conversation-rail" aria-label="Conversations">
+        <aside
+          className={`conversation-rail work-navigator ${workNavigatorOpen ? "open" : ""}`}
+          aria-label="Find work"
+          aria-hidden={!workNavigatorOpen}
+          aria-modal={workNavigatorOpen ? true : undefined}
+          ref={workNavigatorRef}
+          role="dialog"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && (event.target as HTMLElement).closest('[role="dialog"]') === event.currentTarget) {
+              event.preventDefault();
+              closeWorkNavigator();
+              return;
+            }
+            keepFocusInsideDialog(event.nativeEvent, workNavigatorRef.current);
+          }}
+        >
           <nav className="surface-tabs" aria-label="Kestrel views">
+            <span className="surface-tabs-heading">Work</span>
             <button
               className={surface === "chat" ? "active" : ""}
               type="button"
               title="Conversations"
               aria-label="Conversations"
-              onClick={() => setSurface("chat")}
+              onClick={() => openWorkSurface("chat")}
             >
               <MessageSquare size={17} />
+              <span>Conversation</span>
             </button>
             <button
               className={surface === "mission-control" ? "active" : ""}
@@ -1189,48 +1253,20 @@ export function DesktopApp() {
               disabled={archivedThreadSelected}
               title="Mission control"
               aria-label="Mission control"
-              onClick={() => setSurface("mission-control")}
+              onClick={() => openWorkSurface("mission-control")}
             >
               <ListChecks size={17} />
+              <span>Mission control</span>
             </button>
             <button
               className={surface === "projects" ? "active" : ""}
               type="button"
               title="Projects"
               aria-label="Projects"
-              onClick={() => setSurface("projects")}
+              onClick={() => openWorkSurface("projects")}
             >
               <Folder size={17} />
-            </button>
-            <button
-              className={surface === "diff" ? "active" : ""}
-              type="button"
-              disabled={archivedThreadSelected}
-              title="Diff"
-              aria-label="Diff"
-              onClick={() => setSurface("diff")}
-            >
-              <GitCompareArrows size={17} />
-            </button>
-            <button
-              className={surface === "review" ? "active" : ""}
-              type="button"
-              disabled={archivedThreadSelected}
-              title="Review"
-              aria-label="Review"
-              onClick={() => setSurface("review")}
-            >
-              <ShieldCheck size={17} />
-            </button>
-            <button
-              className={surface === "validation" ? "active" : ""}
-              type="button"
-              disabled={archivedThreadSelected}
-              title="Validation"
-              aria-label="Validation"
-              onClick={() => setSurface("validation")}
-            >
-              <FlaskConical size={17} />
+              <span>Project files</span>
             </button>
             <button
               className={surface === "git" ? "active" : ""}
@@ -1238,9 +1274,10 @@ export function DesktopApp() {
               disabled={archivedThreadSelected}
               title="Git and pull requests"
               aria-label="Git and pull requests"
-              onClick={() => setSurface("git")}
+              onClick={() => openWorkSurface("git")}
             >
               <GitPullRequest size={17} />
+              <span>Git and pull requests</span>
             </button>
             <button
               className={surface === "preview" ? "active" : ""}
@@ -1248,9 +1285,10 @@ export function DesktopApp() {
               disabled={archivedThreadSelected}
               title="Preview"
               aria-label="Preview"
-              onClick={() => setSurface("preview")}
+              onClick={() => openWorkSurface("preview")}
             >
               <MonitorPlay size={17} />
+              <span>Preview</span>
             </button>
             <button
               className={surface === "terminal" ? "active" : ""}
@@ -1258,37 +1296,46 @@ export function DesktopApp() {
               disabled={archivedThreadSelected}
               title="Terminal"
               aria-label="Terminal"
-              onClick={() => setSurface("terminal")}
+              onClick={() => openWorkSurface("terminal")}
             >
               <TerminalSquare size={17} />
+              <span>Terminal</span>
             </button>
+            <span className="surface-tabs-heading">Configure</span>
             <button
               className={surface === "mcp" ? "active" : ""}
               type="button"
               title="Apps"
               aria-label="Apps"
-              onClick={() => setSurface("mcp")}
+              onClick={() => openWorkSurface("mcp")}
             >
               <Plug size={17} />
+              <span>Apps</span>
             </button>
-            <button className={surface === "settings" ? "active" : ""} type="button" title="Settings" aria-label="Settings" onClick={() => openCapabilitySettings()}>
+            <button className={surface === "settings" ? "active" : ""} type="button" title="Settings" aria-label="Settings" onClick={() => { openCapabilitySettings(); closeWorkNavigator(); }}>
               <Settings size={17} />
+              <span>Settings</span>
             </button>
-            <button className={surface === "diagnostics" ? "active" : ""} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => setSurface("diagnostics")}>
+            <button className={surface === "diagnostics" ? "active" : ""} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => openWorkSurface("diagnostics")}>
               <Wrench size={17} />
+              <span>Diagnostics</span>
             </button>
           </nav>
 
-          {surface === "chat" ? (
-            <ConversationExplorer
+          <ConversationExplorer
               threads={state.threads}
               activeThreadId={state.activeThreadId}
               projects={settings?.projects ?? []}
+              searchInputRef={workNavigatorSearchRef}
               onSelect={(threadId) => {
                 setState((current) => current === undefined ? current : selectRendererThread(current, threadId));
                 setSurface("chat");
+                closeWorkNavigator();
               }}
-              onNewConversation={() => newConversation()}
+              onNewConversation={() => {
+                newConversation();
+                closeWorkNavigator();
+              }}
               onRename={(threadId, title) => setState((current) => current === undefined ? current : renameRendererThread(current, threadId, title))}
               onArchive={async (threadId) => {
                 const thread = threadsRef.current.find((candidate) => candidate.id === threadId);
@@ -1331,81 +1378,10 @@ export function DesktopApp() {
                 setSurface("chat");
               }}
             />
-          ) : surface === "projects" ? (
-            <>
-              <div className="rail-heading">
-                <span>Projects</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Add project"
-                  aria-label="Add project"
-                  onClick={() =>
-                    void addProject().catch((cause) =>
-                      setSurfaceError("projects", errorMessage(cause)),
-                    )
-                  }
-                >
-                  <Plus size={17} />
-                </button>
-              </div>
-              <nav className="thread-list project-rail-list">
-                {settings?.projects.map((project) => (
-                  <button
-                    className={`thread-row ${project.path === selectedProject?.path ? "active" : ""}`}
-                    key={project.path}
-                    type="button"
-                    title={project.path}
-                    onClick={() => setSelectedProjectPath(project.path)}
-                  >
-                    <span>{project.label}</span>
-                  </button>
-                ))}
-                {settings?.projects.length === 0 ? (
-                  <p className="rail-empty">No projects</p>
-                ) : null}
-              </nav>
-            </>
-          ) : (
-            <div className="rail-context">
-              <span>
-                {surface === "mission-control"
-                  ? "Mission control"
-                  : surface === "diff"
-                    ? "Diff"
-                    : surface === "review"
-                      ? "Review"
-                      : surface === "validation"
-                        ? "Validation"
-                        : surface === "git"
-                          ? "Git and pull requests"
-                          : surface === "preview"
-                            ? "Preview"
-                            : surface === "terminal"
-                              ? "Terminal"
-                              : surface === "mcp"
-                                ? "Apps"
-                                : "Diagnostics"}
-              </span>
-              <p>
-                {surface === "mission-control" ||
-                surface === "diff" ||
-                surface === "review" ||
-                surface === "validation" ||
-                surface === "git" ||
-                surface === "preview" ||
-                surface === "terminal"
-                  ? activeThread.title
-                  : surface === "mcp"
-                    ? "Apps available on this device"
-                    : (runtimeHealth?.state ?? "unknown")}
-              </p>
-            </div>
-          )}
-        </aside> : null}
+        </aside>
 
         {surface === "chat" ? (
-          <main className="conversation-pane" id="app-main">
+          <main className="conversation-pane" id="app-main" inert={workNavigatorOpen ? true : undefined}>
           <section className="transcript" aria-label="Conversation transcript">
             {conversationTimeline.length === 0 ? (
               <div className="empty-transcript">
@@ -1607,7 +1583,7 @@ export function DesktopApp() {
             </form>}
           </main>
         ) : (
-          <div className="surface-host">
+          <div className="surface-host" inert={workNavigatorOpen ? true : undefined}>
             {systemError !== undefined ? <div className="surface-error" role="alert"><span>{systemError}</span></div> : null}
             {surfaceErrors[surface] !== undefined ? <div className="surface-error" role="alert"><span>{surfaceErrors[surface]}</span></div> : null}
             {surface === "projects" ? (
@@ -1803,6 +1779,7 @@ export function DesktopApp() {
             error={activeThreadFeedback.error}
             errorCapability={activeThreadFeedback.errorCapability}
             onOpenSettings={openCapabilitySettings}
+            inert={workNavigatorOpen}
             onResizeStart={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId);
               const startX = event.clientX;
