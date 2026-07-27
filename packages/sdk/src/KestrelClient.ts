@@ -28,6 +28,8 @@ import type {
   RunnerOperatorRunView,
   RunnerOperatorThreadView,
   RunnerProfile,
+  ExecutionProfileResolveCommandPayload,
+  ExecutionProfileResolvedEventPayload,
   RunnerResponseByCommandType,
   RunnerRunTerminalEvent,
   RunnerRunStreamEvent,
@@ -179,6 +181,18 @@ export class KestrelClient {
   async getProfile(profileId: string, context: KestrelRequestContext): Promise<RunnerProfile> {
     const event = await this.sendCommand("profile.get", { profileId }, context);
     return event.payload.profile;
+  }
+
+  async resolveExecutionProfile(
+    input: ExecutionProfileResolveCommandPayload,
+    context: KestrelRequestContext,
+  ): Promise<ExecutionProfileResolvedEventPayload> {
+    const event = await this.sendCommand(
+      "execution-profile.resolve",
+      input,
+      context,
+    );
+    return event.payload;
   }
 
   async run(

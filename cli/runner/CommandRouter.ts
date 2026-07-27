@@ -4,6 +4,7 @@ import {
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
 import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
+import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
 import { parseTaskAction } from "../../src/missionControl/contracts.js";
 import { parseOperatorControlPolicyFields } from "../../src/orchestration/OperatorControlValidation.js";
 import { parseProductProjectBoardAction } from "../../src/project/contracts.js";
@@ -12,6 +13,7 @@ import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
 import { parseJobInputV1 } from "../job/contracts.js";
 import { readDatabaseUrlSource } from "../localCoreEnv.js";
 import type {
+  ExecutionProfileResolveCommandPayload,
   JobRunCommandPayload,
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
@@ -148,6 +150,12 @@ export class CommandRouter {
       if (command.type === "profile.get") {
         const payload = validateProfileGetPayload(command.payload);
         await this.host.profileGet(command.id, payload);
+        return;
+      }
+
+      if (command.type === "execution-profile.resolve") {
+        const payload = validateExecutionProfileResolvePayload(command.payload);
+        await this.host.executionProfileResolve(command.id, payload);
         return;
       }
 
@@ -1885,6 +1893,61 @@ function validateProfileGetPayload(value: unknown): ProfileGetCommandPayload {
 
   return {
     profileId: record.profileId,
+  };
+}
+
+function validateExecutionProfileResolvePayload(
+  value: unknown,
+): ExecutionProfileResolveCommandPayload {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("execution-profile.resolve payload must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.environmentPresetId !== "cli_dev_local" &&
+    record.environmentPresetId !== "desktop_dev_local" &&
+    record.environmentPresetId !== "workspace_hosted"
+  ) {
+    throw new Error(
+      "execution-profile.resolve payload.environmentPresetId must be cli_dev_local, desktop_dev_local, or workspace_hosted",
+    );
+  }
+  if (
+    record.managedConfiguration !== undefined &&
+    (typeof record.managedConfiguration !== "object" ||
+      record.managedConfiguration === null ||
+      Array.isArray(record.managedConfiguration))
+  ) {
+    throw new Error(
+      "execution-profile.resolve payload.managedConfiguration must be an object when present",
+    );
+  }
+  const managedConfiguration =
+    record.managedConfiguration === undefined
+      ? undefined
+      : parseKestrelManagedConfiguration(record.managedConfiguration);
+  if (
+    record.authoringProfileId !== undefined &&
+    (typeof record.authoringProfileId !== "string" ||
+      record.authoringProfileId.trim().length === 0)
+  ) {
+    throw new Error(
+      "execution-profile.resolve payload.authoringProfileId must be a non-empty string when present",
+    );
+  }
+  return {
+    environmentPresetId: record.environmentPresetId,
+    ...(managedConfiguration !== undefined
+      ? {
+          managedConfiguration: managedConfiguration as Record<
+            string,
+            unknown
+          >,
+        }
+      : {}),
+    ...(record.authoringProfileId !== undefined
+      ? { authoringProfileId: record.authoringProfileId }
+      : {}),
   };
 }
 

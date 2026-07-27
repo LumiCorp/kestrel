@@ -18,6 +18,7 @@ export const RUNNER_ASSISTANT_TEXT_HISTORY_KIND = "runtime.assistant_text" as co
 export const RUNNER_COMMAND_TYPES = [
   "profile.list",
   "profile.get",
+  "execution-profile.resolve",
   "job.run",
   "run.start",
   "run.cancel",
@@ -133,6 +134,7 @@ export type RunnerJobStreamEventType =
 export const RUNNER_EVENT_TYPES = [
   "profile.listed",
   "profile.loaded",
+  "execution-profile.resolved",
   "job.started",
   "job.progress",
   "job.completed",
@@ -661,6 +663,12 @@ export interface ProfileGetCommandPayload {
   profileId: string;
 }
 
+export interface ExecutionProfileResolveCommandPayload {
+  environmentPresetId: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+  managedConfiguration?: Record<string, unknown> | undefined;
+  authoringProfileId?: string | undefined;
+}
+
 export type RunnerProfileReference =
   | {
       profile: RunnerProfile;
@@ -996,6 +1004,7 @@ export type McpRefreshCommandPayload = RunnerProfileReference;
 export interface RunnerCommandPayloadByType {
   "profile.list": ProfileListCommandPayload;
   "profile.get": ProfileGetCommandPayload;
+  "execution-profile.resolve": ExecutionProfileResolveCommandPayload;
   "job.run": JobRunCommandPayload;
   "run.start": RunStartCommandPayload;
   "run.cancel": RunCancelCommandPayload;
@@ -1074,6 +1083,21 @@ export interface ProfileListedEventPayload {
 
 export interface ProfileLoadedEventPayload {
   profile: RunnerProfile;
+}
+
+export interface ExecutionProfileResolvedEventPayload {
+  version: 1;
+  profileId: string;
+  fingerprint: string;
+  policy: {
+    id: string;
+    version: number;
+  };
+  environmentPreset: {
+    id: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+    version: number;
+  };
+  resolvedProfile: RunnerProfile;
 }
 
 export interface JobStartedEventPayload {
@@ -1471,6 +1495,7 @@ export interface McpRefreshedEventPayload {
 export interface RunnerEventPayloadByType {
   "profile.listed": ProfileListedEventPayload;
   "profile.loaded": ProfileLoadedEventPayload;
+  "execution-profile.resolved": ExecutionProfileResolvedEventPayload;
   "job.started": JobStartedEventPayload;
   "job.progress": JobProgressEventPayload;
   "job.completed": JobCompletedEventPayload;
@@ -1545,6 +1570,7 @@ export type RunnerRunStreamEvent = Extract<
 export interface RunnerResponseByCommandType {
   "profile.list": RunnerEventEnvelope<"profile.listed">;
   "profile.get": RunnerEventEnvelope<"profile.loaded">;
+  "execution-profile.resolve": RunnerEventEnvelope<"execution-profile.resolved">;
   "job.run": RunnerEventEnvelope<"job.completed"> | RunnerEventEnvelope<"job.failed">;
   "run.start": RunnerRunTerminalEvent;
   "run.cancel": RunnerEventEnvelope<"run.cancelled">;
@@ -1607,6 +1633,7 @@ export interface RunnerResponseByCommandType {
 export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "profile.list": ["profile.listed"],
   "profile.get": ["profile.loaded"],
+  "execution-profile.resolve": ["execution-profile.resolved"],
   "job.run": ["job.completed", "job.failed"],
   "run.start": ["run.completed", "run.failed", "run.cancelled"],
   "run.cancel": ["run.cancelled"],
@@ -1893,6 +1920,17 @@ function parseRunnerCommandPayloadV2(
       break;
     case "profile.get":
       requireNonEmptyString(payload.profileId, `${label}.profileId`);
+      break;
+    case "execution-profile.resolve":
+      validateEnum(payload.environmentPresetId, `${label}.environmentPresetId`, [
+        "cli_dev_local",
+        "desktop_dev_local",
+        "workspace_hosted",
+      ]);
+      if (payload.managedConfiguration !== undefined) {
+        requireRecord(payload.managedConfiguration, `${label}.managedConfiguration`);
+      }
+      validateOptionalNonEmptyString(payload.authoringProfileId, `${label}.authoringProfileId`);
       break;
     case "job.run": {
       validateOptionalProfile(payload.profile, `${label}.profile`);
@@ -2246,6 +2284,19 @@ function parseRunnerEventPayloadV2(
       break;
     case "profile.loaded":
       validateRunnerProfile(requireRecord(payload.profile, `${label}.profile`), `${label}.profile`);
+      break;
+    case "execution-profile.resolved":
+      if (payload.version !== 1) {
+        throw new RunnerProtocolContractError(`${label}.version must be 1`);
+      }
+      requireNonEmptyString(payload.profileId, `${label}.profileId`);
+      validateSha256(payload.fingerprint, `${label}.fingerprint`);
+      validateProfileResolutionProvenance(payload.policy, `${label}.policy`);
+      validateEnvironmentPresetProvenance(payload.environmentPreset, `${label}.environmentPreset`);
+      validateRunnerProfile(
+        requireRecord(payload.resolvedProfile, `${label}.resolvedProfile`),
+        `${label}.resolvedProfile`,
+      );
       break;
     case "job.started":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
@@ -3510,6 +3561,34 @@ function validateWorkspaceChangeScope(scope: Record<string, unknown>, label: str
 function validateWorkspaceDiffOptions(options: Record<string, unknown>, label: string): void {
   validateOptionalIntegerRange(options.contextLines, `${label}.contextLines`, 0, 100);
   if (options.whitespace !== undefined) validateEnum(options.whitespace, `${label}.whitespace`, ["show", "ignore_all", "ignore_eol"]);
+}
+
+function validateSha256(value: unknown, label: string): void {
+  if (typeof value !== "string" || /^[a-f0-9]{64}$/u.test(value) === false) {
+    throw new RunnerProtocolContractError(`${label} must be a SHA-256 digest`);
+  }
+}
+
+function validateProfileResolutionProvenance(value: unknown, label: string): void {
+  const record = requireRecord(value, label);
+  requireNonEmptyString(record.id, `${label}.id`);
+  const version = requireNonNegativeInteger(record.version, `${label}.version`);
+  if (version < 1) {
+    throw new RunnerProtocolContractError(`${label}.version must be positive`);
+  }
+}
+
+function validateEnvironmentPresetProvenance(value: unknown, label: string): void {
+  const record = requireRecord(value, label);
+  validateEnum(record.id, `${label}.id`, [
+    "cli_dev_local",
+    "desktop_dev_local",
+    "workspace_hosted",
+  ]);
+  const version = requireNonNegativeInteger(record.version, `${label}.version`);
+  if (version < 1) {
+    throw new RunnerProtocolContractError(`${label}.version must be positive`);
+  }
 }
 
 function requireNonNegativeInteger(value: unknown, label: string): number {

@@ -27,7 +27,7 @@ contractTest("runtime.hermetic", "Local Core execution profile registry is deter
   assert.deepEqual(reloaded, first.profile);
   assert.match(
     first.profileId,
-    /^kestrel-one:desktop_dev_local:[a-f0-9]{64}$/u,
+    /^kestrel:desktop_dev_local:[a-f0-9]{64}$/u,
   );
   assert.equal(
     (
@@ -51,13 +51,13 @@ contractTest("runtime.hermetic", "Local Core execution profile registry invalida
   }).profile;
   const registry = new LocalCoreExecutionProfileRegistry(home);
   const first = await registry.register(profile, "desktop_dev_local", {
-    policy: { id: "kestrel-one", version: 1 },
+    policy: { id: "kestrel", version: 2 },
     environmentPreset: { id: "desktop_dev_local", version: 1 },
     modelConfiguration: { id: "desktop-default", revision: 1 },
     integrationContracts: [{ id: "github", revision: 1 }],
   });
   const repeated = await registry.register(profile, "desktop_dev_local", {
-    policy: { id: "kestrel-one", version: 1 },
+    policy: { id: "kestrel", version: 2 },
     environmentPreset: { id: "desktop_dev_local", version: 1 },
     modelConfiguration: { id: "desktop-default", revision: 1 },
     integrationContracts: [{ id: "github", revision: 1 }],
@@ -66,7 +66,7 @@ contractTest("runtime.hermetic", "Local Core execution profile registry invalida
     profile,
     "desktop_dev_local",
     {
-      policy: { id: "kestrel-one", version: 1 },
+      policy: { id: "kestrel", version: 2 },
       environmentPreset: { id: "desktop_dev_local", version: 1 },
       modelConfiguration: { id: "desktop-default", revision: 2 },
       integrationContracts: [{ id: "github", revision: 1 }],
@@ -76,7 +76,7 @@ contractTest("runtime.hermetic", "Local Core execution profile registry invalida
     profile,
     "desktop_dev_local",
     {
-      policy: { id: "kestrel-one", version: 1 },
+      policy: { id: "kestrel", version: 2 },
       environmentPreset: { id: "desktop_dev_local", version: 1 },
       modelConfiguration: { id: "desktop-default", revision: 1 },
       integrationContracts: [{ id: "github", revision: 2 }],

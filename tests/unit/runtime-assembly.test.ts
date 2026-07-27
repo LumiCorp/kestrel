@@ -596,7 +596,7 @@ contractTest("runtime.hermetic", "RuntimeComposer appends one canonical assembly
 
   assert.equal(migrated.record.cause, "profile_migration");
   assert.equal(migrated.record.authority, "profile");
-  assert.equal(migrated.bundle?.metadata?.agentProfileId, "kestrel-one");
+  assert.equal(migrated.bundle?.metadata?.agentProfileId, "kestrel");
   assert.equal(repeated.record.recordId, migrated.record.recordId);
   assert.equal(
     (await store.listThreadAssemblyRecords(thread.threadId)).length,

@@ -58,6 +58,7 @@ const DEFAULT_RUNNER_SERVICE_VERSION = "0.5.1";
 const TERMINAL_EVENT_TYPES = new Set<RunnerEvent["type"]>([
   "profile.listed",
   "profile.loaded",
+  "execution-profile.resolved",
   "job.completed",
   "job.failed",
   "run.completed",

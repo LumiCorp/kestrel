@@ -16,6 +16,8 @@ import {
   KESTREL_ONE_ENVIRONMENT_PRESETS,
   KESTREL_ONE_POLICY_ID,
   KESTREL_ONE_POLICY_VERSION,
+  LEGACY_KESTREL_ONE_POLICY_ID,
+  type KestrelOneProfileOverlay,
 } from "../profile/kestrelOnePolicy.js";
 import {
   LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION,
@@ -31,6 +33,7 @@ import {
 } from "./executionProfileRegistry.js";
 import { readLocalCoreLocalSettings } from "./localSettings.js";
 import type { LocalCoreRuntimeConfigurationV1 } from "./runtimeConfiguration.js";
+import { createDefaultLocalCoreRuntimeConfiguration } from "./runtimeConfiguration.js";
 import { createWebDemoProfile } from "../web/profile.js";
 
 export interface LocalCoreProfileProviderOptions {
@@ -143,21 +146,20 @@ export async function resolveLocalCoreExecutionProfile(
         ? "web_balanced"
         : "cli_dev_local";
   }
-  const registered = await new LocalCoreExecutionProfileRegistry(
-    homePath,
-  ).register(
+  const provenance = buildExecutionProfileRevisionProvenance(
+    request,
     profile,
     environmentPresetId,
-    buildExecutionProfileRevisionProvenance(
-      request,
-      profile,
-      environmentPresetId,
-    ),
   );
+  const registered = await new LocalCoreExecutionProfileRegistry(
+    homePath,
+  ).register(profile, environmentPresetId, provenance);
   return {
     version: 1,
     profileId: registered.profileId,
     fingerprint: registered.fingerprint,
+    policy: provenance.policy,
+    environmentPreset: provenance.environmentPreset,
     resolvedProfile: registered.profile,
   };
 }
@@ -286,7 +288,7 @@ export function resolveLocalCoreConfiguredProfiles(
 
 export function createLocalCoreProfileProvider(
   homePath: string,
-  _options: LocalCoreProfileProviderOptions = {},
+  options: LocalCoreProfileProviderOptions = {},
 ): RunnerProfileProvider {
   const registry = new LocalCoreExecutionProfileRegistry(homePath);
   return {
@@ -295,6 +297,119 @@ export function createLocalCoreProfileProvider(
     },
     async getProfile(profileId) {
       return await registry.get(profileId);
+    },
+    async resolveExecutionProfile(payload) {
+      const store = new ProfileStore(homePath, {
+        managedEnvironmentPresetId:
+          payload.environmentPresetId === "workspace_hosted"
+            ? "workspace_hosted"
+            : "cli_dev_local",
+      });
+      let profile: TuiProfile;
+      if (payload.authoringProfileId !== undefined) {
+        const profiles = resolveLocalCoreConfiguredProfiles(
+          await store.load(),
+          options.runtimeConfiguration ??
+            createDefaultLocalCoreRuntimeConfiguration(
+              new ModelPolicyStore(homePath).read(),
+            ),
+        );
+        const selected = store.findById(profiles, payload.authoringProfileId);
+        if (selected === undefined) {
+          throw new Error(
+            `Profile '${payload.authoringProfileId}' was not found.`,
+          );
+        }
+        if (
+          selected.id === KESTREL_ONE_POLICY_ID ||
+          selected.id === LEGACY_KESTREL_ONE_POLICY_ID ||
+          selected.agentProfileId === KESTREL_ONE_POLICY_ID ||
+          selected.agentProfileId === LEGACY_KESTREL_ONE_POLICY_ID
+        ) {
+          profile = composeKestrelOneProfile({
+            environmentPresetId: payload.environmentPresetId,
+            overlay: {
+              label: selected.label,
+              modelProvider: selected.modelProvider,
+              model: selected.model,
+              modelCredential: selected.modelCredential,
+              modelCapabilities: selected.modelCapabilities,
+              agentStageConfig: selected.agentStageConfig,
+              modelTimeoutMs: selected.modelTimeoutMs,
+              approvalPolicyPackId: selected.approvalPolicyPackId,
+              additionalToolNames: selected.toolAllowlist,
+              mcpServers: selected.mcpServers,
+              toolQueue: selected.toolQueue,
+              codeMode: selected.codeMode,
+              devShell: selected.devShell,
+              delegationLimits: selected.delegation,
+              reasoning: selected.reasoning,
+              theme: selected.theme,
+              default: selected.default,
+              ...(payload.managedConfiguration as
+                | KestrelOneProfileOverlay
+                | undefined),
+            },
+          }).profile;
+        } else {
+          if (payload.managedConfiguration !== undefined) {
+            throw new Error(
+              "execution-profile.resolve cannot apply Kestrel managed configuration to a custom profile.",
+            );
+          }
+          profile = selected;
+        }
+      } else {
+        profile = composeKestrelOneProfile({
+          environmentPresetId: payload.environmentPresetId,
+          overlay: payload.managedConfiguration as
+            | KestrelOneProfileOverlay
+            | undefined,
+        }).profile;
+      }
+      const isKestrelProfile =
+        profile.agentProfileId === KESTREL_ONE_POLICY_ID ||
+        profile.agentProfileId === LEGACY_KESTREL_ONE_POLICY_ID ||
+        profile.id === KESTREL_ONE_POLICY_ID ||
+        profile.id === LEGACY_KESTREL_ONE_POLICY_ID;
+      const provenance: ExecutionProfileRevisionProvenance = {
+        policy: {
+          id: isKestrelProfile
+            ? KESTREL_ONE_POLICY_ID
+            : (profile.agentProfileId ?? profile.id),
+          version: isKestrelProfile ? KESTREL_ONE_POLICY_VERSION : 1,
+        },
+        environmentPreset: {
+          id: payload.environmentPresetId,
+          version:
+            KESTREL_ONE_ENVIRONMENT_PRESETS[payload.environmentPresetId]
+              .version,
+        },
+        ...(payload.authoringProfileId !== undefined
+          ? {
+              authoringProfile: {
+                id: payload.authoringProfileId,
+                revision: fingerprintResolvedProfile(profile),
+              },
+            }
+          : {}),
+      };
+      const registered = await registry.register(
+        profile,
+        payload.environmentPresetId,
+        provenance,
+      );
+      return {
+        version: 1,
+        profileId: registered.profileId,
+        fingerprint: registered.fingerprint,
+        policy: provenance.policy,
+        environmentPreset: {
+          id: payload.environmentPresetId,
+          version: provenance.environmentPreset.version,
+        },
+        resolvedProfile: registered.profile,
+      };
     },
   };
 }

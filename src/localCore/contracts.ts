@@ -45,6 +45,14 @@ export interface LocalCoreExecutionProfileResolution {
   version: typeof LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION;
   profileId: string;
   fingerprint: string;
+  policy: {
+    id: string;
+    version: number;
+  };
+  environmentPreset: {
+    id: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted" | "web_balanced";
+    version: number;
+  };
   resolvedProfile: TuiProfile;
 }
 
@@ -91,7 +99,14 @@ export function parseLocalCoreExecutionProfileResolution(
   const record = requireLocalCoreRecord(value, "execution profile resolution");
   rejectUnknownLocalCoreFields(
     record,
-    new Set(["version", "profileId", "fingerprint", "resolvedProfile"]),
+    new Set([
+      "version",
+      "profileId",
+      "fingerprint",
+      "policy",
+      "environmentPreset",
+      "resolvedProfile",
+    ]),
     "execution profile resolution",
   );
   if (record.version !== LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION) {
@@ -110,6 +125,56 @@ export function parseLocalCoreExecutionProfileResolution(
   if (/^[a-f0-9]{64}$/u.test(fingerprint) === false) {
     throw new Error(
       "Local Core execution profile resolution.fingerprint must be a SHA-256 digest.",
+    );
+  }
+  const policy = requireLocalCoreRecord(
+    record.policy,
+    "execution profile resolution.policy",
+  );
+  rejectUnknownLocalCoreFields(
+    policy,
+    new Set(["id", "version"]),
+    "execution profile resolution.policy",
+  );
+  const policyId = requireLocalCoreString(
+    policy.id,
+    "execution profile resolution.policy.id",
+  );
+  if (
+    typeof policy.version !== "number" ||
+    Number.isSafeInteger(policy.version) === false ||
+    policy.version < 1
+  ) {
+    throw new Error(
+      "Local Core execution profile resolution.policy.version must be a positive integer.",
+    );
+  }
+  const environmentPreset = requireLocalCoreRecord(
+    record.environmentPreset,
+    "execution profile resolution.environmentPreset",
+  );
+  rejectUnknownLocalCoreFields(
+    environmentPreset,
+    new Set(["id", "version"]),
+    "execution profile resolution.environmentPreset",
+  );
+  if (
+    environmentPreset.id !== "cli_dev_local" &&
+    environmentPreset.id !== "desktop_dev_local" &&
+    environmentPreset.id !== "workspace_hosted" &&
+    environmentPreset.id !== "web_balanced"
+  ) {
+    throw new Error(
+      "Local Core execution profile resolution.environmentPreset.id is invalid.",
+    );
+  }
+  if (
+    typeof environmentPreset.version !== "number" ||
+    Number.isSafeInteger(environmentPreset.version) === false ||
+    environmentPreset.version < 1
+  ) {
+    throw new Error(
+      "Local Core execution profile resolution.environmentPreset.version must be a positive integer.",
     );
   }
   const profile = requireLocalCoreRecord(
@@ -140,6 +205,14 @@ export function parseLocalCoreExecutionProfileResolution(
     version: LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION,
     profileId,
     fingerprint,
+    policy: {
+      id: policyId,
+      version: policy.version,
+    },
+    environmentPreset: {
+      id: environmentPreset.id,
+      version: environmentPreset.version,
+    },
     resolvedProfile: structuredClone(profile as TuiProfile),
   };
 }
@@ -261,11 +334,11 @@ export function parseLocalCoreDesktopExecutionConfig(
   }
   if (
     typeof record.profileId !== "string" ||
-    /^kestrel-one:desktop_dev_local:[a-f0-9]{64}$/u.test(record.profileId) ===
+    /^kestrel:desktop_dev_local:[a-f0-9]{64}$/u.test(record.profileId) ===
       false
   ) {
     throw new Error(
-      "Local Core Desktop execution config.profileId must be an immutable Kestrel One Desktop profile reference.",
+      "Local Core Desktop execution config.profileId must be an immutable Kestrel Desktop profile reference.",
     );
   }
 
