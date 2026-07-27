@@ -56,6 +56,7 @@ import { TerminalWorkspace } from "./TerminalWorkspace";
 import { ValidationWorkspace } from "./ValidationWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
 import { getDesktopComposerSubmissionPolicy } from "./composerPolicy";
+import { loadDesktopUiState } from "./uiStateBootstrap";
 import {
   describeDesktopRunnerActivity,
   projectDesktopConversationTimeline,
@@ -173,6 +174,7 @@ export function DesktopApp() {
   const threadsRef = useRef<DesktopRendererState["threads"]>([]);
   const pendingTurnSubmissionsRef = useRef<Record<string, PendingTurnSubmission>>({});
   const acceptedTurnSessionsRef = useRef(new Set<string>());
+  const uiStatePersistenceEnabledRef = useRef(true);
   const { activeRuns, threadViews, threadWorkspaces, authorityStatuses } = authorityCaches;
 
   const activeThread = useMemo(
@@ -280,17 +282,18 @@ export function DesktopApp() {
   useEffect(() => {
     let disposed = false;
     void Promise.all([
-      window.kestrelDesktop.getUiState(),
+      loadDesktopUiState(() => window.kestrelDesktop.getUiState()),
       window.kestrelDesktop.getSettings(),
       window.kestrelDesktop.getRuntimeHealth(),
-    ]).then(([uiState, nextSettings, health]) => {
+    ]).then(([uiStateBootstrap, nextSettings, health]) => {
       if (disposed) {
         return;
       }
+      uiStatePersistenceEnabledRef.current = uiStateBootstrap.persistenceEnabled;
       const defaultConfiguration = nextSettings.modelConfigurations.find(
         (configuration) => configuration.id === nextSettings.defaultModelConfigurationId,
       );
-      const rendererState = readDesktopRendererState(uiState, {
+      const rendererState = readDesktopRendererState(uiStateBootstrap.state, {
         modelConfigurationId: defaultConfiguration?.id,
         modelConfigurationRevision: defaultConfiguration?.currentRevision,
         enabledAppIds: nextSettings.defaultEnabledAppIds,
@@ -415,6 +418,9 @@ export function DesktopApp() {
       : state.theme;
     document.documentElement.dataset.theme = resolvedTheme;
     document.documentElement.style.colorScheme = resolvedTheme;
+    if (uiStatePersistenceEnabledRef.current === false) {
+      return;
+    }
     void window.kestrelDesktop
       .saveUiState(serializeDesktopRendererState(state))
       .catch((cause) => {
@@ -1128,6 +1134,8 @@ export function DesktopApp() {
   }
 
   const healthState = runtimeHealth?.state ?? "degraded";
+  const healthLabel = runtimeHealthLabel(healthState);
+  const detailsLabel = `${inspectorOpen ? "Close" : "Open"} details${healthState === "healthy" ? "" : `, ${healthLabel}`}`;
   const archivedThreadSelected = activeThread.archivedAt !== undefined;
   const activeModelConfiguration = settings?.modelConfigurations.find(
     (configuration) => configuration.id === activeThread.modelConfigurationId,
@@ -1218,10 +1226,10 @@ export function DesktopApp() {
           </button>
           {surface === "chat" ? (
             <button
-              className="details-button"
+              className={`details-button ${healthState === "healthy" ? "" : "needs-attention"}`}
               type="button"
-              title={inspectorOpen ? "Close details" : "Open details"}
-              aria-label={inspectorOpen ? "Close details" : "Open details"}
+              title={detailsLabel}
+              aria-label={detailsLabel}
               aria-controls="context-sidebar"
               aria-expanded={inspectorOpen}
               onClick={() => setInspectorOpen((open) => !open)}
@@ -1553,8 +1561,7 @@ export function DesktopApp() {
             ) : null}
             <div className="composer-actions">
               <div className="composer-actions-left">
-                <label className="composer-model-selector">
-                  <span>Model</span>
+                <div className="composer-model-selector">
                   <select
                     aria-label="Conversation model"
                     disabled={modelSelectionLocked}
@@ -1590,8 +1597,7 @@ export function DesktopApp() {
                       ))}
                   </select>
                   {activeModelRevision !== undefined ? <small title={activeModelRevision.policy.model}>{activeModelRevision.policy.model}</small> : null}
-                </label>
-                <span className="composer-mode-label">{activeThread.mode === "build" ? "Safe build" : modeLabel(activeThread.mode)}</span>
+                </div>
                 <button className="icon-button" type="button" title="Attach files" aria-label="Attach files" disabled={activeThread.draftAttachmentIds.length >= 8} onClick={() => void selectAttachments()}>
                   <Paperclip size={16} />
                 </button>
@@ -2029,6 +2035,12 @@ function readString(value: unknown): string | undefined {
 
 function modeLabel(mode: RendererMode): string {
   return mode === "chat" ? "Chat" : mode === "plan" ? "Plan" : "Build";
+}
+
+function runtimeHealthLabel(state: DesktopRuntimeHealth["state"]): string {
+  if (state === "healthy") return "Runtime ready";
+  if (state === "blocked") return "Runtime blocked";
+  return "Runtime degraded";
 }
 
 function surfacePageTitle(surface: DesktopSurface): string {

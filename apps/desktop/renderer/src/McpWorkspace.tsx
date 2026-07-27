@@ -321,7 +321,6 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
     <main className="surface-pane mcp-surface" id="app-main">
       <header className="surface-header">
         <div>
-          <span className="surface-kicker">Capabilities</span>
           <h1>Apps</h1>
           <p>
             {result === undefined
