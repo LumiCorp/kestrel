@@ -9,7 +9,6 @@ apps/web/.local/
 apps/web/.next/
 apps/cli/
 apps/desktop/
-apps/docs/
 apps/scene*/
 .venv-swebench/
 .hf-cache/
