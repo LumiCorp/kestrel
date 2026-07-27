@@ -35,6 +35,36 @@ Use a dedicated Vercel project named `kestrel-docs` with these settings:
 
 The dedicated project keeps docs previews, production promotion, and rollback independent from Kestrel One.
 
+### Monorepo deployment policy
+
+Both `kestrel-docs` and Kestrel One are connected to this repository, so Vercel
+receives every Git push for both projects. The project root directory determines
+what Vercel builds; it does not, by itself, decide whether that project needs a
+deployment.
+
+Keep Vercel's **Skip unaffected projects** behavior enabled for both projects.
+It uses the pnpm workspace dependency graph to avoid allocating a build for an
+application whose source and internal dependencies did not change. The expected
+outcomes are:
+
+| Change | `kestrel-docs` | Kestrel One |
+| --- | --- | --- |
+| Docs content or docs app source only (`apps/docs/**`) | Deploy | Skip |
+| Kestrel One source only (`apps/web/**`) | Skip | Deploy |
+| A shared dependency, workspace relationship, dependency lockfile impact, or root deployment input | Deploy as affected | Deploy as affected |
+
+Treat root deployment inputs such as `.vercelignore` as shared: a change can
+alter the source bundle for either project and may correctly deploy both. This
+is different from a normal MDX or docs-copy update, which should not cause a
+Kestrel One build.
+
+If an apparently docs-only change builds Kestrel One, first inspect the Vercel
+deployment and the project's **Root Directory** settings to confirm that
+unaffected-project skipping is enabled. Then confirm that the changed code and
+its internal dependencies are declared in `pnpm-workspace.yaml` and the
+relevant `package.json` files. Do not create a separate production docs branch
+to work around this: `main` remains the single production source of truth.
+
 ## Preview and verification
 
 Create a preview deployment from the exact revision intended for review. Do not attach `docs.kestrelagents.dev` or use `--prod` during preview validation.
@@ -42,7 +72,7 @@ Create a preview deployment from the exact revision intended for review. Do not 
 Run the deployment smoke suite against its immutable URL:
 
 ```bash
-pnpm run docs:smoke -- https://kestrel-docs-example.vercel.app
+pnpm --filter @kestrel/docs smoke:deployment -- https://kestrel-docs-example.vercel.app
 ```
 
 The smoke suite checks the six public journeys, search index, sitemap, robots file, brand asset, permanent redirects, and excluded routes. Complete responsive and interaction QA in the browser before promotion.
@@ -50,7 +80,7 @@ The smoke suite checks the six public journeys, search index, sitemap, robots fi
 Team previews remain protected. For automated checks, provide a scoped Vercel automation bypass secret without committing it:
 
 ```bash
-VERCEL_PROTECTION_BYPASS=your-scoped-secret pnpm run docs:smoke -- https://kestrel-docs-example.vercel.app
+VERCEL_PROTECTION_BYPASS=your-scoped-secret pnpm --filter @kestrel/docs smoke:deployment -- https://kestrel-docs-example.vercel.app
 ```
 
 For manual authenticated inspection, `vercel curl` can generate and use a temporary bypass for the linked project while leaving preview protection enabled.
