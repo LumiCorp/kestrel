@@ -127,7 +127,6 @@ contractTest(
           environmentId: "environment-1",
           workspaceId: "workspace-1",
           hostname,
-          ingressProvider: "kestrel_edge",
           targetProvider: "desktop",
           expiresAt: new Date(now.getTime() + 600_000),
         },

@@ -149,8 +149,6 @@ export async function publishDesktopPreview(request: Request, input: unknown) {
               threadId: null,
               runId: null,
               actorId: user.id,
-              connectionId: null,
-              ingressProvider: "kestrel_edge",
               targetProvider: "desktop",
               desktopConnectionId: connection.id,
               desktopTunnelTokenHash: hashSecret(tunnelSecret),

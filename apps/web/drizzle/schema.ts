@@ -2780,14 +2780,6 @@ export const workspacePreviewLeases = pgTable(
       onDelete: "cascade",
     }),
     actorId: text("actor_id").notNull(),
-    connectionId: text("connection_id").references(() => appConnections.id, {
-      onDelete: "restrict",
-    }),
-    ingressProvider: text("ingress_provider", {
-      enum: ["ngrok", "kestrel_edge"],
-    })
-      .notNull()
-      .default("ngrok"),
     targetProvider: text("target_provider", {
       enum: ["fly", "desktop"],
     })
@@ -2868,7 +2860,6 @@ export const workspacePreviewLeases = pgTable(
           and ${table.desktopConnectionId} is not null
           and ${table.desktopTunnelTokenHash} is not null
           and ${table.localRunRef} is not null
-          and ${table.ingressProvider} = 'kestrel_edge'
         )
       )`,
     ),
