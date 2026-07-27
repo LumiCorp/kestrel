@@ -216,7 +216,6 @@ export function MissionControlWorkspace({
     <main className="surface-pane mission-control-surface" id="app-main">
       <header className="surface-header">
         <div>
-          <span className="surface-kicker">Session operations</span>
           <h1>Mission control</h1>
           <p>{project?.label ?? "Current conversation"}</p>
         </div>

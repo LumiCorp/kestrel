@@ -19,6 +19,7 @@ export function ContextSidebar(props: {
   inert?: boolean;
 }) {
   const actionableItems = props.inboxItems.filter((item) => item.actionable);
+  const showActivity = props.activeRun || props.error !== undefined;
 
   return (
     <aside
@@ -38,30 +39,31 @@ export function ContextSidebar(props: {
             <span>Conversation</span>
           </div>
           <p className="context-title">{props.thread.title}</p>
-          <p className="compact-note">{props.activeRun ? "A run is in progress." : "No run in progress."}</p>
         </section>
 
-        <section className="inspector-section compact-section" aria-live="polite">
-          <div className="section-heading">
-            <Activity size={14} aria-hidden="true" />
-            <span>Activity</span>
-          </div>
-          <p className="context-title">{props.activity}</p>
-          {props.error !== undefined ? (
-            <div className="context-exception" role="alert">
-              <CircleAlert size={15} aria-hidden="true" />
-              <div>
-                <strong>Attention needed</strong>
-                <p>{props.error}</p>
-                {props.errorCapability !== undefined ? (
-                  <button type="button" onClick={() => props.onOpenSettings(props.errorCapability)}>
-                    Open Settings
-                  </button>
-                ) : null}
-              </div>
+        {showActivity ? (
+          <section className="inspector-section compact-section" aria-live="polite">
+            <div className="section-heading">
+              <Activity size={14} aria-hidden="true" />
+              <span>Activity</span>
             </div>
-          ) : null}
-        </section>
+            {props.activeRun ? <p className="context-title">{props.activity}</p> : null}
+            {props.error !== undefined ? (
+              <div className="context-exception" role="alert">
+                <CircleAlert size={15} aria-hidden="true" />
+                <div>
+                  <strong>Attention needed</strong>
+                  <p>{props.error}</p>
+                  {props.errorCapability !== undefined ? (
+                    <button type="button" onClick={() => props.onOpenSettings(props.errorCapability)}>
+                      Open Settings
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         {actionableItems.length > 0 ? (
           <section className="inspector-section compact-section">

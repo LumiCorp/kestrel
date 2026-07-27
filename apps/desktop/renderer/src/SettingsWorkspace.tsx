@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, CircleAlert, RefreshCw, Settings2, X } from "lucide-react";
+import { CheckCircle2, Circle, CircleAlert, RefreshCw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import type {
@@ -86,7 +86,6 @@ export function SettingsWorkspace({
     category,
     view?.capabilities.filter((capability) => capability.category === category) ?? [],
   ])), [view]);
-  const readinessSummary = useMemo(() => summarizeReadiness(view?.capabilities ?? []), [view]);
   const attentionCapabilities = useMemo(
     () => getDesktopCapabilityAttentionQueue(view?.capabilities ?? []),
     [view],
@@ -337,9 +336,8 @@ export function SettingsWorkspace({
     <main className="surface-pane settings-surface" id="app-main">
       <header className="surface-header">
         <div>
-          <span className="surface-kicker">Desktop authority</span>
           <h1>Settings</h1>
-          <p>Understand what Kestrel can use, what is ready, and what needs setup.</p>
+          <p>Models, Apps, permissions, and local capability setup.</p>
         </div>
         <button className="secondary-button" type="button" onClick={() => void refresh()} disabled={loading}>
           <RefreshCw size={15} className={loading ? "spin" : undefined} aria-hidden="true" />
@@ -349,26 +347,20 @@ export function SettingsWorkspace({
 
       {view !== undefined ? (
         <>
-          <div className="settings-authority-note">
-            <Settings2 size={17} aria-hidden="true" />
-            <span>
-              Credentials are {view.credentialStore.available ? "stored securely by Local Core" : "unavailable on this system"} and are never returned to this screen.
-            </span>
-          </div>
-          <div className="capability-summary" aria-label="Capability readiness summary">
-            <span><CheckCircle2 size={15} aria-hidden="true" /><strong>{readinessSummary.ready}</strong> ready</span>
-            <span><CircleAlert size={15} aria-hidden="true" /><strong>{readinessSummary.attention}</strong> need attention</span>
-            <span><Circle size={15} aria-hidden="true" /><strong>{readinessSummary.inactive}</strong> inactive or optional</span>
-          </div>
-          <p className="capability-summary-time">Readiness last checked {new Date(view.refreshedAt).toLocaleString()}.</p>
+          {view.credentialStore.available ? null : (
+            <div className="settings-authority-note" role="status">
+              <CircleAlert size={17} aria-hidden="true" />
+              <span>Secure credential storage is unavailable on this system.</span>
+            </div>
+          )}
           {attentionCapabilities.length > 0 ? (
             <section className="capability-attention-queue" aria-labelledby="capability-attention-title">
               <div className="capability-attention-heading">
                 <div>
-                  <span className="surface-kicker">Next to resolve</span>
-                  <h2 id="capability-attention-title">{attentionCapabilities.length} {attentionCapabilities.length === 1 ? "capability" : "capabilities"} need attention</h2>
+                  <h2 id="capability-attention-title">Needs attention</h2>
+                  <p>{attentionCapabilities.length} {attentionCapabilities.length === 1 ? "capability" : "capabilities"} to resolve.</p>
                 </div>
-                <p>These are the current setup or recovery blockers. Resolve them here, then refresh readiness to confirm the effective Desktop state.</p>
+                <p>Last checked {new Date(view.refreshedAt).toLocaleString()}.</p>
               </div>
               <div className="capability-attention-list">
                 {attentionCapabilities.map((capability) => {
@@ -394,12 +386,7 @@ export function SettingsWorkspace({
                 })}
               </div>
             </section>
-          ) : (
-            <section className="capability-attention-queue capability-attention-clear" aria-label="Capability readiness">
-              <CheckCircle2 size={18} aria-hidden="true" />
-              <p><strong>No setup blockers.</strong> Enabled Desktop capabilities are ready to use.</p>
-            </section>
-          )}
+          ) : null}
           <nav className="settings-category-nav" aria-label="Settings categories">
             {CATEGORY_ORDER.map((category) => (
               <a href={`#settings-${category}`} key={category}>{CATEGORY_LABELS[category]}</a>
@@ -682,15 +669,6 @@ function actionLabel(capability: DesktopCapability): string {
   if (capability.id === "permission.microphone") return "Request access";
   if (capability.readiness === "setup_required" || capability.readiness === "verification_failed") return "Set up";
   return "Configure";
-}
-
-function summarizeReadiness(capabilities: DesktopCapability[]): { ready: number; attention: number; inactive: number } {
-  return capabilities.reduce((summary, capability) => {
-    if (capability.readiness === "ready") summary.ready += 1;
-    else if (capability.readiness === "setup_required" || capability.readiness === "verification_failed" || capability.readiness === "unavailable") summary.attention += 1;
-    else summary.inactive += 1;
-    return summary;
-  }, { ready: 0, attention: 0, inactive: 0 });
 }
 
 export function getDesktopCapabilityAttentionQueue(capabilities: DesktopCapability[]): DesktopCapability[] {

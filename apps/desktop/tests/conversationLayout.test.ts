@@ -90,6 +90,20 @@ contractTest("desktop.hermetic", "composer controls are grouped by context and a
   assert.match(app, /className="composer-actions-left"[\s\S]*className="composer-actions-right"/u);
 });
 
+contractTest("desktop.hermetic", "composer keeps mode and model semantics without redundant visible chrome", async () => {
+  const [styles, app] = await Promise.all([
+    readFile(stylesPath, "utf8"),
+    readFile(appPath, "utf8"),
+  ]);
+
+  assert.match(app, /aria-label="Conversation model"/u);
+  assert.doesNotMatch(app, />Model<\/span>/u);
+  assert.doesNotMatch(app, /Safe build/u);
+  assert.doesNotMatch(app, /composer-mode-label/u);
+  assert.match(styles, /\.composer-model-selector\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*170px\);/su);
+  assert.doesNotMatch(styles, /\.composer-mode-label/u);
+});
+
 contractTest("desktop.hermetic", "active runs suppress stale stalled-attention cards", async () => {
   const app = await readFile(appPath, "utf8");
 
@@ -191,11 +205,30 @@ contractTest("desktop.hermetic", "details persist while Find Work remains a calm
   const [app, styles] = await Promise.all([readFile(appPath, "utf8"), readFile(stylesPath, "utf8")]);
 
   assert.match(app, /readDesktopSidebarState\(INSPECTOR_STATE_KEY, false\)/u);
-  assert.match(app, /aria-label=\{inspectorOpen \? "Close details" : "Open details"\}/u);
+  assert.match(app, /const detailsLabel = `\$\{inspectorOpen \? "Close" : "Open"\} details/u);
+  assert.match(app, /aria-label=\{detailsLabel\}/u);
+  assert.match(app, /runtimeHealthLabel\(healthState\)/u);
+  assert.match(styles, /\.details-button\.needs-attention/u);
   assert.match(app, /className=\{`conversation-rail work-navigator/u);
   assert.match(app, /aria-modal=\{workNavigatorOpen \? true : undefined\}/u);
   assert.doesNotMatch(styles, /\.workspace\.with-conversation-rail\s*\{/u);
   assert.match(app, /storedWidth === null \? 288 : clampInspectorWidth\(Number\(storedWidth\)\)/u);
+});
+
+contractTest("desktop.hermetic", "top-level workspace headers avoid decorative category kickers", async () => {
+  const [settings, apps, mission, projects, diagnostics] = await Promise.all([
+    readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8"),
+    readFile(path.join(testDir, "..", "renderer", "src", "McpWorkspace.tsx"), "utf8"),
+    readFile(path.join(testDir, "..", "renderer", "src", "MissionControlWorkspace.tsx"), "utf8"),
+    readFile(path.join(testDir, "..", "renderer", "src", "ProjectWorkspace.tsx"), "utf8"),
+    readFile(path.join(testDir, "..", "renderer", "src", "DiagnosticsWorkspace.tsx"), "utf8"),
+  ]);
+
+  assert.doesNotMatch(settings, /Desktop authority/u);
+  assert.doesNotMatch(apps, /<span className="surface-kicker">Capabilities<\/span>/u);
+  assert.doesNotMatch(mission, /Session operations/u);
+  assert.doesNotMatch(projects, /\{props\.workspace\?\.kind === "managed" \? "Managed worktree" : "Project"\}/u);
+  assert.doesNotMatch(diagnostics, /<span className="surface-kicker">Local Core<\/span>/u);
 });
 
 contractTest("desktop.hermetic", "archive blocking covers runs, waits, and actionable operator requests", async () => {
