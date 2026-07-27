@@ -384,23 +384,23 @@ export function readSdkAgentShakedownToolObservation(value: unknown): SdkAgentSh
     return ;
   }
   let result = asRecord(update?.output);
-  let auditRecord = asRecord(result?.auditRecord);
-  let output = asRecord(auditRecord?.output);
+  let output = readToolActivityOutput(result);
   let toolInput = asRecord(update?.input);
   let durationMs = typeof update?.durationMs === "number" ? update.durationMs : undefined;
   if (toolName === "effect_result_lookup" && phase === "completed") {
     const effectToolResult = asRecord(output?.output);
     const effectAuditRecord = asRecord(effectToolResult?.auditRecord);
     const effectToolName = asString(effectToolResult?.toolName) ?? asString(effectAuditRecord?.toolName);
-    if (effectToolName !== undefined && effectAuditRecord !== undefined) {
+    if (effectToolName !== undefined && effectToolResult !== undefined) {
       toolName = effectToolName;
       result = effectToolResult;
-      auditRecord = effectAuditRecord;
-      output = asRecord(effectAuditRecord.output);
-      toolInput = asRecord(effectAuditRecord.input) ?? toolInput;
-      durationMs = typeof effectAuditRecord.durationMs === "number"
+      output = readNestedToolActivityOutput(effectToolResult);
+      toolInput = asRecord(effectAuditRecord?.input) ?? asRecord(effectToolResult.input) ?? toolInput;
+      durationMs = typeof effectAuditRecord?.durationMs === "number"
         ? effectAuditRecord.durationMs
-        : durationMs;
+        : typeof effectToolResult.durationMs === "number"
+          ? effectToolResult.durationMs
+          : durationMs;
     }
   }
   const changedFiles = Array.isArray(output?.changedFiles)
@@ -416,8 +416,8 @@ export function readSdkAgentShakedownToolObservation(value: unknown): SdkAgentSh
       ? { stepIndex: readNonNegativeInteger(update?.stepIndex) }
       : {}),
     ...(toolInput !== undefined ? { input: toolInput } : {}),
-    ...(result?.status === "OK" || result?.status === "FAILED"
-      ? { resultStatus: result.status }
+    ...(readToolResultStatus(phase, result) !== undefined
+      ? { resultStatus: readToolResultStatus(phase, result) }
       : {}),
     ...(asString(output?.status) !== undefined
       ? { outputStatus: asString(output?.status)?.toLowerCase() }
@@ -426,6 +426,38 @@ export function readSdkAgentShakedownToolObservation(value: unknown): SdkAgentSh
     ...(asString(output?.sessionId) !== undefined ? { sessionId: asString(output?.sessionId) } : {}),
     ...(changedFiles !== undefined && changedFiles.length > 0 ? { changedFiles } : {}),
   };
+}
+
+function readToolActivityOutput(
+  result: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const auditOutput = asRecord(asRecord(result?.auditRecord)?.output);
+  if (auditOutput !== undefined) {
+    return auditOutput;
+  }
+  return result;
+}
+
+function readNestedToolActivityOutput(
+  result: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  return asRecord(asRecord(result.auditRecord)?.output) ?? asRecord(result.output) ?? result;
+}
+
+function readToolResultStatus(
+  phase: SdkAgentShakedownToolObservation["phase"],
+  result: Record<string, unknown> | undefined,
+): "OK" | "FAILED" | undefined {
+  if (phase === "failed") {
+    return "FAILED";
+  }
+  if (phase !== "completed") {
+    return ;
+  }
+  if (result?.status === "FAILED") {
+    return "FAILED";
+  }
+  return "OK";
 }
 
 function isCodingTestStart(tool: SdkAgentShakedownToolObservation): boolean {

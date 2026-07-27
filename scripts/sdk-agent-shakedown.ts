@@ -8,10 +8,16 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { loadShellAndDotEnv } from "../cli/config/EnvLoader.js";
+import { ProfileStore } from "../cli/config/ProfileStore.js";
+import type { TuiProfile } from "../cli/contracts.js";
 import { createAgent } from "../packages/sdk/src/index.js";
 import { KestrelClient } from "../packages/sdk/src/runner.js";
+import { LocalCoreExecutionProfileRegistry } from "../src/localCore/executionProfileRegistry.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "../src/localCore/home.js";
-import { ModelPolicyStore } from "../src/profile/modelPolicy.js";
+import {
+  ModelPolicyStore,
+  resolveProfileWithModelPolicy,
+} from "../src/profile/modelPolicy.js";
 import type {
   KestrelRequestContext,
   RunnerRunStreamEvent,
@@ -71,7 +77,9 @@ async function main(): Promise<void> {
   await mkdir(reportDir, { recursive: true });
   await seedSdkAgentShakedownWorkspace(workspaceRoot);
 
-  const runner = await startIsolatedWebRunner(options.model);
+  const runner = await startIsolatedWebRunner(options.model, {
+    extraToolAllowlist: scenarioRequiredToolNames(scenarios),
+  });
   const context: KestrelRequestContext = {
     actor: {
       actorId: "sdk-agent-shakedown",
@@ -87,16 +95,21 @@ async function main(): Promise<void> {
   });
   const reports: ScenarioReport[] = [];
   let keepWorkspace = options.keepWorkspace;
+  let selectedProfileId: string | undefined;
 
   try {
     const health = await client.getHealth();
     const profiles = await client.listProfiles(context);
-    const profile = profiles.find((candidate) => candidate.id === "reference");
-    assert.ok(profile, `Reference profile is missing. Profiles: ${profiles.map((item) => item.id).join(", ")}`);
+    const profile = profiles.find((candidate) => candidate.id === runner.profileId);
+    assert.ok(
+      profile,
+      `Registered SDK shake-down profile is missing. Profiles: ${profiles.map((item) => item.id).join(", ")}`,
+    );
+    selectedProfileId = profile.id;
     assert.equal(
       profile.model,
       options.model,
-      `Shake-down requested ${options.model}, but the reference profile resolved ${profile.model ?? "no model"}.`,
+      `Shake-down requested ${options.model}, but the default Reference React profile resolved ${profile.model ?? "no model"}.`,
     );
     process.stdout.write(
       `[sdk-shakedown] runner=${runner.url} service=${health.service.name}@${health.service.version} profile=${profile.id} model=${profile.model}\n`,
@@ -133,7 +146,7 @@ async function main(): Promise<void> {
     version: "sdk_agent_shakedown_v1",
     generatedAt: new Date().toISOString(),
     model: options.model,
-    profileId: "reference",
+    profileId: selectedProfileId ?? "unresolved",
     workspaceRoot: keepWorkspace ? workspaceRoot : null,
     scenarioCount: reports.length,
     passed: reports.length - failed.length,
@@ -164,9 +177,14 @@ async function runScenario(input: {
   const startedAt = Date.now();
   const sessionId = `sdk-shakedown-${input.scenario.id}-${randomUUID()}`;
   const controller = new AbortController();
+  const timeoutMs = input.scenario.timeoutMs ?? SCENARIO_TIMEOUT_MS;
+  let scenarioTimedOut = false;
   const timeout = setTimeout(
-    () => controller.abort(),
-    input.scenario.timeoutMs ?? SCENARIO_TIMEOUT_MS,
+    () => {
+      scenarioTimedOut = true;
+      controller.abort();
+    },
+    timeoutMs,
   );
   const tools: SdkAgentShakedownToolObservation[] = [];
   let terminal: RunnerRunTerminalEvent | undefined;
@@ -223,7 +241,9 @@ async function runScenario(input: {
   const runtimeError = terminalRecord?.type === "run.failed"
     ? terminalRecord.payload.error
     : undefined;
-  const observationErrors = terminalRecord === undefined || result === undefined
+  const observationErrors = scenarioTimedOut
+    ? [`Scenario timed out after ${timeoutMs}ms before completing.`]
+    : terminalRecord === undefined || result === undefined
     ? [formatError(thrownError ?? new Error(
         terminalRecord === undefined
           ? "SDK stream ended without a terminal event."
@@ -236,7 +256,9 @@ async function runScenario(input: {
         visibleTodos,
         tools,
       });
-  const workspaceErrors = await verifyScenarioWorkspace(input.scenario.id, input.workspaceRoot);
+  const workspaceErrors = scenarioTimedOut
+    ? []
+    : await verifyScenarioWorkspace(input.scenario.id, input.workspaceRoot);
   const errors = [
     ...(runtimeError !== undefined ? [`Runtime failed: ${formatError(runtimeError)}`] : []),
     ...observationErrors,
@@ -532,9 +554,12 @@ function renderFixtureProcess(result: {
   });
 }
 
-async function startIsolatedWebRunner(model: string): Promise<{
+async function startIsolatedWebRunner(inputModel: string, options: {
+  extraToolAllowlist?: readonly string[] | undefined;
+} = {}): Promise<{
   url: string;
   token: string;
+  profileId: string;
   close(): Promise<void>;
 }> {
   const kestrelHome = await mkdtemp(path.join(os.tmpdir(), "kestrel-sdk-shakedown-home-"));
@@ -552,20 +577,35 @@ async function startIsolatedWebRunner(model: string): Promise<{
     KESTREL_CORE_PLATFORM: "linux",
     KESTREL_STORE_DRIVER: "sqlite",
     DATABASE_URL: undefined,
-    OPENROUTER_MODEL: model,
+    OPENROUTER_MODEL: inputModel,
     FORCE_COLOR: "0",
   };
   const isolatedCoreHome = resolveKestrelCoreHome(runnerEnv, process.platform).homePath;
   const isolatedCorePaths = resolveLocalCorePaths(isolatedCoreHome);
-  new ModelPolicyStore(isolatedCoreHome).write({
+  const modelPolicy = {
     version: 1,
     provider: "openrouter",
-    model,
+    model: inputModel,
     modelByStage: {},
     modelCapabilities: {
       visionInputEnabled: false,
     },
+  } as const;
+  new ModelPolicyStore(isolatedCoreHome).write(modelPolicy);
+  const configuredProfiles = await new ProfileStore(isolatedCoreHome, {
+    managedEnvironmentPresetId: "cli_dev_local",
+  }).load();
+  const referenceProfile = configuredProfiles.find((candidate) => candidate.id === "reference");
+  assert.ok(referenceProfile, "SDK shake-down requires the configured CLI Reference profile.");
+  const shakedownProfile = buildSdkAgentShakedownProfile(referenceProfile, {
+    extraToolAllowlist: options.extraToolAllowlist,
   });
+  const registeredProfile = await new LocalCoreExecutionProfileRegistry(
+    isolatedCoreHome,
+  ).register(
+    resolveProfileWithModelPolicy(shakedownProfile, modelPolicy),
+    "cli_dev_local",
+  );
   const port = await reservePort();
   const child = spawn(
     process.execPath,
@@ -591,6 +631,7 @@ async function startIsolatedWebRunner(model: string): Promise<{
     return {
       url: url as string,
       token: token as string,
+      profileId: registeredProfile.profileId,
       async close() {
         child.kill("SIGINT");
         const exit = await exitPromise;
@@ -606,6 +647,31 @@ async function startIsolatedWebRunner(model: string): Promise<{
     await rm(kestrelHome, { recursive: true, force: true });
     throw new Error(`${formatError(error)}\n${stderr.join("")}`.trim());
   }
+}
+
+export function buildSdkAgentShakedownProfile(
+  profile: TuiProfile,
+  options: { extraToolAllowlist?: readonly string[] | undefined } = {},
+): TuiProfile {
+  return {
+    ...structuredClone(profile),
+    toolAllowlist: [
+      ...new Set([
+        ...(profile.toolAllowlist ?? []),
+        ...(options.extraToolAllowlist ?? []),
+      ]),
+    ],
+  };
+}
+
+function scenarioRequiredToolNames(
+  scenarios: readonly SdkAgentShakedownScenario[],
+): string[] {
+  return [
+    ...new Set(scenarios.flatMap((scenario) =>
+      scenario.requiredTools.map((requirement) => requirement.toolName)
+    )),
+  ];
 }
 
 async function stopLocalCoreFromLock(lockPath: string): Promise<void> {

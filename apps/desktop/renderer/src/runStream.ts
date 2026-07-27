@@ -9,6 +9,8 @@ export interface DesktopRunStreamItem {
   timestamp: string;
   status: "active" | "completed" | "failed";
   reasoningKey?: string | undefined;
+  toolName?: string | undefined;
+  toolInput?: unknown;
 }
 
 export type DesktopConversationTimelineItem =
@@ -92,10 +94,16 @@ export function projectDesktopRunStream(
       return [...current];
     }
     if (phase === "completed" || phase === "failed") {
+      const emptyText = update.contentState === "not_retained"
+        ? "Provider reasoning is not retained for this run."
+        : phase === "failed"
+          ? "Provider reasoning failed before returning visible detail."
+          : "Provider returned no visible reasoning detail.";
       return completeMostRecentReasoning(
         current,
         reasoningKey,
         phase === "failed" ? "failed" : "completed",
+        emptyText,
       );
     }
     const contentState = update.contentState === "not_retained" ? "not_retained" : "live";
@@ -104,13 +112,19 @@ export function projectDesktopRunStream(
       && last?.kind === "reasoning"
       && last.reasoningKey === reasoningKey
       && last.status === "active";
-    const text = contentState === "not_retained"
-      ? "Provider reasoning is not retained for this run."
-      : `${continuesTail ? last.text : ""}${delta ?? ""}`;
+    const text = phase === "unavailable"
+      ? "Provider reasoning is unavailable for this model."
+      : contentState === "not_retained"
+        ? "Provider reasoning is not retained for this run."
+        : `${continuesTail ? last.text : ""}${delta ?? ""}`;
     const item: DesktopRunStreamItem = {
       id: continuesTail ? last.id : `reasoning:${event.id}`,
       kind: "reasoning",
-      label: update.format === "summary" ? "Reasoning summary" : "Reasoning",
+      label: update.format === "summary"
+        ? "Provider reasoning summary"
+        : update.format === "provider_thinking"
+          ? "Provider-visible thinking"
+          : "Provider reasoning",
       text,
       timestamp: readString(update.ts) ?? event.ts,
       status: phase === "unavailable" ? "completed" : "active",
@@ -122,21 +136,27 @@ export function projectDesktopRunStream(
 
   if (event.type === "run.tool.started" || event.type === "run.tool.completed" || event.type === "run.tool.failed") {
     const toolCallId = readString(update.toolCallId) ?? event.id;
-    const toolName = readString(update.displayName) ?? readString(update.toolName) ?? "tool";
+    const canonicalToolName = readString(update.toolName) ?? "tool";
+    const displayName = readString(update.displayName) ?? canonicalToolName;
+    const toolIdentity = displayName === canonicalToolName
+      ? canonicalToolName
+      : `${displayName} (${canonicalToolName})`;
     const phase = event.type.slice("run.tool.".length);
     const error = readRecord(update.error);
     const failure = readString(error?.message);
     return upsert(current, {
       id: `tool:${toolCallId}`,
       kind: "tool",
-      label: "Tool",
+      label: "Tool action",
       text: phase === "started"
-        ? `Running ${toolName}`
+        ? `Running ${toolIdentity}`
         : phase === "failed"
-          ? `${toolName} failed${failure === undefined ? "" : `: ${failure}`}`
-          : `Completed ${toolName}`,
+          ? `${toolIdentity} failed${failure === undefined ? "" : `: ${failure}`}`
+          : `Completed ${toolIdentity}`,
       timestamp: readString(update.ts) ?? event.ts,
       status: phase === "failed" ? "failed" : phase === "completed" ? "completed" : "active",
+      toolName: canonicalToolName,
+      ...("input" in update ? { toolInput: update.input } : {}),
     });
   }
 
@@ -186,6 +206,7 @@ function completeMostRecentReasoning(
   current: readonly DesktopRunStreamItem[],
   reasoningKey: string,
   status: "completed" | "failed",
+  emptyText: string,
 ): DesktopRunStreamItem[] {
   const index = findLastIndex(current, (item) => (
     item.kind === "reasoning"
@@ -194,7 +215,11 @@ function completeMostRecentReasoning(
   ));
   if (index < 0) return [...current];
   const next = [...current];
-  next[index] = { ...next[index]!, status };
+  next[index] = {
+    ...next[index]!,
+    status,
+    ...(next[index]!.text.length === 0 ? { text: emptyText } : {}),
+  };
   return next;
 }
 

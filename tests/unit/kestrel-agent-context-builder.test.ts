@@ -529,6 +529,10 @@ contractTest("runtime.hermetic", "Kestrel deliberator system prompt keeps contex
   assert.match(systemPrompt, /data\.keepRunningSessionIds/u);
   assert.match(systemPrompt, /visible plan agent-owned/u);
   assert.match(systemPrompt, /User-facing control tools:/u);
+  assert.match(systemPrompt, /only when it directly advances the active user request/u);
+  assert.match(systemPrompt, /Never call an unrelated tool to test or verify tool operation/u);
+  assert.match(systemPrompt, /merely satisfy the structured tool-call requirement/u);
+  assert.match(systemPrompt, /truthfully describes that exact selected action/u);
 });
 
 contractTest("runtime.hermetic", "Kestrel agent context builder owns compaction prompt messages", () => {

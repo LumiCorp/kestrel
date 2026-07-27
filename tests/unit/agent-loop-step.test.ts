@@ -4767,7 +4767,7 @@ contractTest("runtime.hermetic", "agent loop advertises assistantProgress inside
       type: "string",
       minLength: 1,
       maxLength: 600,
-      description: "One concise user-facing progress sentence for this action. It is shown only after the action is accepted and committed.",
+      description: "One concise user-facing progress sentence that truthfully describes this exact action and how it advances the active request. It is shown only after the action is accepted and committed.",
     });
   }
 });

@@ -18,17 +18,32 @@ contractTest("desktop.hermetic", "Desktop projects assistant progress and tool a
     update: baseUpdate({ message: "I am starting the development server.", stepIndex: 1, stepAgent: "agent.loop" }),
   });
   const started = event("run.tool.started", {
-    update: baseUpdate({ toolCallId: "tool-1", toolName: "exec_command", phase: "started" }),
+    update: baseUpdate({
+      toolCallId: "tool-1",
+      toolName: "exec_command",
+      displayName: "Exec Command",
+      input: { command: "npm run dev" },
+      phase: "started",
+    }),
   });
   const completed = event("run.tool.completed", {
-    update: baseUpdate({ toolCallId: "tool-1", toolName: "exec_command", phase: "completed" }),
+    update: baseUpdate({
+      toolCallId: "tool-1",
+      toolName: "exec_command",
+      displayName: "Exec Command",
+      input: { command: "npm run dev" },
+      phase: "completed",
+    }),
   });
 
   const projected = [progress, started, completed].reduce(projectDesktopRunStream, []);
   assert.deepEqual(projected.map((item) => [item.kind, item.text, item.status]), [
     ["assistant", "I am starting the development server.", "active"],
-    ["tool", "Completed exec_command", "completed"],
+    ["tool", "Completed Exec Command (exec_command)", "completed"],
   ]);
+  assert.equal(projected[1]?.label, "Tool action");
+  assert.equal(projected[1]?.toolName, "exec_command");
+  assert.deepEqual(projected[1]?.toolInput, { command: "npm run dev" });
 });
 
 contractTest("desktop.hermetic", "Desktop accumulates live reasoning deltas in one visible stream item", () => {
@@ -44,8 +59,80 @@ contractTest("desktop.hermetic", "Desktop accumulates live reasoning deltas in o
 
   const projected = [started, first, second].reduce(projectDesktopRunStream, []);
   assert.equal(projected.length, 1);
-  assert.equal(projected[0]?.label, "Reasoning summary");
+  assert.equal(projected[0]?.label, "Provider reasoning summary");
   assert.equal(projected[0]?.text, "Inspecting the workspace.");
+});
+
+contractTest("desktop.hermetic", "Desktop distinguishes empty, unavailable, and unretained provider reasoning", () => {
+  const empty = [
+    event("run.model.reasoning.started", {
+      update: baseUpdate({ event: "started", attempt: 1, format: "provider_reasoning_text", contentState: "live" }),
+    }),
+    event("run.model.reasoning.completed", {
+      update: baseUpdate({ event: "completed", attempt: 1, format: "provider_reasoning_text", contentState: "live" }),
+    }),
+  ].reduce(projectDesktopRunStream, []);
+  const unavailable = projectDesktopRunStream([], event("run.model.reasoning.unavailable", {
+    update: baseUpdate({ event: "unavailable", attempt: 1, format: "provider_reasoning_text", contentState: "live" }),
+  }));
+  const unretained = projectDesktopRunStream([], event("run.model.reasoning.started", {
+    update: baseUpdate({ event: "started", attempt: 1, format: "provider_reasoning_text", contentState: "not_retained" }),
+  }));
+
+  assert.deepEqual(
+    [empty[0]?.label, empty[0]?.text, empty[0]?.status],
+    ["Provider reasoning", "Provider returned no visible reasoning detail.", "completed"],
+  );
+  assert.equal(unavailable[0]?.text, "Provider reasoning is unavailable for this model.");
+  assert.equal(unretained[0]?.text, "Provider reasoning is not retained for this run.");
+});
+
+contractTest("desktop.hermetic", "Desktop keeps mismatched agent narration separate from canonical Weather action truth", () => {
+  const events = [
+    event("run.agent_progress", {
+      update: baseUpdate({
+        message: "Continuing implementation of Likes feature server action and UI components.",
+        stepIndex: 1,
+        stepAgent: "agent.loop",
+      }),
+    }),
+    event("run.tool.completed", {
+      update: baseUpdate({
+        toolCallId: "call-weather-1",
+        toolName: "free.weather.current",
+        displayName: "Current Weather",
+        input: { city: "Atlantic Ocean" },
+        phase: "completed",
+      }),
+    }),
+  ];
+  const runStream = events.reduce(projectDesktopRunStream, []);
+  const items = projectDesktopConversationTimeline(
+    [{
+      role: "user",
+      text: "Implement the Likes feature.",
+      timestamp: "2026-07-27T13:54:00.000Z",
+    }],
+    runStream,
+  );
+  const html = renderToStaticMarkup(React.createElement(ConversationTimeline, {
+    items,
+    active: true,
+    activity: "Working",
+    endRef: { current: null },
+  }));
+
+  assert.deepEqual(runStream.map((item) => [item.kind, item.text]), [
+    ["assistant", "Continuing implementation of Likes feature server action and UI components."],
+    ["tool", "Completed Current Weather (free.weather.current)"],
+  ]);
+  assert.match(html, /Kestrel/u);
+  assert.match(html, /Continuing implementation of Likes feature/u);
+  assert.match(html, /Details/u);
+  assert.match(html, /Tool action/u);
+  assert.match(html, /Current Weather \(free\.weather\.current\)/u);
+  assert.match(html, /free\.weather\.current input/u);
+  assert.match(html, /Atlantic Ocean/u);
 });
 
 contractTest("desktop.hermetic", "Desktop ignores repeated reasoning starts after an interrupted stream", () => {
@@ -66,7 +153,7 @@ contractTest("desktop.hermetic", "Desktop ignores repeated reasoning starts afte
 
   const projected = events.reduce(projectDesktopRunStream, []);
   assert.equal(projected.length, 1);
-  assert.equal(projected[0]?.label, "Reasoning");
+  assert.equal(projected[0]?.label, "Provider reasoning");
   assert.equal(projected[0]?.text, "Inspecting the workspace.");
 });
 

@@ -17,9 +17,11 @@ import {
   type SdkAgentShakedownToolObservation,
 } from "../../scripts/lib/sdk-agent-shakedown.js";
 import {
+  buildSdkAgentShakedownProfile,
   seedSdkAgentShakedownWorkspace,
   verifySdkAgentShakedownCodingWorkspace,
 } from "../../scripts/sdk-agent-shakedown.js";
+import type { TuiProfile } from "../../cli/contracts.js";
 import { contractTest } from "../helpers/contract-test.js";
 
 
@@ -64,6 +66,24 @@ contractTest("runtime.hermetic", "SDK agent shake-down uses the mini model and e
   assert.throws(
     () => selectSdkAgentShakedownScenarios(["provider-write"]),
     /Unknown SDK shake-down scenario/u,
+  );
+});
+
+contractTest("runtime.hermetic", "SDK agent shake-down profile adds scenario-required tools only inside the harness", () => {
+  const baseProfile = buildProfile(["fs.read_text", "exec_command"]);
+  const profile = buildSdkAgentShakedownProfile(baseProfile, {
+    extraToolAllowlist: scenarioById("coding").requiredTools.map((tool) => tool.toolName),
+  });
+
+  assert.deepEqual(baseProfile.toolAllowlist, ["fs.read_text", "exec_command"]);
+  assert.deepEqual(
+    profile.toolAllowlist,
+    [
+      "fs.read_text",
+      "exec_command",
+      "fs.replace_text",
+      "fs.write_text",
+    ],
   );
 });
 
@@ -162,6 +182,49 @@ contractTest("runtime.hermetic", "SDK agent shake-down reads canonical result an
             yieldTimeMs: 25,
           },
           output: {
+            status: "running",
+            sessionId: "process-1",
+            changedFiles: ["a.txt"],
+          },
+        },
+      },
+    }),
+    {
+      toolName: "exec_command",
+      phase: "completed",
+      seq: 7,
+      stepIndex: 4,
+      input: {
+        command: "npm test",
+        cwd: "coding-fixture",
+        yieldTimeMs: 25,
+      },
+      resultStatus: "OK",
+      outputStatus: "running",
+      durationMs: 12,
+      sessionId: "process-1",
+      changedFiles: ["a.txt"],
+    },
+  );
+});
+
+contractTest("runtime.hermetic", "SDK agent shake-down preserves legacy wrapped tool output compatibility", () => {
+  assert.deepEqual(
+    readSdkAgentShakedownToolObservation({
+      type: "run.tool.completed",
+      payload: {
+        update: {
+          seq: 7,
+          stepIndex: 4,
+          toolName: "exec_command",
+          phase: "completed",
+          durationMs: 12,
+          input: {
+            command: "npm test",
+            cwd: "coding-fixture",
+            yieldTimeMs: 25,
+          },
+          output: {
             status: "OK",
             auditRecord: {
               output: {
@@ -189,6 +252,47 @@ contractTest("runtime.hermetic", "SDK agent shake-down reads canonical result an
       durationMs: 12,
       sessionId: "process-1",
       changedFiles: ["a.txt"],
+    },
+  );
+});
+
+contractTest("runtime.hermetic", "SDK agent shake-down unwraps current effect tool results", () => {
+  assert.deepEqual(
+    readSdkAgentShakedownToolObservation({
+      type: "run.tool.completed",
+      payload: {
+        update: {
+          seq: 8,
+          stepIndex: 5,
+          toolName: "effect_result_lookup",
+          phase: "completed",
+          durationMs: 2,
+          output: {
+            status: "DONE",
+            output: {
+              toolName: "exec_command",
+              status: "OK",
+              input: { sessionId: "process-2" },
+              output: {
+                status: "running",
+                sessionId: "process-2",
+              },
+              durationMs: 18,
+            },
+          },
+        },
+      },
+    }),
+    {
+      toolName: "exec_command",
+      phase: "completed",
+      seq: 8,
+      stepIndex: 5,
+      input: { sessionId: "process-2" },
+      resultStatus: "OK",
+      outputStatus: "running",
+      durationMs: 18,
+      sessionId: "process-2",
     },
   );
 });
@@ -439,4 +543,14 @@ function scenarioById(id: SdkAgentShakedownScenario["id"]): SdkAgentShakedownSce
   const scenario = SDK_AGENT_SHAKEDOWN_SCENARIOS.find((candidate) => candidate.id === id);
   assert.ok(scenario);
   return scenario;
+}
+
+function buildProfile(toolAllowlist: string[]): TuiProfile {
+  return {
+    id: "reference",
+    label: "Reference React",
+    agent: "reference-react",
+    sessionPrefix: "reference",
+    toolAllowlist,
+  };
 }

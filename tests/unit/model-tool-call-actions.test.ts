@@ -67,7 +67,15 @@ contractTest("runtime.hermetic", "provider aliases are transport-only and canoni
   assert.equal(registry.byProviderName.get("exec_command")?.canonicalName, "exec_command");
   assert.match(
     registry.requestTools.find((tool) => tool.name === "exec_command")?.description ?? "",
-    /^Run terminal work\. Include assistantProgress:/u,
+    /^Run terminal work\. Include assistantProgress: one concise sentence that truthfully describes this exact accepted action/u,
+  );
+  const execTool = registry.requestTools.find((tool) => tool.name === "exec_command");
+  const execInputProperties = (
+    execTool?.inputSchema.properties as Record<string, Record<string, unknown>>
+  );
+  assert.match(
+    String(execInputProperties.assistantProgress?.description),
+    /truthfully describes this exact action and how it advances the active request/u,
   );
   assert.equal(registry.byProviderName.has("dev_shell_run"), false);
   assert.equal(registry.requestTools.some((tool) => tool.name === "dev_shell_run"), false);
