@@ -234,6 +234,7 @@ export function ensureBrowserPreviewBridge(): void {
           presetId: settings.presetId,
           capabilityPacks: [...settings.capabilityPacks],
           projects: settings.projects.map((project) => ({ ...project })),
+          projectTombstones: [],
           mcpServers: managedMcpServers,
           capabilityVerifications: {},
           developerShellEnvMode: "inherit",

@@ -76,6 +76,14 @@ import type {
   DesktopWorkspaceFeedbackSubmitResult,
 } from "../../../src/desktopShell/contracts.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
+import type { DesktopEnvironmentStatusProjection } from "../../../src/localCore/desktopEnvironmentConnector.js";
+import type {
+  KestrelOneAccountStatus,
+  KestrelOneAuthorizationSessionView,
+  KestrelOneDesktopPreview,
+  KestrelOneSubmittedTurn,
+  KestrelOneThreadSnapshot,
+} from "../../../src/localCore/kestrelOneAccount.js";
 import type {
   WorkspaceSkillInstallation,
   WorkspaceSkillSource,
@@ -210,6 +218,15 @@ export type {
   WorkspaceSkillInstallation,
   WorkspaceSkillSource,
 } from "../../../src/skills/contracts.js";
+export type { DesktopEnvironmentStatusProjection } from "../../../src/localCore/desktopEnvironmentConnector.js";
+export type {
+  KestrelOneAccountProjection,
+  KestrelOneAccountStatus,
+  KestrelOneAuthorizationSessionView,
+  KestrelOneDesktopPreview,
+  KestrelOneSubmittedTurn,
+  KestrelOneThreadSnapshot,
+} from "../../../src/localCore/kestrelOneAccount.js";
 export type {
   DesktopAppDefinition,
   DesktopAppRef,
@@ -285,6 +302,42 @@ export interface DesktopBridge {
     input: DesktopCapabilityConfigurationInput,
   ): Promise<DesktopCapabilityConfigurationResult>;
   getSettings(): Promise<DesktopRendererSettings>;
+  getKestrelOneAccount(): Promise<KestrelOneAccountStatus>;
+  startKestrelOneAuthorization(input: {
+    baseUrl: string;
+  }): Promise<KestrelOneAuthorizationSessionView>;
+  getKestrelOneAuthorizationStatus(
+    sessionId: string,
+  ): Promise<KestrelOneAuthorizationSessionView>;
+  signOutKestrelOneAccount(): Promise<KestrelOneAccountStatus>;
+  getKestrelOneThread(threadId: string): Promise<KestrelOneThreadSnapshot>;
+  submitKestrelOneTurn(input: {
+    threadId: string;
+    text: string;
+    interactionMode: "chat" | "plan" | "build";
+    model?: string | undefined;
+  }): Promise<KestrelOneSubmittedTurn>;
+  publishKestrelOnePreview(input: {
+    projectId: string;
+    connectionId: string;
+    localRunRef: string;
+    localUrl: string;
+    name?: string | undefined;
+  }): Promise<KestrelOneDesktopPreview>;
+  renewKestrelOnePreview(previewId: string): Promise<KestrelOneDesktopPreview>;
+  unpublishKestrelOnePreview(previewId: string): Promise<void>;
+  getKestrelOneEnvironments(): Promise<DesktopEnvironmentStatusProjection>;
+  startKestrelOneEnrollment(input: {
+    baseUrl: string;
+    desktopName: string;
+  }): Promise<DesktopEnvironmentStatusProjection>;
+  refreshKestrelOneEnrollments(): Promise<DesktopEnvironmentStatusProjection>;
+  setKestrelOneCapacity(
+    capacity: number,
+  ): Promise<DesktopEnvironmentStatusProjection>;
+  disconnectKestrelOneEnvironment(
+    connectionId: string,
+  ): Promise<DesktopEnvironmentStatusProjection>;
   saveSettings(
     settings: DesktopRendererSettingsUpdate,
   ): Promise<DesktopRendererSettings>;
@@ -297,13 +350,17 @@ export interface DesktopBridge {
   ): Promise<DesktopUiStateSyncResult>;
   runTurn(request: DesktopRunTurnRequest): Promise<DesktopRunnerEvent>;
   selectAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
-  importAttachment(input: DesktopAttachmentImportInput): Promise<DesktopAttachmentMetadata>;
+  importAttachment(
+    input: DesktopAttachmentImportInput,
+  ): Promise<DesktopAttachmentMetadata>;
   listAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
   removeAttachment(threadId: string, attachmentId: string): Promise<boolean>;
   submitOperatorControl(
     request: DesktopOperatorControlRequest,
   ): Promise<DesktopRuntimeThreadInspection>;
-  cancelRun(request: DesktopRunCancelRequest): Promise<DesktopRunCancellationResult>;
+  cancelRun(
+    request: DesktopRunCancelRequest,
+  ): Promise<DesktopRunCancellationResult>;
   onRunnerEvent(listener: (event: DesktopRunnerEvent) => void): () => void;
   getModelPolicy(): Promise<ModelPolicyV1>;
   getModelCatalog(

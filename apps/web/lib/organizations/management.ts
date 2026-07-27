@@ -19,6 +19,7 @@ export type OrganizationManagementWorkspace = {
 export type OrganizationManagementEnvironment = {
   id: string;
   name: string;
+  provider: "fly" | "desktop";
   region: string;
   status: string;
   isDefault: boolean;
@@ -26,6 +27,10 @@ export type OrganizationManagementEnvironment = {
   updatedAt: Date;
   failureCode: string | null;
   failureMessage: string | null;
+  connectionState: "online" | "offline" | null;
+  capacity: number | null;
+  activeRuns: number | null;
+  lastSeenAt: Date | null;
   workspaces: OrganizationManagementWorkspace[];
   counts: { total: number; ready: number; stopped: number; attention: number };
 };
@@ -34,7 +39,14 @@ export async function getOrganizationManagementSnapshot(input: {
   organizationId: string;
   userId: string;
 }) {
-  const [organization, membership, environments, workspaces, operations] =
+  const [
+    organization,
+    membership,
+    environments,
+    workspaces,
+    operations,
+    desktopConnections,
+  ] =
     await Promise.all([
       knowledgeDb.query.organizations.findFirst({
         where: eq(schema.organizations.id, input.organizationId),
@@ -71,6 +83,15 @@ export async function getOrganizationManagementSnapshot(input: {
         orderBy: [desc(schema.environmentOperations.updatedAt)],
         limit: 20,
       }),
+      knowledgeDb.query.desktopEnvironmentConnections.findMany({
+        where: and(
+          eq(
+            schema.desktopEnvironmentConnections.organizationId,
+            input.organizationId,
+          ),
+          eq(schema.desktopEnvironmentConnections.status, "active"),
+        ),
+      }),
     ]);
 
   if (!organization || !membership) return null;
@@ -102,9 +123,20 @@ export async function getOrganizationManagementSnapshot(input: {
     environments.map((environment) => {
       const environmentWorkspaces =
         workspacesByEnvironment.get(environment.id) ?? [];
+      const desktopConnection = desktopConnections.find(
+        (connection) => connection.environmentId === environment.id,
+      );
+      const connectionState =
+        desktopConnection?.lastSeenAt &&
+        Date.now() - desktopConnection.lastSeenAt.getTime() <= 90_000
+          ? ("online" as const)
+          : environment.provider === "desktop"
+            ? ("offline" as const)
+            : null;
       return {
         id: environment.id,
         name: environment.name,
+        provider: environment.provider,
         region: environment.region,
         status: environment.status,
         isDefault: environment.isDefault,
@@ -112,6 +144,10 @@ export async function getOrganizationManagementSnapshot(input: {
         updatedAt: environment.updatedAt,
         failureCode: environment.failureCode,
         failureMessage: environment.failureMessage,
+        connectionState,
+        capacity: desktopConnection?.capacity ?? null,
+        activeRuns: desktopConnection?.activeRuns ?? null,
+        lastSeenAt: desktopConnection?.lastSeenAt ?? null,
         workspaces: environmentWorkspaces,
         counts: {
           total: environmentWorkspaces.length,

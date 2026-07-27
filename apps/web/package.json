@@ -42,7 +42,7 @@
     "infra:ps": "docker compose ps postgres redis minio",
     "infra:reset": "docker compose down -v && docker compose up -d",
     "smoke:local": "./scripts/smoke-local.sh",
-    "create-dev-admin": "tsx scripts/create-dev-admin.ts",
+    "create-dev-admin": "node --conditions=react-server --import ./scripts/register-server-only.mjs --import tsx scripts/create-dev-admin.ts",
     "bootstrap": "tsx scripts/bootstrap.ts",
     "generate-secret": "tsx scripts/generate-secret.ts",
     "gateway-credentials:migrate": "tsx scripts/migrate-gateway-credentials.ts",

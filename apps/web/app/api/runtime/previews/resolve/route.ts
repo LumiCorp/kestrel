@@ -15,6 +15,7 @@ export async function GET(request: Request) {
       await resolvePreviewEdgeRoute({
         authorization: request.headers.get("authorization"),
         hostname: new URL(request.url).searchParams.get("hostname") ?? "",
+        accessToken: request.headers.get("x-kestrel-preview-access"),
       }),
       { headers: NO_STORE_HEADERS }
     );

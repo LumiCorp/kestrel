@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Square,
   TerminalSquare,
+  UploadCloud,
 } from "lucide-react";
 import React, {
   createElement,
@@ -96,6 +97,16 @@ export function PreviewWorkspace(props: {
     loading: false,
   });
   const [elapsedNow, setElapsedNow] = useState(() => Date.now());
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [publishDestinations, setPublishDestinations] = useState<
+    Array<{ projectId: string; connectionId: string; label: string }>
+  >([]);
+  const [publishDestinationId, setPublishDestinationId] = useState("");
+  const [publishedPreview, setPublishedPreview] = useState<{
+    id: string;
+    publicUrl: string;
+    expiresAt: string;
+  }>();
   const webviewRef = useRef<PreviewWebview | null>(null);
   const screenshotRef = useRef<HTMLImageElement | null>(null);
   const overflowRef = useRef<HTMLDivElement>(null);
@@ -245,6 +256,72 @@ export function PreviewWorkspace(props: {
     setDrawerPreference(undefined);
     setDrawerView("activity");
   }, [selectedRunId]);
+
+  useEffect(() => {
+    setPublishedPreview(undefined);
+    if (!(props.projectPath && selectedRun && selectedUrl)) {
+      setPublishDestinations([]);
+      setPublishDestinationId("");
+      return;
+    }
+    const desktop = window.kestrelDesktop;
+    if (
+      typeof desktop.getSettings !== "function" ||
+      typeof desktop.getKestrelOneAccount !== "function" ||
+      typeof desktop.getKestrelOneEnvironments !== "function"
+    ) {
+      setPublishDestinations([]);
+      setPublishDestinationId("");
+      return;
+    }
+    let cancelled = false;
+    void Promise.all([
+      desktop.getSettings(),
+      desktop.getKestrelOneAccount(),
+      desktop.getKestrelOneEnvironments(),
+    ])
+      .then(([settings, account, environments]) => {
+        if (cancelled || account.status !== "signed_in") return;
+        const localProject = settings.projects.find(
+          (project) => project.path === props.projectPath,
+        );
+        if (!localProject?.id) return;
+        const organizationNames = new Map(
+          account.projection.organizations.map((organization) => [
+            organization.organizationId,
+            organization.organizationName,
+          ]),
+        );
+        const destinations = environments.environments.flatMap((environment) => {
+          const workspace = environment.workspaces.find(
+            (candidate) => candidate.projectId === localProject.id,
+          );
+          if (!workspace) return [];
+          return account.projection.projects
+            .filter(
+              (project) =>
+                project.environmentProvider === "desktop" &&
+                project.environmentId === environment.environmentId &&
+                project.desktopWorkspaceRef === workspace.workspaceRef,
+            )
+            .map((project) => ({
+              projectId: project.id,
+              connectionId: environment.connectionId,
+              label: `${organizationNames.get(project.organizationId) ?? "Organization"} / ${project.name}`,
+            }));
+        });
+        setPublishDestinations(destinations);
+        setPublishDestinationId(
+          destinations.length === 1 ? destinations[0]!.projectId : "",
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setPublishDestinations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.projectPath, selectedRun?.runId, selectedUrl]);
 
   useEffect(
     () =>
@@ -498,6 +575,59 @@ export function PreviewWorkspace(props: {
     }
   }
 
+  async function publishToKestrelOne(): Promise<void> {
+    if (!(selectedRun && selectedUrl && publishDestinationId)) return;
+    const destination = publishDestinations.find(
+      (candidate) => candidate.projectId === publishDestinationId,
+    );
+    if (!destination) return;
+    setPublishBusy(true);
+    try {
+      const preview = await window.kestrelDesktop.publishKestrelOnePreview({
+        projectId: destination.projectId,
+        connectionId: destination.connectionId,
+        localRunRef: selectedRun.runId,
+        localUrl: selectedUrl,
+        name: `${selectedRun.scriptName} preview`,
+      });
+      setPublishedPreview(preview);
+      props.onError(undefined);
+    } catch (cause) {
+      props.onError(message(cause));
+    } finally {
+      setPublishBusy(false);
+    }
+  }
+
+  async function renewPublishedPreview(): Promise<void> {
+    if (!publishedPreview) return;
+    setPublishBusy(true);
+    try {
+      setPublishedPreview(
+        await window.kestrelDesktop.renewKestrelOnePreview(publishedPreview.id),
+      );
+    } catch (cause) {
+      props.onError(message(cause));
+    } finally {
+      setPublishBusy(false);
+    }
+  }
+
+  async function unpublishFromKestrelOne(): Promise<void> {
+    if (!publishedPreview) return;
+    setPublishBusy(true);
+    try {
+      await window.kestrelDesktop.unpublishKestrelOnePreview(
+        publishedPreview.id,
+      );
+      setPublishedPreview(undefined);
+    } catch (cause) {
+      props.onError(message(cause));
+    } finally {
+      setPublishBusy(false);
+    }
+  }
+
   const webview =
     selectedUrl &&
     (selectedRun?.status === "running" ||
@@ -703,6 +833,79 @@ export function PreviewWorkspace(props: {
           <ExternalLink size={14} />
           <span className="preview-control-label">Open</span>
         </button>
+        {publishDestinations.length > 1 && !publishedPreview ? (
+          <select
+            aria-label="Kestrel One preview destination"
+            value={publishDestinationId}
+            onChange={(event) => setPublishDestinationId(event.target.value)}
+          >
+            <option value="">Choose Project…</option>
+            {publishDestinations.map((destination) => (
+              <option value={destination.projectId} key={destination.projectId}>
+                {destination.label}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        <button
+          aria-label={
+            publishedPreview
+              ? "Unpublish from Kestrel One"
+              : "Publish to Kestrel One"
+          }
+          title={
+            publishDestinations.length === 0
+              ? "Bind this Desktop workspace to an accessible Kestrel One Project first"
+              : publishedPreview
+                ? "Unpublish from Kestrel One"
+                : "Publish to Kestrel One"
+          }
+          type="button"
+          disabled={
+            publishBusy ||
+            !selectedUrl ||
+            selectedRun?.status !== "running" ||
+            (!publishedPreview && !publishDestinationId)
+          }
+          onClick={() =>
+            void (publishedPreview
+              ? unpublishFromKestrelOne()
+              : publishToKestrelOne())
+          }
+        >
+          {publishBusy ? (
+            <LoaderCircle className="preview-spin" size={14} />
+          ) : (
+            <UploadCloud size={14} />
+          )}
+          <span className="preview-control-label">
+            {publishedPreview ? "Unpublish" : "Publish to One"}
+          </span>
+        </button>
+        {publishedPreview ? (
+          <>
+            <button
+              type="button"
+              disabled={publishBusy}
+              onClick={() =>
+                void window.kestrelDesktop.openExternal(
+                  publishedPreview.publicUrl,
+                )
+              }
+            >
+              <ExternalLink size={14} />
+              <span className="preview-control-label">Open published</span>
+            </button>
+            <button
+              type="button"
+              disabled={publishBusy}
+              onClick={() => void renewPublishedPreview()}
+            >
+              <RefreshCw size={14} />
+              <span className="preview-control-label">Renew</span>
+            </button>
+          </>
+        ) : null}
         <select
           aria-label="Preview viewport"
           value={viewport}

@@ -84,6 +84,38 @@ contractTest("web.hermetic", "runtime model selection preserves the base profile
   assert.deepEqual(profile.guardrails, { maxStepVisits: 80 });
 });
 
+contractTest("web.hermetic", "Desktop-local model selection never carries a Kestrel One credential reference", () => {
+  const profile = applyKestrelOneModelToProfile(
+    {
+      id: "base",
+      label: "Base",
+      agent: "reference-react",
+      sessionPrefix: "base",
+      modelCredential: {
+        source: "kestrel-one",
+        runId: "prior",
+        gatewayId: "prior",
+        organizationId: "org",
+        environmentId: "env",
+        rawModelId: "prior",
+        provider: "openai",
+      },
+    },
+    {
+      desktopLocal: true,
+      id: "desktop-local:ollama:qwen",
+      organizationId: "org",
+      environmentId: "env",
+      provider: "ollama",
+      model: "qwen",
+    },
+    "run-1",
+  );
+  assert.equal(profile.modelProvider, "ollama");
+  assert.equal(profile.model, "qwen");
+  assert.equal(profile.modelCredential, undefined);
+});
+
 contractTest("web.hermetic", "Lumi models select the configured native runner protocol", () => {
   assert.equal(
     toKestrelOneRuntimeModelSelection({

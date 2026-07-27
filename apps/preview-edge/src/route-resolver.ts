@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import {
   PREVIEW_EDGE_ROUTE_TICKET_CLOCK_SKEW_SECONDS,
   PREVIEW_EDGE_ROUTE_TICKET_MAX_TTL_SECONDS,
 } from "@lumi/kestrel-environment-auth";
 
 const RESOLVED_ROUTE_VERSION = "preview-edge-resolved-route-v1";
+const RESOLVED_ROUTE_V2_VERSION = "preview-edge-resolved-route-v2";
 const RESOLVER_PATH = "/api/runtime/previews/resolve";
 const RESOLVER_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 16_384;
@@ -11,8 +13,13 @@ const DEFAULT_CACHE_CAPACITY = 10_000;
 
 export type PreviewEdgeRoute = {
   hostname: string;
-  targetUrl: string;
-  authorization: string;
+  target?:
+    | { provider: "fly"; targetUrl: string; authorization: string }
+    | { provider: "desktop"; previewId: string };
+  /** v1 compatibility projection for Fly routes. */
+  targetUrl?: string;
+  /** v1 compatibility projection for Fly routes. */
+  authorization?: string;
   expiresAt: number;
 };
 
@@ -43,39 +50,40 @@ export class PreviewEdgeRouteResolver {
     }
   ) {}
 
-  async resolve(hostname: string): Promise<{
+  async resolve(hostname: string, accessToken: string | null = null): Promise<{
     route: PreviewEdgeRoute;
     cacheOutcome: PreviewEdgeCacheOutcome;
   }> {
     const now = this.now();
-    const cached = this.cache.get(hostname);
+    const cacheKey = `${hostname}\n${accessToken ? createHash("sha256").update(accessToken).digest("base64url") : "anonymous"}`;
+    const cached = this.cache.get(cacheKey);
     if (cached) {
       if (cached.expiresAt > now) {
-        this.cache.delete(hostname);
-        this.cache.set(hostname, cached);
+        this.cache.delete(cacheKey);
+        this.cache.set(cacheKey, cached);
         return { route: cached, cacheOutcome: "hit" };
       }
-      this.cache.delete(hostname);
+      this.cache.delete(cacheKey);
     }
 
-    const existing = this.pending.get(hostname);
+    const existing = this.pending.get(cacheKey);
     if (existing) {
       return { route: await existing, cacheOutcome: "coalesced" };
     }
 
-    const pending = this.resolveFresh(hostname);
-    this.pending.set(hostname, pending);
+    const pending = this.resolveFresh(hostname, accessToken);
+    this.pending.set(cacheKey, pending);
     try {
       const route = await pending;
-      this.cache.set(hostname, route);
+      this.cache.set(cacheKey, route);
       this.evictOverflow();
       return { route, cacheOutcome: "miss" };
     } finally {
-      this.pending.delete(hostname);
+      this.pending.delete(cacheKey);
     }
   }
 
-  private async resolveFresh(hostname: string) {
+  private async resolveFresh(hostname: string, accessToken: string | null) {
     const resolverUrl = new URL(RESOLVER_PATH, this.input.controlPlaneUrl);
     resolverUrl.searchParams.set("hostname", hostname);
     let response: Response;
@@ -86,6 +94,9 @@ export class PreviewEdgeRouteResolver {
         headers: {
           accept: "application/json",
           authorization: `Bearer ${this.input.serviceToken}`,
+          ...(accessToken
+            ? { "x-kestrel-preview-access": accessToken }
+            : {}),
         },
         signal: AbortSignal.timeout(
           this.input.timeoutMs ?? RESOLVER_TIMEOUT_MS
@@ -144,12 +155,12 @@ function parseResolvedRoute(
   now: number
 ): PreviewEdgeRoute {
   if (!isRecord(value)) throw unavailable();
-  const { version, hostname, targetUrl, authorization, expiresAt } = value;
+  const { version, hostname, targetUrl, authorization, expiresAt, target } =
+    value;
   if (
-    version !== RESOLVED_ROUTE_VERSION ||
+    (version !== RESOLVED_ROUTE_VERSION &&
+      version !== RESOLVED_ROUTE_V2_VERSION) ||
     hostname !== expectedHostname ||
-    typeof authorization !== "string" ||
-    !/^Bearer [^\s]+$/u.test(authorization) ||
     typeof expiresAt !== "string"
   ) {
     throw unavailable();
@@ -166,10 +177,36 @@ function parseResolvedRoute(
   ) {
     throw unavailable();
   }
+  if (version === RESOLVED_ROUTE_V2_VERSION) {
+    if (!isRecord(target)) throw unavailable();
+    if (
+      target.provider !== "desktop" ||
+      typeof target.previewId !== "string" ||
+      !/^[0-9a-f-]{36}$/u.test(target.previewId)
+    ) {
+      throw unavailable();
+    }
+    return {
+      hostname,
+      target: { provider: "desktop", previewId: target.previewId },
+      expiresAt: expiresAtMs,
+    };
+  }
+  if (
+    typeof authorization !== "string" ||
+    !/^Bearer [^\s]+$/u.test(authorization)
+  ) {
+    throw unavailable();
+  }
   return {
     hostname,
     targetUrl: parseTargetUrl(targetUrl),
     authorization,
+    target: {
+      provider: "fly",
+      targetUrl: parseTargetUrl(targetUrl),
+      authorization,
+    },
     expiresAt: expiresAtMs,
   };
 }

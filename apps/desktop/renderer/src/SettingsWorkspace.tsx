@@ -1,4 +1,10 @@
-import { CheckCircle2, Circle, CircleAlert, RefreshCw, X } from "lucide-react";
+import {
+  CheckCircle2,
+  Circle,
+  CircleAlert,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import type {
@@ -9,6 +15,10 @@ import type {
   DesktopModelProvider,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
+  DesktopEnvironmentStatusProjection,
+  KestrelOneAccountStatus,
+  KestrelOneAuthorizationSessionView,
+  KestrelOneThreadSnapshot,
 } from "../../src/contracts";
 import {
   appendDesktopModelConfigurationRevision,
@@ -41,7 +51,9 @@ const CATEGORY_LABELS: Record<DesktopCapabilityCategory, string> = {
 interface SettingsWorkspaceProps {
   settings: DesktopRendererSettings;
   initialCapabilityId?: DesktopCapabilityId | undefined;
-  onSettings: (update: DesktopRendererSettingsUpdate) => Promise<DesktopRendererSettings>;
+  onSettings: (
+    update: DesktopRendererSettingsUpdate,
+  ) => Promise<DesktopRendererSettings>;
   onCapabilitiesChange?: ((view: DesktopCapabilityView) => void) | undefined;
   onOpenMcp: () => void;
   onAddProject: () => Promise<void>;
@@ -67,10 +79,14 @@ export function SettingsWorkspace({
   const [saving, setSaving] = useState(false);
   const [editorError, setEditorError] = useState<string>();
   const [notice, setNotice] = useState<string>();
-  const [confirmingCredentialRemoval, setConfirmingCredentialRemoval] = useState(false);
+  const [confirmingCredentialRemoval, setConfirmingCredentialRemoval] =
+    useState(false);
   const [openedTarget, setOpenedTarget] = useState<DesktopCapabilityId>();
-  const [toolServicesNavigationRequest, setToolServicesNavigationRequest] = useState<ToolServicesNavigationRequest>();
-  const [selectedId, setSelectedId] = useState(settings.defaultModelConfigurationId);
+  const [toolServicesNavigationRequest, setToolServicesNavigationRequest] =
+    useState<ToolServicesNavigationRequest>();
+  const [selectedId, setSelectedId] = useState(
+    settings.defaultModelConfigurationId,
+  );
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<DesktopModelProvider>("openrouter");
   const [model, setModel] = useState("");
@@ -79,13 +95,38 @@ export function SettingsWorkspace({
   const [stageOverrides, setStageOverrides] = useState("{}");
   const [apiKey, setApiKey] = useState("");
   const [catalog, setCatalog] = useState<string[]>([]);
+  const [kestrelOne, setKestrelOne] =
+    useState<DesktopEnvironmentStatusProjection>();
+  const [kestrelOneAccount, setKestrelOneAccount] =
+    useState<KestrelOneAccountStatus>();
+  const [kestrelOneAuthorization, setKestrelOneAuthorization] =
+    useState<KestrelOneAuthorizationSessionView>();
+  const [kestrelOneThreadId, setKestrelOneThreadId] = useState("");
+  const [kestrelOneThread, setKestrelOneThread] =
+    useState<KestrelOneThreadSnapshot>();
+  const [kestrelOneMessage, setKestrelOneMessage] = useState("");
+  const [kestrelOneInteractionMode, setKestrelOneInteractionMode] = useState<
+    "chat" | "plan" | "build"
+  >("chat");
+  const [kestrelOneModelId, setKestrelOneModelId] = useState("");
+  const [kestrelOneUrl, setKestrelOneUrl] = useState("https://kestrel.one");
+  const [desktopName, setDesktopName] = useState("Kestrel Desktop");
+  const [kestrelOneBusy, setKestrelOneBusy] = useState(false);
   const dialogRef = useRef<HTMLFormElement>(null);
   const savingRef = useRef(false);
   const refreshVersionRef = useRef(0);
-  const grouped = useMemo(() => new Map(CATEGORY_ORDER.map((category) => [
-    category,
-    view?.capabilities.filter((capability) => capability.category === category) ?? [],
-  ])), [view]);
+  const grouped = useMemo(
+    () =>
+      new Map(
+        CATEGORY_ORDER.map((category) => [
+          category,
+          view?.capabilities.filter(
+            (capability) => capability.category === category,
+          ) ?? [],
+        ]),
+      ),
+    [view],
+  );
   const attentionCapabilities = useMemo(
     () => getDesktopCapabilityAttentionQueue(view?.capabilities ?? []),
     [view],
@@ -97,31 +138,108 @@ export function SettingsWorkspace({
 
   useEffect(() => {
     void refresh();
+    void refreshKestrelOne();
+    void refreshKestrelOneAccount();
   }, []);
 
   useEffect(() => {
-    const revision = selected?.revisions.find((entry) => entry.revision === selected.currentRevision);
+    if (!kestrelOne?.enrollments.length) return;
+    const timer = window.setInterval(() => {
+      void refreshKestrelOne(true);
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [kestrelOne?.enrollments.length]);
+
+  useEffect(() => {
+    if (!kestrelOne?.environments.length) return;
+    const timer = window.setInterval(() => {
+      void window.kestrelDesktop
+        .getKestrelOneEnvironments()
+        .then(setKestrelOne)
+        .catch(() => undefined);
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [kestrelOne?.environments.length]);
+
+  useEffect(() => {
+    if (!kestrelOneThreadId) {
+      setKestrelOneThread(undefined);
+      return;
+    }
+    let disposed = false;
+    const refreshThread = () => {
+      void window.kestrelDesktop
+        .getKestrelOneThread(kestrelOneThreadId)
+        .then((thread) => {
+          if (!disposed) setKestrelOneThread(thread);
+        })
+        .catch((error) => {
+          if (!disposed) onError(errorMessage(error));
+        });
+    };
+    refreshThread();
+    const timer = window.setInterval(refreshThread, 2_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [kestrelOneThreadId]);
+
+  useEffect(() => {
+    if (kestrelOneAuthorization?.state !== "awaiting_user") return;
+    const timer = window.setInterval(() => {
+      void window.kestrelDesktop
+        .getKestrelOneAuthorizationStatus(kestrelOneAuthorization.sessionId)
+        .then((session) => {
+          setKestrelOneAuthorization(session);
+          if (session.state === "complete") {
+            void refreshKestrelOneAccount();
+          }
+        })
+        .catch((error) => onError(errorMessage(error)));
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [kestrelOneAuthorization?.sessionId, kestrelOneAuthorization?.state]);
+
+  useEffect(() => {
+    const revision = selected?.revisions.find(
+      (entry) => entry.revision === selected.currentRevision,
+    );
     setName(selected?.name ?? "");
     setProvider(revision?.policy.provider ?? "openrouter");
     setModel(revision?.policy.model ?? "");
     setTimeoutValue(revision?.policy.modelTimeoutMs?.toString() ?? "");
     setVision(revision?.policy.modelCapabilities.visionInputEnabled ?? false);
-    setStageOverrides(JSON.stringify(revision?.policy.modelByStage ?? {}, null, 2));
+    setStageOverrides(
+      JSON.stringify(revision?.policy.modelByStage ?? {}, null, 2),
+    );
   }, [selected]);
 
   useEffect(() => {
     let disposed = false;
-    void window.kestrelDesktop.getModelCatalog(provider).then((result) => {
-      if (!disposed) setCatalog(result.models);
-    }).catch(() => {
-      if (!disposed) setCatalog([]);
-    });
-    return () => { disposed = true; };
+    void window.kestrelDesktop
+      .getModelCatalog(provider)
+      .then((result) => {
+        if (!disposed) setCatalog(result.models);
+      })
+      .catch(() => {
+        if (!disposed) setCatalog([]);
+      });
+    return () => {
+      disposed = true;
+    };
   }, [provider]);
 
   useEffect(() => {
-    if (initialCapabilityId === undefined || initialCapabilityId === openedTarget || view === undefined) return;
-    const target = view.capabilities.find((capability) => capability.id === initialCapabilityId);
+    if (
+      initialCapabilityId === undefined ||
+      initialCapabilityId === openedTarget ||
+      view === undefined
+    )
+      return;
+    const target = view.capabilities.find(
+      (capability) => capability.id === initialCapabilityId,
+    );
     if (target !== undefined && isConfigurable(target)) openEditor(target);
     setOpenedTarget(initialCapabilityId);
   }, [initialCapabilityId, openedTarget, view]);
@@ -132,7 +250,10 @@ export function SettingsWorkspace({
 
   useEffect(() => {
     if (editing === undefined) return;
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : undefined;
     dialogRef.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && savingRef.current === false) closeEditor();
@@ -170,7 +291,99 @@ export function SettingsWorkspace({
     onCapabilitiesChange?.(nextView);
   }
 
-  async function runAction(action: (() => void | Promise<void>) | undefined): Promise<void> {
+  async function refreshKestrelOne(poll = false): Promise<void> {
+    if (!poll) setKestrelOneBusy(true);
+    try {
+      const next = poll
+        ? await window.kestrelDesktop.refreshKestrelOneEnrollments()
+        : await window.kestrelDesktop.getKestrelOneEnvironments();
+      setKestrelOne(next);
+    } catch (error) {
+      if (!poll) onError(errorMessage(error));
+    } finally {
+      if (!poll) setKestrelOneBusy(false);
+    }
+  }
+
+  async function refreshKestrelOneAccount(): Promise<void> {
+    try {
+      setKestrelOneAccount(await window.kestrelDesktop.getKestrelOneAccount());
+    } catch (error) {
+      onError(errorMessage(error));
+    }
+  }
+
+  async function signInToKestrelOne(): Promise<void> {
+    setKestrelOneBusy(true);
+    onError(undefined);
+    try {
+      const session = await window.kestrelDesktop.startKestrelOneAuthorization({
+        baseUrl: kestrelOneUrl,
+      });
+      setKestrelOneAuthorization(session);
+      setNotice("Finish signing in through your system browser.");
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setKestrelOneBusy(false);
+    }
+  }
+
+  async function submitKestrelOneTurn(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    setKestrelOneBusy(true);
+    onError(undefined);
+    try {
+      const turn = await window.kestrelDesktop.submitKestrelOneTurn({
+        threadId: kestrelOneThreadId,
+        text: kestrelOneMessage,
+        interactionMode: kestrelOneInteractionMode,
+        ...(kestrelOneModelId ? { model: kestrelOneModelId } : {}),
+      });
+      setKestrelOneMessage("");
+      setNotice(
+        `Turn ${turn.sequence} is ${turn.status}. It will run in the Thread's bound Environment.`,
+      );
+      await Promise.all([
+        refreshKestrelOneAccount(),
+        window.kestrelDesktop
+          .getKestrelOneThread(kestrelOneThreadId)
+          .then(setKestrelOneThread),
+      ]);
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setKestrelOneBusy(false);
+    }
+  }
+
+  async function enrollDesktopEnvironment(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    setKestrelOneBusy(true);
+    onError(undefined);
+    try {
+      const next = await window.kestrelDesktop.startKestrelOneEnrollment({
+        baseUrl: kestrelOneUrl,
+        desktopName,
+      });
+      setKestrelOne(next);
+      const enrollment = next.enrollments.at(-1);
+      if (enrollment) {
+        await window.kestrelDesktop.openExternal(enrollment.verificationUrl);
+        setNotice(
+          "Finish the one-time organization approval in your browser. Desktop will connect automatically.",
+        );
+      }
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setKestrelOneBusy(false);
+    }
+  }
+
+  async function runAction(
+    action: (() => void | Promise<void>) | undefined,
+  ): Promise<void> {
     if (action === undefined) return;
     setNotice(undefined);
     onError(undefined);
@@ -182,7 +395,9 @@ export function SettingsWorkspace({
     }
   }
 
-  function actionFor(capability: DesktopCapability): (() => void | Promise<void>) | undefined {
+  function actionFor(
+    capability: DesktopCapability,
+  ): (() => void | Promise<void>) | undefined {
     if (capability.id === "connections.mcp") return onOpenMcp;
     if (isConfigurable(capability)) return () => openEditor(capability);
     if (capability.id === "data.workspace") return onAddProject;
@@ -190,11 +405,17 @@ export function SettingsWorkspace({
     return;
   }
 
-  function attentionActionFor(capability: DesktopCapability): (() => void | Promise<void>) | undefined {
+  function attentionActionFor(
+    capability: DesktopCapability,
+  ): (() => void | Promise<void>) | undefined {
     if (capability.category === "tools_services") {
       return () => {
-        setToolServicesNavigationRequest((current) => createToolServicesNavigationRequest(capability.id, current));
-        document.getElementById("settings-tools_services")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        setToolServicesNavigationRequest((current) =>
+          createToolServicesNavigationRequest(capability.id, current),
+        );
+        document
+          .getElementById("settings-tools_services")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
       };
     }
     return actionFor(capability);
@@ -206,9 +427,11 @@ export function SettingsWorkspace({
     setEditorError(undefined);
     setConfirmingCredentialRemoval(false);
     setDraft({
-      ...Object.fromEntries(capability.settings
-        .filter((field) => field.secret === false)
-        .map((field) => [field.key, field.value ?? ""])),
+      ...Object.fromEntries(
+        capability.settings
+          .filter((field) => field.secret === false)
+          .map((field) => [field.key, field.value ?? ""]),
+      ),
       enabled: capability.enabled,
     });
   }
@@ -231,17 +454,28 @@ export function SettingsWorkspace({
           .filter((field) => field.secret === false)
           .map((field) => {
             const value = draft[field.key];
-            return [field.key, typeof value === "string" && value.trim().length === 0 ? null : value ?? null];
+            return [
+              field.key,
+              typeof value === "string" && value.trim().length === 0
+                ? null
+                : (value ?? null),
+            ];
           }),
       );
       const result = await window.kestrelDesktop.configureCapability({
         capabilityId: editing.id,
-        ...(supportsEnablement(editing) ? { enabled: draft.enabled === true } : {}),
+        ...(supportsEnablement(editing)
+          ? { enabled: draft.enabled === true }
+          : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
-        ...(credential.trim().length > 0 ? { credential: credential.trim() } : {}),
+        ...(credential.trim().length > 0
+          ? { credential: credential.trim() }
+          : {}),
       });
       commitCapabilityView(result.view);
-      setNotice(`${editing.name} was verified and applied${result.runtimeRestarted ? "; the runtime restarted with the new configuration" : ""}.`);
+      setNotice(
+        `${editing.name} was verified and applied${result.runtimeRestarted ? "; the runtime restarted with the new configuration" : ""}.`,
+      );
       closeEditor();
     } catch (error) {
       setEditorError(errorMessage(error));
@@ -280,7 +514,11 @@ export function SettingsWorkspace({
     onError(undefined);
     try {
       const parsedStageOverrides = JSON.parse(stageOverrides) as unknown;
-      if (typeof parsedStageOverrides !== "object" || parsedStageOverrides === null || Array.isArray(parsedStageOverrides)) {
+      if (
+        typeof parsedStageOverrides !== "object" ||
+        parsedStageOverrides === null ||
+        Array.isArray(parsedStageOverrides)
+      ) {
         throw new Error("Stage overrides must be a JSON object.");
       }
       if (apiKey.trim().length > 0) {
@@ -294,34 +532,55 @@ export function SettingsWorkspace({
         onCapabilitiesChange?.(result.view);
         setApiKey("");
       }
-      const base = selected ?? createDesktopModelConfiguration({
-        version: 1,
-        provider,
-        model: model.trim(),
-        modelByStage: {},
-        modelCapabilities: { visionInputEnabled: vision },
-      }, {
-        id: crypto.randomUUID(),
-        name: name.trim(),
-        createdAt: new Date().toISOString(),
-      });
-      const current = base.revisions.find((entry) => entry.revision === base.currentRevision)!.policy;
-      const { modelTimeoutMs: _currentTimeout, ...currentWithoutTimeout } = current;
+      const base =
+        selected ??
+        createDesktopModelConfiguration(
+          {
+            version: 1,
+            provider,
+            model: model.trim(),
+            modelByStage: {},
+            modelCapabilities: { visionInputEnabled: vision },
+          },
+          {
+            id: crypto.randomUUID(),
+            name: name.trim(),
+            createdAt: new Date().toISOString(),
+          },
+        );
+      const current = base.revisions.find(
+        (entry) => entry.revision === base.currentRevision,
+      )!.policy;
+      const { modelTimeoutMs: _currentTimeout, ...currentWithoutTimeout } =
+        current;
       const nextPolicy = {
         ...currentWithoutTimeout,
         provider,
         model: model.trim(),
         modelByStage: parsedStageOverrides as Record<string, string>,
-        ...(timeout.trim().length > 0 ? { modelTimeoutMs: Number(timeout) } : {}),
+        ...(timeout.trim().length > 0
+          ? { modelTimeoutMs: Number(timeout) }
+          : {}),
         modelCapabilities: { visionInputEnabled: vision },
       };
-      const next = selected === undefined
-        ? { ...base, name: name.trim(), revisions: [{ ...base.revisions[0]!, policy: nextPolicy }] }
-        : { ...appendDesktopModelConfigurationRevision(base, nextPolicy), name: name.trim() };
+      const next =
+        selected === undefined
+          ? {
+              ...base,
+              name: name.trim(),
+              revisions: [{ ...base.revisions[0]!, policy: nextPolicy }],
+            }
+          : {
+              ...appendDesktopModelConfigurationRevision(base, nextPolicy),
+              name: name.trim(),
+            };
       await onSettings({
-        modelConfigurations: selected === undefined
-          ? [...settings.modelConfigurations, next]
-          : settings.modelConfigurations.map((entry) => entry.id === next.id ? next : entry),
+        modelConfigurations:
+          selected === undefined
+            ? [...settings.modelConfigurations, next]
+            : settings.modelConfigurations.map((entry) =>
+                entry.id === next.id ? next : entry,
+              ),
       });
       setSelectedId(next.id);
       setNotice(`${next.name} configuration saved.`);
@@ -337,10 +596,19 @@ export function SettingsWorkspace({
       <header className="surface-header">
         <div>
           <h1>Settings</h1>
-          <p>Models, Apps, permissions, and local capability setup.</p>
+          <p>Models, Apps, environments, permissions, and local setup.</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => void refresh()} disabled={loading}>
-          <RefreshCw size={15} className={loading ? "spin" : undefined} aria-hidden="true" />
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => void refresh()}
+          disabled={loading}
+        >
+          <RefreshCw
+            size={15}
+            className={loading ? "spin" : undefined}
+            aria-hidden="true"
+          />
           {loading ? "Checking…" : "Refresh readiness"}
         </button>
       </header>
@@ -350,34 +618,59 @@ export function SettingsWorkspace({
           {view.credentialStore.available ? null : (
             <div className="settings-authority-note" role="status">
               <CircleAlert size={17} aria-hidden="true" />
-              <span>Secure credential storage is unavailable on this system.</span>
+              <span>
+                Secure credential storage is unavailable on this system.
+              </span>
             </div>
           )}
           {attentionCapabilities.length > 0 ? (
-            <section className="capability-attention-queue" aria-labelledby="capability-attention-title">
+            <section
+              className="capability-attention-queue"
+              aria-labelledby="capability-attention-title"
+            >
               <div className="capability-attention-heading">
                 <div>
                   <h2 id="capability-attention-title">Needs attention</h2>
-                  <p>{attentionCapabilities.length} {attentionCapabilities.length === 1 ? "capability" : "capabilities"} to resolve.</p>
+                  <p>
+                    {attentionCapabilities.length}{" "}
+                    {attentionCapabilities.length === 1
+                      ? "capability"
+                      : "capabilities"}{" "}
+                    to resolve.
+                  </p>
                 </div>
-                <p>Last checked {new Date(view.refreshedAt).toLocaleString()}.</p>
+                <p>
+                  Last checked {new Date(view.refreshedAt).toLocaleString()}.
+                </p>
               </div>
               <div className="capability-attention-list">
                 {attentionCapabilities.map((capability) => {
                   const action = attentionActionFor(capability);
                   const CapabilityIcon = readinessIcon(capability.readiness);
                   return (
-                    <article className="capability-attention-item" data-readiness={capability.readiness} key={capability.id}>
+                    <article
+                      className="capability-attention-item"
+                      data-readiness={capability.readiness}
+                      key={capability.id}
+                    >
                       <div>
                         <div className="capability-attention-title">
                           <CapabilityIcon size={16} aria-hidden="true" />
                           <h3>{capability.name}</h3>
-                          <span className={`capability-readiness readiness-${capability.readiness}`}>{readinessLabel(capability.readiness)}</span>
+                          <span
+                            className={`capability-readiness readiness-${capability.readiness}`}
+                          >
+                            {readinessLabel(capability.readiness)}
+                          </span>
                         </div>
                         <p>{capability.detail}</p>
                       </div>
                       {action !== undefined ? (
-                        <button className="secondary-button" type="button" onClick={() => void runAction(action)}>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => void runAction(action)}
+                        >
                           {actionLabel(capability)}
                         </button>
                       ) : null}
@@ -387,15 +680,480 @@ export function SettingsWorkspace({
               </div>
             </section>
           ) : null}
-          <nav className="settings-category-nav" aria-label="Settings categories">
+          <nav
+            className="settings-category-nav"
+            aria-label="Settings categories"
+          >
             {CATEGORY_ORDER.map((category) => (
-              <a href={`#settings-${category}`} key={category}>{CATEGORY_LABELS[category]}</a>
+              <a href={`#settings-${category}`} key={category}>
+                {CATEGORY_LABELS[category]}
+              </a>
             ))}
           </nav>
         </>
       ) : null}
 
-      {notice !== undefined ? <p className="settings-notice" role="status">{notice}</p> : null}
+      {notice !== undefined ? (
+        <p className="settings-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
+
+      <section
+        className="settings-section"
+        aria-labelledby="kestrel-one-environments-title"
+      >
+        <div className="settings-section-heading">
+          <div>
+            <h2 id="kestrel-one-environments-title">
+              Kestrel One Environments
+            </h2>
+            <p>
+              Enroll this Desktop once per organization. Project members can
+              then run work here without per-task approval.
+            </p>
+          </div>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={kestrelOneBusy}
+            onClick={() => void refreshKestrelOne()}
+          >
+            <RefreshCw
+              size={15}
+              className={kestrelOneBusy ? "spin" : undefined}
+              aria-hidden="true"
+            />
+            Refresh
+          </button>
+        </div>
+        <div className="settings-content settings-card">
+          {kestrelOneAccount?.status === "signed_in" ? (
+            <div className="settings-form">
+              <strong>{kestrelOneAccount.projection.account.name}</strong>
+              <p>{kestrelOneAccount.projection.account.email}</p>
+              <small>
+                {kestrelOneAccount.projection.organizations.length} organization
+                {kestrelOneAccount.projection.organizations.length === 1
+                  ? ""
+                  : "s"}{" "}
+                · {kestrelOneAccount.projection.projects.length} Project
+                {kestrelOneAccount.projection.projects.length === 1
+                  ? ""
+                  : "s"}{" "}
+                · {kestrelOneAccount.projection.threads.length} Thread
+                {kestrelOneAccount.projection.threads.length === 1 ? "" : "s"}
+              </small>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() =>
+                  void window.kestrelDesktop
+                    .signOutKestrelOneAccount()
+                    .then(setKestrelOneAccount)
+                    .catch((error) => onError(errorMessage(error)))
+                }
+              >
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <div className="settings-form">
+              <strong>Kestrel One account</strong>
+              <p>
+                Sign in to see your organizations, Projects, and canonical
+                Threads in Desktop.
+              </p>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={kestrelOneBusy}
+                onClick={() => void signInToKestrelOne()}
+              >
+                Sign in with Kestrel One
+              </button>
+              {kestrelOneAuthorization?.state === "awaiting_user" ? (
+                <small>Waiting for browser sign-in…</small>
+              ) : null}
+            </div>
+          )}
+          {kestrelOneAccount?.status === "signed_in" ? (
+            <div className="settings-form">
+              <strong>Accessible Projects</strong>
+              {kestrelOneAccount.projection.projects.length === 0 ? (
+                <p>No Projects have been shared with this account.</p>
+              ) : (
+                kestrelOneAccount.projection.projects.map((project) => (
+                  <div className="capability-detail" key={project.id}>
+                    <strong>{project.name}</strong>
+                    <small>
+                      {project.role} ·{" "}
+                      {project.environmentProvider === "desktop"
+                        ? "Desktop Environment"
+                        : "Fly.io Environment"}
+                    </small>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : null}
+          {kestrelOneAccount?.status === "signed_in" &&
+          kestrelOneAccount.projection.threads.length > 0 ? (
+            <form
+              className="settings-form"
+              onSubmit={(event) => void submitKestrelOneTurn(event)}
+            >
+              <strong>Continue a Kestrel One Thread</strong>
+              <label>
+                Thread
+                <select
+                  required
+                  value={kestrelOneThreadId}
+                  onChange={(event) => {
+                    setKestrelOneThreadId(event.target.value);
+                    setKestrelOneThread(undefined);
+                    setKestrelOneModelId("");
+                  }}
+                >
+                  <option value="">Choose a Thread</option>
+                  {kestrelOneAccount.projection.threads.map((thread) => (
+                    <option value={thread.id} key={thread.id}>
+                      {thread.title || "Untitled Thread"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {kestrelOneThread ? (
+                <div className="settings-form">
+                  <div className="capability-detail">
+                    <strong>{kestrelOneThread.thread.title}</strong>
+                    <small>
+                      Queue: {kestrelOneThread.queue.state}
+                      {kestrelOneThread.queue.queuedTurnIds.length > 0
+                        ? ` · ${kestrelOneThread.queue.queuedTurnIds.length} queued`
+                        : ""}
+                    </small>
+                  </div>
+                  {kestrelOneThread.messages.slice(-20).map((message) => {
+                    const turn = kestrelOneThread.turns.find(
+                      (candidate) => candidate.id === message.turnId,
+                    );
+                    return (
+                      <article
+                        className="capability-card"
+                        data-readiness={
+                          turn?.status === "failed" ? "setup_required" : "ready"
+                        }
+                        key={message.id}
+                      >
+                        <div className="capability-card-main">
+                          <div className="capability-title-row">
+                            <div>
+                              <h3>
+                                {message.role === "user"
+                                  ? "You"
+                                  : message.role === "assistant"
+                                    ? "Kestrel"
+                                    : "System"}
+                              </h3>
+                              {turn ? (
+                                <p>
+                                  Turn {turn.sequence} · {turn.status} ·{" "}
+                                  {turn.stage.replaceAll("_", " ")}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+                          {message.parts.map((part, index) => (
+                            <div
+                              className="capability-detail"
+                              key={`${message.id}:${part.kind}:${index}`}
+                            >
+                              {part.kind === "text" ? null : (
+                                <small>{part.label}</small>
+                              )}
+                              <p>{part.text}</p>
+                            </div>
+                          ))}
+                          {turn?.failure ? (
+                            <p className="capability-detail">
+                              {turn.failure.message}
+                            </p>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : null}
+              <label>
+                Mode
+                <select
+                  value={kestrelOneInteractionMode}
+                  onChange={(event) =>
+                    setKestrelOneInteractionMode(
+                      event.target.value as "chat" | "plan" | "build",
+                    )
+                  }
+                >
+                  <option value="chat">Chat</option>
+                  <option value="plan">Plan</option>
+                  <option value="build">Build</option>
+                </select>
+              </label>
+              {(() => {
+                const thread = kestrelOneAccount.projection.threads.find(
+                  (candidate) => candidate.id === kestrelOneThreadId,
+                );
+                const project = kestrelOneAccount.projection.projects.find(
+                  (candidate) => candidate.id === thread?.projectId,
+                );
+                const environment = kestrelOne?.environments.find(
+                  (candidate) =>
+                    candidate.environmentId === project?.environmentId,
+                );
+                const localModels =
+                  environment?.models.filter(
+                    (candidate) => candidate.health === "ready",
+                  ) ?? [];
+                return localModels.length > 0 ? (
+                  <label>
+                    Model
+                    <select
+                      value={kestrelOneModelId}
+                      onChange={(event) =>
+                        setKestrelOneModelId(event.target.value)
+                      }
+                    >
+                      <option value="">Kestrel One default</option>
+                      {localModels.map((candidate) => {
+                        const id = `desktop-local:${candidate.provider}:${encodeURIComponent(candidate.model)}`;
+                        return (
+                          <option value={id} key={id}>
+                            This Desktop · {candidate.provider}/
+                            {candidate.model}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                ) : null;
+              })()}
+              <label>
+                Message
+                <textarea
+                  required
+                  value={kestrelOneMessage}
+                  onChange={(event) => setKestrelOneMessage(event.target.value)}
+                  placeholder="Message this canonical Thread"
+                />
+              </label>
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={
+                  kestrelOneBusy ||
+                  !kestrelOneThreadId ||
+                  !kestrelOneMessage.trim()
+                }
+              >
+                Send to Thread
+              </button>
+            </form>
+          ) : null}
+        </div>
+        <div className="settings-content settings-card">
+          <form
+            className="settings-form"
+            onSubmit={(event) => void enrollDesktopEnvironment(event)}
+          >
+            <strong>Enroll this Desktop</strong>
+            <label>
+              Kestrel One URL
+              <input
+                type="url"
+                required
+                value={kestrelOneUrl}
+                onChange={(event) => setKestrelOneUrl(event.target.value)}
+              />
+            </label>
+            <label>
+              Desktop name
+              <input
+                required
+                value={desktopName}
+                onChange={(event) => setDesktopName(event.target.value)}
+              />
+            </label>
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={kestrelOneBusy}
+            >
+              {kestrelOneBusy ? "Connecting…" : "Enroll in organization"}
+            </button>
+          </form>
+          <div className="settings-form">
+            <strong>Remote-task capacity</strong>
+            <p>
+              One machine-wide limit shared fairly across all enrolled
+              organizations.
+            </p>
+            <label>
+              Concurrent tasks
+              <input
+                type="number"
+                min={1}
+                max={16}
+                value={kestrelOne?.globalCapacity ?? 1}
+                onChange={(event) => {
+                  const capacity = Number(event.target.value);
+                  if (
+                    Number.isInteger(capacity) &&
+                    capacity >= 1 &&
+                    capacity <= 16
+                  ) {
+                    void window.kestrelDesktop
+                      .setKestrelOneCapacity(capacity)
+                      .then(setKestrelOne)
+                      .catch((error) => onError(errorMessage(error)));
+                  }
+                }}
+              />
+            </label>
+            <small>
+              {kestrelOne?.activeRuns ?? 0} active remote task
+              {(kestrelOne?.activeRuns ?? 0) === 1 ? "" : "s"}
+            </small>
+          </div>
+        </div>
+        {kestrelOne?.activity.length ? (
+          <div className="capability-card-list">
+            {kestrelOne.activity.map((activity) => (
+              <article
+                className="capability-card"
+                data-readiness="ready"
+                key={activity.commandId}
+              >
+                <div className="capability-card-main">
+                  <div className="capability-title-row">
+                    <RefreshCw size={17} aria-hidden="true" />
+                    <div>
+                      <h3>
+                        {activity.projectName} · {activity.threadTitle}
+                      </h3>
+                      <p>
+                        {activity.organizationName} · requested by{" "}
+                        {activity.requestingUserName}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="capability-detail">
+                    Queue: {activity.queueState} · Run: {activity.runState}
+                  </p>
+                </div>
+                <div className="capability-card-actions">
+                  <span className="capability-readiness readiness-ready">
+                    {activity.runState === "running" ? "Running" : "Starting"}
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+        {kestrelOne?.enrollments.map((enrollment) => (
+          <article
+            className="capability-card"
+            data-readiness="setup_required"
+            key={enrollment.requestId}
+          >
+            <div className="capability-card-main">
+              <div className="capability-title-row">
+                <CircleAlert size={17} aria-hidden="true" />
+                <div>
+                  <h3>{enrollment.desktopName}</h3>
+                  <p>Waiting for organization approval in Kestrel One.</p>
+                </div>
+              </div>
+              <p className="capability-detail">
+                Pairing fingerprint: <code>{enrollment.fingerprint}</code>
+              </p>
+            </div>
+            <div className="capability-card-actions">
+              <span className="capability-readiness readiness-setup_required">
+                Approval pending
+              </span>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() =>
+                  void window.kestrelDesktop.openExternal(
+                    enrollment.verificationUrl,
+                  )
+                }
+              >
+                Continue in browser
+              </button>
+            </div>
+          </article>
+        ))}
+        <div className="capability-card-list">
+          {kestrelOne?.environments.map((environment) => (
+            <article
+              className="capability-card"
+              data-readiness={
+                environment.connectionStatus === "online" ? "ready" : "inactive"
+              }
+              key={environment.connectionId}
+            >
+              <div className="capability-card-main">
+                <div className="capability-title-row">
+                  {environment.connectionStatus === "online" ? (
+                    <CheckCircle2 size={17} aria-hidden="true" />
+                  ) : (
+                    <Circle size={17} aria-hidden="true" />
+                  )}
+                  <div>
+                    <h3>{environment.desktopName}</h3>
+                    <p>
+                      Organization {environment.organizationId.slice(0, 8)} ·{" "}
+                      {environment.workspaces.length} synced project
+                      {environment.workspaces.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                </div>
+                <p className="capability-detail">
+                  {environment.connectionStatus === "online"
+                    ? `${environment.activeRuns} active task${environment.activeRuns === 1 ? "" : "s"}`
+                    : (environment.lastError ??
+                      "Offline. New tasks remain queued until this Desktop reconnects.")}
+                </p>
+              </div>
+              <div className="capability-card-actions">
+                <span
+                  className={`capability-readiness readiness-${environment.connectionStatus === "online" ? "ready" : "inactive"}`}
+                >
+                  {environment.connectionStatus === "online"
+                    ? "Online"
+                    : "Offline"}
+                </span>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() =>
+                    void window.kestrelDesktop
+                      .disconnectKestrelOneEnvironment(environment.connectionId)
+                      .then(setKestrelOne)
+                      .catch((error) => onError(errorMessage(error)))
+                  }
+                >
+                  Disconnect
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <div className="settings-sections" aria-busy={loading}>
         {CATEGORY_ORDER.map((category) => {
@@ -417,17 +1175,31 @@ export function SettingsWorkspace({
             );
           }
           return (
-            <section className="settings-section" key={category} aria-labelledby={`settings-${category}-title`} id={`settings-${category}`}>
+            <section
+              className="settings-section"
+              key={category}
+              aria-labelledby={`settings-${category}-title`}
+              id={`settings-${category}`}
+            >
               <div className="settings-section-heading">
-                <h2 id={`settings-${category}-title`}>{CATEGORY_LABELS[category]}</h2>
-                <span>{capabilities.length} {capabilities.length === 1 ? "capability" : "capabilities"}</span>
+                <h2 id={`settings-${category}-title`}>
+                  {CATEGORY_LABELS[category]}
+                </h2>
+                <span>
+                  {capabilities.length}{" "}
+                  {capabilities.length === 1 ? "capability" : "capabilities"}
+                </span>
               </div>
               <div className="capability-card-list">
                 {capabilities.map((capability) => {
                   const action = actionFor(capability);
                   const CapabilityIcon = readinessIcon(capability.readiness);
                   return (
-                    <article className="capability-card" data-readiness={capability.readiness} key={capability.id}>
+                    <article
+                      className="capability-card"
+                      data-readiness={capability.readiness}
+                      key={capability.id}
+                    >
                       <div className="capability-card-main">
                         <div className="capability-title-row">
                           <CapabilityIcon size={17} aria-hidden="true" />
@@ -438,21 +1210,37 @@ export function SettingsWorkspace({
                         </div>
                         <p className="capability-detail">{capability.detail}</p>
                         {capability.lastVerifiedAt !== undefined ? (
-                          <p className="capability-verification-time">Last verified {new Date(capability.lastVerifiedAt).toLocaleString()}</p>
+                          <p className="capability-verification-time">
+                            Last verified{" "}
+                            {new Date(
+                              capability.lastVerifiedAt,
+                            ).toLocaleString()}
+                          </p>
                         ) : null}
                         {capability.toolNames.length > 0 ? (
                           <p className="capability-tools">
-                            <strong>{capability.toolNames.length} tool{capability.toolNames.length === 1 ? "" : "s"}</strong>
-                            <span title={capability.toolNames.join(", ")}>{summarizeTools(capability.toolNames)}</span>
+                            <strong>
+                              {capability.toolNames.length} tool
+                              {capability.toolNames.length === 1 ? "" : "s"}
+                            </strong>
+                            <span title={capability.toolNames.join(", ")}>
+                              {summarizeTools(capability.toolNames)}
+                            </span>
                           </p>
                         ) : null}
                       </div>
                       <div className="capability-card-actions">
-                        <span className={`capability-readiness readiness-${capability.readiness}`}>
+                        <span
+                          className={`capability-readiness readiness-${capability.readiness}`}
+                        >
                           {readinessLabel(capability.readiness)}
                         </span>
                         {action !== undefined ? (
-                          <button className="secondary-button" type="button" onClick={() => void runAction(action)}>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            onClick={() => void runAction(action)}
+                          >
                             {actionLabel(capability)}
                           </button>
                         ) : null}
@@ -466,87 +1254,248 @@ export function SettingsWorkspace({
         })}
       </div>
 
-      <section className="settings-section" aria-labelledby="model-configurations-title">
+      <section
+        className="settings-section"
+        aria-labelledby="model-configurations-title"
+      >
         <div className="settings-section-heading">
           <div>
-            <h2 id="model-configurations-title">Conversation model configurations</h2>
-            <p>Named, revisioned model choices available in the conversation composer.</p>
+            <h2 id="model-configurations-title">
+              Conversation model configurations
+            </h2>
+            <p>
+              Named, revisioned model choices available in the conversation
+              composer.
+            </p>
           </div>
         </div>
         <div className="settings-content model-settings-grid">
           <div className="settings-list">
             {settings.modelConfigurations.map((configuration) => (
-              <button key={configuration.id} type="button" className={selectedId === configuration.id ? "active" : ""} onClick={() => setSelectedId(configuration.id)}>
+              <button
+                key={configuration.id}
+                type="button"
+                className={selectedId === configuration.id ? "active" : ""}
+                onClick={() => setSelectedId(configuration.id)}
+              >
                 <strong>{configuration.name}</strong>
-                <small>{configuration.revisions.find((entry) => entry.revision === configuration.currentRevision)?.policy.model}</small>
-                {configuration.id === settings.defaultModelConfigurationId ? <span>Default</span> : null}
+                <small>
+                  {
+                    configuration.revisions.find(
+                      (entry) =>
+                        entry.revision === configuration.currentRevision,
+                    )?.policy.model
+                  }
+                </small>
+                {configuration.id === settings.defaultModelConfigurationId ? (
+                  <span>Default</span>
+                ) : null}
               </button>
             ))}
-            <button type="button" className={selected === undefined ? "active" : ""} onClick={() => {
-              setSelectedId("");
-              setName("New model");
-              setProvider("openrouter");
-              setModel("");
-              setTimeoutValue("");
-              setVision(false);
-              setStageOverrides("{}");
-            }}>+ Add model</button>
+            <button
+              type="button"
+              className={selected === undefined ? "active" : ""}
+              onClick={() => {
+                setSelectedId("");
+                setName("New model");
+                setProvider("openrouter");
+                setModel("");
+                setTimeoutValue("");
+                setVision(false);
+                setStageOverrides("{}");
+              }}
+            >
+              + Add model
+            </button>
           </div>
-          <form className="settings-form" onSubmit={(event) => void saveModel(event)}>
-            <label>Name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
-            <label>Provider<select value={provider} onChange={(event) => setProvider(event.target.value as DesktopModelProvider)}>
-              <option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="ollama">Ollama</option><option value="lmstudio">LM Studio</option>
-            </select></label>
-            <label>Model ID<input list="model-catalog" value={model} onChange={(event) => setModel(event.target.value)} /></label>
-            <datalist id="model-catalog">{catalog.map((entry) => <option key={entry} value={entry} />)}</datalist>
-            {provider === "openrouter" || provider === "openai" || provider === "anthropic" ? (
-              <label>Provider API key<input type="password" autoComplete="off" value={apiKey} placeholder="Leave blank to keep the stored key" onChange={(event) => setApiKey(event.target.value)} /></label>
+          <form
+            className="settings-form"
+            onSubmit={(event) => void saveModel(event)}
+          >
+            <label>
+              Name
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <label>
+              Provider
+              <select
+                value={provider}
+                onChange={(event) =>
+                  setProvider(event.target.value as DesktopModelProvider)
+                }
+              >
+                <option value="openrouter">OpenRouter</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="ollama">Ollama</option>
+                <option value="lmstudio">LM Studio</option>
+              </select>
+            </label>
+            <label>
+              Model ID
+              <input
+                list="model-catalog"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              />
+            </label>
+            <datalist id="model-catalog">
+              {catalog.map((entry) => (
+                <option key={entry} value={entry} />
+              ))}
+            </datalist>
+            {provider === "openrouter" ||
+            provider === "openai" ||
+            provider === "anthropic" ? (
+              <label>
+                Provider API key
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={apiKey}
+                  placeholder="Leave blank to keep the stored key"
+                  onChange={(event) => setApiKey(event.target.value)}
+                />
+              </label>
             ) : null}
-            <details><summary>Advanced policy</summary>
-              <label>Timeout (ms)<input inputMode="numeric" value={timeout} onChange={(event) => setTimeoutValue(event.target.value.replace(/\D/g, ""))} /></label>
-              <label className="settings-check"><input type="checkbox" checked={vision} onChange={(event) => setVision(event.target.checked)} />Enable vision input</label>
-              <label>Stage overrides (JSON)<textarea rows={5} value={stageOverrides} onChange={(event) => setStageOverrides(event.target.value)} /></label>
+            <details>
+              <summary>Advanced policy</summary>
+              <label>
+                Timeout (ms)
+                <input
+                  inputMode="numeric"
+                  value={timeout}
+                  onChange={(event) =>
+                    setTimeoutValue(event.target.value.replace(/\D/g, ""))
+                  }
+                />
+              </label>
+              <label className="settings-check">
+                <input
+                  type="checkbox"
+                  checked={vision}
+                  onChange={(event) => setVision(event.target.checked)}
+                />
+                Enable vision input
+              </label>
+              <label>
+                Stage overrides (JSON)
+                <textarea
+                  rows={5}
+                  value={stageOverrides}
+                  onChange={(event) => setStageOverrides(event.target.value)}
+                />
+              </label>
             </details>
             <div className="settings-form-actions">
-              {selected !== undefined && selected.id !== settings.defaultModelConfigurationId ? <button type="button" onClick={() => void onSettings({ defaultModelConfigurationId: selected.id })}>Make default</button> : null}
-              {selected !== undefined && selected.id !== settings.defaultModelConfigurationId ? <button type="button" onClick={() => void onSettings({ modelConfigurations: settings.modelConfigurations.map((entry) => entry.id === selected.id ? { ...entry, archivedAt: new Date().toISOString() } : entry) })}>Archive</button> : null}
-              <button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Save model"}</button>
+              {selected !== undefined &&
+              selected.id !== settings.defaultModelConfigurationId ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    void onSettings({
+                      defaultModelConfigurationId: selected.id,
+                    })
+                  }
+                >
+                  Make default
+                </button>
+              ) : null}
+              {selected !== undefined &&
+              selected.id !== settings.defaultModelConfigurationId ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    void onSettings({
+                      modelConfigurations: settings.modelConfigurations.map(
+                        (entry) =>
+                          entry.id === selected.id
+                            ? { ...entry, archivedAt: new Date().toISOString() }
+                            : entry,
+                      ),
+                    })
+                  }
+                >
+                  Archive
+                </button>
+              ) : null}
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={saving}
+              >
+                {saving ? "Saving…" : "Save model"}
+              </button>
             </div>
           </form>
         </div>
       </section>
 
-      <section className="settings-section" aria-labelledby="desktop-preferences-title">
-        <div className="settings-section-heading"><h2 id="desktop-preferences-title">Desktop preferences</h2></div>
+      <section
+        className="settings-section"
+        aria-labelledby="desktop-preferences-title"
+      >
+        <div className="settings-section-heading">
+          <h2 id="desktop-preferences-title">Desktop preferences</h2>
+        </div>
         <div className="settings-content settings-card">
           <div className="settings-form">
             <strong>Enabled Apps</strong>
-            <p className="compact-note">Available to every conversation. Changes affect the next run; an active run keeps its submitted tools.</p>
+            <p className="compact-note">
+              Available to every conversation. Changes affect the next run; an
+              active run keeps its submitted tools.
+            </p>
             {settings.apps.map((app) => (
               <label className="settings-check" key={app.id}>
                 <input
                   type="checkbox"
                   checked={settings.defaultEnabledAppIds.includes(app.id)}
-                  onChange={(event) => void onSettings({
-                    defaultEnabledAppIds: event.target.checked
-                      ? [...new Set([...settings.defaultEnabledAppIds, app.id])]
-                      : settings.defaultEnabledAppIds.filter((id) => id !== app.id),
-                  })}
+                  onChange={(event) =>
+                    void onSettings({
+                      defaultEnabledAppIds: event.target.checked
+                        ? [
+                            ...new Set([
+                              ...settings.defaultEnabledAppIds,
+                              app.id,
+                            ]),
+                          ]
+                        : settings.defaultEnabledAppIds.filter(
+                            (id) => id !== app.id,
+                          ),
+                    })
+                  }
                 />
                 Enable {app.label}
               </label>
             ))}
           </div>
           <div className="appearance-options">
-            {(["system", "light", "dark"] as const).map((theme) => <label key={theme}><input type="radio" name="theme" checked={settings.appearanceTheme === theme} onChange={() => void onSettings({ appearanceTheme: theme })} />{theme[0]!.toUpperCase() + theme.slice(1)}</label>)}
+            {(["system", "light", "dark"] as const).map((theme) => (
+              <label key={theme}>
+                <input
+                  type="radio"
+                  name="theme"
+                  checked={settings.appearanceTheme === theme}
+                  onChange={() => void onSettings({ appearanceTheme: theme })}
+                />
+                {theme[0]!.toUpperCase() + theme.slice(1)}
+              </label>
+            ))}
           </div>
         </div>
       </section>
 
       {editing !== undefined ? (
-        <div className="dialog-backdrop" onMouseDown={(event) => {
-          if (event.target === event.currentTarget && saving === false) closeEditor();
-        }}>
+        <div
+          className="dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && saving === false)
+              closeEditor();
+          }}
+        >
           <form
             className="provider-dialog capability-dialog"
             ref={dialogRef}
@@ -562,11 +1511,21 @@ export function SettingsWorkspace({
           >
             <div className="provider-dialog-header">
               <div>
-                <span className="surface-kicker">{CATEGORY_LABELS[editing.category]}</span>
+                <span className="surface-kicker">
+                  {CATEGORY_LABELS[editing.category]}
+                </span>
                 <h2 id="capability-dialog-title">{editing.name}</h2>
-                <p id="capability-dialog-description">{editing.verificationStrategy}</p>
+                <p id="capability-dialog-description">
+                  {editing.verificationStrategy}
+                </p>
               </div>
-              <button className="icon-button" type="button" aria-label="Close capability settings" disabled={saving} onClick={closeEditor}>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Close capability settings"
+                disabled={saving}
+                onClick={closeEditor}
+              >
                 <X size={17} aria-hidden="true" />
               </button>
             </div>
@@ -576,59 +1535,151 @@ export function SettingsWorkspace({
                   data-autofocus
                   type="checkbox"
                   checked={draft.enabled === true}
-                  onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      enabled: event.target.checked,
+                    }))
+                  }
                 />
-                <span>{editing.category === "models" ? "Use as active model provider" : "Enable this capability pack"}</span>
+                <span>
+                  {editing.category === "models"
+                    ? "Use as active model provider"
+                    : "Enable this capability pack"}
+                </span>
               </label>
             ) : null}
             {editing.settings.map((field, index) => {
-              const credentialStored = field.secret && editing.requirements.some((requirement) => requirement.kind === "credential" && requirement.satisfied);
+              const credentialStored =
+                field.secret &&
+                editing.requirements.some(
+                  (requirement) =>
+                    requirement.kind === "credential" && requirement.satisfied,
+                );
               const controlId = `capability-setting-${field.key}`;
               return (
-                <label className="provider-dialog-field" htmlFor={controlId} key={field.key}>
-                  <span>{field.label}{field.required && credentialStored === false ? " *" : ""}{credentialStored ? <small>Stored securely</small> : null}</span>
+                <label
+                  className="provider-dialog-field"
+                  htmlFor={controlId}
+                  key={field.key}
+                >
+                  <span>
+                    {field.label}
+                    {field.required && credentialStored === false ? " *" : ""}
+                    {credentialStored ? <small>Stored securely</small> : null}
+                  </span>
                   {field.kind === "select" ? (
                     <select
                       id={controlId}
-                      data-autofocus={supportsEnablement(editing) === false && index === 0 ? true : undefined}
+                      data-autofocus={
+                        supportsEnablement(editing) === false && index === 0
+                          ? true
+                          : undefined
+                      }
                       value={String(draft[field.key] ?? field.value ?? "")}
-                      onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          [field.key]: event.target.value,
+                        }))
+                      }
                     >
-                      {field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      {field.options?.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
                     </select>
                   ) : (
                     <input
                       id={controlId}
-                      data-autofocus={supportsEnablement(editing) === false && index === 0 ? true : undefined}
-                      type={field.secret ? "password" : field.kind === "url" ? "url" : "text"}
-                      value={field.secret ? credential : String(draft[field.key] ?? "")}
-                      placeholder={field.secret ? credentialStored ? "Enter a new value to replace" : "Enter credential" : field.placeholder}
+                      data-autofocus={
+                        supportsEnablement(editing) === false && index === 0
+                          ? true
+                          : undefined
+                      }
+                      type={
+                        field.secret
+                          ? "password"
+                          : field.kind === "url"
+                            ? "url"
+                            : "text"
+                      }
+                      value={
+                        field.secret
+                          ? credential
+                          : String(draft[field.key] ?? "")
+                      }
+                      placeholder={
+                        field.secret
+                          ? credentialStored
+                            ? "Enter a new value to replace"
+                            : "Enter credential"
+                          : field.placeholder
+                      }
                       autoComplete="off"
                       required={field.required && credentialStored === false}
-                      onChange={(event) => field.secret
-                        ? setCredential(event.target.value)
-                        : setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
+                      onChange={(event) =>
+                        field.secret
+                          ? setCredential(event.target.value)
+                          : setDraft((current) => ({
+                              ...current,
+                              [field.key]: event.target.value,
+                            }))
+                      }
                     />
                   )}
                 </label>
               );
             })}
             <p className="provider-dialog-note">{editing.runtimeApplication}</p>
-            {editorError !== undefined ? <p className="provider-dialog-error" role="alert">{editorError}</p> : null}
+            {editorError !== undefined ? (
+              <p className="provider-dialog-error" role="alert">
+                {editorError}
+              </p>
+            ) : null}
             <div className="provider-dialog-actions provider-dialog-actions-split">
-              {editing.requirements.some((requirement) => requirement.kind === "credential" && requirement.satisfied) ? (
+              {editing.requirements.some(
+                (requirement) =>
+                  requirement.kind === "credential" && requirement.satisfied,
+              ) ? (
                 confirmingCredentialRemoval ? (
                   <div className="destructive-confirmation">
-                    <button className="secondary-button" type="button" disabled={saving} onClick={() => setConfirmingCredentialRemoval(false)}>Cancel</button>
-                    <button className="provider-dialog-remove" type="button" disabled={saving} onClick={() => void removeCredential()}>Confirm removal</button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={saving}
+                      onClick={() => setConfirmingCredentialRemoval(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="provider-dialog-remove"
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void removeCredential()}
+                    >
+                      Confirm removal
+                    </button>
                   </div>
                 ) : (
-                  <button className="provider-dialog-remove" type="button" disabled={saving} onClick={() => setConfirmingCredentialRemoval(true)}>
+                  <button
+                    className="provider-dialog-remove"
+                    type="button"
+                    disabled={saving}
+                    onClick={() => setConfirmingCredentialRemoval(true)}
+                  >
                     Remove credential
                   </button>
                 )
-              ) : <span />}
-              <button className="provider-dialog-save" type="submit" disabled={saving}>
+              ) : (
+                <span />
+              )}
+              <button
+                className="provider-dialog-save"
+                type="submit"
+                disabled={saving}
+              >
                 {saving ? "Verifying…" : "Verify and apply"}
               </button>
             </div>
@@ -640,11 +1691,13 @@ export function SettingsWorkspace({
 }
 
 function supportsEnablement(capability: DesktopCapability): boolean {
-  return capability.category === "models"
-    || capability.id === "tools.network.free"
-    || capability.id === "local.filesystem"
-    || capability.id === "local.developer_shell"
-    || capability.id === "local.sandbox_code";
+  return (
+    capability.category === "models" ||
+    capability.id === "tools.network.free" ||
+    capability.id === "local.filesystem" ||
+    capability.id === "local.developer_shell" ||
+    capability.id === "local.sandbox_code"
+  );
 }
 
 function isConfigurable(capability: DesktopCapability): boolean {
@@ -657,9 +1710,16 @@ function readinessLabel(readiness: DesktopCapability["readiness"]): string {
   return readiness.charAt(0).toUpperCase() + readiness.slice(1);
 }
 
-function readinessIcon(readiness: DesktopCapability["readiness"]): typeof CheckCircle2 {
+function readinessIcon(
+  readiness: DesktopCapability["readiness"],
+): typeof CheckCircle2 {
   if (readiness === "ready") return CheckCircle2;
-  if (readiness === "setup_required" || readiness === "verification_failed" || readiness === "unavailable") return CircleAlert;
+  if (
+    readiness === "setup_required" ||
+    readiness === "verification_failed" ||
+    readiness === "unavailable"
+  )
+    return CircleAlert;
   return Circle;
 }
 
@@ -667,14 +1727,23 @@ function actionLabel(capability: DesktopCapability): string {
   if (capability.id === "connections.mcp") return "Manage Apps";
   if (capability.id === "data.workspace") return "Add project";
   if (capability.id === "permission.microphone") return "Request access";
-  if (capability.readiness === "setup_required" || capability.readiness === "verification_failed") return "Set up";
+  if (
+    capability.readiness === "setup_required" ||
+    capability.readiness === "verification_failed"
+  )
+    return "Set up";
   return "Configure";
 }
 
-export function getDesktopCapabilityAttentionQueue(capabilities: DesktopCapability[]): DesktopCapability[] {
-  return capabilities.filter((capability) => capability.readiness === "setup_required"
-    || capability.readiness === "verification_failed"
-    || capability.readiness === "unavailable");
+export function getDesktopCapabilityAttentionQueue(
+  capabilities: DesktopCapability[],
+): DesktopCapability[] {
+  return capabilities.filter(
+    (capability) =>
+      capability.readiness === "setup_required" ||
+      capability.readiness === "verification_failed" ||
+      capability.readiness === "unavailable",
+  );
 }
 
 export function createToolServicesNavigationRequest(

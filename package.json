@@ -196,6 +196,7 @@
     "@types/node": "^22.13.10",
     "@types/pg": "^8.16.0",
     "@types/react": "^19.2.14",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.8.2"
   },
   "pnpm": {
@@ -205,9 +206,10 @@
   },
   "packageManager": "pnpm@9.12.2+sha512.22721b3a11f81661ae1ec68ce1a7b879425a1ca5b991c975b074ac220b187ce56c708fe5db69f4c962c989452eee76c82877f4ee80f474cebd61ee13461b6228",
   "dependencies": {
-    "@kestrel-agents/workspace-skills": "workspace:*",
     "@electric-sql/pglite": "^0.4.6",
     "@kestrel-agents/protocol": "workspace:*",
+    "@kestrel-agents/workspace-skills": "workspace:*",
+    "@lumi/kestrel-environment-auth": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tavily/core": "^0.7.2",
     "ajv": "^8.18.0",
@@ -218,6 +220,7 @@
     "node-pty": "1.2.0-beta.12",
     "pg": "^8.18.0",
     "react": "^19.2.4",
-    "tsx": "^4.19.3"
+    "tsx": "^4.19.3",
+    "ws": "^8.21.1"
   }
 }

@@ -5,6 +5,7 @@ const files = execFileSync("git", ["ls-files", "-z", "apps/web/**/*.postgres.tes
   .filter(Boolean)
   .concat(
     "apps/web/lib/costs/store.postgres.test.ts",
+    "apps/web/lib/environments/desktop.postgres.test.ts",
     "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
     "apps/web/lib/projects/skills.postgres.test.ts",
   )
@@ -32,6 +33,7 @@ const groups = [
       "lib/email/config.postgres.test.ts",
       "lib/environments/backup-execution-guard.postgres.test.ts",
       "lib/environments/cutover-readiness.postgres.test.ts",
+      "lib/environments/desktop.postgres.test.ts",
       "lib/environments/fly-connection.postgres.test.ts",
       "lib/environments/reconcile-lock.postgres.test.ts",
       "lib/environments/reconciliation-status.postgres.test.ts",

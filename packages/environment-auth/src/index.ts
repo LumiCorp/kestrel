@@ -1,20 +1,20 @@
 import { sign, verify } from "node:crypto";
 
 export * from "./gateway-config.js";
+export * from "./desktop-credential-envelope.js";
 export * from "./preview-edge.js";
 export * from "./preview-relay.js";
 export * from "./workspace-readiness.js";
 
 export const ENVIRONMENT_ROUTER_AUDIENCE = "kestrel-environment-router";
-export const ENVIRONMENT_TICKET_VERSION = 1;
+export const ENVIRONMENT_TICKET_VERSION = 2;
 export const ENVIRONMENT_TICKET_MAX_TTL_SECONDS = 300;
 export const ENVIRONMENT_TOOL_CREDENTIAL_AUDIENCE =
   "kestrel-environment-tool-broker";
 export const ENVIRONMENT_TOOL_CREDENTIAL_VERSION = 1;
 export const ENVIRONMENT_TOOL_CREDENTIAL_MAX_TTL_SECONDS = 60;
 
-export type EnvironmentExecutionTicket = {
-  version: 1;
+type EnvironmentExecutionTicketBase = {
   audience: typeof ENVIRONMENT_ROUTER_AUDIENCE;
   organizationId: string;
   environmentId: string;
@@ -23,13 +23,64 @@ export type EnvironmentExecutionTicket = {
   runId: string;
   actorId: string;
   agentId: string;
-  flyAppName: string;
-  flyMachineId: string;
   capabilities: string[];
   issuedAt: number;
   expiresAt: number;
   nonce: string;
 };
+
+export type EnvironmentExecutionTicketV1 = EnvironmentExecutionTicketBase & {
+  version: 1;
+  flyAppName: string;
+  flyMachineId: string;
+};
+
+export type EnvironmentExecutionTarget =
+  | {
+      provider: "fly";
+      appName: string;
+      machineId: string;
+    }
+  | {
+      provider: "desktop";
+      connectionId: string;
+      workspaceRef: string;
+    };
+
+export type EnvironmentExecutionTicketV2 = EnvironmentExecutionTicketBase & {
+  version: 2;
+  target: EnvironmentExecutionTarget;
+};
+
+export type EnvironmentExecutionTicket =
+  | EnvironmentExecutionTicketV1
+  | EnvironmentExecutionTicketV2;
+
+export type FlyEnvironmentExecutionTarget = Extract<
+  EnvironmentExecutionTarget,
+  { provider: "fly" }
+>;
+
+export function getFlyEnvironmentExecutionTarget(
+  ticket: EnvironmentExecutionTicket,
+): FlyEnvironmentExecutionTarget | null {
+  if (ticket.version === 1) {
+    return {
+      provider: "fly",
+      appName: ticket.flyAppName,
+      machineId: ticket.flyMachineId,
+    };
+  }
+  return ticket.target.provider === "fly" ? ticket.target : null;
+}
+
+export function getDesktopEnvironmentExecutionTarget(
+  ticket: EnvironmentExecutionTicket,
+): Extract<EnvironmentExecutionTarget, { provider: "desktop" }> | null {
+  return ticket.version === 2 && ticket.target.provider === "desktop"
+    ? ticket.target
+    : null;
+}
 
 export type EnvironmentToolCredentialTicket = {
   version: 1;
@@ -70,9 +121,14 @@ export function signEnvironmentExecutionTicket(input: {
   privateKey: string;
 }): string {
   const privateKey = requireKey(input.privateKey, "private");
-  validateTicket(input.ticket, input.ticket.issuedAt);
-  const header = encodeJson({ algorithm: "EdDSA", type: "KET", version: 1 });
-  const payload = encodeJson(input.ticket);
+  const ticket = parseTicket(input.ticket);
+  validateTicket(ticket, ticket.issuedAt);
+  const header = encodeJson({
+    algorithm: "EdDSA",
+    type: "KET",
+    version: ticket.version,
+  });
+  const payload = encodeJson(ticket);
   const signingInput = `${header}.${payload}`;
   return `${signingInput}.${sign(null, Buffer.from(signingInput), privateKey).toString("base64url")}`;
 }
@@ -102,7 +158,7 @@ export function verifyEnvironmentExecutionTicket(input: {
     !isRecord(decodedHeader) ||
     decodedHeader.algorithm !== "EdDSA" ||
     decodedHeader.type !== "KET" ||
-    decodedHeader.version !== 1
+    (decodedHeader.version !== 1 && decodedHeader.version !== 2)
   ) {
     throw invalidTicket();
   }
@@ -229,12 +285,10 @@ function parseTicket(value: unknown): EnvironmentExecutionTicket {
     "runId",
     "actorId",
     "agentId",
-    "flyAppName",
-    "flyMachineId",
     "nonce",
   ] as const;
   if (
-    value.version !== ENVIRONMENT_TICKET_VERSION ||
+    (value.version !== 1 && value.version !== ENVIRONMENT_TICKET_VERSION) ||
     value.audience !== ENVIRONMENT_ROUTER_AUDIENCE ||
     requiredStrings.some(
       (key) => typeof value[key] !== "string" || value[key].length === 0,
@@ -251,7 +305,50 @@ function parseTicket(value: unknown): EnvironmentExecutionTicket {
   ) {
     throw invalidTicket();
   }
+  if (value.version === 1) {
+    if (
+      typeof value.flyAppName !== "string" ||
+      value.flyAppName.length === 0 ||
+      typeof value.flyMachineId !== "string" ||
+      value.flyMachineId.length === 0 ||
+      Object.keys(value).some((key) => key === "target")
+    ) {
+      throw invalidTicket();
+    }
+    return value as EnvironmentExecutionTicketV1;
+  }
+  if (
+    !isRecord(value.target) ||
+    !parseExecutionTarget(value.target) ||
+    Object.keys(value).some(
+      (key) => key === "flyAppName" || key === "flyMachineId",
+    )
+  ) {
+    throw invalidTicket();
+  }
   return value as EnvironmentExecutionTicket;
+}
+
+function parseExecutionTarget(value: Record<string, unknown>): boolean {
+  if (value.provider === "fly") {
+    return (
+      Object.keys(value).length === 3 &&
+      typeof value.appName === "string" &&
+      value.appName.length > 0 &&
+      typeof value.machineId === "string" &&
+      value.machineId.length > 0
+    );
+  }
+  if (value.provider === "desktop") {
+    return (
+      Object.keys(value).length === 3 &&
+      typeof value.connectionId === "string" &&
+      value.connectionId.length > 0 &&
+      typeof value.workspaceRef === "string" &&
+      value.workspaceRef.length > 0
+    );
+  }
+  return false;
 }
 
 function parseToolCredential(value: unknown): EnvironmentToolCredentialTicket {
