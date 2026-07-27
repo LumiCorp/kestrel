@@ -92,7 +92,6 @@ export function DiagnosticsWorkspace(props: {
     <main className="surface-pane diagnostics-surface" id="app-main">
       <header className="surface-header">
         <div>
-          <span className="surface-kicker">Local Core</span>
           <h1>Diagnostics</h1>
           <p>{props.runtimeHealth?.summary ?? "Runtime status unavailable"}</p>
         </div>

@@ -252,6 +252,11 @@ button:disabled {
   border-radius: 6px;
 }
 
+.details-button.needs-attention {
+  border-color: color-mix(in srgb, var(--warning) 36%, var(--border));
+  color: var(--text);
+}
+
 .health-indicator {
   display: inline-flex;
   align-items: center;
@@ -2475,34 +2480,28 @@ button:disabled {
 .composer-actions-left,
 .composer-actions-right {
   display: flex;
-  align-items: center;
   gap: 6px;
 }
 
 .composer-actions-left {
+  align-items: flex-start;
   min-width: 0;
   justify-self: start;
 }
 
 .composer-actions-right {
+  align-items: center;
   justify-self: end;
-}
-
-.composer-mode-label {
-  min-width: 54px;
-  white-space: nowrap;
 }
 
 .composer-model-selector {
   display: grid;
-  grid-template-columns: auto minmax(0, 150px);
+  grid-template-columns: minmax(0, 170px);
   align-items: center;
-  gap: 4px 6px;
+  gap: 3px;
   min-width: 0;
   color: var(--muted);
-  font-size: 9px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+  font-size: 10px;
 }
 
 .composer-model-selector select {
@@ -2520,7 +2519,6 @@ button:disabled {
 }
 
 .composer-model-selector small {
-  grid-column: 2;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -5430,8 +5428,8 @@ button:disabled {
 
 .settings-authority-note {
   align-items: center;
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  background: color-mix(in srgb, var(--warning) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
   border-radius: 8px;
   display: flex;
   gap: 10px;
@@ -5441,42 +5439,8 @@ button:disabled {
   font-size: 11px;
 }
 
-.capability-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 24px 10px;
-}
-
-.capability-summary > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.capability-summary > span:first-child svg {
-  color: var(--accent);
-}
-
-.capability-summary > span:nth-child(2) svg {
+.settings-authority-note svg {
   color: var(--warning);
-}
-
-.capability-summary strong {
-  color: var(--text);
-}
-
-.capability-summary-time {
-  margin: -3px 24px 12px;
-  color: var(--muted);
-  font-size: 10px;
 }
 
 .capability-attention-queue {
@@ -5490,25 +5454,19 @@ button:disabled {
 .capability-attention-heading {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr);
-  align-items: end;
+  align-items: start;
   gap: 20px;
   padding-bottom: 14px;
-}
-
-.capability-attention-heading .surface-kicker {
-  color: var(--warning);
 }
 
 .capability-attention-heading h2,
 .capability-attention-heading p,
 .capability-attention-item h3,
-.capability-attention-item p,
-.capability-attention-clear p {
+.capability-attention-item p {
   margin: 0;
 }
 
 .capability-attention-heading h2 {
-  margin-top: 3px;
   font-size: 15px;
 }
 
@@ -5567,25 +5525,6 @@ button:disabled {
 
 .capability-attention-item .secondary-button {
   flex: none;
-}
-
-.capability-attention-clear {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
-  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.capability-attention-clear > svg {
-  flex: none;
-  color: var(--accent);
-}
-
-.capability-attention-clear strong {
-  color: var(--text);
 }
 
 .settings-category-nav {
@@ -6227,8 +6166,6 @@ button:disabled {
 
 @media (max-width: 760px) {
   .settings-authority-note,
-  .capability-summary,
-  .capability-summary-time,
   .capability-attention-queue,
   .settings-notice {
     margin-inline: 14px;

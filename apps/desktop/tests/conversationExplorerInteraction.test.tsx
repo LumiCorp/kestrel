@@ -174,10 +174,29 @@ contractTest("desktop.hermetic", "conversation context exposes active work and r
     onResizeStart={() => {}}
   />));
 
-  assert.match(container.textContent ?? "", /A run is in progress/u);
+  assert.match(container.textContent ?? "", /Waiting for approval/u);
   assert.match(container.textContent ?? "", /Approve the file change/u);
+  assert.doesNotMatch(container.textContent ?? "", /No run in progress/u);
   assert.equal(container.querySelector('[aria-label="Conversation project"]'), null);
   await act(async () => container.querySelector<HTMLButtonElement>(".context-exception button")?.click());
   assert.equal(openedCapability, "model.openai");
+  await act(async () => root.unmount());
+});
+
+contractTest("desktop.hermetic", "conversation context stays quiet when idle and healthy", async () => {
+  const { root, container } = installDom();
+  await act(async () => root.render(<ContextSidebar
+    thread={{ ...createRendererThread({ projectPath: "/project" }), title: "Quiet conversation" }}
+    activeRun={false}
+    activity="Ready"
+    inboxItems={[]}
+    onOpenSettings={() => {}}
+    onResizeStart={() => {}}
+  />));
+
+  assert.match(container.textContent ?? "", /Quiet conversation/u);
+  assert.doesNotMatch(container.textContent ?? "", /No run in progress/u);
+  assert.doesNotMatch(container.textContent ?? "", /Ready/u);
+  assert.equal(container.querySelector(".context-exception"), null);
   await act(async () => root.unmount());
 });

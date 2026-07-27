@@ -545,9 +545,6 @@ export function ProjectWorkspace(props: {
     <main className="surface-pane project-surface" id="app-main">
       <header className="surface-header">
         <div>
-          <span className="surface-kicker">
-            {props.workspace?.kind === "managed" ? "Managed worktree" : "Project"}
-          </span>
           <h1>{props.project.label}</h1>
           <p>{renderedWorkspaceRoot}</p>
         </div>

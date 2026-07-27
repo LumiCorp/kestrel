@@ -64,3 +64,18 @@ contractTest("desktop.hermetic", "repeated tool-service recovery requests carry 
   assert.deepEqual(initial, { capabilityId: "tools.internet.tavily", requestId: 1 });
   assert.deepEqual(repeated, { capabilityId: "tools.internet.tavily", requestId: 2 });
 });
+
+contractTest("desktop.hermetic", "Settings keeps healthy readiness quiet while retaining targeted recovery", async () => {
+  const source = await readFile(path.join(rendererDirectory, "SettingsWorkspace.tsx"), "utf8");
+  const styles = await readFile(path.join(rendererDirectory, "styles.css"), "utf8");
+
+  assert.match(source, /attentionCapabilities\.length > 0 \? \(/u);
+  assert.match(source, /Secure credential storage is unavailable on this system\./u);
+  assert.match(source, /Last checked/u);
+  assert.match(source, /runAction\(action\)/u);
+  assert.doesNotMatch(source, /No setup blockers/u);
+  assert.doesNotMatch(source, /Capability readiness summary/u);
+  assert.doesNotMatch(source, /readinessSummary/u);
+  assert.doesNotMatch(styles, /\.capability-summary/u);
+  assert.doesNotMatch(styles, /\.capability-attention-clear/u);
+});

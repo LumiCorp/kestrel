@@ -283,6 +283,41 @@ contractTest("desktop.hermetic", "Desktop renders a stopped transition when canc
   assert.match(html, /state-cancelled/u);
 });
 
+contractTest("desktop.hermetic", "Desktop renders progress calmly while operational evidence stays collapsed", () => {
+  const items = projectDesktopConversationTimeline([], [
+    {
+      id: "assistant:event-1",
+      kind: "assistant",
+      label: "Kestrel",
+      text: "Inspecting the workspace.",
+      timestamp: "2026-07-20T12:00:01.000Z",
+      status: "active",
+    },
+    {
+      id: "tool:tool-1",
+      kind: "tool",
+      label: "Tool",
+      text: "Completed exec_command",
+      timestamp: "2026-07-20T12:00:02.000Z",
+      status: "completed",
+    },
+  ]);
+
+  const html = renderToStaticMarkup(React.createElement(ConversationTimeline, {
+    items,
+    active: true,
+    activity: "Inspecting the workspace.",
+    endRef: { current: null },
+  }));
+
+  assert.match(html, /Kestrel/u);
+  assert.match(html, /Inspecting the workspace\./u);
+  assert.match(html, /Details/u);
+  assert.match(html, /1 operational event/u);
+  assert.doesNotMatch(html, /Agent progress/u);
+  assert.doesNotMatch(html, /Activity details/u);
+});
+
 function event(type: DesktopRunnerEvent["type"], payload: Record<string, unknown>): DesktopRunnerEvent {
   return {
     id: `event-${type}-${Math.random()}`,

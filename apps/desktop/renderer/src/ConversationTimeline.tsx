@@ -263,7 +263,7 @@ function ProgressEntry({
       <TimelineMarker kind="progress" />
       <div className="timeline-entry-content">
         <div className="timeline-entry-meta">
-          <strong>Agent progress</strong>
+          <strong>{item.label}</strong>
           <time dateTime={item.timestamp}>{formatMessageTime(item.timestamp)}</time>
         </div>
         <MessageContent
@@ -286,8 +286,10 @@ function OperationalDetails({
       <TimelineMarker kind="details" />
       <details className="timeline-details">
         <summary>
-          <span>Activity details</span>
-          <small>{items.length}</small>
+          <span>Details</span>
+          <small aria-label={`${items.length} operational ${items.length === 1 ? "event" : "events"}`}>
+            {items.length}
+          </small>
         </summary>
         <ol>
           {items.map((item) => (
