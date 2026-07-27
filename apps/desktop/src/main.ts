@@ -119,6 +119,10 @@ import type {
   DesktopShellCommand,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
+import {
+  DESKTOP_LOCAL_CORE_EXECUTION_PROFILE_INCOMPATIBLE,
+  assertDesktopLocalCoreExecutionProfileCompatibility,
+} from "./localCoreCompatibility.js";
 import { resolveDesktopPublicAppClientId } from "./appConnectionConfig.js";
 import {
   assertWithinRoot,
@@ -3988,6 +3992,20 @@ function deriveRuntimeHealth(
     };
   }
   if (nextBootState.phase === "failed") {
+    if (
+      nextBootState.code ===
+      DESKTOP_LOCAL_CORE_EXECUTION_PROFILE_INCOMPATIBLE
+    ) {
+      return {
+        state: "blocked",
+        summary: "Kestrel Local Core needs an update.",
+        code: nextBootState.code,
+        details: nextBootState.details,
+        running: status?.running ?? false,
+        ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
+        database: databaseStatus,
+      };
+    }
     return {
       state: "blocked",
       summary: nextBootState.message,
@@ -4683,6 +4701,7 @@ async function ensureDesktopLocalCoreReady(
       message: "Kestrel Desktop requires the Kestrel Local Core API.",
     });
   }
+  assertDesktopLocalCoreExecutionProfileCompatibility(ready.status);
   return {
     ...ready,
     client: ready.client,

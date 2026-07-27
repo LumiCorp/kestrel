@@ -19,6 +19,13 @@ export {
 export const LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION = 1;
 export const LOCAL_CORE_DESKTOP_PROFILE_ID = "local-core-desktop";
 export const LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION = 1;
+/**
+ * An advertised Local Core capability required before Desktop can submit or
+ * prepare an execution. This is deliberately separate from the shell/Core
+ * release version: an endpoint contract can change within a release line.
+ */
+export const LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY =
+  "local-core.execution-profile-resolution.v1";
 
 export type LocalCoreExecutionProfileResolveRequest =
   | {

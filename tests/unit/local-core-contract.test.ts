@@ -7,6 +7,7 @@ import {
   acquireCoreLock,
   createCoreManifest,
   ensureLocalCoreReady,
+  LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY,
   parseLocalCoreRuntimeStoreReset,
   parseLocalCoreRuntimeStoreResetRequest,
   parseLocalCoreRuntimeStoreResetResult,
@@ -587,6 +588,12 @@ contractTest("runtime.hermetic", "ensureLocalCoreReady updates executable metada
     assert.equal(status.state, "healthy");
     assert.equal(status.manifest?.coreVersion, "0.6.1");
     assert.equal(status.manifest?.stateEpoch, "0.6");
+    assert.equal(
+      status.manifest?.capabilities.includes(
+        LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY,
+      ),
+      true,
+    );
     assert.equal(status.manifest?.createdAt, "2026-06-17T12:00:00.000Z");
     assert.equal(status.manifest?.updatedAt, "2026-07-10T12:00:00.000Z");
   } finally {

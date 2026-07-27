@@ -60,3 +60,32 @@ contractTest("desktop.hermetic", "provider setup owns the summary when no higher
   assert.equal(readiness.summary.state, "degraded");
   assert.equal(readiness.summary.detail, "Choose a model provider to finish Desktop setup.");
 });
+
+contractTest("desktop.hermetic", "Local Core profile incompatibility directs the user to update Desktop", () => {
+  const readiness = deriveDesktopReadiness({
+    isDesktopApp: true,
+    settings: createDefaultDesktopSettings(),
+    settingsLoaded: true,
+    resourcesReady: true,
+    bridgeConnected: true,
+    projectCount: 0,
+    databaseStatus: {
+      state: "healthy",
+      summary: "Local Core database is ready.",
+      managed: true,
+      initialized: true,
+      running: true,
+    },
+    runtimeHealth: {
+      state: "blocked",
+      summary: "Kestrel Local Core needs an update.",
+      code: "desktop.local_core_execution_profile_incompatible",
+      running: false,
+    },
+  });
+
+  assert.deepEqual(readiness.items.find((item) => item.id === "runner")?.action, {
+    label: "Update Kestrel",
+    command: "reinstall_desktop",
+  });
+});
