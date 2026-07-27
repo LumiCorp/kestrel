@@ -16,11 +16,17 @@ export function ContextSidebar(props: {
   errorCapability?: DesktopCapabilityId | undefined;
   onOpenSettings: (target?: DesktopCapabilityId | undefined) => void;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  inert?: boolean;
 }) {
   const actionableItems = props.inboxItems.filter((item) => item.actionable);
 
   return (
-    <aside id="context-sidebar" className="inspector contextual-sidebar" aria-label="Conversation context">
+    <aside
+      id="context-sidebar"
+      className="inspector contextual-sidebar"
+      aria-label="Conversation context"
+      inert={props.inert ? true : undefined}
+    >
       <div
         className="sidebar-resize-handle"
         onPointerDown={props.onResizeStart}

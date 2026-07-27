@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { ConversationExplorer } from "../renderer/src/ConversationExplorer.js";
 import { ContextSidebar } from "../renderer/src/ContextSidebar.js";
+import { keepFocusInsideDialog } from "../renderer/src/dialogFocus.js";
 import { createRendererThread } from "../renderer/src/state.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
@@ -33,6 +34,66 @@ function button(container: HTMLElement, label: string): HTMLButtonElement {
   assert.ok(found, `Expected button '${label}'.`);
   return found;
 }
+
+contractTest("desktop.hermetic", "conversation explorer hides the archive shortcut until an archived conversation exists", async () => {
+  const { root, container } = installDom();
+  const thread = { ...createRendererThread(), id: "thread-1", title: "Current conversation" };
+  await act(async () => root.render(<ConversationExplorer
+    threads={[thread]}
+    activeThreadId={thread.id}
+    projects={[]}
+    onSelect={() => {}}
+    onNewConversation={() => {}}
+    onRename={() => {}}
+    onArchive={async () => ({ status: "archived" })}
+    onUndoArchive={() => {}}
+    onRestore={() => {}}
+  />));
+  assert.doesNotMatch(container.textContent ?? "", /Archived \(0\)/u);
+  await act(async () => root.unmount());
+});
+
+contractTest("desktop.hermetic", "conversation explorer exposes its search field for Find Work focus", async () => {
+  const { root, container } = installDom();
+  const thread = { ...createRendererThread(), id: "thread-1", title: "Current conversation" };
+  const searchInputRef = React.createRef<HTMLInputElement>();
+  await act(async () => root.render(<ConversationExplorer
+    threads={[thread]}
+    activeThreadId={thread.id}
+    projects={[]}
+    searchInputRef={searchInputRef}
+    onSelect={() => {}}
+    onNewConversation={() => {}}
+    onRename={() => {}}
+    onArchive={async () => ({ status: "archived" })}
+    onUndoArchive={() => {}}
+    onRestore={() => {}}
+  />));
+  assert.equal(searchInputRef.current, container.querySelector('[aria-label="Search conversations"]'));
+  searchInputRef.current?.focus();
+  assert.equal(document.activeElement, searchInputRef.current);
+  await act(async () => root.unmount());
+});
+
+contractTest("desktop.hermetic", "Find Work focus wraps within its dialog", () => {
+  installDom();
+  const drawer = document.createElement("aside");
+  const first = document.createElement("button");
+  const last = document.createElement("input");
+  drawer.append(first, last);
+  document.body.append(drawer);
+
+  last.focus();
+  const forward = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+  keepFocusInsideDialog(forward, drawer);
+  assert.equal(document.activeElement, first);
+  assert.equal(forward.defaultPrevented, true);
+
+  const backward = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+  keepFocusInsideDialog(backward, drawer);
+  assert.equal(document.activeElement, last);
+  assert.equal(backward.defaultPrevented, true);
+});
 
 contractTest("desktop.hermetic", "conversation archive waits for authoritative preflight before offering Undo", async () => {
   const { root, container } = installDom();

@@ -25,7 +25,7 @@ contractTest("desktop.hermetic", "thread messages and composer share the convers
   assert.match(source, /\.composer\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),/su);
 });
 
-contractTest("desktop.hermetic", "context sidebar occupies its width without an empty resizer column", async () => {
+contractTest("desktop.hermetic", "context sidebar joins the full-width work canvas without an empty resizer column", async () => {
   const [styles, sidebar] = await Promise.all([
     readFile(stylesPath, "utf8"),
     readFile(contextSidebarPath, "utf8"),
@@ -34,10 +34,6 @@ contractTest("desktop.hermetic", "context sidebar occupies its width without an 
   assert.match(
     styles,
     /\.workspace\.with-inspector\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) var\(--inspector-width\);/su,
-  );
-  assert.match(
-    styles,
-    /\.workspace\.with-conversation-rail\.with-inspector\s*\{[^}]*grid-template-columns:\s*var\(--rail-width\) minmax\(0,\s*1fr\) var\(--inspector-width\);/su,
   );
   assert.doesNotMatch(
     styles,
@@ -100,14 +96,32 @@ contractTest("desktop.hermetic", "user-input requests are composer-owned and do 
   assert.match(app, /operatorActionCardItems\.map\(\(item\) => \(/u);
 });
 
-contractTest("desktop.hermetic", "conversation rail is grouped and keeps row selection separate from actions", async () => {
+contractTest("desktop.hermetic", "find work drawer groups conversations and keeps row selection separate from actions", async () => {
   const [app, explorer] = await Promise.all([readFile(appPath, "utf8"), readFile(explorerPath, "utf8")]);
+  assert.match(app, /conversation-rail work-navigator/u);
+  assert.match(app, /Find work \(Command-K\)/u);
+  assert.match(app, /setWorkNavigatorOpen\(false\)/u);
   assert.match(app, /<ConversationExplorer/u);
+  assert.match(app, /role="dialog"/u);
+  assert.match(app, /aria-modal=\{workNavigatorOpen \? true : undefined\}/u);
+  assert.match(app, /workNavigatorSearchRef\.current\?\.focus\(\)/u);
+  assert.match(app, /trigger\?\.isConnected/u);
+  assert.match(app, /workNavigatorFallbackRef\.current\?\.focus\(\)/u);
+  assert.doesNotMatch(app, /closeWorkNavigator\(false\)/u);
+  assert.match(app, /keepFocusInsideDialog\(event\.nativeEvent, workNavigatorRef\.current\)/u);
   assert.match(explorer, /groupRendererThreads\(/u);
   assert.match(explorer, /className="explorer-thread-select"/u);
   assert.match(explorer, /className="explorer-thread-menu-button"/u);
   assert.match(explorer, /Archived \(\$\{archivedCount\}\)/u);
   assert.match(explorer, /aria-label="Search conversations"/u);
+});
+
+contractTest("desktop.hermetic", "find work keeps low-value inspection pages out of the everyday navigation", async () => {
+  const app = await readFile(appPath, "utf8");
+
+  assert.doesNotMatch(app, /openWorkSurface\("diff"\)/u);
+  assert.doesNotMatch(app, /openWorkSurface\("review"\)/u);
+  assert.doesNotMatch(app, /openWorkSurface\("validation"\)/u);
 });
 
 contractTest("desktop.hermetic", "conversation menus and rename dialog expose keyboard and focus behavior", async () => {
@@ -158,15 +172,14 @@ contractTest("desktop.hermetic", "composer selects configured models while Apps 
   assert.match(main, /selection: globalExecutionSelection/u);
 });
 
-contractTest("desktop.hermetic", "both sidebar controls persist a calm, reopenable layout", async () => {
+contractTest("desktop.hermetic", "details persist while Find Work remains a calm, temporary drawer", async () => {
   const [app, styles] = await Promise.all([readFile(appPath, "utf8"), readFile(stylesPath, "utf8")]);
 
-  assert.match(app, /CONVERSATION_RAIL_STATE_KEY/u);
   assert.match(app, /readDesktopSidebarState\(INSPECTOR_STATE_KEY, false\)/u);
-  assert.match(app, /aria-label=\{conversationRailOpen \? "Close conversation rail" : "Open conversation rail"\}/u);
-  assert.match(app, /aria-label=\{inspectorOpen \? "Close context sidebar" : "Open context sidebar"\}/u);
-  assert.match(app, /conversationRailOpen \? <aside id="conversation-rail"/u);
-  assert.match(styles, /\.workspace\.with-conversation-rail\s*\{/u);
+  assert.match(app, /aria-label=\{inspectorOpen \? "Close details" : "Open details"\}/u);
+  assert.match(app, /className=\{`conversation-rail work-navigator/u);
+  assert.match(app, /aria-modal=\{workNavigatorOpen \? true : undefined\}/u);
+  assert.doesNotMatch(styles, /\.workspace\.with-conversation-rail\s*\{/u);
   assert.match(app, /storedWidth === null \? 288 : clampInspectorWidth\(Number\(storedWidth\)\)/u);
 });
 
