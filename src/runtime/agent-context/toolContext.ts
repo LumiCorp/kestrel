@@ -233,7 +233,7 @@ function withAgentProgressContract(
   }
   return {
     ...entry,
-    description: `${entry.description} Include assistantProgress: one concise sentence describing the accepted action to the user; do not mention internal steps, routing, commits, or model calls.`,
+    description: `${entry.description} Include assistantProgress: one concise sentence that truthfully describes this exact accepted action and how it advances the active request; do not mention internal steps, routing, commits, or model calls.`,
     inputSchema: addAgentProgressToActionSchema(entry.inputSchema),
   };
 }
@@ -242,7 +242,7 @@ const AGENT_PROGRESS_SCHEMA = {
   type: "string",
   minLength: 1,
   maxLength: 600,
-  description: "One concise user-facing progress sentence for this action. It is shown only after the action is accepted and committed.",
+  description: "One concise user-facing progress sentence that truthfully describes this exact action and how it advances the active request. It is shown only after the action is accepted and committed.",
 } as const;
 
 function addAgentProgressToActionSchema(schema: Record<string, unknown>): Record<string, unknown> {

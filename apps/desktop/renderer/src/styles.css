@@ -2141,6 +2141,19 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+.timeline-detail-tool-input {
+  margin: 6px 0 0;
+  max-height: 180px;
+  padding: 7px 9px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--muted);
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
 .timeline-detail-failed {
   border-left-color: var(--danger);
 }

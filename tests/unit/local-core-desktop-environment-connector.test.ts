@@ -20,7 +20,11 @@ contractTest(
     const home = await mkdtemp(
       path.join(os.tmpdir(), "kestrel-desktop-environment-connector-"),
     );
-    context.after(() => rm(home, { recursive: true, force: true }));
+    let manager: LocalCoreDesktopEnvironmentManager | undefined;
+    context.after(async () => {
+      await manager?.close();
+      await rm(home, { recursive: true, force: true });
+    });
     const credentialStore = new MemoryLocalCoreCredentialStore();
     const signingKeys = generateKeyPairSync("ed25519");
     const privateKey = signingKeys.privateKey
@@ -107,12 +111,11 @@ contractTest(
       globalThis.fetch = originalFetch;
     });
 
-    const manager = new LocalCoreDesktopEnvironmentManager({
+    manager = new LocalCoreDesktopEnvironmentManager({
       homePath: home,
       credentialStore,
       coreVersion: "test",
     });
-    context.after(() => manager.close());
     const client = {
       async desktopExecutionConfig() {
         return {

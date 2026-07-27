@@ -303,7 +303,21 @@ function OperationalDetails({
                   {formatMessageTime(item.timestamp)}
                 </time>
               </div>
-              <p>{item.text.length > 0 ? item.text : "No retained detail."}</p>
+              <p>
+                {item.text.length > 0
+                  ? item.text
+                  : item.kind === "reasoning"
+                    ? "Provider returned no visible reasoning detail."
+                    : "No visible detail."}
+              </p>
+              {item.kind === "tool" && item.toolInput !== undefined ? (
+                <pre
+                  aria-label={`${item.toolName ?? "Tool"} input`}
+                  className="timeline-detail-tool-input"
+                >
+                  <code>{formatToolInput(item.toolInput)}</code>
+                </pre>
+              ) : null}
             </li>
           ))}
         </ol>
@@ -402,6 +416,14 @@ function formatMessageTime(value: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatToolInput(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return "Tool input could not be displayed.";
+  }
 }
 
 function findLastIndex<T>(
