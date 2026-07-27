@@ -13,6 +13,18 @@ const journal = fs.readFileSync(
   path.join(root, "migrations/meta/_journal.json"),
   "utf8",
 );
+const schema = fs.readFileSync(
+  path.join(root, "../../drizzle/schema.ts"),
+  "utf8",
+);
+const desktopPreview = fs.readFileSync(
+  path.join(root, "../environments/desktop-preview.ts"),
+  "utf8",
+);
+const workspacePreviewLeaseSchema = schema.slice(
+  schema.indexOf("export const workspacePreviewLeases"),
+  schema.indexOf("export const workspacePreviewAccessTokens"),
+);
 
 contractTest(
   "web.hermetic",
@@ -51,6 +63,11 @@ contractTest(
       migration,
       /ADD COLUMN "target_provider" text DEFAULT 'fly' NOT NULL/u,
     );
+    assert.doesNotMatch(migration, /"ingress_provider"/u);
+    assert.doesNotMatch(workspacePreviewLeaseSchema, /ingressProvider/u);
+    assert.doesNotMatch(workspacePreviewLeaseSchema, /connectionId/u);
+    assert.doesNotMatch(desktopPreview, /connectionId: null/u);
+    assert.doesNotMatch(desktopPreview, /ingressProvider/u);
     assert.match(migration, /"source_type" IN \('blank', 'github', 'desktop'\)/u);
     assert.match(journal, /0054_desktop_environments/u);
   },

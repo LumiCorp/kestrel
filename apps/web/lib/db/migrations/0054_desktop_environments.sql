@@ -284,7 +284,6 @@ ALTER TABLE "workspace_preview_leases"
       AND "desktop_connection_id" IS NOT NULL
       AND "desktop_tunnel_token_hash" IS NOT NULL
       AND "local_run_ref" IS NOT NULL
-      AND "ingress_provider" = 'kestrel_edge'
     )
   );
 --> statement-breakpoint

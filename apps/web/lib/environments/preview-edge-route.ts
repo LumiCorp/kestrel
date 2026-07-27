@@ -33,7 +33,6 @@ export type PreviewEdgeRouteDependencies = {
     environmentId: string;
     workspaceId: string;
     hostname: string;
-    ingressProvider: "ngrok" | "kestrel_edge";
     targetProvider?: "fly" | "desktop";
     expiresAt: Date;
   } | null>;
@@ -65,7 +64,6 @@ const defaultDependencies: PreviewEdgeRouteDependencies = {
         environmentId: true,
         workspaceId: true,
         hostname: true,
-        ingressProvider: true,
         targetProvider: true,
         expiresAt: true,
       },
