@@ -36,6 +36,7 @@ interface MissionControlWorkspaceProps {
   sessionId: string;
   project: DesktopProjectRegistration | undefined;
   refreshVersion: number;
+  initialRunId?: string | undefined;
   onError: (message: string | undefined) => void;
 }
 
@@ -55,6 +56,7 @@ export function MissionControlWorkspace({
   sessionId,
   project,
   refreshVersion,
+  initialRunId,
   onError,
 }: MissionControlWorkspaceProps) {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot>();
@@ -76,6 +78,13 @@ export function MissionControlWorkspace({
     setSelectedRunId(undefined);
     setShowCreate(false);
   }, [sessionId]);
+
+  useEffect(() => {
+    if (initialRunId === undefined) return;
+    setView("runs");
+    setSelectedThreadId(undefined);
+    setSelectedRunId(initialRunId);
+  }, [initialRunId]);
 
   useEffect(() => {
     let disposed = false;

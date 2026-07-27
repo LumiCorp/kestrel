@@ -49,6 +49,12 @@ import { DiffWorkspace } from "./DiffWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
 import { McpWorkspace } from "./McpWorkspace";
 import { MissionControlWorkspace } from "./MissionControlWorkspace";
+import {
+  extractDesktopTerminalOutcome,
+  getDesktopOutcomeHandoff,
+  OutcomeHandoff,
+  withDesktopOutcomeWorkspaceChanges,
+} from "./outcomeHandoff";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { PreviewWorkspace } from "./PreviewWorkspace";
 import { ReviewWorkspace } from "./ReviewWorkspace";
@@ -162,6 +168,7 @@ export function DesktopApp() {
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
   const [missionControlRevision, setMissionControlRevision] = useState(0);
+  const [missionControlRunId, setMissionControlRunId] = useState<string>();
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>();
   const [timelineHasNewActivity, setTimelineHasNewActivity] = useState(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -692,6 +699,18 @@ export function DesktopApp() {
         ),
       });
       const assistantText = extractTerminalMessage(terminal);
+      const rawTerminalOutcome = extractDesktopTerminalOutcome(terminal);
+      const terminalOutcome =
+        rawTerminalOutcome?.terminalEvent === "run.completed" &&
+        rawTerminalOutcome.resultStatus === "COMPLETED" &&
+        projectPath !== undefined
+          ? withDesktopOutcomeWorkspaceChanges(
+              rawTerminalOutcome,
+              await window.kestrelDesktop
+                .getWorkspaceLifecycle(localCoreThreadId(activeThread.sessionId))
+                .catch(() => ({ checkpoints: [] })),
+            )
+          : rawTerminalOutcome;
       const terminalFailure = extractTerminalFailure(terminal, settings?.selectedProvider);
       const terminalError = terminalFailure?.message;
       const pendingWaitEventType = getTerminalWaitEventType(terminal);
@@ -702,7 +721,16 @@ export function DesktopApp() {
               role: "assistant" as const,
               text: assistantText,
               timestamp: new Date().toISOString(),
+              ...(terminalOutcome !== undefined ? { data: terminalOutcome } : {}),
             }
+          : terminalOutcome?.terminalEvent === "run.completed" &&
+              terminalOutcome.resultStatus === "COMPLETED"
+            ? {
+                role: "system" as const,
+                text: "Run completed.",
+                timestamp: new Date().toISOString(),
+                data: terminalOutcome,
+              }
           : undefined;
       const acceptedFromEvent = acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
       setState((current) => {
@@ -1087,8 +1115,24 @@ export function DesktopApp() {
   }
 
   function openWorkSurface(nextSurface: DesktopSurface): void {
+    setMissionControlRunId(undefined);
     setSurface(nextSurface);
     closeWorkNavigator();
+  }
+
+  function reviewOutcomeChanges(runId: string): void {
+    if (activeThread === undefined) return;
+    setState((current) => current === undefined ? current : updateRendererThread(
+      current,
+      activeThread.id,
+      (thread) => ({ ...thread, diffScopeKind: "latest_run", diffRevision: runId }),
+    ));
+    setSurface("diff");
+  }
+
+  function inspectOutcomeRun(runId: string): void {
+    setMissionControlRunId(runId);
+    setSurface("mission-control");
   }
 
   function openWorkNavigator(trigger?: HTMLElement): void {
@@ -1435,6 +1479,18 @@ export function DesktopApp() {
                 behavior: "smooth",
               });
             }}
+            messageSupplement={(entry) => {
+              const outcome = getDesktopOutcomeHandoff(entry.line.data);
+              return outcome === undefined ? null : (
+                <OutcomeHandoff
+                  outcome={outcome}
+                  hasWorkspace={threadProjectPath !== undefined}
+                  onReviewChanges={reviewOutcomeChanges}
+                  onViewChecks={() => setSurface("validation")}
+                  onInspectRun={inspectOutcomeRun}
+                />
+              );
+            }}
             tail={(
               <>
                 {!archivedThreadSelected && composerPolicy.mode === "reply_to_request" ? (
@@ -1668,11 +1724,12 @@ export function DesktopApp() {
                 sessionId={activeThread.sessionId}
                 project={threadProject}
                 refreshVersion={missionControlRevision}
+                initialRunId={missionControlRunId}
                 onError={(error) => setSurfaceError("mission-control", error)}
               />
             ) : surface === "diff" ? (
               <DiffWorkspace
-                key={activeThread.id}
+                key={`${activeThread.id}:${activeThread.diffScopeKind}:${activeThread.diffRevision}`}
                 sessionId={activeThread.sessionId}
                 threadId={localCoreThreadId(activeThread.sessionId)}
                 projectPath={activeThread.projectPath}
