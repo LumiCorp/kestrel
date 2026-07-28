@@ -416,6 +416,40 @@ export function DesktopApp() {
 
   useEffect(() => window.kestrelDesktop.onRuntimeHealth(setRuntimeHealth), []);
 
+  useEffect(
+    () =>
+      window.kestrelDesktop.onCommand((command) => {
+        if (command === "add-project") {
+          void addProject();
+          return;
+        }
+        if (command === "new-thread") {
+          newConversation();
+          return;
+        }
+        if (command === "stop-agent") {
+          void cancelActiveRun();
+          return;
+        }
+        if (command === "restart-runtime") {
+          void window.kestrelDesktop.restartRuntime();
+          return;
+        }
+        if (command === "toggle-left-sidebar") {
+          setWorkNavigatorOpen((current) => !current);
+          return;
+        }
+        if (command === "toggle-right-sidebar") {
+          setInspectorOpen((current) => !current);
+          return;
+        }
+        if (command === "uninstall") {
+          openCapabilitySettings();
+        }
+      }),
+    [activeThread],
+  );
+
   useEffect(() => {
     if (state === undefined) {
       return;
@@ -1865,6 +1899,8 @@ export function DesktopApp() {
                 }}
                 onOpenMcp={() => setSurface("mcp")}
                 onAddProject={async () => { await addProject(); }}
+                onCreateUninstallPlan={async (scope) =>
+                  await window.kestrelDesktop.createUninstallPlan({ scope })}
                 onRequestMicrophone={async () => { await window.kestrelDesktop.requestMicrophoneAccess(); }}
                 onError={(error) => setSurfaceError("settings", error)}
               />

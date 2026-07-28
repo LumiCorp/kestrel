@@ -226,6 +226,11 @@ import {
 } from "./attachmentInput.js";
 import { cancelDesktopRun } from "./runCancellation.js";
 import { inspectDesktopThreadAuthority } from "./threadAuthority.js";
+import { createKestrelUninstallPlan } from "../../../src/uninstall/coordinator.js";
+import {
+  parseKestrelUninstallScope,
+  type KestrelUninstallPlanOptions,
+} from "../../../src/uninstall/contracts.js";
 
 declare global {
   var __kestrelDesktopRunnerTransportFactory:
@@ -833,6 +838,12 @@ function installApplicationMenu(): void {
             void showDesktopUpdateDialog();
           },
         },
+        {
+          label: "Uninstall Kestrel...",
+          click: () => {
+            void sendDesktopCommand("uninstall");
+          },
+        },
         { type: "separator" },
         { role: "services" },
         { type: "separator" },
@@ -956,6 +967,17 @@ function registerBootIpcHandlers(): void {
   ipcMain.handle(
     "desktop:get-support-bundle",
     async () => await buildCurrentDesktopSupportBundle(),
+  );
+  ipcMain.handle(
+    "desktop:create-uninstall-plan",
+    async (_event, input: unknown) => {
+      const record = isRecord(input) ? input : {};
+      return await createKestrelUninstallPlan({
+        initiator: "desktop",
+        scope: parseKestrelUninstallScope(record.scope),
+        options: parseDesktopUninstallPlanOptions(record.options),
+      });
+    },
   );
   ipcMain.handle("desktop:restart-app", async () => {
     app.relaunch();
@@ -4055,6 +4077,48 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     value !== null &&
     Array.isArray(value) === false
   );
+}
+
+function parseDesktopUninstallPlanOptions(
+  value: unknown,
+): KestrelUninstallPlanOptions {
+  if (value === undefined) return {};
+  if (isRecord(value) === false) {
+    throw createDesktopError({
+      code: "desktop.invalid_input",
+      message: "Desktop uninstall options must be an object.",
+    });
+  }
+  const options: KestrelUninstallPlanOptions = {};
+  if (value.disconnectKestrelOne !== undefined) {
+    if (typeof value.disconnectKestrelOne !== "boolean") {
+      throw createDesktopError({
+        code: "desktop.invalid_input",
+        message: "Desktop uninstall disconnectKestrelOne must be a boolean.",
+      });
+    }
+    options.disconnectKestrelOne = value.disconnectKestrelOne;
+  }
+  if (value.exportWorktreesDirectory !== undefined) {
+    if (typeof value.exportWorktreesDirectory !== "string") {
+      throw createDesktopError({
+        code: "desktop.invalid_input",
+        message:
+          "Desktop uninstall exportWorktreesDirectory must be a string.",
+      });
+    }
+    options.exportWorktreesDirectory = value.exportWorktreesDirectory;
+  }
+  if (value.discardWorktrees !== undefined) {
+    if (typeof value.discardWorktrees !== "boolean") {
+      throw createDesktopError({
+        code: "desktop.invalid_input",
+        message: "Desktop uninstall discardWorktrees must be a boolean.",
+      });
+    }
+    options.discardWorktrees = value.discardWorktrees;
+  }
+  return options;
 }
 
 function deriveRuntimeHealth(

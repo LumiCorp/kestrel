@@ -16,6 +16,8 @@ import type {
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopEnvironmentStatusProjection,
+  KestrelUninstallPlanV1,
+  KestrelUninstallScope,
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
   KestrelOneThreadSnapshot,
@@ -57,6 +59,9 @@ interface SettingsWorkspaceProps {
   onCapabilitiesChange?: ((view: DesktopCapabilityView) => void) | undefined;
   onOpenMcp: () => void;
   onAddProject: () => Promise<void>;
+  onCreateUninstallPlan: (
+    scope: KestrelUninstallScope,
+  ) => Promise<KestrelUninstallPlanV1>;
   onRequestMicrophone: () => Promise<void>;
   onError: (message: string | undefined) => void;
 }
@@ -68,6 +73,7 @@ export function SettingsWorkspace({
   onCapabilitiesChange,
   onOpenMcp,
   onAddProject,
+  onCreateUninstallPlan,
   onRequestMicrophone,
   onError,
 }: SettingsWorkspaceProps) {
@@ -87,6 +93,8 @@ export function SettingsWorkspace({
   const [selectedId, setSelectedId] = useState(
     settings.defaultModelConfigurationId,
   );
+  const [uninstallBusy, setUninstallBusy] = useState(false);
+  const [uninstallPlan, setUninstallPlan] = useState<KestrelUninstallPlanV1>();
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<DesktopModelProvider>("openrouter");
   const [model, setModel] = useState("");
@@ -591,6 +599,22 @@ export function SettingsWorkspace({
     }
   }
 
+  async function createUninstallPlan(
+    scope: KestrelUninstallScope,
+  ): Promise<void> {
+    setUninstallBusy(true);
+    setNotice(undefined);
+    try {
+      const plan = await onCreateUninstallPlan(scope);
+      setUninstallPlan(plan);
+      setNotice(`Uninstall plan ${plan.planId} created.`);
+    } catch (cause) {
+      onError(errorMessage(cause));
+    } finally {
+      setUninstallBusy(false);
+    }
+  }
+
   return (
     <main className="surface-pane settings-surface" id="app-main">
       <header className="surface-header">
@@ -698,6 +722,71 @@ export function SettingsWorkspace({
           {notice}
         </p>
       ) : null}
+
+      <section
+        className="settings-section"
+        aria-labelledby="data-privacy-title"
+      >
+        <div className="settings-section-heading">
+          <div>
+            <h2 id="data-privacy-title">Data & Privacy</h2>
+            <p>
+              Plan removal of this Desktop, all Kestrel software, or all
+              verified local data.
+            </p>
+          </div>
+        </div>
+        <div className="settings-content settings-card">
+          <div className="settings-inline-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={uninstallBusy}
+              onClick={() => void createUninstallPlan("current_component")}
+            >
+              Current Desktop
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={uninstallBusy}
+              onClick={() => void createUninstallPlan("all_software")}
+            >
+              All software
+            </button>
+            <button
+              className="secondary-button danger"
+              type="button"
+              disabled={uninstallBusy}
+              onClick={() => void createUninstallPlan("complete")}
+            >
+              Complete removal
+            </button>
+          </div>
+          {uninstallPlan !== undefined ? (
+            <div className="settings-form">
+              <strong>Plan {uninstallPlan.planId}</strong>
+              <p>
+                {
+                  uninstallPlan.targets.filter((target) => target.selected)
+                    .length
+                }{" "}
+                selected · {uninstallPlan.blockers.length} blocker
+                {uninstallPlan.blockers.length === 1 ? "" : "s"}
+              </p>
+              {uninstallPlan.blockers.length > 0 ? (
+                <ul>
+                  {uninstallPlan.blockers.map((blocker) => (
+                    <li key={`${blocker.code}-${blocker.targetId ?? "global"}`}>
+                      {blocker.code}: {blocker.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </section>
 
       <section
         className="settings-section"

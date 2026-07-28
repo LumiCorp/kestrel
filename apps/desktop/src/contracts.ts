@@ -85,6 +85,11 @@ import type {
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
 import type {
+  KestrelUninstallPlanOptions,
+  KestrelUninstallPlanV1,
+  KestrelUninstallScope,
+} from "../../../src/uninstall/contracts.js";
+import type {
   WorkspaceSkillInstallation,
   WorkspaceSkillSource,
 } from "../../../src/skills/contracts.js";
@@ -228,6 +233,11 @@ export type {
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
 export type {
+  KestrelUninstallPlanOptions,
+  KestrelUninstallPlanV1,
+  KestrelUninstallScope,
+} from "../../../src/uninstall/contracts.js";
+export type {
   DesktopAppDefinition,
   DesktopAppRef,
   DesktopExecutionSelection,
@@ -295,7 +305,8 @@ export type DesktopShellCommand =
   | "stop-agent"
   | "toggle-left-sidebar"
   | "toggle-right-sidebar"
-  | "restart-runtime";
+  | "restart-runtime"
+  | "uninstall";
 
 export type DesktopRunCancellationResult =
   | { status: "cancelled"; event: DesktopRunnerEvent }
@@ -322,6 +333,10 @@ export interface DesktopBridge {
   getBridgeInfo(): Promise<DesktopBridgeInfo>;
   getAppInfo(): Promise<DesktopAppInfo>;
   getSupportBundle(): Promise<DesktopSupportBundle>;
+  createUninstallPlan(input: {
+    scope: KestrelUninstallScope;
+    options?: KestrelUninstallPlanOptions | undefined;
+  }): Promise<KestrelUninstallPlanV1>;
   getCapabilities(): Promise<DesktopCapabilityView>;
   configureCapability(
     input: DesktopCapabilityConfigurationInput,
