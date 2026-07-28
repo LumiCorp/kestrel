@@ -16,7 +16,7 @@ const FINALIZE_ACTION: ReactAction = {
   },
 };
 
-contractTest("runtime.hermetic", "goal-satisfied finalization does not inspect hidden ledger or evidence gates", () => {
+contractTest("runtime.hermetic", "goal-satisfied finalization does not use artifact evidence as a hidden completion gate", () => {
   assert.doesNotThrow(() =>
     validateFinalizationDecision({
       action: {
@@ -90,6 +90,97 @@ contractTest("runtime.hermetic", "finalization still requires a non-empty user-f
       error instanceof DecisionCompileError &&
       error.code === "DECISION_SCHEMA_FAILED" &&
       error.diagnostics?.reason === "finalize_message_required",
+  );
+});
+
+contractTest("runtime.hermetic", "finalization rejects a rewritten Workspace preview hostname", () => {
+  const exactUrl =
+    "https://p-49d7077ad58642715cb42553de349d44.preview.kestrelagents.dev";
+  assert.throws(
+    () =>
+      validateFinalizationDecision({
+        action: {
+          ...FINALIZE_ACTION,
+          input: {
+            message:
+              "The preview is live at https://p-49d7077ad58642715cb42553de349d44.preview.kestrel.live",
+            data: {},
+          },
+        },
+        lastActionResult: {
+          kind: "tool",
+          toolName: "workspace.preview.list",
+          output: {
+            previews: [{ url: exactUrl }],
+          },
+        },
+      }),
+    (error) =>
+      error instanceof DecisionCompileError &&
+      error.code === "DECISION_SCHEMA_FAILED" &&
+      error.diagnostics?.reason ===
+        "workspace_preview_url_not_copied_exactly" &&
+      error.diagnostics?.suppliedUrl ===
+        "https://p-49d7077ad58642715cb42553de349d44.preview.kestrel.live" &&
+      Array.isArray(error.diagnostics?.expectedUrls) &&
+      error.diagnostics.expectedUrls.includes(exactUrl),
+  );
+});
+
+contractTest("runtime.hermetic", "finalization accepts the exact Workspace preview URL", () => {
+  const exactUrl =
+    "https://p-49d7077ad58642715cb42553de349d44.preview.kestrelagents.dev";
+  assert.doesNotThrow(() =>
+    validateFinalizationDecision({
+      action: {
+        ...FINALIZE_ACTION,
+        input: {
+          message: `The preview is live at ${exactUrl}.`,
+          data: {},
+        },
+      },
+      lastActionResult: {
+        kind: "tool",
+        toolName: "workspace.preview.publish",
+        output: {
+          preview: { url: exactUrl },
+        },
+      },
+    }),
+  );
+});
+
+contractTest("runtime.hermetic", "finalization preserves Workspace preview URLs from durable evidence", () => {
+  const exactUrl =
+    "https://p-49d7077ad58642715cb42553de349d44.preview.kestrelagents.dev";
+  assert.throws(
+    () =>
+      validateFinalizationDecision({
+        action: {
+          ...FINALIZE_ACTION,
+          input: {
+            message:
+              "The preview remains at https://p-49d7077ad58642715cb42553de349d44.preview.kestrel.live",
+            data: {},
+          },
+        },
+        lastActionResult: {
+          kind: "tool",
+          toolName: "exec_command",
+          output: { status: "completed" },
+        },
+        evidenceLedger: [
+          {
+            version: "v1",
+            summary: `Workspace preview URL: ${exactUrl}`,
+            facts: { toolName: "workspace.preview.publish" },
+          },
+        ],
+      }),
+    (error) =>
+      error instanceof DecisionCompileError &&
+      error.diagnostics?.reason ===
+        "workspace_preview_url_not_copied_exactly",
   );
 });
 
