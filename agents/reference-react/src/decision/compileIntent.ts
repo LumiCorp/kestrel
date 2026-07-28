@@ -207,6 +207,8 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
   } satisfies DecisionVerification;
   validateFinalizationDecision({
     action,
+    lastActionResult: input.lastActionResult,
+    evidenceLedger: input.evidenceLedger,
   });
   validateDevShellProcessTargets(action, input.devShellProcesses, input.postToolVerification);
   validateLiveDevShellExecReplay({

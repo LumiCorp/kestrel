@@ -6,6 +6,8 @@ import { buildModeSwitchMessage } from "./modeSwitch.js";
 
 export function validateFinalizationDecision(input: {
   action: ReactAction;
+  lastActionResult?: unknown;
+  evidenceLedger?: unknown;
 }): void {
   if (input.action.kind !== "finalize" && input.action.kind !== "handoff_to_build" && input.action.kind !== "switch_mode") {
     return;
@@ -47,6 +49,11 @@ export function validateFinalizationDecision(input: {
   }
   const data = asRecord(actionInput?.data);
   validateKeepRunningSessionIds(input.action, data);
+  validateWorkspacePreviewUrls({
+    message,
+    lastActionResult: input.lastActionResult,
+    evidenceLedger: input.evidenceLedger,
+  });
   if (input.action.finalizeReason !== "goal_satisfied") {
     return;
   }
@@ -81,6 +88,128 @@ export function validateFinalizationDecision(input: {
           "Call kestrel_finalize again with the same status and user-facing message, but omit changedFiles, checksRun, and checksFailed from data. The runtime derives changed files and validation evidence from observed tool results.",
       },
     );
+  }
+}
+
+function validateWorkspacePreviewUrls(input: {
+  message: string;
+  lastActionResult: unknown;
+  evidenceLedger: unknown;
+}): void {
+  const evidenceUrls = collectWorkspacePreviewEvidenceUrls(input);
+  if (evidenceUrls.length === 0) {
+    return;
+  }
+  const evidenceByPreviewId = new Map<string, Set<string>>();
+  for (const evidenceUrl of evidenceUrls) {
+    const previewId = readWorkspacePreviewId(evidenceUrl);
+    if (previewId === undefined) {
+      continue;
+    }
+    const urls = evidenceByPreviewId.get(previewId) ?? new Set<string>();
+    urls.add(evidenceUrl);
+    evidenceByPreviewId.set(previewId, urls);
+  }
+  for (const suppliedUrl of extractUrls(input.message)) {
+    const previewId = readWorkspacePreviewId(suppliedUrl);
+    const expectedUrls =
+      previewId === undefined ? undefined : evidenceByPreviewId.get(previewId);
+    if (expectedUrls === undefined || expectedUrls.has(suppliedUrl)) {
+      continue;
+    }
+    throw new DecisionCompileError(
+      "DECISION_SCHEMA_FAILED",
+      "Finalize must copy a Workspace preview URL exactly from tool evidence.",
+      "schema",
+      {
+        reason: "workspace_preview_url_not_copied_exactly",
+        path: "nextAction.message",
+        suppliedUrl,
+        expectedUrls: [...expectedUrls],
+        requiredCorrection:
+          "Call kestrel_finalize again and copy the matching workspace.preview URL byte-for-byte, including its hostname, path, query, and trailing slash.",
+      },
+    );
+  }
+}
+
+function collectWorkspacePreviewEvidenceUrls(input: {
+  lastActionResult: unknown;
+  evidenceLedger: unknown;
+}): string[] {
+  const urls = new Set<string>();
+  const addPreviewUrls = (value: unknown) => {
+    for (const url of extractUrlsFromValue(value)) {
+      if (readWorkspacePreviewId(url) !== undefined) {
+        urls.add(url);
+      }
+    }
+  };
+  const addToolResult = (value: unknown) => {
+    const result = asRecord(value);
+    if (result === undefined) {
+      return;
+    }
+    const toolName = asString(result.toolName) ?? asString(result.name);
+    if (toolName?.startsWith("workspace.preview.") === true) {
+      addPreviewUrls(result.output);
+      addPreviewUrls(result.outputSummary);
+    }
+    for (const item of asArray(result.items)) {
+      addToolResult(item);
+    }
+  };
+  addToolResult(input.lastActionResult);
+  for (const value of asArray(input.evidenceLedger)) {
+    const entry = asRecord(value);
+    const facts = asRecord(entry?.facts);
+    if (asString(facts?.toolName)?.startsWith("workspace.preview.") !== true) {
+      continue;
+    }
+    addPreviewUrls(entry?.summary);
+    addPreviewUrls(facts);
+    addPreviewUrls(entry?.target);
+  }
+  return [...urls];
+}
+
+function extractUrlsFromValue(value: unknown, depth = 0): string[] {
+  if (depth > 8) {
+    return [];
+  }
+  if (typeof value === "string") {
+    return extractUrls(value);
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => extractUrlsFromValue(item, depth + 1));
+  }
+  const record = asRecord(value);
+  return record === undefined
+    ? []
+    : Object.values(record).flatMap((item) =>
+        extractUrlsFromValue(item, depth + 1),
+      );
+}
+
+function extractUrls(value: string): string[] {
+  return (
+    value.match(/https?:\/\/[^\s<>{}\[\]"'`]+/gu) ?? []
+  ).map((url) => url.replace(/[),.;:!?]+$/gu, ""));
+}
+
+function readWorkspacePreviewId(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") {
+      return;
+    }
+    const [previewId, previewLabel] = url.hostname.toLowerCase().split(".");
+    return /^p-[a-f0-9]{32}$/u.test(previewId ?? "") &&
+        previewLabel === "preview"
+      ? previewId
+      : undefined;
+  } catch {
+    return;
   }
 }
 
