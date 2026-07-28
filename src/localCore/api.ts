@@ -64,11 +64,13 @@ import type {
   EnsureLocalCoreReadyOptions,
   LocalCoreRuntimeStoreReset,
   LocalCoreRuntimeStoreResetResult,
+  LocalCoreSystemLifecycle,
   LocalCoreStatus,
 } from "./contracts.js";
 import {
   parseLocalCoreExecutionProfileResolveRequest,
   parseLocalCoreRuntimeStoreResetRequest,
+  parseLocalCoreSystemShutdownRequest,
 } from "./contracts.js";
 import {
   createLocalCoreConnectionDescriptor,
@@ -581,6 +583,31 @@ export async function startLocalCoreApiServer(
         },
       });
 
+    const getSystemLifecycle = (): LocalCoreSystemLifecycle =>
+      buildLocalCoreSystemLifecycle({
+        executionBundle,
+        projectRunRegistry: projectRunRegistry!,
+        activeRuntimeStoreRequests,
+        activeRuntimeConfigurationMutations,
+        maintenanceOperation,
+      });
+
+    const requestUninstallShutdown = async (): Promise<LocalCoreSystemLifecycle> => {
+      const lifecycle = getSystemLifecycle();
+      if (lifecycle.state === "busy") {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_UNINSTALL_BLOCKED",
+          "Local Core cannot shut down for uninstall while work is active.",
+          { blockers: lifecycle.blockers },
+        );
+      }
+      setImmediate(() => {
+        void closeOnce();
+      });
+      return lifecycle;
+    };
+
     server = http.createServer(async (request, response) => {
       if (isRuntimeV2Request(request.url)) {
         const activeExecution = executionBundle;
@@ -615,6 +642,8 @@ export async function startLocalCoreApiServer(
           updateRuntimeConfiguration,
           restartExecution,
           resetRuntimeStore,
+          getSystemLifecycle,
+          requestUninstallShutdown,
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
           mcpOAuthSessions,
@@ -969,15 +998,86 @@ async function cleanupFailedLocalCoreStartup(input: {
   }
 }
 
+function buildLocalCoreSystemLifecycle(input: {
+  executionBundle: LocalCoreExecutionBundle | undefined;
+  projectRunRegistry: DesktopProjectRunRegistry;
+  activeRuntimeStoreRequests: number;
+  activeRuntimeConfigurationMutations: number;
+  maintenanceOperation: LocalCoreMaintenanceOperation | undefined;
+}): LocalCoreSystemLifecycle {
+  const blockers: LocalCoreSystemLifecycle["blockers"] = [];
+  const activeProjectRunCount = input.projectRunRegistry.listRuns().filter(
+    (run) => run.status === "running" || run.status === "stopping",
+  ).length;
+  if (activeProjectRunCount > 0) {
+    blockers.push({
+      code: "LOCAL_CORE_PROJECT_RUNS_ACTIVE",
+      message: "Desktop project runs are active.",
+      count: activeProjectRunCount,
+    });
+  }
+  if (input.executionBundle?.handler.hasActiveExecutions() === true) {
+    blockers.push({
+      code: "LOCAL_CORE_EXECUTIONS_ACTIVE",
+      message: "Runtime executions are active.",
+      count: 1,
+    });
+  }
+  if (input.executionBundle?.handler.hasActiveRequests() === true) {
+    blockers.push({
+      code: "LOCAL_CORE_REQUESTS_ACTIVE",
+      message: "Runtime requests are being admitted.",
+      count: 1,
+    });
+  }
+  if (input.activeRuntimeStoreRequests > 0) {
+    blockers.push({
+      code: "LOCAL_CORE_STORE_READS_ACTIVE",
+      message: "Runtime evidence is being read.",
+      count: input.activeRuntimeStoreRequests,
+    });
+  }
+  if (input.activeRuntimeConfigurationMutations > 0) {
+    blockers.push({
+      code: "LOCAL_CORE_CONFIG_MUTATIONS_ACTIVE",
+      message: "Runtime configuration is being updated.",
+      count: input.activeRuntimeConfigurationMutations,
+    });
+  }
+  if (input.maintenanceOperation !== undefined) {
+    blockers.push({
+      code: "LOCAL_CORE_MAINTENANCE_ACTIVE",
+      message: `Local Core maintenance is active: ${input.maintenanceOperation.kind}.`,
+      count: 1,
+    });
+  }
+  return {
+    state: blockers.length === 0 ? "idle" : "busy",
+    owner: {
+      pid: process.pid,
+      executable: process.execPath,
+    },
+    blockers,
+  };
+}
+
 class LocalCoreApiRequestError extends Error {
   readonly statusCode: number;
   readonly code: string;
 
-  constructor(statusCode: number, code: string, message: string) {
+  readonly details: Record<string, unknown> | undefined;
+
+  constructor(
+    statusCode: number,
+    code: string,
+    message: string,
+    details?: Record<string, unknown> | undefined,
+  ) {
     super(message);
     this.name = "LocalCoreApiRequestError";
     this.statusCode = statusCode;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -999,6 +1099,8 @@ async function handleRequest(input: {
   ): Promise<LocalCoreRuntimeConfigurationV1>;
   restartExecution(): Promise<LocalCoreStatus>;
   resetRuntimeStore(): Promise<LocalCoreRuntimeStoreResetResult>;
+  getSystemLifecycle(): LocalCoreSystemLifecycle;
+  requestUninstallShutdown(): Promise<LocalCoreSystemLifecycle>;
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
   mcpOAuthSessions?: LocalCoreMcpOAuthSessionManager | undefined;
@@ -1033,6 +1135,29 @@ async function handleRequest(input: {
 
     if (method === "GET" && url.pathname === "/v1/status") {
       writeJson(input.response, 200, { ok: true, status: input.status });
+      return;
+    }
+    if (method === "GET" && url.pathname === "/v1/system/lifecycle") {
+      writeJson(input.response, 200, {
+        ok: true,
+        lifecycle: input.getSystemLifecycle(),
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/system/shutdown") {
+      try {
+        parseLocalCoreSystemShutdownRequest(await readJsonBody(input.request));
+      } catch {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_SHUTDOWN_INVALID",
+          "Local Core shutdown requires exactly the uninstall confirmation payload.",
+        );
+      }
+      writeJson(input.response, 200, {
+        ok: true,
+        lifecycle: await input.requestUninstallShutdown(),
+      });
       return;
     }
     if (method === "GET" && url.pathname === "/v1/kestrel-one/account") {
@@ -2356,6 +2481,7 @@ async function handleRequest(input: {
           runtimeConfigurationError?.code ??
           "LOCAL_CORE_API_ERROR",
         error instanceof Error ? error.message : String(error),
+        requestError?.details,
       ),
     );
   }
@@ -3121,12 +3247,17 @@ function writeJson(
   response.end(payload);
 }
 
-function errorBody(code: string, message: string): Record<string, unknown> {
+function errorBody(
+  code: string,
+  message: string,
+  details?: Record<string, unknown> | undefined,
+): Record<string, unknown> {
   return {
     ok: false,
     error: {
       code,
       message,
+      ...(details !== undefined ? { details } : {}),
     },
   };
 }

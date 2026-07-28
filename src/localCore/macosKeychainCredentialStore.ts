@@ -200,6 +200,44 @@ export class MacosKeychainCredentialStore implements LocalCoreCredentialStore {
   }
 }
 
+export async function purgeMacosLocalCoreKeychainService(
+  runCommand: MacosSecurityCommandRunner = runMacosSecurityCommand,
+): Promise<{ deleted: number }> {
+  let deleted = 0;
+  for (;;) {
+    const result = await runCommand({
+      executable: MACOS_SECURITY_EXECUTABLE,
+      args: [
+        "delete-generic-password",
+        "-s",
+        KESTREL_LOCAL_CORE_KEYCHAIN_SERVICE,
+      ],
+    });
+    if (isMacosKeychainItemNotFound(result)) {
+      return { deleted };
+    }
+    if (result.exitCode !== 0) {
+      throw new MacosKeychainServicePurgeError(result.exitCode);
+    }
+    deleted += 1;
+  }
+}
+
+export class MacosKeychainServicePurgeError extends Error {
+  readonly code = "LOCAL_CORE_KEYCHAIN_SERVICE_PURGE_FAILED";
+  readonly backend = "macos_keychain" as const;
+  readonly service = KESTREL_LOCAL_CORE_KEYCHAIN_SERVICE;
+  readonly exitCode: number | undefined;
+
+  constructor(exitCode?: number | undefined) {
+    super(
+      `Local Core could not purge macOS Keychain service '${KESTREL_LOCAL_CORE_KEYCHAIN_SERVICE}'.`,
+    );
+    this.name = "MacosKeychainServicePurgeError";
+    this.exitCode = exitCode;
+  }
+}
+
 export function isMacosKeychainItemNotFound(
   result: Pick<MacosSecurityCommandResult, "exitCode">,
 ): boolean {
