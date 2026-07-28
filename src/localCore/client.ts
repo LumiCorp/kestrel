@@ -22,11 +22,16 @@ import {
   parseLocalCoreDesktopExecutionConfig,
   parseLocalCoreExecutionProfileResolution,
   parseLocalCoreRuntimeStoreResetResult,
+  parseLocalCoreSystemLifecycle,
+  parseLocalCoreSystemShutdownResult,
   parseLocalCoreStatus,
   type LocalCoreDesktopExecutionConfig,
   type LocalCoreExecutionProfileResolution,
   type LocalCoreExecutionProfileResolveRequest,
   type LocalCoreRuntimeStoreResetResult,
+  type LocalCoreSystemLifecycle,
+  type LocalCoreSystemShutdownRequest,
+  type LocalCoreSystemShutdownResult,
   type LocalCoreStatus,
 } from "./contracts.js";
 import type { DesktopAttachmentMetadata } from "./desktopAttachments.js";
@@ -97,6 +102,58 @@ export class LocalCoreClient {
         "status",
       ),
     );
+  }
+
+  async systemLifecycle(): Promise<LocalCoreSystemLifecycle> {
+    return parseLocalCoreSystemLifecycle(
+      readObjectField<Record<string, unknown>>(
+        await this.get("/v1/system/lifecycle"),
+        "lifecycle",
+        "system lifecycle",
+      ),
+    );
+  }
+
+  async shutdownForUninstall(): Promise<LocalCoreSystemShutdownResult> {
+    return await this.requestSystemShutdown({
+      reason: "uninstall",
+      confirm: "shutdown-local-core-for-uninstall",
+    });
+  }
+
+  async shutdownForDesktopUpdate(): Promise<LocalCoreSystemShutdownResult> {
+    return await this.requestSystemShutdown({
+      reason: "desktop_update",
+      confirm: "shutdown-local-core-for-desktop-update",
+    });
+  }
+
+  private async requestSystemShutdown(
+    input: LocalCoreSystemShutdownRequest,
+  ): Promise<LocalCoreSystemShutdownResult> {
+    try {
+      return parseLocalCoreSystemShutdownResult(
+        readObjectField<Record<string, unknown>>(
+          await this.post("/v1/system/shutdown", input),
+          "shutdown",
+          "system shutdown result",
+        ),
+      );
+    } catch (error) {
+      if (
+        error instanceof LocalCoreApiError &&
+        error.statusCode === 409 &&
+        typeof error.body === "object" &&
+        error.body !== null &&
+        !Array.isArray(error.body) &&
+        (error.body as Record<string, unknown>).shutdown !== undefined
+      ) {
+        return parseLocalCoreSystemShutdownResult(
+          (error.body as Record<string, unknown>).shutdown,
+        );
+      }
+      throw error;
+    }
   }
 
   async settings(): Promise<unknown> {

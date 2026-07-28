@@ -85,6 +85,12 @@ import type {
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
 import type {
+  KestrelUninstallApplyResultV1,
+  KestrelUninstallPlanOptions,
+  KestrelUninstallPlanV1,
+  KestrelUninstallScope,
+} from "../../../src/uninstall/contracts.js";
+import type {
   WorkspaceSkillInstallation,
   WorkspaceSkillSource,
 } from "../../../src/skills/contracts.js";
@@ -228,6 +234,19 @@ export type {
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
 export type {
+  KestrelUninstallApplyResultV1,
+  KestrelUninstallPlanOptions,
+  KestrelUninstallPlanV1,
+  KestrelUninstallScope,
+} from "../../../src/uninstall/contracts.js";
+
+export interface DesktopUninstallApplyInput {
+  plan: KestrelUninstallPlanV1;
+  confirmPlanId: string;
+  deleteDataPhrase?: string | undefined;
+  discardWorktreesPhrase?: string | undefined;
+}
+export type {
   DesktopAppDefinition,
   DesktopAppRef,
   DesktopExecutionSelection,
@@ -271,9 +290,12 @@ export type DesktopUpdatePhase =
   | "installing"
   | "error";
 
-export type DesktopUpdateBlocker =
-  | "active_execution"
-  | "managed_project_process";
+export interface DesktopUpdateBlocker {
+  source: "desktop" | "local_core";
+  code: string;
+  message: string;
+  count: number;
+}
 
 export interface DesktopUpdateState {
   supported: boolean;
@@ -295,7 +317,8 @@ export type DesktopShellCommand =
   | "stop-agent"
   | "toggle-left-sidebar"
   | "toggle-right-sidebar"
-  | "restart-runtime";
+  | "restart-runtime"
+  | "uninstall";
 
 export type DesktopRunCancellationResult =
   | { status: "cancelled"; event: DesktopRunnerEvent }
@@ -322,6 +345,14 @@ export interface DesktopBridge {
   getBridgeInfo(): Promise<DesktopBridgeInfo>;
   getAppInfo(): Promise<DesktopAppInfo>;
   getSupportBundle(): Promise<DesktopSupportBundle>;
+  createUninstallPlan(input: {
+    scope: KestrelUninstallScope;
+    options?: KestrelUninstallPlanOptions | undefined;
+  }): Promise<KestrelUninstallPlanV1>;
+  applyUninstallPlan(
+    input: DesktopUninstallApplyInput,
+  ): Promise<KestrelUninstallApplyResultV1>;
+  getPendingUninstallResult(): Promise<KestrelUninstallApplyResultV1 | undefined>;
   getCapabilities(): Promise<DesktopCapabilityView>;
   configureCapability(
     input: DesktopCapabilityConfigurationInput,

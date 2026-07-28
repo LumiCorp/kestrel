@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import {
   LOCAL_CORE_CREDENTIAL_IDS,
@@ -11,7 +15,9 @@ import {
   MACOS_SECURITY_EXECUTABLE,
   MacosKeychainCredentialStore,
   MacosKeychainCredentialStoreError,
+  hasMacosLocalCoreKeychainServiceItems,
   isMacosKeychainItemNotFound,
+  purgeMacosLocalCoreKeychainService,
   type MacosSecurityCommandInput,
   type MacosSecurityCommandResult,
 } from "../../src/localCore/macosKeychainCredentialStore.js";
@@ -205,6 +211,103 @@ contractTest("runtime.hermetic", "macOS Keychain validates IDs and values before
     LocalCoreCredentialValidationError,
   );
   assert.equal(calls, 0);
+});
+
+contractTest("runtime.hermetic", "macOS Keychain purge deletes every exact-service item and is idempotent", async () => {
+  let remaining = 2;
+  const runner = async (
+    input: MacosSecurityCommandInput,
+  ): Promise<MacosSecurityCommandResult> => {
+    assert.equal(
+      argumentAfter(input.args, "-s"),
+      KESTREL_LOCAL_CORE_KEYCHAIN_SERVICE,
+    );
+    if (input.args[0] === "find-generic-password") {
+      return remaining > 0
+        ? success("metadata")
+        : {
+            exitCode: MACOS_KEYCHAIN_ITEM_NOT_FOUND_EXIT_CODE,
+            stdout: "",
+            stderr: "missing",
+          };
+    }
+    if (remaining > 0) {
+      remaining -= 1;
+      return success();
+    }
+    return {
+      exitCode: MACOS_KEYCHAIN_ITEM_NOT_FOUND_EXIT_CODE,
+      stdout: "",
+      stderr: "missing",
+    };
+  };
+
+  assert.equal(await hasMacosLocalCoreKeychainServiceItems(runner), true);
+  assert.deepEqual(await purgeMacosLocalCoreKeychainService(runner), {
+    deleted: 2,
+  });
+  assert.equal(await hasMacosLocalCoreKeychainServiceItems(runner), false);
+  assert.deepEqual(await purgeMacosLocalCoreKeychainService(runner), {
+    deleted: 0,
+  });
+});
+
+contractTest("runtime.process", "macOS Keychain purge works against a disposable keychain", async () => {
+  if (process.platform !== "darwin") return;
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-disposable-keychain-"),
+  );
+  const keychainPath = path.join(root, "uninstall-test.keychain-db");
+  const password = "kestrel-uninstall-test";
+  const security = (
+    args: string[],
+  ): MacosSecurityCommandResult => {
+    const result = spawnSync(MACOS_SECURITY_EXECUTABLE, args, {
+      encoding: "utf8",
+    });
+    return {
+      exitCode: result.status ?? 1,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
+  };
+  try {
+    assert.equal(
+      security(["create-keychain", "-p", password, keychainPath]).exitCode,
+      0,
+    );
+    assert.equal(
+      security(["unlock-keychain", "-p", password, keychainPath]).exitCode,
+      0,
+    );
+    for (const account of ["fixture-one", "fixture-two"]) {
+      assert.equal(
+        security([
+          "add-generic-password",
+          "-U",
+          "-s",
+          KESTREL_LOCAL_CORE_KEYCHAIN_SERVICE,
+          "-a",
+          account,
+          "-w",
+          "secret",
+          keychainPath,
+        ]).exitCode,
+        0,
+      );
+    }
+    const runner = async (
+      input: MacosSecurityCommandInput,
+    ): Promise<MacosSecurityCommandResult> =>
+      security([...input.args, keychainPath]);
+    assert.deepEqual(await purgeMacosLocalCoreKeychainService(runner), {
+      deleted: 2,
+    });
+    assert.equal(await hasMacosLocalCoreKeychainServiceItems(runner), false);
+  } finally {
+    security(["delete-keychain", keychainPath]);
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 function success(stdout = ""): MacosSecurityCommandResult {

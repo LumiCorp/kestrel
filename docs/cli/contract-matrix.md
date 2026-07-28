@@ -3,15 +3,16 @@ id: cli-contract-matrix
 domain: cli
 status: active
 owner: kestrel-cli
-last_verified_at: 2026-07-15
+last_verified_at: 2026-07-28
 depends_on:
   - ./kchat.md
+  - ./kchat-protocol.md
   - ../generated/cli-contract-matrix.json
 ---
 
 # CLI Contract Matrix
 
-This page is generated from `cli/contractMatrix.ts` and must stay aligned with parser behavior and CLI contracts.
+This page is generated from `cli/contractMatrix.ts` and must stay aligned with parser behavior and protocol contracts.
 
 ## Executables
 
@@ -32,6 +33,7 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 | `operator` | `kestrel operator <resume-wait|approve|retry-delegation|doctor-export> ...` | `--thread-id`, `--request-id`, `--allow-tool-class`, `--allow-capability`, `--delegation-id`, `--run-id`, `--out`, `--reason` |
 | `runtime` | `kestrel runtime <replay|doctor> <query> [--json]; kestrel runtime bundle <query> --out <file>` | `--run-id`, `--session-id`, `--thread-id`, `--delegation-id`, `--out`, `--limit`, `--json` |
 | `setup` | `kestrel setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]` | `--profile`, `--approval-pack`, `--full` |
+| `uninstall` | `kestrel uninstall; kestrel uninstall plan --scope current|software|complete; kestrel uninstall apply --plan <file> --confirm <plan-id>` | `--scope`, `--disconnect-kestrel-one`, `--export-worktrees`, `--discard-worktrees`, `--json`, `--out`, `--plan`, `--confirm`, `--delete-data`, `--discard-confirm` |
 
 ## Slash Commands
 
@@ -50,7 +52,6 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 - `/status`
 - `/mcp`
 - `/code`
-- `/skill`
 - `/compact`
 - `/snapshot`
 - `/restore`
@@ -93,7 +94,34 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 - `workspace.checkpoint.diff`
 - `workspace.checkpoint.restore`
 - `workspace.checkpoint.cleanup`
+- `workspace.promotion.list`
+- `workspace.promotion.preview`
+- `workspace.promotion.apply`
 - `workspace.promotion.undo_latest`
+- `workspace.managed.inspect`
+- `workspace.managed.cleanup`
+- `workspace.managed.restore`
+- `workspace.managed.setup.retry`
+- `user.terminal.start`
+- `user.terminal.list`
+- `user.terminal.read`
+- `user.terminal.write`
+- `user.terminal.resize`
+- `user.terminal.stop`
+- `workspace.changes.inspect`
+- `workspace.changes.mutate`
+- `workspace.feedback.add`
+- `workspace.feedback.list`
+- `workspace.feedback.remove`
+- `workspace.feedback.submit`
+- `workspace.review.run`
+- `workspace.review.list`
+- `workspace.review.update`
+- `workspace.review.submit`
+- `workspace.validation.inspect`
+- `workspace.validation.run`
+- `workspace.validation.cancel`
+- `workspace.validation.submit`
 - `project.snapshot.get`
 - `project.snapshot.update`
 - `project.action`
@@ -140,6 +168,11 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 - `task.updated`
 - `task.graph`
 - `workspace.checkpoint`
+- `user.terminal`
+- `workspace.changes`
+- `workspace.feedback`
+- `workspace.review`
+- `workspace.validation`
 - `project.snapshot`
 - `project.review`
 - `mcp.status`

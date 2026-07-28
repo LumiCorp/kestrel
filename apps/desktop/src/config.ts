@@ -39,7 +39,7 @@ export function resolveDesktopPathConfig(input: {
   isPackaged: boolean;
 }): DesktopPathConfig {
   const repoRoot = input.isPackaged
-    ? path.join(input.resourcesPath ?? input.cwd, "kestrel-repo")
+    ? path.join(input.resourcesPath ?? input.cwd, "kestrel-runtime", "payload")
     : resolveRepoRoot([input.cwd, input.appPath]);
   const staticPath = input.isPackaged
     ? path.join(input.resourcesPath ?? input.cwd, "static")

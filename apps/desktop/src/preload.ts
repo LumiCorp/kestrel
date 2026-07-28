@@ -22,7 +22,10 @@ import type {
   DesktopRunTurnRequest,
   DesktopRuntimeHealth,
   DesktopUpdateState,
+  DesktopUninstallApplyInput,
   DesktopThreadAuthorityResult,
+  KestrelUninstallPlanOptions,
+  KestrelUninstallScope,
   DesktopSupportBundle,
   DesktopShellCommand,
   DesktopUiStateSyncResult,
@@ -39,6 +42,18 @@ const desktopBridge: DesktopBridge = {
   },
   getSupportBundle(): Promise<DesktopSupportBundle> {
     return ipcRenderer.invoke("desktop:get-support-bundle");
+  },
+  createUninstallPlan(input: {
+    scope: KestrelUninstallScope;
+    options?: KestrelUninstallPlanOptions | undefined;
+  }) {
+    return ipcRenderer.invoke("desktop:create-uninstall-plan", input);
+  },
+  applyUninstallPlan(input: DesktopUninstallApplyInput) {
+    return ipcRenderer.invoke("desktop:apply-uninstall-plan", input);
+  },
+  getPendingUninstallResult() {
+    return ipcRenderer.invoke("desktop:get-pending-uninstall-result");
   },
   getCapabilities(): Promise<DesktopCapabilityView> {
     return ipcRenderer.invoke("desktop:get-capabilities");

@@ -27,7 +27,7 @@ contractTest("runtime.hermetic", "checkDesktopResourceDrift skips absent generat
 
     const result = checkDesktopResourceDrift({
       repoRoot: path.join(tempDir, "repo"),
-      desktopResourcesDir: path.join(tempDir, "repo", "apps", "desktop", "resources", "kestrel-repo"),
+      desktopResourcesDir: path.join(tempDir, "repo", "apps", "desktop-runtime", "payload"),
       criticalPaths: ["agents"],
     });
 
@@ -42,7 +42,7 @@ contractTest("runtime.hermetic", "checkDesktopResourceDrift reports stale genera
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-desktop-drift-"));
   try {
     const repoRoot = path.join(tempDir, "repo");
-    const resourcesDir = path.join(repoRoot, "apps", "desktop", "resources", "kestrel-repo");
+    const resourcesDir = path.join(repoRoot, "apps", "desktop-runtime", "payload");
     mkdirSync(path.join(repoRoot, "agents"), { recursive: true });
     mkdirSync(path.join(resourcesDir, "agents"), { recursive: true });
     writeFileSync(path.join(repoRoot, "agents", "runtime.ts"), "source\n", "utf8");

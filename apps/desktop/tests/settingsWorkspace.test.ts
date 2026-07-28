@@ -4,9 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { DesktopCapability } from "../../../src/desktopShell/contracts.js";
+import type { KestrelUninstallPlanV1 } from "../src/contracts.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 import {
   createToolServicesNavigationRequest,
+  desktopUninstallConfirmationsSatisfied,
   getDesktopCapabilityAttentionQueue,
 } from "../renderer/src/SettingsWorkspace.js";
 
@@ -78,4 +80,56 @@ contractTest("desktop.hermetic", "Settings keeps healthy readiness quiet while r
   assert.doesNotMatch(source, /readinessSummary/u);
   assert.doesNotMatch(styles, /\.capability-summary/u);
   assert.doesNotMatch(styles, /\.capability-attention-clear/u);
+});
+
+contractTest("desktop.hermetic", "Settings exposes guarded Desktop uninstall apply wizard controls", async () => {
+  const source = await readFile(path.join(rendererDirectory, "SettingsWorkspace.tsx"), "utf8");
+
+  assert.match(source, /Removal scope/u);
+  assert.match(source, /Disconnect local Kestrel One enrollments/u);
+  assert.match(source, /Worktree recovery export directory/u);
+  assert.match(source, /Discard retained managed worktrees/u);
+  assert.match(source, /DELETE KESTREL DATA/u);
+  assert.match(source, /Apply uninstall/u);
+  assert.match(source, /onApplyUninstallPlan/u);
+  assert.match(source, /uninstallPlan\.blockers\.length > 0/u);
+  assert.match(source, /Apply result:/u);
+});
+
+contractTest("desktop.hermetic", "Desktop uninstall confirmations require exact destructive phrases", () => {
+  const plan = {
+    confirmations: [
+      { kind: "plan_id", phrase: "plan-1" },
+      { kind: "delete_data", phrase: "DELETE KESTREL DATA" },
+      {
+        kind: "discard_worktrees",
+        phrase: "DISCARD 2 KESTREL WORKTREES",
+      },
+    ],
+  } as KestrelUninstallPlanV1;
+
+  assert.equal(
+    desktopUninstallConfirmationsSatisfied(
+      plan,
+      "delete kestrel data",
+      "DISCARD 2 KESTREL WORKTREES",
+    ),
+    false,
+  );
+  assert.equal(
+    desktopUninstallConfirmationsSatisfied(
+      plan,
+      "DELETE KESTREL DATA",
+      "DISCARD 2 KESTREL WORKTREES",
+    ),
+    true,
+  );
+  assert.equal(
+    desktopUninstallConfirmationsSatisfied(
+      undefined,
+      "DELETE KESTREL DATA",
+      "DISCARD 2 KESTREL WORKTREES",
+    ),
+    false,
+  );
 });

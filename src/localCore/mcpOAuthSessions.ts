@@ -30,6 +30,13 @@ export interface LocalCoreMcpOAuthSessionStartInput {
   appName: string;
   clientId?: string | undefined;
   scopes?: readonly string[] | undefined;
+  loopbackCallback?:
+    | Readonly<{
+        host: "localhost";
+        port: number;
+        path: string;
+      }>
+    | undefined;
 }
 
 export interface LocalCoreMcpOAuthSessionView {
@@ -46,10 +53,21 @@ export function parseLocalCoreMcpOAuthSessionStartInput(
   const record = parseRecord(value, "App authorization request");
   rejectUnknown(
     record,
-    new Set(["credentialPrefix", "serverUrl", "appName", "clientId", "scopes"]),
+    new Set([
+      "credentialPrefix",
+      "serverUrl",
+      "appName",
+      "clientId",
+      "scopes",
+      "loopbackCallback",
+    ]),
   );
   const scopes =
     record.scopes === undefined ? undefined : parseScopeList(record.scopes);
+  const loopbackCallback =
+    record.loopbackCallback === undefined
+      ? undefined
+      : parseLoopbackCallback(record.loopbackCallback);
   return {
     credentialPrefix: parseOAuthCredentialPrefix(record.credentialPrefix),
     serverUrl: parseRequiredString(record.serverUrl, "remote App URL"),
@@ -58,6 +76,7 @@ export function parseLocalCoreMcpOAuthSessionStartInput(
       ? { clientId: parseClientId(record.clientId) }
       : {}),
     ...(scopes !== undefined ? { scopes } : {}),
+    ...(loopbackCallback !== undefined ? { loopbackCallback } : {}),
   };
 }
 
@@ -154,7 +173,9 @@ export class LocalCoreMcpOAuthSessionManager {
     const scope = normalizeScopes(input.scopes);
     const sessionId = randomBytes(18).toString("base64url");
     const stateValue = randomBytes(32).toString("base64url");
-    const callbackPath = `/oauth/callback/${sessionId}`;
+    const loopbackCallback = input.loopbackCallback;
+    const callbackPath =
+      loopbackCallback?.path ?? `/oauth/callback/${sessionId}`;
     let active: ActiveOAuthSession | undefined;
     const callbackServer = createServer((request, response) => {
       if (active === undefined) {
@@ -176,7 +197,7 @@ export class LocalCoreMcpOAuthSessionManager {
           ),
         );
     });
-    await listenOnLoopback(callbackServer);
+    await listenOnLoopback(callbackServer, loopbackCallback);
     const address = callbackServer.address();
     if (address === null || typeof address === "string") {
       callbackServer.close();
@@ -184,7 +205,7 @@ export class LocalCoreMcpOAuthSessionManager {
         "Kestrel could not create the App authorization callback.",
       );
     }
-    const callbackHost = `127.0.0.1:${address.port}`;
+    const callbackHost = `${loopbackCallback?.host ?? "127.0.0.1"}:${address.port}`;
     const redirectUrl = `http://${callbackHost}${callbackPath}`;
     let authorizationUrl: string | undefined;
     const provider = new LocalCoreMcpOAuthProvider({
@@ -402,10 +423,13 @@ export class LocalCoreMcpOAuthSessionManager {
   }
 }
 
-function listenOnLoopback(server: Server): Promise<void> {
+function listenOnLoopback(
+  server: Server,
+  callback?: LocalCoreMcpOAuthSessionStartInput["loopbackCallback"],
+): Promise<void> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(callback?.port ?? 0, callback?.host ?? "127.0.0.1", () => {
       server.off("error", reject);
       resolve();
     });
@@ -524,6 +548,32 @@ function parseScopeList(value: unknown): string[] {
     );
   }
   return [...value] as string[];
+}
+
+function parseLoopbackCallback(
+  value: unknown,
+): NonNullable<LocalCoreMcpOAuthSessionStartInput["loopbackCallback"]> {
+  const record = parseRecord(value, "App authorization loopback callback");
+  rejectUnknown(record, new Set(["host", "port", "path"]));
+  if (record.host !== "localhost") {
+    throw new Error("The App authorization loopback host is invalid.");
+  }
+  if (
+    typeof record.port !== "number" ||
+    !Number.isSafeInteger(record.port) ||
+    record.port < 1024 ||
+    record.port > 65_535
+  ) {
+    throw new Error("The App authorization loopback port is invalid.");
+  }
+  const path = parseRequiredString(
+    record.path,
+    "App authorization loopback path",
+  );
+  if (!/^\/[A-Za-z0-9_/-]+$/u.test(path)) {
+    throw new Error("The App authorization loopback path is invalid.");
+  }
+  return { host: "localhost", port: record.port, path };
 }
 
 function parseIsoDate(value: unknown, label: string): string {

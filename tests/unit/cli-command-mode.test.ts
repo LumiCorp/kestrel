@@ -25,6 +25,7 @@ contractTest("runtime.hermetic", "shouldRunCommandMode recognizes command-mode e
   assert.equal(shouldRunCommandMode(["operator", "resume-wait"]), true);
   assert.equal(shouldRunCommandMode(["runtime", "bundle"]), true);
   assert.equal(shouldRunCommandMode(["setup"]), true);
+  assert.equal(shouldRunCommandMode(["uninstall", "plan"]), true);
   assert.equal(shouldRunCommandMode(["--session", "default"]), false);
 });
 

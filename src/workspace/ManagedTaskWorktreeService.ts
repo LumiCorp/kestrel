@@ -209,6 +209,11 @@ export interface ManagedTaskWorktreeLifecycleInspection {
   retention: ManagedTaskWorktreeRetentionState;
 }
 
+export interface ManagedTaskWorktreeInventoryEntry {
+  binding: ManagedTaskWorktreeBinding;
+  inspection: ManagedTaskWorktreeLifecycleInspection;
+}
+
 export interface ManagedTaskWorktreeRetentionState {
   policy: "retain_until_explicit_cleanup";
   disposition: "blocked" | "retain_with_snapshot" | "clean_disposable";
@@ -900,6 +905,22 @@ export class ManagedTaskWorktreeService {
         lastBoundAt: latestSessionBindingAt(metadata?.bindings),
       }),
     };
+  }
+
+  async listManagedWorktrees(): Promise<ManagedTaskWorktreeInventoryEntry[]> {
+    const roots = await this.discoverManagedWorktreeRoots();
+    const entries: ManagedTaskWorktreeInventoryEntry[] = [];
+    for (const worktreeRoot of roots) {
+      const binding = await this.readBindingForWorktreeRoot(worktreeRoot);
+      if (binding === undefined) continue;
+      entries.push({
+        binding,
+        inspection: await this.inspectLifecycle(binding),
+      });
+    }
+    return entries.sort((left, right) =>
+      left.binding.worktreeRoot.localeCompare(right.binding.worktreeRoot),
+    );
   }
 
   async cleanupManagedWorktree(
@@ -1767,6 +1788,50 @@ export class ManagedTaskWorktreeService {
       return ;
     }
     return parseBindingRegistry(raw, locator.bindingKey, input.sourceRepoRoot, input.scope);
+  }
+
+  private async discoverManagedWorktreeRoots(): Promise<string[]> {
+    const root = path.join(this.homeDir, "worktrees");
+    const repoDirs = await readdir(root, { withFileTypes: true }).catch(() => []);
+    const worktreeRoots = new Set<string>();
+    for (const repoDir of repoDirs) {
+      if (repoDir.isDirectory() === false) continue;
+      const repoRoot = path.join(root, repoDir.name);
+      const bindingsDir = path.join(repoRoot, "bindings");
+      const bindingFiles = await readdir(bindingsDir, { withFileTypes: true }).catch(() => []);
+      for (const bindingFile of bindingFiles) {
+        if (bindingFile.isFile() === false || bindingFile.name.endsWith(".json") === false) continue;
+        const raw = await readFile(path.join(bindingsDir, bindingFile.name), "utf8").catch(() => {});
+        if (raw === undefined) continue;
+        let parsed: Partial<ManagedTaskWorktreeBindingRegistry>;
+        try {
+          parsed = JSON.parse(raw) as Partial<ManagedTaskWorktreeBindingRegistry>;
+        } catch {
+          continue;
+        }
+        if (typeof parsed.currentWorktreeRoot === "string") {
+          worktreeRoots.add(parsed.currentWorktreeRoot);
+        }
+        if (Array.isArray(parsed.generations)) {
+          for (const generation of parsed.generations) {
+            if (
+              typeof generation === "object" &&
+              generation !== null &&
+              typeof generation.worktreeRoot === "string"
+            ) {
+              worktreeRoots.add(generation.worktreeRoot);
+            }
+          }
+        }
+      }
+      const sidecars = await readdir(repoRoot, { withFileTypes: true }).catch(() => []);
+      for (const sidecar of sidecars) {
+        if (sidecar.isFile() === false || sidecar.name.endsWith(".binding.json") === false) continue;
+        const worktreeName = sidecar.name.slice(0, -".binding.json".length);
+        worktreeRoots.add(path.join(repoRoot, worktreeName));
+      }
+    }
+    return [...worktreeRoots];
   }
 
   private async updateBindingRegistryCurrent(

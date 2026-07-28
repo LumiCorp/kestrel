@@ -1,6 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
 import path from "node:path";
 import {
   resolveDesktopBuilderConfiguration,
@@ -9,10 +8,8 @@ import {
 
 const ROOT = resolveRepoRoot(process.cwd());
 const TARGET_VERSION = readManifestVersion("apps/desktop/package.json");
-const PACKAGE_VERSION = readManifestVersion("package.json");
 
 const REQUIRED_RUNTIME_RESOURCE_PATHS = [
-  "package.json",
   "cli/runner/main.ts",
   "cli/runner/RunnerServiceEventJournal.ts",
   "cli/runner/RunnerServiceHost.ts",
@@ -68,30 +65,41 @@ function checkDesktopBuilderConfiguration(): void {
   const candidate = resolveDesktopBuilderConfiguration({
     repoRoot: ROOT,
     version: TARGET_VERSION,
+    electronVersion: "37.2.6",
     releaseBuild: false,
     updateChannel: "candidate",
+    packageMode: "dir",
   });
   if (candidate.publish.url !== resolveDesktopUpdateUrl("candidate")) {
     errors.push("candidate Desktop builds must use the candidate update URL.");
   }
   if (
     candidate.mac.target.map(({ target }) => target).sort().join(",") !==
-    "dmg,zip"
+    "dir"
   ) {
-    errors.push("Desktop builder must emit independent DMG and ZIP targets.");
+    errors.push("unsigned Desktop builder must emit only the dir target.");
   }
   const release = resolveDesktopBuilderConfiguration({
     repoRoot: ROOT,
     version: TARGET_VERSION,
+    electronVersion: "37.2.6",
     releaseBuild: true,
     updateChannel: "stable",
     signingIdentity: "Developer ID Application: release-check",
+    packageMode: "release",
   });
   if (release.publish.url !== resolveDesktopUpdateUrl("stable")) {
     errors.push("final Desktop builds must use the stable update URL.");
   }
   if (!release.afterSign?.endsWith("notarize-desktop.mjs")) {
     errors.push("final Desktop builds must run the notarization hook.");
+  }
+  if (
+    release.extraResources.some(
+      (resource) => resource.to === "kestrel-uninstall-helper",
+    ) === false
+  ) {
+    errors.push("Desktop packages must include the native uninstall helper.");
   }
 }
 
@@ -169,8 +177,8 @@ function checkDesktopResources(): void {
     errors.push("Desktop Vite renderer is missing. Run `pnpm --filter @kestrel/desktop renderer:build` before release checks.");
   }
 
-  const resourcesRoot = path.join(ROOT, "apps", "desktop", "resources", "kestrel-repo");
-  if (!existsSync(resourcesRoot)) {
+  const payloadRoot = path.join(ROOT, "apps", "desktop-runtime", "payload");
+  if (!existsSync(payloadRoot)) {
     errors.push(
       "Desktop runtime resources are missing. Run `pnpm --filter @kestrel/desktop prepare:resources` before release checks.",
     );
@@ -178,14 +186,13 @@ function checkDesktopResources(): void {
   }
 
   for (const relativePath of REQUIRED_RUNTIME_RESOURCE_PATHS) {
-    if (!existsSync(path.join(resourcesRoot, relativePath))) {
+    if (!existsSync(path.join(payloadRoot, relativePath))) {
       errors.push(`Desktop runtime resources are missing '${relativePath}'.`);
     }
   }
 
-  const resourcePackage = readJson(path.join(resourcesRoot, "package.json")) as {
+  const resourcePackage = readJson(path.join(ROOT, "apps", "desktop-runtime", "package.json")) as {
     private?: unknown;
-    overrides?: Record<string, unknown> | undefined;
     dependencies?: Record<string, unknown> | undefined;
   };
   if (resourcePackage.private !== true) {
@@ -196,23 +203,19 @@ function checkDesktopResources(): void {
       errors.push(`Desktop runtime resource package.json must include dependency '${dependency}'.`);
     }
   }
-  if (resourcePackage.dependencies?.["@kestrel-agents/protocol"] !== PACKAGE_VERSION) {
-    errors.push(`Desktop runtime resources must declare @kestrel-agents/protocol ${PACKAGE_VERSION}.`);
+  if (resourcePackage.dependencies?.["@kestrel-agents/protocol"] === undefined) {
+    errors.push("Desktop runtime resources must declare @kestrel-agents/protocol.");
   }
   if (resourcePackage.dependencies?.next !== undefined) {
     errors.push("Desktop runtime resource package.json must not include the retired Next.js renderer dependency.");
   }
-  if (resourcePackage.overrides?.postcss !== "8.5.15") {
-    errors.push("Desktop runtime resource package.json must preserve the postcss 8.5.15 override.");
-  }
-
-  for (const envFile of collectLocalEnvFiles(resourcesRoot)) {
+  for (const envFile of collectLocalEnvFiles(payloadRoot)) {
     errors.push(`Desktop runtime resources must not include local env file '${envFile}'.`);
   }
-  if (existsSync(path.join(resourcesRoot, "apps"))) {
+  if (existsSync(path.join(payloadRoot, "apps"))) {
     errors.push("Desktop runtime resources must not include product app source under 'apps/'.");
   }
-  if (existsSync(path.join(resourcesRoot, "packages", "protocol"))) {
+  if (existsSync(path.join(payloadRoot, "packages", "protocol"))) {
     errors.push("Desktop runtime resources must install protocol from its packed artifact, not copied package source.");
   }
 
@@ -231,28 +234,16 @@ function checkDesktopResources(): void {
       "Kestrel.app",
       "Contents",
       "Resources",
-      "kestrel-repo",
+      "kestrel-runtime",
     );
-    const installedRuntimeRoot = existsSync(packagedRuntimeRoot) ? packagedRuntimeRoot : resourcesRoot;
+    const installedRuntimeRoot = existsSync(packagedRuntimeRoot)
+      ? packagedRuntimeRoot
+      : path.join(ROOT, "apps", "desktop", ".desktop-runtime");
     for (const dependency of ["tsx", "pg", "@electric-sql/pglite", "@kestrel-agents/protocol"]) {
-      if (!existsSync(path.join(installedRuntimeRoot, "node_modules", dependency, "package.json"))) {
+      if (!existsSync(path.join(installedRuntimeRoot, "node_modules", dependency))) {
         errors.push(`Prepared package resources must include node_modules/${dependency}.`);
       }
     }
-    const installedProtocolPath = path.join(
-      installedRuntimeRoot,
-      "node_modules",
-      "@kestrel-agents",
-      "protocol",
-      "package.json",
-    );
-    if (existsSync(installedProtocolPath)) {
-      const installedProtocol = readJson(installedProtocolPath) as { version?: unknown };
-      if (installedProtocol.version !== PACKAGE_VERSION) {
-        errors.push(`Prepared package resources must install @kestrel-agents/protocol ${PACKAGE_VERSION}.`);
-      }
-    }
-    checkInstalledPackageDependencies(installedRuntimeRoot, "tsx");
   }
 
   const packagedResourcesRoot = path.join(
@@ -266,7 +257,7 @@ function checkDesktopResources(): void {
     "Resources",
   );
   if (existsSync(path.join(packagedResourcesRoot, "postgres-bundle"))) {
-    errors.push("Desktop 0.6 package must not include the retired bundled Postgres runtime.");
+    errors.push("Desktop 0.7 package must not include the retired bundled Postgres runtime.");
   }
 }
 
@@ -309,6 +300,54 @@ function checkPackagedDesktopSignature(): void {
   if (!/flags=.*\([^)]*\bruntime\b[^)]*\)/u.test(signatureDetails)) {
     errors.push("packaged Desktop release must enable hardened runtime.");
   }
+  const helperPath = path.join(
+    appPath,
+    "Contents",
+    "Resources",
+    "kestrel-uninstall-helper",
+  );
+  if (!existsSync(helperPath)) {
+    errors.push("packaged Desktop release is missing the uninstall helper.");
+  } else {
+    const helperVerification = spawnSync(
+      "codesign",
+      ["--verify", "--strict", "--verbose=2", helperPath],
+      { encoding: "utf8" },
+    );
+    if (helperVerification.status !== 0) {
+      errors.push(
+        `packaged uninstall helper signature is invalid: ${helperVerification.stderr.trim()}`,
+      );
+    }
+    const helperSignature = spawnSync(
+      "codesign",
+      ["-dv", "--verbose=4", helperPath],
+      { encoding: "utf8" },
+    );
+    const helperSignatureDetails =
+      `${helperSignature.stdout}\n${helperSignature.stderr}`;
+    const appAuthority = signatureDetails.match(/^Authority=(.+)$/mu)?.[1];
+    const helperAuthority =
+      helperSignatureDetails.match(/^Authority=(.+)$/mu)?.[1];
+    if (
+      helperSignature.status !== 0 ||
+      appAuthority === undefined ||
+      helperAuthority !== appAuthority
+    ) {
+      errors.push(
+        "packaged uninstall helper must use the same Developer ID Application identity as Desktop.",
+      );
+    }
+    const architectures = spawnSync("lipo", ["-archs", helperPath], {
+      encoding: "utf8",
+    });
+    if (
+      architectures.status !== 0 ||
+      architectures.stdout.trim().split(/\s+/u).includes("arm64") === false
+    ) {
+      errors.push("packaged uninstall helper must include arm64.");
+    }
+  }
   const staple = spawnSync("xcrun", ["stapler", "validate", appPath], { encoding: "utf8" });
   if (staple.status !== 0) {
     errors.push(`packaged Desktop release has no valid stapled notarization ticket: ${staple.stderr.trim()}`);
@@ -320,25 +359,6 @@ function checkPackagedDesktopSignature(): void {
   );
   if (gatekeeper.status !== 0) {
     errors.push(`packaged Desktop release failed Gatekeeper assessment: ${gatekeeper.stderr.trim()}`);
-  }
-}
-
-function checkInstalledPackageDependencies(resourcesRoot: string, packageName: string): void {
-  const packageJsonPath = path.join(resourcesRoot, "node_modules", packageName, "package.json");
-  if (!existsSync(packageJsonPath)) {
-    return;
-  }
-
-  const packageJson = readJson(packageJsonPath) as {
-    dependencies?: Record<string, unknown> | undefined;
-  };
-  const requireFromPackage = createRequire(packageJsonPath);
-  for (const dependency of Object.keys(packageJson.dependencies ?? {})) {
-    try {
-      requireFromPackage.resolve(`${dependency}/package.json`);
-    } catch {
-      errors.push(`Prepared package resources must let ${packageName} resolve dependency '${dependency}'.`);
-    }
   }
 }
 

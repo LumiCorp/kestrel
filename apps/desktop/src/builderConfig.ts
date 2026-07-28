@@ -5,14 +5,17 @@ export type DesktopUpdateChannel = "stable" | "candidate";
 export interface DesktopBuilderConfigInput {
   repoRoot: string;
   version: string;
+  electronVersion: string;
   releaseBuild: boolean;
   updateChannel?: DesktopUpdateChannel | undefined;
   signingIdentity?: string | undefined;
+  packageMode?: "dir" | "release" | undefined;
 }
 
 export interface DesktopBuilderConfiguration {
   appId: string;
   productName: string;
+  electronVersion: string;
   artifactName: string;
   asar: false;
   npmRebuild: false;
@@ -32,7 +35,7 @@ export interface DesktopBuilderConfiguration {
     hardenedRuntime: boolean;
     gatekeeperAssess: false;
     identity: string | null;
-    target: Array<{ target: "dmg" | "zip"; arch: ["arm64"] }>;
+    target: Array<{ target: "dir" | "dmg" | "zip"; arch: ["arm64"] }>;
   };
   publish: {
     provider: "generic";
@@ -53,11 +56,15 @@ export function resolveDesktopBuilderConfiguration(
   input: DesktopBuilderConfigInput,
 ): DesktopBuilderConfiguration {
   const channel = input.updateChannel ?? "stable";
+  const packageMode = input.packageMode ?? "release";
   const signingIdentity = input.signingIdentity?.trim();
-  if (input.releaseBuild && !signingIdentity) {
+  if (packageMode === "release" && (!input.releaseBuild || !signingIdentity)) {
     throw new Error(
-      "KESTREL_DESKTOP_SIGN_IDENTITY must name a Developer ID Application certificate for a release build.",
+      "Desktop release packaging requires KESTREL_DESKTOP_RELEASE=1 and KESTREL_DESKTOP_SIGN_IDENTITY naming a Developer ID Application certificate.",
     );
+  }
+  if (packageMode === "dir" && input.releaseBuild) {
+    throw new Error("The unsigned Desktop dir gate cannot enable release signing.");
   }
   if (input.releaseBuild && channel !== "stable") {
     throw new Error(
@@ -69,6 +76,7 @@ export function resolveDesktopBuilderConfiguration(
   const config: DesktopBuilderConfiguration = {
     appId: "com.kestrel.desktop",
     productName: "Kestrel",
+    electronVersion: input.electronVersion,
     artifactName: `Kestrel-${input.version}-mac-\${arch}.\${ext}`,
     asar: false,
     npmRebuild: false,
@@ -77,21 +85,21 @@ export function resolveDesktopBuilderConfiguration(
       output: path.join(desktopRoot, "out"),
       buildResources: path.join(desktopRoot, "assets"),
     },
-    files: ["**/*"],
+    files: ["**/*", "!node_modules{,/**/*}"],
     extraResources: [
       {
-        from: path.join(desktopRoot, "resources", "kestrel-repo"),
-        to: "kestrel-repo",
+        from: path.join(desktopRoot, ".desktop-package", "node_modules"),
+        to: path.join("app", "node_modules"),
+        filter: ["**/*"],
+      },
+      {
+        from: path.join(desktopRoot, ".desktop-runtime"),
+        to: "kestrel-runtime",
         filter: ["**/*", "!node_modules{,/**/*}"],
       },
       {
-        from: path.join(
-          desktopRoot,
-          "resources",
-          "kestrel-repo",
-          "node_modules",
-        ),
-        to: path.join("kestrel-repo", "node_modules"),
+        from: path.join(desktopRoot, ".desktop-runtime", "node_modules"),
+        to: path.join("kestrel-runtime", "node_modules"),
         filter: ["**/*"],
       },
       {
@@ -102,16 +110,22 @@ export function resolveDesktopBuilderConfiguration(
         from: path.join(desktopRoot, "assets", "kestrel-head.png"),
         to: path.join("assets", "kestrel-head.png"),
       },
+      {
+        from: path.join(desktopRoot, "resources", "kestrel-uninstall-helper"),
+        to: "kestrel-uninstall-helper",
+      },
     ],
     mac: {
       category: "public.app-category.developer-tools",
       hardenedRuntime: input.releaseBuild,
       gatekeeperAssess: false,
       identity: input.releaseBuild ? signingIdentity! : null,
-      target: [
-        { target: "dmg", arch: ["arm64"] },
-        { target: "zip", arch: ["arm64"] },
-      ],
+      target: packageMode === "dir"
+        ? [{ target: "dir", arch: ["arm64"] }]
+        : [
+            { target: "dmg", arch: ["arm64"] },
+            { target: "zip", arch: ["arm64"] },
+          ],
     },
     publish: {
       provider: "generic",

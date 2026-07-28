@@ -33,6 +33,8 @@ contractTest("runtime.hermetic", "Microsoft 365 OAuth requests only selected pac
     assert.equal(scopes.includes("Chat.Read"), false);
     assert.equal(scopes.includes("Sites.Read.All"), false);
     const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+    assert.equal(callback.hostname, "localhost");
+    assert.equal(callback.pathname, "/oauth/callback");
     callback.searchParams.set("state", authorization.searchParams.get("state")!);
     callback.searchParams.set("code", "authorization-code");
     const response = await fetch(callback);

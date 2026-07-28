@@ -66,7 +66,7 @@ Local Core settings support two database modes:
 
 ## First-Run Setup
 
-Packaged Desktop treats first-run onboarding as an explicit choice flow, not a silent OpenRouter default. A public 0.6 artifact must be Developer ID signed and notarized.
+Packaged Desktop treats first-run onboarding as an explicit choice flow, not a silent OpenRouter default. A public 0.7 artifact must be Developer ID signed and notarized.
 
 - Guided setup requires the user to choose one provider first: `openrouter`, `openai`, `anthropic`, `ollama`, or `lmstudio`.
 - Hosted providers require a Local Core Keychain credential before runs can start.
@@ -74,11 +74,11 @@ Packaged Desktop treats first-run onboarding as an explicit choice flow, not a s
 - If onboarding is incomplete, Desktop resumes the first unfinished milestone instead of routing provider setup through the blocked recovery screen.
 - Settings is the authoritative capability surface for models, built-in tools, local execution, MCP, storage, and operating-system permissions. Credential inputs are write-only and verified before replacement.
 
-## 0.6 Release Boundaries
+## 0.7 Release Boundaries
 
 - macOS is the first clean-machine proof target.
 - Release packaging fails unless the app is Developer ID signed, hardened, notarized, stapled, and accepted by Gatekeeper.
-- Auto-update is out of scope.
+- Updates are manual check, download, and explicit restart/install. Kestrel refuses restart while Desktop or Local Core work is active and never cancels that work to install.
 - Local Core owns PGlite storage and execution; Desktop does not launch independent Postgres or runner processes.
 - Developer-shell and Docker-backed code capabilities expose their prerequisites and runtime policies in Settings; `kcron` automation remains a companion surface.
 
@@ -105,7 +105,7 @@ pnpm run desktop:build
 Package:
 
 ```bash
-pnpm run desktop:package
+pnpm run desktop:package:dir
 ```
 
 Public macOS release package:

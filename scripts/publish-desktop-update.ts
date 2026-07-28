@@ -3,7 +3,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { readFileSync } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { parseDesktopUpdateChannel } from "../apps/desktop/src/builderConfig.js";
@@ -32,6 +32,7 @@ const store: DesktopUpdateObjectStore = {
         new HeadObjectCommand({ Bucket: bucket, Key: key }),
       );
       return {
+        etag: result.ETag,
         sha256: result.Metadata?.sha256,
         size: result.ContentLength,
       };
@@ -45,10 +46,18 @@ const store: DesktopUpdateObjectStore = {
       new PutObjectCommand({
         Bucket: bucket,
         Key: input.key,
-        Body: input.body,
+        Body: input.body.kind === "file"
+          ? createReadStream(input.body.path)
+          : input.body.value,
+        ...(input.body.kind === "file"
+          ? { ContentLength: input.body.size }
+          : {}),
         ContentType: input.contentType,
         CacheControl: input.cacheControl,
         Metadata: { sha256: input.sha256 },
+        ...("ifNoneMatch" in input.condition
+          ? { IfNoneMatch: input.condition.ifNoneMatch }
+          : { IfMatch: input.condition.ifMatch }),
       }),
     );
   },

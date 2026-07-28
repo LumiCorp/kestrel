@@ -29,6 +29,7 @@ export const COMMAND_MODE_COMMANDS = [
   "operator",
   "runtime",
   "setup",
+  "uninstall",
 ] as const;
 
 export const SLASH_COMMANDS = [
@@ -240,6 +241,23 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
         command: "setup",
         usage: "kestrel setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]",
         flags: ["--profile", "--approval-pack", "--full"],
+      },
+      {
+        command: "uninstall",
+        usage:
+          "kestrel uninstall; kestrel uninstall plan --scope current|software|complete; kestrel uninstall apply --plan <file> --confirm <plan-id>",
+        flags: [
+          "--scope",
+          "--disconnect-kestrel-one",
+          "--export-worktrees",
+          "--discard-worktrees",
+          "--json",
+          "--out",
+          "--plan",
+          "--confirm",
+          "--delete-data",
+          "--discard-confirm",
+        ],
       },
     ],
     slashCommands: [...SLASH_COMMANDS],

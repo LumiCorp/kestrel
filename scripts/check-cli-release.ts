@@ -8,7 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { parseRunnerHealthV1 } from "../packages/protocol/src/index.js";
 
-const TARGET_VERSION = "0.7.0";
+const root = resolveRepoRoot(process.cwd());
+const TARGET_VERSION = readRootPackageVersion(root);
 const TARGET_PLATFORM = process.env.KESTREL_CLI_PACKAGE_PLATFORM?.trim() || process.platform;
 const TARGET_ARCH = process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch;
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
@@ -78,7 +79,6 @@ const REQUIRED_DEPENDENCIES = [
   "@kestrel-agents/protocol",
 ] as const;
 
-const root = resolveRepoRoot(process.cwd());
 const artifactPath = path.join(root, "apps", "cli", "out", `kestrel-cli-${TARGET_VERSION}-${TARGET_PLATFORM}-${TARGET_ARCH}.tar.gz`);
 const errors: string[] = [];
 
@@ -245,11 +245,12 @@ async function runSmokeChecks(extractRoot: string): Promise<void> {
   const kcron = path.join(extractRoot, "bin", "kcron");
 
   try {
-    expectOutput(kestrel, ["--version"], cwd, env, /0\.6\.0/u, "kestrel --version");
+    const versionPattern = new RegExp(escapeRegExp(TARGET_VERSION), "u");
+    expectOutput(kestrel, ["--version"], cwd, env, versionPattern, "kestrel --version");
     expectOutput(kestrel, ["--help"], cwd, env, /Usage: kestrel/u, "kestrel --help");
     expectOutput(kestrel, ["workspace", "status"], cwd, env, /Workspace:/u, "kestrel workspace status");
     expectOutput(kestrel, ["status"], cwd, env, /Kestrel Local Core|Local Core/u, "kestrel status");
-    expectOutput(kcron, ["--version"], cwd, env, /0\.6\.0/u, "kcron --version");
+    expectOutput(kcron, ["--version"], cwd, env, versionPattern, "kcron --version");
     expectOutput(kcron, ["status"], cwd, env, /kcron:/u, "kcron status");
     smokePackagedProtocolClient(extractRoot, cwd, env);
     await smokeWebRunner(kestrel, cwd, env);
@@ -491,6 +492,18 @@ async function reservePort(): Promise<number> {
 
 function readJson(filePath: string): unknown {
   return JSON.parse(readFileSync(filePath, "utf8"));
+}
+
+function readRootPackageVersion(repoRoot: string): string {
+  const manifest = readJson(path.join(repoRoot, "package.json")) as { version?: unknown };
+  if (typeof manifest.version !== "string" || manifest.version.trim().length === 0) {
+    throw new Error("root package.json must declare a version.");
+  }
+  return manifest.version.trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function resolveRepoRoot(cwd: string): string {

@@ -99,6 +99,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.9
         version: 1.19.9(hono@4.12.3)
+      '@lumi/kestrel-environment-auth':
+        specifier: workspace:^
+        version: link:../../packages/environment-auth
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@4.3.6)
@@ -168,6 +171,9 @@ importers:
       tsx:
         specifier: ^4.19.3
         version: 4.21.0
+      ws:
+        specifier: ^8.21.1
+        version: 8.21.1
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -190,9 +196,12 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.14)
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       electron:
-        specifier: ^37.2.6
-        version: 37.10.3
+        specifier: 37.2.6
+        version: 37.2.6
       happy-dom:
         specifier: 20.9.0
         version: 20.9.0
@@ -202,6 +211,57 @@ importers:
       vite:
         specifier: ^7.3.2
         version: 7.3.2(@types/node@22.19.11)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.2)
+
+  apps/desktop-runtime:
+    dependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.4.6
+        version: 0.4.6
+      '@kestrel-agents/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@kestrel-agents/workspace-skills':
+        specifier: workspace:*
+        version: link:../../packages/workspace-skills
+      '@lumi/kestrel-environment-auth':
+        specifier: workspace:^
+        version: link:../../packages/environment-auth
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(zod@4.3.6)
+      '@tavily/core':
+        specifier: ^0.7.2
+        version: 0.7.2
+      ajv:
+        specifier: ^8.18.0
+        version: 8.18.0
+      cron-parser:
+        specifier: ^5.5.0
+        version: 5.5.0
+      ink:
+        specifier: ^6.8.0
+        version: 6.8.0(@types/react@19.2.14)(react@19.2.4)
+      ink-text-input:
+        specifier: ^6.0.0
+        version: 6.0.0(ink@6.8.0(@types/react@19.2.14)(react@19.2.4))(react@19.2.4)
+      js-tiktoken:
+        specifier: 1.0.21
+        version: 1.0.21
+      node-pty:
+        specifier: 1.2.0-beta.12
+        version: 1.2.0-beta.12
+      pg:
+        specifier: ^8.18.0
+        version: 8.20.0
+      react:
+        specifier: ^19.2.4
+        version: 19.2.4
+      tsx:
+        specifier: ^4.19.3
+        version: 4.21.0
+      ws:
+        specifier: ^8.21.1
+        version: 8.21.1
 
   apps/docs:
     dependencies:
@@ -6045,8 +6105,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@37.10.3:
-    resolution: {integrity: sha512-3IjCGSjQmH50IbW2PFveaTzK+KwcFX9PEhE7KXb9v5IT8cLAiryAN7qezm/XzODhDRlLu0xKG1j8xWBtZ/bx/g==}
+  electron@37.2.6:
+    resolution: {integrity: sha512-Ns6xyxE+hIK5UlujtRlw7w4e2Ju/ImCWXf1Q/PoOhc0N3/6SN6YW7+ujCarsHbxWnolbW+1RlkHtdklUJpjbPA==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
 
@@ -15517,7 +15577,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@37.10.3:
+  electron@37.2.6:
     dependencies:
       '@electron/get': 2.0.3
       '@types/node': 22.19.11

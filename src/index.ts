@@ -21,6 +21,8 @@ export * from "./runtime/RuntimeTurn.js";
 export * from "./runtime/RuntimeTurnCoordinator.js";
 export * from "./runtime/RuntimeThreadedTurnExecutor.js";
 export * from "./localCore/index.js";
+export * from "./uninstall/contracts.js";
+export * from "./uninstall/coordinator.js";
 export * from "./mcp/index.js";
 export * from "./mode/index.js";
 export * from "./code/index.js";

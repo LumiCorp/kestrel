@@ -13,8 +13,8 @@ import { contractTest } from "../../../tests/helpers/contract-test.js";
 contractTest("desktop.hermetic", "resolveDesktopLibexecRoot points Local Core bootstrap at the active Desktop runtime sources", () => {
   assert.equal(resolveDesktopLibexecRoot({
     isPackaged: true,
-    repoRoot: "/Applications/Kestrel.app/Contents/Resources/kestrel-repo",
-  }), "/Applications/Kestrel.app/Contents/Resources/kestrel-repo");
+    repoRoot: "/Applications/Kestrel.app/Contents/Resources/kestrel-runtime/payload",
+  }), "/Applications/Kestrel.app/Contents/Resources/kestrel-runtime/payload");
   assert.equal(resolveDesktopLibexecRoot({
     currentValue: " /custom/kestrel/libexec ",
     isPackaged: true,
@@ -133,7 +133,10 @@ contractTest("desktop.hermetic", "resolveDesktopPathConfig uses packaged resourc
     isPackaged: true,
   });
 
-  assert.equal(config.repoRoot, path.join(resourcesPath, "kestrel-repo"));
+  assert.equal(
+    config.repoRoot,
+    path.join(resourcesPath, "kestrel-runtime", "payload"),
+  );
   assert.equal(config.bootHtmlPath, path.join(resourcesPath, "static", "boot.html"));
   assert.equal(config.iconPath, path.join(resourcesPath, "kestrel-head.png"));
   assert.equal(config.rendererHtmlPath, path.join(resourcesPath, "static", "renderer", "index.html"));

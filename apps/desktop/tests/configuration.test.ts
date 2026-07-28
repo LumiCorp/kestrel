@@ -113,6 +113,11 @@ contractTest(
       url: "https://mcp.slack.com/mcp",
       credentialPrefix: "mcp.standard.slack",
       clientIdEnvironmentVariable: "KESTREL_SLACK_MCP_CLIENT_ID",
+      loopbackCallback: {
+        host: "localhost",
+        port: 3118,
+        path: "/oauth/callback",
+      },
       capabilityPackScopes: {
         search: [
           "search:read.public",

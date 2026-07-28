@@ -1,9 +1,12 @@
 {
   "name": "@kestrel/desktop",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "main": "dist/apps/desktop/src/main.js",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "clean:dist": "rm -rf dist",
     "dev": "pnpm run clean:dist && pnpm run typecheck && pnpm run renderer:build && pnpm run prepare:resources && tsc -p tsconfig.json --noCheck && electron-forge start",
@@ -13,7 +16,8 @@
     "renderer:dev": "vite --config vite.config.ts --host 127.0.0.1",
     "build": "pnpm run typecheck:self && pnpm run build:self",
     "build:self": "pnpm run clean:dist && pnpm run renderer:build && pnpm run prepare:resources && tsc -p tsconfig.json --noCheck",
-    "package": "pnpm run build && pnpm run prepare:package-stage && node --import tsx ../../scripts/package-desktop.ts",
+    "package:dir": "pnpm run build && pnpm run prepare:package-stage && KESTREL_DESKTOP_PACKAGE_MODE=dir node --import tsx ../../scripts/package-desktop.ts",
+    "package": "pnpm run build && pnpm run prepare:package-stage && KESTREL_DESKTOP_PACKAGE_MODE=release node --import tsx ../../scripts/package-desktop.ts",
     "make": "pnpm run package",
     "typecheck": "pnpm run typecheck:self",
     "typecheck:self": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
@@ -23,6 +27,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
+    "@lumi/kestrel-environment-auth": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tavily/core": "^0.7.2",
     "@xterm/xterm": "6.0.0",
@@ -46,6 +51,7 @@
     "react-dom": "19.2.4",
     "streamdown": "^2.0.1",
     "tsx": "^4.19.3",
+    "ws": "^8.21.1",
     "zod": "^4.3.6",
     "zod-to-json-schema": "^3.25.1"
   },
@@ -58,7 +64,8 @@
     "@types/node": "^22.13.10",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "electron": "^37.2.6",
+    "@types/ws": "^8.18.1",
+    "electron": "37.2.6",
     "happy-dom": "20.9.0",
     "typescript": "^5.8.2",
     "vite": "^7.3.2"

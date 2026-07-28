@@ -18,6 +18,7 @@ const TOKEN_ENDPOINT =
   "https://login.microsoftonline.com/organizations/oauth2/v2.0/token";
 const CLIENT_ID = `${MICROSOFT_365_CREDENTIAL_PREFIX}.oauth.client` as LocalCoreCredentialId;
 const TOKENS_ID = `${MICROSOFT_365_CREDENTIAL_PREFIX}.oauth.tokens` as LocalCoreCredentialId;
+const CALLBACK_PATH = "/oauth/callback";
 
 export interface Microsoft365OAuthStartInput {
   clientId: string;
@@ -69,7 +70,9 @@ export class LocalCoreMicrosoft365OAuthSessionManager {
     const sessionId = randomBytes(18).toString("base64url");
     const stateValue = randomBytes(32).toString("base64url");
     const verifier = randomBytes(48).toString("base64url");
-    const callbackPath = `/oauth/callback/${sessionId}`;
+    // Microsoft matches a native loopback callback's path exactly, while it
+    // ignores only the ephemeral port for a localhost callback.
+    const callbackPath = CALLBACK_PATH;
     let active: ActiveSession | undefined;
     const callbackServer = createServer((request, response) => {
       if (active === undefined) return writeCallback(response, 503, "This App connection is not ready.");
@@ -80,7 +83,7 @@ export class LocalCoreMicrosoft365OAuthSessionManager {
     await listen(callbackServer);
     const address = callbackServer.address();
     if (address === null || typeof address === "string") throw new Error("Kestrel could not create the App authorization callback.");
-    const callbackHost = `127.0.0.1:${address.port}`;
+    const callbackHost = `localhost:${address.port}`;
     const redirectUri = `http://${callbackHost}${callbackPath}`;
     const expiresAtMs = this.#now() + this.#ttlMs;
     const authorizationUrl = new URL(AUTHORIZATION_ENDPOINT);
@@ -174,5 +177,5 @@ export class LocalCoreMicrosoft365OAuthSessionManager {
 
 function parseClientId(value: unknown): string { if (typeof value !== "string" || !value.trim() || value.trim() !== value || value.length > 4096 || /[\u0000-\u001f\u007f]/u.test(value)) throw new Error("The Microsoft 365 client identity is invalid."); return value; }
 function parsePacks(value: unknown): Microsoft365Pack[] { if (!Array.isArray(value) || value.length === 0 || value.some((pack) => typeof pack !== "string" || !isMicrosoft365Pack(pack))) throw new Error("Choose valid Microsoft 365 capabilities before connecting."); return [...new Set(value)] as Microsoft365Pack[]; }
-function listen(server: Server): Promise<void> { return new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); }); }); }
+function listen(server: Server): Promise<void> { return new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "localhost", () => { server.off("error", reject); resolve(); }); }); }
 function writeCallback(response: import("node:http").ServerResponse, status: number, message: string) { response.writeHead(status, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }); response.end(message); }

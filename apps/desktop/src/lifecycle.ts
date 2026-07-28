@@ -10,7 +10,9 @@ export interface DesktopShutdownPreparationOptions {
 }
 
 export interface DesktopShutdownPreparation {
-  prepare(): Promise<void>;
+  prepare(input?: {
+    cancelActiveWork?: boolean | undefined;
+  }): Promise<void>;
   isPrepared(): boolean;
 }
 
@@ -21,7 +23,7 @@ export function createDesktopShutdownPreparation(
   let pending: Promise<void> | undefined;
 
   return {
-    prepare() {
+    prepare(input = {}) {
       if (prepared) {
         return Promise.resolve();
       }
@@ -29,7 +31,9 @@ export function createDesktopShutdownPreparation(
         return pending;
       }
       pending = (async () => {
-        await options.stopProjectRuns?.();
+        if (input.cancelActiveWork !== false) {
+          await options.stopProjectRuns?.();
+        }
         await options.closeAdapters?.();
         await options.stopRunner?.();
         await options.closeDatabase?.();

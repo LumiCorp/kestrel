@@ -77,6 +77,25 @@ contractTest(
 
 contractTest(
   "desktop.hermetic",
+  "update preparation closes resources without cancelling project runs",
+  async () => {
+    const order: string[] = [];
+    const preparation = createDesktopShutdownPreparation({
+      stopProjectRuns: () => order.push("cancel"),
+      closeAdapters: () => order.push("adapters"),
+      stopRunner: () => order.push("runner"),
+      closeDatabase: () => order.push("database"),
+    });
+
+    await preparation.prepare({ cancelActiveWork: false });
+    await preparation.prepare();
+    assert.equal(preparation.isPrepared(), true);
+    assert.deepEqual(order, ["adapters", "runner", "database"]);
+  },
+);
+
+contractTest(
+  "desktop.hermetic",
   "normal quit ignores cleanup failure, quits once, and ignores reentry",
   async () => {
     let prevented = 0;

@@ -12,8 +12,10 @@ test("Desktop builder emits signed arm64 DMG and ZIP update targets", () => {
   const config = resolveDesktopBuilderConfiguration({
     repoRoot: "/repo",
     version: "0.7.0",
+    electronVersion: "37.2.6",
     releaseBuild: true,
     signingIdentity: "Developer ID Application: Lumi",
+    packageMode: "release",
   });
   assert.deepEqual(config.mac.target, [
     { target: "dmg", arch: ["arm64"] },
@@ -24,7 +26,7 @@ test("Desktop builder emits signed arm64 DMG and ZIP update targets", () => {
   assert.match(config.afterSign ?? "", /notarize-desktop\.mjs$/u);
   assert.deepEqual(
     config.extraResources.find(({ to }) =>
-      to.endsWith(path.join("kestrel-repo", "node_modules")),
+      to === path.join("kestrel-runtime", "node_modules")
     )?.filter,
     ["**/*"],
   );
@@ -34,8 +36,10 @@ test("development candidate builds receive candidate app-update metadata", () =>
   const config = resolveDesktopBuilderConfiguration({
     repoRoot: "/repo",
     version: "0.6.0",
+    electronVersion: "37.2.6",
     releaseBuild: false,
     updateChannel: "candidate",
+    packageMode: "dir",
   });
   assert.equal(config.mac.identity, null);
   assert.equal(config.publish.url, resolveDesktopUpdateUrl("candidate"));
@@ -47,7 +51,9 @@ test("final artifacts reject missing signing and non-stable channels", () => {
       resolveDesktopBuilderConfiguration({
         repoRoot: "/repo",
         version: "0.7.0",
+        electronVersion: "37.2.6",
         releaseBuild: true,
+        packageMode: "release",
       }),
     /Developer ID Application/u,
   );
@@ -56,12 +62,29 @@ test("final artifacts reject missing signing and non-stable channels", () => {
       resolveDesktopBuilderConfiguration({
         repoRoot: "/repo",
         version: "0.7.0",
+        electronVersion: "37.2.6",
         releaseBuild: true,
         signingIdentity: "Developer ID Application: Lumi",
         updateChannel: "candidate",
+        packageMode: "release",
       }),
     /stable update channel/u,
   );
+});
+
+test("unsigned local proof emits only an unpacked arm64 app", () => {
+  const config = resolveDesktopBuilderConfiguration({
+    repoRoot: "/repo",
+    version: "0.7.0",
+    electronVersion: "37.2.6",
+    releaseBuild: false,
+    packageMode: "dir",
+  });
+  assert.deepEqual(config.mac.target, [
+    { target: "dir", arch: ["arm64"] },
+  ]);
+  assert.equal(config.mac.identity, null);
+  assert.equal(config.afterSign, undefined);
 });
 
 test("Desktop update channel parsing is strict", () => {

@@ -232,6 +232,161 @@ export interface LocalCoreRuntimeStoreResetResult {
   status: LocalCoreStatus;
 }
 
+export interface LocalCoreSystemLifecycleBlocker {
+  code: string;
+  message: string;
+  count: number;
+}
+
+export interface LocalCoreSystemLifecycle {
+  state: "idle" | "busy";
+  owner: {
+    pid: number;
+    executable: string;
+  };
+  blockers: LocalCoreSystemLifecycleBlocker[];
+}
+
+export type LocalCoreSystemShutdownRequest =
+  | {
+      reason: "uninstall";
+      confirm: "shutdown-local-core-for-uninstall";
+    }
+  | {
+      reason: "desktop_update";
+      confirm: "shutdown-local-core-for-desktop-update";
+    };
+
+export type LocalCoreSystemShutdownResult =
+  | {
+      status: "accepted";
+      reason: LocalCoreSystemShutdownRequest["reason"];
+      lifecycle: LocalCoreSystemLifecycle;
+    }
+  | {
+      status: "blocked";
+      reason: LocalCoreSystemShutdownRequest["reason"];
+      lifecycle: LocalCoreSystemLifecycle;
+    };
+
+export function parseLocalCoreSystemLifecycle(
+  value: unknown,
+): LocalCoreSystemLifecycle {
+  const record = requireLocalCoreRecord(value, "system lifecycle");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set(["state", "owner", "blockers"]),
+    "system lifecycle",
+  );
+  if (record.state !== "idle" && record.state !== "busy") {
+    throw new Error("Local Core system lifecycle.state must be idle or busy.");
+  }
+  const owner = requireLocalCoreRecord(record.owner, "system lifecycle.owner");
+  rejectUnknownLocalCoreFields(
+    owner,
+    new Set(["pid", "executable"]),
+    "system lifecycle.owner",
+  );
+  const blockers = requireLocalCoreArray(
+    record.blockers,
+    "system lifecycle.blockers",
+  ).map((entry, index) => {
+    const blocker = requireLocalCoreRecord(
+      entry,
+      `system lifecycle.blockers[${index}]`,
+    );
+    rejectUnknownLocalCoreFields(
+      blocker,
+      new Set(["code", "message", "count"]),
+      `system lifecycle.blockers[${index}]`,
+    );
+    return {
+      code: requireLocalCoreString(
+        blocker.code,
+        `system lifecycle.blockers[${index}].code`,
+      ),
+      message: requireLocalCoreString(
+        blocker.message,
+        `system lifecycle.blockers[${index}].message`,
+      ),
+      count: requireLocalCoreInteger(
+        blocker.count,
+        `system lifecycle.blockers[${index}].count`,
+        1,
+      ),
+    };
+  });
+  return {
+    state: record.state,
+    owner: {
+      pid: requireLocalCoreInteger(
+        owner.pid,
+        "system lifecycle.owner.pid",
+        1,
+      ),
+      executable: requireLocalCoreString(
+        owner.executable,
+        "system lifecycle.owner.executable",
+      ),
+    },
+    blockers,
+  };
+}
+
+export function parseLocalCoreSystemShutdownRequest(
+  value: unknown,
+): LocalCoreSystemShutdownRequest {
+  const record = requireLocalCoreRecord(value, "system shutdown request");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set(["reason", "confirm"]),
+    "system shutdown request",
+  );
+  if (
+    record.reason === "uninstall" &&
+    record.confirm === "shutdown-local-core-for-uninstall"
+  ) {
+    return {
+      reason: "uninstall",
+      confirm: "shutdown-local-core-for-uninstall",
+    };
+  }
+  if (
+    record.reason === "desktop_update" &&
+    record.confirm === "shutdown-local-core-for-desktop-update"
+  ) {
+    return {
+      reason: "desktop_update",
+      confirm: "shutdown-local-core-for-desktop-update",
+    };
+  }
+  throw new Error(
+    "Local Core shutdown requires an exact uninstall or Desktop update confirmation payload.",
+  );
+}
+
+export function parseLocalCoreSystemShutdownResult(
+  value: unknown,
+): LocalCoreSystemShutdownResult {
+  const record = requireLocalCoreRecord(value, "system shutdown result");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set(["status", "reason", "lifecycle"]),
+    "system shutdown result",
+  );
+  if (record.status !== "accepted" && record.status !== "blocked") {
+    throw new Error("Local Core system shutdown result.status is invalid.");
+  }
+  if (record.reason !== "uninstall" && record.reason !== "desktop_update") {
+    throw new Error("Local Core system shutdown result.reason is invalid.");
+  }
+  return {
+    status: record.status,
+    reason: record.reason,
+    lifecycle: parseLocalCoreSystemLifecycle(record.lifecycle),
+  };
+}
+
 export function parseLocalCoreRuntimeStoreResetRequest(
   value: unknown,
 ): LocalCoreRuntimeStoreResetRequest {
@@ -1140,6 +1295,13 @@ function requireLocalCoreStringArray(value: unknown, label: string): string[] {
     throw new Error(`Local Core ${label} must be a string array.`);
   }
   return value.map((item, index) => requireLocalCoreString(item, `${label}[${index}]`));
+}
+
+function requireLocalCoreArray(value: unknown, label: string): unknown[] {
+  if (Array.isArray(value) === false) {
+    throw new Error(`Local Core ${label} must be an array.`);
+  }
+  return value;
 }
 
 function parseOptionalLocalCoreString(
