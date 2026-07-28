@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   cp,
+  chmod,
   lstat,
   mkdir,
   readFile,
@@ -49,6 +50,10 @@ const execFileAsync = promisify(execFile);
 const KESTREL_PACKAGE_NAME = "@kestrel-agents/kestrel";
 const DESKTOP_HELPER_NAME = "kestrel-uninstall-helper";
 const CLI_BUNDLE_MANIFEST_NAME = "kestrel-bundle.json";
+const NON_BLOCKING_APPLY_FAILURE_CODES = new Set([
+  "KESTREL_ONE_DISCONNECT_FAILED",
+  "UNINSTALL_CLI_FINALIZER_SCHEDULED",
+]);
 
 export interface KestrelUninstallCoordinatorOperations {
   now?(): Date;
@@ -76,10 +81,22 @@ export interface KestrelUninstallCoordinatorOperations {
   removePath?(targetPath: string): Promise<void>;
   trashPath?(targetPath: string): Promise<void>;
   runPackageManager?(command: string[]): Promise<void>;
+  scheduleCliFinalizer?(target: KestrelUninstallTarget): Promise<void>;
   unloadKcron?(): Promise<void>;
   purgeKeychain?(): Promise<void>;
   shutdownLocalCore?(platform: NodeJS.Platform): Promise<void>;
   disconnectKestrelOne?(connectionId: string): Promise<void>;
+  listManagedWorktrees?(input: {
+    env: NodeJS.ProcessEnv;
+    platform: NodeJS.Platform;
+  }): Promise<ManagedTaskWorktreeInventoryEntry[]>;
+  createRecoveryBundle?(
+    entry: ManagedTaskWorktreeInventoryEntry,
+    exportRoot: string,
+    ignoredFiles: string[],
+  ): Promise<void>;
+  removeManagedWorktree?(entry: ManagedTaskWorktreeInventoryEntry): Promise<void>;
+  listGitFiles?(worktreeRoot: string, args: string[]): Promise<string[]>;
 }
 
 export interface CreateKestrelUninstallPlanInput {
@@ -270,21 +287,28 @@ export async function applyKestrelUninstallPlan(
     platform: plan.platform,
     operations,
   });
-  if (current.planId !== plan.planId) {
+  const staleBlockers = buildStalePlanBlockers(plan, current);
+  if (staleBlockers.length > 0) {
     return {
       version: KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
       planId: plan.planId,
-      appliedAt: new Date().toISOString(),
+      appliedAt: (operations.now?.() ?? new Date()).toISOString(),
       status: "blocked",
       removedTargets: [],
       skippedTargets: [],
-      blockers: [
-        {
-          code: "UNINSTALL_PLAN_STALE",
-          message:
-            "Uninstall plan is stale. Re-run planning before applying destructive changes.",
-        },
-      ],
+      blockers: staleBlockers,
+      finalTargets: current.targets,
+    };
+  }
+  if (current.blockers.length > 0) {
+    return {
+      version: KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
+      planId: plan.planId,
+      appliedAt: (operations.now?.() ?? new Date()).toISOString(),
+      status: "blocked",
+      removedTargets: [],
+      skippedTargets: [],
+      blockers: current.blockers,
       finalTargets: current.targets,
     };
   }
@@ -292,7 +316,7 @@ export async function applyKestrelUninstallPlan(
     return {
       version: KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
       planId: plan.planId,
-      appliedAt: new Date().toISOString(),
+      appliedAt: (operations.now?.() ?? new Date()).toISOString(),
       status: "blocked",
       removedTargets: [],
       skippedTargets: [],
@@ -304,7 +328,7 @@ export async function applyKestrelUninstallPlan(
     return {
       version: KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
       planId: plan.planId,
-      appliedAt: new Date().toISOString(),
+      appliedAt: (operations.now?.() ?? new Date()).toISOString(),
       status: "applied",
       removedTargets: [],
       skippedTargets: plan.targets.filter((target) => target.selected).map((target) => target.id),
@@ -318,7 +342,7 @@ export async function applyKestrelUninstallPlan(
   const blockers: KestrelUninstallBlocker[] = [];
 
   if (plan.scope === "complete") {
-    const recovery = await recoverOrDiscardManagedWorktrees(plan);
+    const recovery = await recoverOrDiscardManagedWorktrees(plan, operations);
     blockers.push(...recovery.blockers);
     if (blockers.length > 0) {
       return await buildApplyResult(plan, removedTargets, skippedTargets, blockers, operations);
@@ -359,8 +383,13 @@ export async function applyKestrelUninstallPlan(
     }
   }
 
+  const currentTargetIds = new Set(current.targets.map((target) => target.id));
   for (const target of plan.targets) {
     if (target.selected === false) {
+      skippedTargets.push(target.id);
+      continue;
+    }
+    if (target.kind !== "keychain_service" && currentTargetIds.has(target.id) === false) {
       skippedTargets.push(target.id);
       continue;
     }
@@ -368,8 +397,11 @@ export async function applyKestrelUninstallPlan(
       await removeTarget(target, operations);
       removedTargets.push(target.id);
     } catch (error) {
+      const code = error instanceof NonBlockingUninstallFailure
+        ? error.code
+        : "UNINSTALL_TARGET_REMOVE_FAILED";
       blockers.push({
-        code: "UNINSTALL_TARGET_REMOVE_FAILED",
+        code,
         message: error instanceof Error ? error.message : String(error),
         targetId: target.id,
       });
@@ -405,6 +437,114 @@ function normalizeOptions(
     disconnectKestrelOne: options?.disconnectKestrelOne === true,
     exportWorktreesDirectory: options?.exportWorktreesDirectory?.trim() ?? "",
     discardWorktrees: options?.discardWorktrees === true,
+  };
+}
+
+function buildStalePlanBlockers(
+  planned: KestrelUninstallPlanV1,
+  current: KestrelUninstallPlanV1,
+): KestrelUninstallBlocker[] {
+  const blockers: KestrelUninstallBlocker[] = [];
+  const currentTargets = new Map(current.targets.map((target) => [target.id, target]));
+  const plannedTargets = new Map(planned.targets.map((target) => [target.id, target]));
+  for (const target of planned.targets.filter((entry) => entry.selected)) {
+    if (target.kind === "keychain_service") continue;
+    const currentTarget = currentTargets.get(target.id);
+    if (currentTarget === undefined) continue;
+    if (sameTargetIdentity(target, currentTarget) === false) {
+      blockers.push(staleBlocker(`Selected target '${target.id}' changed since planning.`, target.id));
+    }
+  }
+  for (const target of current.targets.filter((entry) => entry.selected)) {
+    if (target.kind === "keychain_service") continue;
+    if (plannedTargets.has(target.id) === false) {
+      blockers.push(staleBlocker(`New selected target '${target.id}' appeared since planning.`, target.id));
+    }
+  }
+  if (current.lifecycle.blockers.length > 0) return blockers;
+  if (
+    current.lifecycle.state !== planned.lifecycle.state &&
+    (planned.lifecycle.state === "idle" && current.lifecycle.state === "missing") === false
+  ) {
+    blockers.push(staleBlocker("Local Core lifecycle changed since planning."));
+  }
+  blockers.push(...staleWorktreeBlockers(planned, current));
+  blockers.push(...staleKestrelOneBlockers(planned, current));
+  return blockers;
+}
+
+function sameTargetIdentity(
+  left: KestrelUninstallTarget,
+  right: KestrelUninstallTarget,
+): boolean {
+  return (
+    left.kind === right.kind &&
+    left.path === right.path &&
+    left.verified === right.verified &&
+    left.removal === right.removal &&
+    left.fingerprint === right.fingerprint &&
+    JSON.stringify(left.command ?? []) === JSON.stringify(right.command ?? [])
+  );
+}
+
+function staleWorktreeBlockers(
+  planned: KestrelUninstallPlanV1,
+  current: KestrelUninstallPlanV1,
+): KestrelUninstallBlocker[] {
+  if (planned.scope !== "complete") return [];
+  const blockers: KestrelUninstallBlocker[] = [];
+  const plannedEntries = new Map(planned.worktrees.entries.map((entry) => [entry.worktreeRoot, entry]));
+  const currentEntries = new Map(current.worktrees.entries.map((entry) => [entry.worktreeRoot, entry]));
+  for (const entry of current.worktrees.entries) {
+    if (plannedEntries.has(entry.worktreeRoot) === false) {
+      blockers.push(staleBlocker(`Managed worktree '${entry.worktreeRoot}' appeared since planning.`));
+    }
+  }
+  for (const entry of planned.worktrees.entries) {
+    const currentEntry = currentEntries.get(entry.worktreeRoot);
+    if (currentEntry === undefined) continue;
+    if (
+      entry.disposition !== currentEntry.disposition ||
+      entry.dirty !== currentEntry.dirty ||
+      entry.aheadCommitCount !== currentEntry.aheadCommitCount ||
+      JSON.stringify(entry.reasons) !== JSON.stringify(currentEntry.reasons)
+    ) {
+      blockers.push(staleBlocker(`Managed worktree '${entry.worktreeRoot}' changed since planning.`));
+    }
+  }
+  return blockers;
+}
+
+function staleKestrelOneBlockers(
+  planned: KestrelUninstallPlanV1,
+  current: KestrelUninstallPlanV1,
+): KestrelUninstallBlocker[] {
+  if (planned.options.disconnectKestrelOne === false) return [];
+  const blockers: KestrelUninstallBlocker[] = [];
+  const plannedEnvironments = new Map(
+    planned.kestrelOne.environments.map((environment) => [environment.connectionId, environment]),
+  );
+  for (const environment of current.kestrelOne.environments) {
+    const plannedEnvironment = plannedEnvironments.get(environment.connectionId);
+    if (plannedEnvironment === undefined) {
+      blockers.push(staleBlocker(`Kestrel One environment '${environment.connectionId}' appeared since planning.`));
+      continue;
+    }
+    if (
+      plannedEnvironment.organizationId !== environment.organizationId ||
+      plannedEnvironment.baseUrl !== environment.baseUrl
+    ) {
+      blockers.push(staleBlocker(`Kestrel One environment '${environment.connectionId}' changed since planning.`));
+    }
+  }
+  return blockers;
+}
+
+function staleBlocker(message: string, targetId?: string | undefined): KestrelUninstallBlocker {
+  return {
+    code: "UNINSTALL_PLAN_STALE",
+    message: `${message} Re-run planning before applying destructive changes.`,
+    ...(targetId !== undefined ? { targetId } : {}),
   };
 }
 
@@ -857,6 +997,14 @@ async function removeTarget(
     if (target.command === undefined || target.command.length === 0) {
       throw new Error(`Target '${target.id}' has no package manager command.`);
     }
+    if (target.path !== undefined && await isCurrentProcessInside(target.path)) {
+      if (operations.scheduleCliFinalizer !== undefined) await operations.scheduleCliFinalizer(target);
+      else await scheduleCliSelfRemovalFinalizer(target);
+      throw new NonBlockingUninstallFailure(
+        "UNINSTALL_CLI_FINALIZER_SCHEDULED",
+        `Target '${target.id}' is owned by the running CLI and was scheduled for removal after process exit.`,
+      );
+    }
     if (operations.runPackageManager !== undefined) {
       await operations.runPackageManager(target.command);
     } else {
@@ -871,10 +1019,18 @@ async function removeTarget(
   if (target.path === undefined) {
     throw new Error(`Target '${target.id}' has no path.`);
   }
+  if (target.kind === "cli_bundle" && await isCurrentProcessInside(target.path)) {
+    if (operations.scheduleCliFinalizer !== undefined) await operations.scheduleCliFinalizer(target);
+    else await scheduleCliSelfRemovalFinalizer(target);
+    throw new NonBlockingUninstallFailure(
+      "UNINSTALL_CLI_FINALIZER_SCHEDULED",
+      `Target '${target.id}' is owned by the running CLI and was scheduled for removal after process exit.`,
+    );
+  }
   await assertSafeRemovalPath(target.path, target.kind);
   if (target.removal === "unlink") {
     if (operations.unlinkPath !== undefined) await operations.unlinkPath(target.path);
-    else await unlink(target.path);
+    else await unlink(target.path).catch(ignoreMissingPath);
     return;
   }
   if (target.removal === "trash") {
@@ -886,6 +1042,90 @@ async function removeTarget(
   }
   if (operations.removePath !== undefined) await operations.removePath(target.path);
   else await rm(target.path, { recursive: true, force: true });
+}
+
+class NonBlockingUninstallFailure extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+async function isCurrentProcessInside(candidatePath: string): Promise<boolean> {
+  const candidate = await realpath(candidatePath).catch(() => undefined);
+  if (candidate === undefined) return false;
+  const processPaths = [process.argv[1], process.execPath].filter(
+    (value): value is string => value !== undefined && value.length > 0,
+  );
+  for (const processPath of processPaths) {
+    const processRealPath = await realpath(processPath).catch(() => undefined);
+    if (processRealPath !== undefined && (processRealPath === candidate || isAncestor(candidate, processRealPath))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function scheduleCliSelfRemovalFinalizer(target: KestrelUninstallTarget): Promise<void> {
+  const finalizerDir = path.join(os.tmpdir(), `kestrel-uninstall-finalizer-${process.pid}-${Date.now()}`);
+  await mkdir(finalizerDir, { recursive: true, mode: 0o700 });
+  const scriptPath = path.join(finalizerDir, "finalize.mjs");
+  await writeFile(scriptPath, cliFinalizerScript(), { encoding: "utf8", mode: 0o600 });
+  await chmod(scriptPath, 0o700);
+  const child = spawn(process.execPath, [scriptPath, JSON.stringify({
+    parentPid: process.pid,
+    target,
+    finalizerDir,
+  })], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
+function cliFinalizerScript(): string {
+  return [
+    "import { rm, unlink } from 'node:fs/promises';",
+    "import { spawn } from 'node:child_process';",
+    "const input = JSON.parse(process.argv[2] || '{}');",
+    "while (true) {",
+    "  try { process.kill(input.parentPid, 0); await new Promise((resolve) => setTimeout(resolve, 200)); }",
+    "  catch { break; }",
+    "}",
+    "const target = input.target || {};",
+    "try {",
+    "  if (target.removal === 'package_manager') {",
+    "    const [command, ...args] = target.command || [];",
+    "    if (!command) throw new Error('missing package manager command');",
+    "    await new Promise((resolve, reject) => {",
+    "      const child = spawn(command, args, { stdio: 'ignore' });",
+    "      child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`package manager exited ${code}`)));",
+    "      child.once('error', reject);",
+    "    });",
+    "  } else if (target.removal === 'unlink' && target.path) {",
+    "    await unlink(target.path).catch((error) => { if (error?.code !== 'ENOENT') throw error; });",
+    "  } else if (target.path) {",
+    "    await rm(target.path, { recursive: true, force: true });",
+    "  }",
+    "} finally {",
+    "  if (input.finalizerDir) await rm(input.finalizerDir, { recursive: true, force: true }).catch(() => {});",
+    "}",
+    "",
+  ].join("\n");
+}
+
+function ignoreMissingPath(error: unknown): void {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  ) {
+    return;
+  }
+  throw error;
 }
 
 interface PathTargetInput {
@@ -1103,9 +1343,18 @@ async function buildApplyResult(
     platform: plan.platform,
     operations,
   });
+  const deferredTargetIds = new Set(
+    blockers
+      .filter((blocker) => blocker.code === "UNINSTALL_CLI_FINALIZER_SCHEDULED" && blocker.targetId !== undefined)
+      .map((blocker) => blocker.targetId as string),
+  );
   const selectedTargetIds = new Set(
     plan.targets
-      .filter((target) => target.selected && target.kind !== "keychain_service")
+      .filter((target) =>
+        target.selected &&
+        target.kind !== "keychain_service" &&
+        deferredTargetIds.has(target.id) === false,
+      )
       .map((target) => target.id),
   );
   const remainingTargets = finalPlan.targets.filter((target) =>
@@ -1119,6 +1368,9 @@ async function buildApplyResult(
       targetId: target.id,
     })),
   ];
+  const hasBlockingFailures = finalBlockers.some(
+    (blocker) => NON_BLOCKING_APPLY_FAILURE_CODES.has(blocker.code) === false,
+  );
   return {
     version: KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
     planId: plan.planId,
@@ -1126,7 +1378,7 @@ async function buildApplyResult(
     status:
       finalBlockers.length === 0
         ? "applied"
-        : removedTargets.length > 0
+        : hasBlockingFailures === false || removedTargets.length > 0
           ? "partial"
           : "blocked",
     removedTargets,
@@ -1138,12 +1390,10 @@ async function buildApplyResult(
 
 async function recoverOrDiscardManagedWorktrees(
   plan: KestrelUninstallPlanV1,
+  operations: KestrelUninstallCoordinatorOperations,
 ): Promise<{ blockers: KestrelUninstallBlocker[] }> {
   const blockers: KestrelUninstallBlocker[] = [];
-  const service = new ManagedTaskWorktreeService({
-    homeDir: resolveKestrelCoreHome(process.env, plan.platform).homePath,
-  });
-  const entries = await service.listManagedWorktrees();
+  const entries = await loadManagedWorktreeEntries(plan, operations);
   if (entries.length === 0) return { blockers };
   const exportDirectory = plan.options.exportWorktreesDirectory ?? "";
   const exportRoot =
@@ -1158,8 +1408,8 @@ async function recoverOrDiscardManagedWorktrees(
       : undefined;
   if (blockers.length > 0) return { blockers };
   for (const entry of entries) {
-    const inspection = await service.inspectLifecycle(entry.binding);
-    const currentEntry = { ...entry, inspection };
+    const currentEntry = entry;
+    const { inspection } = currentEntry;
     if (inspection.retention.disposition === "blocked") {
       blockers.push({
         code: "UNINSTALL_WORKTREE_BLOCKED",
@@ -1167,7 +1417,7 @@ async function recoverOrDiscardManagedWorktrees(
       });
       continue;
     }
-    const ignored = await listGitFiles(inspection.binding.worktreeRoot, [
+    const ignored = await listManagedWorktreeGitFiles(operations, inspection.binding.worktreeRoot, [
       "ls-files",
       "--others",
       "--ignored",
@@ -1194,12 +1444,41 @@ async function recoverOrDiscardManagedWorktrees(
         continue;
       }
       if (exportRoot !== undefined) {
-        await createRecoveryBundle(currentEntry, exportRoot, ignored);
+        if (operations.createRecoveryBundle !== undefined) {
+          await operations.createRecoveryBundle(currentEntry, exportRoot, ignored);
+        } else {
+          await createRecoveryBundle(currentEntry, exportRoot, ignored, operations);
+        }
       }
     }
-    await removeManagedWorktree(currentEntry);
+    if (operations.removeManagedWorktree !== undefined) {
+      await operations.removeManagedWorktree(currentEntry);
+    } else {
+      await removeManagedWorktree(currentEntry);
+    }
   }
   return { blockers };
+}
+
+async function loadManagedWorktreeEntries(
+  plan: KestrelUninstallPlanV1,
+  operations: KestrelUninstallCoordinatorOperations,
+): Promise<ManagedTaskWorktreeInventoryEntry[]> {
+  if (operations.listManagedWorktrees !== undefined) {
+    return await operations.listManagedWorktrees({ env: process.env, platform: plan.platform });
+  }
+  const service = new ManagedTaskWorktreeService({
+    homeDir: resolveKestrelCoreHome(process.env, plan.platform).homePath,
+  });
+  const entries = await service.listManagedWorktrees();
+  const refreshed: ManagedTaskWorktreeInventoryEntry[] = [];
+  for (const entry of entries) {
+    refreshed.push({
+      binding: entry.binding,
+      inspection: await service.inspectLifecycle(entry.binding),
+    });
+  }
+  return refreshed;
 }
 
 async function prepareWorktreeExportRoot(
@@ -1230,12 +1509,13 @@ async function createRecoveryBundle(
   entry: ManagedTaskWorktreeInventoryEntry,
   exportRoot: string,
   ignoredFiles: string[],
+  operations: KestrelUninstallCoordinatorOperations,
 ): Promise<void> {
   const worktreeRoot = entry.binding.worktreeRoot;
   const bundleRoot = path.join(exportRoot, `worktree-${hashString(worktreeRoot).slice(0, 16)}`);
   await mkdir(bundleRoot, { recursive: true, mode: 0o700 });
   const ignoredSummary = await summarizeFiles(worktreeRoot, ignoredFiles);
-  const untracked = await listGitFiles(worktreeRoot, [
+  const untracked = await listManagedWorktreeGitFiles(operations, worktreeRoot, [
     "ls-files",
     "--others",
     "--exclude-standard",
@@ -1308,6 +1588,17 @@ async function listGitFiles(worktreeRoot: string, args: string[]): Promise<strin
     .toString("utf8")
     .split("\0")
     .filter((entry) => entry.length > 0);
+}
+
+async function listManagedWorktreeGitFiles(
+  operations: KestrelUninstallCoordinatorOperations,
+  worktreeRoot: string,
+  args: string[],
+): Promise<string[]> {
+  if (operations.listGitFiles !== undefined) {
+    return await operations.listGitFiles(worktreeRoot, args);
+  }
+  return await listGitFiles(worktreeRoot, args);
 }
 
 async function writeGitOutput(
