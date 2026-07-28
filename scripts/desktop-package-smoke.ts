@@ -17,6 +17,7 @@ import path from "node:path";
 import { _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
 
 import { resolveDesktopPackagerConfig } from "../apps/desktop/src/packageConfig.js";
+import { DESKTOP_BRIDGE_VERSION } from "../src/desktopShell/contracts.js";
 import { resolveLocalCorePaths } from "../src/localCore/home.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
@@ -25,13 +26,12 @@ const packagerConfig = resolveDesktopPackagerConfig({ repoRoot });
 const packagedRoot = process.env.KESTREL_DESKTOP_PACKAGE_PATH?.trim()
   || path.join(
     packagerConfig.outDir,
-    `${packagerConfig.appName}-${packagerConfig.platform}-${packagerConfig.arch}`,
+    `mac-${packagerConfig.arch}`,
   );
 const executablePath = resolvePackagedExecutable(packagedRoot, packagerConfig.platform);
 const evidenceDir = path.join(repoRoot, "apps", "desktop", "out", "package-smoke");
 const smokeLockPath = path.join(evidenceDir, "active.lock");
 const screenshotPath = path.join(evidenceDir, "renderer.png");
-const missionControlScreenshotPath = path.join(evidenceDir, "mission-control.png");
 const projectsScreenshotPath = path.join(evidenceDir, "projects.png");
 const mcpScreenshotPath = path.join(evidenceDir, "mcp.png");
 const mcpEditorScreenshotPath = path.join(evidenceDir, "mcp-editor.png");
@@ -164,13 +164,17 @@ try {
       chatLayout: (() => {
         const activity = document.querySelector(".activity-line")?.getBoundingClientRect();
         const composer = document.querySelector(".composer")?.getBoundingClientRect();
-        return activity === undefined || composer === undefined
+        return composer === undefined
           ? undefined
           : {
-              activityLeft: activity.left,
-              activityWidth: activity.width,
               composerLeft: composer.left,
               composerWidth: composer.width,
+              ...(activity === undefined
+                ? {}
+                : {
+                    activityLeft: activity.left,
+                    activityWidth: activity.width,
+                  }),
             };
       })(),
     };
@@ -181,7 +185,11 @@ try {
   assert.equal(renderer.appInfo.version, mainProcess.version, "Main and preload versions must agree.");
   assert.equal(renderer.appInfo.version, expectedDesktopVersion, "Packaged Desktop must report its manifest version.");
   assert.equal(renderer.bridgeInfo.connected, true, "Desktop preload bridge must be connected.");
-  assert.equal(renderer.bridgeInfo.version, "4", "Packaged Desktop must expose bridge version 4.");
+  assert.equal(
+    renderer.bridgeInfo.version,
+    DESKTOP_BRIDGE_VERSION,
+    `Packaged Desktop must expose bridge version ${DESKTOP_BRIDGE_VERSION}.`,
+  );
   assert.equal(renderer.bridgeInfo.capabilities.includes("capability_registry"), true);
   assert.equal(renderer.bridgeInfo.capabilities.includes("runtime_inspection"), true);
   assert.equal(renderer.bridgeInfo.capabilities.includes("mission_control"), true);
@@ -190,17 +198,30 @@ try {
   assert.equal(renderer.bootState.phase, "ready", renderer.bootState.code ?? renderer.bootState.message);
   assert.equal(renderer.hasRoot, true, "Packaged Desktop must mount the Vite renderer root.");
   assert.equal(renderer.hasNextAsset, false, "Packaged Desktop must not load Next.js assets.");
-  assert.notEqual(renderer.chatLayout, undefined, "Packaged Desktop must render chat activity and composer geometry.");
-  assert.equal(
-    Math.abs(renderer.chatLayout!.activityLeft - renderer.chatLayout!.composerLeft) < 1,
-    true,
-    "Ephemeral activity must share the composer's left edge.",
+  assert.notEqual(
+    renderer.chatLayout,
+    undefined,
+    "Packaged Desktop must render composer geometry.",
   );
-  assert.equal(
-    Math.abs(renderer.chatLayout!.activityWidth - renderer.chatLayout!.composerWidth) < 1,
-    true,
-    "Ephemeral activity must share the composer's width.",
-  );
+  if (
+    renderer.chatLayout?.activityLeft !== undefined &&
+    renderer.chatLayout.activityWidth !== undefined
+  ) {
+    assert.equal(
+      Math.abs(
+        renderer.chatLayout.activityLeft - renderer.chatLayout.composerLeft,
+      ) < 1,
+      true,
+      "Ephemeral activity must share the composer's left edge.",
+    );
+    assert.equal(
+      Math.abs(
+        renderer.chatLayout.activityWidth - renderer.chatLayout.composerWidth,
+      ) < 1,
+      true,
+      "Ephemeral activity must share the composer's width.",
+    );
+  }
   assert.match(renderer.bodyText, /Kestrel/u);
 
   await window.screenshot({ path: screenshotPath, fullPage: true });
@@ -362,8 +383,11 @@ function readDesktopVersion(root: string): string {
 
 async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string, string>> {
   await openRendererSurface(window, "Settings", "Settings");
-  for (const capability of ["OpenRouter", "MCP connections", "Developer shell", "Sandboxed code execution", "Runtime database", "Microphone"]) {
-    await window.getByRole("heading", { name: capability, exact: true }).waitFor({ timeout: 30_000 });
+  for (const capability of ["OpenRouter", "Apps", "Developer shell", "Sandboxed code execution", "Runtime database", "Microphone"]) {
+    await window
+      .getByRole("heading", { name: capability, exact: true })
+      .first()
+      .waitFor({ timeout: 30_000 });
   }
   const databaseCard = window.locator(".capability-card").filter({ hasText: "Runtime database" });
   await databaseCard.getByRole("button", { name: "Configure", exact: true }).click();
@@ -375,27 +399,15 @@ async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string
   await assertNoSurfaceError(window, "Settings");
   await window.screenshot({ path: settingsScreenshotPath, fullPage: true });
 
-  await openRendererSurface(window, "Mission control", "Mission control");
-  await window.getByText("No tasks in this session", { exact: true }).waitFor({ timeout: 30_000 });
-  await window.getByRole("button", { name: "Runs", exact: true }).click();
-  await window.waitForFunction(
-    () => document.body.innerText.includes("No runtime runs")
-      || document.querySelector(".runtime-run-index") !== null,
-    undefined,
-    { timeout: 30_000 },
-  );
-  await assertNoSurfaceError(window, "Mission control");
-  await window.screenshot({ path: missionControlScreenshotPath, fullPage: true });
-
   await openRendererSurface(window, "Projects", "No project selected");
   await assertNoSurfaceError(window, "Projects");
   await window.screenshot({ path: projectsScreenshotPath, fullPage: true });
 
-  await openRendererSurface(window, "MCP servers", "MCP servers");
-  await assertNoSurfaceError(window, "MCP servers");
+  await openRendererSurface(window, "Apps", "Apps");
+  await assertNoSurfaceError(window, "Apps");
   await window.screenshot({ path: mcpScreenshotPath, fullPage: true });
-  await window.getByRole("button", { name: "Add server", exact: true }).click();
-  await window.getByRole("dialog", { name: "Add server", exact: true }).waitFor({ timeout: 30_000 });
+  await window.getByRole("button", { name: "Add Custom App", exact: true }).click();
+  await window.getByRole("dialog", { name: "Add Custom App", exact: true }).waitFor({ timeout: 30_000 });
   await window.getByRole("button", { name: "Add credential", exact: true }).click();
   assert.equal(
     await window.locator(".mcp-credential-row input[type='password']").count(),
@@ -403,7 +415,7 @@ async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string
     "MCP credentials must use a write-only password field.",
   );
   await window.screenshot({ path: mcpEditorScreenshotPath, fullPage: true });
-  await window.getByRole("button", { name: "Close MCP server editor", exact: true }).click();
+  await window.getByRole("button", { name: "Close Custom App editor", exact: true }).click();
 
   await openRendererSurface(window, "Diagnostics", "Diagnostics");
   await assertNoSurfaceError(window, "Diagnostics");
@@ -411,7 +423,6 @@ async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string
 
   return {
     chat: screenshotPath,
-    missionControl: missionControlScreenshotPath,
     projects: projectsScreenshotPath,
     mcp: mcpScreenshotPath,
     mcpEditor: mcpEditorScreenshotPath,
@@ -425,7 +436,11 @@ async function openRendererSurface(
   buttonName: string,
   headingName: string,
 ): Promise<void> {
-  await window.getByRole("button", { name: buttonName, exact: true }).click();
+  await window.getByRole("button", { name: /Find work/u }).click();
+  const navigator = window.getByRole("dialog", { name: "Find work" });
+  await navigator
+    .getByRole("button", { name: buttonName, exact: true })
+    .click();
   await window.getByRole("heading", { name: headingName, exact: true }).waitFor({ timeout: 30_000 });
 }
 

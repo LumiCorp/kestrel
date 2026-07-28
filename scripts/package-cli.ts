@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { shouldCopyDesktopResourceEntry } from "./prepare-desktop-resources.js";
 import {
-  packPublicProtocolPackage,
+  packRuntimeWorkspacePackages,
   resolveRuntimePackageDependencies,
   resolveRuntimeDependencyInstallArgs,
 } from "./runtime-package-dependencies.js";
@@ -185,9 +185,9 @@ function copyCliPostgresBundle(): void {
 function installRuntimeDependenciesWithPackedProtocol(): void {
   const localPackageDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-cli-runtime-pack-"));
   try {
-    installRuntimeDependencies([
-      packPublicProtocolPackage({ repoRoot, packDir: localPackageDir }),
-    ]);
+    installRuntimeDependencies(
+      packRuntimeWorkspacePackages({ repoRoot, packDir: localPackageDir }),
+    );
   } finally {
     rmSync(localPackageDir, { recursive: true, force: true });
   }
