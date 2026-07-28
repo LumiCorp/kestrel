@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseRunnerHealthV1 } from "../packages/protocol/src/index.js";
 
-const TARGET_VERSION = "0.6.0";
+const TARGET_VERSION = "0.7.0";
 const TARGET_PLATFORM = process.env.KESTREL_CLI_PACKAGE_PLATFORM?.trim() || process.platform;
 const TARGET_ARCH = process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch;
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;

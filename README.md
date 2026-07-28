@@ -23,7 +23,7 @@
 <p align="center">
   <a href="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml"><img src="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1f6f5f.svg" alt="MIT license" /></a>
-  <a href="apps/docs/content/start/release-status.mdx"><img src="https://img.shields.io/badge/release-0.6.0-2f7d32.svg" alt="Kestrel 0.6.0" /></a>
+  <a href="apps/docs/content/start/release-status.mdx"><img src="https://img.shields.io/badge/release-0.7.0-2f7d32.svg" alt="Kestrel packages 0.7.0" /></a>
 </p>
 
 ## Kestrel Desktop

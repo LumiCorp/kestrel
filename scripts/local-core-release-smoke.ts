@@ -13,7 +13,7 @@ import {
 import { WorkspaceStore } from "../cli/workspace/WorkspaceStore.js";
 import { SessionStore } from "../cli/session/SessionStore.js";
 
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 const SMOKE_TEMP_ROOT = process.platform === "darwin" ? "/tmp" : os.tmpdir();
 
 async function main(): Promise<void> {
@@ -66,7 +66,7 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
 
     const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
     const status = await client.status();
-    const stateHome = path.join(home, "state", "0.6");
+    const stateHome = path.join(home, "state", "0.7");
     assert.equal(status.state, "healthy");
     assert.equal(status.home.productRootPath, home);
     assert.equal(status.home.homePath, stateHome);

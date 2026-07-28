@@ -53,7 +53,7 @@ contractTest("packages.hermetic", "runner health contract rejects legacy unversi
 });
 
 contractTest("packages.hermetic", "runner health rejects the v1 event contract", () => {
-  const health = createRunnerHealthV1({ serviceVersion: "0.6.0-beta.0" });
+  const health = createRunnerHealthV1({ serviceVersion: "0.7.0-beta.0" });
   assert.throws(
     () => parseRunnerHealthV1({
       ...health,
@@ -64,7 +64,7 @@ contractTest("packages.hermetic", "runner health rejects the v1 event contract",
 });
 
 contractTest("packages.hermetic", "runner health requires the aggregate Execution Protocol v3 contract", () => {
-  const health = createRunnerHealthV1({ serviceVersion: "0.6.0-beta.0" });
+  const health = createRunnerHealthV1({ serviceVersion: "0.7.0-beta.0" });
   const { execution: _execution, ...withoutExecution } = health.contracts;
   assert.throws(
     () => parseRunnerHealthV1({

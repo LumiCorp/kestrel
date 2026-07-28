@@ -77,7 +77,7 @@ The local Environment runtime uses a separate `kestrel_runtime` database in the 
 
 For local browser flows, `DEV_AUTH_BYPASS=true` only works on `localhost`/`127.0.0.1`. API routes still require a real session or API key, so smoke tests and direct HTTP clients continue to receive `401`/`403` when appropriate.
 
-Kestrel One declares exact released versions of `@kestrel-agents/sdk` and `@kestrel-agents/next`. Repository-root commands build the matching workspace packages before invoking the app, while Kestrel One's own scripts contain no sibling-package filters or source imports. `pnpm run check:kestrel-boundary` enforces that standalone contract.
+Kestrel One declares exact released versions of every `@kestrel-agents/*` package it consumes. Repository-root commands build the matching workspace packages before invoking the app, while Kestrel One's own scripts contain no sibling-package filters or source imports. `pnpm run check:kestrel-boundary` enforces that standalone contract.
 
 Public-repo defaults:
 - `dev:all` seeds a local-only admin for development, but there is no automatic first-user production admin bootstrap.

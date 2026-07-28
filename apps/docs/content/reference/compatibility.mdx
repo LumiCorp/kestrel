@@ -1,6 +1,6 @@
 ---
-title: 0.6 compatibility
-summary: Keep the Runtime, public packages, CLI, Desktop, and Kestrel One on compatible 0.6.0 versions.
+title: Release compatibility
+summary: Match the 0.7 package line while respecting the independently released Desktop and Kestrel One channels.
 section: reference
 audience: integrators
 status: active
@@ -10,4 +10,4 @@ updatedAt: 2026-07-20
 
 <ReleaseCompatibilityTable />
 
-Use the same documented version across the Runtime, public packages, CLI, Desktop resources, and Kestrel One dependencies. Mixing release lines can cause incompatible events, terminal results, or health responses.
+Use the `0.7.0` package line together across Runtime, Protocol, SDK, and adapters. Desktop and Kestrel One are products with independent release channels: the signed public Desktop remains `0.6.0`, while Kestrel One is invitation-managed. Do not infer a product artifact version from the npm package line.

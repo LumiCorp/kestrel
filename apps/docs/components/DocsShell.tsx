@@ -73,7 +73,7 @@ export function DocsShell(props: DocsShellProps) {
                 <span>{surfaceLabel}</span>
                 <span>{pageMeta.experienceLevel}</span>
                 {pageMeta.estimatedTime ? <span>{pageMeta.estimatedTime}</span> : null}
-                <span>{DOCS_RELEASE.version} {DOCS_RELEASE.channel}</span>
+                <span>{DOCS_RELEASE.packages.version} {DOCS_RELEASE.packages.channel}</span>
               </div>
               <div className="article-details">
                 <span>Verified {pageMeta.updatedAt}</span>

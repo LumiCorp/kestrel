@@ -78,7 +78,7 @@ try {
   assert.deepEqual(entryModule.RUNNER_STREAMING_COMMAND_TYPES, ["job.run", "run.start"]);
   assert.equal(entryModule.RUNNER_JOB_STREAM_EVENT_TYPES.includes("run.progress"), true);
   assert.equal(typeof entryModule.isRunnerEventAllowedForCommand, "function");
-  const health = entryModule.createRunnerHealthV1({ serviceVersion: "0.6.0" });
+  const health = entryModule.createRunnerHealthV1({ serviceVersion: "0.7.0" });
   assert.equal(health.contracts.execution, "execution-protocol-v3");
   assert.equal(health.capabilities.includes("events.cursor"), true);
   assert.equal(health.capabilities.includes("run.continue_on_disconnect"), true);

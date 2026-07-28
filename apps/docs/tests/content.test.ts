@@ -13,7 +13,8 @@ import { CONTENT_ARCHETYPES, DOCS_NAV_SECTIONS, PRODUCT_SURFACES } from "@/lib/t
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-const VERSION = "0.6.0";
+const PACKAGE_VERSION = "0.7.0";
+const DESKTOP_VERSION = "0.6.0";
 
 contractTest("docs.hermetic", "navigation exposes exactly six ordered public journeys", async () => {
   const navigation = await getNavigation();
@@ -62,7 +63,7 @@ contractTest("docs.hermetic", "every navigation, related, and Markdown link reso
   }
 });
 
-contractTest("docs.hermetic", "the complete 0.6 public baseline is represented", async () => {
+contractTest("docs.hermetic", "the complete 0.7 package baseline is represented", async () => {
   const required = [
     "start/quickstart",
     "desktop/providers",
@@ -134,17 +135,22 @@ contractTest("docs.hermetic", "released packages and compatibility are first-cla
   for (const route of routes) assert.ok(await getRenderedPageBySlug(["reference", route]), route);
   assert.ok(await getRenderedPageBySlug(["reference", "compatibility"]));
   assert.deepEqual(
-    DOCS_RELEASE.compatibility.map(([component]) => component),
+    DOCS_RELEASE.compatibility.map(({ surface }) => surface),
     ["Runtime", "Protocol", "SDK", "Next.js", "AI SDK", "Observability", "Workspace skills", "CLI", "Desktop", "Kestrel One"],
   );
 });
 
-contractTest("docs.hermetic", "release-sensitive public copy uses stable 0.6.0", async () => {
+contractTest("docs.hermetic", "release metadata separates packages from product availability", async () => {
   const pages = await getPublicPages();
   const corpus = pages.map(({ rawContent }) => rawContent).join("\n");
-  assert.equal(DOCS_RELEASE.version, VERSION);
-  assert.equal(DOCS_RELEASE.channel, "Stable");
+  assert.equal(DOCS_RELEASE.packages.version, PACKAGE_VERSION);
+  assert.equal(DOCS_RELEASE.packages.channel, "Stable");
+  assert.equal(DOCS_RELEASE.products.desktop.version, DESKTOP_VERSION);
+  assert.equal(DOCS_RELEASE.products.desktop.channel, "Stable");
+  assert.equal(DOCS_RELEASE.products.kestrelOne.version, "Managed");
+  assert.equal(DOCS_RELEASE.products.kestrelOne.channel, "Invitation");
   assert.doesNotMatch(corpus, /\b\d+\.\d+\.\d+-beta\.\d+\b/gu);
+  assert.match(corpus, /\b0\.7\.0\b/u);
   assert.match(corpus, /\b0\.6\.0\b/u);
 });
 
@@ -185,7 +191,7 @@ contractTest("docs.hermetic", "public code fences name their language and packag
 
     for (const line of page.rawContent.split("\n").filter((candidate) => candidate.includes("pnpm add @kestrel-agents/"))) {
       for (const packageName of line.match(/@kestrel-agents\/[a-z-]+(?:@[^\s\\]+)?/gu) ?? []) {
-        assert.match(packageName, /@0\.6\.0$/u, `${page.meta.url} has an unpinned package install`);
+        assert.match(packageName, /@0\.7\.0$/u, `${page.meta.url} has an unpinned package install`);
       }
     }
   }

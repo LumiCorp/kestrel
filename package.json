@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/kestrel",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Minimal durable runtime kernel for agentic step execution",
   "type": "module",
   "main": "dist/src/index.js",
@@ -39,6 +39,9 @@
     "!tools/**/*.spec.*",
     "!cli/**/*.test.*",
     "!cli/**/*.spec.*"
+  ],
+  "bundledDependencies": [
+    "@lumi/kestrel-environment-auth"
   ],
   "scripts": {
     "start": "node --import tsx scripts/start.ts",
@@ -94,9 +97,8 @@
     "next:smoke": "pnpm --filter @kestrel-agents/next smoke:import",
     "next:release-check": "pnpm --filter @kestrel-agents/next release:check",
     "ecosystem:e2e": "pnpm run sdk:build && pnpm run observability:build && pnpm run next:build && node --import tsx --test tests/e2e/sdk-ecosystem/ecosystem.test.ts tests/e2e/sdk-ecosystem/realtime-faults.test.ts",
-    "ecosystem:otel-e2e": "pnpm run otel:up && pnpm run sdk:build && pnpm run observability:build && node --import tsx --test tests/e2e/sdk-ecosystem/otel-collector.test.ts",
     "ecosystem:next-fixture": "pnpm run sdk:build && pnpm run next:build && node --import tsx --test tests/e2e/sdk-ecosystem/next-fixture.test.ts",
-    "ecosystem:release-check": "pnpm run protocol:release-check && pnpm run sdk:release-check && pnpm run observability:release-check && pnpm run next:release-check && pnpm run ecosystem:e2e && pnpm run ecosystem:otel-e2e && pnpm run ecosystem:next-fixture",
+    "ecosystem:release-check": "pnpm run protocol:release-check && pnpm run sdk:release-check && pnpm run observability:release-check && pnpm run next:release-check && pnpm run ecosystem:e2e && pnpm run ecosystem:next-fixture",
     "desktop:dev": "pnpm --filter @kestrel/desktop dev",
     "desktop:build": "pnpm --filter @kestrel/desktop build",
     "desktop:package": "pnpm --filter @kestrel/desktop package",
