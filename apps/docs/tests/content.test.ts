@@ -14,7 +14,7 @@ import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const PACKAGE_VERSION = "0.7.0";
-const DESKTOP_VERSION = "0.7.0";
+const DESKTOP_VERSION = "0.6.0";
 
 contractTest("docs.hermetic", "navigation exposes exactly six ordered public journeys", async () => {
   const navigation = await getNavigation();
@@ -151,6 +151,7 @@ contractTest("docs.hermetic", "release metadata separates packages from product 
   assert.equal(DOCS_RELEASE.products.kestrelOne.channel, "Invitation");
   assert.doesNotMatch(corpus, /\b\d+\.\d+\.\d+-beta\.\d+\b/gu);
   assert.match(corpus, /\b0\.7\.0\b/u);
+  assert.match(corpus, /\b0\.6\.0\b/u);
 });
 
 contractTest("docs.hermetic", "all seven product screenshots exist and have descriptive alt text and captions", async () => {
