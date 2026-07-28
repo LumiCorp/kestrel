@@ -1,0 +1,118 @@
+.surface-host,
+.surface-pane {
+  background: var(--bg-pane);
+}
+
+.surface-header,
+.mission-control-surface > .surface-header,
+.settings-surface > .surface-header {
+  min-height: var(--topbar-height);
+  padding: 0 var(--space-3);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-pane);
+}
+
+.surface-header h1,
+.mcp-detail-body h2,
+.empty-surface h1 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.surface-header p,
+.mcp-detail-body > div > p {
+  margin-top: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.surface-kicker {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.project-grid,
+.mcp-grid,
+.diagnostics-grid,
+.settings-content {
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.project-grid {
+  min-height: calc(100% - var(--topbar-height));
+}
+
+.workspace-panel,
+.runtime-tail,
+.review-finding,
+.diff-hunk-index article,
+.settings-card,
+.provider-card,
+.connector-card,
+.mcp-detail,
+.diagnostic-card,
+.readiness-panel,
+.support-panel {
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-pane-subtle);
+  box-shadow: none;
+}
+
+.panel-toolbar {
+  min-height: var(--row-height);
+  padding: 0 var(--space-3);
+  border-bottom-color: var(--border-subtle);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.diff-toolbar,
+.terminal-toolbar,
+.diff-identity,
+.terminal-identity {
+  min-height: var(--topbar-height);
+  padding: 0 var(--space-3);
+  border-bottom-color: var(--border-subtle);
+}
+
+.terminal-workspace,
+.terminal-canvas {
+  background: #151514;
+  color: #d7d6cf;
+}
+
+.terminal-toolbar,
+.terminal-identity {
+  background: #191918;
+  color: #92918b;
+}
+
+.diff-view {
+  background: var(--bg-pane);
+}
+
+.diff-added,
+.line-added {
+  color: var(--diff-added);
+}
+
+.diff-removed,
+.line-removed {
+  color: var(--diff-removed);
+}
+
+.context-sidebar-scroll {
+  background: var(--bg-pane);
+}
+
+.surface-error {
+  border-bottom-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--status-failed) 10%, var(--bg-pane));
+  color: var(--status-failed);
+}

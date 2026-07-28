@@ -1,0 +1,40 @@
+.editor-app {
+  grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--row-height-compact);
+  background: var(--bg-pane);
+  color: var(--text-primary);
+}
+
+.editor-titlebar {
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-pane);
+}
+
+.editor-file-title {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.editor-workspace,
+.editor-workspace textarea,
+.editor-preview {
+  background: var(--bg-pane);
+  color: var(--text-primary);
+}
+
+.editor-workspace textarea {
+  padding: var(--space-4);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.editor-empty {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.editor-status {
+  gap: var(--space-4);
+  border-top: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-pane-subtle);
+  color: var(--text-tertiary);
+}

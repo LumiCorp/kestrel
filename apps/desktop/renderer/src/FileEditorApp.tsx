@@ -22,6 +22,40 @@ export function FileEditorApp(props: {
 
   useEffect(() => {
     let disposed = false;
+    const applyTheme = (theme: "system" | "light" | "dark") => {
+      const resolved = theme === "system"
+        ? window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+        : theme;
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.style.colorScheme = resolved;
+    };
+    void window.kestrelDesktop.getSettings().then((settings) => {
+      if (disposed) {
+        return;
+      }
+      applyTheme(settings.appearanceTheme);
+    }).catch(() => {
+      applyTheme("system");
+    });
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onSystemThemeChange = () => {
+      void window.kestrelDesktop.getSettings()
+        .then((settings) => {
+          if (settings.appearanceTheme === "system") {
+            applyTheme("system");
+          }
+        })
+        .catch(() => applyTheme("system"));
+    };
+    media.addEventListener("change", onSystemThemeChange);
+    return () => {
+      disposed = true;
+      media.removeEventListener("change", onSystemThemeChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
     void window.kestrelDesktop.readFile({
       rootPath: props.projectPath,
       targetPath: props.filePath,

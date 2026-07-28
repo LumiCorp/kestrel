@@ -7,21 +7,21 @@
     <style>
       :root {
         color-scheme: dark;
-        --bg: #141518;
-        --bg-muted: #191b1f;
-        --surface: rgba(25, 27, 31, 0.9);
-        --surface-soft: rgba(20, 22, 26, 0.86);
-        --surface-elevated: rgba(29, 31, 36, 0.95);
-        --surface-ink: #111317;
-        --border: rgba(238, 230, 214, 0.12);
-        --border-strong: rgba(238, 230, 214, 0.24);
-        --text: #f3eee5;
-        --muted: rgba(243, 238, 229, 0.72);
-        --dim: rgba(243, 238, 229, 0.44);
-        --success: #6fbd8e;
-        --warning: #d5a24d;
-        --danger: #df7777;
-        --focus: #b1bfdc;
+        --bg: #151514;
+        --bg-muted: #1d1d1b;
+        --surface: #191918;
+        --surface-soft: #1d1d1b;
+        --surface-elevated: #1c1c1a;
+        --surface-ink: #151514;
+        --border: #292927;
+        --border-strong: #343430;
+        --text: #d7d6cf;
+        --muted: #92918b;
+        --dim: #85847f;
+        --success: #82a981;
+        --warning: #b59a69;
+        --danger: #b77b74;
+        --focus: #8793a3;
       }
       * { box-sizing: border-box; }
       body {
@@ -29,42 +29,42 @@
         min-height: 100vh;
         display: grid;
         place-items: center;
-        background: linear-gradient(180deg, var(--surface-ink), var(--bg) 42%, #101115);
+        background: var(--bg);
         color: var(--text);
-        font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font: 12px/16px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
       main {
-        width: min(900px, calc(100vw - 64px));
+        width: min(720px, calc(100vw - 24px));
         border: 1px solid var(--border);
-        background: color-mix(in srgb, var(--surface) 96%, var(--bg));
-        border-radius: 8px;
-        padding: 40px;
-        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
+        background: var(--surface);
+        border-radius: 3px;
+        padding: 24px;
+        box-shadow: none;
       }
       .topline {
         display: grid;
-        gap: 18px;
-        padding: 6px 0 30px;
+        gap: 12px;
+        padding: 0 0 20px;
         text-align: center;
       }
       .brand-lockup {
         display: grid;
         justify-items: center;
-        gap: 18px;
+        gap: 12px;
       }
       .brand-logo-wrap {
         display: grid;
         place-items: center;
         width: min(540px, 76vw);
         min-width: 0;
-        min-height: 156px;
-        padding: 18px 24px;
+        min-height: 112px;
+        padding: 12px 16px;
       }
       .brand-logo {
         display: block;
         width: min(500px, 100%);
         max-width: none;
-        max-height: 132px;
+        max-height: 96px;
         object-fit: contain;
       }
       .brand-copy {
@@ -75,8 +75,9 @@
       }
       h1 {
         margin: 0 0 6px;
-        font-size: 28px;
-        line-height: 1.15;
+        font-size: 16px;
+        line-height: 20px;
+        font-weight: 500;
       }
       .sr-only {
         position: absolute;
@@ -92,7 +93,8 @@
       p {
         margin: 0;
         color: var(--muted);
-        font-size: 15px;
+        font-size: 13px;
+        line-height: 18px;
       }
       .appinfo {
         justify-self: start;
@@ -103,8 +105,8 @@
         overflow-wrap: anywhere;
       }
       .status {
-        padding: 26px 28px 24px;
-        border-radius: 6px;
+        padding: 16px;
+        border-radius: 3px;
         border: 1px solid var(--border);
         background: var(--surface-soft);
         text-align: center;
@@ -113,9 +115,9 @@
         display: inline-flex;
         width: fit-content;
         padding: 4px 10px;
-        border-radius: 999px;
-        font-size: 12px;
-        letter-spacing: 0.08em;
+        border-radius: 3px;
+        font-size: 11px;
+        letter-spacing: 0.04em;
         text-transform: uppercase;
         border: 1px solid var(--border);
         background: var(--surface-muted, rgba(35, 39, 45, 0.9));
@@ -132,9 +134,9 @@
         color: var(--warning);
       }
       .message {
-        margin-top: 14px;
-        font-size: 25px;
-        line-height: 1.2;
+        margin-top: 12px;
+        font-size: 16px;
+        line-height: 20px;
         font-weight: 500;
         color: var(--text);
       }
@@ -148,7 +150,7 @@
         margin: 8px auto 0;
         max-width: 620px;
         color: var(--muted);
-        font-size: 14px;
+        font-size: 12px;
       }
       .actions {
         display: flex;
@@ -179,8 +181,8 @@
         gap: 4px;
         align-content: center;
         border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 10px;
+        border-radius: 3px;
+        padding: 8px;
         background: var(--surface-elevated);
       }
       .check-head {
@@ -226,8 +228,8 @@
         border: 1px solid var(--border);
         background: var(--bg-muted);
         color: var(--text);
-        border-radius: 6px;
-        padding: 10px 14px;
+        border-radius: 3px;
+        padding: 6px 10px;
         cursor: pointer;
       }
       button:focus-visible {
