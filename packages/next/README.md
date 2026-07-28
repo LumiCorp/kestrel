@@ -24,11 +24,11 @@ Use this package when your application already has a Kestrel agent client and yo
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/next@0.6.0 \
-  @kestrel-agents/sdk@0.6.0
+pnpm add @kestrel-agents/next@0.7.0 \
+  @kestrel-agents/sdk@0.7.0
 ```
 
-Check [0.6 release status](../../apps/docs/content/start/release-status.mdx)
+Check [0.7 release status](../../apps/docs/content/start/release-status.mdx)
 before pinning a production dependency.
 
 ## Exports

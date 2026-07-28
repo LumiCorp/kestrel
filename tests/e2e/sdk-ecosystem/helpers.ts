@@ -237,17 +237,22 @@ export function preparePackedConsumerFixture(): string {
       "@kestrel-agents/observability": observabilityTarball,
       "@kestrel-agents/next": nextTarball,
     },
+    pnpm: {
+      overrides: {
+        "@kestrel-agents/protocol": `file:${protocolTarball}`,
+        "@kestrel-agents/sdk": `file:${sdkTarball}`,
+      },
+      onlyBuiltDependencies: ["sharp"],
+    },
     scripts: {
       build: "next build",
       start: "next start",
     },
   }, null, 2)}\n`);
-  writePnpmWorkspaceOverrides(fixtureDir, {
-    "@kestrel-agents/protocol": protocolTarball,
-    "@kestrel-agents/sdk": sdkTarball,
-  }, {
-    allowBuilds: { sharp: true },
-  });
+  writeFileSync(
+    path.join(fixtureDir, "pnpm-workspace.yaml"),
+    `${JSON.stringify({ packages: ["."] }, null, 2)}\n`,
+  );
   execFileSync("pnpm", ["install", "--prefer-offline"], {
     cwd: fixtureDir,
     env: process.env,
@@ -255,25 +260,6 @@ export function preparePackedConsumerFixture(): string {
   });
   writeFileSync(readyFile, "ready\n");
   return fixtureDir;
-}
-
-export function writePnpmWorkspaceOverrides(
-  fixtureDir: string,
-  overrides: Record<string, string>,
-  options: {
-    allowBuilds?: Record<string, boolean> | undefined;
-  } = {},
-): void {
-  writeFileSync(
-    path.join(fixtureDir, "pnpm-workspace.yaml"),
-    `${JSON.stringify({
-      packages: ["."],
-      overrides,
-      ...(options.allowBuilds !== undefined
-        ? { allowBuilds: options.allowBuilds }
-        : {}),
-    }, null, 2)}\n`,
-  );
 }
 
 export async function runChildProcess(

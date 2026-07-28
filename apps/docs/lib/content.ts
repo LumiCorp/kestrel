@@ -325,7 +325,7 @@ export const getNavigation = cache(async (): Promise<NavGroup[]> => {
     group("build", "Build", "/build", [
       ["First working agent", ["/build", "/build/building-your-first-agent", "/build/running-your-first-streamed-request", "/build/adding-session-memory"]],
       ["Add to your app", ["/build/openai-compatible-http", "/build/integrating-with-nextjs", "/build/nextjs-route-cookbook", "/build/adding-background-subscriptions", "/build/adding-observability"]],
-      ["Runtime behavior", ["/build/protocol-and-results", "/build/runner-events", "/build/waiting-resume-and-cancellation", "/build/upgrading-to-0-6"]],
+      ["Runtime behavior", ["/build/protocol-and-results", "/build/runner-events", "/build/waiting-resume-and-cancellation", "/build/upgrading-to-0-7"]],
     ]),
     group("operate", "Operate", "/operate", [
       ["Prepare and deploy", ["/operate", "/operate/runner-service", "/operate/environment-and-auth", "/operate/deployment"]],

@@ -42,7 +42,7 @@ contractTest("packages.process", "KestrelClient dispatches unary, run-stream, an
     });
 
     if (request.url === "/runtime/v2/health") {
-      sendJson(response, createRunnerHealthV1({ serviceVersion: "0.6.0" }));
+      sendJson(response, createRunnerHealthV1({ serviceVersion: "0.7.0" }));
       return;
     }
     if (request.url === "/runtime/v2/commands") {
@@ -195,7 +195,7 @@ contractTest("packages.process", "KestrelClient dispatches unary, run-stream, an
   t.after(async () => client.close());
 
   const health = await client.getHealth();
-  assert.equal(health.service.version, "0.6.0");
+  assert.equal(health.service.version, "0.7.0");
 
   const controlled = await client.controlOperator(
     { action: "reply", threadId: "thread-local", message: "approve" },

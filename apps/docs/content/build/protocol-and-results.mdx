@@ -1,6 +1,6 @@
 ---
 title: Protocol and results
-summary: Read the user-facing answer, structured output, and run status from a 0.6 terminal result.
+summary: Read the user-facing answer, structured output, and run status from a 0.7 terminal result.
 section: build
 audience: integrators
 status: active
@@ -8,7 +8,7 @@ sourceKind: curated
 updatedAt: 2026-07-13
 ---
 
-Every terminal result separates the answer intended for a person from status and structured application data. In Kestrel 0.6, the readable answer is always available as `assistantText: string | null`.
+Every terminal result separates the answer intended for a person from status and structured application data. In Kestrel 0.7, the readable answer is always available as `assistantText: string | null`.
 
 ```ts
 type RunnerTerminalResult = {

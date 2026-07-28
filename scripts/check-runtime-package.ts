@@ -27,8 +27,10 @@ const forbiddenPrefixes = [
   ".github/",
   "benchmarks/",
   "coding-agent-review/",
-  "node_modules/",
 ] as const;
+
+const allowedBundledDependencyPrefix =
+  "node_modules/@lumi/kestrel-environment-auth/";
 
 const requiredFiles = [
   "package.json",
@@ -78,6 +80,13 @@ try {
   assert.ok(filePaths.size > 0, "npm pack returned an empty runtime package.");
 
   for (const filePath of filePaths) {
+    if (filePath.startsWith("node_modules/")) {
+      assert.ok(
+        filePath.startsWith(allowedBundledDependencyPrefix),
+        `runtime package contains unexpected bundled dependency '${filePath}'`,
+      );
+      continue;
+    }
     const forbiddenPrefix = forbiddenPrefixes.find((prefix) => filePath.startsWith(prefix));
     assert.equal(
       forbiddenPrefix,
@@ -93,22 +102,32 @@ try {
   for (const requiredFile of requiredFiles) {
     assert.ok(filePaths.has(requiredFile), `runtime package is missing '${requiredFile}'`);
   }
+  assert.ok(
+    filePaths.has(`${allowedBundledDependencyPrefix}dist/index.js`),
+    "runtime package is missing the bundled environment-auth runtime",
+  );
+  assert.ok(
+    filePaths.has(`${allowedBundledDependencyPrefix}package.json`),
+    "runtime package is missing the bundled environment-auth manifest",
+  );
 
   const manifest = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
     dependencies?: Record<string, string>;
     main?: string;
     name?: string;
     types?: string;
+    bundledDependencies?: string[];
   };
   assert.equal(manifest.name, "@kestrel-agents/kestrel");
   assert.equal(manifest.main, "dist/src/index.js");
   assert.equal(manifest.types, "dist/src/index.d.ts");
   assert.equal(manifest.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
   assert.equal(manifest.dependencies?.["@kestrel-agents/workspace-skills"], "workspace:*");
+  assert.deepEqual(manifest.bundledDependencies, ["@lumi/kestrel-environment-auth"]);
   assert.ok(filePaths.has(manifest.main), `runtime package main '${manifest.main}' is not packed`);
   assert.ok(filePaths.has(manifest.types), `runtime package types '${manifest.types}' are not packed`);
 
-  execFileSync("pnpm", ["pack", "--pack-destination", packDir], {
+  execFileSync("pnpm", ["pack", "--config.node-linker=hoisted", "--pack-destination", packDir], {
     cwd: repoRoot,
     stdio: "pipe",
   });

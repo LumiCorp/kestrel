@@ -98,8 +98,8 @@ function ReleaseCompatibilityTable() {
     <table>
       <thead><tr><th>Surface</th><th>Compatible line</th><th>Contract note</th></tr></thead>
       <tbody>
-        {DOCS_RELEASE.compatibility.map(([surface, note]) => (
-          <tr key={surface}><td>{surface}</td><td><code>{DOCS_RELEASE.version}</code></td><td>{note}</td></tr>
+        {DOCS_RELEASE.compatibility.map(({ surface, version, note }) => (
+          <tr key={surface}><td>{surface}</td><td><code>{version}</code></td><td>{note}</td></tr>
         ))}
       </tbody>
     </table>
@@ -111,8 +111,8 @@ function ReleaseStatusTable() {
     <table>
       <thead><tr><th>Surface</th><th>Documented line</th><th>Channel</th></tr></thead>
       <tbody>
-        {DOCS_RELEASE.compatibility.map(([surface]) => (
-          <tr key={surface}><td>{surface}</td><td><code>{DOCS_RELEASE.version}</code></td><td>{DOCS_RELEASE.channel}</td></tr>
+        {DOCS_RELEASE.compatibility.map(({ surface, version, channel }) => (
+          <tr key={surface}><td>{surface}</td><td><code>{version}</code></td><td>{channel}</td></tr>
         ))}
       </tbody>
     </table>
@@ -120,11 +120,11 @@ function ReleaseStatusTable() {
 }
 
 function DesktopDownload() {
-  const access = DOCS_RELEASE.productAccess.desktop;
+  const access = DOCS_RELEASE.products.desktop;
   return (
     <aside className="download-panel">
       <div>
-        <span className="download-panel-kicker">Kestrel Desktop {DOCS_RELEASE.version}</span>
+        <span className="download-panel-kicker">Kestrel Desktop {access.version}</span>
         <strong>Download for {access.supportedPlatforms.join(", ")}</strong>
         <p>{access.trustNote}</p>
       </div>
@@ -136,7 +136,7 @@ function DesktopDownload() {
 function KestrelOneAccess() {
   return (
     <Callout title="Invitation required">
-      <p>{DOCS_RELEASE.productAccess.kestrelOne.accessNote}</p>
+      <p>{DOCS_RELEASE.products.kestrelOne.accessNote}</p>
     </Callout>
   );
 }

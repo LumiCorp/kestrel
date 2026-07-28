@@ -65,9 +65,9 @@ contractTest("docs.hermetic", "release metadata names only real public packages 
   ));
   const names = manifests.map(({ name }) => name);
   names.sort();
-  const releasedNames = [...DOCS_RELEASE.releasedPackageNames].sort();
+  const releasedNames = [...DOCS_RELEASE.packages.releasedPackageNames].sort();
   assert.deepEqual(names, releasedNames);
-  assert.deepEqual([...new Set(manifests.map(({ version }) => version))], [DOCS_RELEASE.version]);
+  assert.deepEqual([...new Set(manifests.map(({ version }) => version))], [DOCS_RELEASE.packages.version]);
 
   for (const route of ["protocol", "sdk", "nextjs", "ai-sdk", "observability", "workspace-skills"]) {
     assert.ok(await getRenderedPageBySlug(["reference", route]), route);

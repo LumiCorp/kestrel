@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/workspace-skills",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Secure workspace-scoped SKILL.md installation and provenance for Kestrel agents",
   "license": "MIT",
   "repository": {

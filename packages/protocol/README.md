@@ -14,11 +14,11 @@ transport, gateway, or contract-aware diagnostic tool.
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/protocol@0.6.0
+pnpm add @kestrel-agents/protocol@0.7.0
 ```
 
 Use the same release line as the runtime and SDK. Check
-[0.6 release status](../../apps/docs/content/start/release-status.mdx)
+[0.7 release status](../../apps/docs/content/start/release-status.mdx)
 before pinning a production dependency.
 
 ## Contract Families
@@ -78,7 +78,7 @@ protocol type. Parse it at the boundary before routing or mutation.
 
 ## Execution Protocol v3
 
-The 0.6 line uses the aggregate `execution-protocol-v3` contract. It includes:
+The 0.7 line uses the aggregate `execution-protocol-v3` contract. It includes:
 
 - complete command and event registries
 - discriminated wire envelopes and payload parsers
