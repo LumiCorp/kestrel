@@ -6,7 +6,7 @@ import {
   installDesktopRuntimeDependencies,
   shouldInstallDesktopRuntimeDependencies,
 } from "./prepare-desktop-resources.js";
-import { packPublicProtocolPackage } from "./runtime-package-dependencies.js";
+import { packRuntimeWorkspacePackages } from "./runtime-package-dependencies.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const desktopDir = path.join(repoRoot, "apps", "desktop");
@@ -30,7 +30,10 @@ if (shouldInstallDesktopRuntimeDependencies({ packageStage: true })) {
   try {
     installDesktopRuntimeDependencies(resourcesDir, {
       npmCacheDir,
-      localPackages: [packPublicProtocolPackage({ repoRoot, packDir: localPackageDir })],
+      localPackages: packRuntimeWorkspacePackages({
+        repoRoot,
+        packDir: localPackageDir,
+      }),
     });
   } finally {
     rmSync(localPackageDir, { recursive: true, force: true });

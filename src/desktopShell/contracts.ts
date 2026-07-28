@@ -75,6 +75,7 @@ export type DesktopBridgeCapabilityId =
   | "project_picker"
   | "workspace_picker"
   | "runtime_control"
+  | "updates"
   | "database_control"
   | "file_browser"
   | "file_editor"
@@ -107,7 +108,7 @@ export interface DesktopBridgeInfo {
   capabilities: DesktopBridgeCapabilityId[];
 }
 
-export const DESKTOP_BRIDGE_VERSION = "6";
+export const DESKTOP_BRIDGE_VERSION = "7";
 
 export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "app_info",
@@ -120,6 +121,7 @@ export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "project_picker",
   "workspace_picker",
   "runtime_control",
+  "updates",
   "database_control",
   "file_browser",
   "file_editor",

@@ -30,6 +30,7 @@
     "content-type": "^1.0.5",
     "cross-spawn": "^7.0.5",
     "electron-squirrel-startup": "^1.0.1",
+    "electron-updater": "^6.8.9",
     "eventsource-parser": "^3.0.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
@@ -58,7 +59,6 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "electron": "^37.2.6",
-    "electron-packager": "^17.1.2",
     "happy-dom": "20.9.0",
     "typescript": "^5.8.2",
     "vite": "^7.3.2"

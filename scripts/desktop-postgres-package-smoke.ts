@@ -22,7 +22,7 @@ const packagerConfig = resolveDesktopPackagerConfig({ repoRoot });
 const packagedRoot = process.env.KESTREL_DESKTOP_PACKAGE_PATH?.trim()
   || path.join(
     packagerConfig.outDir,
-    `${packagerConfig.appName}-${packagerConfig.platform}-${packagerConfig.arch}`,
+    `mac-${packagerConfig.arch}`,
   );
 const bundleRootPath = process.env.KESTREL_DESKTOP_POSTGRES_BUNDLE_PATH?.trim()
   || resolvePackagedBundleRoot(packagedRoot, packagerConfig.platform);

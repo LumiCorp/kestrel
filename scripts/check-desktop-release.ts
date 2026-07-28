@@ -2,20 +2,14 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
+import {
+  resolveDesktopBuilderConfiguration,
+  resolveDesktopUpdateUrl,
+} from "../apps/desktop/src/builderConfig.js";
 
-const TARGET_VERSION = "0.6.0";
 const ROOT = resolveRepoRoot(process.cwd());
-
-const VERSIONED_MANIFESTS = [
-  "package.json",
-  "apps/desktop/package.json",
-  "apps/web/package.json",
-  "apps/docs/package.json",
-  "packages/protocol/package.json",
-  "packages/sdk/package.json",
-  "packages/next/package.json",
-  "packages/observability/package.json",
-] as const;
+const TARGET_VERSION = readManifestVersion("apps/desktop/package.json");
+const PACKAGE_VERSION = readManifestVersion("package.json");
 
 const REQUIRED_RUNTIME_RESOURCE_PATHS = [
   "package.json",
@@ -55,8 +49,7 @@ const REQUIRED_RUNTIME_RESOURCE_PATHS = [
 
 const errors: string[] = [];
 
-checkManifestVersions();
-checkDesktopPackagerVersionSource();
+checkDesktopBuilderConfiguration();
 checkDesktopLocalCoreOwnership();
 checkDesktopResources();
 checkPackagedDesktopSignature();
@@ -71,35 +64,34 @@ if (errors.length > 0) {
   process.stdout.write(`[desktop-release] Desktop ${TARGET_VERSION} release checks passed\n`);
 }
 
-function checkManifestVersions(): void {
-  for (const relativePath of VERSIONED_MANIFESTS) {
-    const manifest = readJson(path.join(ROOT, relativePath)) as { version?: unknown };
-    if (manifest.version !== TARGET_VERSION) {
-      errors.push(`${relativePath} version must be ${TARGET_VERSION}; found ${String(manifest.version)}`);
-    }
+function checkDesktopBuilderConfiguration(): void {
+  const candidate = resolveDesktopBuilderConfiguration({
+    repoRoot: ROOT,
+    version: TARGET_VERSION,
+    releaseBuild: false,
+    updateChannel: "candidate",
+  });
+  if (candidate.publish.url !== resolveDesktopUpdateUrl("candidate")) {
+    errors.push("candidate Desktop builds must use the candidate update URL.");
   }
-}
-
-function checkDesktopPackagerVersionSource(): void {
-  const source = readFileSync(path.join(ROOT, "scripts", "package-desktop.ts"), "utf8");
-  if (/appVersion:\s*"[^"]+"/u.test(source)) {
-    errors.push("scripts/package-desktop.ts must not hardcode electronPackager appVersion.");
+  if (
+    candidate.mac.target.map(({ target }) => target).sort().join(",") !==
+    "dmg,zip"
+  ) {
+    errors.push("Desktop builder must emit independent DMG and ZIP targets.");
   }
-  if (!source.includes("appVersion: desktopPackageJson.version")) {
-    errors.push("scripts/package-desktop.ts must source appVersion from apps/desktop/package.json.");
+  const release = resolveDesktopBuilderConfiguration({
+    repoRoot: ROOT,
+    version: TARGET_VERSION,
+    releaseBuild: true,
+    updateChannel: "stable",
+    signingIdentity: "Developer ID Application: release-check",
+  });
+  if (release.publish.url !== resolveDesktopUpdateUrl("stable")) {
+    errors.push("final Desktop builds must use the stable update URL.");
   }
-  for (const required of [
-    "KESTREL_DESKTOP_RELEASE",
-    "KESTREL_DESKTOP_SIGN_IDENTITY",
-    "KESTREL_DESKTOP_NOTARY_PROFILE",
-    '"notarytool", "submit"',
-    '"stapler", "staple"',
-    '"stapler", "validate"',
-    '"spctl"',
-  ]) {
-    if (!source.includes(required)) {
-      errors.push(`scripts/package-desktop.ts must preserve release security step '${required}'.`);
-    }
+  if (!release.afterSign?.endsWith("notarize-desktop.mjs")) {
+    errors.push("final Desktop builds must run the notarization hook.");
   }
 }
 
@@ -204,8 +196,8 @@ function checkDesktopResources(): void {
       errors.push(`Desktop runtime resource package.json must include dependency '${dependency}'.`);
     }
   }
-  if (resourcePackage.dependencies?.["@kestrel-agents/protocol"] !== TARGET_VERSION) {
-    errors.push(`Desktop runtime resources must declare @kestrel-agents/protocol ${TARGET_VERSION}.`);
+  if (resourcePackage.dependencies?.["@kestrel-agents/protocol"] !== PACKAGE_VERSION) {
+    errors.push(`Desktop runtime resources must declare @kestrel-agents/protocol ${PACKAGE_VERSION}.`);
   }
   if (resourcePackage.dependencies?.next !== undefined) {
     errors.push("Desktop runtime resource package.json must not include the retired Next.js renderer dependency.");
@@ -235,7 +227,7 @@ function checkDesktopResources(): void {
       "apps",
       "desktop",
       "out",
-      `Kestrel-${process.env.KESTREL_DESKTOP_PLATFORM ?? process.platform}-${process.env.KESTREL_DESKTOP_ARCH ?? process.arch}`,
+      `mac-${process.env.KESTREL_DESKTOP_ARCH ?? process.arch}`,
       "Kestrel.app",
       "Contents",
       "Resources",
@@ -256,8 +248,8 @@ function checkDesktopResources(): void {
     );
     if (existsSync(installedProtocolPath)) {
       const installedProtocol = readJson(installedProtocolPath) as { version?: unknown };
-      if (installedProtocol.version !== TARGET_VERSION) {
-        errors.push(`Prepared package resources must install @kestrel-agents/protocol ${TARGET_VERSION}.`);
+      if (installedProtocol.version !== PACKAGE_VERSION) {
+        errors.push(`Prepared package resources must install @kestrel-agents/protocol ${PACKAGE_VERSION}.`);
       }
     }
     checkInstalledPackageDependencies(installedRuntimeRoot, "tsx");
@@ -268,7 +260,7 @@ function checkDesktopResources(): void {
     "apps",
     "desktop",
     "out",
-    `Kestrel-${process.env.KESTREL_DESKTOP_PLATFORM ?? process.platform}-${process.env.KESTREL_DESKTOP_ARCH ?? process.arch}`,
+    `mac-${process.env.KESTREL_DESKTOP_ARCH ?? process.arch}`,
     "Kestrel.app",
     "Contents",
     "Resources",
@@ -281,7 +273,10 @@ function checkDesktopResources(): void {
 function checkPackagedDesktopSignature(): void {
   const platform = process.env.KESTREL_DESKTOP_PLATFORM ?? process.platform;
   const arch = process.env.KESTREL_DESKTOP_ARCH ?? process.arch;
-  if (platform !== "darwin") {
+  if (
+    platform !== "darwin" ||
+    process.env.KESTREL_DESKTOP_RELEASE !== "1"
+  ) {
     return;
   }
   const appPath = path.join(
@@ -289,7 +284,7 @@ function checkPackagedDesktopSignature(): void {
     "apps",
     "desktop",
     "out",
-    `Kestrel-${platform}-${arch}`,
+    `mac-${arch}`,
     "Kestrel.app",
   );
   if (!existsSync(appPath)) {
@@ -305,9 +300,6 @@ function checkPackagedDesktopSignature(): void {
   );
   if (verification.status !== 0) {
     errors.push(`packaged Desktop signature is invalid: ${verification.stderr.trim()}`);
-  }
-  if (process.env.KESTREL_DESKTOP_RELEASE !== "1") {
-    return;
   }
   const signature = spawnSync("codesign", ["-dv", "--verbose=4", appPath], { encoding: "utf8" });
   const signatureDetails = `${signature.stdout}\n${signature.stderr}`;
@@ -348,6 +340,16 @@ function checkInstalledPackageDependencies(resourcesRoot: string, packageName: s
       errors.push(`Prepared package resources must let ${packageName} resolve dependency '${dependency}'.`);
     }
   }
+}
+
+function readManifestVersion(relativePath: string): string {
+  const manifest = readJson(path.join(ROOT, relativePath)) as {
+    version?: unknown;
+  };
+  if (typeof manifest.version !== "string" || !manifest.version.trim()) {
+    throw new Error(`${relativePath} must declare a version.`);
+  }
+  return manifest.version;
 }
 
 function collectLocalEnvFiles(root: string): string[] {

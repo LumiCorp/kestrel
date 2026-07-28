@@ -13,8 +13,9 @@ import {
 import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Desktop bridge v6 exposes workspace, attachment, and operator-control contracts", () => {
-  assert.equal(DESKTOP_BRIDGE_VERSION, "6");
+contractTest("runtime.hermetic", "Desktop bridge v7 exposes update, workspace, attachment, and operator-control contracts", () => {
+  assert.equal(DESKTOP_BRIDGE_VERSION, "7");
+  assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("updates"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("attachments"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("operator_control"), true);
   assert.deepEqual(parseDesktopOperatorControlRequest({
