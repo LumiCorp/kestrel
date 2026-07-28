@@ -15,7 +15,14 @@ function state(
     phase,
     currentVersion: "0.6.0",
     targetVersion: "0.7.0",
-    blockers: phase === "blocked" ? ["active_execution"] : [],
+    blockers: phase === "blocked"
+      ? [{
+          source: "desktop",
+          code: "DESKTOP_EXECUTIONS_ACTIVE",
+          message: "Desktop workspace executions are active.",
+          count: 1,
+        }]
+      : [],
     message: `state: ${phase}`,
   };
 }

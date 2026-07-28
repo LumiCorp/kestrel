@@ -30,13 +30,14 @@ export interface DesktopUpdateCoordinatorOptions {
   arch: string;
   currentVersion: string;
   getBlockers: () => Promise<DesktopUpdateBlocker[]>;
-  prepareForInstall: () => Promise<void>;
+  prepareForInstall: () => Promise<DesktopUpdateBlocker[]>;
   publish: (state: DesktopUpdateState) => void;
 }
 
 export class DesktopUpdateCoordinator {
   readonly #options: DesktopUpdateCoordinatorOptions;
   #state: DesktopUpdateState;
+  #operation: "check" | "download" | "install" | undefined;
 
   constructor(options: DesktopUpdateCoordinatorOptions) {
     this.#options = options;
@@ -53,9 +54,14 @@ export class DesktopUpdateCoordinator {
   }
 
   async checkForUpdates(): Promise<DesktopUpdateState> {
-    if (!this.#state.supported) {
+    if (
+      !this.#state.supported ||
+      this.#operation !== undefined ||
+      (this.#state.phase !== "idle" && this.#state.phase !== "error")
+    ) {
       return this.state();
     }
+    this.#operation = "check";
     this.#set({
       supported: true,
       phase: "checking",
@@ -67,14 +73,21 @@ export class DesktopUpdateCoordinator {
       await this.#options.updater.checkForUpdates();
     } catch (cause) {
       this.#fail("Update check failed", cause);
+    } finally {
+      this.#operation = undefined;
     }
     return this.state();
   }
 
   async downloadUpdate(): Promise<DesktopUpdateState> {
-    if (!this.#state.supported || this.#state.phase !== "available") {
+    if (
+      !this.#state.supported ||
+      this.#state.phase !== "available" ||
+      this.#operation !== undefined
+    ) {
       return this.state();
     }
+    this.#operation = "download";
     this.#set({
       ...this.#state,
       phase: "downloading",
@@ -86,6 +99,8 @@ export class DesktopUpdateCoordinator {
       await this.#options.updater.downloadUpdate();
     } catch (cause) {
       this.#fail("Update download failed", cause);
+    } finally {
+      this.#operation = undefined;
     }
     return this.state();
   }
@@ -93,40 +108,51 @@ export class DesktopUpdateCoordinator {
   async installUpdate(): Promise<DesktopUpdateState> {
     if (
       !this.#state.supported ||
+      this.#operation !== undefined ||
       (this.#state.phase !== "downloaded" &&
         this.#state.phase !== "blocked")
     ) {
       return this.state();
     }
+    this.#operation = "install";
 
-    let blockers: DesktopUpdateBlocker[];
     try {
+      let blockers: DesktopUpdateBlocker[];
       blockers = await this.#options.getBlockers();
-    } catch (cause) {
-      this.#fail("Could not verify whether Desktop can restart", cause);
-      return this.state();
-    }
-    if (blockers.length > 0) {
+      if (blockers.length > 0) {
+        this.#set({
+          ...this.#state,
+          phase: "blocked",
+          blockers: blockers.map((blocker) => ({ ...blocker })),
+          message: blockerMessage(blockers),
+        });
+        return this.state();
+      }
+
       this.#set({
         ...this.#state,
-        phase: "blocked",
-        blockers: [...new Set(blockers)],
-        message: blockerMessage(blockers),
+        phase: "installing",
+        blockers: [],
+        message: "Preparing Kestrel to restart and install the update…",
       });
-      return this.state();
-    }
-
-    this.#set({
-      ...this.#state,
-      phase: "installing",
-      blockers: [],
-      message: "Preparing Kestrel to restart and install the update…",
-    });
-    try {
-      await this.#options.prepareForInstall();
+      const preparationBlockers = await this.#options.prepareForInstall();
+      if (preparationBlockers.length > 0) {
+        this.#set({
+          ...this.#state,
+          phase: "blocked",
+          blockers: preparationBlockers.map((blocker) => ({ ...blocker })),
+          message: blockerMessage(preparationBlockers),
+        });
+        return this.state();
+      }
     } catch (cause) {
-      this.#fail("Kestrel could not safely prepare for update installation", cause);
+      this.#fail(
+        "Kestrel could not safely prepare for update installation",
+        cause,
+      );
       return this.state();
+    } finally {
+      this.#operation = undefined;
     }
     this.#options.updater.quitAndInstall();
     return this.state();
@@ -135,6 +161,7 @@ export class DesktopUpdateCoordinator {
   #subscribe(): void {
     const updater = this.#options.updater;
     updater.onUpdateAvailable((info) => {
+      if (this.#state.phase !== "checking") return;
       this.#set({
         supported: true,
         phase: "available",
@@ -145,6 +172,7 @@ export class DesktopUpdateCoordinator {
       });
     });
     updater.onUpdateNotAvailable(() => {
+      if (this.#state.phase !== "checking") return;
       this.#set({
         supported: true,
         phase: "idle",
@@ -154,6 +182,7 @@ export class DesktopUpdateCoordinator {
       });
     });
     updater.onDownloadProgress((progress) => {
+      if (this.#state.phase !== "downloading") return;
       const progressPercent = Math.max(
         0,
         Math.min(100, Math.round(progress.percent)),
@@ -167,6 +196,7 @@ export class DesktopUpdateCoordinator {
       });
     });
     updater.onUpdateDownloaded((info) => {
+      if (this.#state.phase !== "downloading") return;
       this.#set({
         supported: true,
         phase: "downloaded",
@@ -228,14 +258,11 @@ export function initialDesktopUpdateState(
 }
 
 function blockerMessage(blockers: DesktopUpdateBlocker[]): string {
-  const descriptions = blockers.map((blocker) =>
-    blocker === "active_execution"
-      ? "an active Kestrel execution"
-      : "a managed project process",
-  );
-  return `The update is ready, but Kestrel cannot restart while ${descriptions.join(
-    " and ",
-  )} is running.`;
+  const count = blockers.reduce((total, blocker) => total + blocker.count, 0);
+  const descriptions = blockers.map((blocker) => blocker.message);
+  return `The update is ready, but Kestrel cannot restart while ${count} restart-unsafe operation${count === 1 ? "" : "s"} remain: ${descriptions.join(
+    " ",
+  )}`;
 }
 
 function copyState(state: DesktopUpdateState): DesktopUpdateState {

@@ -290,9 +290,12 @@ export type DesktopUpdatePhase =
   | "installing"
   | "error";
 
-export type DesktopUpdateBlocker =
-  | "active_execution"
-  | "managed_project_process";
+export interface DesktopUpdateBlocker {
+  source: "desktop" | "local_core";
+  code: string;
+  message: string;
+  count: number;
+}
 
 export interface DesktopUpdateState {
   supported: boolean;

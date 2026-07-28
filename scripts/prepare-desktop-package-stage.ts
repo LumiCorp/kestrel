@@ -1,68 +1,128 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import os from "node:os";
-import path from "node:path";
 import {
-  installDesktopRuntimeDependencies,
-  shouldInstallDesktopRuntimeDependencies,
-} from "./prepare-desktop-resources.js";
-import { packRuntimeWorkspacePackages } from "./runtime-package-dependencies.js";
+  existsSync,
+  realpathSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import path from "node:path";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const desktopDir = path.join(repoRoot, "apps", "desktop");
 const stageDir = path.join(desktopDir, ".desktop-package");
-const distDir = path.join(desktopDir, "dist");
-const resourcesDir = path.join(desktopDir, "resources", "kestrel-repo");
-const npmCacheDir = path.join(desktopDir, ".npm-cache");
+const runtimeDir = path.join(desktopDir, ".desktop-runtime");
+const payloadDir = path.join(repoRoot, "apps", "desktop-runtime", "payload");
 
-if (existsSync(distDir) === false) {
-  throw new Error("Desktop dist output is missing. Run the desktop build before preparing the package stage.");
+if (!existsSync(path.join(desktopDir, "dist"))) {
+  throw new Error(
+    "Desktop dist output is missing. Run the Desktop build before preparing its package.",
+  );
+}
+if (!existsSync(payloadDir)) {
+  throw new Error(
+    "Desktop runtime payload is missing. Run prepare:resources before packaging.",
+  );
 }
 
 rmSync(stageDir, { recursive: true, force: true });
-mkdirSync(stageDir, { recursive: true });
+rmSync(runtimeDir, { recursive: true, force: true });
+deploy("@kestrel/desktop", stageDir);
+deploy("@kestrel/desktop-runtime", runtimeDir);
+pruneNonArm64NativePayload(stageDir);
+pruneNonArm64NativePayload(runtimeDir);
+writeElectronBuilderStageManifest();
 
-cpSync(distDir, path.join(stageDir, "dist"), { recursive: true });
-writeStagePackageJson();
-installStageDependencies();
-if (shouldInstallDesktopRuntimeDependencies({ packageStage: true })) {
-  const localPackageDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-desktop-runtime-pack-"));
-  try {
-    installDesktopRuntimeDependencies(resourcesDir, {
-      npmCacheDir,
-      localPackages: packRuntimeWorkspacePackages({
-        repoRoot,
-        packDir: localPackageDir,
-      }),
-    });
-  } finally {
-    rmSync(localPackageDir, { recursive: true, force: true });
-  }
+console.log(`[desktop] deployed Electron shell to ${stageDir}`);
+console.log(`[desktop] deployed Local Core to ${runtimeDir}`);
+
+function deploy(packageName: string, targetDir: string): void {
+  execFileSync(
+    process.platform === "win32" ? "pnpm.cmd" : "pnpm",
+    [
+      "--filter",
+      packageName,
+      "--fail-if-no-match",
+      "--prod",
+      "deploy",
+      targetDir,
+    ],
+    { cwd: repoRoot, stdio: "inherit" },
+  );
 }
 
-console.log(`[desktop] prepared package stage in ${stageDir}`);
+function pruneNonArm64NativePayload(deploymentRoot: string): void {
+  const visit = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const entryPath = path.join(current, entry.name);
+      if (!entry.isDirectory()) continue;
+      if (entry.name === "fsevents") {
+        rmSync(entryPath, { recursive: true, force: true });
+        continue;
+      }
+      if (
+        path.basename(current) === "prebuilds" &&
+        entry.name !== "darwin-arm64"
+      ) {
+        rmSync(entryPath, { recursive: true, force: true });
+        continue;
+      }
+      visit(entryPath);
+    }
+  };
+  visit(path.join(deploymentRoot, "node_modules"));
+  removeBrokenOrExternalLinks(
+    path.join(deploymentRoot, "node_modules"),
+    deploymentRoot,
+  );
+}
 
-function writeStagePackageJson(): void {
-  const packageJson = JSON.parse(readFileSync(path.join(desktopDir, "package.json"), "utf8")) as {
+function removeBrokenOrExternalLinks(root: string, deploymentRoot: string): void {
+  const visit = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const entryPath = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        let target: string | undefined;
+        try {
+          target = realpathSync(entryPath);
+        } catch {
+          // Broken links are not a valid portable deployment.
+        }
+        if (
+          target === undefined ||
+          path.relative(deploymentRoot, target).startsWith(`..${path.sep}`) ||
+          path.relative(deploymentRoot, target) === ".."
+        ) {
+          rmSync(entryPath, { force: true });
+        }
+        continue;
+      }
+      if (entry.isDirectory()) visit(entryPath);
+    }
+  };
+  visit(root);
+}
+
+function writeElectronBuilderStageManifest(): void {
+  const manifestPath = path.join(stageDir, "package.json");
+  const source = JSON.parse(readFileSync(manifestPath, "utf8")) as {
     name: string;
     version: string;
-    type?: string | undefined;
+    type: string;
     main: string;
-    dependencies?: Record<string, string> | undefined;
-    overrides?: Record<string, string> | undefined;
   };
-
   writeFileSync(
-    path.join(stageDir, "package.json"),
+    manifestPath,
     `${JSON.stringify(
       {
-        name: packageJson.name,
-        version: packageJson.version,
+        name: source.name,
+        version: source.version,
         private: true,
-        ...(packageJson.type !== undefined ? { type: packageJson.type } : {}),
-        main: packageJson.main,
-        dependencies: packageJson.dependencies ?? {},
-        ...(packageJson.overrides !== undefined ? { overrides: packageJson.overrides } : {}),
+        packageManager: "npm@10.9.2",
+        type: source.type,
+        main: source.main,
+        dependencies: {},
       },
       null,
       2,
@@ -71,33 +131,14 @@ function writeStagePackageJson(): void {
   );
 }
 
-function installStageDependencies(): void {
-  mkdirSync(npmCacheDir, { recursive: true });
-  execFileSync(resolveNpmCommand(), ["install", "--omit=dev"], {
-    cwd: stageDir,
-    env: {
-      ...process.env,
-      CI: "1",
-      npm_config_cache: npmCacheDir,
-    },
-    stdio: "inherit",
-  });
-}
-
 function resolveRepoRoot(cwd: string): string {
   let current = cwd;
   while (true) {
-    if (existsSync(path.join(current, "pnpm-workspace.yaml"))) {
-      return current;
-    }
+    if (existsSync(path.join(current, "pnpm-workspace.yaml"))) return current;
     const parent = path.dirname(current);
     if (parent === current) {
       throw new Error(`Unable to locate repo root from '${cwd}'.`);
     }
     current = parent;
   }
-}
-
-function resolveNpmCommand(): string {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
 }

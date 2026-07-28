@@ -12,7 +12,11 @@ import {
 
 class FakeStore implements DesktopUpdateObjectStore {
   readonly objects = new Map<string, DesktopUpdateObjectHead>();
-  readonly puts: Array<{ key: string; cacheControl: string }> = [];
+  readonly puts: Array<{
+    key: string;
+    cacheControl: string;
+    condition: { ifNoneMatch: "*" } | { ifMatch: string };
+  }> = [];
 
   async head(key: string): Promise<DesktopUpdateObjectHead | undefined> {
     return this.objects.get(key);
@@ -20,16 +24,26 @@ class FakeStore implements DesktopUpdateObjectStore {
 
   async put(input: {
     key: string;
-    body: Uint8Array | string;
+    body:
+      | { kind: "file"; path: string; size: number }
+      | { kind: "text"; value: string };
     cacheControl: string;
     sha256: string;
+    condition: { ifNoneMatch: "*" } | { ifMatch: string };
   }): Promise<void> {
-    const size =
-      typeof input.body === "string"
-        ? Buffer.byteLength(input.body)
-        : input.body.byteLength;
-    this.puts.push({ key: input.key, cacheControl: input.cacheControl });
-    this.objects.set(input.key, { sha256: input.sha256, size });
+    const size = input.body.kind === "file"
+      ? input.body.size
+      : Buffer.byteLength(input.body.value);
+    this.puts.push({
+      key: input.key,
+      cacheControl: input.cacheControl,
+      condition: input.condition,
+    });
+    this.objects.set(input.key, {
+      etag: `"etag-${this.puts.length}"`,
+      sha256: input.sha256,
+      size,
+    });
   }
 }
 
@@ -45,10 +59,18 @@ test("publisher uploads manifest artifacts and promotes channel metadata last", 
   assert.equal(store.puts.at(-1)?.key, "desktop/stable/arm64/latest-mac.yml");
   assert.deepEqual(
     result.uploaded.map((key) => path.posix.basename(key)).sort(),
-    ["Kestrel-0.7.0-mac-arm64.dmg", "Kestrel-0.7.0-mac-arm64.zip"].sort(),
+    [
+      "Kestrel-0.7.0-mac-arm64.dmg",
+      "Kestrel-0.7.0-mac-arm64.dmg.blockmap",
+      "Kestrel-0.7.0-mac-arm64.zip",
+      "Kestrel-0.7.0-mac-arm64.zip.blockmap",
+      "SHA256SUMS.txt",
+    ].sort(),
   );
   assert.equal(store.puts[0]?.cacheControl, "public, max-age=31536000, immutable");
+  assert.deepEqual(store.puts[0]?.condition, { ifNoneMatch: "*" });
   assert.equal(store.puts.at(-1)?.cacheControl, "no-cache, no-store, max-age=0");
+  assert.deepEqual(store.puts.at(-1)?.condition, { ifNoneMatch: "*" });
 });
 
 test("publisher retries identical immutable objects and refuses mismatches", async () => {
@@ -66,7 +88,8 @@ test("publisher retries identical immutable objects and refuses mismatches", asy
     channel: "candidate",
     store,
   });
-  assert.equal(retry.skipped.length, 2);
+  assert.equal(retry.skipped.length, 5);
+  assert.deepEqual(store.puts.at(-1)?.condition, { ifMatch: '"etag-6"' });
 
   store.objects.set(
     "desktop/releases/0.7.0/arm64/Kestrel-0.7.0-mac-arm64.zip",
@@ -118,5 +141,7 @@ function fixture(): string {
   );
   writeFileSync(path.join(outDir, "Kestrel-0.7.0-mac-arm64.zip"), "zip");
   writeFileSync(path.join(outDir, "Kestrel-0.7.0-mac-arm64.dmg"), "dmg");
+  writeFileSync(path.join(outDir, "Kestrel-0.7.0-mac-arm64.zip.blockmap"), "zip-blockmap");
+  writeFileSync(path.join(outDir, "Kestrel-0.7.0-mac-arm64.dmg.blockmap"), "dmg-blockmap");
   return outDir;
 }

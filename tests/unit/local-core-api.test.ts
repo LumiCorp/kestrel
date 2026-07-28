@@ -243,7 +243,7 @@ contractTest("runtime.process", "Local Core API serves health/status with bearer
     assert.equal(lifecycle.state, "idle");
     assert.deepEqual(lifecycle.blockers, []);
     assert.equal(lifecycle.owner.pid, process.pid);
-    assert.equal((await client.shutdownForUninstall()).state, "idle");
+    assert.equal((await client.shutdownForUninstall()).status, "accepted");
     const shutdownDeadline = Date.now() + 5_000;
     while (
       (existsSync(paths.apiSocketPath) || existsSync(paths.lockPath)) &&
@@ -749,14 +749,25 @@ contractTest("runtime.process", "Local Core runtime-store reset rejects an activ
         (blocker) => blocker.code === "LOCAL_CORE_EXECUTIONS_ACTIVE",
       ),
     );
-    await assert.rejects(
-      withTimeout(client.shutdownForUninstall()),
-      (error) =>
-        error instanceof LocalCoreApiError &&
-        error.statusCode === 409 &&
-        error.code === "LOCAL_CORE_UNINSTALL_BLOCKED",
+    const blockedShutdown = await withTimeout(client.shutdownForUninstall());
+    assert.equal(blockedShutdown.status, "blocked");
+    assert.ok(
+      blockedShutdown.lifecycle.blockers.some(
+        (blocker) => blocker.code === "LOCAL_CORE_EXECUTIONS_ACTIVE",
+      ),
     );
-    assert.equal((await client.status()).state, "healthy");
+    const blockedUpdate = await withTimeout(client.shutdownForDesktopUpdate());
+    assert.equal(blockedUpdate.status, "blocked");
+    assert.deepEqual(
+      blockedUpdate.lifecycle.blockers,
+      blockedShutdown.lifecycle.blockers,
+      "Uninstall and Desktop update must use the same lifecycle truth.",
+    );
+    assert.equal(
+      (await client.status()).state,
+      "healthy",
+      "A blocked shutdown must reopen admission for ordinary work.",
+    );
     assert.equal(
       await readFile(path.join(paths.pgliteDataPath, "active-run-sentinel"), "utf8"),
       "present\n",

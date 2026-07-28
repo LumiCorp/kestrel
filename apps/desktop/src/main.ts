@@ -299,6 +299,8 @@ let bootState: DesktopBootState = {
 let runnerTransport: DesktopRunnerControlTransport | undefined;
 const microsoft365AuthorizationSessionIds = new Set<string>();
 const googleWorkspaceAuthorizationSessionIds = new Set<string>();
+const mcpAuthorizationSessionIds = new Set<string>();
+let desktopAdmissionClosed = false;
 let desktopConfig: ReturnType<typeof resolveDesktopPathConfig> | undefined;
 let localCoreStatus: LocalCoreStatus | undefined;
 let runtimeHealth: DesktopRuntimeHealth = {
@@ -389,7 +391,11 @@ async function main(): Promise<void> {
   ) {
     process.env.KESTREL_HOME = localCoreHome.homePath;
   }
-  if (process.platform === "darwin") {
+  const isolatedPackageSmokeCredentials =
+    app.isPackaged &&
+    process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_APPROVED === "1" &&
+    process.env.KESTREL_CORE_CREDENTIAL_STORE === "environment";
+  if (process.platform === "darwin" && isolatedPackageSmokeCredentials === false) {
     process.env.KESTREL_CORE_CREDENTIAL_STORE = "macos_keychain";
   }
   desktopConfig = resolveDesktopPathConfig({
@@ -585,7 +591,8 @@ function createMainDesktopUpdateCoordinator(
     arch: process.arch,
     currentVersion: app.getVersion(),
     getBlockers: getDesktopUpdateBlockers,
-    prepareForInstall: async () => await preparation.prepare(),
+    prepareForInstall: async () =>
+      await prepareDesktopUpdateInstallation(preparation),
     publish(state) {
       if (mainWindow?.isDestroyed() === false) {
         mainWindow.webContents.send("desktop:update-state", state);
@@ -1005,6 +1012,7 @@ function registerBootIpcHandlers(): void {
   ipcMain.handle(
     "desktop:create-uninstall-plan",
     async (_event, input: unknown) => {
+      assertDesktopAdmissionOpen("uninstall planning");
       const record = isRecord(input) ? input : {};
       return await createKestrelUninstallPlan({
         initiator: "desktop",
@@ -1016,6 +1024,7 @@ function registerBootIpcHandlers(): void {
   ipcMain.handle(
     "desktop:apply-uninstall-plan",
     async (_event, input: unknown) => {
+      assertDesktopAdmissionOpen("uninstall");
       return await applyDesktopUninstallPlan(parseDesktopUninstallApplyInput(input));
     },
   );
@@ -1630,6 +1639,7 @@ function registerIpcHandlers(
         : path.resolve(
             workspace.sourceWorkspaceRoot ?? workspace.workspaceRoot,
           );
+    assertDesktopAdmissionOpen("a workspace execution");
     if (skillWorkspaceRoot !== undefined) {
       await activateDesktopWorkspaceSkills(skillWorkspaceRoot);
       activeDesktopWorkspaceRunCounts.set(
@@ -1881,6 +1891,7 @@ function registerIpcHandlers(
   ipcMain.handle(
     "desktop:save-settings",
     async (_event, nextSettings: unknown) => {
+      assertDesktopAdmissionOpen("a settings mutation");
       let update: DesktopRendererSettingsUpdate;
       try {
         update = parseDesktopRendererSettingsUpdate(nextSettings);
@@ -2504,6 +2515,7 @@ function registerIpcHandlers(
   ipcMain.handle(
     "desktop:start-standard-app-connection",
     async (_event, rawInput: unknown): Promise<DesktopAppConnectionSession> => {
+      assertDesktopAdmissionOpen("an authorization session");
       if (
         typeof rawInput !== "object" ||
         rawInput === null ||
@@ -2596,6 +2608,9 @@ function registerIpcHandlers(
                   serverUrl: connection.url,
                   appName: manifest.name,
                   ...(clientId ? { clientId } : {}),
+                  ...(connection.loopbackCallback
+                    ? { loopbackCallback: connection.loopbackCallback }
+                    : {}),
                   ...(configuredScopes
                     ? {
                         scopes: [
@@ -2614,6 +2629,9 @@ function registerIpcHandlers(
       }
       if (connection.appId === KESTREL_APP_IDS.GOOGLE_WORKSPACE) {
         googleWorkspaceAuthorizationSessionIds.add(session.sessionId);
+      }
+      if (connection.runtime !== "native") {
+        mcpAuthorizationSessionIds.add(session.sessionId);
       }
       if (session.authorizationUrl !== undefined) {
         await shell.openExternal(session.authorizationUrl);
@@ -2649,6 +2667,7 @@ function registerIpcHandlers(
       if (session.state !== "awaiting_user") {
         microsoft365AuthorizationSessionIds.delete(sessionId);
         googleWorkspaceAuthorizationSessionIds.delete(sessionId);
+        mcpAuthorizationSessionIds.delete(sessionId);
       }
       return {
         sessionId: session.sessionId,
@@ -5119,24 +5138,80 @@ async function stopCoreProjectRuns(): Promise<void> {
 }
 
 async function getDesktopUpdateBlockers(): Promise<DesktopUpdateBlocker[]> {
+  const blockers = getDesktopActivityBlockers();
+  const client = localCoreConnectionManager?.current()?.client;
+  if (client !== undefined) {
+    const lifecycle = await client.systemLifecycle();
+    blockers.push(
+      ...lifecycle.blockers.map((blocker) => ({
+        source: "local_core" as const,
+        ...blocker,
+      })),
+    );
+  }
+  return blockers;
+}
+
+function getDesktopActivityBlockers(): DesktopUpdateBlocker[] {
   const blockers: DesktopUpdateBlocker[] = [];
   if (
     [...activeDesktopWorkspaceRunCounts.values()].some((count) => count > 0)
   ) {
-    blockers.push("active_execution");
+    blockers.push({
+      source: "desktop",
+      code: "DESKTOP_EXECUTIONS_ACTIVE",
+      message: "Desktop workspace executions are active.",
+      count: [...activeDesktopWorkspaceRunCounts.values()].reduce(
+        (total, count) => total + count,
+        0,
+      ),
+    });
+  }
+  const authorizationCount =
+    microsoft365AuthorizationSessionIds.size +
+    googleWorkspaceAuthorizationSessionIds.size +
+    mcpAuthorizationSessionIds.size;
+  if (authorizationCount > 0) {
+    blockers.push({
+      source: "desktop",
+      code: "DESKTOP_AUTHORIZATION_ACTIVE",
+      message: "Desktop authorization sessions are active.",
+      count: authorizationCount,
+    });
+  }
+  return blockers;
+}
+
+function assertDesktopAdmissionOpen(operation: string): void {
+  if (!desktopAdmissionClosed) return;
+  throw createDesktopError({
+    code: "desktop.admission_closed",
+    message: `Kestrel cannot begin ${operation} while preparing to restart.`,
+  });
+}
+
+async function prepareDesktopUpdateInstallation(
+  preparation: DesktopShutdownPreparation,
+): Promise<DesktopUpdateBlocker[]> {
+  desktopAdmissionClosed = true;
+  const desktopBlockers = getDesktopActivityBlockers();
+  if (desktopBlockers.length > 0) {
+    desktopAdmissionClosed = false;
+    return desktopBlockers;
   }
   const client = localCoreConnectionManager?.current()?.client;
   if (client !== undefined) {
-    const runs = await client.listDesktopProjectRuns();
-    if (
-      runs.some(
-        (run) => run.status === "running" || run.status === "stopping",
-      )
-    ) {
-      blockers.push("managed_project_process");
+    const shutdown = await client.shutdownForDesktopUpdate();
+    if (shutdown.status === "blocked") {
+      desktopAdmissionClosed = false;
+      return shutdown.lifecycle.blockers.map((blocker) => ({
+        source: "local_core",
+        ...blocker,
+      }));
     }
   }
-  return blockers;
+  await preparation.prepare({ cancelActiveWork: false });
+  return [];
 }
 
 async function restartLocalCoreForDatabaseSettingsChange(): Promise<void> {

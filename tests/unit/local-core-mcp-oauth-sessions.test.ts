@@ -110,6 +110,10 @@ contractTest(
           client_id: "kestrel-slack-public-client",
           token_endpoint_auth_method: "none",
         });
+        assert.equal(
+          provider.redirectUrl,
+          "http://localhost:3118/oauth/callback",
+        );
         assert.equal(options.scope, "search:read.public");
         await provider.redirectToAuthorization(
           new URL("https://slack.com/oauth/v2_user/authorize"),
@@ -124,6 +128,11 @@ contractTest(
       appName: "Slack",
       clientId: "kestrel-slack-public-client",
       scopes: ["search:read.public"],
+      loopbackCallback: {
+        host: "localhost",
+        port: 3118,
+        path: "/oauth/callback",
+      },
     });
 
     const stored = JSON.parse(

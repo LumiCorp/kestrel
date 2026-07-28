@@ -18,6 +18,8 @@ apps/desktop/out/
 apps/desktop/resources/
 apps/desktop/static/renderer/
 apps/desktop/.desktop-package/
+apps/desktop/.desktop-runtime/
+apps/desktop-runtime/payload/
 apps/desktop/.npm-cache/
 apps/desktop/.forge-package/
 .kestrel/

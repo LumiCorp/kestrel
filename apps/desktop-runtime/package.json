@@ -1,0 +1,27 @@
+{
+  "name": "@kestrel/desktop-runtime",
+  "private": true,
+  "version": "0.7.0",
+  "type": "module",
+  "files": [
+    "payload"
+  ],
+  "dependencies": {
+    "@electric-sql/pglite": "^0.4.6",
+    "@kestrel-agents/protocol": "workspace:*",
+    "@kestrel-agents/workspace-skills": "workspace:*",
+    "@lumi/kestrel-environment-auth": "workspace:^",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@tavily/core": "^0.7.2",
+    "ajv": "^8.18.0",
+    "cron-parser": "^5.5.0",
+    "ink": "^6.8.0",
+    "ink-text-input": "^6.0.0",
+    "js-tiktoken": "1.0.21",
+    "node-pty": "1.2.0-beta.12",
+    "pg": "^8.18.0",
+    "react": "^19.2.4",
+    "tsx": "^4.19.3",
+    "ws": "^8.21.1"
+  }
+}

@@ -1,24 +1,32 @@
-import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  resolveRuntimeDependencyInstallArgs,
-  resolveRuntimePackageDependencies,
-} from "./runtime-package-dependencies.js";
 
 export const DESKTOP_RESOURCE_DIRECTORIES = [
   "cli",
-  "db",
+  "db/migrations",
   "src",
   "tools",
   "agents",
   "models",
   "bin",
   "scripts",
-];
+] as const;
 
-export const DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS = ["agents", "src", "cli", "db"] as const;
+export const DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS = [
+  "agents",
+  "src",
+  "cli",
+  "db/migrations",
+] as const;
+
 const EXCLUDED_BASENAMES = new Set([
   "test-results",
   "tsconfig.tsbuildinfo",
@@ -32,40 +40,31 @@ const EXCLUDED_BASENAMES = new Set([
 ]);
 
 if (isDirectExecution()) {
-  main();
+  prepareDesktopRuntimePayload(resolveRepoRoot(process.cwd()));
 }
 
-function main(): void {
-  const repoRoot = resolveRepoRoot(process.cwd());
-  const desktopResourcesDir = path.join(repoRoot, "apps", "desktop", "resources", "kestrel-repo");
-
-  rmSync(desktopResourcesDir, { recursive: true, force: true });
-  mkdirSync(desktopResourcesDir, { recursive: true });
+export function prepareDesktopRuntimePayload(repoRoot: string): string {
+  const payloadDir = path.join(repoRoot, "apps", "desktop-runtime", "payload");
+  rmSync(payloadDir, { recursive: true, force: true });
+  mkdirSync(payloadDir, { recursive: true });
 
   for (const relativePath of DESKTOP_RESOURCE_DIRECTORIES) {
     const sourcePath = path.join(repoRoot, relativePath);
-    if (existsSync(sourcePath) === false) {
-      continue;
-    }
-    cpSync(sourcePath, path.join(desktopResourcesDir, relativePath), {
+    if (!existsSync(sourcePath)) continue;
+    cpSync(sourcePath, path.join(payloadDir, relativePath), {
       recursive: true,
       filter: shouldCopyDesktopResourceEntry,
     });
   }
 
-  writeDesktopRuntimeManifest(repoRoot, desktopResourcesDir);
-  if (shouldInstallDesktopRuntimeDependencies({ packageStage: false })) {
-    installDesktopRuntimeDependencies(desktopResourcesDir);
-  }
-  console.log(`[desktop] prepared resources in ${desktopResourcesDir}`);
+  console.log(`[desktop] prepared Local Core payload in ${payloadDir}`);
+  return payloadDir;
 }
 
 function resolveRepoRoot(cwd: string): string {
   let current = cwd;
   while (true) {
-    if (existsSync(path.join(current, "pnpm-workspace.yaml"))) {
-      return current;
-    }
+    if (existsSync(path.join(current, "pnpm-workspace.yaml"))) return current;
     const parent = path.dirname(current);
     if (parent === current) {
       throw new Error(`Unable to locate repo root from '${cwd}'.`);
@@ -76,10 +75,8 @@ function resolveRepoRoot(cwd: string): string {
 
 function isDirectExecution(): boolean {
   const entryPath = process.argv[1];
-  if (entryPath === undefined) {
-    return false;
-  }
-  return path.resolve(entryPath) === fileURLToPath(import.meta.url);
+  return entryPath !== undefined &&
+    path.resolve(entryPath) === fileURLToPath(import.meta.url);
 }
 
 function isLocalEnvFile(basename: string): boolean {
@@ -88,10 +85,7 @@ function isLocalEnvFile(basename: string): boolean {
 
 export function shouldCopyDesktopResourceEntry(entry: string): boolean {
   const basename = path.basename(entry);
-  if (EXCLUDED_BASENAMES.has(basename)) {
-    return false;
-  }
-  return isLocalEnvFile(basename) === false;
+  return !EXCLUDED_BASENAMES.has(basename) && !isLocalEnvFile(basename);
 }
 
 export interface DesktopResourceDriftCheckInput {
@@ -115,57 +109,57 @@ export type DesktopResourceDriftCheckResult =
       message: string;
     };
 
-export function checkDesktopResourceDrift(input: DesktopResourceDriftCheckInput): DesktopResourceDriftCheckResult {
-  const desktopResourcesDir = input.desktopResourcesDir ??
-    path.join(input.repoRoot, "apps", "desktop", "resources", "kestrel-repo");
-  const criticalPaths = [...(input.criticalPaths ?? DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS)];
-  if (existsSync(desktopResourcesDir) === false) {
+export function checkDesktopResourceDrift(
+  input: DesktopResourceDriftCheckInput,
+): DesktopResourceDriftCheckResult {
+  const payloadDir = input.desktopResourcesDir ??
+    path.join(input.repoRoot, "apps", "desktop-runtime", "payload");
+  const criticalPaths = [
+    ...(input.criticalPaths ?? DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS),
+  ];
+  if (!existsSync(payloadDir)) {
     return {
       ok: true,
       skipped: true,
       checkedPaths: criticalPaths,
-      message: `Desktop generated resources are absent at '${desktopResourcesDir}'; drift check skipped.`,
+      message: `Desktop generated runtime payload is absent at '${payloadDir}'; drift check skipped.`,
     };
   }
 
   const stalePaths: string[] = [];
   for (const criticalPath of criticalPaths) {
     const sourceRoot = path.join(input.repoRoot, criticalPath);
-    if (existsSync(sourceRoot) === false) {
-      continue;
-    }
+    if (!existsSync(sourceRoot)) continue;
     for (const relativeFile of collectResourceFiles(sourceRoot)) {
-      const sourcePath = path.join(sourceRoot, relativeFile);
-      const resourceRelativePath = path.join(criticalPath, relativeFile);
-      const outputPath = path.join(desktopResourcesDir, resourceRelativePath);
+      const outputPath = path.join(payloadDir, criticalPath, relativeFile);
       if (
-        existsSync(outputPath) === false ||
-        readFileSync(sourcePath).equals(readFileSync(outputPath)) === false
+        !existsSync(outputPath) ||
+        !readFileSync(path.join(sourceRoot, relativeFile)).equals(
+          readFileSync(outputPath),
+        )
       ) {
-        stalePaths.push(resourceRelativePath.split(path.sep).join("/"));
+        stalePaths.push(
+          path.join(criticalPath, relativeFile).split(path.sep).join("/"),
+        );
       }
     }
   }
 
-  if (stalePaths.length > 0) {
-    return {
-      ok: false,
-      skipped: false,
-      checkedPaths: criticalPaths,
-      stalePaths,
-      message: [
-        "Desktop generated resources are stale.",
-        "Run `pnpm --filter @kestrel/desktop prepare:resources` and restart or repackage desktop.",
-      ].join(" "),
-    };
-  }
-
-  return {
-    ok: true,
-    skipped: false,
-    checkedPaths: criticalPaths,
-    message: "Desktop generated resources match tracked runtime sources.",
-  };
+  return stalePaths.length > 0
+    ? {
+        ok: false,
+        skipped: false,
+        checkedPaths: criticalPaths,
+        stalePaths,
+        message:
+          "Desktop generated runtime payload is stale. Run `pnpm --filter @kestrel/desktop prepare:resources`.",
+      }
+    : {
+        ok: true,
+        skipped: false,
+        checkedPaths: criticalPaths,
+        message: "Desktop generated runtime payload matches tracked sources.",
+      };
 }
 
 function collectResourceFiles(root: string): string[] {
@@ -173,89 +167,12 @@ function collectResourceFiles(root: string): string[] {
   const visit = (current: string, relativeDir: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const entryPath = path.join(current, entry.name);
-      if (shouldCopyDesktopResourceEntry(entryPath) === false) {
-        continue;
-      }
+      if (!shouldCopyDesktopResourceEntry(entryPath)) continue;
       const relativePath = path.join(relativeDir, entry.name);
-      if (entry.isDirectory()) {
-        visit(entryPath, relativePath);
-        continue;
-      }
-      if (entry.isFile()) {
-        files.push(relativePath);
-      }
+      if (entry.isDirectory()) visit(entryPath, relativePath);
+      else if (entry.isFile()) files.push(relativePath);
     }
   };
   visit(root, "");
   return files.sort();
-}
-
-function writeDesktopRuntimeManifest(repoRoot: string, outputDir: string): void {
-  const rootPackage = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
-    version: string;
-    packageManager?: string | undefined;
-    engines?: Record<string, string> | undefined;
-    dependencies?: Record<string, string> | undefined;
-    devDependencies?: Record<string, string> | undefined;
-  };
-  const desktopPackage = JSON.parse(readFileSync(path.join(repoRoot, "apps", "desktop", "package.json"), "utf8")) as {
-    overrides?: Record<string, string> | undefined;
-  };
-
-  const dependencies = resolveRuntimePackageDependencies({
-    repoRoot,
-    runtimeVersion: rootPackage.version,
-    dependencies: rootPackage.dependencies,
-    tsxVersion: rootPackage.devDependencies?.tsx,
-  });
-
-  writeFileSync(
-    path.join(outputDir, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "kestrel-desktop-runtime",
-        private: true,
-        type: "module",
-        ...(rootPackage.packageManager !== undefined ? { packageManager: rootPackage.packageManager } : {}),
-        ...(rootPackage.engines !== undefined ? { engines: rootPackage.engines } : {}),
-        ...(desktopPackage.overrides !== undefined ? { overrides: desktopPackage.overrides } : {}),
-        dependencies,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-}
-
-export function shouldInstallDesktopRuntimeDependencies(input: { packageStage: boolean }): boolean {
-  return input.packageStage;
-}
-
-export function installDesktopRuntimeDependencies(
-  outputDir: string,
-  input?: {
-    npmCacheDir?: string | undefined;
-    localPackages?: readonly string[] | undefined;
-  },
-): void {
-  if (existsSync(path.join(outputDir, "package.json")) === false) {
-    throw new Error(`Desktop runtime package.json not found at '${outputDir}'. Run prepare:resources first.`);
-  }
-  const npmCacheDir = input?.npmCacheDir ?? path.join(outputDir, ".npm-cache");
-  mkdirSync(npmCacheDir, { recursive: true });
-  rmSync(path.join(outputDir, "node_modules"), { recursive: true, force: true });
-  execFileSync(resolveNpmCommand(), resolveRuntimeDependencyInstallArgs(input?.localPackages), {
-    cwd: outputDir,
-    env: {
-      ...process.env,
-      CI: "1",
-      npm_config_cache: npmCacheDir,
-    },
-    stdio: "inherit",
-  });
-}
-
-function resolveNpmCommand(): string {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
 }

@@ -12,7 +12,10 @@ import {
 const repoRoot = resolveRepoRoot(process.cwd());
 const desktopRoot = path.join(repoRoot, "apps", "desktop");
 const stageDir = path.join(desktopRoot, ".desktop-package");
-const version = readVersion(path.join(desktopRoot, "package.json"));
+const desktopManifestPath = path.join(desktopRoot, "package.json");
+const version = readVersion(desktopManifestPath);
+const electronVersion = readDependencyVersion(desktopManifestPath, "electron");
+const packageMode = parsePackageMode(process.env.KESTREL_DESKTOP_PACKAGE_MODE);
 const releaseBuild = process.env.KESTREL_DESKTOP_RELEASE === "1";
 
 if (!existsSync(stageDir)) {
@@ -33,15 +36,21 @@ prepareDesktopUninstallHelper();
 const config = resolveDesktopBuilderConfiguration({
   repoRoot,
   version,
+  electronVersion,
   releaseBuild,
   updateChannel: parseDesktopUpdateChannel(
     process.env.KESTREL_DESKTOP_UPDATE_CHANNEL,
   ),
   signingIdentity: process.env.KESTREL_DESKTOP_SIGN_IDENTITY,
+  packageMode,
 });
 
 await build({
-  targets: Platform.MAC.createTarget(["dmg", "zip"], Arch.arm64),
+  projectDir: stageDir,
+  targets: Platform.MAC.createTarget(
+    packageMode === "dir" ? ["dir"] : ["dmg", "zip"],
+    Arch.arm64,
+  ),
   config: config as Configuration,
   publish: "never",
 });
@@ -95,6 +104,29 @@ function readVersion(packageJsonPath: string): string {
     );
   }
   return parsed.version;
+}
+
+function readDependencyVersion(
+  packageJsonPath: string,
+  dependencyName: string,
+): string {
+  const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+    devDependencies?: Record<string, unknown> | undefined;
+  };
+  const value = parsed.devDependencies?.[dependencyName];
+  if (typeof value !== "string" || !/^\d+\.\d+\.\d+$/u.test(value)) {
+    throw new Error(
+      `${dependencyName} in '${packageJsonPath}' must use an exact version.`,
+    );
+  }
+  return value;
+}
+
+function parsePackageMode(value: string | undefined): "dir" | "release" {
+  if (value === "dir" || value === "release") return value;
+  throw new Error(
+    "KESTREL_DESKTOP_PACKAGE_MODE must be 'dir' or 'release'. Use desktop:package:dir for unsigned local proof.",
+  );
 }
 
 function prepareDesktopUninstallHelper(): void {

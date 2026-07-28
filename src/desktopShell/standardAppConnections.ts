@@ -16,6 +16,13 @@ export interface DesktopStandardAppAuthorizationConnectionDefinition extends Des
   runtime?: "mcp" | "native" | undefined;
   credentialPrefix: `mcp.${string}`;
   clientIdEnvironmentVariable?: string | undefined;
+  loopbackCallback?:
+    | Readonly<{
+        host: "localhost";
+        port: number;
+        path: string;
+      }>
+    | undefined;
   capabilityPackScopes?:
     | Readonly<Record<string, readonly string[]>>
     | undefined;
@@ -133,6 +140,11 @@ const DESKTOP_STANDARD_APP_CONNECTIONS: readonly DesktopStandardAppConnectionDef
       url: "https://mcp.slack.com/mcp",
       credentialPrefix: "mcp.standard.slack",
       clientIdEnvironmentVariable: "KESTREL_SLACK_MCP_CLIENT_ID",
+      loopbackCallback: Object.freeze({
+        host: "localhost",
+        port: 3118,
+        path: "/oauth/callback",
+      }),
       capabilityPackScopes: Object.freeze({
         search: Object.freeze([
           "search:read.public",

@@ -64,7 +64,7 @@ function coordinator(input: {
   platform?: NodeJS.Platform;
   arch?: string;
   blockers?: () => Promise<DesktopUpdateBlocker[]>;
-  prepare?: () => Promise<void>;
+  prepare?: () => Promise<DesktopUpdateBlocker[]>;
   published?: DesktopUpdateState[];
 } = {}) {
   const updater = input.updater ?? new FakeUpdater();
@@ -76,7 +76,7 @@ function coordinator(input: {
     arch: input.arch ?? "arm64",
     currentVersion: "0.6.0",
     getBlockers: input.blockers ?? (async () => []),
-    prepareForInstall: input.prepare ?? (async () => {}),
+    prepareForInstall: input.prepare ?? (async () => []),
     publish: (state) => published.push(state),
   });
   return { result, updater, published };
@@ -166,9 +166,23 @@ contractTest(
   "blocked installation rechecks blockers and installs after work stops",
   async () => {
     const fake = new FakeUpdater();
+    fake.checkAction = async () =>
+      fake.updateAvailable?.({ version: "0.7.0" });
+    fake.downloadAction = async () =>
+      fake.updateDownloaded?.({ version: "0.7.0" });
     let blockers: DesktopUpdateBlocker[] = [
-      "active_execution",
-      "managed_project_process",
+      {
+        source: "desktop",
+        code: "DESKTOP_EXECUTIONS_ACTIVE",
+        message: "Desktop workspace executions are active.",
+        count: 1,
+      },
+      {
+        source: "local_core",
+        code: "LOCAL_CORE_PROJECT_RUNS_ACTIVE",
+        message: "Desktop project runs are active.",
+        count: 1,
+      },
     ];
     let prepared = 0;
     const { result } = coordinator({
@@ -176,9 +190,11 @@ contractTest(
       blockers: async () => blockers,
       prepare: async () => {
         prepared += 1;
+        return [];
       },
     });
-    fake.updateDownloaded?.({ version: "0.7.0" });
+    await result.checkForUpdates();
+    await result.downloadUpdate();
 
     const blocked = await result.installUpdate();
     assert.equal(blocked.phase, "blocked");
@@ -198,16 +214,54 @@ contractTest(
   "cleanup failure aborts installation",
   async () => {
     const fake = new FakeUpdater();
+    fake.checkAction = async () =>
+      fake.updateAvailable?.({ version: "0.7.0" });
+    fake.downloadAction = async () =>
+      fake.updateDownloaded?.({ version: "0.7.0" });
     const { result } = coordinator({
       updater: fake,
       prepare: async () => {
         throw new Error("database close failed");
       },
     });
-    fake.updateDownloaded?.({ version: "0.7.0" });
+    await result.checkForUpdates();
+    await result.downloadUpdate();
 
     assert.equal((await result.installUpdate()).phase, "error");
     assert.match(result.state().message, /database close failed/u);
     assert.equal(fake.installCalls, 0);
+  },
+);
+
+contractTest(
+  "desktop.hermetic",
+  "reentrant operations and stale updater events cannot advance state",
+  async () => {
+    const fake = new FakeUpdater();
+    let releaseCheck = () => {};
+    fake.checkAction = async () => {
+      await new Promise<void>((resolve) => {
+        releaseCheck = resolve;
+      });
+    };
+    const { result } = coordinator({ updater: fake });
+
+    const pendingCheck = result.checkForUpdates();
+    assert.equal(result.state().phase, "checking");
+    assert.equal((await result.checkForUpdates()).phase, "checking");
+    assert.equal((await result.downloadUpdate()).phase, "checking");
+    assert.equal(fake.checkCalls, 1);
+    assert.equal(fake.downloadCalls, 0);
+
+    fake.downloadProgress?.({ percent: 80 });
+    fake.updateDownloaded?.({ version: "9.9.9" });
+    assert.equal(result.state().phase, "checking");
+    releaseCheck();
+    await pendingCheck;
+
+    fake.updateNotAvailable?.();
+    assert.equal(result.state().phase, "idle");
+    fake.updateAvailable?.({ version: "9.9.9" });
+    assert.equal(result.state().phase, "idle");
   },
 );

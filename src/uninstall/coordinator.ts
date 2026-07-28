@@ -1449,8 +1449,11 @@ async function shutdownLocalCoreIfPresent(input: {
   if (before.state === "busy") {
     throw new Error("Local Core is busy and cannot shut down for uninstall.");
   }
-  const lifecycle = await client.shutdownForUninstall();
-  if (lifecycle.state !== "idle") {
+  const shutdown = await client.shutdownForUninstall();
+  if (
+    shutdown.status !== "accepted" ||
+    shutdown.lifecycle.state !== "idle"
+  ) {
     throw new Error("Local Core remained busy during uninstall shutdown.");
   }
   const deadline = Date.now() + 5_000;

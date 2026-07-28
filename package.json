@@ -101,6 +101,8 @@
     "ecosystem:release-check": "pnpm run protocol:release-check && pnpm run sdk:release-check && pnpm run observability:release-check && pnpm run next:release-check && pnpm run ecosystem:e2e && pnpm run ecosystem:next-fixture",
     "desktop:dev": "pnpm --filter @kestrel/desktop dev",
     "desktop:build": "pnpm --filter @kestrel/desktop build",
+    "desktop:package:dir": "pnpm --filter @kestrel/desktop package:dir",
+    "desktop:package:preflight": "node --import tsx scripts/check-desktop-package.ts",
     "desktop:package": "pnpm --filter @kestrel/desktop package",
     "desktop:package-smoke": "node --import tsx scripts/desktop-package-smoke.ts",
     "desktop:release-check": "node --import tsx scripts/check-desktop-release.ts",

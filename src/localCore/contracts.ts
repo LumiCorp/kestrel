@@ -247,10 +247,27 @@ export interface LocalCoreSystemLifecycle {
   blockers: LocalCoreSystemLifecycleBlocker[];
 }
 
-export interface LocalCoreSystemShutdownRequest {
-  reason: "uninstall";
-  confirm: "shutdown-local-core-for-uninstall";
-}
+export type LocalCoreSystemShutdownRequest =
+  | {
+      reason: "uninstall";
+      confirm: "shutdown-local-core-for-uninstall";
+    }
+  | {
+      reason: "desktop_update";
+      confirm: "shutdown-local-core-for-desktop-update";
+    };
+
+export type LocalCoreSystemShutdownResult =
+  | {
+      status: "accepted";
+      reason: LocalCoreSystemShutdownRequest["reason"];
+      lifecycle: LocalCoreSystemLifecycle;
+    }
+  | {
+      status: "blocked";
+      reason: LocalCoreSystemShutdownRequest["reason"];
+      lifecycle: LocalCoreSystemLifecycle;
+    };
 
 export function parseLocalCoreSystemLifecycle(
   value: unknown,
@@ -326,14 +343,47 @@ export function parseLocalCoreSystemShutdownRequest(
     "system shutdown request",
   );
   if (
-    record.reason !== "uninstall" ||
-    record.confirm !== "shutdown-local-core-for-uninstall"
+    record.reason === "uninstall" &&
+    record.confirm === "shutdown-local-core-for-uninstall"
   ) {
-    throw new Error("Local Core shutdown requires the uninstall confirmation payload.");
+    return {
+      reason: "uninstall",
+      confirm: "shutdown-local-core-for-uninstall",
+    };
+  }
+  if (
+    record.reason === "desktop_update" &&
+    record.confirm === "shutdown-local-core-for-desktop-update"
+  ) {
+    return {
+      reason: "desktop_update",
+      confirm: "shutdown-local-core-for-desktop-update",
+    };
+  }
+  throw new Error(
+    "Local Core shutdown requires an exact uninstall or Desktop update confirmation payload.",
+  );
+}
+
+export function parseLocalCoreSystemShutdownResult(
+  value: unknown,
+): LocalCoreSystemShutdownResult {
+  const record = requireLocalCoreRecord(value, "system shutdown result");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set(["status", "reason", "lifecycle"]),
+    "system shutdown result",
+  );
+  if (record.status !== "accepted" && record.status !== "blocked") {
+    throw new Error("Local Core system shutdown result.status is invalid.");
+  }
+  if (record.reason !== "uninstall" && record.reason !== "desktop_update") {
+    throw new Error("Local Core system shutdown result.reason is invalid.");
   }
   return {
-    reason: "uninstall",
-    confirm: "shutdown-local-core-for-uninstall",
+    status: record.status,
+    reason: record.reason,
+    lifecycle: parseLocalCoreSystemLifecycle(record.lifecycle),
   };
 }
 

@@ -17,8 +17,17 @@ import path from "node:path";
 import { _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
 
 import { resolveDesktopPackagerConfig } from "../apps/desktop/src/packageConfig.js";
+import {
+  createDefaultDesktopSettings,
+  writeDesktopSettings,
+} from "../apps/desktop/src/settingsStore.js";
 import { DESKTOP_BRIDGE_VERSION } from "../src/desktopShell/contracts.js";
 import { resolveLocalCorePaths } from "../src/localCore/home.js";
+import {
+  createDefaultLocalCoreRuntimeConfiguration,
+  resolveLocalCoreRuntimeConfigurationPath,
+} from "../src/localCore/runtimeConfiguration.js";
+import { startFakeOpenRouterServer } from "../tests/ops/helpers/fake-open-router.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const expectedDesktopVersion = readDesktopVersion(repoRoot);
@@ -53,10 +62,18 @@ assert.deepEqual(
 );
 mkdirSync(evidenceDir, { recursive: true });
 acquireSmokeLock(smokeLockPath);
+const heartbeat = setInterval(() => {
+  process.stdout.write("[desktop-package-smoke] still running\n");
+}, 10_000);
 
 const smokeRoot = mkdtempSync(path.join(resolveSmokeTempParent(), "kdp-gui-"));
 const coreHome = path.join(smokeRoot, "core-home");
 const userDataPath = path.join(smokeRoot, "user-data");
+const fakeOpenRouter = await startFakeOpenRouterServer();
+await seedOfflineModelConfiguration({
+  coreHome,
+  baseUrl: fakeOpenRouter.url,
+});
 const liveModelApproved = process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_LIVE_MODEL_APPROVED === "1";
 const sourceCoreHome = process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_SOURCE_CORE_HOME?.trim();
 if (liveModelApproved) {
@@ -85,6 +102,8 @@ try {
       ELECTRON_ENABLE_LOGGING: "1",
       ELECTRON_ENABLE_STACK_DUMPING: "1",
       KESTREL_HOME: coreHome,
+      KESTREL_CORE_CREDENTIAL_STORE: "environment",
+      OPENROUTER_API_KEY: "kestrel-package-smoke-token",
     },
     timeout: 60_000,
   });
@@ -225,10 +244,65 @@ try {
   assert.match(renderer.bodyText, /Kestrel/u);
 
   await window.screenshot({ path: screenshotPath, fullPage: true });
+  const offlineModel = await verifyOfflineModel(window, fakeOpenRouter.url);
   const liveModel = liveModelApproved
     ? await verifyLiveModelResponse(window)
     : undefined;
   const surfaces = await verifyStaticRendererSurfaces(window);
+  const persistenceMarker = `KESTREL_PACKAGE_PERSIST_${Date.now()}`;
+  await openConversationSurface(window);
+  await window
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill(persistenceMarker);
+  await window.waitForFunction(
+    async (marker) => JSON.stringify(
+      await (globalThis as typeof globalThis & {
+        kestrelDesktop: { getUiState(): Promise<unknown> };
+      }).kestrelDesktop.getUiState(),
+    ).includes(String(marker)),
+    persistenceMarker,
+    { timeout: 30_000 },
+  );
+  await electronApp.close();
+  electronApp = undefined;
+  electronPid = undefined;
+
+  electronApp = await electron.launch({
+    executablePath,
+    args: [`--user-data-dir=${userDataPath}`],
+    env: {
+      ...process.env,
+      ELECTRON_ENABLE_LOGGING: "1",
+      ELECTRON_ENABLE_STACK_DUMPING: "1",
+      KESTREL_HOME: coreHome,
+      KESTREL_CORE_CREDENTIAL_STORE: "environment",
+      OPENROUTER_API_KEY: "kestrel-package-smoke-token",
+    },
+    timeout: 60_000,
+  });
+  electronPid = electronApp.process().pid;
+  electronApp.process().stdout?.on("data", (chunk: Buffer | string) => {
+    mainOutput.stdout.push(String(chunk));
+  });
+  electronApp.process().stderr?.on("data", (chunk: Buffer | string) => {
+    mainOutput.stderr.push(String(chunk));
+  });
+  const relaunchedWindow = await waitForReadyWindow(electronApp);
+  await relaunchedWindow
+    .getByRole("textbox", { name: "Message", exact: true })
+    .waitFor({ state: "visible", timeout: 30_000 });
+  assert.equal(
+    await relaunchedWindow
+      .getByRole("textbox", { name: "Message", exact: true })
+      .inputValue(),
+    persistenceMarker,
+    "The packaged app must restore persisted conversation draft state after relaunch.",
+  );
+  assert.match(
+    await relaunchedWindow.locator("body").innerText(),
+    /Hello from the fake cross-surface model/u,
+    "The completed offline model conversation must survive relaunch.",
+  );
   const evidence = {
     version: "desktop-package-smoke-v1",
     capturedAt: new Date().toISOString(),
@@ -243,6 +317,12 @@ try {
       chatLayout: renderer.chatLayout,
       screenshotPath,
       surfaces,
+      offlineModel,
+      persistence: {
+        marker: persistenceMarker,
+        relaunched: true,
+        conversationRestored: true,
+      },
       ...(liveModel !== undefined ? { liveModel } : {}),
     },
   };
@@ -268,12 +348,17 @@ try {
       packagedRoot,
     });
   } finally {
-    rmSync(smokeLockPath, { force: true });
-    if (
-      smokePassed
-      || process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_KEEP_STATE !== "1"
-    ) {
-      rmSync(smokeRoot, { recursive: true, force: true });
+    try {
+      await fakeOpenRouter.close();
+    } finally {
+      clearInterval(heartbeat);
+      rmSync(smokeLockPath, { force: true });
+      if (
+        smokePassed
+        || process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_KEEP_STATE !== "1"
+      ) {
+        rmSync(smokeRoot, { recursive: true, force: true });
+      }
     }
   }
 }
@@ -373,6 +458,89 @@ async function verifyLiveModelResponse(window: Page): Promise<{
   return { verified: true, expectedToken, markdownRendered: true };
 }
 
+async function seedOfflineModelConfiguration(input: {
+  coreHome: string;
+  baseUrl: string;
+}): Promise<void> {
+  const paths = resolveLocalCorePaths(input.coreHome);
+  const policy = {
+    version: 1 as const,
+    provider: "openrouter" as const,
+    model: "openai/gpt-5.2-chat",
+    modelByStage: {},
+    modelCapabilities: { visionInputEnabled: false },
+  };
+  mkdirSync(paths.stateRootPath, { recursive: true, mode: 0o700 });
+  mkdirSync(paths.settingsPath, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    path.join(paths.stateRootPath, "model-policy.json"),
+    `${JSON.stringify(policy, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  const runtimeConfiguration = createDefaultLocalCoreRuntimeConfiguration(policy);
+  writeFileSync(
+    resolveLocalCoreRuntimeConfigurationPath(paths.stateRootPath),
+    `${JSON.stringify({
+      ...runtimeConfiguration,
+      providers: {
+        ...runtimeConfiguration.providers,
+        openrouter: { baseUrl: input.baseUrl },
+      },
+    }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  await writeDesktopSettings(
+    path.join(paths.settingsPath, "local-core-settings.json"),
+    {
+      ...createDefaultDesktopSettings(policy),
+      selectedProvider: "openrouter",
+      openrouterModel: policy.model,
+      openrouterBaseUrl: input.baseUrl,
+      providerSelectionCompletedAt: new Date().toISOString(),
+      setupCompletedAt: new Date().toISOString(),
+    },
+  );
+}
+
+async function verifyOfflineModel(
+  window: Page,
+  baseUrl: string,
+): Promise<{
+  verified: true;
+  baseUrl: string;
+  response: string;
+}> {
+  await window.getByRole("button", { name: "Chat", exact: true }).click();
+  await window.getByRole("textbox", { name: "Message", exact: true }).fill(
+    "Run the deterministic packaged Desktop smoke.",
+  );
+  await window.getByRole("button", { name: "Send message", exact: true }).click();
+  const response = "Hello from the fake cross-surface model.";
+  await window.getByText(response, { exact: true }).waitFor({ timeout: 180_000 });
+  return { verified: true, baseUrl, response };
+}
+
+async function waitForReadyWindow(app: ElectronApplication): Promise<Page> {
+  const window = await app.firstWindow({ timeout: 60_000 });
+  await window.waitForLoadState("domcontentloaded");
+  await window.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, {
+    timeout: 60_000,
+  });
+  await window.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
+  await window.locator(".composer").waitFor({ state: "visible", timeout: 60_000 });
+  await window.waitForFunction(
+    async () =>
+      (await (globalThis as typeof globalThis & {
+        kestrelDesktop?: {
+          getBootState(): Promise<{ phase?: string | undefined }>;
+        };
+      }).kestrelDesktop?.getBootState())?.phase === "ready",
+    undefined,
+    { timeout: 60_000 },
+  );
+  return window;
+}
+
 function readDesktopVersion(root: string): string {
   const manifest = JSON.parse(
     readFileSync(path.join(root, "apps", "desktop", "package.json"), "utf8"),
@@ -447,6 +615,17 @@ async function openRendererSurface(
     .getByRole("button", { name: buttonName, exact: true })
     .click();
   await window.getByRole("heading", { name: headingName, exact: true }).waitFor({ timeout: 30_000 });
+}
+
+async function openConversationSurface(window: Page): Promise<void> {
+  await window.getByRole("button", { name: /Find work/u }).click();
+  await window
+    .getByRole("dialog", { name: "Find work" })
+    .getByRole("button", { name: "Conversations", exact: true })
+    .click();
+  await window
+    .getByRole("textbox", { name: "Message", exact: true })
+    .waitFor({ state: "visible", timeout: 30_000 });
 }
 
 async function assertNoSurfaceError(window: Page, surface: string): Promise<void> {

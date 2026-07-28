@@ -74,6 +74,17 @@ async function handleFakeOpenRouterRequest(
     return;
   }
 
+  if (request.url === "/api/v1/models" && request.method === "GET") {
+    response.writeHead(200, {
+      "content-type": "application/json",
+      connection: "close",
+    });
+    response.end(JSON.stringify({
+      data: [{ id: "openai/gpt-5.2-chat" }],
+    }));
+    return;
+  }
+
   if (request.url === "/test/reset" && request.method === "POST") {
     scenarios.failedAttempts = 0;
     delete scenarios.waitingCallId;

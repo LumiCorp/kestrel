@@ -65,6 +65,8 @@ import type {
   LocalCoreRuntimeStoreReset,
   LocalCoreRuntimeStoreResetResult,
   LocalCoreSystemLifecycle,
+  LocalCoreSystemShutdownRequest,
+  LocalCoreSystemShutdownResult,
   LocalCoreStatus,
 } from "./contracts.js";
 import {
@@ -228,6 +230,8 @@ export async function startLocalCoreApiServer(
   let maintenanceOperation: LocalCoreMaintenanceOperation | undefined;
   let activeRuntimeStoreRequests = 0;
   let activeRuntimeConfigurationMutations = 0;
+  let admissionClosed = false;
+  let quiescedShutdownAccepted = false;
   let closePromise: Promise<void> | undefined;
   const projectRunEventClients = new Set<ProjectRunEventClient>();
   const mcpOAuthSessions = options.credentialStore?.available
@@ -311,6 +315,13 @@ export async function startLocalCoreApiServer(
           "Local Core is shutting down.",
         );
       }
+      if (admissionClosed) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_ADMISSION_CLOSED",
+          "Local Core is quiescing for shutdown.",
+        );
+      }
       const activeMaintenance = maintenanceOperation;
       if (activeMaintenance !== undefined) {
         if (input.coalesce && activeMaintenance.kind === input.kind) {
@@ -385,6 +396,13 @@ export async function startLocalCoreApiServer(
           "Local Core is shutting down.",
         );
       }
+      if (admissionClosed) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_ADMISSION_CLOSED",
+          "Local Core is quiescing for shutdown.",
+        );
+      }
       if (maintenanceOperation !== undefined) {
         throw new LocalCoreApiRequestError(
           503,
@@ -416,6 +434,13 @@ export async function startLocalCoreApiServer(
           503,
           "LOCAL_CORE_SHUTTING_DOWN",
           "Local Core is shutting down.",
+        );
+      }
+      if (admissionClosed) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_ADMISSION_CLOSED",
+          "Local Core is quiescing for shutdown.",
         );
       }
       if (maintenanceOperation !== undefined) {
@@ -592,23 +617,43 @@ export async function startLocalCoreApiServer(
         maintenanceOperation,
       });
 
-    const requestUninstallShutdown = async (): Promise<LocalCoreSystemLifecycle> => {
+    const requestSystemShutdown = (
+      reason: LocalCoreSystemShutdownRequest["reason"],
+    ): LocalCoreSystemShutdownResult => {
+      admissionClosed = true;
       const lifecycle = getSystemLifecycle();
       if (lifecycle.state === "busy") {
-        throw new LocalCoreApiRequestError(
-          409,
-          "LOCAL_CORE_UNINSTALL_BLOCKED",
-          "Local Core cannot shut down for uninstall while work is active.",
-          { blockers: lifecycle.blockers },
-        );
+        admissionClosed = false;
+        return { status: "blocked", reason, lifecycle };
       }
+      quiescedShutdownAccepted = true;
       setImmediate(() => {
         void closeOnce();
       });
-      return lifecycle;
+      return { status: "accepted", reason, lifecycle };
     };
 
     server = http.createServer(async (request, response) => {
+      const pathname = new URL(
+        request.url ?? "/",
+        "http://local-core",
+      ).pathname;
+      if (
+        admissionClosed &&
+        pathname !== "/v1/health" &&
+        pathname !== "/v1/system/lifecycle" &&
+        pathname !== "/v1/system/shutdown"
+      ) {
+        writeJson(
+          response,
+          503,
+          errorBody(
+            "LOCAL_CORE_ADMISSION_CLOSED",
+            "Local Core is quiescing for shutdown.",
+          ),
+        );
+        return;
+      }
       if (isRuntimeV2Request(request.url)) {
         const activeExecution = executionBundle;
         if (
@@ -643,7 +688,7 @@ export async function startLocalCoreApiServer(
           restartExecution,
           resetRuntimeStore,
           getSystemLifecycle,
-          requestUninstallShutdown,
+          requestSystemShutdown,
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
           mcpOAuthSessions,
@@ -703,6 +748,7 @@ export async function startLocalCoreApiServer(
           executionHandler: activeExecution?.handler,
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
+          cancelActiveWork: !quiescedShutdownAccepted,
         });
       })().finally(() => {
         activeLocalCoreAuthorities.delete(authorityKey);
@@ -1100,7 +1146,9 @@ async function handleRequest(input: {
   restartExecution(): Promise<LocalCoreStatus>;
   resetRuntimeStore(): Promise<LocalCoreRuntimeStoreResetResult>;
   getSystemLifecycle(): LocalCoreSystemLifecycle;
-  requestUninstallShutdown(): Promise<LocalCoreSystemLifecycle>;
+  requestSystemShutdown(
+    reason: LocalCoreSystemShutdownRequest["reason"],
+  ): LocalCoreSystemShutdownResult;
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
   mcpOAuthSessions?: LocalCoreMcpOAuthSessionManager | undefined;
@@ -1145,18 +1193,22 @@ async function handleRequest(input: {
       return;
     }
     if (method === "POST" && url.pathname === "/v1/system/shutdown") {
+      let shutdownRequest: LocalCoreSystemShutdownRequest;
       try {
-        parseLocalCoreSystemShutdownRequest(await readJsonBody(input.request));
+        shutdownRequest = parseLocalCoreSystemShutdownRequest(
+          await readJsonBody(input.request),
+        );
       } catch {
         throw new LocalCoreApiRequestError(
           400,
           "LOCAL_CORE_SHUTDOWN_INVALID",
-          "Local Core shutdown requires exactly the uninstall confirmation payload.",
+          "Local Core shutdown requires an exact uninstall or Desktop update confirmation payload.",
         );
       }
-      writeJson(input.response, 200, {
-        ok: true,
-        lifecycle: await input.requestUninstallShutdown(),
+      const shutdown = input.requestSystemShutdown(shutdownRequest.reason);
+      writeJson(input.response, shutdown.status === "accepted" ? 202 : 409, {
+        ok: shutdown.status === "accepted",
+        shutdown,
       });
       return;
     }
@@ -3272,6 +3324,7 @@ async function closeServer(input: {
   executionHandler?: RunnerServiceHttpHandler | undefined;
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
+  cancelActiveWork: boolean;
 }): Promise<void> {
   const errors: Error[] = [];
   if (input.heartbeat !== undefined) {
@@ -3285,9 +3338,11 @@ async function closeServer(input: {
     }
   }
   input.projectRunEventClients.clear();
-  await input.projectRunRegistry.stopAll().catch((error) => {
-    errors.push(asError(error));
-  });
+  if (input.cancelActiveWork) {
+    await input.projectRunRegistry.stopAll().catch((error) => {
+      errors.push(asError(error));
+    });
+  }
   const serverClosed = new Promise<void>((resolve, reject) => {
     input.server.close((error) => {
       if (error !== undefined && error !== null) {
@@ -3299,7 +3354,7 @@ async function closeServer(input: {
     input.server.closeIdleConnections?.();
   });
   await input.executionHandler
-    ?.close({ abortActiveRuns: true })
+    ?.close({ abortActiveRuns: input.cancelActiveWork })
     .catch((error) => {
       errors.push(asError(error));
     });
