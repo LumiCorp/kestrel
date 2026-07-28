@@ -40,6 +40,17 @@ import {
   isSupportedModelSetProvider,
   MODEL_SET_PROVIDER_USAGE,
 } from "./modelProviderCommand.js";
+import {
+  applyKestrelUninstallPlan,
+  createKestrelUninstallPlan,
+  formatKestrelUninstallPlan,
+  readKestrelUninstallPlan,
+  writeKestrelUninstallPlan,
+} from "../src/uninstall/coordinator.js";
+import {
+  parseKestrelUninstallScope,
+  type KestrelUninstallPlanOptions,
+} from "../src/uninstall/contracts.js";
 
 export async function runCliCommand(args: string[], cwd = process.cwd()): Promise<void> {
   const [command, ...rest] = args;
@@ -81,6 +92,10 @@ export async function runCliCommand(args: string[], cwd = process.cwd()): Promis
     await runRuntimeCommand(rest, cwd, core.client);
     return;
   }
+  if (command === "uninstall") {
+    await runUninstallCommand(rest);
+    return;
+  }
 
   throw new Error(`Unknown command '${command ?? ""}'.`);
 }
@@ -93,6 +108,171 @@ export function shouldRunCommandMode(args: string[]): boolean {
 async function runStatusCommand(): Promise<void> {
   const status = await ensureCliLocalCoreReady();
   process.stdout.write(formatCliLocalCoreStatus(status));
+}
+
+async function runUninstallCommand(args: string[]): Promise<void> {
+  const [subcommand = "plan", ...rest] = args;
+  if (subcommand !== "plan" && subcommand !== "apply") {
+    throw new Error(
+      "Usage: kestrel uninstall [plan|apply] --scope current|software|complete",
+    );
+  }
+  if (subcommand === "plan") {
+    const options = parseUninstallPlanArgs(rest);
+    const plan = await createKestrelUninstallPlan({
+      initiator: "cli",
+      scope: options.scope,
+      options: options.options,
+    });
+    if (options.out !== undefined) {
+      await writeKestrelUninstallPlan(plan, options.out);
+    }
+    process.stdout.write(
+      options.json
+        ? `${JSON.stringify(plan, null, 2)}\n`
+        : formatKestrelUninstallPlan(plan),
+    );
+    return;
+  }
+
+  const options = parseUninstallApplyArgs(rest);
+  const plan = await readKestrelUninstallPlan(options.planPath);
+  const result = await applyKestrelUninstallPlan({
+    plan,
+    confirmPlanId: options.confirmPlanId,
+    ...(options.deleteDataPhrase !== undefined
+      ? { deleteDataPhrase: options.deleteDataPhrase }
+      : {}),
+    ...(options.discardWorktreesPhrase !== undefined
+      ? { discardWorktreesPhrase: options.discardWorktreesPhrase }
+      : {}),
+  });
+  process.stdout.write(
+    options.json
+      ? `${JSON.stringify(result, null, 2)}\n`
+      : [
+          `Uninstall apply: ${result.status}`,
+          `Plan: ${result.planId}`,
+          `Removed targets: ${result.removedTargets.length}`,
+          `Skipped targets: ${result.skippedTargets.length}`,
+          `Blockers: ${result.blockers.length}`,
+          ...result.blockers.map(
+            (blocker) => `- ${blocker.code}: ${blocker.message}`,
+          ),
+          "",
+        ].join("\n"),
+  );
+}
+
+function parseUninstallPlanArgs(args: string[]): {
+  scope: ReturnType<typeof parseKestrelUninstallScope>;
+  options: KestrelUninstallPlanOptions;
+  json: boolean;
+  out?: string | undefined;
+} {
+  let scope: ReturnType<typeof parseKestrelUninstallScope> = "current_component";
+  const options: KestrelUninstallPlanOptions = {};
+  let json = false;
+  let out: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--scope") {
+      scope = parseKestrelUninstallScope(requireArgValue(args, index, token));
+      index += 1;
+      continue;
+    }
+    if (token === "--disconnect-kestrel-one") {
+      options.disconnectKestrelOne = true;
+      continue;
+    }
+    if (token === "--export-worktrees") {
+      options.exportWorktreesDirectory = requireArgValue(args, index, token);
+      index += 1;
+      continue;
+    }
+    if (token === "--discard-worktrees") {
+      options.discardWorktrees = true;
+      continue;
+    }
+    if (token === "--json") {
+      json = true;
+      continue;
+    }
+    if (token === "--out") {
+      out = requireArgValue(args, index, token);
+      index += 1;
+      continue;
+    }
+    throw new Error(`Unknown uninstall plan argument '${token ?? ""}'.`);
+  }
+  return {
+    scope,
+    options,
+    json,
+    ...(out !== undefined ? { out } : {}),
+  };
+}
+
+function parseUninstallApplyArgs(args: string[]): {
+  planPath: string;
+  confirmPlanId: string;
+  deleteDataPhrase?: string | undefined;
+  discardWorktreesPhrase?: string | undefined;
+  json: boolean;
+} {
+  let planPath: string | undefined;
+  let confirmPlanId: string | undefined;
+  let deleteDataPhrase: string | undefined;
+  let discardWorktreesPhrase: string | undefined;
+  let json = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--plan") {
+      planPath = requireArgValue(args, index, token);
+      index += 1;
+      continue;
+    }
+    if (token === "--confirm") {
+      confirmPlanId = requireArgValue(args, index, token);
+      index += 1;
+      continue;
+    }
+    if (token === "--delete-data") {
+      deleteDataPhrase = requireArgValue(args, index, token);
+      index += 1;
+      continue;
+    }
+    if (token === "--discard-confirm") {
+      discardWorktreesPhrase = requireArgValue(args, index, token);
+      index += 1;
+      continue;
+    }
+    if (token === "--json") {
+      json = true;
+      continue;
+    }
+    throw new Error(`Unknown uninstall apply argument '${token ?? ""}'.`);
+  }
+  if (planPath === undefined || confirmPlanId === undefined) {
+    throw new Error(
+      "Usage: kestrel uninstall apply --plan <file> --confirm <plan-id>",
+    );
+  }
+  return {
+    planPath,
+    confirmPlanId,
+    ...(deleteDataPhrase !== undefined ? { deleteDataPhrase } : {}),
+    ...(discardWorktreesPhrase !== undefined ? { discardWorktreesPhrase } : {}),
+    json,
+  };
+}
+
+function requireArgValue(args: string[], index: number, flag: string): string {
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value.`);
+  }
+  return value;
 }
 
 async function runWorkspaceCommand(args: string[], cwd: string): Promise<void> {

@@ -119,6 +119,7 @@ export function formatKestrelHelp(): string {
     "  setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]",
     "  runtime <replay|doctor> <query> [--json]",
     "  runtime bundle <query> --out <file>",
+    "  uninstall [plan|apply] ...",
     "",
     "Options:",
     "  --profile <id>",
