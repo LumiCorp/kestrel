@@ -255,11 +255,13 @@ export async function createKestrelUninstallPlan(
 
 export async function applyKestrelUninstallPlan(
   request: KestrelUninstallApplyRequest & {
+    deferredTargetIds?: string[] | undefined;
     operations?: KestrelUninstallCoordinatorOperations | undefined;
   },
 ): Promise<KestrelUninstallApplyResultV1> {
   const plan = parseKestrelUninstallPlanV1(request.plan);
   const operations = request.operations ?? {};
+  const deferredTargetIds = new Set(request.deferredTargetIds ?? []);
   if (request.confirmPlanId !== plan.planId) {
     throw new Error("Uninstall apply requires the matching plan id.");
   }
@@ -345,7 +347,7 @@ export async function applyKestrelUninstallPlan(
     const recovery = await recoverOrDiscardManagedWorktrees(plan, operations);
     blockers.push(...recovery.blockers);
     if (blockers.length > 0) {
-      return await buildApplyResult(plan, removedTargets, skippedTargets, blockers, operations);
+      return await buildApplyResult(plan, removedTargets, skippedTargets, blockers, operations, deferredTargetIds);
     }
   }
 
@@ -379,13 +381,17 @@ export async function applyKestrelUninstallPlan(
           code: "LOCAL_CORE_SHUTDOWN_FAILED",
           message: error instanceof Error ? error.message : String(error),
         },
-      ], operations);
+      ], operations, deferredTargetIds);
     }
   }
 
   const currentTargetIds = new Set(current.targets.map((target) => target.id));
   for (const target of plan.targets) {
     if (target.selected === false) {
+      skippedTargets.push(target.id);
+      continue;
+    }
+    if (deferredTargetIds.has(target.id)) {
       skippedTargets.push(target.id);
       continue;
     }
@@ -408,7 +414,7 @@ export async function applyKestrelUninstallPlan(
     }
   }
 
-  return await buildApplyResult(plan, removedTargets, skippedTargets, blockers, operations);
+  return await buildApplyResult(plan, removedTargets, skippedTargets, blockers, operations, deferredTargetIds);
 }
 
 export function formatKestrelUninstallPlan(plan: KestrelUninstallPlanV1): string {
@@ -1335,6 +1341,7 @@ async function buildApplyResult(
   skippedTargets: string[],
   blockers: KestrelUninstallBlocker[],
   operations: KestrelUninstallCoordinatorOperations,
+  requestedDeferredTargetIds: ReadonlySet<string> = new Set(),
 ): Promise<KestrelUninstallApplyResultV1> {
   const finalPlan = await createKestrelUninstallPlan({
     initiator: plan.initiator,
@@ -1348,6 +1355,9 @@ async function buildApplyResult(
       .filter((blocker) => blocker.code === "UNINSTALL_CLI_FINALIZER_SCHEDULED" && blocker.targetId !== undefined)
       .map((blocker) => blocker.targetId as string),
   );
+  for (const targetId of requestedDeferredTargetIds) {
+    deferredTargetIds.add(targetId);
+  }
   const selectedTargetIds = new Set(
     plan.targets
       .filter((target) =>

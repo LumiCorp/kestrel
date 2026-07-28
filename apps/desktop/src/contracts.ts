@@ -85,6 +85,7 @@ import type {
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
 import type {
+  KestrelUninstallApplyResultV1,
   KestrelUninstallPlanOptions,
   KestrelUninstallPlanV1,
   KestrelUninstallScope,
@@ -233,10 +234,18 @@ export type {
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
 export type {
+  KestrelUninstallApplyResultV1,
   KestrelUninstallPlanOptions,
   KestrelUninstallPlanV1,
   KestrelUninstallScope,
 } from "../../../src/uninstall/contracts.js";
+
+export interface DesktopUninstallApplyInput {
+  plan: KestrelUninstallPlanV1;
+  confirmPlanId: string;
+  deleteDataPhrase?: string | undefined;
+  discardWorktreesPhrase?: string | undefined;
+}
 export type {
   DesktopAppDefinition,
   DesktopAppRef,
@@ -337,6 +346,9 @@ export interface DesktopBridge {
     scope: KestrelUninstallScope;
     options?: KestrelUninstallPlanOptions | undefined;
   }): Promise<KestrelUninstallPlanV1>;
+  applyUninstallPlan(
+    input: DesktopUninstallApplyInput,
+  ): Promise<KestrelUninstallApplyResultV1>;
   getCapabilities(): Promise<DesktopCapabilityView>;
   configureCapability(
     input: DesktopCapabilityConfigurationInput,

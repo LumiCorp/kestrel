@@ -5,18 +5,26 @@ struct HelperFailure: Error, CustomStringConvertible {
   var description: String { message }
 }
 
+struct RemovalFailure: Encodable {
+  let targetId: String?
+  let code: String
+  let message: String
+}
+
 struct RemovalReport: Encodable {
   let status: String
-  let removed: [String]
-  let failures: [String]
+  let removedTargets: [String]
+  let failures: [RemovalFailure]
+  let reportPath: String
 }
 
 let arguments = CommandLine.arguments
 let planPath = value(after: "--plan", in: arguments)
 let parentPidText = value(after: "--parent-pid", in: arguments)
+let reportPath = value(after: "--report", in: arguments)
 
 var removed: [String] = []
-var failures: [String] = []
+var failures: [RemovalFailure] = []
 
 do {
   guard let planPath else {
@@ -27,6 +35,9 @@ do {
     waitForParentExit(parentPid)
   }
   let plan = try readPlan(planPath)
+  guard plan["initiator"] as? String == "desktop" else {
+    throw HelperFailure(message: "plan initiator must be desktop")
+  }
   let targets = plan["targets"] as? [[String: Any]] ?? []
   for target in targets {
     guard (target["selected"] as? Bool) == true else { continue }
@@ -42,19 +53,36 @@ do {
         try removeDesktopProfilePath(path)
         removed.append(id)
       default:
-        continue
+        throw HelperFailure(message: "unsupported helper target kind \(kind)")
       }
     } catch {
-      failures.append("\(id): \(error)")
+      failures.append(RemovalFailure(
+        targetId: id,
+        code: "DESKTOP_UNINSTALL_HELPER_TARGET_FAILED",
+        message: "\(error)"
+      ))
     }
   }
 } catch {
-  failures.append("\(error)")
+  failures.append(RemovalFailure(
+    targetId: nil,
+    code: "DESKTOP_UNINSTALL_HELPER_FAILED",
+    message: "\(error)"
+  ))
 }
 
 let status = failures.isEmpty ? "applied" : (removed.isEmpty ? "blocked" : "partial")
-let report = RemovalReport(status: status, removed: removed, failures: failures)
+let resolvedReportPath = reportPath ?? ""
+let report = RemovalReport(
+  status: status,
+  removedTargets: removed,
+  failures: failures,
+  reportPath: resolvedReportPath
+)
 let reportData = try JSONEncoder().encode(report)
+if let reportPath {
+  try reportData.write(to: URL(fileURLWithPath: reportPath), options: .atomic)
+}
 FileHandle.standardOutput.write(reportData)
 FileHandle.standardOutput.write(Data("\n".utf8))
 exit(failures.isEmpty ? 0 : 1)
@@ -71,8 +99,8 @@ func requireMode0600(_ inputPath: String) throws {
   if stat(inputPath, &info) != 0 {
     throw HelperFailure(message: "plan is unavailable")
   }
-  let mode = info.st_mode & S_IRWXU | info.st_mode & S_IRWXG | info.st_mode & S_IRWXO
-  if mode != S_IRUSR | S_IWUSR {
+  let mode = (info.st_mode & S_IRWXU) | (info.st_mode & S_IRWXG) | (info.st_mode & S_IRWXO)
+  if mode != (S_IRUSR | S_IWUSR) {
     throw HelperFailure(message: "plan must be mode 0600")
   }
 }
@@ -96,11 +124,14 @@ func readPlan(_ inputPath: String) throws -> [String: Any] {
 
 func removeDesktopBundle(_ inputPath: String) throws {
   let inputURL = URL(fileURLWithPath: inputPath)
-  try rejectSymlinkRoot(inputURL.path)
-  let url = inputURL.resolvingSymlinksInPath()
-  guard url.pathExtension == "app" else {
+  guard inputURL.pathExtension == "app" else {
     throw HelperFailure(message: "desktop target is not an app bundle")
   }
+  guard FileManager.default.fileExists(atPath: inputURL.path) else {
+    return
+  }
+  try rejectSymlinkRoot(inputURL.path)
+  let url = inputURL.resolvingSymlinksInPath()
   guard try bundleIdentifier(at: url) == "com.kestrel.desktop" else {
     throw HelperFailure(message: "desktop bundle identifier is not com.kestrel.desktop")
   }
@@ -114,8 +145,6 @@ func removeDesktopBundle(_ inputPath: String) throws {
 
 func removeDesktopProfilePath(_ inputPath: String) throws {
   let inputURL = URL(fileURLWithPath: inputPath)
-  try rejectSymlinkRoot(inputURL.path)
-  let url = inputURL.resolvingSymlinksInPath()
   let home = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path
   let allowedPrefixes = [
     "\(home)/Library/Application Support/@kestrel/desktop",
@@ -123,8 +152,16 @@ func removeDesktopProfilePath(_ inputPath: String) throws {
     "\(home)/Library/Caches/com.kestrel.desktop",
     "\(home)/Library/Saved Application State/com.kestrel.desktop.savedState",
   ]
-  guard allowedPrefixes.contains(where: { url.path == $0 || url.path.hasPrefix("\($0)/") }) else {
+  guard allowedPrefixes.contains(where: { inputURL.path == $0 || inputURL.path.hasPrefix("\($0)/") }) else {
     throw HelperFailure(message: "profile target is outside verified Desktop paths")
+  }
+  guard FileManager.default.fileExists(atPath: inputURL.path) else {
+    return
+  }
+  try rejectSymlinkRoot(inputURL.path)
+  let url = inputURL.resolvingSymlinksInPath()
+  guard allowedPrefixes.contains(where: { url.path == $0 || url.path.hasPrefix("\($0)/") }) else {
+    throw HelperFailure(message: "profile target resolves outside verified Desktop paths")
   }
   var isDirectory: ObjCBool = false
   guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {

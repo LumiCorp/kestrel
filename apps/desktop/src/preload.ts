@@ -22,6 +22,7 @@ import type {
   DesktopRunTurnRequest,
   DesktopRuntimeHealth,
   DesktopUpdateState,
+  DesktopUninstallApplyInput,
   DesktopThreadAuthorityResult,
   KestrelUninstallPlanOptions,
   KestrelUninstallScope,
@@ -47,6 +48,9 @@ const desktopBridge: DesktopBridge = {
     options?: KestrelUninstallPlanOptions | undefined;
   }) {
     return ipcRenderer.invoke("desktop:create-uninstall-plan", input);
+  },
+  applyUninstallPlan(input: DesktopUninstallApplyInput) {
+    return ipcRenderer.invoke("desktop:apply-uninstall-plan", input);
   },
   getCapabilities(): Promise<DesktopCapabilityView> {
     return ipcRenderer.invoke("desktop:get-capabilities");

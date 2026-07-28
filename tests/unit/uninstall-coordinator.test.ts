@@ -217,6 +217,41 @@ contractTest("runtime.hermetic", "uninstall apply treats scheduled CLI self-remo
   );
 });
 
+contractTest("runtime.hermetic", "uninstall apply defers Desktop helper targets without failing final verification", async () => {
+  const target: KestrelUninstallTarget = {
+    id: "desktop.bundle.fixture",
+    kind: "desktop_bundle",
+    path: "/Applications/Kestrel.app",
+    verified: true,
+    selected: true,
+    removal: "trash",
+    fingerprint: "fixture",
+    evidence: ["fixture Desktop bundle"],
+  };
+  let removed = false;
+  const operations = baseOperations(() => [target]);
+  operations.trashPath = async () => {
+    removed = true;
+  };
+  const plan = await createKestrelUninstallPlan({
+    initiator: "desktop",
+    scope: "current_component",
+    platform: "darwin",
+    operations,
+  });
+
+  const result = await applyKestrelUninstallPlan({
+    plan,
+    confirmPlanId: plan.planId,
+    deferredTargetIds: [target.id],
+    operations,
+  });
+
+  assert.equal(result.status, "applied", JSON.stringify(result.blockers, null, 2));
+  assert.equal(removed, false);
+  assert.deepEqual(result.skippedTargets, [target.id]);
+});
+
 contractTest("runtime.hermetic", "uninstall apply recovers retained managed worktrees through injected operations", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-worktree-"));
   try {

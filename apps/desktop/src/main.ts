@@ -1,6 +1,8 @@
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import { lstat, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { chmod, lstat, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import electronSquirrelStartup from "electron-squirrel-startup";
@@ -119,6 +121,7 @@ import type {
   DesktopModelProvider,
   DesktopShellCommand,
   DesktopUpdateBlocker,
+  DesktopUninstallApplyInput,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
 import {
@@ -226,10 +229,18 @@ import {
 } from "./attachmentInput.js";
 import { cancelDesktopRun } from "./runCancellation.js";
 import { inspectDesktopThreadAuthority } from "./threadAuthority.js";
-import { createKestrelUninstallPlan } from "../../../src/uninstall/coordinator.js";
 import {
+  applyKestrelUninstallPlan,
+  createKestrelUninstallPlan,
+} from "../../../src/uninstall/coordinator.js";
+import {
+  KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
+  parseKestrelUninstallPlanV1,
   parseKestrelUninstallScope,
+  type KestrelUninstallApplyResultV1,
+  type KestrelUninstallBlocker,
   type KestrelUninstallPlanOptions,
+  type KestrelUninstallTarget,
 } from "../../../src/uninstall/contracts.js";
 
 declare global {
@@ -251,6 +262,28 @@ declare global {
         version: number;
       }
     | undefined;
+  var __kestrelDesktopUninstallHelperRunner:
+    | ((input: DesktopUninstallHelperRunnerInput) => Promise<DesktopUninstallHelperReport>)
+    | undefined;
+}
+
+interface DesktopUninstallHelperRunnerInput {
+  helperPath: string;
+  planPath: string;
+  reportPath: string;
+  parentPid: number;
+  waitsForParentExit: boolean;
+}
+
+interface DesktopUninstallHelperReport {
+  status: "applied" | "blocked" | "partial";
+  removedTargets: string[];
+  failures: Array<{
+    targetId?: string | undefined;
+    code: string;
+    message: string;
+  }>;
+  reportPath: string;
 }
 
 let mainWindow: BrowserWindow | undefined;
@@ -977,6 +1010,12 @@ function registerBootIpcHandlers(): void {
         scope: parseKestrelUninstallScope(record.scope),
         options: parseDesktopUninstallPlanOptions(record.options),
       });
+    },
+  );
+  ipcMain.handle(
+    "desktop:apply-uninstall-plan",
+    async (_event, input: unknown) => {
+      return await applyDesktopUninstallPlan(parseDesktopUninstallApplyInput(input));
     },
   );
   ipcMain.handle("desktop:restart-app", async () => {
@@ -4119,6 +4158,216 @@ function parseDesktopUninstallPlanOptions(
     options.discardWorktrees = value.discardWorktrees;
   }
   return options;
+}
+
+function parseDesktopUninstallApplyInput(
+  value: unknown,
+): DesktopUninstallApplyInput {
+  const record = isRecord(value) ? value : undefined;
+  if (record === undefined) {
+    throw createDesktopError({
+      code: "desktop.invalid_input",
+      message: "Desktop uninstall apply input must be an object.",
+    });
+  }
+  const plan = parseKestrelUninstallPlanV1(record.plan);
+  if (plan.initiator !== "desktop") {
+    throw createDesktopError({
+      code: "desktop.invalid_input",
+      message: "Desktop uninstall apply requires a Desktop-initiated plan.",
+    });
+  }
+  if (typeof record.confirmPlanId !== "string") {
+    throw createDesktopError({
+      code: "desktop.invalid_input",
+      message: "Desktop uninstall apply requires confirmPlanId.",
+    });
+  }
+  return {
+    plan,
+    confirmPlanId: record.confirmPlanId,
+    ...(record.deleteDataPhrase !== undefined
+      ? { deleteDataPhrase: requireOptionalDesktopString(record.deleteDataPhrase, "deleteDataPhrase") }
+      : {}),
+    ...(record.discardWorktreesPhrase !== undefined
+      ? { discardWorktreesPhrase: requireOptionalDesktopString(record.discardWorktreesPhrase, "discardWorktreesPhrase") }
+      : {}),
+  };
+}
+
+function requireOptionalDesktopString(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw createDesktopError({
+      code: "desktop.invalid_input",
+      message: `Desktop uninstall apply ${field} must be a string.`,
+    });
+  }
+  return value;
+}
+
+async function applyDesktopUninstallPlan(
+  input: DesktopUninstallApplyInput,
+): Promise<KestrelUninstallApplyResultV1> {
+  const helperTargets = selectedDesktopHelperTargets(input.plan.targets);
+  const helperTargetIds = helperTargets.map((target) => target.id);
+  const removesDesktopBundle = helperTargets.some((target) => target.kind === "desktop_bundle");
+  if (removesDesktopBundle && app.isPackaged === false) {
+    return blockedDesktopUninstallResult(input.plan, [
+      {
+        code: "DESKTOP_UNINSTALL_RELEASE_BUILD_REQUIRED",
+        message: "Desktop app self-removal requires a packaged release-signed build.",
+      },
+    ]);
+  }
+
+  const coordinatorResult = await applyKestrelUninstallPlan({
+    plan: input.plan,
+    confirmPlanId: input.confirmPlanId,
+    ...(input.deleteDataPhrase !== undefined ? { deleteDataPhrase: input.deleteDataPhrase } : {}),
+    ...(input.discardWorktreesPhrase !== undefined
+      ? { discardWorktreesPhrase: input.discardWorktreesPhrase }
+      : {}),
+    deferredTargetIds: helperTargetIds,
+  });
+  if (coordinatorResult.status === "blocked" || helperTargets.length === 0) {
+    return coordinatorResult;
+  }
+
+  const helperReport = await runDesktopUninstallHelper(input.plan, helperTargets, {
+    waitsForParentExit: true,
+  });
+  const merged = mergeDesktopHelperReport(coordinatorResult, helperReport);
+  if (
+    globalThis.__kestrelDesktopUninstallHelperRunner === undefined &&
+    helperReport.status !== "blocked"
+  ) {
+    setImmediate(() => {
+      app.quit();
+    });
+  }
+  return merged;
+}
+
+function selectedDesktopHelperTargets(
+  targets: readonly KestrelUninstallTarget[],
+): KestrelUninstallTarget[] {
+  return targets.filter((target) =>
+    target.selected &&
+    (
+      target.kind === "desktop_bundle" ||
+      target.kind === "electron_profile" ||
+      target.kind === "preferences" ||
+      target.kind === "cache" ||
+      target.kind === "saved_state"
+    ),
+  );
+}
+
+function blockedDesktopUninstallResult(
+  plan: DesktopUninstallApplyInput["plan"],
+  blockers: KestrelUninstallBlocker[],
+): KestrelUninstallApplyResultV1 {
+  return {
+    version: KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
+    planId: plan.planId,
+    appliedAt: new Date().toISOString(),
+    status: "blocked",
+    removedTargets: [],
+    skippedTargets: [],
+    blockers,
+    finalTargets: plan.targets,
+  };
+}
+
+async function runDesktopUninstallHelper(
+  plan: DesktopUninstallApplyInput["plan"],
+  helperTargets: readonly KestrelUninstallTarget[],
+  input: { waitsForParentExit: boolean },
+): Promise<DesktopUninstallHelperReport> {
+  const helperPath = path.join(process.resourcesPath, "kestrel-uninstall-helper");
+  const handoffRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-uninstall-"));
+  await chmod(handoffRoot, 0o700);
+  const planPath = path.join(handoffRoot, "plan.json");
+  const reportPath = path.join(handoffRoot, "report.json");
+  const helperPlan = {
+    ...plan,
+    targets: helperTargets,
+  };
+  await writeFile(planPath, `${JSON.stringify(helperPlan, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await chmod(planPath, 0o600);
+  const runnerInput: DesktopUninstallHelperRunnerInput = {
+    helperPath,
+    planPath,
+    reportPath,
+    parentPid: process.pid,
+    waitsForParentExit: input.waitsForParentExit,
+  };
+  if (globalThis.__kestrelDesktopUninstallHelperRunner !== undefined) {
+    return await globalThis.__kestrelDesktopUninstallHelperRunner(runnerInput);
+  }
+  if (existsSync(helperPath) === false) {
+    await rm(handoffRoot, { recursive: true, force: true });
+    return {
+      status: "blocked",
+      removedTargets: [],
+      failures: [{
+        code: "DESKTOP_UNINSTALL_HELPER_MISSING",
+        message: "Packaged Desktop uninstall helper is missing.",
+      }],
+      reportPath,
+    };
+  }
+  const child = spawn(helperPath, [
+    "--plan",
+    planPath,
+    "--report",
+    reportPath,
+    "--parent-pid",
+    String(process.pid),
+  ], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  return {
+    status: "partial",
+    removedTargets: [],
+    failures: [{
+      code: "DESKTOP_UNINSTALL_HELPER_SCHEDULED",
+      message: `Desktop uninstall helper scheduled. Report: ${reportPath}`,
+    }],
+    reportPath,
+  };
+}
+
+function mergeDesktopHelperReport(
+  coordinatorResult: KestrelUninstallApplyResultV1,
+  helperReport: DesktopUninstallHelperReport,
+): KestrelUninstallApplyResultV1 {
+  const helperBlockers = helperReport.failures.map((failure) => ({
+    code: failure.code,
+    message: failure.message,
+    ...(failure.targetId !== undefined ? { targetId: failure.targetId } : {}),
+  }));
+  const blockers = [...coordinatorResult.blockers, ...helperBlockers];
+  const removedTargets = [
+    ...coordinatorResult.removedTargets,
+    ...helperReport.removedTargets,
+  ];
+  return {
+    ...coordinatorResult,
+    status:
+      blockers.length === 0
+        ? coordinatorResult.status
+        : removedTargets.length > 0 || helperReport.status === "partial"
+          ? "partial"
+          : "blocked",
+    removedTargets,
+    blockers,
+  };
 }
 
 function deriveRuntimeHealth(

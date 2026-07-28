@@ -1899,8 +1899,10 @@ export function DesktopApp() {
                 }}
                 onOpenMcp={() => setSurface("mcp")}
                 onAddProject={async () => { await addProject(); }}
-                onCreateUninstallPlan={async (scope) =>
-                  await window.kestrelDesktop.createUninstallPlan({ scope })}
+                onCreateUninstallPlan={async (scope, options) =>
+                  await window.kestrelDesktop.createUninstallPlan({ scope, options })}
+                onApplyUninstallPlan={async (input) =>
+                  await window.kestrelDesktop.applyUninstallPlan(input)}
                 onRequestMicrophone={async () => { await window.kestrelDesktop.requestMicrophoneAccess(); }}
                 onError={(error) => setSurfaceError("settings", error)}
               />

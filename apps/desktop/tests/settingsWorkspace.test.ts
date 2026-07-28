@@ -79,3 +79,17 @@ contractTest("desktop.hermetic", "Settings keeps healthy readiness quiet while r
   assert.doesNotMatch(styles, /\.capability-summary/u);
   assert.doesNotMatch(styles, /\.capability-attention-clear/u);
 });
+
+contractTest("desktop.hermetic", "Settings exposes guarded Desktop uninstall apply wizard controls", async () => {
+  const source = await readFile(path.join(rendererDirectory, "SettingsWorkspace.tsx"), "utf8");
+
+  assert.match(source, /Removal scope/u);
+  assert.match(source, /Disconnect local Kestrel One enrollments/u);
+  assert.match(source, /Worktree recovery export directory/u);
+  assert.match(source, /Discard retained managed worktrees/u);
+  assert.match(source, /DELETE KESTREL DATA/u);
+  assert.match(source, /Apply uninstall/u);
+  assert.match(source, /onApplyUninstallPlan/u);
+  assert.match(source, /uninstallPlan\.blockers\.length > 0/u);
+  assert.match(source, /Apply result:/u);
+});

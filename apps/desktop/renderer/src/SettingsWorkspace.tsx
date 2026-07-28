@@ -16,6 +16,9 @@ import type {
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopEnvironmentStatusProjection,
+  DesktopUninstallApplyInput,
+  KestrelUninstallApplyResultV1,
+  KestrelUninstallPlanOptions,
   KestrelUninstallPlanV1,
   KestrelUninstallScope,
   KestrelOneAccountStatus,
@@ -61,7 +64,11 @@ interface SettingsWorkspaceProps {
   onAddProject: () => Promise<void>;
   onCreateUninstallPlan: (
     scope: KestrelUninstallScope,
+    options?: KestrelUninstallPlanOptions | undefined,
   ) => Promise<KestrelUninstallPlanV1>;
+  onApplyUninstallPlan: (
+    input: DesktopUninstallApplyInput,
+  ) => Promise<KestrelUninstallApplyResultV1>;
   onRequestMicrophone: () => Promise<void>;
   onError: (message: string | undefined) => void;
 }
@@ -74,6 +81,7 @@ export function SettingsWorkspace({
   onOpenMcp,
   onAddProject,
   onCreateUninstallPlan,
+  onApplyUninstallPlan,
   onRequestMicrophone,
   onError,
 }: SettingsWorkspaceProps) {
@@ -94,7 +102,20 @@ export function SettingsWorkspace({
     settings.defaultModelConfigurationId,
   );
   const [uninstallBusy, setUninstallBusy] = useState(false);
+  const [uninstallScope, setUninstallScope] =
+    useState<KestrelUninstallScope>("current_component");
+  const [uninstallDisconnectKestrelOne, setUninstallDisconnectKestrelOne] =
+    useState(false);
+  const [uninstallExportWorktreesDirectory, setUninstallExportWorktreesDirectory] =
+    useState("");
+  const [uninstallDiscardWorktrees, setUninstallDiscardWorktrees] =
+    useState(false);
+  const [uninstallDeleteDataPhrase, setUninstallDeleteDataPhrase] =
+    useState("");
+  const [uninstallDiscardPhrase, setUninstallDiscardPhrase] = useState("");
   const [uninstallPlan, setUninstallPlan] = useState<KestrelUninstallPlanV1>();
+  const [uninstallResult, setUninstallResult] =
+    useState<KestrelUninstallApplyResultV1>();
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<DesktopModelProvider>("openrouter");
   const [model, setModel] = useState("");
@@ -604,10 +625,41 @@ export function SettingsWorkspace({
   ): Promise<void> {
     setUninstallBusy(true);
     setNotice(undefined);
+    setUninstallResult(undefined);
     try {
-      const plan = await onCreateUninstallPlan(scope);
+      const options: KestrelUninstallPlanOptions = {
+        disconnectKestrelOne: uninstallDisconnectKestrelOne,
+        exportWorktreesDirectory: uninstallExportWorktreesDirectory.trim(),
+        discardWorktrees: uninstallDiscardWorktrees,
+      };
+      const plan = await onCreateUninstallPlan(scope, options);
       setUninstallPlan(plan);
       setNotice(`Uninstall plan ${plan.planId} created.`);
+    } catch (cause) {
+      onError(errorMessage(cause));
+    } finally {
+      setUninstallBusy(false);
+    }
+  }
+
+  async function applyUninstallPlan(): Promise<void> {
+    if (uninstallPlan === undefined) return;
+    setUninstallBusy(true);
+    setNotice(undefined);
+    setUninstallResult(undefined);
+    try {
+      const result = await onApplyUninstallPlan({
+        plan: uninstallPlan,
+        confirmPlanId: uninstallPlan.planId,
+        ...(uninstallDeleteDataPhrase.length > 0
+          ? { deleteDataPhrase: uninstallDeleteDataPhrase }
+          : {}),
+        ...(uninstallDiscardPhrase.length > 0
+          ? { discardWorktreesPhrase: uninstallDiscardPhrase }
+          : {}),
+      });
+      setUninstallResult(result);
+      setNotice(`Uninstall apply ${result.status}.`);
     } catch (cause) {
       onError(errorMessage(cause));
     } finally {
@@ -737,30 +789,60 @@ export function SettingsWorkspace({
           </div>
         </div>
         <div className="settings-content settings-card">
+          <div className="settings-form">
+            <label>
+              Removal scope
+              <select
+                value={uninstallScope}
+                disabled={uninstallBusy}
+                onChange={(event) =>
+                  setUninstallScope(event.currentTarget.value as KestrelUninstallScope)}
+              >
+                <option value="current_component">Current Desktop</option>
+                <option value="all_software">All software</option>
+                <option value="complete">Complete removal</option>
+              </select>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={uninstallDisconnectKestrelOne}
+                disabled={uninstallBusy}
+                onChange={(event) =>
+                  setUninstallDisconnectKestrelOne(event.currentTarget.checked)}
+              />
+              Disconnect local Kestrel One enrollments before removing credentials
+            </label>
+            <label>
+              Worktree recovery export directory
+              <input
+                type="text"
+                value={uninstallExportWorktreesDirectory}
+                disabled={uninstallBusy || uninstallDiscardWorktrees}
+                placeholder="/Users/me/Desktop/kestrel-worktree-recovery"
+                onChange={(event) =>
+                  setUninstallExportWorktreesDirectory(event.currentTarget.value)}
+              />
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={uninstallDiscardWorktrees}
+                disabled={uninstallBusy}
+                onChange={(event) =>
+                  setUninstallDiscardWorktrees(event.currentTarget.checked)}
+              />
+              Discard retained managed worktrees instead of exporting them
+            </label>
+          </div>
           <div className="settings-inline-actions">
             <button
               className="secondary-button"
               type="button"
               disabled={uninstallBusy}
-              onClick={() => void createUninstallPlan("current_component")}
+              onClick={() => void createUninstallPlan(uninstallScope)}
             >
-              Current Desktop
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={uninstallBusy}
-              onClick={() => void createUninstallPlan("all_software")}
-            >
-              All software
-            </button>
-            <button
-              className="secondary-button danger"
-              type="button"
-              disabled={uninstallBusy}
-              onClick={() => void createUninstallPlan("complete")}
-            >
-              Complete removal
+              Create plan
             </button>
           </div>
           {uninstallPlan !== undefined ? (
@@ -774,6 +856,15 @@ export function SettingsWorkspace({
                 selected · {uninstallPlan.blockers.length} blocker
                 {uninstallPlan.blockers.length === 1 ? "" : "s"}
               </p>
+              <ul>
+                {uninstallPlan.targets
+                  .filter((target) => target.selected)
+                  .map((target) => (
+                    <li key={target.id}>
+                      {target.kind}: {target.path ?? target.id}
+                    </li>
+                  ))}
+              </ul>
               {uninstallPlan.blockers.length > 0 ? (
                 <ul>
                   {uninstallPlan.blockers.map((blocker) => (
@@ -782,6 +873,65 @@ export function SettingsWorkspace({
                     </li>
                   ))}
                 </ul>
+              ) : null}
+              {uninstallPlan.confirmations.some((entry) => entry.kind === "delete_data") ? (
+                <label>
+                  Complete removal confirmation
+                  <input
+                    type="text"
+                    value={uninstallDeleteDataPhrase}
+                    disabled={uninstallBusy}
+                    placeholder="DELETE KESTREL DATA"
+                    onChange={(event) =>
+                      setUninstallDeleteDataPhrase(event.currentTarget.value)}
+                  />
+                </label>
+              ) : null}
+              {uninstallPlan.confirmations.some((entry) => entry.kind === "discard_worktrees") ? (
+                <label>
+                  Worktree discard confirmation
+                  <input
+                    type="text"
+                    value={uninstallDiscardPhrase}
+                    disabled={uninstallBusy}
+                    placeholder={
+                      uninstallPlan.confirmations.find((entry) => entry.kind === "discard_worktrees")
+                        ?.phrase ?? "DISCARD 0 KESTREL WORKTREES"
+                    }
+                    onChange={(event) =>
+                      setUninstallDiscardPhrase(event.currentTarget.value)}
+                  />
+                </label>
+              ) : null}
+              <div className="settings-inline-actions">
+                <button
+                  className="secondary-button danger"
+                  type="button"
+                  disabled={uninstallBusy || uninstallPlan.blockers.length > 0}
+                  onClick={() => void applyUninstallPlan()}
+                >
+                  {uninstallBusy ? "Applying..." : "Apply uninstall"}
+                </button>
+              </div>
+              {uninstallResult !== undefined ? (
+                <div>
+                  <strong>Apply result: {uninstallResult.status}</strong>
+                  <p>
+                    {uninstallResult.removedTargets.length} removed ·{" "}
+                    {uninstallResult.skippedTargets.length} skipped ·{" "}
+                    {uninstallResult.blockers.length} issue
+                    {uninstallResult.blockers.length === 1 ? "" : "s"}
+                  </p>
+                  {uninstallResult.blockers.length > 0 ? (
+                    <ul>
+                      {uninstallResult.blockers.map((blocker) => (
+                        <li key={`result-${blocker.code}-${blocker.targetId ?? "global"}`}>
+                          {blocker.code}: {blocker.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : null}
