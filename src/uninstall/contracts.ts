@@ -18,6 +18,8 @@ export interface KestrelUninstallTarget {
   id: string;
   kind:
     | "cli_symlink"
+    | "cli_bundle"
+    | "cli_package"
     | "kcron_launch_agent"
     | "desktop_bundle"
     | "state_root"
@@ -31,9 +33,10 @@ export interface KestrelUninstallTarget {
   path?: string | undefined;
   verified: boolean;
   selected: boolean;
-  removal: "unlink" | "rm" | "trash" | "keychain_purge" | "manual";
+  removal: "unlink" | "rm" | "trash" | "keychain_purge" | "package_manager" | "manual";
   fingerprint: string;
   evidence: string[];
+  command?: string[] | undefined;
   blockedReason?: string | undefined;
 }
 
@@ -233,6 +236,7 @@ function parseTarget(value: unknown): KestrelUninstallTarget {
       "removal",
       "fingerprint",
       "evidence",
+      "command",
       "blockedReason",
     ]),
     "uninstall target",
@@ -253,6 +257,13 @@ function parseTarget(value: unknown): KestrelUninstallTarget {
     evidence: requireArray(record.evidence, "uninstall target.evidence").map(
       (entry, index) => requireString(entry, `uninstall target.evidence[${index}]`),
     ),
+    ...(record.command !== undefined
+      ? {
+          command: requireArray(record.command, "uninstall target.command").map(
+            (entry, index) => requireString(entry, `uninstall target.command[${index}]`),
+          ),
+        }
+      : {}),
     ...(record.blockedReason !== undefined
       ? {
           blockedReason: requireString(

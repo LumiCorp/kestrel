@@ -32,6 +32,27 @@ contractTest("runtime.hermetic", "UninstallPlanV1 rejects unknown fields", () =>
   );
 });
 
+contractTest("runtime.hermetic", "UninstallPlanV1 preserves package manager command arrays", () => {
+  const plan = minimalPlan();
+  const parsed = parseKestrelUninstallPlanV1({
+    ...plan,
+    targets: [
+      {
+        ...plan.targets[0]!,
+        kind: "cli_package",
+        removal: "package_manager",
+        command: ["/opt/homebrew/bin/pnpm", "remove", "--global", "@kestrel-agents/kestrel"],
+      },
+    ],
+  });
+  assert.deepEqual(parsed.targets[0]?.command, [
+    "/opt/homebrew/bin/pnpm",
+    "remove",
+    "--global",
+    "@kestrel-agents/kestrel",
+  ]);
+});
+
 function minimalPlan(): KestrelUninstallPlanV1 {
   return {
     version: KESTREL_UNINSTALL_PLAN_VERSION,
