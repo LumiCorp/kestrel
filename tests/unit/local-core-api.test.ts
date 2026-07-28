@@ -231,6 +231,28 @@ contractTest("runtime.process", "Local Core API serves health/status with bearer
       () => unauthorized.credentialStatus(),
       (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
     );
+    await assert.rejects(
+      () => unauthorized.systemLifecycle(),
+      (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
+    );
+    await assert.rejects(
+      () => unauthorized.shutdownForUninstall(),
+      (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
+    );
+    const lifecycle = await client.systemLifecycle();
+    assert.equal(lifecycle.state, "idle");
+    assert.deepEqual(lifecycle.blockers, []);
+    assert.equal(lifecycle.owner.pid, process.pid);
+    assert.equal((await client.shutdownForUninstall()).state, "idle");
+    const shutdownDeadline = Date.now() + 5_000;
+    while (
+      (existsSync(paths.apiSocketPath) || existsSync(paths.lockPath)) &&
+      Date.now() < shutdownDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(existsSync(paths.apiSocketPath), false);
+    assert.equal(existsSync(paths.lockPath), false);
   } finally {
     await server.close();
     await rm(home, { recursive: true, force: true });
@@ -719,6 +741,20 @@ contractTest("runtime.process", "Local Core runtime-store reset rejects an activ
       (error) => error instanceof LocalCoreApiError
         && error.statusCode === 409
         && error.code === "LOCAL_CORE_EXECUTION_ACTIVE",
+    );
+    const uninstallLifecycle = await client.systemLifecycle();
+    assert.equal(uninstallLifecycle.state, "busy");
+    assert.ok(
+      uninstallLifecycle.blockers.some(
+        (blocker) => blocker.code === "LOCAL_CORE_EXECUTIONS_ACTIVE",
+      ),
+    );
+    await assert.rejects(
+      withTimeout(client.shutdownForUninstall()),
+      (error) =>
+        error instanceof LocalCoreApiError &&
+        error.statusCode === 409 &&
+        error.code === "LOCAL_CORE_UNINSTALL_BLOCKED",
     );
     assert.equal((await client.status()).state, "healthy");
     assert.equal(

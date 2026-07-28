@@ -44,6 +44,41 @@ contractTest("runtime.hermetic", "uninstall apply rejects stale target fingerpri
   assert.equal(result.blockers[0]?.code, "UNINSTALL_PLAN_STALE");
 });
 
+contractTest("runtime.hermetic", "uninstall fingerprints ignore size-only data changes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-size-"));
+  const previousHome = process.env.HOME;
+  try {
+    const home = path.join(root, "home");
+    const legacyRoot = path.join(home, ".kestrel");
+    await mkdir(legacyRoot, { recursive: true });
+    process.env.HOME = home;
+    const input = {
+      initiator: "cli" as const,
+      scope: "complete" as const,
+      platform: "darwin" as const,
+      env: { ...process.env, HOME: home },
+      operations: observationalOperations(),
+      now: new Date("2026-07-28T00:00:00.000Z"),
+    };
+    const before = await createKestrelUninstallPlan(input);
+    await writeFile(path.join(legacyRoot, "size-change"), "x".repeat(4096));
+    const after = await createKestrelUninstallPlan(input);
+    const beforeTarget = before.targets.find(
+      (target) => target.id === "state.cli_legacy",
+    );
+    const afterTarget = after.targets.find(
+      (target) => target.id === "state.cli_legacy",
+    );
+
+    assert.equal(afterTarget?.fingerprint, beforeTarget?.fingerprint);
+    assert.equal(after.planId, before.planId);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 contractTest("runtime.hermetic", "uninstall dry-run skips selected targets without removal", async () => {
   let removed = false;
   const operations = baseOperations(() => [packageTarget()]);
@@ -165,7 +200,7 @@ contractTest("runtime.hermetic", "uninstall apply reports Kestrel One disconnect
     ],
   });
   operations.disconnectKestrelOne = async () => {
-    throw new Error("network unavailable");
+    throw new Error("network unavailable: Authorization: Bearer secret-token");
   };
   const plan = await createKestrelUninstallPlan({
     initiator: "cli",
@@ -180,7 +215,55 @@ contractTest("runtime.hermetic", "uninstall apply reports Kestrel One disconnect
   assert.equal(result.status, "partial");
   assert.equal(result.blockers[0]?.code, "KESTREL_ONE_DISCONNECT_FAILED");
   assert.match(result.blockers[0]?.message ?? "", /connection-offline/u);
-  assert.match(result.blockers[0]?.message ?? "", /network unavailable/u);
+  assert.doesNotMatch(result.blockers[0]?.message ?? "", /secret-token/u);
+  assert.match(result.blockers[0]?.message ?? "", /local uninstall continued/u);
+  assert.deepEqual(result.kestrelOneDisconnects, [
+    {
+      connectionId: "connection-offline",
+      baseUrl: "https://kestrel.invalid",
+      status: "failed",
+      errorCode: "KESTREL_ONE_DISCONNECT_FAILED",
+      message: "Kestrel One disconnect failed; local uninstall continued.",
+    },
+  ]);
+});
+
+contractTest("runtime.hermetic", "uninstall reports disconnected and already-disconnected Kestrel One environments", async () => {
+  const operations = baseOperations(() => []);
+  operations.inspectKestrelOne = async (input) => ({
+    disconnectSelected: input.disconnectSelected,
+    environments: [
+      { connectionId: "connected", baseUrl: "https://one.example" },
+      { connectionId: "gone", baseUrl: "https://two.example" },
+    ],
+  });
+  operations.disconnectKestrelOne = async (connectionId) =>
+    connectionId === "gone" ? "already_disconnected" : "disconnected";
+  const plan = await createKestrelUninstallPlan({
+    initiator: "cli",
+    scope: "current_component",
+    platform: "darwin",
+    options: { disconnectKestrelOne: true },
+    operations,
+  });
+
+  const result = await applyKestrelUninstallPlan({
+    plan,
+    confirmPlanId: plan.planId,
+    operations,
+  });
+
+  assert.equal(result.status, "applied");
+  assert.deepEqual(
+    result.kestrelOneDisconnects.map(({ connectionId, status }) => ({
+      connectionId,
+      status,
+    })),
+    [
+      { connectionId: "connected", status: "disconnected" },
+      { connectionId: "gone", status: "already_disconnected" },
+    ],
+  );
 });
 
 contractTest("runtime.hermetic", "uninstall apply treats scheduled CLI self-removal as nonblocking", async () => {
@@ -198,6 +281,7 @@ contractTest("runtime.hermetic", "uninstall apply treats scheduled CLI self-remo
   const operations = baseOperations(() => [target]);
   operations.scheduleCliFinalizer = async () => {
     scheduled = true;
+    return "/private/var/tmp/com.kestrel.uninstall/fixture/cli-finalizer.json";
   };
   const plan = await createKestrelUninstallPlan({
     initiator: "cli",
@@ -211,6 +295,14 @@ contractTest("runtime.hermetic", "uninstall apply treats scheduled CLI self-remo
   assert.equal(scheduled, true);
   assert.equal(result.status, "partial", JSON.stringify(result.blockers, null, 2));
   assert.equal(result.blockers[0]?.code, "UNINSTALL_CLI_FINALIZER_SCHEDULED");
+  assert.deepEqual(result.deferredCompletions, [
+    {
+      executor: "cli_finalizer",
+      state: "scheduled",
+      reportPath:
+        "/private/var/tmp/com.kestrel.uninstall/fixture/cli-finalizer.json",
+    },
+  ]);
   assert.equal(
     result.blockers.some((blocker) => blocker.code === "UNINSTALL_FINAL_VERIFICATION_FAILED"),
     false,
@@ -405,6 +497,38 @@ contractTest("runtime.hermetic", "uninstall recovery bundle captures commits pat
     const checksums = JSON.parse(await readText(path.join(bundleRoot, "checksums.json"))) as Record<string, string>;
     assert.ok(checksums["metadata.json"]);
     assert.ok(checksums["restore.sh"]);
+    assert.match(await readText(path.join(bundleRoot, "checksums.sha256")), /metadata\.json/u);
+
+    const restoreDestination = path.join(root, "restored");
+    await git(root, ["clone", sourceRepo, restoreDestination]);
+    await execFileAsync("sh", [
+      path.join(bundleRoot, "restore.sh"),
+      restoreDestination,
+    ]);
+    assert.equal(
+      await readText(path.join(restoreDestination, "committed.txt")),
+      "committed\n",
+    );
+    assert.equal(
+      await readText(path.join(restoreDestination, "staged.txt")),
+      "staged\n",
+    );
+    assert.equal(
+      await readText(path.join(restoreDestination, "tracked.txt")),
+      "base\nunstaged\n",
+    );
+    assert.equal(
+      await readText(path.join(restoreDestination, "untracked.txt")),
+      "untracked\n",
+    );
+    const restoredStatus = await git(restoreDestination, ["status", "--short"]);
+    assert.match(restoredStatus, /^A  staged\.txt$/mu);
+    assert.match(restoredStatus, /^ M tracked\.txt$/mu);
+    assert.match(restoredStatus, /^\?\? untracked\.txt$/mu);
+    await assert.rejects(
+      readFile(path.join(restoreDestination, "ignored.bin")),
+      /ENOENT/u,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -475,6 +599,35 @@ contractTest("runtime.hermetic", "uninstall inventory recognizes source shims, s
     });
     assert.ok(plan.targets.some((target) => target.kind === "cli_package" && target.removal === "package_manager"));
 
+    const pnpmBin = path.join(root, "pnpm-manager");
+    await writeFile(
+      pnpmBin,
+      `#!/usr/bin/env sh\nif [ "$1" = "root" ]; then echo "${npmRoot}"; exit 0; fi\nexit 0\n`,
+      "utf8",
+    );
+    await chmod(pnpmBin, 0o755);
+    plan = await createKestrelUninstallPlan({
+      initiator: "cli",
+      scope: "current_component",
+      platform: "darwin",
+      env: {
+        ...process.env,
+        PNPM_HOME: pnpmHome,
+        HOME: home,
+        KESTREL_UNINSTALL_NPM_PATH: npmBin,
+        KESTREL_UNINSTALL_PNPM_PATH: pnpmBin,
+      },
+      operations: observationalOperations(),
+    });
+    assert.ok(
+      plan.targets.some(
+        (target) =>
+          target.kind === "cli_package" &&
+          target.verified === false &&
+          target.blockedReason?.includes("Multiple package managers"),
+      ),
+    );
+
     await rm(path.join(pnpmHome, "kestrel"), { force: true });
     const foreign = path.join(root, "foreign");
     await writeFile(foreign, "#!/usr/bin/env sh\n", "utf8");
@@ -541,6 +694,46 @@ contractTest("runtime.hermetic", "uninstall apply unloads kcron through its exac
   assert.equal(shutdown, false);
 });
 
+contractTest("runtime.hermetic", "uninstall inventory accepts only the exact kcron LaunchAgent label", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-kcron-plist-"));
+  const previousHome = process.env.HOME;
+  try {
+    const home = path.join(root, "home");
+    const launchAgents = path.join(home, "Library", "LaunchAgents");
+    const plistPath = path.join(launchAgents, "com.kestrel.kcron.plist");
+    await mkdir(launchAgents, { recursive: true });
+    process.env.HOME = home;
+    const input = {
+      initiator: "cli" as const,
+      scope: "current_component" as const,
+      platform: "darwin" as const,
+      env: { ...process.env, HOME: home },
+      operations: observationalOperations(),
+      now: new Date("2026-07-28T00:00:00.000Z"),
+    };
+
+    await writeFile(plistPath, launchAgentPlist("com.example.foreign"));
+    const foreign = await createKestrelUninstallPlan(input);
+    const foreignTarget = foreign.targets.find(
+      (target) => target.id === "kcron.launch_agent",
+    );
+    assert.equal(foreignTarget?.verified, false);
+    assert.match(foreignTarget?.blockedReason ?? "", /not verified/u);
+
+    await writeFile(plistPath, launchAgentPlist("com.kestrel.kcron"));
+    const exact = await createKestrelUninstallPlan(input);
+    const exactTarget = exact.targets.find(
+      (target) => target.id === "kcron.launch_agent",
+    );
+    assert.equal(exactTarget?.verified, true);
+    assert.equal(exactTarget?.selected, true);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 contractTest("runtime.hermetic", "complete uninstall purges an empty Keychain service idempotently before data deletion", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-keychain-"));
   let purged = 0;
@@ -604,6 +797,184 @@ contractTest("runtime.hermetic", "complete uninstall reports custom Core homes b
   }
 });
 
+contractTest("runtime.hermetic", "uninstall deduplicates nested selected roots without widening deletion", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-overlap-"));
+  try {
+    const nested = path.join(root, "nested");
+    await mkdir(nested);
+    const operations = baseOperations(() => [
+      dataTarget(root),
+      {
+        ...dataTarget(nested),
+        id: "state.nested",
+      },
+    ]);
+    const plan = await createKestrelUninstallPlan({
+      initiator: "cli",
+      scope: "complete",
+      platform: "darwin",
+      operations,
+    });
+
+    assert.equal(
+      plan.targets.find((target) => target.id === "state.default_product_root")
+        ?.selected,
+      true,
+    );
+    const nestedTarget = plan.targets.find(
+      (target) => target.id === "state.nested",
+    );
+    assert.equal(nestedTarget?.selected, false);
+    assert.match(nestedTarget?.evidence.join("\n") ?? "", /covered by/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+contractTest("runtime.hermetic", "uninstall blocks ancestors of registered external projects", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-protected-"));
+  try {
+    const externalProject = path.join(root, "external-project");
+    await mkdir(externalProject);
+    const operations = baseOperations(() => [dataTarget(root)]);
+    operations.listProtectedPaths = async () => [externalProject];
+    const plan = await createKestrelUninstallPlan({
+      initiator: "cli",
+      scope: "complete",
+      platform: "darwin",
+      operations,
+    });
+
+    assert.ok(
+      plan.blockers.some(
+        (blocker) => blocker.code === "UNINSTALL_PROTECTED_EXTERNAL_PATH",
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+contractTest("runtime.hermetic", "apply refuses a symlink deletion root even after inventory verification", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-symlink-"));
+  try {
+    const destination = path.join(root, "destination");
+    const link = path.join(root, "state-link");
+    await mkdir(destination);
+    await symlink(destination, link);
+    let removed = false;
+    const target = dataTarget(link);
+    const operations = baseOperations(() => [target]);
+    operations.removePath = async () => {
+      removed = true;
+    };
+    const plan = await createKestrelUninstallPlan({
+      initiator: "cli",
+      scope: "complete",
+      platform: "darwin",
+      operations,
+    });
+    const result = await applyKestrelUninstallPlan({
+      plan,
+      confirmPlanId: plan.planId,
+      deleteDataPhrase: "DELETE KESTREL DATA",
+      operations,
+    });
+
+    assert.equal(removed, false);
+    assert.ok(
+      result.blockers.some((blocker) =>
+        /symlink root/u.test(blocker.message),
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+contractTest("runtime.hermetic", "Keychain purge failure blocks filesystem deletion", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-keychain-failure-"));
+  try {
+    const dataPath = path.join(root, "data");
+    await mkdir(dataPath);
+    let removedData = false;
+    const operations = baseOperations(() => [
+      keychainTarget(),
+      dataTarget(dataPath),
+    ]);
+    operations.purgeKeychain = async () => {
+      throw new Error("disposable keychain locked");
+    };
+    operations.removePath = async () => {
+      removedData = true;
+    };
+    const plan = await createKestrelUninstallPlan({
+      initiator: "cli",
+      scope: "complete",
+      platform: "darwin",
+      operations,
+    });
+    const result = await applyKestrelUninstallPlan({
+      plan,
+      confirmPlanId: plan.planId,
+      deleteDataPhrase: "DELETE KESTREL DATA",
+      operations,
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(removedData, false);
+    assert.match(result.blockers[0]?.message ?? "", /keychain locked/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+contractTest("runtime.hermetic", "all-software apply unloads kcron before Core shutdown", async () => {
+  const order: string[] = [];
+  let kcronPresent = true;
+  let packagePresent = true;
+  const packageInstall = packageTarget();
+  const kcron: KestrelUninstallTarget = {
+    id: "kcron.launch_agent",
+    kind: "kcron_launch_agent",
+    path: "/tmp/com.kestrel.kcron.plist",
+    verified: true,
+    selected: true,
+    removal: "unlink",
+    fingerprint: "kcron",
+    evidence: ["fixture"],
+  };
+  const operations = baseOperations(() => [
+    ...(kcronPresent ? [kcron] : []),
+    ...(packagePresent ? [packageInstall] : []),
+  ]);
+  operations.unloadKcron = async () => {
+    order.push("kcron");
+    kcronPresent = false;
+  };
+  operations.shutdownLocalCore = async () => {
+    order.push("core");
+  };
+  operations.runPackageManager = async () => {
+    order.push("package");
+    packagePresent = false;
+  };
+  const plan = await createKestrelUninstallPlan({
+    initiator: "cli",
+    scope: "all_software",
+    platform: "darwin",
+    operations,
+  });
+  const result = await applyKestrelUninstallPlan({
+    plan,
+    confirmPlanId: plan.planId,
+    operations,
+  });
+
+  assert.equal(result.status, "applied", JSON.stringify(result.blockers));
+  assert.deepEqual(order, ["kcron", "core", "package"]);
+});
+
 function baseOperations(
   inventory: () => KestrelUninstallTarget[],
 ): KestrelUninstallCoordinatorOperations {
@@ -626,6 +997,7 @@ function baseOperations(
       environments: [],
     }),
     listManagedWorktrees: async () => [],
+    resetDesktopPrivacy: async () => {},
   };
 }
 
@@ -633,6 +1005,17 @@ function observationalOperations(): KestrelUninstallCoordinatorOperations {
   const operations = baseOperations(() => []);
   delete operations.inventoryTargets;
   return operations;
+}
+
+function launchAgentPlist(label: string): string {
+  return [
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"",
+    "  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+    "<plist version=\"1.0\"><dict>",
+    `<key>Label</key><string>${label}</string>`,
+    "</dict></plist>",
+  ].join("\n");
 }
 
 function packageTarget(input: { fingerprint?: string } = {}): KestrelUninstallTarget {

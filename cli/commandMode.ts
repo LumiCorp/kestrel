@@ -155,6 +155,18 @@ async function runUninstallCommand(args: string[]): Promise<void> {
           `Plan: ${result.planId}`,
           `Removed targets: ${result.removedTargets.length}`,
           `Skipped targets: ${result.skippedTargets.length}`,
+          `Kestrel One disconnects: ${result.kestrelOneDisconnects.length}`,
+          ...result.kestrelOneDisconnects.map(
+            (outcome) =>
+              `- ${outcome.connectionId} (${outcome.baseUrl || "unknown URL"}): ${outcome.status}${
+                outcome.message ? ` — ${outcome.message}` : ""
+              }`,
+          ),
+          `Deferred completions: ${result.deferredCompletions.length}`,
+          ...result.deferredCompletions.map(
+            (completion) =>
+              `- ${completion.executor}: ${completion.state}; report ${completion.reportPath}`,
+          ),
           `Blockers: ${result.blockers.length}`,
           ...result.blockers.map(
             (blocker) => `- ${blocker.code}: ${blocker.message}`,

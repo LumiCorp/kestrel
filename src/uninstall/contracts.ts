@@ -1,6 +1,8 @@
 export const KESTREL_UNINSTALL_PLAN_VERSION = "kestrel_uninstall_plan_v1";
 export const KESTREL_UNINSTALL_APPLY_RESULT_VERSION =
   "kestrel_uninstall_apply_result_v1";
+export const KESTREL_UNINSTALL_COMPLETION_REPORT_VERSION =
+  "kestrel_uninstall_completion_report_v1";
 
 export type KestrelUninstallInitiator = "cli" | "desktop";
 export type KestrelUninstallScope =
@@ -57,6 +59,8 @@ export interface KestrelUninstallWorktreeSummary {
     dirty: boolean;
     aheadCommitCount: number;
     storageBytes: number;
+    ignoredFileCount?: number | undefined;
+    ignoredBytes?: number | undefined;
     reasons: string[];
   }>;
 }
@@ -118,6 +122,37 @@ export interface KestrelUninstallApplyResultV1 {
   skippedTargets: string[];
   blockers: KestrelUninstallBlocker[];
   finalTargets: KestrelUninstallTarget[];
+  kestrelOneDisconnects: KestrelOneDisconnectResult[];
+  deferredCompletions: KestrelUninstallDeferredCompletion[];
+}
+
+export interface KestrelOneDisconnectResult {
+  connectionId: string;
+  baseUrl: string;
+  status: "disconnected" | "already_disconnected" | "failed";
+  errorCode?: string | undefined;
+  message?: string | undefined;
+}
+
+export interface KestrelUninstallDeferredCompletion {
+  executor: "cli_finalizer" | "desktop_helper";
+  state: "scheduled" | "complete";
+  reportPath: string;
+}
+
+export interface KestrelUninstallCompletionReportV1 {
+  version: typeof KESTREL_UNINSTALL_COMPLETION_REPORT_VERSION;
+  executor: "cli_finalizer" | "desktop_helper";
+  planId: string;
+  status: "complete" | "partial" | "blocked";
+  completedAt: string;
+  removedTargets: string[];
+  failures: Array<{
+    targetId?: string | undefined;
+    code: string;
+    message: string;
+  }>;
+  reportPath: string;
 }
 
 export function parseKestrelUninstallScope(
@@ -171,7 +206,7 @@ export function parseKestrelUninstallPlanV1(
   const scope = parseKestrelUninstallScope(record.scope);
   return {
     version: KESTREL_UNINSTALL_PLAN_VERSION,
-    planId: requireString(record.planId, "uninstall plan.planId"),
+    planId: requireNonEmptyString(record.planId, "uninstall plan.planId"),
     generatedAt: requireString(record.generatedAt, "uninstall plan.generatedAt"),
     platform: requireString(record.platform, "uninstall plan.platform") as NodeJS.Platform,
     initiator,
@@ -189,6 +224,149 @@ export function parseKestrelUninstallPlanV1(
     ).map(parseConfirmation),
     blockers: requireArray(record.blockers, "uninstall plan.blockers").map(
       parseBlocker,
+    ),
+  };
+}
+
+export function parseKestrelUninstallApplyResultV1(
+  value: unknown,
+): KestrelUninstallApplyResultV1 {
+  const record = requireRecord(value, "uninstall apply result");
+  rejectUnknownFields(
+    record,
+    new Set([
+      "version",
+      "planId",
+      "appliedAt",
+      "status",
+      "removedTargets",
+      "skippedTargets",
+      "blockers",
+      "finalTargets",
+      "kestrelOneDisconnects",
+      "deferredCompletions",
+    ]),
+    "uninstall apply result",
+  );
+  if (record.version !== KESTREL_UNINSTALL_APPLY_RESULT_VERSION) {
+    throw new Error("Uninstall apply result version is invalid.");
+  }
+  return {
+    version: KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
+    planId: requireNonEmptyString(record.planId, "uninstall apply result.planId"),
+    appliedAt: requireString(record.appliedAt, "uninstall apply result.appliedAt"),
+    status: requireEnum(
+      record.status,
+      ["applied", "blocked", "partial"],
+      "uninstall apply result.status",
+    ),
+    removedTargets: requireStringArray(
+      record.removedTargets,
+      "uninstall apply result.removedTargets",
+    ),
+    skippedTargets: requireStringArray(
+      record.skippedTargets,
+      "uninstall apply result.skippedTargets",
+    ),
+    blockers: requireArray(
+      record.blockers,
+      "uninstall apply result.blockers",
+    ).map(parseBlocker),
+    finalTargets: requireArray(
+      record.finalTargets,
+      "uninstall apply result.finalTargets",
+    ).map(parseTarget),
+    kestrelOneDisconnects: requireArray(
+      record.kestrelOneDisconnects,
+      "uninstall apply result.kestrelOneDisconnects",
+    ).map(parseKestrelOneDisconnectResult),
+    deferredCompletions: requireArray(
+      record.deferredCompletions,
+      "uninstall apply result.deferredCompletions",
+    ).map(parseDeferredCompletion),
+  };
+}
+
+export function parseKestrelUninstallCompletionReportV1(
+  value: unknown,
+): KestrelUninstallCompletionReportV1 {
+  const record = requireRecord(value, "uninstall completion report");
+  rejectUnknownFields(
+    record,
+    new Set([
+      "version",
+      "executor",
+      "planId",
+      "status",
+      "completedAt",
+      "removedTargets",
+      "failures",
+      "reportPath",
+    ]),
+    "uninstall completion report",
+  );
+  if (record.version !== KESTREL_UNINSTALL_COMPLETION_REPORT_VERSION) {
+    throw new Error("Uninstall completion report version is invalid.");
+  }
+  return {
+    version: KESTREL_UNINSTALL_COMPLETION_REPORT_VERSION,
+    executor: requireEnum(
+      record.executor,
+      ["cli_finalizer", "desktop_helper"],
+      "uninstall completion report.executor",
+    ),
+    planId: requireNonEmptyString(
+      record.planId,
+      "uninstall completion report.planId",
+    ),
+    status: requireEnum(
+      record.status,
+      ["complete", "partial", "blocked"],
+      "uninstall completion report.status",
+    ),
+    completedAt: requireString(
+      record.completedAt,
+      "uninstall completion report.completedAt",
+    ),
+    removedTargets: requireStringArray(
+      record.removedTargets,
+      "uninstall completion report.removedTargets",
+    ),
+    failures: requireArray(
+      record.failures,
+      "uninstall completion report.failures",
+    ).map((failure) => {
+      const failureRecord = requireRecord(
+        failure,
+        "uninstall completion report failure",
+      );
+      rejectUnknownFields(
+        failureRecord,
+        new Set(["targetId", "code", "message"]),
+        "uninstall completion report failure",
+      );
+      return {
+        ...(failureRecord.targetId !== undefined
+          ? {
+              targetId: requireString(
+                failureRecord.targetId,
+                "uninstall completion report failure.targetId",
+              ),
+            }
+          : {}),
+        code: requireString(
+          failureRecord.code,
+          "uninstall completion report failure.code",
+        ),
+        message: requireString(
+          failureRecord.message,
+          "uninstall completion report failure.message",
+        ),
+      };
+    }),
+    reportPath: requireString(
+      record.reportPath,
+      "uninstall completion report.reportPath",
     ),
   };
 }
@@ -343,6 +521,8 @@ function parseWorktrees(value: unknown): KestrelUninstallWorktreeSummary {
             "dirty",
             "aheadCommitCount",
             "storageBytes",
+            "ignoredFileCount",
+            "ignoredBytes",
             "reasons",
           ]),
           "uninstall worktree entry",
@@ -365,6 +545,22 @@ function parseWorktrees(value: unknown): KestrelUninstallWorktreeSummary {
             entryRecord.storageBytes,
             "uninstall worktree entry.storageBytes",
           ),
+          ...(entryRecord.ignoredFileCount !== undefined
+            ? {
+                ignoredFileCount: requireInteger(
+                  entryRecord.ignoredFileCount,
+                  "uninstall worktree entry.ignoredFileCount",
+                ),
+              }
+            : {}),
+          ...(entryRecord.ignoredBytes !== undefined
+            ? {
+                ignoredBytes: requireInteger(
+                  entryRecord.ignoredBytes,
+                  "uninstall worktree entry.ignoredBytes",
+                ),
+              }
+            : {}),
           reasons: requireArray(
             entryRecord.reasons,
             "uninstall worktree entry.reasons",
@@ -449,6 +645,75 @@ function parseConfirmation(value: unknown): KestrelUninstallConfirmation {
   };
 }
 
+function parseKestrelOneDisconnectResult(
+  value: unknown,
+): KestrelOneDisconnectResult {
+  const record = requireRecord(value, "Kestrel One disconnect result");
+  rejectUnknownFields(
+    record,
+    new Set(["connectionId", "baseUrl", "status", "errorCode", "message"]),
+    "Kestrel One disconnect result",
+  );
+  return {
+    connectionId: requireString(
+      record.connectionId,
+      "Kestrel One disconnect result.connectionId",
+    ),
+    baseUrl: requireString(
+      record.baseUrl,
+      "Kestrel One disconnect result.baseUrl",
+    ),
+    status: requireEnum(
+      record.status,
+      ["disconnected", "already_disconnected", "failed"],
+      "Kestrel One disconnect result.status",
+    ),
+    ...(record.errorCode !== undefined
+      ? {
+          errorCode: requireString(
+            record.errorCode,
+            "Kestrel One disconnect result.errorCode",
+          ),
+        }
+      : {}),
+    ...(record.message !== undefined
+      ? {
+          message: requireString(
+            record.message,
+            "Kestrel One disconnect result.message",
+          ),
+        }
+      : {}),
+  };
+}
+
+function parseDeferredCompletion(
+  value: unknown,
+): KestrelUninstallDeferredCompletion {
+  const record = requireRecord(value, "uninstall deferred completion");
+  rejectUnknownFields(
+    record,
+    new Set(["executor", "state", "reportPath"]),
+    "uninstall deferred completion",
+  );
+  return {
+    executor: requireEnum(
+      record.executor,
+      ["cli_finalizer", "desktop_helper"],
+      "uninstall deferred completion.executor",
+    ),
+    state: requireEnum(
+      record.state,
+      ["scheduled", "complete"],
+      "uninstall deferred completion.state",
+    ),
+    reportPath: requireString(
+      record.reportPath,
+      "uninstall deferred completion.reportPath",
+    ),
+  };
+}
+
 function parseBlocker(value: unknown): KestrelUninstallBlocker {
   const record = requireRecord(value, "uninstall blocker");
   rejectUnknownFields(
@@ -479,11 +744,25 @@ function requireArray(value: unknown, label: string): unknown[] {
   return value;
 }
 
+function requireStringArray(value: unknown, label: string): string[] {
+  return requireArray(value, label).map((entry, index) =>
+    requireString(entry, `${label}[${index}]`),
+  );
+}
+
 function requireString(value: unknown, label: string): string {
   if (typeof value !== "string") {
     throw new Error(`${label} must be a string.`);
   }
   return value;
+}
+
+function requireNonEmptyString(value: unknown, label: string): string {
+  const parsed = requireString(value, label);
+  if (parsed.trim().length === 0) {
+    throw new Error(`${label} must not be empty.`);
+  }
+  return parsed;
 }
 
 function requireBoolean(value: unknown, label: string): boolean {

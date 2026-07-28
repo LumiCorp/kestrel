@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 
 import {
+  KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
+  KESTREL_UNINSTALL_COMPLETION_REPORT_VERSION,
   KESTREL_UNINSTALL_PLAN_VERSION,
+  parseKestrelUninstallApplyResultV1,
+  parseKestrelUninstallCompletionReportV1,
   parseKestrelUninstallPlanV1,
   parseKestrelUninstallScope,
   type KestrelUninstallPlanV1,
@@ -51,6 +55,83 @@ contractTest("runtime.hermetic", "UninstallPlanV1 preserves package manager comm
     "--global",
     "@kestrel-agents/kestrel",
   ]);
+});
+
+contractTest("runtime.hermetic", "UninstallApplyResultV1 strictly parses structured outcomes", () => {
+  const result = {
+    version: KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
+    planId: "plan-test",
+    appliedAt: "2026-07-28T00:00:01.000Z",
+    status: "partial",
+    removedTargets: ["state.default_product_root"],
+    skippedTargets: ["desktop.bundle.fixture"],
+    blockers: [],
+    finalTargets: [],
+    kestrelOneDisconnects: [
+      {
+        connectionId: "connection-fixture",
+        baseUrl: "https://kestrel.invalid",
+        status: "failed",
+        errorCode: "OFFLINE",
+        message: "network unavailable",
+      },
+    ],
+    deferredCompletions: [
+      {
+        executor: "desktop_helper",
+        state: "scheduled",
+        reportPath:
+          "/private/var/tmp/com.kestrel.uninstall/plan-test/desktop-helper.json",
+      },
+    ],
+  };
+  assert.deepEqual(
+    parseKestrelUninstallApplyResultV1(result),
+    result,
+  );
+  assert.throws(
+    () => parseKestrelUninstallApplyResultV1({ ...result, extra: true }),
+    /unsupported field 'extra'/u,
+  );
+  assert.throws(
+    () =>
+      parseKestrelUninstallApplyResultV1({
+        ...result,
+        deferredCompletions: [
+          { ...result.deferredCompletions[0], state: "unknown" },
+        ],
+      }),
+    /deferred completion\.state is invalid/u,
+  );
+});
+
+contractTest("runtime.hermetic", "uninstall completion reports are strict and versioned", () => {
+  const report = {
+    version: KESTREL_UNINSTALL_COMPLETION_REPORT_VERSION,
+    executor: "cli_finalizer",
+    planId: "plan-test",
+    status: "partial",
+    completedAt: "2026-07-28T00:00:02.000Z",
+    removedTargets: [],
+    failures: [
+      {
+        targetId: "cli.bundle.fixture",
+        code: "UNINSTALL_TARGET_REMOVE_FAILED",
+        message: "permission denied",
+      },
+    ],
+    reportPath:
+      "/private/var/tmp/com.kestrel.uninstall/plan-test/cli-finalizer.json",
+  } as const;
+  assert.deepEqual(parseKestrelUninstallCompletionReportV1(report), report);
+  assert.throws(
+    () =>
+      parseKestrelUninstallCompletionReportV1({
+        ...report,
+        failures: [{ ...report.failures[0], secret: "must reject" }],
+      }),
+    /unsupported field 'secret'/u,
+  );
 });
 
 function minimalPlan(): KestrelUninstallPlanV1 {

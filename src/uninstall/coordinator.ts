@@ -24,7 +24,11 @@ import { uninstallManagedService } from "../../cli/kcron/service.js";
 import { LocalCoreClient } from "../localCore/client.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "../localCore/home.js";
 import { detectLocalCoreMigrationState } from "../localCore/legacyState.js";
-import { purgeMacosLocalCoreKeychainService } from "../localCore/macosKeychainCredentialStore.js";
+import { readCoreManifest } from "../localCore/manifest.js";
+import {
+  hasMacosLocalCoreKeychainServiceItems,
+  purgeMacosLocalCoreKeychainService,
+} from "../localCore/macosKeychainCredentialStore.js";
 import {
   ManagedTaskWorktreeService,
   type ManagedTaskWorktreeInventoryEntry,
@@ -39,6 +43,8 @@ import {
   type KestrelUninstallInitiator,
   type KestrelUninstallKestrelOneSummary,
   type KestrelUninstallLifecycle,
+  type KestrelOneDisconnectResult,
+  type KestrelUninstallDeferredCompletion,
   type KestrelUninstallPlanOptions,
   type KestrelUninstallPlanV1,
   type KestrelUninstallScope,
@@ -50,9 +56,11 @@ const execFileAsync = promisify(execFile);
 const KESTREL_PACKAGE_NAME = "@kestrel-agents/kestrel";
 const DESKTOP_HELPER_NAME = "kestrel-uninstall-helper";
 const CLI_BUNDLE_MANIFEST_NAME = "kestrel-bundle.json";
+const UNINSTALL_REPORT_ROOT = "/private/var/tmp/com.kestrel.uninstall";
 const NON_BLOCKING_APPLY_FAILURE_CODES = new Set([
   "KESTREL_ONE_DISCONNECT_FAILED",
   "UNINSTALL_CLI_FINALIZER_SCHEDULED",
+  "DESKTOP_PRIVACY_RESET_FAILED",
 ]);
 
 export interface KestrelUninstallCoordinatorOperations {
@@ -81,11 +89,18 @@ export interface KestrelUninstallCoordinatorOperations {
   removePath?(targetPath: string): Promise<void>;
   trashPath?(targetPath: string): Promise<void>;
   runPackageManager?(command: string[]): Promise<void>;
-  scheduleCliFinalizer?(target: KestrelUninstallTarget): Promise<void>;
+  scheduleCliFinalizer?(
+    target: KestrelUninstallTarget,
+    planId: string,
+  ): Promise<string | void>;
   unloadKcron?(): Promise<void>;
   purgeKeychain?(): Promise<void>;
+  keychainServiceHasItems?(): Promise<boolean>;
+  resetDesktopPrivacy?(): Promise<void>;
   shutdownLocalCore?(platform: NodeJS.Platform): Promise<void>;
-  disconnectKestrelOne?(connectionId: string): Promise<void>;
+  disconnectKestrelOne?(
+    connectionId: string,
+  ): Promise<"disconnected" | "already_disconnected" | void>;
   listManagedWorktrees?(input: {
     env: NodeJS.ProcessEnv;
     platform: NodeJS.Platform;
@@ -97,6 +112,10 @@ export interface KestrelUninstallCoordinatorOperations {
   ): Promise<void>;
   removeManagedWorktree?(entry: ManagedTaskWorktreeInventoryEntry): Promise<void>;
   listGitFiles?(worktreeRoot: string, args: string[]): Promise<string[]>;
+  listProtectedPaths?(input: {
+    env: NodeJS.ProcessEnv;
+    platform: NodeJS.Platform;
+  }): Promise<string[]>;
 }
 
 export interface CreateKestrelUninstallPlanInput {
@@ -113,6 +132,9 @@ export async function createKestrelUninstallPlan(
   input: CreateKestrelUninstallPlanInput,
 ): Promise<KestrelUninstallPlanV1> {
   const platform = input.platform ?? process.platform;
+  if (platform === "darwin" && process.platform === "darwin") {
+    await pruneExpiredUninstallReports().catch(() => {});
+  }
   const env = input.env ?? process.env;
   const operations = input.operations ?? {};
   const options = normalizeOptions(input.options);
@@ -124,7 +146,7 @@ export async function createKestrelUninstallPlan(
     });
   }
 
-  const targets = operations.inventoryTargets !== undefined
+  let targets = operations.inventoryTargets !== undefined
     ? await operations.inventoryTargets({
         initiator: input.initiator,
         scope: input.scope,
@@ -151,6 +173,7 @@ export async function createKestrelUninstallPlan(
           platform,
         })),
       ].filter((target): target is KestrelUninstallTarget => target !== undefined);
+  targets = await deduplicateSelectedTargets(targets);
 
   for (const target of targets) {
     if (target.selected && target.verified === false) {
@@ -173,6 +196,10 @@ export async function createKestrelUninstallPlan(
     ? await operations.inspectLifecycle({ env, platform })
     : await inspectLocalCoreLifecycle({ env, platform });
   blockers.push(...lifecycle.blockers);
+  const protectedPaths = operations.listProtectedPaths !== undefined
+    ? await operations.listProtectedPaths({ env, platform })
+    : await listRegisteredExternalProjectPaths({ lifecycle, env, platform });
+  blockers.push(...await protectedPathBlockers(targets, protectedPaths));
 
   const worktrees = operations.inspectWorktrees !== undefined
     ? await operations.inspectWorktrees({ env, platform })
@@ -300,6 +327,8 @@ export async function applyKestrelUninstallPlan(
       skippedTargets: [],
       blockers: staleBlockers,
       finalTargets: current.targets,
+      kestrelOneDisconnects: [],
+      deferredCompletions: [],
     };
   }
   if (current.blockers.length > 0) {
@@ -312,6 +341,8 @@ export async function applyKestrelUninstallPlan(
       skippedTargets: [],
       blockers: current.blockers,
       finalTargets: current.targets,
+      kestrelOneDisconnects: [],
+      deferredCompletions: [],
     };
   }
   if (plan.blockers.length > 0) {
@@ -324,6 +355,8 @@ export async function applyKestrelUninstallPlan(
       skippedTargets: [],
       blockers: plan.blockers,
       finalTargets: current.targets,
+      kestrelOneDisconnects: [],
+      deferredCompletions: [],
     };
   }
   if (request.dryRun === true) {
@@ -336,35 +369,94 @@ export async function applyKestrelUninstallPlan(
       skippedTargets: plan.targets.filter((target) => target.selected).map((target) => target.id),
       blockers: [],
       finalTargets: current.targets,
+      kestrelOneDisconnects: [],
+      deferredCompletions: [],
     };
   }
 
   const removedTargets: string[] = [];
   const skippedTargets: string[] = [];
   const blockers: KestrelUninstallBlocker[] = [];
+  const kestrelOneDisconnects: KestrelOneDisconnectResult[] = [];
+  const deferredCompletions: KestrelUninstallDeferredCompletion[] = [];
 
   if (plan.scope === "complete") {
     const recovery = await recoverOrDiscardManagedWorktrees(plan, operations);
     blockers.push(...recovery.blockers);
     if (blockers.length > 0) {
-      return await buildApplyResult(plan, removedTargets, skippedTargets, blockers, operations, deferredTargetIds);
+      return await buildApplyResult(
+        plan,
+        removedTargets,
+        skippedTargets,
+        blockers,
+        operations,
+        deferredTargetIds,
+        kestrelOneDisconnects,
+        deferredCompletions,
+      );
     }
   }
 
   if (plan.options.disconnectKestrelOne) {
     for (const environment of plan.kestrelOne.environments) {
       try {
+        let outcome: "disconnected" | "already_disconnected" | void;
         if (operations.disconnectKestrelOne !== undefined) {
-          await operations.disconnectKestrelOne(environment.connectionId);
+          outcome = await operations.disconnectKestrelOne(environment.connectionId);
         } else {
           await disconnectKestrelOneEnvironment(environment.connectionId, plan.platform);
+          outcome = "disconnected";
         }
+        kestrelOneDisconnects.push({
+          connectionId: environment.connectionId,
+          baseUrl: environment.baseUrl ?? "",
+          status: outcome === "already_disconnected"
+            ? "already_disconnected"
+            : "disconnected",
+        });
       } catch (error) {
+        const errorCode = safeErrorCode(error);
+        const message = safeDisconnectErrorMessage(errorCode);
+        kestrelOneDisconnects.push({
+          connectionId: environment.connectionId,
+          baseUrl: environment.baseUrl ?? "",
+          status: "failed",
+          errorCode,
+          message,
+        });
         blockers.push({
           code: "KESTREL_ONE_DISCONNECT_FAILED",
-          message: `Kestrel One environment ${environment.connectionId} could not be disconnected: ${error instanceof Error ? error.message : String(error)}`,
+          message: `Kestrel One environment ${environment.connectionId} (${environment.baseUrl ?? "unknown base URL"}) could not be disconnected: ${message}`,
         });
       }
+    }
+  }
+
+  const selectedKcronTargets = plan.targets.filter(
+    (target) => target.selected && target.kind === "kcron_launch_agent",
+  );
+  for (const target of selectedKcronTargets) {
+    try {
+      await removeTarget(target, operations, plan.planId);
+      removedTargets.push(target.id);
+    } catch (error) {
+      return await buildApplyResult(
+        plan,
+        removedTargets,
+        skippedTargets,
+        [
+          ...blockers,
+          {
+            code: "KCRON_UNLOAD_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+            targetId: target.id,
+          },
+        ],
+        operations,
+        deferredTargetIds,
+        kestrelOneDisconnects,
+        deferredCompletions,
+      );
     }
   }
 
@@ -377,16 +469,54 @@ export async function applyKestrelUninstallPlan(
       }
     } catch (error) {
       return await buildApplyResult(plan, removedTargets, skippedTargets, [
+        ...blockers,
         {
           code: "LOCAL_CORE_SHUTDOWN_FAILED",
           message: error instanceof Error ? error.message : String(error),
         },
-      ], operations, deferredTargetIds);
+      ],
+      operations,
+      deferredTargetIds,
+      kestrelOneDisconnects,
+      deferredCompletions);
     }
   }
 
   const currentTargetIds = new Set(current.targets.map((target) => target.id));
-  for (const target of plan.targets) {
+  const processedTargetIds = new Set(removedTargets);
+  let desktopPrivacyReset = false;
+  for (const target of [...plan.targets].sort(
+    (left, right) => applyTargetPriority(left) - applyTargetPriority(right),
+  )) {
+    if (
+      desktopPrivacyReset === false &&
+      applyTargetPriority(target) >= 20 &&
+      plan.targets.some(
+        (candidate) =>
+          candidate.selected && candidate.kind === "desktop_bundle",
+      )
+    ) {
+      desktopPrivacyReset = true;
+      try {
+        if (operations.resetDesktopPrivacy !== undefined) {
+          await operations.resetDesktopPrivacy();
+        } else if (plan.platform === "darwin" && process.platform === "darwin") {
+          await execFileAsync(
+            "/usr/bin/tccutil",
+            ["reset", "All", "com.kestrel.desktop"],
+            { timeout: 5_000 },
+          );
+        }
+      } catch (error) {
+        blockers.push({
+          code: "DESKTOP_PRIVACY_RESET_FAILED",
+          message: `macOS privacy reset failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      }
+    }
+    if (processedTargetIds.has(target.id)) continue;
     if (target.selected === false) {
       skippedTargets.push(target.id);
       continue;
@@ -400,21 +530,67 @@ export async function applyKestrelUninstallPlan(
       continue;
     }
     try {
-      await removeTarget(target, operations);
+      const removal = await removeTarget(target, operations, plan.planId);
+      if (removal?.deferredCompletion !== undefined) {
+        deferredCompletions.push(removal.deferredCompletion);
+        deferredTargetIds.add(target.id);
+        skippedTargets.push(target.id);
+        blockers.push({
+          code: "UNINSTALL_CLI_FINALIZER_SCHEDULED",
+          message: `Target '${target.id}' is scheduled for removal after the running CLI exits. Report: ${removal.deferredCompletion.reportPath}`,
+          targetId: target.id,
+        });
+        continue;
+      }
       removedTargets.push(target.id);
+      processedTargetIds.add(target.id);
     } catch (error) {
-      const code = error instanceof NonBlockingUninstallFailure
-        ? error.code
-        : "UNINSTALL_TARGET_REMOVE_FAILED";
       blockers.push({
-        code,
+        code: "UNINSTALL_TARGET_REMOVE_FAILED",
         message: error instanceof Error ? error.message : String(error),
         targetId: target.id,
       });
+      if (target.kind === "keychain_service") {
+        return await buildApplyResult(
+          plan,
+          removedTargets,
+          skippedTargets,
+          blockers,
+          operations,
+          deferredTargetIds,
+          kestrelOneDisconnects,
+          deferredCompletions,
+        );
+      }
     }
   }
 
-  return await buildApplyResult(plan, removedTargets, skippedTargets, blockers, operations, deferredTargetIds);
+  return await buildApplyResult(
+    plan,
+    removedTargets,
+    skippedTargets,
+    blockers,
+    operations,
+    deferredTargetIds,
+    kestrelOneDisconnects,
+    deferredCompletions,
+  );
+}
+
+function applyTargetPriority(target: KestrelUninstallTarget): number {
+  if (target.kind === "keychain_service") return 0;
+  if (
+    target.kind === "state_root" ||
+    target.kind === "electron_profile" ||
+    target.kind === "legacy_root" ||
+    target.kind === "preferences" ||
+    target.kind === "cache" ||
+    target.kind === "saved_state"
+  ) {
+    return 10;
+  }
+  if (target.kind === "kcron_launch_agent") return 15;
+  return 20;
 }
 
 export function formatKestrelUninstallPlan(plan: KestrelUninstallPlanV1): string {
@@ -444,6 +620,143 @@ function normalizeOptions(
     exportWorktreesDirectory: options?.exportWorktreesDirectory?.trim() ?? "",
     discardWorktrees: options?.discardWorktrees === true,
   };
+}
+
+async function deduplicateSelectedTargets(
+  targets: KestrelUninstallTarget[],
+): Promise<KestrelUninstallTarget[]> {
+  const canonical = new Map<string, string>();
+  for (const target of targets) {
+    if (target.path === undefined) continue;
+    const resolved = await realpath(target.path).catch(() =>
+      path.resolve(target.path!),
+    );
+    canonical.set(target.id, resolved);
+  }
+  const selectedRoots = targets
+    .filter(
+      (target) =>
+        target.selected &&
+        target.path !== undefined &&
+        (target.removal === "rm" || target.removal === "trash"),
+    )
+    .sort(
+      (left, right) =>
+        (canonical.get(left.id)?.length ?? 0) -
+        (canonical.get(right.id)?.length ?? 0),
+    );
+  const coveringRoots: Array<{ id: string; path: string }> = [];
+  return targets.map((target) => {
+    const targetPath = canonical.get(target.id);
+    if (target.selected === false || targetPath === undefined) return target;
+    const covering = coveringRoots.find(
+      (root) => root.path === targetPath || isAncestor(root.path, targetPath),
+    );
+    if (covering !== undefined) {
+      return {
+        ...target,
+        selected: false,
+        evidence: [
+          ...target.evidence,
+          `covered by selected target ${covering.id}`,
+        ],
+      };
+    }
+    if (selectedRoots.some((candidate) => candidate.id === target.id)) {
+      coveringRoots.push({ id: target.id, path: targetPath });
+    }
+    return target;
+  });
+}
+
+async function listRegisteredExternalProjectPaths(input: {
+  lifecycle: KestrelUninstallLifecycle;
+  env: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+}): Promise<string[]> {
+  if (
+    input.lifecycle.state === "missing" ||
+    input.lifecycle.state === "unavailable"
+  ) {
+    return [];
+  }
+  try {
+    const client = await localCoreClientFor({
+      env: input.env,
+      platform: input.platform,
+    });
+    const projection = await client.desktopSettings<{
+      projects?: unknown;
+    }>();
+    if (Array.isArray(projection.settings.projects) === false) return [];
+    return projection.settings.projects.flatMap((project) => {
+      if (typeof project !== "object" || project === null) return [];
+      const candidate = (project as { path?: unknown }).path;
+      return typeof candidate === "string" && path.isAbsolute(candidate)
+        ? [candidate]
+        : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function protectedPathBlockers(
+  targets: KestrelUninstallTarget[],
+  protectedPaths: string[],
+): Promise<KestrelUninstallBlocker[]> {
+  const canonicalProtected = (
+    await Promise.all(
+      protectedPaths.map((candidate) =>
+        realpath(candidate).catch(() => path.resolve(candidate)),
+      ),
+    )
+  ).filter((candidate, index, all) => all.indexOf(candidate) === index);
+  const blockers: KestrelUninstallBlocker[] = [];
+  for (const target of targets) {
+    if (
+      target.selected === false ||
+      target.path === undefined ||
+      target.removal === "unlink" ||
+      target.removal === "package_manager"
+    ) {
+      continue;
+    }
+    if (path.isAbsolute(target.path) === false || path.normalize(target.path) !== target.path) {
+      blockers.push({
+        code: "UNINSTALL_TARGET_PATH_INVALID",
+        message: `Selected target '${target.id}' is not a canonical absolute path.`,
+        targetId: target.id,
+      });
+      continue;
+    }
+    const targetPath = await realpath(target.path).catch(() =>
+      path.resolve(target.path!),
+    );
+    for (const protectedPath of canonicalProtected) {
+      if (
+        targetPath === protectedPath ||
+        isAncestor(targetPath, protectedPath)
+      ) {
+        blockers.push({
+          code: "UNINSTALL_PROTECTED_EXTERNAL_PATH",
+          message: `Selected target '${target.id}' contains registered external project '${protectedPath}'.`,
+          targetId: target.id,
+        });
+      }
+    }
+    if (
+      target.kind !== "desktop_bundle" &&
+      existsSync(path.join(targetPath, ".git"))
+    ) {
+      blockers.push({
+        code: "UNINSTALL_SOURCE_REPOSITORY_PROTECTED",
+        message: `Selected target '${target.id}' is a source repository.`,
+        targetId: target.id,
+      });
+    }
+  }
+  return blockers;
 }
 
 function buildStalePlanBlockers(
@@ -513,6 +826,8 @@ function staleWorktreeBlockers(
       entry.disposition !== currentEntry.disposition ||
       entry.dirty !== currentEntry.dirty ||
       entry.aheadCommitCount !== currentEntry.aheadCommitCount ||
+      entry.ignoredFileCount !== currentEntry.ignoredFileCount ||
+      entry.ignoredBytes !== currentEntry.ignoredBytes ||
       JSON.stringify(entry.reasons) !== JSON.stringify(currentEntry.reasons)
     ) {
       blockers.push(staleBlocker(`Managed worktree '${entry.worktreeRoot}' changed since planning.`));
@@ -626,6 +941,23 @@ async function inventoryCliSymlinks(input: {
     }
     const packageInstall = await inspectCliPackageInstall(link.realTarget, input.env);
     if (packageInstall !== undefined) {
+      if (packageInstall.status === "ambiguous") {
+        targets.push({
+          id: `cli.package.${hashString(packageInstall.packageRoot).slice(0, 12)}`,
+          kind: "cli_package",
+          path: packageInstall.packageRoot,
+          verified: false,
+          selected,
+          removal: "manual",
+          fingerprint: hashValue(packageInstall),
+          evidence: packageInstall.managers.map(
+            (manager) => `matching package manager ${manager}`,
+          ),
+          blockedReason:
+            "Multiple package managers claim the same global Kestrel installation.",
+        });
+        continue;
+      }
       if (seenPackageRoots.has(packageInstall.packageRoot) === false) {
         seenPackageRoots.add(packageInstall.packageRoot);
         targets.push({
@@ -682,8 +1014,13 @@ async function inventoryKcronLaunchAgent(input: {
     "com.kestrel.kcron.plist",
   );
   if (existsSync(filePath) === false) return undefined;
-  const content = await readFile(filePath, "utf8").catch(() => "");
-  const verified = content.includes("<string>com.kestrel.kcron</string>");
+  const label = await execFileAsync(
+    "/usr/libexec/PlistBuddy",
+    ["-c", "Print :Label", filePath],
+    { timeout: 5_000 },
+  ).then(({ stdout }) => stdout.trim()).catch(() => "");
+  const pathIdentity = await fingerprintPath(filePath);
+  const verified = label === "com.kestrel.kcron" && pathIdentity.verified;
   const selected =
     input.scope === "all_software" ||
     input.scope === "complete" ||
@@ -695,8 +1032,17 @@ async function inventoryKcronLaunchAgent(input: {
     verified,
     selected,
     removal: "unlink",
-    fingerprint: hashValue({ filePath, contentHash: hashString(content), verified }),
-    evidence: verified ? ["LaunchAgent label com.kestrel.kcron"] : ["LaunchAgent label not verified"],
+    fingerprint: hashValue({
+      filePath,
+      label,
+      pathFingerprint: pathIdentity.fingerprint,
+    }),
+    evidence: [
+      ...(verified
+        ? ["LaunchAgent label com.kestrel.kcron"]
+        : [`LaunchAgent label '${label || "unreadable"}' is not verified`]),
+      ...pathIdentity.evidence,
+    ],
     ...(verified ? {} : { blockedReason: "kcron LaunchAgent label is not verified." }),
   };
 }
@@ -717,12 +1063,11 @@ async function inventoryDesktopBundles(input: {
   for (const bundlePath of candidates) {
     const infoPath = path.join(bundlePath, "Contents", "Info.plist");
     if (existsSync(infoPath) === false) continue;
-    const info = await readFile(infoPath, "utf8").catch(() => "");
     const helperPath = path.join(bundlePath, "Contents", "Resources", DESKTOP_HELPER_NAME);
-    const helperReady = await isExecutableFile(helperPath);
-    const verified = info.includes("com.kestrel.desktop");
-    const blockedReason = selected && helperReady === false
-      ? "Packaged Desktop removal requires the signed native helper."
+    const identity = await inspectDesktopReleaseIdentity(bundlePath, helperPath);
+    const verified = identity.verified;
+    const blockedReason = selected && verified === false
+      ? identity.blockedReason
       : undefined;
     targets.push({
       id: `desktop.bundle.${hashString(bundlePath).slice(0, 12)}`,
@@ -730,16 +1075,172 @@ async function inventoryDesktopBundles(input: {
       path: bundlePath,
       verified,
       selected,
-      removal: helperReady ? "trash" : "manual",
-      ...(helperReady ? { command: [helperPath, "--plan", "<plan>"] } : {}),
-      fingerprint: hashValue({ bundlePath, infoHash: hashString(info), verified, helperReady }),
-      evidence: verified
-        ? ["bundle id com.kestrel.desktop", ...(helperReady ? [`helper ${helperPath}`] : [])]
-        : ["bundle id not verified"],
+      removal: verified ? "trash" : "manual",
+      ...(verified ? { command: [helperPath, "--plan", "<plan>"] } : {}),
+      fingerprint: hashValue({
+        bundlePath,
+        bundleId: identity.bundleId,
+        bundleRealPath: identity.bundleRealPath,
+        bundleUid: identity.bundleUid,
+        designatedRequirement: identity.designatedRequirement,
+        signingAuthorities: identity.signingAuthorities,
+        helperRealPath: identity.helperRealPath,
+        helperUid: identity.helperUid,
+        helperArchitectures: identity.helperArchitectures,
+        helperDesignatedRequirement: identity.helperDesignatedRequirement,
+      }),
+      evidence: identity.evidence,
       ...(blockedReason !== undefined ? { blockedReason } : {}),
     });
   }
   return targets;
+}
+
+async function inspectDesktopReleaseIdentity(
+  bundlePath: string,
+  helperPath: string,
+): Promise<{
+  verified: boolean;
+  blockedReason: string;
+  bundleId: string;
+  bundleRealPath: string;
+  bundleUid: number;
+  designatedRequirement: string;
+  signingAuthorities: string[];
+  helperRealPath: string;
+  helperUid: number;
+  helperArchitectures: string[];
+  helperDesignatedRequirement: string;
+  evidence: string[];
+}> {
+  const empty = {
+    verified: false,
+    blockedReason:
+      "Desktop self-removal requires an exact Developer ID-signed release bundle and signed arm64 helper.",
+    bundleId: "",
+    bundleRealPath: "",
+    bundleUid: -1,
+    designatedRequirement: "",
+    signingAuthorities: [] as string[],
+    helperRealPath: "",
+    helperUid: -1,
+    helperArchitectures: [] as string[],
+    helperDesignatedRequirement: "",
+    evidence: [] as string[],
+  };
+  try {
+    const bundleEntry = await lstat(bundlePath);
+    const helperEntry = await lstat(helperPath);
+    const currentUid = process.getuid?.();
+    const bundleRealPath = await realpath(bundlePath);
+    const helperRealPath = await realpath(helperPath);
+    const { stdout: bundleIdOutput } = await execFileAsync(
+      "/usr/libexec/PlistBuddy",
+      ["-c", "Print :CFBundleIdentifier", path.join(bundlePath, "Contents", "Info.plist")],
+      { timeout: 5_000 },
+    );
+    const bundleId = bundleIdOutput.trim();
+    await execFileAsync(
+      "/usr/bin/codesign",
+      ["--verify", "--deep", "--strict", bundlePath],
+      { timeout: 10_000 },
+    );
+    await execFileAsync(
+      "/usr/bin/codesign",
+      ["--verify", "--strict", helperPath],
+      { timeout: 10_000 },
+    );
+    const bundleSignature = await codeSigningDetails(bundlePath);
+    const helperSignature = await codeSigningDetails(helperPath);
+    const { stdout: architecturesOutput } = await execFileAsync(
+      "/usr/bin/lipo",
+      ["-archs", helperPath],
+      { timeout: 5_000 },
+    );
+    const helperArchitectures = architecturesOutput.trim().split(/\s+/u).filter(Boolean);
+    const releaseAuthority = bundleSignature.authorities.some((authority) =>
+      authority.startsWith("Developer ID Application:"),
+    );
+    const sameAuthority =
+      bundleSignature.authorities.length > 0 &&
+      bundleSignature.authorities[0] === helperSignature.authorities[0];
+    const owned =
+      currentUid === undefined ||
+      (bundleEntry.uid === currentUid && helperEntry.uid === currentUid);
+    const verified =
+      bundleId === "com.kestrel.desktop" &&
+      bundleEntry.isSymbolicLink() === false &&
+      helperEntry.isSymbolicLink() === false &&
+      helperEntry.isFile() &&
+      (helperEntry.mode & 0o111) !== 0 &&
+      helperArchitectures.includes("arm64") &&
+      releaseAuthority &&
+      sameAuthority &&
+      owned;
+    return {
+      verified,
+      blockedReason: verified
+        ? ""
+        : empty.blockedReason,
+      bundleId,
+      bundleRealPath,
+      bundleUid: bundleEntry.uid,
+      designatedRequirement: bundleSignature.designatedRequirement,
+      signingAuthorities: bundleSignature.authorities,
+      helperRealPath,
+      helperUid: helperEntry.uid,
+      helperArchitectures,
+      helperDesignatedRequirement: helperSignature.designatedRequirement,
+      evidence: [
+        `bundle id ${bundleId}`,
+        `bundle realpath ${bundleRealPath}`,
+        `bundle uid ${bundleEntry.uid}`,
+        ...bundleSignature.authorities.map((authority) => `bundle authority ${authority}`),
+        `helper realpath ${helperRealPath}`,
+        `helper uid ${helperEntry.uid}`,
+        `helper architectures ${helperArchitectures.join(",")}`,
+        ...helperSignature.authorities.map((authority) => `helper authority ${authority}`),
+      ],
+    };
+  } catch (error) {
+    return {
+      ...empty,
+      evidence: [
+        `Desktop release identity verification failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ],
+    };
+  }
+}
+
+async function codeSigningDetails(inputPath: string): Promise<{
+  authorities: string[];
+  designatedRequirement: string;
+}> {
+  const details = await execFileAsync(
+    "/usr/bin/codesign",
+    ["-d", "--verbose=4", "--requirements", "-", inputPath],
+    { timeout: 10_000 },
+  ).catch((error: unknown) => {
+    const stderr =
+      typeof error === "object" &&
+      error !== null &&
+      "stderr" in error &&
+      typeof (error as { stderr?: unknown }).stderr === "string"
+        ? (error as { stderr: string }).stderr
+        : "";
+    if (stderr.length > 0) return { stdout: "", stderr };
+    throw error;
+  });
+  const output = `${details.stdout ?? ""}\n${details.stderr ?? ""}`;
+  return {
+    authorities: [...output.matchAll(/^Authority=(.+)$/gmu)].map(
+      (match) => match[1]!.trim(),
+    ),
+    designatedRequirement:
+      output.match(/^designated => (.+)$/mu)?.[1]?.trim() ?? "",
+  };
 }
 
 async function inventoryStateTargets(input: {
@@ -766,18 +1267,61 @@ async function inventoryStateTargets(input: {
         "Custom or isolated Core homes are reported but preserved unless individually selected and manifest-verified.",
     }));
   } else if (existsSync(home.productRootPath)) {
-    targets.push(await pathTarget({
+    const target = await pathTarget({
       id: "state.default_product_root",
       kind: "state_root",
       path: home.productRootPath,
       selected,
       removal: "rm",
       evidence: ["default macOS Kestrel product root"],
-    }));
+    });
+    const manifest = await readCoreManifest(home.homePath).catch(() => undefined);
+    const manifestVerified =
+      manifest !== undefined &&
+      manifest.homePath === home.homePath &&
+      manifest.stateEpoch === home.stateEpoch;
+    targets.push({
+      ...target,
+      verified: target.verified && manifestVerified,
+      fingerprint: hashValue({
+        pathFingerprint: target.fingerprint,
+        manifest: manifest === undefined
+          ? null
+          : {
+              version: manifest.version,
+              stateEpoch: manifest.stateEpoch,
+              coreVersion: manifest.coreVersion,
+              schemaVersion: manifest.schemaVersion,
+              homePath: manifest.homePath,
+              dbMode: manifest.dbMode,
+            },
+      }),
+      evidence: [
+        ...target.evidence,
+        manifestVerified
+          ? `Local Core manifest ${manifest.coreVersion}`
+          : "Local Core manifest missing or invalid",
+      ],
+      ...(
+        manifestVerified
+          ? {}
+          : {
+              blockedReason:
+                "Default Kestrel product root is not manifest-verified.",
+            }
+      ),
+    });
   }
 
   const homeDir = os.homedir();
   const stateCandidates: Array<Omit<PathTargetInput, "selected">> = [
+    {
+      id: "state.electron_profile_current",
+      kind: "electron_profile",
+      path: path.join(homeDir, "Library", "Application Support", "Kestrel"),
+      removal: "rm",
+      evidence: ["current Electron profile path"],
+    },
     {
       id: "state.electron_profile",
       kind: "electron_profile",
@@ -798,6 +1342,13 @@ async function inventoryStateTargets(input: {
       path: path.join(homeDir, "Library", "Preferences", "com.kestrel.desktop.plist"),
       removal: "rm",
       evidence: ["Desktop preferences domain"],
+    },
+    {
+      id: "state.desktop_cache_current",
+      kind: "cache",
+      path: path.join(homeDir, "Library", "Caches", "Kestrel"),
+      removal: "rm",
+      evidence: ["current Desktop cache path"],
     },
     {
       id: "state.desktop_cache",
@@ -894,9 +1445,43 @@ async function shutdownLocalCoreIfPresent(input: {
     token,
     timeoutMs: 2_000,
   });
+  const before = await client.systemLifecycle();
+  if (before.state === "busy") {
+    throw new Error("Local Core is busy and cannot shut down for uninstall.");
+  }
   const lifecycle = await client.shutdownForUninstall();
   if (lifecycle.state !== "idle") {
     throw new Error("Local Core remained busy during uninstall shutdown.");
+  }
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const socketExists = existsSync(paths.apiSocketPath);
+    const lockExists = existsSync(paths.lockPath);
+    const ownerAlive =
+      before.owner !== undefined && isProcessAlive(before.owner.pid);
+    if (socketExists === false && lockExists === false && ownerAlive === false) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        "Local Core did not remove its socket/lock or terminate its verified owner after shutdown.",
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "ESRCH"
+    );
   }
 }
 
@@ -914,7 +1499,19 @@ async function inspectManagedWorktrees(input: {
   const entries: KestrelUninstallWorktreeSummary["entries"] = [];
   for (const entry of inventory) {
     const { inspection } = entry;
-    const disposition = inspection.retention.disposition;
+    const ignoredFiles = await listGitFiles(
+      inspection.binding.worktreeRoot,
+      ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+    ).catch(() => []);
+    const ignored = await summarizeFiles(
+      inspection.binding.worktreeRoot,
+      ignoredFiles,
+    );
+    const disposition =
+      inspection.retention.disposition === "clean_disposable" &&
+      ignored.count > 0
+        ? "retain_with_snapshot"
+        : inspection.retention.disposition;
     if (disposition === "clean_disposable") cleanDisposable += 1;
     else if (disposition === "retain_with_snapshot") retained += 1;
     else blocked += 1;
@@ -925,7 +1522,16 @@ async function inspectManagedWorktrees(input: {
       dirty: inspection.dirtyState.dirty,
       aheadCommitCount: inspection.aheadCommitCount,
       storageBytes: inspection.storageBytes,
-      reasons: inspection.retention.reasons,
+      ignoredFileCount: ignored.count,
+      ignoredBytes: ignored.bytes,
+      reasons: [
+        ...inspection.retention.reasons,
+        ...(ignored.count > 0
+          ? [
+              `${ignored.count} ignored file(s), ${ignored.bytes} byte(s), require explicit discard`,
+            ]
+          : []),
+      ],
     });
   }
   return { cleanDisposable, retained, blocked, totalBytes, entries };
@@ -982,7 +1588,8 @@ async function localCoreClientFor(input: {
 async function removeTarget(
   target: KestrelUninstallTarget,
   operations: KestrelUninstallCoordinatorOperations,
-): Promise<void> {
+  planId: string,
+): Promise<{ deferredCompletion?: KestrelUninstallDeferredCompletion } | void> {
   if (target.verified === false) {
     throw new Error(`Refusing to remove unverified target '${target.id}'.`);
   }
@@ -1004,12 +1611,19 @@ async function removeTarget(
       throw new Error(`Target '${target.id}' has no package manager command.`);
     }
     if (target.path !== undefined && await isCurrentProcessInside(target.path)) {
-      if (operations.scheduleCliFinalizer !== undefined) await operations.scheduleCliFinalizer(target);
-      else await scheduleCliSelfRemovalFinalizer(target);
-      throw new NonBlockingUninstallFailure(
-        "UNINSTALL_CLI_FINALIZER_SCHEDULED",
-        `Target '${target.id}' is owned by the running CLI and was scheduled for removal after process exit.`,
-      );
+      const reportPath = operations.scheduleCliFinalizer !== undefined
+        ? await operations.scheduleCliFinalizer(target, planId)
+        : await scheduleCliSelfRemovalFinalizer(target, planId);
+      if (typeof reportPath !== "string" || reportPath.length === 0) {
+        throw new Error("CLI uninstall finalizer did not provide a report path.");
+      }
+      return {
+        deferredCompletion: {
+          executor: "cli_finalizer",
+          state: "scheduled",
+          reportPath,
+        },
+      };
     }
     if (operations.runPackageManager !== undefined) {
       await operations.runPackageManager(target.command);
@@ -1026,12 +1640,19 @@ async function removeTarget(
     throw new Error(`Target '${target.id}' has no path.`);
   }
   if (target.kind === "cli_bundle" && await isCurrentProcessInside(target.path)) {
-    if (operations.scheduleCliFinalizer !== undefined) await operations.scheduleCliFinalizer(target);
-    else await scheduleCliSelfRemovalFinalizer(target);
-    throw new NonBlockingUninstallFailure(
-      "UNINSTALL_CLI_FINALIZER_SCHEDULED",
-      `Target '${target.id}' is owned by the running CLI and was scheduled for removal after process exit.`,
-    );
+    const reportPath = operations.scheduleCliFinalizer !== undefined
+      ? await operations.scheduleCliFinalizer(target, planId)
+      : await scheduleCliSelfRemovalFinalizer(target, planId);
+    if (typeof reportPath !== "string" || reportPath.length === 0) {
+      throw new Error("CLI uninstall finalizer did not provide a report path.");
+    }
+    return {
+      deferredCompletion: {
+        executor: "cli_finalizer",
+        state: "scheduled",
+        reportPath,
+      },
+    };
   }
   await assertSafeRemovalPath(target.path, target.kind);
   if (target.removal === "unlink") {
@@ -1050,15 +1671,6 @@ async function removeTarget(
   else await rm(target.path, { recursive: true, force: true });
 }
 
-class NonBlockingUninstallFailure extends Error {
-  readonly code: string;
-
-  constructor(code: string, message: string) {
-    super(message);
-    this.code = code;
-  }
-}
-
 async function isCurrentProcessInside(candidatePath: string): Promise<boolean> {
   const candidate = await realpath(candidatePath).catch(() => undefined);
   if (candidate === undefined) return false;
@@ -1074,26 +1686,35 @@ async function isCurrentProcessInside(candidatePath: string): Promise<boolean> {
   return false;
 }
 
-async function scheduleCliSelfRemovalFinalizer(target: KestrelUninstallTarget): Promise<void> {
+async function scheduleCliSelfRemovalFinalizer(
+  target: KestrelUninstallTarget,
+  planId: string,
+): Promise<string> {
   const finalizerDir = path.join(os.tmpdir(), `kestrel-uninstall-finalizer-${process.pid}-${Date.now()}`);
   await mkdir(finalizerDir, { recursive: true, mode: 0o700 });
+  const reportDir = path.join(UNINSTALL_REPORT_ROOT, planId);
+  await mkdir(reportDir, { recursive: true, mode: 0o700 });
+  const reportPath = path.join(reportDir, "cli-finalizer.json");
   const scriptPath = path.join(finalizerDir, "finalize.mjs");
   await writeFile(scriptPath, cliFinalizerScript(), { encoding: "utf8", mode: 0o600 });
   await chmod(scriptPath, 0o700);
   const child = spawn(process.execPath, [scriptPath, JSON.stringify({
     parentPid: process.pid,
+    planId,
     target,
     finalizerDir,
+    reportPath,
   })], {
     detached: true,
     stdio: "ignore",
   });
   child.unref();
+  return reportPath;
 }
 
 function cliFinalizerScript(): string {
   return [
-    "import { rm, unlink } from 'node:fs/promises';",
+    "import { chmod, rename, rm, unlink, writeFile } from 'node:fs/promises';",
     "import { spawn } from 'node:child_process';",
     "const input = JSON.parse(process.argv[2] || '{}');",
     "while (true) {",
@@ -1101,20 +1722,43 @@ function cliFinalizerScript(): string {
     "  catch { break; }",
     "}",
     "const target = input.target || {};",
+    "const removedTargets = [];",
+    "const failures = [];",
     "try {",
-    "  if (target.removal === 'package_manager') {",
-    "    const [command, ...args] = target.command || [];",
-    "    if (!command) throw new Error('missing package manager command');",
-    "    await new Promise((resolve, reject) => {",
-    "      const child = spawn(command, args, { stdio: 'ignore' });",
-    "      child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`package manager exited ${code}`)));",
-    "      child.once('error', reject);",
-    "    });",
-    "  } else if (target.removal === 'unlink' && target.path) {",
-    "    await unlink(target.path).catch((error) => { if (error?.code !== 'ENOENT') throw error; });",
-    "  } else if (target.path) {",
-    "    await rm(target.path, { recursive: true, force: true });",
+    "  try {",
+    "    if (target.removal === 'package_manager') {",
+    "      const [command, ...args] = target.command || [];",
+    "      if (!command || !command.startsWith('/')) throw new Error('package manager command must be absolute');",
+    "      await new Promise((resolve, reject) => {",
+    "        const child = spawn(command, args, { stdio: 'ignore' });",
+    "        child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`package manager exited ${code}`)));",
+    "        child.once('error', reject);",
+    "      });",
+    "    } else if (target.removal === 'unlink' && target.path) {",
+    "      await unlink(target.path).catch((error) => { if (error?.code !== 'ENOENT') throw error; });",
+    "    } else if (target.path) {",
+    "      await rm(target.path, { recursive: true, force: true });",
+    "    } else {",
+    "      throw new Error('target path is missing');",
+    "    }",
+    "    removedTargets.push(target.id);",
+    "  } catch (error) {",
+    "    failures.push({ code: 'UNINSTALL_TARGET_REMOVE_FAILED', targetId: target.id || '', message: error instanceof Error ? error.message : String(error) });",
     "  }",
+    "  const report = {",
+    "    version: 'kestrel_uninstall_completion_report_v1',",
+    "    executor: 'cli_finalizer',",
+    "    planId: input.planId,",
+    "    status: failures.length === 0 ? 'complete' : 'partial',",
+    "    completedAt: new Date().toISOString(),",
+    "    removedTargets,",
+    "    failures,",
+    "    reportPath: input.reportPath,",
+    "  };",
+    "  const temporaryReportPath = `${input.reportPath}.tmp-${process.pid}`;",
+    "  await writeFile(temporaryReportPath, `${JSON.stringify(report, null, 2)}\\n`, { mode: 0o600 });",
+    "  await chmod(temporaryReportPath, 0o600);",
+    "  await rename(temporaryReportPath, input.reportPath);",
     "} finally {",
     "  if (input.finalizerDir) await rm(input.finalizerDir, { recursive: true, force: true }).catch(() => {});",
     "}",
@@ -1132,6 +1776,39 @@ function ignoreMissingPath(error: unknown): void {
     return;
   }
   throw error;
+}
+
+function safeErrorCode(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string" &&
+    /^(?:EAI_AGAIN|ECONNABORTED|ECONNREFUSED|ECONNRESET|ENETUNREACH|ETIMEDOUT)$/u.test(
+      (error as { code: string }).code,
+    )
+  ) {
+    return (error as { code: string }).code;
+  }
+  return "KESTREL_ONE_DISCONNECT_FAILED";
+}
+
+function safeDisconnectErrorMessage(errorCode: string): string {
+  switch (errorCode) {
+    case "EAI_AGAIN":
+      return "The Kestrel One address could not be resolved; local uninstall continued.";
+    case "ECONNABORTED":
+    case "ECONNRESET":
+      return "The Kestrel One connection ended before disconnect completed; local uninstall continued.";
+    case "ECONNREFUSED":
+      return "The Kestrel One service refused the connection; local uninstall continued.";
+    case "ENETUNREACH":
+      return "The Kestrel One network was unreachable; local uninstall continued.";
+    case "ETIMEDOUT":
+      return "The Kestrel One disconnect timed out; local uninstall continued.";
+    default:
+      return "Kestrel One disconnect failed; local uninstall continued.";
+  }
 }
 
 interface PathTargetInput {
@@ -1167,18 +1844,22 @@ async function fingerprintPath(inputPath: string): Promise<{
   try {
     const entry = await lstat(inputPath);
     const real = await realpath(inputPath);
+    const currentUid = process.getuid?.();
+    const ownedByCurrentUser =
+      currentUid === undefined || entry.uid === currentUid;
     return {
-      verified: entry.isSymbolicLink() === false,
+      verified: entry.isSymbolicLink() === false && ownedByCurrentUser,
       fingerprint: hashValue({
         path: inputPath,
         real,
         mode: entry.mode,
         uid: entry.uid,
-        mtimeMs: Math.trunc(entry.mtimeMs),
+        type: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other",
       }),
       evidence: [
         `realpath ${real}`,
         `uid ${entry.uid}`,
+        ownedByCurrentUser ? "owned by current user" : "foreign owner",
         entry.isSymbolicLink() ? "root is symlink" : "root is not symlink",
       ],
     };
@@ -1253,12 +1934,18 @@ async function inspectCliBundle(realTarget: string): Promise<{
 }
 
 async function inspectCliPackageInstall(realTarget: string, env: NodeJS.ProcessEnv): Promise<{
+  status: "verified";
   packageRoot: string;
   name: typeof KESTREL_PACKAGE_NAME;
   command: string[];
+} | {
+  status: "ambiguous";
+  packageRoot: string;
+  managers: string[];
 } | undefined> {
   const packageRoot = await findOwningPackageRoot(realTarget);
   if (packageRoot === undefined) return undefined;
+  const matches: Array<{ managerName: "pnpm" | "npm"; manager: string }> = [];
   for (const managerName of ["pnpm", "npm"] as const) {
     const manager = await findExecutable(managerName, env);
     if (manager === undefined) continue;
@@ -1268,13 +1955,28 @@ async function inspectCliPackageInstall(realTarget: string, env: NodeJS.ProcessE
       path.join(globalRoot, "@kestrel-agents", "kestrel"),
     ).catch(() => undefined);
     if (expectedPackageRoot !== packageRoot) continue;
+    matches.push({ managerName, manager });
+  }
+  if (matches.length === 0) return undefined;
+  if (matches.length > 1) {
     return {
+      status: "ambiguous",
       packageRoot,
-      name: KESTREL_PACKAGE_NAME,
-      command: [manager, managerName === "pnpm" ? "remove" : "uninstall", "--global", KESTREL_PACKAGE_NAME],
+      managers: matches.map(({ manager }) => manager),
     };
   }
-  return undefined;
+  const match = matches[0]!;
+  return {
+    status: "verified",
+    packageRoot,
+    name: KESTREL_PACKAGE_NAME,
+    command: [
+      match.manager,
+      match.managerName === "pnpm" ? "remove" : "uninstall",
+      "--global",
+      KESTREL_PACKAGE_NAME,
+    ],
+  };
 }
 
 async function findOwningPackageRoot(realTarget: string): Promise<string | undefined> {
@@ -1342,6 +2044,8 @@ async function buildApplyResult(
   blockers: KestrelUninstallBlocker[],
   operations: KestrelUninstallCoordinatorOperations,
   requestedDeferredTargetIds: ReadonlySet<string> = new Set(),
+  kestrelOneDisconnects: KestrelOneDisconnectResult[] = [],
+  deferredCompletions: KestrelUninstallDeferredCompletion[] = [],
 ): Promise<KestrelUninstallApplyResultV1> {
   const finalPlan = await createKestrelUninstallPlan({
     initiator: plan.initiator,
@@ -1370,8 +2074,39 @@ async function buildApplyResult(
   const remainingTargets = finalPlan.targets.filter((target) =>
     target.selected && selectedTargetIds.has(target.id),
   );
+  const keychainVerificationBlockers: KestrelUninstallBlocker[] = [];
+  if (
+    removedTargets.includes("credentials.local_core_keychain_service") &&
+    (
+      operations.keychainServiceHasItems !== undefined ||
+      (operations.purgeKeychain === undefined && process.platform === "darwin")
+    )
+  ) {
+    try {
+      const hasItems = operations.keychainServiceHasItems !== undefined
+        ? await operations.keychainServiceHasItems()
+        : await hasMacosLocalCoreKeychainServiceItems();
+      if (hasItems) {
+        keychainVerificationBlockers.push({
+          code: "UNINSTALL_FINAL_VERIFICATION_FAILED",
+          message:
+            "The Kestrel Local Core Keychain service still contains credential items.",
+          targetId: "credentials.local_core_keychain_service",
+        });
+      }
+    } catch (error) {
+      keychainVerificationBlockers.push({
+        code: "UNINSTALL_FINAL_VERIFICATION_FAILED",
+        message: `Keychain purge verification failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        targetId: "credentials.local_core_keychain_service",
+      });
+    }
+  }
   const finalBlockers = [
     ...blockers,
+    ...keychainVerificationBlockers,
     ...remainingTargets.map((target) => ({
       code: "UNINSTALL_FINAL_VERIFICATION_FAILED",
       message: `Selected uninstall target '${target.id}' remains after apply.`,
@@ -1395,6 +2130,8 @@ async function buildApplyResult(
     skippedTargets,
     blockers: finalBlockers,
     finalTargets: finalPlan.targets,
+    kestrelOneDisconnects,
+    deferredCompletions,
   };
 }
 
@@ -1435,7 +2172,6 @@ async function recoverOrDiscardManagedWorktrees(
       "-z",
     ]);
     if (
-      inspection.retention.disposition === "retain_with_snapshot" &&
       ignored.length > 0 &&
       plan.options.discardWorktrees === false
     ) {
@@ -1532,6 +2268,7 @@ async function createRecoveryBundle(
     "-z",
   ]);
   for (const relativePath of untracked) {
+    assertSafeRecoveryRelativePath(relativePath);
     const source = path.join(worktreeRoot, relativePath);
     const destination = path.join(bundleRoot, "untracked", relativePath);
     await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
@@ -1545,11 +2282,34 @@ async function createRecoveryBundle(
     [
       "#!/usr/bin/env sh",
       "set -eu",
-      "echo 'Restore this Kestrel worktree bundle into a clean clone manually:'",
-      "echo '  git bundle unbundle commits.bundle'",
-      "echo '  git apply staged.patch'",
-      "echo '  git apply unstaged.patch'",
-      "echo '  copy files from untracked/ as needed'",
+      "if [ \"$#\" -ne 1 ]; then",
+      "  echo \"usage: $0 /path/to/clean-clone\" >&2",
+      "  exit 64",
+      "fi",
+      "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)",
+      "DESTINATION=$1",
+      "if [ ! -d \"$DESTINATION/.git\" ] && ! git -C \"$DESTINATION\" rev-parse --git-dir >/dev/null 2>&1; then",
+      "  echo \"restore destination must be a Git worktree\" >&2",
+      "  exit 65",
+      "fi",
+      "if [ -n \"$(git -C \"$DESTINATION\" status --porcelain --untracked-files=all)\" ]; then",
+      "  echo \"restore destination must be clean\" >&2",
+      "  exit 66",
+      "fi",
+      "(cd \"$SCRIPT_DIR\" && shasum -a 256 -c checksums.sha256)",
+      "git -C \"$DESTINATION\" bundle verify \"$SCRIPT_DIR/commits.bundle\" >/dev/null",
+      "git -C \"$DESTINATION\" fetch \"$SCRIPT_DIR/commits.bundle\" HEAD",
+      "git -C \"$DESTINATION\" checkout --detach FETCH_HEAD",
+      "if [ -s \"$SCRIPT_DIR/staged.patch\" ]; then",
+      "  git -C \"$DESTINATION\" apply --index --binary \"$SCRIPT_DIR/staged.patch\"",
+      "fi",
+      "if [ -s \"$SCRIPT_DIR/unstaged.patch\" ]; then",
+      "  git -C \"$DESTINATION\" apply --binary \"$SCRIPT_DIR/unstaged.patch\"",
+      "fi",
+      "if [ -d \"$SCRIPT_DIR/untracked\" ]; then",
+      "  cp -R \"$SCRIPT_DIR/untracked/.\" \"$DESTINATION/\"",
+      "fi",
+      "git -C \"$DESTINATION\" status --short",
       "",
     ].join("\n"),
     { encoding: "utf8", mode: 0o700 },
@@ -1567,11 +2327,34 @@ async function createRecoveryBundle(
     }, null, 2)}\n`,
     { encoding: "utf8", mode: 0o600 },
   );
+  const checksums = await recoveryChecksums(bundleRoot);
   await writeFile(
     path.join(bundleRoot, "checksums.json"),
-    `${JSON.stringify(await recoveryChecksums(bundleRoot), null, 2)}\n`,
+    `${JSON.stringify(checksums, null, 2)}\n`,
     { encoding: "utf8", mode: 0o600 },
   );
+  await writeFile(
+    path.join(bundleRoot, "checksums.sha256"),
+    `${Object.entries(checksums)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([relativePath, checksum]) => `${checksum}  ${relativePath}`)
+      .join("\n")}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+}
+
+function assertSafeRecoveryRelativePath(relativePath: string): void {
+  if (
+    relativePath.length === 0 ||
+    relativePath.includes("\n") ||
+    relativePath.includes("\r") ||
+    path.isAbsolute(relativePath) ||
+    path.normalize(relativePath) !== relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`)
+  ) {
+    throw new Error(`Unsafe worktree recovery path '${relativePath}'.`);
+  }
 }
 
 async function removeManagedWorktree(entry: ManagedTaskWorktreeInventoryEntry): Promise<void> {
@@ -1679,6 +2462,12 @@ async function assertSafeRemovalPath(
     throw new Error(`Unsupported filesystem removal kind '${kind}'.`);
   }
   const entry = await lstat(candidatePath);
+  const currentUid = process.getuid?.();
+  if (currentUid !== undefined && entry.uid !== currentUid) {
+    throw new Error(
+      `Refusing to remove foreign-owned path '${candidatePath}' (uid ${entry.uid}).`,
+    );
+  }
   if (entry.isSymbolicLink() && kind !== "cli_symlink") {
     throw new Error(`Refusing to remove symlink root '${candidatePath}'.`);
   }
@@ -1723,6 +2512,21 @@ function hashPlan(plan: KestrelUninstallPlanV1): string {
     worktrees: plan.worktrees,
     kestrelOne: plan.kestrelOne,
   }).slice(0, 24);
+}
+
+async function pruneExpiredUninstallReports(): Promise<void> {
+  const retentionCutoff = Date.now() - 7 * 24 * 60 * 60 * 1_000;
+  const entries = await readdir(UNINSTALL_REPORT_ROOT, {
+    withFileTypes: true,
+  }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.isDirectory() === false) continue;
+    const reportDirectory = path.join(UNINSTALL_REPORT_ROOT, entry.name);
+    const reportStat = await stat(reportDirectory).catch(() => undefined);
+    if (reportStat !== undefined && reportStat.mtimeMs < retentionCutoff) {
+      await rm(reportDirectory, { recursive: true, force: true });
+    }
+  }
 }
 
 function hashValue(value: unknown): string {

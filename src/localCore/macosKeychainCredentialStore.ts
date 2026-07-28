@@ -223,6 +223,24 @@ export async function purgeMacosLocalCoreKeychainService(
   }
 }
 
+export async function hasMacosLocalCoreKeychainServiceItems(
+  runCommand: MacosSecurityCommandRunner = runMacosSecurityCommand,
+): Promise<boolean> {
+  const result = await runCommand({
+    executable: MACOS_SECURITY_EXECUTABLE,
+    args: [
+      "find-generic-password",
+      "-s",
+      KESTREL_LOCAL_CORE_KEYCHAIN_SERVICE,
+    ],
+  });
+  if (isMacosKeychainItemNotFound(result)) return false;
+  if (result.exitCode !== 0) {
+    throw new MacosKeychainServicePurgeError(result.exitCode);
+  }
+  return true;
+}
+
 export class MacosKeychainServicePurgeError extends Error {
   readonly code = "LOCAL_CORE_KEYCHAIN_SERVICE_PURGE_FAILED";
   readonly backend = "macos_keychain" as const;
