@@ -349,6 +349,7 @@ export interface DesktopBridge {
   applyUninstallPlan(
     input: DesktopUninstallApplyInput,
   ): Promise<KestrelUninstallApplyResultV1>;
+  getPendingUninstallResult(): Promise<KestrelUninstallApplyResultV1 | undefined>;
   getCapabilities(): Promise<DesktopCapabilityView>;
   configureCapability(
     input: DesktopCapabilityConfigurationInput,

@@ -102,6 +102,10 @@ export function resolveDesktopBuilderConfiguration(
         from: path.join(desktopRoot, "assets", "kestrel-head.png"),
         to: path.join("assets", "kestrel-head.png"),
       },
+      {
+        from: path.join(desktopRoot, "resources", "kestrel-uninstall-helper"),
+        to: "kestrel-uninstall-helper",
+      },
     ],
     mac: {
       category: "public.app-category.developer-tools",

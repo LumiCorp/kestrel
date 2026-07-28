@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { Arch, build, Platform, type Configuration } from "electron-builder";
@@ -28,6 +28,7 @@ if (
 }
 
 writeDesktopPublicAppConfiguration();
+prepareDesktopUninstallHelper();
 
 const config = resolveDesktopBuilderConfiguration({
   repoRoot,
@@ -94,6 +95,36 @@ function readVersion(packageJsonPath: string): string {
     );
   }
   return parsed.version;
+}
+
+function prepareDesktopUninstallHelper(): void {
+  const sourcePath = path.join(
+    desktopRoot,
+    "native",
+    "kestrel-uninstall-helper.swift",
+  );
+  const resourcesDir = path.join(desktopRoot, "resources");
+  const outputPath = path.join(resourcesDir, "kestrel-uninstall-helper");
+  const moduleCachePath = path.join(resourcesDir, ".swift-module-cache");
+  if (existsSync(sourcePath) === false) {
+    throw new Error("Desktop uninstall helper source is missing.");
+  }
+  mkdirSync(moduleCachePath, { recursive: true });
+  execFileSync(
+    "/usr/bin/xcrun",
+    [
+      "swiftc",
+      "-module-cache-path",
+      moduleCachePath,
+      "-target",
+      "arm64-apple-macosx13.0",
+      sourcePath,
+      "-O",
+      "-o",
+      outputPath,
+    ],
+    { stdio: "inherit" },
+  );
 }
 
 function writeDesktopPublicAppConfiguration(): void {

@@ -93,6 +93,13 @@ function checkDesktopBuilderConfiguration(): void {
   if (!release.afterSign?.endsWith("notarize-desktop.mjs")) {
     errors.push("final Desktop builds must run the notarization hook.");
   }
+  if (
+    release.extraResources.some(
+      (resource) => resource.to === "kestrel-uninstall-helper",
+    ) === false
+  ) {
+    errors.push("Desktop packages must include the native uninstall helper.");
+  }
 }
 
 function checkDesktopLocalCoreOwnership(): void {
@@ -308,6 +315,54 @@ function checkPackagedDesktopSignature(): void {
   }
   if (!/flags=.*\([^)]*\bruntime\b[^)]*\)/u.test(signatureDetails)) {
     errors.push("packaged Desktop release must enable hardened runtime.");
+  }
+  const helperPath = path.join(
+    appPath,
+    "Contents",
+    "Resources",
+    "kestrel-uninstall-helper",
+  );
+  if (!existsSync(helperPath)) {
+    errors.push("packaged Desktop release is missing the uninstall helper.");
+  } else {
+    const helperVerification = spawnSync(
+      "codesign",
+      ["--verify", "--strict", "--verbose=2", helperPath],
+      { encoding: "utf8" },
+    );
+    if (helperVerification.status !== 0) {
+      errors.push(
+        `packaged uninstall helper signature is invalid: ${helperVerification.stderr.trim()}`,
+      );
+    }
+    const helperSignature = spawnSync(
+      "codesign",
+      ["-dv", "--verbose=4", helperPath],
+      { encoding: "utf8" },
+    );
+    const helperSignatureDetails =
+      `${helperSignature.stdout}\n${helperSignature.stderr}`;
+    const appAuthority = signatureDetails.match(/^Authority=(.+)$/mu)?.[1];
+    const helperAuthority =
+      helperSignatureDetails.match(/^Authority=(.+)$/mu)?.[1];
+    if (
+      helperSignature.status !== 0 ||
+      appAuthority === undefined ||
+      helperAuthority !== appAuthority
+    ) {
+      errors.push(
+        "packaged uninstall helper must use the same Developer ID Application identity as Desktop.",
+      );
+    }
+    const architectures = spawnSync("lipo", ["-archs", helperPath], {
+      encoding: "utf8",
+    });
+    if (
+      architectures.status !== 0 ||
+      architectures.stdout.trim().split(/\s+/u).includes("arm64") === false
+    ) {
+      errors.push("packaged uninstall helper must include arm64.");
+    }
   }
   const staple = spawnSync("xcrun", ["stapler", "validate", appPath], { encoding: "utf8" });
   if (staple.status !== 0) {

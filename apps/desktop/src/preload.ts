@@ -52,6 +52,9 @@ const desktopBridge: DesktopBridge = {
   applyUninstallPlan(input: DesktopUninstallApplyInput) {
     return ipcRenderer.invoke("desktop:apply-uninstall-plan", input);
   },
+  getPendingUninstallResult() {
+    return ipcRenderer.invoke("desktop:get-pending-uninstall-result");
+  },
   getCapabilities(): Promise<DesktopCapabilityView> {
     return ipcRenderer.invoke("desktop:get-capabilities");
   },

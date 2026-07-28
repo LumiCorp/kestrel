@@ -169,6 +169,17 @@ export function SettingsWorkspace({
     void refresh();
     void refreshKestrelOne();
     void refreshKestrelOneAccount();
+    void window.kestrelDesktop
+      .getPendingUninstallResult()
+      .then((result) => {
+        if (result !== undefined) {
+          setUninstallResult(result);
+          setNotice(
+            `A previous Desktop uninstall completed with ${result.status} status.`,
+          );
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -667,6 +678,13 @@ export function SettingsWorkspace({
     }
   }
 
+  const uninstallConfirmationsSatisfied =
+    desktopUninstallConfirmationsSatisfied(
+      uninstallPlan,
+      uninstallDeleteDataPhrase,
+      uninstallDiscardPhrase,
+    );
+
   return (
     <main className="surface-pane settings-surface" id="app-main">
       <header className="surface-header">
@@ -856,6 +874,12 @@ export function SettingsWorkspace({
                 selected · {uninstallPlan.blockers.length} blocker
                 {uninstallPlan.blockers.length === 1 ? "" : "s"}
               </p>
+              <p>
+                Managed worktrees: {uninstallPlan.worktrees.cleanDisposable} clean,{" "}
+                {uninstallPlan.worktrees.retained} retained,{" "}
+                {uninstallPlan.worktrees.blocked} blocked ·{" "}
+                {uninstallPlan.worktrees.totalBytes.toLocaleString()} bytes
+              </p>
               <ul>
                 {uninstallPlan.targets
                   .filter((target) => target.selected)
@@ -907,7 +931,11 @@ export function SettingsWorkspace({
                 <button
                   className="secondary-button danger"
                   type="button"
-                  disabled={uninstallBusy || uninstallPlan.blockers.length > 0}
+                  disabled={
+                    uninstallBusy ||
+                    uninstallPlan.blockers.length > 0 ||
+                    uninstallConfirmationsSatisfied === false
+                  }
                   onClick={() => void applyUninstallPlan()}
                 >
                   {uninstallBusy ? "Applying..." : "Apply uninstall"}
@@ -927,6 +955,27 @@ export function SettingsWorkspace({
                       {uninstallResult.blockers.map((blocker) => (
                         <li key={`result-${blocker.code}-${blocker.targetId ?? "global"}`}>
                           {blocker.code}: {blocker.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {uninstallResult.kestrelOneDisconnects.length > 0 ? (
+                    <ul>
+                      {uninstallResult.kestrelOneDisconnects.map((outcome) => (
+                        <li key={`disconnect-${outcome.connectionId}`}>
+                          {outcome.connectionId} ({outcome.baseUrl || "unknown URL"}):{" "}
+                          {outcome.status}
+                          {outcome.message ? ` — ${outcome.message}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {uninstallResult.deferredCompletions.length > 0 ? (
+                    <ul>
+                      {uninstallResult.deferredCompletions.map((completion) => (
+                        <li key={`${completion.executor}-${completion.reportPath}`}>
+                          {completion.executor}: {completion.state}; report{" "}
+                          {completion.reportPath}
                         </li>
                       ))}
                     </ul>
@@ -1983,6 +2032,21 @@ export function getDesktopCapabilityAttentionQueue(
       capability.readiness === "verification_failed" ||
       capability.readiness === "unavailable",
   );
+}
+
+export function desktopUninstallConfirmationsSatisfied(
+  plan: KestrelUninstallPlanV1 | undefined,
+  deleteDataPhrase: string,
+  discardWorktreesPhrase: string,
+): boolean {
+  return plan !== undefined
+    && plan.confirmations.every((confirmation) => {
+      if (confirmation.kind === "plan_id") return true;
+      if (confirmation.kind === "delete_data") {
+        return deleteDataPhrase === confirmation.phrase;
+      }
+      return discardWorktreesPhrase === confirmation.phrase;
+    });
 }
 
 export function createToolServicesNavigationRequest(
