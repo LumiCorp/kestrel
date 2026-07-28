@@ -2,16 +2,54 @@ export interface DesktopBeforeQuitEvent {
   preventDefault(): void;
 }
 
-export interface DesktopBeforeQuitHandlerOptions {
+export interface DesktopShutdownPreparationOptions {
   stopProjectRuns?: (() => Promise<void> | void) | undefined;
-  closeWebServer?: (() => Promise<void> | void) | undefined;
+  closeAdapters?: (() => Promise<void> | void) | undefined;
   stopRunner?: (() => Promise<void> | void) | undefined;
-  quitApp: () => void;
+  closeDatabase?: (() => Promise<void> | void) | undefined;
 }
 
-export function createDesktopBeforeQuitHandler(
-  options: DesktopBeforeQuitHandlerOptions,
-): (event: DesktopBeforeQuitEvent) => void {
+export interface DesktopShutdownPreparation {
+  prepare(): Promise<void>;
+  isPrepared(): boolean;
+}
+
+export function createDesktopShutdownPreparation(
+  options: DesktopShutdownPreparationOptions,
+): DesktopShutdownPreparation {
+  let prepared = false;
+  let pending: Promise<void> | undefined;
+
+  return {
+    prepare() {
+      if (prepared) {
+        return Promise.resolve();
+      }
+      if (pending !== undefined) {
+        return pending;
+      }
+      pending = (async () => {
+        await options.stopProjectRuns?.();
+        await options.closeAdapters?.();
+        await options.stopRunner?.();
+        await options.closeDatabase?.();
+        prepared = true;
+      })().catch((cause) => {
+        pending = undefined;
+        throw cause;
+      });
+      return pending;
+    },
+    isPrepared() {
+      return prepared;
+    },
+  };
+}
+
+export function createDesktopBeforeQuitHandler(options: {
+  preparation: DesktopShutdownPreparation;
+  quitApp: () => void;
+}): (event: DesktopBeforeQuitEvent) => void {
   let handled = false;
 
   return (event: DesktopBeforeQuitEvent) => {
@@ -20,16 +58,9 @@ export function createDesktopBeforeQuitHandler(
     }
     handled = true;
     event.preventDefault();
-    void (async () => {
-      try {
-        await options.stopProjectRuns?.();
-        await Promise.all([
-          options.closeWebServer?.(),
-          options.stopRunner?.(),
-        ]);
-      } finally {
-        options.quitApp();
-      }
-    })().catch(() => {});
+    void options.preparation
+      .prepare()
+      .catch(() => {})
+      .finally(options.quitApp);
   };
 }

@@ -14,6 +14,7 @@ import type {
   DesktopRuntimeHealth,
   DesktopRuntimeStatus,
   DesktopReadinessItemId,
+  DesktopUpdateState,
 } from "../../src/contracts";
 
 export function DiagnosticsWorkspace(props: {
@@ -25,26 +26,30 @@ export function DiagnosticsWorkspace(props: {
   const [database, setDatabase] = useState<DesktopDatabaseStatus>();
   const [runtime, setRuntime] = useState<DesktopRuntimeStatus>();
   const [boot, setBoot] = useState<DesktopBootState>();
+  const [update, setUpdate] = useState<DesktopUpdateState>();
   const [notice, setNotice] = useState<string>();
   const [busyAction, setBusyAction] = useState<string>();
 
   useEffect(() => {
     void refresh();
+    return window.kestrelDesktop.onUpdateState(setUpdate);
   }, []);
 
   async function refresh() {
     setBusyAction("refresh");
     try {
-      const [health, databaseStatus, runtimeStatus, bootState] = await Promise.all([
+      const [health, databaseStatus, runtimeStatus, bootState, updateState] = await Promise.all([
         window.kestrelDesktop.getRuntimeHealth(),
         window.kestrelDesktop.getDatabaseStatus(),
         window.kestrelDesktop.getRuntimeStatus(),
         window.kestrelDesktop.getBootState(),
+        window.kestrelDesktop.getUpdateState(),
       ]);
       props.onRuntimeHealth(health);
       setDatabase(databaseStatus);
       setRuntime(runtimeStatus);
       setBoot(bootState);
+      setUpdate(updateState);
       props.onError(undefined);
     } catch (cause) {
       props.onError(errorMessage(cause));
@@ -73,6 +78,22 @@ export function DiagnosticsWorkspace(props: {
       const bundle = await window.kestrelDesktop.getSupportBundle();
       await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
       setNotice("Support bundle copied.");
+      props.onError(undefined);
+    } catch (cause) {
+      props.onError(errorMessage(cause));
+    } finally {
+      setBusyAction(undefined);
+    }
+  }
+
+  async function runUpdateAction(
+    id: string,
+    action: () => Promise<DesktopUpdateState>,
+  ) {
+    setBusyAction(id);
+    setNotice(undefined);
+    try {
+      setUpdate(await action());
       props.onError(undefined);
     } catch (cause) {
       props.onError(errorMessage(cause));
@@ -190,6 +211,59 @@ export function DiagnosticsWorkspace(props: {
               </div>
             ))}
             {boot?.readiness === undefined ? <p className="panel-empty">No readiness report</p> : null}
+          </div>
+        </section>
+
+        <section className="workspace-panel" aria-label="Desktop update">
+          <div className="panel-toolbar">
+            <span>Desktop update</span>
+            <span className="toolbar-status">{update?.phase ?? "unknown"}</span>
+          </div>
+          <div className="diagnostic-body">
+            <dl className="detail-list">
+              <div><dt>Installed</dt><dd>{update?.currentVersion ?? "-"}</dd></div>
+              <div><dt>Available</dt><dd>{update?.targetVersion ?? "-"}</dd></div>
+              <div><dt>Progress</dt><dd>{update?.progressPercent !== undefined ? `${update.progressPercent}%` : "-"}</dd></div>
+            </dl>
+            <p>{update?.message ?? "Update status unavailable."}</p>
+            {update !== undefined && update.blockers.length > 0 ? (
+              <p className="inline-warning">
+                Finish active work before restarting: {update.blockers.join(", ")}.
+              </p>
+            ) : null}
+            <div className="action-row">
+              {update?.phase === "available" ? (
+                <button
+                  type="button"
+                  disabled={busyAction !== undefined}
+                  onClick={() => void runUpdateAction("download-update", () => window.kestrelDesktop.downloadUpdate())}
+                >
+                  Download
+                </button>
+              ) : update?.phase === "downloaded" || update?.phase === "blocked" ? (
+                <button
+                  type="button"
+                  disabled={busyAction !== undefined}
+                  onClick={() => void runUpdateAction("install-update", () => window.kestrelDesktop.installUpdate())}
+                >
+                  Restart and Install
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={
+                    busyAction !== undefined ||
+                    update?.supported !== true ||
+                    update.phase === "checking" ||
+                    update.phase === "downloading" ||
+                    update.phase === "installing"
+                  }
+                  onClick={() => void runUpdateAction("check-update", () => window.kestrelDesktop.checkForUpdates())}
+                >
+                  Check for Updates
+                </button>
+              )}
+            </div>
           </div>
         </section>
 

@@ -418,6 +418,11 @@ async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string
   await window.getByRole("button", { name: "Close Custom App editor", exact: true }).click();
 
   await openRendererSurface(window, "Diagnostics", "Diagnostics");
+  const updatePanel = window.getByRole("region", { name: "Desktop update" });
+  await updatePanel.waitFor({ timeout: 30_000 });
+  await updatePanel
+    .getByRole("button", { name: "Check for Updates", exact: true })
+    .waitFor({ timeout: 30_000 });
   await assertNoSurfaceError(window, "Diagnostics");
   await window.screenshot({ path: diagnosticsScreenshotPath, fullPage: true });
 

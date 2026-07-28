@@ -260,6 +260,31 @@ export interface DesktopRuntimeStatus {
   logPath: string;
 }
 
+export type DesktopUpdatePhase =
+  | "unsupported"
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "blocked"
+  | "installing"
+  | "error";
+
+export type DesktopUpdateBlocker =
+  | "active_execution"
+  | "managed_project_process";
+
+export interface DesktopUpdateState {
+  supported: boolean;
+  phase: DesktopUpdatePhase;
+  currentVersion: string;
+  targetVersion?: string | undefined;
+  progressPercent?: number | undefined;
+  blockers: DesktopUpdateBlocker[];
+  message: string;
+}
+
 export interface DesktopRuntimeStoreResetResult extends DesktopRuntimeStoreReset {
   runtimeStatus: DesktopRuntimeStatus;
 }
@@ -382,6 +407,11 @@ export interface DesktopBridge {
   requestMicrophoneAccess(): Promise<DesktopMicrophoneAccess>;
   resetRuntimeStore(): Promise<DesktopRuntimeStoreResetResult>;
   restartApp(): Promise<void>;
+  getUpdateState(): Promise<DesktopUpdateState>;
+  checkForUpdates(): Promise<DesktopUpdateState>;
+  downloadUpdate(): Promise<DesktopUpdateState>;
+  installUpdate(): Promise<DesktopUpdateState>;
+  onUpdateState(listener: (state: DesktopUpdateState) => void): () => void;
   openDiagnostics(): Promise<void>;
   getRuntimeStatus(): Promise<DesktopRuntimeStatus>;
   getRuntimeHealth(): Promise<DesktopRuntimeHealth>;

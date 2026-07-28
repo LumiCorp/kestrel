@@ -21,6 +21,7 @@ import type {
   DesktopRunnerEvent,
   DesktopRunTurnRequest,
   DesktopRuntimeHealth,
+  DesktopUpdateState,
   DesktopThreadAuthorityResult,
   DesktopSupportBundle,
   DesktopShellCommand,
@@ -207,6 +208,30 @@ const desktopBridge: DesktopBridge = {
   },
   restartApp() {
     return ipcRenderer.invoke("desktop:restart-app");
+  },
+  getUpdateState(): Promise<DesktopUpdateState> {
+    return ipcRenderer.invoke("desktop:get-update-state");
+  },
+  checkForUpdates(): Promise<DesktopUpdateState> {
+    return ipcRenderer.invoke("desktop:check-for-updates");
+  },
+  downloadUpdate(): Promise<DesktopUpdateState> {
+    return ipcRenderer.invoke("desktop:download-update");
+  },
+  installUpdate(): Promise<DesktopUpdateState> {
+    return ipcRenderer.invoke("desktop:install-update");
+  },
+  onUpdateState(listener) {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: DesktopUpdateState,
+    ) => {
+      listener(state);
+    };
+    ipcRenderer.on("desktop:update-state", handler);
+    return () => {
+      ipcRenderer.removeListener("desktop:update-state", handler);
+    };
   },
   openDiagnostics() {
     return ipcRenderer.invoke("desktop:open-diagnostics");

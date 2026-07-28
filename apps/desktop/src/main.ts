@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import electronSquirrelStartup from "electron-squirrel-startup";
+import electronUpdater from "electron-updater";
 import {
   app,
   BrowserWindow,
@@ -117,6 +118,7 @@ import type {
   DesktopSettings,
   DesktopModelProvider,
   DesktopShellCommand,
+  DesktopUpdateBlocker,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
 import {
@@ -131,7 +133,19 @@ import {
   resolveDesktopProjectRootForWatcherCleanup,
   resolveVerifiedDesktopPathTarget,
 } from "./fileAccess.js";
-import { createDesktopBeforeQuitHandler } from "./lifecycle.js";
+import {
+  createDesktopBeforeQuitHandler,
+  createDesktopShutdownPreparation,
+  type DesktopShutdownPreparation,
+} from "./lifecycle.js";
+import { createElectronUpdaterAdapter } from "./electronUpdaterAdapter.js";
+import {
+  DesktopUpdateCoordinator,
+} from "./updater.js";
+import {
+  buildDesktopUpdateDialog,
+  resolveDesktopUpdateDialogAction,
+} from "./updateDialog.js";
 import {
   LocalCoreRunnerTransport,
   type DesktopRunnerControlTransport,
@@ -320,6 +334,9 @@ if (rejectedDaemonAppLaunch) {
 const currentModulePath = fileURLToPath(import.meta.url);
 const currentDir = path.dirname(currentModulePath);
 const preloadPath = path.join(currentDir, "preload.js");
+const { autoUpdater } = electronUpdater;
+let desktopUpdateCoordinator: DesktopUpdateCoordinator | undefined;
+let desktopShutdownPreparation: DesktopShutdownPreparation | undefined;
 
 async function main(): Promise<void> {
   await app.whenReady();
@@ -356,9 +373,13 @@ async function main(): Promise<void> {
   }
 
   configureEmbeddedPreviewSecurity();
+  desktopShutdownPreparation = createMainDesktopShutdownPreparation();
+  desktopUpdateCoordinator = createMainDesktopUpdateCoordinator(
+    desktopShutdownPreparation,
+  );
   registerBootIpcHandlers();
   installApplicationMenu();
-  installDesktopLifecycleHandlers();
+  installDesktopLifecycleHandlers(desktopShutdownPreparation);
   await startDesktopStartup({
     showBootWindow: async () => {
       await ensureMainWindow();
@@ -472,7 +493,9 @@ async function startDesktopServices(): Promise<void> {
   await bootDesktop({ config: localCoreConfig, runnerTransport });
 }
 
-function installDesktopLifecycleHandlers(): void {
+function installDesktopLifecycleHandlers(
+  preparation: DesktopShutdownPreparation,
+): void {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       void ensureMainWindow();
@@ -486,22 +509,50 @@ function installDesktopLifecycleHandlers(): void {
   app.on(
     "before-quit",
     createDesktopBeforeQuitHandler({
-      stopProjectRuns: stopCoreProjectRuns,
-      closeWebServer: async () => {},
-      stopRunner: async () => {
-        unsubscribeProjectRunEvents?.();
-        await Promise.all(
-          [...desktopRunnerAdapters.values()].map(
-            async (adapter) => await adapter.close(),
-          ),
-        );
-        desktopRunnerAdapters.clear();
-        await runnerTransport?.stop();
-        await databaseController?.close();
-      },
+      preparation,
       quitApp: () => app.quit(),
     }),
   );
+}
+
+function createMainDesktopShutdownPreparation(): DesktopShutdownPreparation {
+  return createDesktopShutdownPreparation({
+    stopProjectRuns: stopCoreProjectRuns,
+    closeAdapters: async () => {
+      unsubscribeProjectRunEvents?.();
+      await Promise.all(
+        [...desktopRunnerAdapters.values()].map(
+          async (adapter) => await adapter.close(),
+        ),
+      );
+      desktopRunnerAdapters.clear();
+    },
+    stopRunner: async () => {
+      await runnerTransport?.stop();
+    },
+    closeDatabase: async () => {
+      await databaseController?.close();
+    },
+  });
+}
+
+function createMainDesktopUpdateCoordinator(
+  preparation: DesktopShutdownPreparation,
+): DesktopUpdateCoordinator {
+  return new DesktopUpdateCoordinator({
+    updater: createElectronUpdaterAdapter(autoUpdater),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    currentVersion: app.getVersion(),
+    getBlockers: getDesktopUpdateBlockers,
+    prepareForInstall: async () => await preparation.prepare(),
+    publish(state) {
+      if (mainWindow?.isDestroyed() === false) {
+        mainWindow.webContents.send("desktop:update-state", state);
+      }
+    },
+  });
 }
 
 async function reportDesktopStartupFailure(error: unknown): Promise<void> {
@@ -532,6 +583,16 @@ function requireDesktopConfig(): ReturnType<typeof resolveDesktopPathConfig> {
     });
   }
   return desktopConfig;
+}
+
+function requireDesktopUpdateCoordinator(): DesktopUpdateCoordinator {
+  if (desktopUpdateCoordinator === undefined) {
+    throw createDesktopError({
+      code: "desktop.update_coordinator_unavailable",
+      message: "Desktop updates are not initialized.",
+    });
+  }
+  return desktopUpdateCoordinator;
 }
 
 if (shouldStartDesktopMain) {
@@ -766,6 +827,12 @@ function installApplicationMenu(): void {
             void sendDesktopCommand("restart-runtime");
           },
         },
+        {
+          label: "Check for Updates…",
+          click: () => {
+            void showDesktopUpdateDialog();
+          },
+        },
         { type: "separator" },
         { role: "services" },
         { type: "separator" },
@@ -845,6 +912,35 @@ async function sendDesktopCommand(command: DesktopShellCommand): Promise<void> {
   mainWindow?.webContents.send("desktop:command", command);
 }
 
+async function showDesktopUpdateDialog(): Promise<void> {
+  const coordinator = requireDesktopUpdateCoordinator();
+  let state = await coordinator.checkForUpdates();
+  while (true) {
+    const updateDialog = buildDesktopUpdateDialog(state);
+    const options = {
+      type: state.phase === "error" ? ("error" as const) : ("info" as const),
+      ...updateDialog,
+    };
+    const result =
+      mainWindow !== undefined && !mainWindow.isDestroyed()
+        ? await dialog.showMessageBox(mainWindow, options)
+        : await dialog.showMessageBox(options);
+    const action = resolveDesktopUpdateDialogAction(state, result.response);
+    if (action === "download") {
+      state = await coordinator.downloadUpdate();
+      continue;
+    }
+    if (action === "install") {
+      state = await coordinator.installUpdate();
+      if (state.phase === "installing") {
+        return;
+      }
+      continue;
+    }
+    return;
+  }
+}
+
 function registerBootIpcHandlers(): void {
   ipcMain.handle("desktop:get-bridge-info", () => ({
     connected: true,
@@ -865,6 +961,18 @@ function registerBootIpcHandlers(): void {
     app.relaunch();
     app.exit(0);
   });
+  ipcMain.handle("desktop:get-update-state", () =>
+    requireDesktopUpdateCoordinator().state(),
+  );
+  ipcMain.handle("desktop:check-for-updates", async () =>
+    await requireDesktopUpdateCoordinator().checkForUpdates(),
+  );
+  ipcMain.handle("desktop:download-update", async () =>
+    await requireDesktopUpdateCoordinator().downloadUpdate(),
+  );
+  ipcMain.handle("desktop:install-update", async () =>
+    await requireDesktopUpdateCoordinator().installUpdate(),
+  );
   ipcMain.handle("desktop:open-diagnostics", async () => {
     const runtimeLogPath =
       runnerTransport?.getStatus().logPath ?? desktopConfig?.runtimeLogPath;
@@ -4522,12 +4630,33 @@ async function stopCoreProjectRuns(): Promise<void> {
   if (client === undefined) {
     return;
   }
-  const runs = await client.listDesktopProjectRuns().catch(() => []);
+  const runs = await client.listDesktopProjectRuns();
   await Promise.all(
     runs
       .filter((run) => run.status === "running" || run.status === "stopping")
-      .map((run) => client.stopDesktopProjectRun(run.runId).catch(() => {})),
+      .map((run) => client.stopDesktopProjectRun(run.runId)),
   );
+}
+
+async function getDesktopUpdateBlockers(): Promise<DesktopUpdateBlocker[]> {
+  const blockers: DesktopUpdateBlocker[] = [];
+  if (
+    [...activeDesktopWorkspaceRunCounts.values()].some((count) => count > 0)
+  ) {
+    blockers.push("active_execution");
+  }
+  const client = localCoreConnectionManager?.current()?.client;
+  if (client !== undefined) {
+    const runs = await client.listDesktopProjectRuns();
+    if (
+      runs.some(
+        (run) => run.status === "running" || run.status === "stopping",
+      )
+    ) {
+      blockers.push("managed_project_process");
+    }
+  }
+  return blockers;
 }
 
 async function restartLocalCoreForDatabaseSettingsChange(): Promise<void> {
