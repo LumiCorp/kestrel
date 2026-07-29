@@ -8,12 +8,17 @@ import {
   parseDesktopUpdateChannel,
   resolveDesktopBuilderConfiguration,
 } from "../apps/desktop/src/builderConfig.js";
+import { parseDesktopOtaFixturePackageOptions } from "./desktop-ota-fixture.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const desktopRoot = path.join(repoRoot, "apps", "desktop");
 const stageDir = path.join(desktopRoot, ".desktop-package");
 const desktopManifestPath = path.join(desktopRoot, "package.json");
-const version = readVersion(desktopManifestPath);
+const otaFixture = parseDesktopOtaFixturePackageOptions({
+  env: process.env,
+  repoRoot,
+});
+const version = otaFixture?.version ?? readVersion(desktopManifestPath);
 const electronVersion = readDependencyVersion(desktopManifestPath, "electron");
 const packageMode = parsePackageMode(process.env.KESTREL_DESKTOP_PACKAGE_MODE);
 const releaseBuild = process.env.KESTREL_DESKTOP_RELEASE === "1";
@@ -30,6 +35,7 @@ if (
   throw new Error("Desktop packaging currently supports macOS arm64 only.");
 }
 
+writeDesktopPackageStageVersion();
 writeDesktopPublicAppConfiguration();
 prepareDesktopUninstallHelper();
 
@@ -43,6 +49,7 @@ const config = resolveDesktopBuilderConfiguration({
   ),
   signingIdentity: process.env.KESTREL_DESKTOP_SIGN_IDENTITY,
   packageMode,
+  otaFixture: otaFixture?.builderInput,
 });
 
 await build({
@@ -57,8 +64,7 @@ await build({
 
 if (releaseBuild) {
   const appPath = path.join(
-    desktopRoot,
-    "out",
+    config.directories.output,
     "mac-arm64",
     "Kestrel.app",
   );
@@ -191,6 +197,21 @@ function writeDesktopPublicAppConfiguration(): void {
       null,
       2,
     )}\n`,
+    "utf8",
+  );
+}
+
+function writeDesktopPackageStageVersion(): void {
+  const manifestPath = path.join(stageDir, "package.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+    version?: unknown;
+  };
+  if (typeof manifest.version !== "string") {
+    throw new Error("Desktop package stage must declare a version.");
+  }
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({ ...manifest, version }, null, 2)}\n`,
     "utf8",
   );
 }

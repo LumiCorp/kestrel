@@ -104,6 +104,7 @@
     "desktop:package:dir": "pnpm --filter @kestrel/desktop package:dir",
     "desktop:package:preflight": "node --import tsx scripts/check-desktop-package.ts",
     "desktop:package": "pnpm --filter @kestrel/desktop package",
+    "desktop:package-ota-fixtures": "pnpm --filter @kestrel/desktop build && pnpm --filter @kestrel/desktop prepare:package-stage && node --import tsx scripts/package-desktop-ota-fixtures.ts",
     "desktop:package-smoke": "node --import tsx scripts/desktop-package-smoke.ts",
     "desktop:launch-services-smoke": "node --import tsx scripts/desktop-launch-services-smoke.ts",
     "desktop:release-check": "node --import tsx scripts/check-desktop-release.ts",
