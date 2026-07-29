@@ -24,6 +24,7 @@ test("Desktop builder emits signed arm64 DMG and ZIP update targets", () => {
   ]);
   assert.equal(config.mac.hardenedRuntime, true);
   assert.equal(config.mac.identity, "Lumi");
+  assert.equal(config.publish.channel, "latest");
   assert.equal(config.publish.url, resolveDesktopUpdateUrl("stable"));
   assert.match(config.afterSign ?? "", /notarize-desktop\.mjs$/u);
   assert.deepEqual(
@@ -130,6 +131,7 @@ test("signed OTA fixtures are isolated from the final production feed", () => {
     },
   });
   assert.equal(fixture.publish.url, DESKTOP_OTA_FIXTURE_UPDATE_URL);
+  assert.equal(fixture.publish.channel, "latest");
   assert.equal(fixture.directories.output, outputDirectory);
 
   const finalRelease = resolveDesktopBuilderConfiguration({

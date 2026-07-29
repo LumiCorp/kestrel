@@ -46,6 +46,7 @@ export interface DesktopBuilderConfiguration {
   };
   publish: {
     provider: "generic";
+    channel: "latest";
     url: string;
   };
   afterSign?: string | undefined;
@@ -155,6 +156,7 @@ export function resolveDesktopBuilderConfiguration(
     },
     publish: {
       provider: "generic",
+      channel: "latest",
       url: otaFixture?.updateUrl ?? resolveDesktopUpdateUrl(channel),
     },
   };
