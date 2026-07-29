@@ -72,6 +72,9 @@ export function resolveDesktopBuilderConfiguration(
   const channel = input.updateChannel ?? "stable";
   const packageMode = input.packageMode ?? "release";
   const signingIdentity = input.signingIdentity?.trim();
+  const electronBuilderSigningIdentity = signingIdentity === undefined
+    ? undefined
+    : resolveElectronBuilderSigningIdentity(signingIdentity);
   const desktopRoot = path.join(input.repoRoot, "apps", "desktop");
   const otaFixture = input.otaFixture === undefined
     ? undefined
@@ -142,7 +145,7 @@ export function resolveDesktopBuilderConfiguration(
       category: "public.app-category.developer-tools",
       hardenedRuntime: input.releaseBuild,
       gatekeeperAssess: false,
-      identity: input.releaseBuild ? signingIdentity! : null,
+      identity: input.releaseBuild ? electronBuilderSigningIdentity! : null,
       target: packageMode === "dir"
         ? [{ target: "dir", arch: ["arm64"] }]
         : [
@@ -159,6 +162,16 @@ export function resolveDesktopBuilderConfiguration(
     config.afterSign = path.join(input.repoRoot, "scripts", "notarize-desktop.mjs");
   }
   return config;
+}
+
+function resolveElectronBuilderSigningIdentity(identity: string): string {
+  const match = /^Developer ID Application:\s+(.+)$/u.exec(identity);
+  if (match?.[1]?.trim() === undefined || match[1].trim().length === 0) {
+    throw new Error(
+      "KESTREL_DESKTOP_SIGN_IDENTITY must name a full Developer ID Application authority.",
+    );
+  }
+  return match[1].trim();
 }
 
 function validateDesktopOtaFixtureBuild(
