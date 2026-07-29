@@ -55,6 +55,7 @@ import {
   assertDesktopOtaBusyBlocker,
   assertDesktopOtaUpdateState,
   resolveDesktopOtaInstalledAppPath,
+  resolveDesktopOtaRelaunchProcessIds,
   runDesktopOtaCleanupActions,
   sanitizeDesktopUpdaterLog,
   shapeDesktopOtaEvidence,
@@ -613,6 +614,18 @@ writeFileSync(
 );
 process.stdout.write(`[desktop-ota-smoke] passed: ${evidencePath}\n`);
 
+interface LaunchInstalledApplicationInput {
+  installedAppPath: string;
+  installedExecutablePath: string;
+  userDataPath: string;
+  coreHome: string;
+  isolatedHome: string;
+  smokeRoot: string;
+  certificateSpki: string;
+  certificatePath: string;
+  label: string;
+}
+
 interface LaunchHandle {
   browser: Browser;
   page: Page;
@@ -621,6 +634,7 @@ interface LaunchHandle {
   openProcess: ChildProcess;
   stdoutPath: string;
   stderrPath: string;
+  relaunchInput: LaunchInstalledApplicationInput;
 }
 
 async function runUpdateHop(input: {
@@ -676,17 +690,9 @@ async function installDownloadedUpdate(input: {
   return await reconnectAfterUpdate(input.launch, input.targetVersion);
 }
 
-async function launchInstalledApplication(input: {
-  installedAppPath: string;
-  installedExecutablePath: string;
-  userDataPath: string;
-  coreHome: string;
-  isolatedHome: string;
-  smokeRoot: string;
-  certificateSpki: string;
-  certificatePath: string;
-  label: string;
-}): Promise<LaunchHandle> {
+async function launchInstalledApplication(
+  input: LaunchInstalledApplicationInput,
+): Promise<LaunchHandle> {
   assert.deepEqual(listInstalledApplicationProcessIds(input.installedAppPath), []);
   const debugPort = await reserveLoopbackPort();
   const stdoutPath = path.join(input.smokeRoot, `${input.label}.stdout.log`);
@@ -696,6 +702,7 @@ async function launchInstalledApplication(input: {
     userDataPath: input.userDataPath,
     debugPort,
     environment: {
+      CFFIXED_USER_HOME: input.isolatedHome,
       ELECTRON_ENABLE_LOGGING: "1",
       ELECTRON_ENABLE_STACK_DUMPING: "1",
       HOME: input.isolatedHome,
@@ -734,6 +741,7 @@ async function launchInstalledApplication(input: {
       openProcess,
       stdoutPath,
       stderrPath,
+      relaunchInput: input,
     };
   } catch (error) {
     await stopInstalledApplicationProcesses(input.installedAppPath);
@@ -746,36 +754,37 @@ async function reconnectAfterUpdate(
   expectedVersion: string,
 ): Promise<LaunchHandle> {
   const deadline = Date.now() + 120_000;
+  let observedNaturalRelaunch = false;
   while (Date.now() < deadline) {
     try {
       verifyInstalledVersion(expectedVersion);
-      const nextPid = listExecutableProcessIds(
-        readProcessList(),
-        installedExecutablePath,
-        [`--remote-debugging-port=${previous.debugPort}`],
-      ).find((pid) => pid !== previous.pid);
-      if (nextPid === undefined) {
-        await delay(250);
-        continue;
-      }
-      const endpoint = `http://127.0.0.1:${previous.debugPort}`;
-      await waitForCdp(endpoint, 30_000);
-      const browser = await chromium.connectOverCDP(endpoint);
-      const page = await waitForRendererPage(browser, 30_000);
-      await verifyReadyDesktop(page, expectedVersion);
-      return {
-        ...previous,
-        browser,
-        page,
-        pid: nextPid,
-      };
     } catch {
       await delay(250);
+      continue;
     }
+    const naturalRelaunchPids = resolveDesktopOtaRelaunchProcessIds(
+      listInstalledApplicationProcessIds(installedAppPath),
+      previous.pid,
+    );
+    if (naturalRelaunchPids.length > 0) {
+      observedNaturalRelaunch = true;
+      break;
+    }
+    await delay(250);
   }
-  throw new Error(
-    `Timed out waiting for Desktop OTA relaunch into ${expectedVersion}.`,
-  );
+  if (!observedNaturalRelaunch) {
+    throw new Error(
+      `Timed out waiting for Desktop OTA relaunch into ${expectedVersion}.`,
+    );
+  }
+  await previous.browser.close().catch(() => undefined);
+  await stopInstalledApplicationProcesses(installedAppPath);
+  const controlledRelaunch = await launchInstalledApplication({
+    ...previous.relaunchInput,
+    label: expectedVersion,
+  });
+  await verifyReadyDesktop(controlledRelaunch.page, expectedVersion);
+  return controlledRelaunch;
 }
 
 async function verifyReadyDesktop(

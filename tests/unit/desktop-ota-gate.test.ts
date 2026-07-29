@@ -14,6 +14,7 @@ import {
 import {
   assertDesktopOtaBusyBlocker,
   resolveDesktopOtaInstalledAppPath,
+  resolveDesktopOtaRelaunchProcessIds,
   runDesktopOtaCleanupActions,
   sanitizeDesktopUpdaterLog,
   shapeDesktopOtaEvidence,
@@ -31,6 +32,16 @@ test("Desktop OTA renderer callbacks resolve the preload bridge in page context"
     )?.length,
     14,
   );
+  assert.match(source, /CFFIXED_USER_HOME: input\.isolatedHome/u);
+});
+
+test("Desktop OTA native relaunch excludes the replaced main process", () => {
+  assert.deepEqual(
+    resolveDesktopOtaRelaunchProcessIds([701, 704, 702, 704], 701),
+    [702, 704],
+  );
+  assert.deepEqual(resolveDesktopOtaRelaunchProcessIds([701], 701), []);
+  assert.throws(() => resolveDesktopOtaRelaunchProcessIds([702], 0));
 });
 
 test("Desktop OTA range parser produces exact single-range responses", () => {
