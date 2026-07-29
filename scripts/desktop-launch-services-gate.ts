@@ -5,6 +5,7 @@ export interface LaunchServicesOpenInput {
   userDataPath: string;
   debugPort: number;
   environment: Readonly<Record<string, string>>;
+  applicationArguments?: readonly string[] | undefined;
 }
 
 export type LaunchServicesCleanupAction = () => void | Promise<void>;
@@ -73,6 +74,14 @@ export function buildLaunchServicesOpenArguments(
       throw new Error(`LaunchServices environment '${name}' contains NUL.`);
     }
   }
+  const applicationArguments = input.applicationArguments ?? [];
+  for (const argument of applicationArguments) {
+    if (!argument.startsWith("--") || argument.includes("\0")) {
+      throw new Error(
+        `Invalid LaunchServices application argument '${argument}'.`,
+      );
+    }
+  }
   return [
     "-n",
     "-W",
@@ -84,6 +93,7 @@ export function buildLaunchServicesOpenArguments(
     `--user-data-dir=${input.userDataPath}`,
     `--remote-debugging-address=127.0.0.1`,
     `--remote-debugging-port=${input.debugPort}`,
+    ...applicationArguments,
   ];
 }
 

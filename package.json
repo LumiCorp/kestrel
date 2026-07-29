@@ -107,6 +107,7 @@
     "desktop:package-ota-fixtures": "pnpm --filter @kestrel/desktop build && pnpm --filter @kestrel/desktop prepare:package-stage && node --import tsx scripts/package-desktop-ota-fixtures.ts",
     "desktop:package-smoke": "node --import tsx scripts/desktop-package-smoke.ts",
     "desktop:launch-services-smoke": "node --import tsx scripts/desktop-launch-services-smoke.ts",
+    "desktop:ota-smoke": "node --import tsx scripts/desktop-ota-smoke.ts",
     "desktop:release-check": "node --import tsx scripts/check-desktop-release.ts",
     "desktop:upload-update": "node --import tsx scripts/upload-desktop-update.ts",
     "desktop:promote-update": "node --import tsx scripts/promote-desktop-update.ts",
