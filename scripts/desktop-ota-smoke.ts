@@ -717,6 +717,7 @@ async function launchInstalledApplication(input: {
     const page = await waitForRendererPage(browser, 60_000);
     const pid = await waitForMainProcess(
       input.installedExecutablePath,
+      [`--remote-debugging-port=${debugPort}`],
       30_000,
     );
     return {
@@ -745,6 +746,7 @@ async function reconnectAfterUpdate(
       const nextPid = listExecutableProcessIds(
         readProcessList(),
         installedExecutablePath,
+        [`--remote-debugging-port=${previous.debugPort}`],
       ).find((pid) => pid !== previous.pid);
       if (nextPid === undefined) {
         await delay(250);
@@ -935,11 +937,16 @@ async function waitForRendererPage(
 
 async function waitForMainProcess(
   executablePath: string,
+  requiredArguments: readonly string[],
   timeoutMs: number,
 ): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const pids = listExecutableProcessIds(readProcessList(), executablePath);
+    const pids = listExecutableProcessIds(
+      readProcessList(),
+      executablePath,
+      requiredArguments,
+    );
     if (pids.length === 1) return pids[0]!;
     if (pids.length > 1) {
       throw new Error(`Desktop OTA launched multiple main processes: ${pids}.`);

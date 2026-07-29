@@ -100,6 +100,7 @@ export function buildLaunchServicesOpenArguments(
 export function listExecutableProcessIds(
   processList: string,
   executablePath: string,
+  requiredArguments: readonly string[] = [],
 ): number[] {
   const normalizedPath = path.resolve(executablePath);
   const pids: number[] = [];
@@ -107,7 +108,8 @@ export function listExecutableProcessIds(
     const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
     if (
       match?.[1] === undefined ||
-      match[2]?.includes(normalizedPath) !== true
+      match[2]?.includes(normalizedPath) !== true ||
+      requiredArguments.some((argument) => !match[2]!.includes(argument))
     ) {
       continue;
     }
