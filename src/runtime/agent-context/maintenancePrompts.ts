@@ -173,6 +173,7 @@ export const KESTREL_COMPACTION_SUFFICIENCY_SCHEMA = {
 export function buildKestrelAgentCompactionMessages(
   input: KestrelAgentCompactionBuildInput,
 ): ModelMessage[] {
+  const sourceItems = input.sourceItems ?? [];
   const messages: ModelMessage[] = [
     {
       role: "system",
@@ -187,10 +188,10 @@ export function buildKestrelAgentCompactionMessages(
         "Do not invent evidence or hidden state.",
       ].join("\n"),
     },
-    ...input.contextMessages,
+    ...(sourceItems.length === 0 ? input.contextMessages : []),
     {
       role: "user",
-      content: input.sourceItems === undefined || input.sourceItems.length === 0
+      content: sourceItems.length === 0
         ? [
             "Write the compact continuation summary now.",
             `Retained active task item id: ${JSON.stringify(input.activeTaskItemId)}`,
@@ -201,11 +202,8 @@ export function buildKestrelAgentCompactionMessages(
             `Retained active task item id: ${JSON.stringify(input.activeTaskItemId)}`,
             `Exact replaced item ids: ${JSON.stringify(input.replacedItemIds)}`,
             "Source transcript items:",
-            JSON.stringify(input.sourceItems.map((item) => ({
-              id: item.id,
-              kind: item.kind,
-              toolName: item.toolName,
-              toolCallId: item.toolCallId,
+            JSON.stringify(sourceItems.map((item) => ({
+              ...item,
               disposition: input.replacedItemIds.includes(item.id) ? "replaced" : "retained",
             }))),
           ].join("\n"),

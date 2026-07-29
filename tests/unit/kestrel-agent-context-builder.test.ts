@@ -627,6 +627,52 @@ contractTest("runtime.hermetic", "Kestrel agent context builder owns compaction 
   assert.equal(compacted.items[0]?.kind, "compaction_summary");
 });
 
+contractTest("runtime.hermetic", "Kestrel compaction binds source item ids to their semantic payloads", () => {
+  const messages = buildKestrelAgentCompactionMessages({
+    activeTaskItemId: "item-user",
+    replacedItemIds: ["item-call", "item-result"],
+    contextMessages: [
+      {
+        role: "assistant",
+        content: "This unanchored rendering must not be duplicated.",
+      },
+    ],
+    sourceItems: [
+      {
+        id: "item-user",
+        createdAt: "2026-07-29T12:00:00.000Z",
+        kind: "user",
+        content: "Inspect the exact failure.",
+      },
+      {
+        id: "item-call",
+        createdAt: "2026-07-29T12:01:00.000Z",
+        kind: "tool_call",
+        toolName: "fs.search_text",
+        toolCallId: "call-1",
+        toolInput: { query: "semantic anchors" },
+      },
+      {
+        id: "item-result",
+        createdAt: "2026-07-29T12:02:00.000Z",
+        kind: "tool_result",
+        toolName: "fs.search_text",
+        toolCallId: "call-1",
+        toolOutput: { matches: [] },
+      },
+    ],
+  });
+
+  assert.equal(messages.length, 2);
+  const sourcePrompt = String(messages[1]?.content);
+  assert.doesNotMatch(sourcePrompt, /unanchored rendering/u);
+  assert.match(sourcePrompt, /"id":"item-user".*"content":"Inspect the exact failure."/u);
+  assert.match(sourcePrompt, /"id":"item-call".*"toolInput":\{"query":"semantic anchors"\}/u);
+  assert.match(sourcePrompt, /"id":"item-result".*"toolOutput":\{"matches":\[\]\}/u);
+  assert.match(sourcePrompt, /"id":"item-call".*"disposition":"replaced"/u);
+  assert.match(sourcePrompt, /"id":"item-user".*"disposition":"retained"/u);
+});
+
 contractTest("runtime.hermetic", "enforce-mode compaction uses resolved model token pressure", () => {
   const policy: HarnessEconomicsPolicyV1 = {
     version: 1,
