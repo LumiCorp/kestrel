@@ -1,0 +1,242 @@
+.conversation-pane {
+  --conversation-content-width: 640px;
+  --conversation-gutter: var(--space-3);
+  --conversation-total-gutter: 24px;
+  background: var(--bg-pane);
+}
+
+.conversation-timeline {
+  padding: var(--space-5) var(--conversation-gutter) var(--space-3);
+}
+
+.conversation-timeline-list {
+  max-width: 62ch;
+}
+
+.conversation-timeline-list::before {
+  background: var(--border-subtle);
+}
+
+.empty-transcript {
+  gap: var(--space-2);
+  color: var(--text-tertiary);
+}
+
+.empty-transcript h1 {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.timeline-entry {
+  gap: var(--space-3);
+}
+
+.timeline-entry-content {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.timeline-entry-content h1,
+.timeline-entry-content h2,
+.timeline-entry-content h3,
+.message-body-markdown h1,
+.message-body-markdown h2,
+.message-body-markdown h3 {
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.message-body-markdown p,
+.message-body-markdown ul,
+.message-body-markdown ol {
+  margin: 0 0 var(--space-2);
+}
+
+.message-body-markdown pre,
+.message-body-markdown code,
+.message-body-markdown table {
+  border-radius: var(--radius-sm);
+}
+
+.timeline-details,
+.operator-action-card,
+.follow-up-queue,
+.archived-conversation-banner {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(38px, auto) 0;
+  width: min(var(--conversation-content-width), calc(100% - var(--conversation-total-gutter)));
+  min-height: var(--composer-height);
+  margin: 0 auto var(--space-6);
+  overflow: hidden;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-control) !important;
+  box-shadow: none;
+  transition:
+    min-height 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.composer:focus-within,
+.composer.composer-expanded {
+  grid-template-rows: auto auto auto;
+  min-height: 112px;
+  border-color: var(--border-interactive);
+  background: var(--bg-pane) !important;
+}
+
+.mode-segment,
+.composer-actions-left,
+.attachment-chips {
+  display: none;
+}
+
+.composer:focus-within .mode-segment,
+.composer.composer-expanded .mode-segment,
+.composer:focus-within .composer-actions-left,
+.composer.composer-expanded .composer-actions-left,
+.composer:focus-within .attachment-chips,
+.composer.composer-expanded .attachment-chips {
+  display: flex;
+}
+
+.mode-segment {
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-2) 0;
+}
+
+.mode-segment button {
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.mode-segment button.active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.composer textarea {
+  min-height: 38px;
+  max-height: 38px;
+  padding: 10px 96px 10px var(--space-3);
+  background: transparent !important;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 18px;
+  resize: none;
+}
+
+.composer:focus-within textarea,
+.composer.composer-expanded textarea {
+  min-height: 64px;
+  max-height: 160px;
+  padding: var(--space-3);
+  resize: vertical;
+}
+
+.composer textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.attachment-chips {
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.attachment-chip,
+.message-attachments span {
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.composer-actions {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 0;
+  padding: 0;
+}
+
+.composer:focus-within .composer-actions,
+.composer.composer-expanded .composer-actions {
+  min-height: var(--composer-height);
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  border-top: var(--border-width) solid var(--border-subtle);
+}
+
+.composer-actions-right {
+  position: absolute;
+  right: var(--space-2);
+  bottom: 7px;
+}
+
+.composer:focus-within .composer-actions-right,
+.composer.composer-expanded .composer-actions-right {
+  position: static;
+}
+
+.composer-model-selector {
+  grid-template-columns: minmax(0, 170px);
+}
+
+.composer-model-selector select {
+  height: var(--control-height);
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-control) !important;
+  font-size: 11px;
+}
+
+.composer-model-selector small {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.composer-steer-button {
+  height: var(--control-height);
+  min-width: 72px;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent !important;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+:root[data-theme="dark"] .composer,
+:root[data-theme="dark"] .composer textarea,
+:root[data-theme="dark"] .composer button,
+:root[data-theme="dark"] .composer select {
+  background-color: #1c1c1a !important;
+  color: #d7d6cf;
+}
+
+:root[data-theme="dark"] .composer:focus-within,
+:root[data-theme="dark"] .composer.composer-expanded {
+  background-color: #191918 !important;
+}
+
+:root[data-theme="dark"] .composer .stop-button {
+  color: #b77b74;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer {
+    transition: none;
+  }
+}

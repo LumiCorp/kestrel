@@ -172,6 +172,7 @@ export function DesktopApp() {
   const [missionControlRunId, setMissionControlRunId] = useState<string>();
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>();
   const [timelineHasNewActivity, setTimelineHasNewActivity] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const timelineFollowingRef = useRef(true);
   const workNavigatorRef = useRef<HTMLElement>(null);
@@ -1264,7 +1265,6 @@ export function DesktopApp() {
         >
           <span className="titlebar-thread-context">
             <strong className="titlebar-thread-title">{activeThread.title}</strong>
-            <small>{conversationProjectLabel}</small>
           </span>
           {surface === "chat" ? null : <span className="titlebar-page-title">{surfacePageTitle(surface)}</span>}
         </div>
@@ -1602,7 +1602,17 @@ export function DesktopApp() {
             )}
           />
 
-          {archivedThreadSelected ? null : <form className="composer" onSubmit={(event) => void submitTurn(event)}>
+          {archivedThreadSelected ? null : <form
+            className={`composer ${composerFocused || activeThread.draft.trim().length > 0 || activeThread.draftAttachmentIds.length > 0 ? "composer-expanded" : ""}`}
+            onBlur={(event) => {
+              if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
+                return;
+              }
+              setComposerFocused(false);
+            }}
+            onFocus={() => setComposerFocused(true)}
+            onSubmit={(event) => void submitTurn(event)}
+          >
             <div className="mode-segment" aria-label="Interaction mode">
               {(["chat", "plan", "build"] as const).map((mode) => (
                 <button

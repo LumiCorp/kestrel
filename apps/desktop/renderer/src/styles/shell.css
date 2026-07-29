@@ -1,0 +1,224 @@
+.titlebar {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  height: var(--topbar-height);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-pane);
+}
+
+.brand-lockup {
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-right: var(--border-width) solid var(--border-subtle);
+}
+
+.brand-lockup strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.brand-mark {
+  width: 18px;
+  height: 18px;
+}
+
+.brand-mark img {
+  filter: grayscale(1) saturate(0) contrast(0.92);
+  opacity: 0.86;
+}
+
+:root[data-theme="dark"] .brand-mark img {
+  filter: grayscale(1) saturate(0) invert(0.78) contrast(0.88);
+  opacity: 0.78;
+}
+
+.project-switcher,
+.topbar-find,
+.details-button {
+  height: var(--control-height);
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.project-switcher {
+  margin-left: var(--space-1);
+}
+
+.project-switcher:hover,
+.topbar-find:hover,
+.details-button:hover,
+.icon-button:hover,
+.surface-tabs button:hover {
+  border-color: var(--border-subtle);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.topbar-find {
+  border-color: var(--border-subtle);
+  background: transparent;
+}
+
+.topbar-find kbd {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-xs);
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.titlebar-context {
+  padding: 0 var(--space-3);
+}
+
+.titlebar-thread-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.titlebar-page-title {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.titlebar-actions {
+  gap: var(--space-1);
+  padding-right: var(--space-2);
+}
+
+.workspace {
+  height: calc(100% - var(--topbar-height));
+  background: var(--bg-app);
+}
+
+.workspace.with-inspector {
+  grid-template-columns: minmax(0, 1fr) var(--inspector-width);
+}
+
+.inspector-resizer {
+  width: var(--border-width);
+  background: var(--border-subtle);
+}
+
+.conversation-rail,
+.inspector {
+  background: var(--bg-pane);
+}
+
+.work-navigator-scrim {
+  top: var(--topbar-height);
+  background: rgb(21 21 20 / 22%);
+}
+
+.work-navigator.open {
+  top: var(--topbar-height);
+  width: min(var(--session-pane-width), calc(100vw - 24px));
+  border-right: var(--border-width) solid var(--border-strong);
+  background: var(--bg-pane);
+  box-shadow: none;
+}
+
+.work-navigator .surface-tabs {
+  gap: var(--space-1);
+  max-height: 184px;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.surface-tabs-heading {
+  margin: var(--space-1) 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.work-navigator .surface-tabs button {
+  height: var(--row-height-compact);
+  padding: 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.surface-tabs button,
+.work-navigator .surface-tabs button.active {
+  border-radius: var(--radius-sm);
+}
+
+.surface-tabs button.active,
+.work-navigator .surface-tabs button.active {
+  border-color: var(--border-subtle);
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.explorer-heading {
+  min-height: var(--topbar-height);
+  padding: 0 var(--space-3);
+  border-bottom-color: var(--border-subtle);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.explorer-search {
+  margin: var(--space-2) var(--space-3);
+  border-color: var(--border-subtle);
+  background: var(--bg-control);
+}
+
+.explorer-search input {
+  height: var(--control-height);
+  font-size: 12px;
+}
+
+.explorer-groups {
+  padding: var(--space-1) var(--space-2) var(--space-3);
+}
+
+.explorer-group-toggle {
+  min-height: var(--row-height-compact);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.explorer-thread-row {
+  margin-bottom: var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+.explorer-thread-row:hover {
+  background: var(--bg-hover);
+}
+
+.explorer-thread-row.active {
+  border-color: var(--border-subtle);
+  background: var(--bg-active);
+}
+
+.explorer-thread-select {
+  min-height: var(--row-height);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+}
+
+.explorer-thread-select span {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.explorer-thread-select time {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.explorer-notice,
+.rename-dialog,
+.explorer-thread-menu {
+  border-radius: var(--radius-sm);
+  background: var(--bg-control);
+  box-shadow: none;
+}
