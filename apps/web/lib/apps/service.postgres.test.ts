@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
+import {
+  type EnvironmentExecutionTicket,
+  verifyEnvironmentToolCredential,
+} from "@lumi/kestrel-environment-auth";
 import postgres from "postgres";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
@@ -17,7 +20,7 @@ contractTest(
     process.env.KESTREL_APP_CREDENTIAL_KEYS = JSON.stringify({
       "test-key": randomBytes(32).toString("base64"),
     });
-    const { privateKey } = generateKeyPairSync("ed25519");
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = privateKey
       .export({ format: "pem", type: "pkcs8" })
       .toString();
@@ -660,6 +663,23 @@ contractTest(
       capabilityKey: "publish",
       approval: "auto",
     });
+    const assertGatewayRefreshAuthorization = (init?: RequestInit) => {
+      const authorization = new Headers(init?.headers).get("authorization");
+      assert.match(authorization ?? "", /^Bearer /u);
+      const credential = verifyEnvironmentToolCredential({
+        token: authorization!.slice("Bearer ".length),
+        publicKey: publicKey
+          .export({ format: "pem", type: "spki" })
+          .toString(),
+      });
+      assert.equal(credential.organizationId, organizationId);
+      assert.equal(credential.environmentId, environmentId);
+      assert.equal(credential.providerKey, "kestrel-control-plane");
+      assert.equal(credential.resourceId, environmentId);
+      assert.equal(credential.capability, "gateway.config.refresh");
+      assert.equal(credential.operation, "refresh");
+      assert.equal(credential.operationBinding, null);
+    };
     const invokePreview = (input: {
       capability: "publish" | "list" | "renew" | "close";
       method: string;
@@ -688,11 +708,14 @@ contractTest(
       });
 
     let failNextGatewayRefresh = true;
-    globalThis.fetch = (async (request) => {
+    globalThis.fetch = (async (request, init) => {
       const url = String(request);
-      if (url.endsWith("/internal/config/refresh") && failNextGatewayRefresh) {
-        failNextGatewayRefresh = false;
-        return new Response("gateway unavailable", { status: 503 });
+      if (url.endsWith("/internal/config/refresh")) {
+        assertGatewayRefreshAuthorization(init);
+        if (failNextGatewayRefresh) {
+          failNextGatewayRefresh = false;
+          return new Response("gateway unavailable", { status: 503 });
+        }
       }
       return new Response("{}", { status: 200 });
     }) as typeof fetch;
@@ -821,11 +844,14 @@ contractTest(
     );
 
     failNextGatewayRefresh = true;
-    globalThis.fetch = (async (request) => {
+    globalThis.fetch = (async (request, init) => {
       const url = String(request);
-      if (url.endsWith("/internal/config/refresh") && failNextGatewayRefresh) {
-        failNextGatewayRefresh = false;
-        return new Response("gateway unavailable", { status: 503 });
+      if (url.endsWith("/internal/config/refresh")) {
+        assertGatewayRefreshAuthorization(init);
+        if (failNextGatewayRefresh) {
+          failNextGatewayRefresh = false;
+          return new Response("gateway unavailable", { status: 503 });
+        }
       }
       return new Response("{}", { status: 200 });
     }) as typeof fetch;
