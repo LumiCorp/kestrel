@@ -23,6 +23,7 @@ test("Desktop builder emits signed arm64 DMG and ZIP update targets", () => {
     { target: "zip", arch: ["arm64"] },
   ]);
   assert.equal(config.mac.hardenedRuntime, true);
+  assert.equal(config.mac.identity, "Lumi");
   assert.equal(config.publish.url, resolveDesktopUpdateUrl("stable"));
   assert.match(config.afterSign ?? "", /notarize-desktop\.mjs$/u);
   assert.deepEqual(
@@ -57,6 +58,18 @@ test("final artifacts reject missing signing and non-stable channels", () => {
         packageMode: "release",
       }),
     /Developer ID Application/u,
+  );
+  assert.throws(
+    () =>
+      resolveDesktopBuilderConfiguration({
+        repoRoot: "/repo",
+        version: "0.7.0",
+        electronVersion: "37.2.6",
+        releaseBuild: true,
+        signingIdentity: "GREGORY MICHAEL ASHER (RD7P29T2BJ)",
+        packageMode: "release",
+      }),
+    /full Developer ID Application authority/u,
   );
   assert.throws(
     () =>
