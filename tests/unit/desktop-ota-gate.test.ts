@@ -7,6 +7,7 @@ import {
   DESKTOP_OTA_SERVER_PREFIX,
   isValidDesktopOtaRequestPath,
   parseDesktopByteRange,
+  resolveDesktopOtaRequestPath,
   resolveDesktopOtaArtifactResponse,
   summarizeDesktopOtaTransfer,
 } from "../../scripts/desktop-ota-https-server.js";
@@ -125,6 +126,30 @@ test("Desktop OTA server rejects traversal and non-exact routes", () => {
       `${DESKTOP_OTA_SERVER_PREFIX}/artifact.zip?token=secret`,
     ),
     false,
+  );
+  assert.equal(
+    resolveDesktopOtaRequestPath(
+      `${DESKTOP_OTA_SERVER_PREFIX}/latest-mac.yml?noCache=1jung7vme`,
+    ),
+    `${DESKTOP_OTA_SERVER_PREFIX}/latest-mac.yml`,
+  );
+  assert.equal(
+    resolveDesktopOtaRequestPath(
+      `${DESKTOP_OTA_SERVER_PREFIX}/latest-mac.yml?token=secret`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    resolveDesktopOtaRequestPath(
+      `${DESKTOP_OTA_SERVER_PREFIX}/latest-mac.yml?noCache=one&noCache=two`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    resolveDesktopOtaRequestPath(
+      `${DESKTOP_OTA_SERVER_PREFIX}/artifact.zip?noCache=value`,
+    ),
+    undefined,
   );
 });
 
