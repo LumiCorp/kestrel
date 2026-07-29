@@ -89,16 +89,25 @@ test("LaunchServices launch uses open with isolated state and explicit environme
 });
 
 test("LaunchServices process ownership matches only the installed executable", () => {
+  const processList = [
+    "  101 /Applications/Kestrel.app/Contents/MacOS/Kestrel",
+    "  202 /Applications/Kestrel Gate.app/Contents/MacOS/Kestrel --remote-debugging-port=31181",
+    "  303 /Applications/Kestrel Gate.app/Contents/MacOS/Kestrel --import loader.mjs daemonMain.ts",
+  ].join("\n");
   assert.deepEqual(
     listExecutableProcessIds(
-      [
-        "  101 /Applications/Kestrel.app/Contents/MacOS/Kestrel",
-        "  202 /Applications/Kestrel Gate.app/Contents/MacOS/Kestrel --flag",
-        "  303 /Applications/Kestrel Gate.app/Contents/MacOS/Kestrel --type=renderer",
-      ].join("\n"),
+      processList,
       "/Applications/Kestrel Gate.app/Contents/MacOS/Kestrel",
     ),
     [202, 303],
+  );
+  assert.deepEqual(
+    listExecutableProcessIds(
+      processList,
+      "/Applications/Kestrel Gate.app/Contents/MacOS/Kestrel",
+      ["--remote-debugging-port=31181"],
+    ),
+    [202],
   );
 });
 
