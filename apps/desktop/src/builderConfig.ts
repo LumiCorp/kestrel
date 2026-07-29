@@ -48,6 +48,7 @@ export interface DesktopBuilderConfiguration {
     provider: "generic";
     channel: "latest";
     url: string;
+    useMultipleRangeRequest?: false | undefined;
   };
   afterSign?: string | undefined;
 }
@@ -158,6 +159,9 @@ export function resolveDesktopBuilderConfiguration(
       provider: "generic",
       channel: "latest",
       url: otaFixture?.updateUrl ?? resolveDesktopUpdateUrl(channel),
+      ...(otaFixture === undefined
+        ? {}
+        : { useMultipleRangeRequest: false as const }),
     },
   };
   if (input.releaseBuild) {
