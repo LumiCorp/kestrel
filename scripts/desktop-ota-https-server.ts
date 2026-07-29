@@ -195,14 +195,15 @@ export async function startDesktopOtaHttpsServer(input: {
     response: ServerResponse,
   ): Promise<void> {
     const method = request.method ?? "";
-    const requestPath = request.url ?? "";
+    const requestTarget = request.url ?? "";
+    const requestPath = resolveDesktopOtaRequestPath(requestTarget);
     const rangeHeader = normalizeHeader(request.headers.range);
     const baseLedger = {
       sequence: ledger.length + 1,
       at: new Date().toISOString(),
       phase,
       method,
-      path: requestPath,
+      path: requestTarget,
       ...(rangeHeader === undefined ? {} : { range: rangeHeader }),
     };
     const record = (
@@ -228,7 +229,7 @@ export async function startDesktopOtaHttpsServer(input: {
       record(405, method === "HEAD" ? 0 : 20);
       return;
     }
-    if (!isValidDesktopOtaRequestPath(requestPath)) {
+    if (requestPath === undefined) {
       respondText(response, method, 400, "Invalid OTA path.\n");
       record(400, method === "HEAD" ? 0 : 18);
       return;
@@ -419,6 +420,37 @@ export function isValidDesktopOtaRequestPath(value: string): boolean {
     !value.includes("#") &&
     !value.includes("..")
   );
+}
+
+export function resolveDesktopOtaRequestPath(
+  requestTarget: string,
+): string | undefined {
+  if (!requestTarget.startsWith("/") || requestTarget.includes("#")) {
+    return undefined;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(requestTarget, "https://localhost");
+  } catch {
+    return undefined;
+  }
+  if (!isValidDesktopOtaRequestPath(parsed.pathname)) {
+    return undefined;
+  }
+  if (parsed.search === "") {
+    return parsed.pathname;
+  }
+  if (
+    parsed.pathname !== `${DESKTOP_OTA_SERVER_PREFIX}/latest-mac.yml` ||
+    [...parsed.searchParams.keys()].length !== 1 ||
+    parsed.searchParams.getAll("noCache").length !== 1
+  ) {
+    return undefined;
+  }
+  const noCache = parsed.searchParams.get("noCache");
+  return noCache !== null && noCache.length > 0 && noCache.length <= 256
+    ? parsed.pathname
+    : undefined;
 }
 
 export function summarizeDesktopOtaTransfer(input: {
