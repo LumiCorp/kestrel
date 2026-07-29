@@ -127,6 +127,28 @@ credential store and are never packaged or returned to the renderer.
 
 `desktop:package-smoke` is an operator-supervised GUI check, not a CI task. It refuses to launch without explicit approval, rejects concurrent smoke runs, closes the launched process in a final cleanup path, and removes isolated state after both success and failure unless retention is explicitly requested for debugging. Local Core daemon children are forced into Electron's Node mode, and Desktop exits immediately if a daemon launch ever reaches application mode. Every run must begin and end with a process-list check.
 
+Desktop update publication has two explicit operator phases:
+
+```bash
+# Upload and verify immutable versioned artifacts. This cannot move stable.
+pnpm run desktop:upload-update
+
+# After independent inspection and approval, move the stable channel pointer.
+KESTREL_DESKTOP_PROMOTION_APPROVED=1 \
+KESTREL_DESKTOP_UPDATE_CHANNEL=stable \
+pnpm run desktop:promote-update -- --version 0.7.0
+```
+
+Upload validates every updater file entry against the local artifact's
+base64 SHA-512 digest and byte size before writing any R2 object. It also
+requires the legacy `path` and `sha512` fields to agree with the corresponding
+file entry.
+
+Promotion reads the immutable staged `latest-mac.yml` from R2, verifies its
+hash and complete artifact set against the staged checksums, and uses a
+conditional ETag write. It never derives the promoted version from mutable
+local build output.
+
 ## Related Code
 
 - [Desktop main process](https://github.com/LumiCorp/kestrel/blob/main/apps/desktop/src/main.ts)
