@@ -414,7 +414,7 @@ try {
   const finalFeedUrl = readEmbeddedUpdateUrl(installedAppPath);
   assert.equal(finalFeedUrl, resolveDesktopUpdateUrl("stable"));
 
-  await closeLaunch(activeLaunch);
+  await forceCloseLaunch(activeLaunch, installedAppPath);
   activeLaunch = undefined;
   const updaterLog = collectUpdaterLogs(smokeRoot, coreHome);
   pendingEvidence = {
@@ -905,11 +905,6 @@ async function waitForProjectRunStopped(
   throw new Error(`Desktop OTA project run '${runId}' did not stop.`);
 }
 
-async function closeLaunch(launch: LaunchHandle): Promise<void> {
-  await launch.browser.close();
-  await waitForNoInstalledProcesses(installedAppPath, 15_000);
-}
-
 async function forceCloseLaunch(
   launch: LaunchHandle,
   appPath: string,
@@ -1187,18 +1182,6 @@ function listInstalledApplicationProcessIds(appPath: string): number[] {
     readProcessList(),
     path.join(appPath, "Contents", "MacOS", "Kestrel"),
   ).filter((pid) => pid !== process.pid);
-}
-
-async function waitForNoInstalledProcesses(
-  appPath: string,
-  timeoutMs: number,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (listInstalledApplicationProcessIds(appPath).length === 0) return;
-    await delay(100);
-  }
-  throw new Error("Desktop OTA application did not quit cleanly.");
 }
 
 async function reserveLoopbackPort(): Promise<number> {
