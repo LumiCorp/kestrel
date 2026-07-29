@@ -57,6 +57,23 @@ export function resolveDesktopOtaInstalledAppPath(input: {
   );
 }
 
+export function resolveDesktopOtaRelaunchProcessIds(
+  processIds: readonly number[],
+  previousPid: number,
+): number[] {
+  if (!Number.isSafeInteger(previousPid) || previousPid <= 0) {
+    throw new Error("Desktop OTA previous process ID must be a positive integer.");
+  }
+  return [...new Set(processIds)]
+    .filter(
+      (pid) =>
+        Number.isSafeInteger(pid) &&
+        pid > 0 &&
+        pid !== previousPid,
+    )
+    .sort((left, right) => left - right);
+}
+
 export function assertDesktopOtaUpdateState(
   state: DesktopUpdateState,
   expected: {
