@@ -127,6 +127,24 @@ credential store and are never packaged or returned to the renderer.
 
 `desktop:package-smoke` is an operator-supervised GUI check, not a CI task. It refuses to launch without explicit approval, rejects concurrent smoke runs, closes the launched process in a final cleanup path, and removes isolated state after both success and failure unless retention is explicitly requested for debugging. Local Core daemon children are forced into Electron's Node mode, and Desktop exits immediately if a daemon launch ever reaches application mode. Every run must begin and end with a process-list check.
 
+After producing a signed and notarized DMG, run the separate LaunchServices gate:
+
+```bash
+KESTREL_DESKTOP_RELEASE=1 \
+KESTREL_DESKTOP_LAUNCH_SERVICES_SMOKE_APPROVED=1 \
+pnpm run desktop:launch-services-smoke
+```
+
+This supervised macOS-only gate verifies the DMG, mounts it read-only, copies a
+uniquely named temporary app into `/Applications`, re-verifies its Developer ID
+signature, hardened runtime, stapled ticket, Gatekeeper assessment, bundle
+identity, and version, then launches and relaunches it through `/usr/bin/open`.
+It uses isolated Desktop and Local Core state, proves a deterministic offline
+model turn and persistence across relaunch, writes evidence under
+`apps/desktop/out/launch-services-smoke/`, unregisters the temporary app, and
+removes only the exact installation it created. It refuses to overwrite an
+existing application and is not a CI task.
+
 Desktop update publication has two explicit operator phases:
 
 ```bash
