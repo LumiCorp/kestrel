@@ -62,6 +62,30 @@ test("LaunchServices launch uses open with isolated state and explicit environme
       "--remote-debugging-port=31181",
     ],
   );
+  const withCertificatePin = buildLaunchServicesOpenArguments({
+    appPath: "/Applications/Kestrel Gate.app",
+    userDataPath: "/tmp/kestrel-gate/user-data",
+    debugPort: 31_181,
+    environment: {},
+    applicationArguments: [
+      "--ignore-certificate-errors-spki-list=fixture-pin",
+    ],
+  });
+  assert.equal(
+    withCertificatePin.at(-1),
+    "--ignore-certificate-errors-spki-list=fixture-pin",
+  );
+  assert.throws(
+    () =>
+      buildLaunchServicesOpenArguments({
+        appPath: "/Applications/Kestrel Gate.app",
+        userDataPath: "/tmp/kestrel-gate/user-data",
+        debugPort: 31_181,
+        environment: {},
+        applicationArguments: ["fixture-pin"],
+      }),
+    /Invalid LaunchServices application argument/u,
+  );
 });
 
 test("LaunchServices process ownership matches only the installed executable", () => {

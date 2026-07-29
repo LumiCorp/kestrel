@@ -36,25 +36,31 @@ export interface DesktopUpdateObjectStore {
   }): Promise<void>;
 }
 
-interface UpdateManifestFile {
+export interface DesktopUpdateManifestFile {
   url: string;
   sha512: string;
   size: number;
   blockMapSize?: number | undefined;
 }
 
-interface UpdateManifest {
+export interface DesktopUpdateManifest {
   version: string;
-  files: UpdateManifestFile[];
+  files: DesktopUpdateManifestFile[];
   path: string;
   sha512: string;
   releaseDate?: string | undefined;
 }
 
-interface ArtifactDigest {
+export interface DesktopUpdateArtifactDigest {
   sha256: string;
   sha512: string;
   size: number;
+}
+
+export interface VerifiedDesktopUpdateRelease {
+  manifest: DesktopUpdateManifest;
+  artifactNames: string[];
+  artifactDigests: ReadonlyMap<string, DesktopUpdateArtifactDigest>;
 }
 
 export interface UploadDesktopUpdateReleaseInput {
@@ -106,51 +112,12 @@ export async function uploadDesktopUpdateRelease(
   const prefix = normalizePrefix(input.prefix ?? "desktop");
   const publicOrigin = (input.publicOrigin ?? "https://updates.lumicorp.ai")
     .replace(/\/+$/u, "");
-  const sourceMetadataPath = path.join(input.outDir, "latest-mac.yml");
-  if (!existsSync(sourceMetadataPath)) {
-    throw new Error("Desktop update metadata is missing: latest-mac.yml.");
-  }
-  const manifest = parseManifest(
-    readFileSync(sourceMetadataPath, "utf8"),
-    input.version,
-  );
-  const referencedNames = manifest.files.map(({ url }) => artifactName(url));
-  if (!referencedNames.some((name) => name.endsWith(".zip"))) {
-    throw new Error("latest-mac.yml must reference a ZIP update artifact.");
-  }
-
-  const dmgName = readdirSync(input.outDir).find(
-    (name) =>
-      name === `Kestrel-${input.version}-mac-arm64.dmg`,
-  );
-  if (!dmgName) {
-    throw new Error(
-      `Desktop ${input.version} manual-install DMG is missing.`,
-    );
-  }
-  const expectedBlockmaps = [
-    `${dmgName}.blockmap`,
-    ...referencedNames
-      .filter((name) => name.endsWith(".zip"))
-      .map((name) => `${name}.blockmap`),
-  ];
-  const artifactNames = [
-    ...new Set([...referencedNames, dmgName, ...expectedBlockmaps]),
-  ];
-  for (const name of artifactNames) {
-    if (!existsSync(path.join(input.outDir, name))) {
-      throw new Error(`Desktop update artifact is missing: ${name}.`);
-    }
-  }
-
-  const artifactDigests = new Map<string, ArtifactDigest>();
-  for (const name of artifactNames) {
-    artifactDigests.set(
-      name,
-      await digestFile(path.join(input.outDir, name)),
-    );
-  }
-  assertManifestArtifactIntegrity(manifest, artifactDigests);
+  const verifiedRelease = await verifyDesktopUpdateReleaseArtifacts(input);
+  const {
+    manifest,
+    artifactNames,
+    artifactDigests,
+  } = verifiedRelease;
 
   const versionPrefix = `${prefix}/releases/${input.version}/arm64`;
   const uploaded: string[] = [];
@@ -211,7 +178,7 @@ export async function uploadDesktopUpdateRelease(
     skipped,
   });
 
-  const promotedManifest: UpdateManifest = {
+  const promotedManifest: DesktopUpdateManifest = {
     ...manifest,
     files: manifest.files.map((file) => {
       const name = artifactName(file.url);
@@ -220,13 +187,7 @@ export async function uploadDesktopUpdateRelease(
         url: `${publicOrigin}/${versionPrefix}/${name}`,
       };
     }),
-    ...(manifest.path
-      ? {
-          path: `${publicOrigin}/${versionPrefix}/${artifactName(
-            manifest.path,
-          )}`,
-        }
-      : {}),
+    path: `${publicOrigin}/${versionPrefix}/${artifactName(manifest.path)}`,
   };
   const metadataBody = stringify(promotedManifest);
   const releaseMetadataKey = `${versionPrefix}/latest-mac.yml`;
@@ -242,6 +203,62 @@ export async function uploadDesktopUpdateRelease(
     uploaded,
     skipped,
     releaseMetadataKey,
+  };
+}
+
+export async function verifyDesktopUpdateReleaseArtifacts(input: {
+  outDir: string;
+  version: string;
+}): Promise<VerifiedDesktopUpdateRelease> {
+  const sourceMetadataPath = path.join(input.outDir, "latest-mac.yml");
+  if (!existsSync(sourceMetadataPath)) {
+    throw new Error("Desktop update metadata is missing: latest-mac.yml.");
+  }
+  const manifest = parseManifest(
+    readFileSync(sourceMetadataPath, "utf8"),
+    input.version,
+  );
+  const referencedNames = manifest.files.map(({ url }) => artifactName(url));
+  if (!referencedNames.some((name) => name.endsWith(".zip"))) {
+    throw new Error("latest-mac.yml must reference a ZIP update artifact.");
+  }
+
+  const dmgName = readdirSync(input.outDir).find(
+    (name) =>
+      name === `Kestrel-${input.version}-mac-arm64.dmg`,
+  );
+  if (!dmgName) {
+    throw new Error(
+      `Desktop ${input.version} manual-install DMG is missing.`,
+    );
+  }
+  const expectedBlockmaps = [
+    `${dmgName}.blockmap`,
+    ...referencedNames
+      .filter((name) => name.endsWith(".zip"))
+      .map((name) => `${name}.blockmap`),
+  ];
+  const artifactNames = [
+    ...new Set([...referencedNames, dmgName, ...expectedBlockmaps]),
+  ];
+  for (const name of artifactNames) {
+    if (!existsSync(path.join(input.outDir, name))) {
+      throw new Error(`Desktop update artifact is missing: ${name}.`);
+    }
+  }
+
+  const artifactDigests = new Map<string, DesktopUpdateArtifactDigest>();
+  for (const name of artifactNames) {
+    artifactDigests.set(
+      name,
+      await digestFile(path.join(input.outDir, name)),
+    );
+  }
+  assertManifestArtifactIntegrity(manifest, artifactDigests);
+  return {
+    manifest,
+    artifactNames,
+    artifactDigests,
   };
 }
 
@@ -444,7 +461,10 @@ function assertExactArtifactNames(
   }
 }
 
-function parseManifest(value: string, expectedVersion: string): UpdateManifest {
+function parseManifest(
+  value: string,
+  expectedVersion: string,
+): DesktopUpdateManifest {
   const parsed = parse(value) as unknown;
   if (typeof parsed !== "object" || parsed === null) {
     throw new Error("latest-mac.yml must contain an object.");
@@ -466,7 +486,7 @@ function parseManifest(value: string, expectedVersion: string): UpdateManifest {
   if (!Array.isArray(candidate.files) || candidate.files.length === 0) {
     throw new Error("latest-mac.yml must reference at least one artifact.");
   }
-  const files = candidate.files.map((file): UpdateManifestFile => {
+  const files = candidate.files.map((file): DesktopUpdateManifestFile => {
     if (typeof file !== "object" || file === null) {
       throw new Error("latest-mac.yml contains an invalid files entry.");
     }
@@ -514,8 +534,8 @@ function parseManifest(value: string, expectedVersion: string): UpdateManifest {
 }
 
 function assertManifestArtifactIntegrity(
-  manifest: UpdateManifest,
-  artifactDigests: ReadonlyMap<string, ArtifactDigest>,
+  manifest: DesktopUpdateManifest,
+  artifactDigests: ReadonlyMap<string, DesktopUpdateArtifactDigest>,
 ): void {
   for (const file of manifest.files) {
     const name = artifactName(file.url);
@@ -592,7 +612,9 @@ function digest(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-async function digestFile(file: string): Promise<ArtifactDigest> {
+async function digestFile(
+  file: string,
+): Promise<DesktopUpdateArtifactDigest> {
   const sha256 = createHash("sha256");
   const sha512 = createHash("sha512");
   let size = 0;

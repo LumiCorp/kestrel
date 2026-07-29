@@ -10,6 +10,13 @@ export interface DesktopBuilderConfigInput {
   updateChannel?: DesktopUpdateChannel | undefined;
   signingIdentity?: string | undefined;
   packageMode?: "dir" | "release" | undefined;
+  otaFixture?: DesktopOtaFixtureBuildInput | undefined;
+}
+
+export interface DesktopOtaFixtureBuildInput {
+  approved: boolean;
+  updateUrl: string;
+  outputDirectory: string;
 }
 
 export interface DesktopBuilderConfiguration {
@@ -45,6 +52,13 @@ export interface DesktopBuilderConfiguration {
 }
 
 export const DESKTOP_UPDATE_ORIGIN = "https://updates.lumicorp.ai";
+export const DESKTOP_OTA_FIXTURE_UPDATE_URL =
+  "https://localhost:45173/desktop/stable/arm64";
+export const DESKTOP_OTA_FIXTURE_VERSIONS = [
+  "0.7.0-ota.1",
+  "0.7.0-ota.2",
+  "0.7.0-ota.3",
+] as const;
 
 export function resolveDesktopUpdateUrl(
   channel: DesktopUpdateChannel,
@@ -58,6 +72,16 @@ export function resolveDesktopBuilderConfiguration(
   const channel = input.updateChannel ?? "stable";
   const packageMode = input.packageMode ?? "release";
   const signingIdentity = input.signingIdentity?.trim();
+  const desktopRoot = path.join(input.repoRoot, "apps", "desktop");
+  const otaFixture = input.otaFixture === undefined
+    ? undefined
+    : validateDesktopOtaFixtureBuild({
+        ...input.otaFixture,
+        desktopRoot,
+        releaseBuild: input.releaseBuild,
+        packageMode,
+        version: input.version,
+      });
   if (packageMode === "release" && (!input.releaseBuild || !signingIdentity)) {
     throw new Error(
       "Desktop release packaging requires KESTREL_DESKTOP_RELEASE=1 and KESTREL_DESKTOP_SIGN_IDENTITY naming a Developer ID Application certificate.",
@@ -72,7 +96,6 @@ export function resolveDesktopBuilderConfiguration(
     );
   }
 
-  const desktopRoot = path.join(input.repoRoot, "apps", "desktop");
   const config: DesktopBuilderConfiguration = {
     appId: "com.kestrel.desktop",
     productName: "Kestrel",
@@ -82,7 +105,7 @@ export function resolveDesktopBuilderConfiguration(
     npmRebuild: false,
     directories: {
       app: path.join(desktopRoot, ".desktop-package"),
-      output: path.join(desktopRoot, "out"),
+      output: otaFixture?.outputDirectory ?? path.join(desktopRoot, "out"),
       buildResources: path.join(desktopRoot, "assets"),
     },
     files: ["**/*", "!node_modules{,/**/*}"],
@@ -129,13 +152,75 @@ export function resolveDesktopBuilderConfiguration(
     },
     publish: {
       provider: "generic",
-      url: resolveDesktopUpdateUrl(channel),
+      url: otaFixture?.updateUrl ?? resolveDesktopUpdateUrl(channel),
     },
   };
   if (input.releaseBuild) {
     config.afterSign = path.join(input.repoRoot, "scripts", "notarize-desktop.mjs");
   }
   return config;
+}
+
+function validateDesktopOtaFixtureBuild(
+  input: DesktopOtaFixtureBuildInput & {
+    desktopRoot: string;
+    releaseBuild: boolean;
+    packageMode: "dir" | "release";
+    version: string;
+  },
+): { updateUrl: string; outputDirectory: string } {
+  if (!input.approved) {
+    throw new Error(
+      "Desktop OTA fixture packaging requires KESTREL_DESKTOP_OTA_FIXTURE_BUILD_APPROVED=1.",
+    );
+  }
+  if (!input.releaseBuild || input.packageMode !== "release") {
+    throw new Error(
+      "Desktop OTA fixtures must use the signed release packaging path.",
+    );
+  }
+  if (
+    !DESKTOP_OTA_FIXTURE_VERSIONS.includes(
+      input.version as (typeof DESKTOP_OTA_FIXTURE_VERSIONS)[number],
+    )
+  ) {
+    throw new Error(
+      `Desktop OTA fixture version must be one of ${DESKTOP_OTA_FIXTURE_VERSIONS.join(", ")}.`,
+    );
+  }
+  if (input.updateUrl !== DESKTOP_OTA_FIXTURE_UPDATE_URL) {
+    throw new Error(
+      `Desktop OTA fixtures must use ${DESKTOP_OTA_FIXTURE_UPDATE_URL}.`,
+    );
+  }
+  const updateUrl = new URL(input.updateUrl);
+  if (
+    updateUrl.protocol !== "https:" ||
+    updateUrl.hostname !== "localhost" ||
+    updateUrl.port !== "45173" ||
+    updateUrl.username !== "" ||
+    updateUrl.password !== "" ||
+    updateUrl.search !== "" ||
+    updateUrl.hash !== ""
+  ) {
+    throw new Error("Desktop OTA fixture update URL must be exact loopback HTTPS.");
+  }
+  const outputDirectory = path.resolve(input.outputDirectory);
+  const expectedOutputDirectory = path.resolve(
+    input.desktopRoot,
+    "out",
+    "ota-fixtures",
+    input.version,
+  );
+  if (outputDirectory !== expectedOutputDirectory) {
+    throw new Error(
+      `Desktop OTA fixture output must be ${expectedOutputDirectory}.`,
+    );
+  }
+  return {
+    updateUrl: input.updateUrl,
+    outputDirectory,
+  };
 }
 
 export function parseDesktopUpdateChannel(
