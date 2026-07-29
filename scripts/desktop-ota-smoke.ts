@@ -30,6 +30,7 @@ import {
   resolveDesktopUpdateUrl,
 } from "../apps/desktop/src/builderConfig.js";
 import type {
+  DesktopBridge,
   DesktopManagedProjectRun,
   DesktopUpdateBlocker,
   DesktopUpdateState,
@@ -319,7 +320,7 @@ try {
   otaServer.offer(finalVersion);
   const finalLogCheckpoint = captureUpdaterLogCheckpoint(smokeRoot, coreHome);
   const available = await activeLaunch.page.evaluate(async () =>
-    await requireDesktopBridge().checkForUpdates()
+    await (globalThis as DesktopPageGlobal).kestrelDesktop!.checkForUpdates()
   ) as DesktopUpdateState;
   transitions.push(available);
   assertDesktopOtaUpdateState(available, {
@@ -328,7 +329,7 @@ try {
     targetVersion: finalVersion,
   });
   const downloaded = await activeLaunch.page.evaluate(async () =>
-    await requireDesktopBridge().downloadUpdate()
+    await (globalThis as DesktopPageGlobal).kestrelDesktop!.downloadUpdate()
   ) as DesktopUpdateState;
   transitions.push(downloaded);
   assertDesktopOtaUpdateState(downloaded, {
@@ -366,7 +367,7 @@ try {
 
   activeProjectRun = await activeLaunch.page.evaluate(
     async (input) =>
-      await requireDesktopBridge().startProjectRun({
+      await (globalThis as DesktopPageGlobal).kestrelDesktop!.startProjectRun({
         projectPath: input.projectPath,
         scriptName: "hold",
         packageManagerOverride: "npm",
@@ -375,11 +376,11 @@ try {
   ) as DesktopManagedProjectRun;
   assert.equal(activeProjectRun.status, "running");
   const blocked = await activeLaunch.page.evaluate(async () =>
-    await requireDesktopBridge().installUpdate()
+    await (globalThis as DesktopPageGlobal).kestrelDesktop!.installUpdate()
   ) as DesktopUpdateState;
   transitions.push(blocked);
   const listedAfterBlock = await activeLaunch.page.evaluate(async () =>
-    await requireDesktopBridge().listProjectRuns()
+    await (globalThis as DesktopPageGlobal).kestrelDesktop!.listProjectRuns()
   ) as DesktopManagedProjectRun[];
   const runAfterBlock = listedAfterBlock.find(
     (run) => run.runId === activeProjectRun!.runId,
@@ -389,7 +390,10 @@ try {
     runStillActive: runAfterBlock?.status === "running",
   });
   activeProjectRun = await activeLaunch.page.evaluate(
-    async (runId) => await requireDesktopBridge().stopProjectRun(runId),
+    async (runId) =>
+      await (globalThis as DesktopPageGlobal).kestrelDesktop!.stopProjectRun(
+        runId,
+      ),
     activeProjectRun.runId,
   ) as DesktopManagedProjectRun;
   await waitForProjectRunStopped(activeLaunch.page, activeProjectRun.runId);
@@ -457,7 +461,9 @@ try {
       label: "managed-project-run",
       async run() {
         await page.evaluate(
-          async (id) => await requireDesktopBridge().stopProjectRun(id),
+          async (id) =>
+            await (globalThis as DesktopPageGlobal).kestrelDesktop!
+              .stopProjectRun(id),
           runId,
         );
       },
@@ -624,7 +630,7 @@ async function runUpdateHop(input: {
   transitions: DesktopUpdateState[];
 }): Promise<LaunchHandle> {
   const available = await input.launch.page.evaluate(async () =>
-    await requireDesktopBridge().checkForUpdates()
+    await (globalThis as DesktopPageGlobal).kestrelDesktop!.checkForUpdates()
   ) as DesktopUpdateState;
   input.transitions.push(available);
   assertDesktopOtaUpdateState(available, {
@@ -633,7 +639,7 @@ async function runUpdateHop(input: {
     targetVersion: input.targetVersion,
   });
   const downloaded = await input.launch.page.evaluate(async () =>
-    await requireDesktopBridge().downloadUpdate()
+    await (globalThis as DesktopPageGlobal).kestrelDesktop!.downloadUpdate()
   ) as DesktopUpdateState;
   input.transitions.push(downloaded);
   assertDesktopOtaUpdateState(downloaded, {
@@ -654,7 +660,7 @@ async function installDownloadedUpdate(input: {
 }): Promise<LaunchHandle> {
   try {
     const installing = await input.launch.page.evaluate(async () =>
-      await requireDesktopBridge().installUpdate()
+      await (globalThis as DesktopPageGlobal).kestrelDesktop!.installUpdate()
     ) as DesktopUpdateState;
     input.transitions.push(installing);
     assertDesktopOtaUpdateState(installing, {
@@ -783,14 +789,16 @@ async function verifyReadyDesktop(
   await page.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
   await page.locator(".composer").waitFor({ state: "visible", timeout: 60_000 });
   await page.waitForFunction(
-    async () =>
-      (await requireDesktopBridge().getBootState() as { phase?: string })
-        .phase === "ready",
+    async () => {
+      const bridge = (globalThis as DesktopPageGlobal).kestrelDesktop;
+      return bridge !== undefined &&
+        ((await bridge.getBootState()) as { phase?: string }).phase === "ready";
+    },
     undefined,
     { timeout: 60_000 },
   );
   const state = await page.evaluate(async () => {
-    const bridge = requireDesktopBridge();
+    const bridge = (globalThis as DesktopPageGlobal).kestrelDesktop!;
     return {
       appInfo: await bridge.getAppInfo(),
       bootState: await bridge.getBootState(),
@@ -816,10 +824,11 @@ async function seedPersistenceMarker(
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(marker);
   await page.waitForFunction(
-    async (expected) =>
-      JSON.stringify(await requireDesktopBridge().getUiState()).includes(
-        String(expected),
-      ),
+    async (expected) => {
+      const bridge = (globalThis as DesktopPageGlobal).kestrelDesktop;
+      return bridge !== undefined &&
+        JSON.stringify(await bridge.getUiState()).includes(String(expected));
+    },
     marker,
     { timeout: 30_000 },
   );
@@ -871,7 +880,7 @@ async function waitForProjectRunStopped(
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const runs = await page.evaluate(async () =>
-      await requireDesktopBridge().listProjectRuns()
+      await (globalThis as DesktopPageGlobal).kestrelDesktop!.listProjectRuns()
     ) as DesktopManagedProjectRun[];
     const run = runs.find((candidate) => candidate.runId === runId);
     if (
@@ -1394,29 +1403,6 @@ function resolveRepoRoot(cwd: string): string {
   }
 }
 
-function requireDesktopBridge(): {
-  getAppInfo(): Promise<unknown>;
-  getBootState(): Promise<unknown>;
-  getBridgeInfo(): Promise<unknown>;
-  getUiState(): Promise<unknown>;
-  checkForUpdates(): Promise<unknown>;
-  downloadUpdate(): Promise<unknown>;
-  installUpdate(): Promise<unknown>;
-  listProjectRuns(): Promise<unknown>;
-  startProjectRun(input: {
-    projectPath: string;
-    scriptName: string;
-    packageManagerOverride: "npm";
-  }): Promise<unknown>;
-  stopProjectRun(runId: string): Promise<unknown>;
-} {
-  const bridge = (
-    globalThis as typeof globalThis & {
-      kestrelDesktop?: ReturnType<typeof requireDesktopBridge>;
-    }
-  ).kestrelDesktop;
-  if (bridge === undefined) {
-    throw new Error("Desktop preload bridge is unavailable.");
-  }
-  return bridge;
-}
+type DesktopPageGlobal = typeof globalThis & {
+  kestrelDesktop?: DesktopBridge;
+};

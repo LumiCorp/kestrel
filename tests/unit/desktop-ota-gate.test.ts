@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { DesktopUpdateState } from "../../apps/desktop/src/contracts.js";
@@ -16,6 +17,20 @@ import {
   sanitizeDesktopUpdaterLog,
   shapeDesktopOtaEvidence,
 } from "../../scripts/desktop-ota-gate.js";
+
+test("Desktop OTA renderer callbacks resolve the preload bridge in page context", () => {
+  const source = readFileSync(
+    new URL("../../scripts/desktop-ota-smoke.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /requireDesktopBridge/u);
+  assert.equal(
+    source.match(
+      /\(globalThis as DesktopPageGlobal\)\.kestrelDesktop/gu,
+    )?.length,
+    14,
+  );
+});
 
 test("Desktop OTA range parser produces exact single-range responses", () => {
   assert.deepEqual(parseDesktopByteRange("bytes=10-19", 100), {
