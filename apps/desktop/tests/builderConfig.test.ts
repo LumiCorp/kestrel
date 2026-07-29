@@ -132,6 +132,7 @@ test("signed OTA fixtures are isolated from the final production feed", () => {
   });
   assert.equal(fixture.publish.url, DESKTOP_OTA_FIXTURE_UPDATE_URL);
   assert.equal(fixture.publish.channel, "latest");
+  assert.equal(fixture.publish.useMultipleRangeRequest, false);
   assert.equal(fixture.directories.output, outputDirectory);
 
   const finalRelease = resolveDesktopBuilderConfiguration({
@@ -143,6 +144,7 @@ test("signed OTA fixtures are isolated from the final production feed", () => {
     packageMode: "release",
   });
   assert.equal(finalRelease.publish.url, resolveDesktopUpdateUrl("stable"));
+  assert.equal(finalRelease.publish.useMultipleRangeRequest, undefined);
   assert.equal(finalRelease.directories.output, path.join("/repo", "apps", "desktop", "out"));
 });
 
