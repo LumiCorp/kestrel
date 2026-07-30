@@ -45,8 +45,8 @@ export function resolveDesktopPathConfig(input: {
     ? path.join(input.resourcesPath ?? input.cwd, "static")
     : path.join(repoRoot, "apps", "desktop", "static");
   const iconPath = input.isPackaged
-    ? path.join(input.resourcesPath ?? input.cwd, "kestrel-head.png")
-    : path.join(repoRoot, "apps", "desktop", "assets", "kestrel-head.png");
+    ? path.join(input.resourcesPath ?? input.cwd, "kestrel-app-icon-light.png")
+    : path.join(repoRoot, "apps", "desktop", "assets", "kestrel-app-icon-light.png");
   const stateRoot = input.localCoreHomePath ?? input.userDataPath;
   const localCorePaths = resolveLocalCorePaths(stateRoot);
 

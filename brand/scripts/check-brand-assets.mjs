@@ -77,6 +77,7 @@ for (const size of [16, 32, 180, 192, 512]) {
 }
 
 const expectedPngs = new Map([
+  ["exports/kestrel-app-icon-light.png", [1024, 1024]],
   ["exports/kestrel-mark-black-512.png", [512, 512]],
   ["exports/kestrel-mark-black-1024.png", [1024, 1024]],
   ["exports/kestrel-mark-white-512.png", [512, 512]],
@@ -101,12 +102,26 @@ for (const [relative, [width, height]] of expectedPngs) {
 }
 
 for (const relative of [
+  "exports/kestrel-app-icon-light.icns",
+  "exports/kestrel-app-icon-light.ico",
   "exports/favicon-light.ico",
   "exports/favicon-dark.ico",
   "review/kestrel-one-brand-review.svg",
 ]) {
   assert(statSync(path.join(BRAND_ROOT, relative)).size > 0, `${relative} is missing`);
 }
+assert(
+  read("exports/kestrel-app-icon-light.icns").subarray(0, 4).toString("ascii") === "icns",
+  "Desktop macOS icon is not an ICNS file",
+);
+const desktopIcoHeader = read("exports/kestrel-app-icon-light.ico").subarray(0, 4);
+assert(
+  desktopIcoHeader[0] === 0
+    && desktopIcoHeader[1] === 0
+    && desktopIcoHeader[2] === 1
+    && desktopIcoHeader[3] === 0,
+  "Desktop Windows icon is not an ICO file",
+);
 
 const forbidden = /better auth|chatbot|starter template|#f71925|#c91b2e/iu;
 for (const relative of [
