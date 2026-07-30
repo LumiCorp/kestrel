@@ -41,6 +41,7 @@ export interface DesktopBuilderConfiguration {
     category: string;
     hardenedRuntime: boolean;
     gatekeeperAssess: false;
+    icon: string;
     identity: string | null;
     target: Array<{ target: "dir" | "dmg" | "zip"; arch: ["arm64"] }>;
   };
@@ -135,8 +136,8 @@ export function resolveDesktopBuilderConfiguration(
         to: "static",
       },
       {
-        from: path.join(desktopRoot, "assets", "kestrel-head.png"),
-        to: path.join("assets", "kestrel-head.png"),
+        from: path.join(desktopRoot, "assets", "kestrel-app-icon-light.png"),
+        to: "kestrel-app-icon-light.png",
       },
       {
         from: path.join(desktopRoot, "resources", "kestrel-uninstall-helper"),
@@ -147,6 +148,7 @@ export function resolveDesktopBuilderConfiguration(
       category: "public.app-category.developer-tools",
       hardenedRuntime: input.releaseBuild,
       gatekeeperAssess: false,
+      icon: path.join(desktopRoot, "assets", "kestrel-app-icon-light.icns"),
       identity: input.releaseBuild ? electronBuilderSigningIdentity! : null,
       target: packageMode === "dir"
         ? [{ target: "dir", arch: ["arm64"] }]

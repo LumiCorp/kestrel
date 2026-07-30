@@ -1,4 +1,5 @@
 import {
+  ChevronDown,
   Folder,
   GitPullRequest,
   KeyRound,
@@ -1535,22 +1536,6 @@ export function DesktopApp() {
             }}
             tail={(
               <>
-                {!archivedThreadSelected && composerPolicy.mode === "reply_to_request" ? (
-                  <li
-                    className="timeline-entry timeline-entry-attention timeline-entry-user-request"
-                    aria-live="assertive"
-                  >
-                    <TimelineMarker kind="attention" />
-                    <section className="timeline-entry-content operator-action-card" aria-label={composerPolicy.item.title}>
-                      <div>
-                        <strong>Kestrel needs your input</strong>
-                        <p>{composerPolicy.item.title}</p>
-                        {composerPolicy.item.detail !== undefined ? <small>{composerPolicy.item.detail}</small> : null}
-                      </div>
-                    </section>
-                  </li>
-                ) : null}
-
                 {!archivedThreadSelected && threadViews[activeThread.id]?.followUpQueue.items.length ? (
                   <li className="timeline-entry timeline-entry-queue">
                     <TimelineMarker kind="queue" />
@@ -1696,6 +1681,11 @@ export function DesktopApp() {
                         </option>
                       ))}
                   </select>
+                  <ChevronDown
+                    className="composer-model-chevron"
+                    size={14}
+                    aria-hidden="true"
+                  />
                   {activeModelRevision !== undefined ? <small title={activeModelRevision.policy.model}>{activeModelRevision.policy.model}</small> : null}
                 </div>
                 <button className="icon-button" type="button" title="Attach files" aria-label="Attach files" disabled={activeThread.draftAttachmentIds.length >= 8} onClick={() => void selectAttachments()}>

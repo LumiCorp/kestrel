@@ -21,7 +21,7 @@ export function resolveDesktopPackagerConfig(input: {
     appName: "Kestrel",
     arch: input.arch ?? process.arch,
     executableName: "Kestrel",
-    iconPath: path.join(desktopDir, "assets", `kestrel-head.${resolveIconExtension(platform)}`),
+    iconPath: path.join(desktopDir, "assets", `kestrel-app-icon-light.${resolveIconExtension(platform)}`),
     outDir: path.join(desktopDir, "out"),
     platform,
     stageDir: path.join(desktopDir, ".desktop-package"),

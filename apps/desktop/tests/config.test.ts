@@ -92,7 +92,7 @@ contractTest("desktop.hermetic", "resolveDesktopPathConfig uses repo-relative pa
 
     assert.equal(config.repoRoot, repoRoot);
     assert.equal(config.bootHtmlPath, path.join(repoRoot, "apps", "desktop", "static", "boot.html"));
-    assert.equal(config.iconPath, path.join(repoRoot, "apps", "desktop", "assets", "kestrel-head.png"));
+    assert.equal(config.iconPath, path.join(repoRoot, "apps", "desktop", "assets", "kestrel-app-icon-light.png"));
     assert.equal(config.rendererHtmlPath, path.join(repoRoot, "apps", "desktop", "static", "renderer", "index.html"));
     assert.equal(config.runtimeLogPath, path.join(stateRoot, "core", "logs", "desktop-runtime.log"));
     assert.equal(config.runtimeHomePath, "/tmp/kestrel-user");
@@ -138,7 +138,7 @@ contractTest("desktop.hermetic", "resolveDesktopPathConfig uses packaged resourc
     path.join(resourcesPath, "kestrel-runtime", "payload"),
   );
   assert.equal(config.bootHtmlPath, path.join(resourcesPath, "static", "boot.html"));
-  assert.equal(config.iconPath, path.join(resourcesPath, "kestrel-head.png"));
+  assert.equal(config.iconPath, path.join(resourcesPath, "kestrel-app-icon-light.png"));
   assert.equal(config.rendererHtmlPath, path.join(resourcesPath, "static", "renderer", "index.html"));
   assert.equal(config.runtimeLogPath, path.join(stateRoot, "core", "logs", "desktop-runtime.log"));
   assert.equal(config.runtimeHomePath, "/tmp/kestrel-user");
