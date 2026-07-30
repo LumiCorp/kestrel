@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import { and, count, eq, inArray, lt, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { refreshEnvironmentGateway } from "@/lib/environments/gateway-refresh";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { authorizeAppRuntime } from "./runtime";
 import { AppRuntimeError } from "./runtime";
@@ -40,7 +41,6 @@ export async function handlePreviewLifecycle(input: {
         preview: await renewPreview({
           previewId: input.path[1] ?? "",
           ticket: input.ticket,
-          authorization: input.authorization,
           body: await input.request.json().catch(() => null),
         }),
       });
@@ -48,7 +48,6 @@ export async function handlePreviewLifecycle(input: {
       await closePreview({
         previewId: input.path[1] ?? "",
         ticket: input.ticket,
-        authorization: input.authorization,
       });
       return NextResponse.json({ ok: true });
     default:
@@ -149,24 +148,23 @@ async function publishPreview(input: {
     });
     if (concurrent) {
       return concurrent.status === "provisioning"
-        ? activateLease(concurrent, input.ticket, input.authorization)
+        ? activateLease(concurrent, input.ticket)
         : describe(concurrent);
     }
     throw error;
   }
   if (!lease) throw new Error("Workspace preview lease was not created.");
   return lease.status === "provisioning"
-    ? activateLease(lease, input.ticket, input.authorization)
+    ? activateLease(lease, input.ticket)
     : describe(lease);
 }
 
 async function activateLease(
   lease: typeof schema.workspacePreviewLeases.$inferSelect,
-  ticket: EnvironmentExecutionTicket,
-  authorization: string
+  ticket: EnvironmentExecutionTicket
 ) {
   try {
-    await refreshGateway(ticket, authorization);
+    await refreshGateway(ticket);
   } catch (error) {
     const now = new Date();
     await knowledgeDb
@@ -237,7 +235,6 @@ async function expireWorkspacePreviews(workspaceId: string, now: Date) {
 async function renewPreview(input: {
   previewId: string;
   ticket: EnvironmentExecutionTicket;
-  authorization: string;
   body: unknown;
 }) {
   const ttlMinutes = parseTtl(input.body, true);
@@ -258,14 +255,13 @@ async function renewPreview(input: {
     .set({ expiresAt, updatedAt: now })
     .where(eq(schema.workspacePreviewLeases.id, lease.id))
     .returning();
-  await refreshGateway(input.ticket, input.authorization);
+  await refreshGateway(input.ticket);
   return describe(updated ?? lease);
 }
 
 async function closePreview(input: {
   previewId: string;
   ticket: EnvironmentExecutionTicket;
-  authorization: string;
 }) {
   const now = new Date();
   await expireWorkspacePreviews(input.ticket.workspaceId, now);
@@ -276,7 +272,7 @@ async function closePreview(input: {
       .set({ status: "closing", updatedAt: now })
       .where(eq(schema.workspacePreviewLeases.id, lease.id));
   }
-  await refreshGateway(input.ticket, input.authorization);
+  await refreshGateway(input.ticket);
   await knowledgeDb
     .update(schema.workspacePreviewLeases)
     .set({ status: "closed", closedAt: now, updatedAt: now })
@@ -345,22 +341,14 @@ async function assertPortListening(input: {
 }
 
 async function refreshGateway(
-  ticket: EnvironmentExecutionTicket,
-  authorization: string
+  ticket: EnvironmentExecutionTicket
 ) {
-  const environment = await knowledgeDb.query.environments.findFirst({
-    where: (table, { eq: equals }) => equals(table.id, ticket.environmentId),
-    columns: { routerUrl: true },
-  });
-  if (!environment?.routerUrl) {
-    throw new AppRuntimeError("WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE", 503);
-  }
-  const response = await fetch(new URL("/internal/config/refresh", environment.routerUrl), {
-    method: "POST",
-    headers: { authorization },
-    cache: "no-store",
-  });
-  if (!response.ok) {
+  try {
+    await refreshEnvironmentGateway({
+      organizationId: ticket.organizationId,
+      environmentId: ticket.environmentId,
+    });
+  } catch {
     throw new AppRuntimeError("WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE", 503);
   }
 }
