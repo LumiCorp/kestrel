@@ -23,6 +23,10 @@ test("Desktop builder emits signed arm64 DMG and ZIP update targets", () => {
     { target: "zip", arch: ["arm64"] },
   ]);
   assert.equal(config.mac.hardenedRuntime, true);
+  assert.equal(
+    config.mac.icon,
+    path.join("/repo", "apps", "desktop", "assets", "kestrel-app-icon-light.icns"),
+  );
   assert.equal(config.mac.identity, "Lumi");
   assert.equal(config.publish.channel, "latest");
   assert.equal(config.publish.url, resolveDesktopUpdateUrl("stable"));
@@ -32,6 +36,13 @@ test("Desktop builder emits signed arm64 DMG and ZIP update targets", () => {
       to === path.join("kestrel-runtime", "node_modules")
     )?.filter,
     ["**/*"],
+  );
+  assert.deepEqual(
+    config.extraResources.find(({ to }) => to === "kestrel-app-icon-light.png"),
+    {
+      from: path.join("/repo", "apps", "desktop", "assets", "kestrel-app-icon-light.png"),
+      to: "kestrel-app-icon-light.png",
+    },
   );
 });
 

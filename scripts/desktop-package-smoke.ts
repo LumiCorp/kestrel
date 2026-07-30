@@ -510,6 +510,7 @@ async function verifyOfflineModel(
   baseUrl: string;
   response: string;
 }> {
+  await window.getByRole("textbox", { name: "Message", exact: true }).click();
   await window.getByRole("button", { name: "Chat", exact: true }).click();
   await window.getByRole("textbox", { name: "Message", exact: true }).fill(
     "Run the deterministic packaged Desktop smoke.",
@@ -551,12 +552,34 @@ function readDesktopVersion(root: string): string {
 
 async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string, string>> {
   await openRendererSurface(window, "Settings", "Settings");
-  for (const capability of ["OpenRouter", "Apps", "Developer shell", "Sandboxed code execution", "Runtime database", "Microphone"]) {
+  for (const [category, capabilities] of [
+    ["Models", ["OpenRouter"]],
+    ["Tools & services", []],
+    ["Local capabilities", ["Developer shell", "Sandboxed code execution"]],
+    ["Workspace & data", ["Runtime database"]],
+    ["Permissions", ["Microphone"]],
+  ] as const) {
     await window
-      .getByRole("heading", { name: capability, exact: true })
+      .getByRole("link", { name: category, exact: true })
+      .click();
+    await window
+      .getByRole("heading", { name: category, exact: true })
       .first()
       .waitFor({ timeout: 30_000 });
+    for (const capability of capabilities) {
+      await window
+        .getByRole("heading", { name: capability, exact: true })
+        .first()
+        .waitFor({ timeout: 30_000 });
+    }
   }
+  await window
+    .getByRole("link", { name: "Workspace & data", exact: true })
+    .click();
+  await window
+    .getByRole("heading", { name: "Runtime database", exact: true })
+    .first()
+    .waitFor({ timeout: 30_000 });
   const databaseCard = window.locator(".capability-card").filter({ hasText: "Runtime database" });
   await databaseCard.getByRole("button", { name: "Configure", exact: true }).click();
   await window.getByRole("dialog", { name: "Runtime database", exact: true }).waitFor({ timeout: 30_000 });

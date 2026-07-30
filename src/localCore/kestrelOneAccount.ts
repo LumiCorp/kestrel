@@ -245,6 +245,7 @@ export class LocalCoreKestrelOneAccountManager {
   }
 
   async account(): Promise<KestrelOneAccountStatus> {
+    if (!this.#store.available) return { status: "signed_out" };
     const stored = await this.#readCredential();
     if (!stored) return { status: "signed_out" };
     const credential = await this.#refreshIfNeeded(stored);

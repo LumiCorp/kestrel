@@ -170,9 +170,17 @@
   background: var(--bg-control);
 }
 
+.explorer-search:focus-within {
+  border-color: var(--focus-ring);
+}
+
 .explorer-search input {
   height: var(--control-height);
   font-size: 12px;
+}
+
+.explorer-search input:focus-visible {
+  outline: 0;
 }
 
 .explorer-groups {

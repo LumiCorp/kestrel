@@ -1,8 +1,23 @@
 import assert from "node:assert/strict";
 
-import { MemoryLocalCoreCredentialStore } from "../../src/localCore/credentialStore.js";
+import {
+  MemoryLocalCoreCredentialStore,
+  UnavailableLocalCoreCredentialStore,
+} from "../../src/localCore/credentialStore.js";
 import { LocalCoreKestrelOneAccountManager } from "../../src/localCore/kestrelOneAccount.js";
 import { contractTest } from "../helpers/contract-test.js";
+
+contractTest(
+  "runtime.hermetic",
+  "Kestrel One account status is signed out when credential storage is unavailable",
+  async () => {
+    const manager = new LocalCoreKestrelOneAccountManager({
+      credentialStore: new UnavailableLocalCoreCredentialStore(),
+    });
+
+    assert.deepEqual(await manager.account(), { status: "signed_out" });
+  },
+);
 
 contractTest(
   "runtime.hermetic",

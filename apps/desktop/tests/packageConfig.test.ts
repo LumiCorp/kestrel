@@ -20,10 +20,10 @@ contractTest("desktop.hermetic", "resolveDesktopPackagerConfig defaults to the h
       "desktop",
       "assets",
       process.platform === "darwin"
-        ? "kestrel-head.icns"
+        ? "kestrel-app-icon-light.icns"
         : process.platform === "win32"
-          ? "kestrel-head.ico"
-          : "kestrel-head.png",
+          ? "kestrel-app-icon-light.ico"
+          : "kestrel-app-icon-light.png",
     ),
   );
   assert.equal(config.stageDir, path.join(repoRoot, "apps", "desktop", ".desktop-package"));
@@ -41,7 +41,7 @@ contractTest("desktop.hermetic", "resolveDesktopPackagerConfig honors explicit p
   assert.equal(config.arch, "arm64");
   assert.equal(
     config.iconPath,
-    path.join("/tmp/kestrel-repo", "apps", "desktop", "assets", "kestrel-head.icns"),
+    path.join("/tmp/kestrel-repo", "apps", "desktop", "assets", "kestrel-app-icon-light.icns"),
   );
 });
 
@@ -50,10 +50,10 @@ contractTest("desktop.hermetic", "resolveDesktopPackagerConfig selects native Wi
 
   assert.equal(
     resolveDesktopPackagerConfig({ repoRoot, platform: "win32" }).iconPath,
-    path.join(repoRoot, "apps", "desktop", "assets", "kestrel-head.ico"),
+    path.join(repoRoot, "apps", "desktop", "assets", "kestrel-app-icon-light.ico"),
   );
   assert.equal(
     resolveDesktopPackagerConfig({ repoRoot, platform: "linux" }).iconPath,
-    path.join(repoRoot, "apps", "desktop", "assets", "kestrel-head.png"),
+    path.join(repoRoot, "apps", "desktop", "assets", "kestrel-app-icon-light.png"),
   );
 });

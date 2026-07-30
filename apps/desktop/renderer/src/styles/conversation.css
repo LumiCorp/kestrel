@@ -77,11 +77,13 @@
   position: relative;
   display: grid;
   grid-template-rows: minmax(38px, auto) 0;
+  gap: 0;
   width: min(var(--conversation-content-width), calc(100% - var(--conversation-total-gutter)));
   min-height: var(--composer-height);
   margin: 0 auto var(--space-6);
+  padding: 0;
   overflow: hidden;
-  border: var(--border-width) solid var(--border-strong);
+  border: var(--border-width) solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--bg-control) !important;
   box-shadow: none;
@@ -94,8 +96,10 @@
 .composer:focus-within,
 .composer.composer-expanded {
   grid-template-rows: auto auto auto;
+  gap: var(--space-2);
   min-height: 112px;
-  border-color: var(--border-interactive);
+  padding: var(--space-2);
+  border-color: var(--border-strong);
   background: var(--bg-pane) !important;
 }
 
@@ -116,13 +120,15 @@
 
 .mode-segment {
   gap: var(--space-1);
-  padding: var(--space-2) var(--space-2) 0;
+  padding: 0;
 }
 
 .mode-segment button {
   height: var(--control-height);
   padding: 0 var(--space-2);
+  border: 0;
   border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
@@ -136,7 +142,8 @@
 .composer textarea {
   min-height: 38px;
   max-height: 38px;
-  padding: 10px 96px 10px var(--space-3);
+  padding: 10px 40px 10px var(--space-3);
+  border: 0;
   background: transparent !important;
   color: var(--text-primary);
   font-size: 13px;
@@ -148,7 +155,7 @@
 .composer.composer-expanded textarea {
   min-height: 64px;
   max-height: 160px;
-  padding: var(--space-3);
+  padding: var(--space-1);
   resize: vertical;
 }
 
@@ -156,11 +163,23 @@
   color: var(--text-tertiary);
 }
 
-.attachment-chips {
-  padding: 0 var(--space-2) var(--space-2);
+.composer textarea:focus-visible {
+  outline: 0;
 }
 
-.attachment-chip,
+.attachment-chips {
+  gap: var(--space-1);
+  padding: 0;
+}
+
+.attachment-chip {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-pane-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 .message-attachments span {
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
@@ -169,15 +188,22 @@
 
 .composer-actions {
   grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1);
   min-height: 0;
   padding: 0;
+  border: 0;
 }
 
 .composer:focus-within .composer-actions,
 .composer.composer-expanded .composer-actions {
   min-height: var(--composer-height);
-  padding: var(--space-1) var(--space-2) var(--space-2);
-  border-top: var(--border-width) solid var(--border-subtle);
+  padding: 0;
+  border: 0;
+}
+
+.composer-actions-left,
+.composer-actions-right {
+  gap: var(--space-1);
 }
 
 .composer-actions-right {
@@ -192,18 +218,35 @@
 }
 
 .composer-model-selector {
+  position: relative;
   grid-template-columns: minmax(0, 170px);
+  gap: var(--space-1);
 }
 
 .composer-model-selector select {
   height: var(--control-height);
-  border-color: var(--border-subtle);
+  padding: 0 26px 0 var(--space-2);
+  border: 0;
   border-radius: var(--radius-sm);
-  background: var(--bg-control) !important;
+  background: transparent !important;
   font-size: 11px;
+  cursor: pointer;
+}
+
+.composer-model-selector select:hover {
+  background: var(--bg-hover) !important;
+}
+
+.composer-model-chevron {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  color: var(--text-tertiary);
+  pointer-events: none;
 }
 
 .composer-model-selector small {
+  padding-left: var(--space-2);
   color: var(--text-tertiary);
   font-size: 10px;
 }
@@ -211,24 +254,50 @@
 .composer-steer-button {
   height: var(--control-height);
   min-width: 72px;
-  border: var(--border-width) solid var(--border-subtle);
+  border: 0;
   border-radius: var(--radius-sm);
-  background: transparent !important;
+  background: var(--bg-active) !important;
   color: var(--text-secondary);
   font-size: 12px;
 }
 
-:root[data-theme="dark"] .composer,
-:root[data-theme="dark"] .composer textarea,
-:root[data-theme="dark"] .composer button,
-:root[data-theme="dark"] .composer select {
-  background-color: #1c1c1a !important;
-  color: #d7d6cf;
+.composer .icon-button,
+.composer .primary-icon-button,
+.composer .stop-button,
+.composer .attachment-chip button {
+  border: 0;
+  box-shadow: none;
+}
+
+.composer .icon-button,
+.composer .stop-button,
+.composer .attachment-chip button {
+  background: transparent;
+}
+
+.composer .primary-icon-button {
+  background: var(--bg-active);
+}
+
+.composer .icon-button:hover,
+.composer .stop-button:hover,
+.composer .attachment-chip button:hover {
+  background: var(--bg-hover);
+}
+
+.composer button:disabled,
+.composer select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+:root[data-theme="dark"] .composer {
+  background-color: var(--bg-control) !important;
 }
 
 :root[data-theme="dark"] .composer:focus-within,
 :root[data-theme="dark"] .composer.composer-expanded {
-  background-color: #191918 !important;
+  background-color: var(--bg-pane) !important;
 }
 
 :root[data-theme="dark"] .composer .stop-button {

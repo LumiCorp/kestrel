@@ -10,6 +10,9 @@ const appPath = path.join(testDir, "..", "renderer", "src", "DesktopApp.tsx");
 const explorerPath = path.join(testDir, "..", "renderer", "src", "ConversationExplorer.tsx");
 const contextSidebarPath = path.join(testDir, "..", "renderer", "src", "ContextSidebar.tsx");
 const timelinePath = path.join(testDir, "..", "renderer", "src", "ConversationTimeline.tsx");
+const browserPreviewPath = path.join(testDir, "..", "renderer", "src", "browserPreview.ts");
+const rendererEntryPath = path.join(testDir, "..", "renderer", "src", "main.tsx");
+const rendererBoundaryPath = path.join(testDir, "..", "renderer", "src", "RendererErrorBoundary.tsx");
 const mainPath = path.join(testDir, "..", "src", "main.ts");
 
 async function readDesktopStyles(filePath = stylesPath, seen = new Set<string>()): Promise<string> {
@@ -110,6 +113,7 @@ contractTest("desktop.hermetic", "composer keeps mode and model semantics withou
   ]);
 
   assert.match(app, /aria-label="Conversation model"/u);
+  assert.match(app, /className="composer-model-chevron"/u);
   assert.doesNotMatch(app, />Model<\/span>/u);
   assert.doesNotMatch(app, /Safe build/u);
   assert.doesNotMatch(app, /composer-mode-label/u);
@@ -127,8 +131,58 @@ contractTest("desktop.hermetic", "composer uses compact idle geometry and expand
   assert.match(styles, /\.composer\s*\{[^}]*min-height:\s*var\(--composer-height\);/su);
   assert.match(styles, /\.composer\s*\{[^}]*margin:\s*0 auto var\(--space-6\);/su);
   assert.match(styles, /\.composer:focus-within,\s*\.composer\.composer-expanded\s*\{/su);
+  assert.match(
+    styles,
+    /\.composer:focus-within,\s*\.composer\.composer-expanded\s*\{[^}]*gap:\s*var\(--space-2\);[^}]*padding:\s*var\(--space-2\);/su,
+  );
   assert.match(app, /const \[composerFocused, setComposerFocused\] = useState\(false\);/u);
   assert.match(app, /className=\{`composer \$\{composerFocused \|\| activeThread\.draft\.trim\(\)\.length > 0/u);
+});
+
+contractTest("desktop.hermetic", "composer keeps one outer border and borderless internal controls", async () => {
+  const styles = await readDesktopStyles();
+  const expandedActions = /\.composer:focus-within \.composer-actions,\s*\.composer\.composer-expanded \.composer-actions\s*\{([^}]*)\}/su.exec(styles)?.[1];
+
+  assert.match(styles, /\.composer\s*\{[^}]*border:\s*var\(--border-width\) solid var\(--border-subtle\);/su);
+  assert.match(
+    styles,
+    /\.composer:focus-within,\s*\.composer\.composer-expanded\s*\{[^}]*border-color:\s*var\(--border-strong\);/su,
+  );
+  assert.match(styles, /\.composer-actions\s*\{[^}]*border:\s*0;/su);
+  assert.match(styles, /\.composer-model-selector select\s*\{[^}]*border:\s*0;/su);
+  assert.match(styles, /\.attachment-chip\s*\{[^}]*border:\s*0;/su);
+  assert.match(styles, /\.composer textarea:focus-visible\s*\{[^}]*outline:\s*0;/su);
+  assert.match(
+    styles,
+    /\.composer \.icon-button,[\s\S]*?\.composer \.attachment-chip button\s*\{[^}]*border:\s*0;/su,
+  );
+  assert.ok(expandedActions !== undefined);
+  assert.doesNotMatch(expandedActions, /border-top:/u);
+});
+
+contractTest("desktop.hermetic", "browser preview keeps new bridge members from crashing workspace navigation", async () => {
+  const preview = await readFile(browserPreviewPath, "utf8");
+
+  assert.match(preview, /onCommand\(\)\s*\{\s*return \(\) => \{\};\s*\}/su);
+  assert.match(preview, /async getPendingUninstallResult\(\)\s*\{\s*return undefined;\s*\}/su);
+  assert.match(preview, /async getKestrelOneAccount\(\)\s*\{/u);
+  assert.match(preview, /async getKestrelOneEnvironments\(\)\s*\{/u);
+  assert.match(preview, /async syncWorkspaceSkills\(\)\s*\{\s*return \[\];\s*\}/su);
+  assert.match(preview, /bridge = new Proxy\(implementedBridge,/u);
+  assert.match(preview, /is unavailable in the browser preview/u);
+});
+
+contractTest("desktop.hermetic", "renderer failures show a recoverable surface instead of a blank window", async () => {
+  const [entry, boundary] = await Promise.all([
+    readFile(rendererEntryPath, "utf8"),
+    readFile(rendererBoundaryPath, "utf8"),
+  ]);
+
+  assert.match(entry, /<RendererErrorBoundary>/u);
+  assert.match(boundary, /getDerivedStateFromError/u);
+  assert.match(boundary, /role="alert"/u);
+  assert.match(boundary, /Reload Kestrel/u);
+  assert.match(boundary, /window\.location\.reload\(\)/u);
 });
 
 contractTest("desktop.hermetic", "active runs suppress stale stalled-attention cards", async () => {
@@ -138,7 +192,7 @@ contractTest("desktop.hermetic", "active runs suppress stale stalled-attention c
   assert.match(app, /operatorActionCardItems\.map\(\(item\) => \(/u);
 });
 
-contractTest("desktop.hermetic", "user-input requests are timeline-visible and composer-owned", async () => {
+contractTest("desktop.hermetic", "user-input requests are composer-owned without a duplicate timeline card", async () => {
   const app = await readFile(appPath, "utf8");
 
   assert.match(app, /inboxItems:\s*operatorInboxItems/u);
@@ -147,8 +201,9 @@ contractTest("desktop.hermetic", "user-input requests are timeline-visible and c
     /const operatorActionCardItems = operatorInboxItems\.filter\(\s*\(item\) => item\.kind !== "user_input_request",?\s*\);/su,
   );
   assert.match(app, /operatorActionCardItems\.map\(\(item\) => \(/u);
-  assert.match(app, /Kestrel needs your input/u);
   assert.match(app, /composerPolicy\.mode === "reply_to_request"/u);
+  assert.doesNotMatch(app, /timeline-entry-user-request/u);
+  assert.doesNotMatch(app, /Kestrel needs your input/u);
 });
 
 contractTest("desktop.hermetic", "find work drawer groups conversations and keeps row selection separate from actions", async () => {
@@ -169,6 +224,90 @@ contractTest("desktop.hermetic", "find work drawer groups conversations and keep
   assert.match(explorer, /className="explorer-thread-menu-button"/u);
   assert.match(explorer, /Archived \(\$\{archivedCount\}\)/u);
   assert.match(explorer, /aria-label="Search conversations"/u);
+});
+
+contractTest("desktop.hermetic", "conversation search uses one focus border on its outer shell", async () => {
+  const styles = await readDesktopStyles();
+
+  assert.match(
+    styles,
+    /\.explorer-search:focus-within\s*\{[^}]*border-color:\s*var\(--focus-ring\);/su,
+  );
+  assert.match(
+    styles,
+    /\.explorer-search input:focus-visible\s*\{[^}]*outline:\s*0;/su,
+  );
+});
+
+contractTest("desktop.hermetic", "settings keep compact checks and wrap navigation at narrow widths", async () => {
+  const app = await readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8");
+  const styles = await readDesktopStyles();
+
+  assert.match(
+    app,
+    /className="settings-check"[\s\S]*?uninstallDisconnectKestrelOne/su,
+  );
+  assert.match(
+    app,
+    /className="settings-check"[\s\S]*?uninstallDiscardWorktrees/su,
+  );
+  assert.match(
+    styles,
+    /\.settings-card > \.settings-form\s*\{[^}]*border:\s*0;/su,
+  );
+  assert.match(
+    styles,
+    /\.surface-header,[\s\S]*?\.settings-surface > \.surface-header\s*\{[^}]*height:\s*var\(--surface-header-height\);/su,
+  );
+  assert.match(
+    styles,
+    /\.settings-category-nav\s*\{[^}]*top:\s*var\(--surface-header-height\);/su,
+  );
+  assert.match(
+    styles,
+    /\.settings-surface \.capability-card\s*\{[^}]*min-height:\s*0;[^}]*border-radius:\s*0;[^}]*background:\s*transparent;/su,
+  );
+  assert.match(
+    styles,
+    /input\[type="checkbox"\],[\s\S]*?input\[type="radio"\]\s*\{[^}]*appearance:\s*auto;[^}]*accent-color:\s*var\(--status-ready\);/su,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width:\s*760px\)\s*\{[\s\S]*?\.settings-category-nav\s*\{[^}]*flex-wrap:\s*wrap;[^}]*overflow-x:\s*visible;/su,
+  );
+});
+
+contractTest("desktop.hermetic", "settings navigation mounts one bounded category page at a time", async () => {
+  const app = await readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8");
+  const styles = await readDesktopStyles();
+
+  assert.match(app, /type SettingsPage = "general" \| DesktopCapabilityCategory;/u);
+  assert.match(app, /const \[activePage, setActivePage\] = useState<SettingsPage>/u);
+  assert.match(app, /aria-current=\{activePage === page \? "page" : undefined\}/u);
+  assert.match(app, /activePage === "general" && attentionCapabilities\.length > 0/u);
+  assert.match(app, /activePage === "workspace_data" \? \(/u);
+  assert.match(app, /activePage === "connections" \? \(/u);
+  assert.match(app, /const category = activePage;/u);
+  assert.match(app, /activePage === "models" \? \(/u);
+  assert.match(app, /activePage === "general" \? \(/u);
+  assert.match(
+    styles,
+    /\.settings-category-nav a\.active,[\s\S]*?a\[aria-current="page"\]\s*\{[^}]*background:\s*var\(--bg-active\);/su,
+  );
+});
+
+contractTest("desktop.hermetic", "standard workspace headers and project grids share shell geometry", async () => {
+  const styles = await readDesktopStyles();
+
+  assert.match(styles, /--surface-header-height:\s*44px;/u);
+  assert.match(
+    styles,
+    /\.project-grid\s*\{[^}]*min-height:\s*calc\(100% - var\(--surface-header-height\)\);/su,
+  );
+  assert.match(
+    styles,
+    /@media \(min-width:\s*820px\)\s*\{[\s\S]*?\.project-grid\s*\{[^}]*grid-template-columns:\s*minmax\(360px,\s*1\.25fr\) minmax\(300px,\s*0\.9fr\);/su,
+  );
 });
 
 contractTest("desktop.hermetic", "find work keeps low-value inspection pages out of the everyday navigation", async () => {
