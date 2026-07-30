@@ -1576,23 +1576,35 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry enables managed dev-shell 
   assert.equal(execInputs[1]?.sourceWriteAuthority, "source_write");
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry scopes pnpm build approval preflight to Build-mode dev-shell calls", async () => {
-  const execInputs: Array<Record<string, unknown>> = [];
+contractTest("runtime.hermetic", "UnifiedToolRegistry passes Build-mode dev-shell commands without package-manager preflight", async () => {
+  const runInputs: Array<Record<string, unknown>> = [];
+  const startInputs: Array<Record<string, unknown>> = [];
   const registry = new UnifiedToolRegistry({
-    allowlist: ["dev.shell.run"],
+    allowlist: ["exec_command", "dev.shell.run", "dev.process.start"],
     context: {
       devShell: {
         enabled: true,
       },
       devShellService: {
         runCommand: async (input: unknown) => {
-          execInputs.push(input as Record<string, unknown>);
+          runInputs.push(input as Record<string, unknown>);
           return {
             submittedAt: "2026-01-01T00:00:00.000Z",
             status: "COMPLETED",
             stdout: "",
             text: "",
             truncated: false,
+          };
+        },
+        startProcess: async (input: unknown) => {
+          startInputs.push(input as Record<string, unknown>);
+          return {
+            processId: "process-1",
+            status: "RUNNING",
+            text: "ready\n",
+            truncated: false,
+            cursor: 0,
+            nextCursor: 6,
           };
         },
       } as never,
@@ -1606,45 +1618,40 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry scopes pnpm build approval
   });
 
   await registry.refresh();
+  const buildRunContext = {
+    runContext: createToolRunContext({
+      runId: "run-build",
+      sessionId: "session-1",
+      payload: {
+        interactionMode: "build",
+        workspace: {
+          workspaceRoot: "/workspace",
+          managedWorktreeRequired: false,
+        },
+      },
+    }),
+  };
+  await registry.call(
+    "exec_command",
+    { command: "pnpm dev", cwd: "." },
+    buildRunContext,
+  );
   await registry.call(
     "dev.shell.run",
-    { command: "pnpm lint", workspaceRoot: "/workspace" },
-    {
-      runContext: createToolRunContext({
-        runId: "run-build",
-        sessionId: "session-1",
-        payload: {
-          interactionMode: "build",
-          workspace: {
-            workspaceRoot: "/workspace",
-            managedWorktreeRequired: false,
-          },
-        },
-      }),
-    }
+    { command: "pnpm dev", workspaceRoot: "/workspace" },
+    buildRunContext,
   );
-
   await registry.call(
-    "dev.shell.run",
-    { command: "pnpm lint", workspaceRoot: "/workspace" },
-    {
-      runContext: createToolRunContext({
-        runId: "run-plan",
-        sessionId: "session-1",
-        payload: {
-          interactionMode: "plan",
-          workspace: {
-            workspaceRoot: "/workspace",
-          },
-        },
-      }),
-    }
+    "dev.process.start",
+    { command: "pnpm dev", workspaceRoot: "/workspace" },
+    buildRunContext,
   );
 
-  assert.deepEqual(execInputs[0]?.packageManagerPreflight, {
-    pnpmApproveBuilds: "approve_all",
-  });
-  assert.equal(execInputs[1]?.packageManagerPreflight, undefined);
+  assert.deepEqual(startInputs.map((input) => input.command), ["pnpm dev", "pnpm dev"]);
+  assert.deepEqual(runInputs.map((input) => input.command), ["pnpm dev"]);
+  for (const input of [...startInputs, ...runInputs]) {
+    assert.equal("packageManagerPreflight" in input, false);
+  }
 });
 
 contractTest("runtime.hermetic", "UnifiedToolRegistry rejects managed dev-shell mode when trusted binding does not match the session or workspace", async () => {

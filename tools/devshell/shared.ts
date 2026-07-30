@@ -5,7 +5,6 @@ import type { SharedToolContext } from "../contracts.js";
 import type {
   DevShellCommandOptions,
   DevShellEnvMode,
-  DevShellPackageManagerPreflightConfig,
   DevShellProfileConfig,
   DevShellSourceWriteAuthority,
   DevShellSourceWriteGuardRequest,
@@ -81,17 +80,6 @@ export function buildDevShellSourceWriteAuthority(
   config: DevShellProfileConfig,
 ): DevShellSourceWriteAuthority | undefined {
   return config.sourceWriteAuthority;
-}
-
-export function buildDevShellPackageManagerPreflight(
-  context: SharedToolContext,
-): DevShellPackageManagerPreflightConfig | undefined {
-  if (context.interactionMode !== "build") {
-    return ;
-  }
-  return {
-    pnpmApproveBuilds: "approve_all",
-  };
 }
 
 export function parseStringArrayField(

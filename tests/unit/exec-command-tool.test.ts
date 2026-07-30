@@ -61,6 +61,46 @@ contractTest("runtime.hermetic", "exec_command maps one-shot process completion 
   });
 });
 
+contractTest("runtime.hermetic", "exec_command passes Build-mode pnpm commands through unchanged", async () => {
+  const service = new CapturingExecCommandService();
+
+  await runExecCommandForTest({
+    interactionMode: "build",
+    fileSystem: { workspaceRoot: "/repo", tempRoots: [] },
+    devShell: { enabled: true },
+    devShellService: service,
+  }, {
+    command: "pnpm dev",
+  });
+
+  assert.equal(service.startInputs[0]?.command, "pnpm dev");
+  assert.equal("packageManagerPreflight" in (service.startInputs[0] ?? {}), false);
+});
+
+contractTest("runtime.hermetic", "exec_command returns the dev-shell failure reason", async () => {
+  const service = new CapturingExecCommandService({
+    startResult: {
+      status: "FAILED",
+      text: "",
+      truncated: false,
+      cursor: 0,
+      nextCursor: 0,
+      exitCode: 1,
+      failureReason: "requested command failed before producing output",
+    },
+  });
+
+  const output = await runExecCommandForTest({
+    devShell: { enabled: true },
+    devShellService: service,
+  }, {
+    command: "pnpm dev",
+  });
+
+  assert.equal(output.status, "failed");
+  assert.equal(output.failureReason, "requested command failed before producing output");
+});
+
 contractTest("runtime.hermetic", "exec_command directs Desktop launches to the typed host-open capability", () => {
   assert.match(execCommandTool.definition.description, /Use desktop\.host\.open/u);
   assert.match(execCommandTool.definition.description, /Build-mode/u);

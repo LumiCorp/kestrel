@@ -2,7 +2,6 @@ import type { SharedToolModule } from "../contracts.js";
 import { createToolInputError, readNumber, readString } from "../helpers.js";
 import {
   buildDevShellCommandOptions,
-  buildDevShellPackageManagerPreflight,
   buildDevShellSourceWriteAuthority,
   buildDevShellSourceWriteGuardRequest,
   parseStringArrayField,
@@ -114,9 +113,6 @@ export const devShellRunTool: SharedToolModule = {
           ...(config.maxReadBytes !== undefined ? { maxReadBytes: config.maxReadBytes } : {}),
           ...(config.allowedEnvNames !== undefined ? { allowedEnvNames: config.allowedEnvNames } : {}),
           ...(envMode !== undefined ? { envMode } : {}),
-          ...(buildDevShellPackageManagerPreflight(context) !== undefined
-            ? { packageManagerPreflight: buildDevShellPackageManagerPreflight(context) }
-            : {}),
           ...(sourceWriteAuthority !== undefined ? { sourceWriteAuthority } : {}),
           ...(sourceWriteGuard !== undefined ? { sourceWriteGuard } : {}),
         },

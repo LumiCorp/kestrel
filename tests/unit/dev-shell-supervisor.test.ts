@@ -339,151 +339,33 @@ contractTest("runtime.process", "DevShellSupervisor does not let a later passing
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor runs pnpm build approval before build-mode pnpm commands", async () => {
-  const { supervisor, workspaceRoot, baseDir } = await createSupervisor();
-  const fake = await createFakePnpm(baseDir);
-  await writeFile(
-    path.join(workspaceRoot, "package.json"),
-    JSON.stringify({ packageManager: "pnpm@11.3.0" }),
-    "utf8",
-  );
-  const restore = installFakePnpmEnv(fake);
-  try {
-    const result = await supervisor.runCommand({
-      workspaceRoot,
-      command: "pnpm lint",
-      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
-      maxOutputBytes: 4096,
-      envMode: "inherit",
-      packageManagerPreflight: {
-        pnpmApproveBuilds: "approve_all",
-      },
-    });
-
-    assert.equal(result.status, "COMPLETED");
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.preflight?.pnpmBuildApproval?.status, "applied");
-    assert.equal(result.preflight?.pnpmBuildApproval?.command, "pnpm approve-builds --all");
-    assert.match(result.text, /requested:lint/u);
-    assert.deepEqual(await readFakePnpmLog(fake.logPath), ["approve-builds --all", "lint"]);
-
-    const second = await supervisor.runCommand({
-      workspaceRoot,
-      command: "pnpm build",
-      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
-      maxOutputBytes: 4096,
-      envMode: "inherit",
-      packageManagerPreflight: {
-        pnpmApproveBuilds: "approve_all",
-      },
-    });
-
-    assert.equal(second.status, "COMPLETED");
-    assert.equal(second.preflight?.pnpmBuildApproval?.status, "already_applied");
-    assert.deepEqual(await readFakePnpmLog(fake.logPath), ["approve-builds --all", "lint", "build"]);
-  } finally {
-    restore();
-    await supervisor.close();
-  }
-});
-
-contractTest("runtime.process", "DevShellSupervisor skips pnpm build approval outside explicit build-mode preflight", async () => {
-  const { supervisor, workspaceRoot, baseDir } = await createSupervisor();
-  const fake = await createFakePnpm(baseDir);
-  await writeFile(
-    path.join(workspaceRoot, "package.json"),
-    JSON.stringify({ packageManager: "pnpm@11.3.0" }),
-    "utf8",
-  );
-  const restore = installFakePnpmEnv(fake);
-  try {
-    const result = await supervisor.runCommand({
-      workspaceRoot,
-      command: "pnpm lint",
-      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
-      maxOutputBytes: 4096,
-      envMode: "inherit",
-    });
-
-    assert.equal(result.status, "COMPLETED");
-    assert.equal(result.preflight, undefined);
-    assert.deepEqual(await readFakePnpmLog(fake.logPath), ["lint"]);
-  } finally {
-    restore();
-    await supervisor.close();
-  }
-});
-
-contractTest("runtime.process", "DevShellSupervisor skips pnpm build approval for non-pnpm commands and missing pnpm packageManager", async () => {
+contractTest("runtime.process", "DevShellSupervisor starts pnpm dev without hidden package-manager commands", async () => {
   const { supervisor, workspaceRoot, baseDir } = await createSupervisor();
   const fake = await createFakePnpm(baseDir);
   const restore = installFakePnpmEnv(fake);
   try {
-    const nonPnpm = await supervisor.runCommand({
+    const result = await supervisor.startProcess({
       workspaceRoot,
-      command: "printf 'ok\\n'",
-      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
+      command: "pnpm dev",
+      yieldTimeMs: 200,
       maxOutputBytes: 4096,
       envMode: "inherit",
-      packageManagerPreflight: {
-        pnpmApproveBuilds: "approve_all",
-      },
     });
 
-    assert.equal(nonPnpm.status, "COMPLETED");
-    assert.equal(nonPnpm.preflight?.pnpmBuildApproval?.status, "skipped");
-    assert.equal(nonPnpm.preflight?.pnpmBuildApproval?.reason, "command_not_pnpm");
-    assert.deepEqual(await readFakePnpmLog(fake.logPath), []);
-    await writeFile(path.join(workspaceRoot, "package.json"), JSON.stringify({ private: true }), "utf8");
-
-    const missingPackageManager = await supervisor.runCommand({
-      workspaceRoot,
-      command: "pnpm lint",
-      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
-      maxOutputBytes: 4096,
-      envMode: "inherit",
-      packageManagerPreflight: {
-        pnpmApproveBuilds: "approve_all",
-      },
-    });
-
-    assert.equal(missingPackageManager.status, "COMPLETED");
-    assert.equal(missingPackageManager.preflight?.pnpmBuildApproval?.status, "skipped");
-    assert.equal(missingPackageManager.preflight?.pnpmBuildApproval?.reason, "package_manager_missing");
-    assert.deepEqual(await readFakePnpmLog(fake.logPath), ["lint"]);
-  } finally {
-    restore();
-    await supervisor.close();
-  }
-});
-
-contractTest("runtime.process", "DevShellSupervisor fails pnpm command without running it when build approval fails", async () => {
-  const { supervisor, workspaceRoot, baseDir } = await createSupervisor();
-  const fake = await createFakePnpm(baseDir);
-  await writeFile(
-    path.join(workspaceRoot, "package.json"),
-    JSON.stringify({ packageManager: "pnpm@11.3.0" }),
-    "utf8",
-  );
-  const restore = installFakePnpmEnv(fake, { approveExitCode: "9" });
-  try {
-    const result = await supervisor.runCommand({
-      workspaceRoot,
-      command: "pnpm lint",
-      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
-      maxOutputBytes: 4096,
-      envMode: "inherit",
-      packageManagerPreflight: {
-        pnpmApproveBuilds: "approve_all",
-      },
-    });
-
-    assert.equal(result.status, "FAILED");
-    assert.equal(result.exitCode, 9);
-    assert.equal(result.failureReason, "pnpm build-script approval preflight failed.");
-    assert.equal(result.preflight?.pnpmBuildApproval?.status, "failed");
-    assert.match(result.preflight?.pnpmBuildApproval?.stderr ?? "", /approval failed/u);
-    assert.deepEqual(await readFakePnpmLog(fake.logPath), ["approve-builds --all"]);
+    assert.equal(result.status, "RUNNING");
+    assert.equal(typeof result.processId, "string");
+    if (result.processId !== undefined) {
+      const observed = await readProcessUntilText({
+        supervisor,
+        processId: result.processId,
+        expectedText: "requested:dev",
+        timeoutMs: TEST_COMMAND_TIMEOUT_MS,
+        cursor: 0,
+      });
+      assert.match(observed.text, /requested:dev/u);
+      assert.deepEqual(await readFakePnpmLog(fake.logPath), ["dev"]);
+      await supervisor.stopProcess({ processId: result.processId, waitMs: 1000 });
+    }
   } finally {
     restore();
     await supervisor.close();
@@ -1506,15 +1388,10 @@ async function createFakePnpm(baseDir: string): Promise<{ binDir: string; logPat
     [
       "#!/bin/sh",
       "printf '%s\\n' \"$*\" >> \"$PNPM_FAKE_LOG\"",
-      "if [ \"$1\" = \"approve-builds\" ]; then",
-      "  if [ \"${PNPM_APPROVE_EXIT:-0}\" != \"0\" ]; then",
-      "    printf 'approval failed\\n' >&2",
-      "    exit \"$PNPM_APPROVE_EXIT\"",
-      "  fi",
-      "  printf 'approval ok\\n'",
-      "  exit 0",
-      "fi",
       "printf 'requested:%s\\n' \"$*\"",
+      "if [ \"$1\" = \"dev\" ]; then",
+      "  while :; do sleep 1; done",
+      "fi",
     ].join("\n"),
     "utf8",
   );
@@ -1525,20 +1402,13 @@ async function createFakePnpm(baseDir: string): Promise<{ binDir: string; logPat
 
 function installFakePnpmEnv(
   fake: { binDir: string; logPath: string },
-  options: { approveExitCode?: string | undefined } = {},
 ): () => void {
   const previousPath = process.env.PATH;
   const previousLog = process.env.PNPM_FAKE_LOG;
-  const previousApproveExit = process.env.PNPM_APPROVE_EXIT;
   const previousShell = process.env.SHELL;
   process.env.PATH = `${fake.binDir}${path.delimiter}${previousPath ?? ""}`;
   process.env.PNPM_FAKE_LOG = fake.logPath;
   process.env.SHELL = "/bin/sh";
-  if (options.approveExitCode !== undefined) {
-    process.env.PNPM_APPROVE_EXIT = options.approveExitCode;
-  } else {
-    delete process.env.PNPM_APPROVE_EXIT;
-  }
   return () => {
     if (previousPath === undefined) {
       delete process.env.PATH;
@@ -1549,11 +1419,6 @@ function installFakePnpmEnv(
       delete process.env.PNPM_FAKE_LOG;
     } else {
       process.env.PNPM_FAKE_LOG = previousLog;
-    }
-    if (previousApproveExit === undefined) {
-      delete process.env.PNPM_APPROVE_EXIT;
-    } else {
-      process.env.PNPM_APPROVE_EXIT = previousApproveExit;
     }
     if (previousShell === undefined) {
       delete process.env.SHELL;

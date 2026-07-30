@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, open, readFile, realpath, stat } from "node:fs/promises";
+import { appendFile, mkdir, open, realpath, stat } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -25,14 +25,11 @@ import type {
   DevProcessWriteAndReadResult,
   DevProcessWriteInput,
   DevProcessWriteResult,
-  DevShellCommandInput,
   DevShellCommandOptions,
   DevShellProcessRecord,
   DevShellProcessStatus,
   DevShellProcessStore,
   DevShellOutputChannel,
-  DevShellPreflightResult,
-  DevShellPnpmBuildApprovalPreflight,
   DevShellReadiness,
   DevShellRunInput,
   DevShellRunResult,
@@ -49,9 +46,6 @@ import { resolveDefaultDevShellBaseDir } from "./paths.js";
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_MAX_READ_BYTES = DEFAULT_DEV_SHELL_DISABLED_CONFIG.maxReadBytes ?? 131_072;
 const DEFAULT_YIELD_TIME_MS = 1000;
-const PNPM_APPROVE_BUILDS_COMMAND = "pnpm approve-builds --all";
-const PNPM_APPROVE_BUILDS_TIMEOUT_MS = 120_000;
-const PREFLIGHT_OUTPUT_PREVIEW_BYTES = 4096;
 const DEFAULT_TRANSCRIPT_MAX_BYTES = 16 * 1024 * 1024;
 const TRANSCRIPT_TRUNCATED_MARKER =
   "\n[dev-shell transcript truncated; set KESTREL_DEV_SHELL_TRANSCRIPT_MAX_BYTES to raise the capture limit]\n";
@@ -80,7 +74,6 @@ export class DevShellSupervisor {
   private readonly processes = new Map<string, RunningProcess>();
   private readonly deliveredOffsets = new Map<string, number>();
   private readonly deliveredTerminalResults = new Set<string>();
-  private readonly pnpmBuildApprovalWorkspaces = new Set<string>();
   private readonly idleInterval: NodeJS.Timeout;
 
   constructor(
@@ -147,36 +140,12 @@ export class DevShellSupervisor {
   }
 
   async runCommand(input: DevShellRunInput, options: DevShellCommandOptions = {}): Promise<DevShellRunResult> {
-    const preflight = await this.runPackageManagerPreflight(input);
-    if (isPreflightFailed(preflight)) {
-      const now = this.now().toISOString();
-      return {
-        status: "FAILED",
-        stdout: "",
-        text: "",
-        truncated: false,
-        command: normalizeDevShellExecCommand(input.command),
-        cwd: resolve(input.workspaceRoot ?? ".", input.cwd ?? "."),
-        workspaceRoot: resolve(input.workspaceRoot ?? "."),
-        submittedAt: now,
-        startedAt: now,
-        updatedAt: now,
-        completedAt: now,
-        exitCode: preflight.pnpmBuildApproval?.exitCode ?? 1,
-        failureReason: "pnpm build-script approval preflight failed.",
-        failurePhase: "command",
-        commandKind: classifyShellCommand(normalizeDevShellExecCommand(input.command) ?? "").commandKind,
-        strictModeApplied: false,
-        preflight,
-      };
-    }
     const running = await this.startManagedProcess(
       {
         ...input,
         strictMultiline: true,
       },
       options,
-      preflight,
     );
     const timeoutMs = normalizePositiveInt(input.timeoutMs, 30_000);
     await waitForProcessExit(running.child, timeoutMs);
@@ -210,7 +179,6 @@ export class DevShellSupervisor {
       ...(result.commandKind !== undefined ? { commandKind: result.commandKind } : {}),
       ...(result.strictModeApplied !== undefined ? { strictModeApplied: result.strictModeApplied } : {}),
       ...(result.strictModeReason !== undefined ? { strictModeReason: result.strictModeReason } : {}),
-      ...(result.preflight !== undefined ? { preflight: result.preflight } : {}),
       ...(result.sourceWriteGuard !== undefined ? { sourceWriteGuard: result.sourceWriteGuard } : {}),
       ...(result.unauthorizedSourceWrites !== undefined
         ? { unauthorizedSourceWrites: result.unauthorizedSourceWrites }
@@ -219,31 +187,7 @@ export class DevShellSupervisor {
   }
 
   async startProcess(input: DevProcessStartInput, options: DevShellCommandOptions = {}): Promise<DevProcessStartResult> {
-    const preflight = await this.runPackageManagerPreflight(input);
-    if (isPreflightFailed(preflight)) {
-      const now = this.now().toISOString();
-      return {
-        status: "FAILED",
-        text: "",
-        truncated: false,
-        cursor: 0,
-        nextCursor: 0,
-        command: normalizeDevShellExecCommand(input.command),
-        cwd: resolve(input.workspaceRoot ?? ".", input.cwd ?? "."),
-        workspaceRoot: resolve(input.workspaceRoot ?? "."),
-        submittedAt: now,
-        startedAt: now,
-        updatedAt: now,
-        completedAt: now,
-        exitCode: preflight.pnpmBuildApproval?.exitCode ?? 1,
-        failureReason: "pnpm build-script approval preflight failed.",
-        failurePhase: "command",
-        commandKind: classifyShellCommand(normalizeDevShellExecCommand(input.command) ?? "").commandKind,
-        strictModeApplied: false,
-        preflight,
-      };
-    }
-    const running = await this.startManagedProcess(input, options, preflight);
+    const running = await this.startManagedProcess(input, options);
     await waitForProcessExit(
       running.child,
       normalizeNonNegativeInt(input.yieldTimeMs, DEFAULT_YIELD_TIME_MS),
@@ -261,7 +205,6 @@ export class DevShellSupervisor {
   private async startManagedProcess(
     input: DevProcessStartInput,
     options: DevShellCommandOptions = {},
-    preflight?: DevShellPreflightResult | undefined,
   ): Promise<RunningProcess> {
     const normalizedCommand = normalizeDevShellExecCommand(input.command);
     if (normalizedCommand === undefined) {
@@ -402,7 +345,6 @@ export class DevShellSupervisor {
             },
           }
         : {}),
-      ...(preflight !== undefined ? { preflight } : {}),
     };
     let resolveSettlement = () => {};
     const settlement = new Promise<void>((resolvePromise) => {
@@ -781,7 +723,6 @@ export class DevShellSupervisor {
       ...(updatedRecord.commandKind !== undefined ? { commandKind: updatedRecord.commandKind } : {}),
       ...(updatedRecord.strictModeApplied !== undefined ? { strictModeApplied: updatedRecord.strictModeApplied } : {}),
       ...(updatedRecord.strictModeReason !== undefined ? { strictModeReason: updatedRecord.strictModeReason } : {}),
-      ...(updatedRecord.preflight !== undefined ? { preflight: updatedRecord.preflight } : {}),
       ...(updatedRecord.sourceWriteGuard !== undefined ? { sourceWriteGuard: updatedRecord.sourceWriteGuard } : {}),
       ...(updatedRecord.sourceWriteGuard?.unauthorizedSourceWrites !== undefined &&
         updatedRecord.sourceWriteGuard.unauthorizedSourceWrites.length > 0
@@ -1011,182 +952,6 @@ export class DevShellSupervisor {
       processId: record.processId,
     });
   }
-
-  private async runPackageManagerPreflight(
-    input: DevShellCommandInput,
-  ): Promise<DevShellPreflightResult | undefined> {
-    const pnpmBuildApproval = await this.runPnpmBuildApprovalPreflight(input);
-    return pnpmBuildApproval === undefined
-      ? undefined
-      : {
-          pnpmBuildApproval,
-        };
-  }
-
-  private async runPnpmBuildApprovalPreflight(
-    input: DevShellCommandInput,
-  ): Promise<DevShellPnpmBuildApprovalPreflight | undefined> {
-    if (input.packageManagerPreflight?.pnpmApproveBuilds !== "approve_all") {
-      return ;
-    }
-    const normalizedCommand = normalizeDevShellExecCommand(input.command);
-    if (normalizedCommand === undefined || isPnpmShellCommand(normalizedCommand) === false) {
-      return {
-        status: "skipped",
-        reason: "command_not_pnpm",
-      };
-    }
-
-    const workspaceRoot = resolve(input.workspaceRoot ?? ".");
-    const cwd = await requirePathWithinWorkspace(
-      workspaceRoot,
-      resolve(workspaceRoot, input.cwd ?? "."),
-      input.cwd ?? ".",
-    );
-    const packageInfo = await findPackageInfo({ workspaceRoot, cwd });
-    if (packageInfo === undefined) {
-      return {
-        status: "skipped",
-        reason: "package_json_missing",
-      };
-    }
-    if (packageInfo.packageManager === undefined) {
-      return {
-        status: "skipped",
-        reason: "package_manager_missing",
-        cwd: packageInfo.packageRoot,
-        packageJsonPath: packageInfo.packageJsonPath,
-      };
-    }
-    if (packageInfo.packageManager.startsWith("pnpm@") === false) {
-      return {
-        status: "skipped",
-        reason: "package_manager_not_pnpm",
-        cwd: packageInfo.packageRoot,
-        packageJsonPath: packageInfo.packageJsonPath,
-        packageManager: packageInfo.packageManager,
-      };
-    }
-
-    if (this.pnpmBuildApprovalWorkspaces.has(packageInfo.packageRoot)) {
-      return {
-        status: "already_applied",
-        reason: "workspace_already_preflighted",
-        command: PNPM_APPROVE_BUILDS_COMMAND,
-        cwd: packageInfo.packageRoot,
-        packageJsonPath: packageInfo.packageJsonPath,
-        packageManager: packageInfo.packageManager,
-        exitCode: 0,
-      };
-    }
-
-    const envMode = input.envMode ?? "allowlist";
-    const allowedEnvNames = new Set(input.allowedEnvNames ?? []);
-    const envNames =
-      envMode === "allowlist"
-        ? (input.envNames ?? []).filter((name) => allowedEnvNames.has(name))
-        : [...new Set(input.envNames ?? [])];
-    const shellPath = resolveShellPath();
-    const result = await runShellCommandOnce({
-      command: PNPM_APPROVE_BUILDS_COMMAND,
-      shellPath,
-      cwd: packageInfo.packageRoot,
-      workspaceRoot,
-      envNames,
-      envMode,
-      timeoutMs: PNPM_APPROVE_BUILDS_TIMEOUT_MS,
-    });
-    const preflight: DevShellPnpmBuildApprovalPreflight = {
-      status: result.exitCode === 0 ? "applied" : "failed",
-      command: PNPM_APPROVE_BUILDS_COMMAND,
-      cwd: packageInfo.packageRoot,
-      packageJsonPath: packageInfo.packageJsonPath,
-      packageManager: packageInfo.packageManager,
-      exitCode: result.exitCode,
-      stdout: boundTextByBytes(result.stdout, PREFLIGHT_OUTPUT_PREVIEW_BYTES),
-      stderr: boundTextByBytes(result.stderr, PREFLIGHT_OUTPUT_PREVIEW_BYTES),
-      ...(result.timedOut ? { timedOut: true, reason: "preflight_timeout" } : {}),
-    };
-    if (result.exitCode === 0) {
-      this.pnpmBuildApprovalWorkspaces.add(packageInfo.packageRoot);
-    }
-    return preflight;
-  }
-}
-
-function isPreflightFailed(
-  preflight: DevShellPreflightResult | undefined,
-): preflight is DevShellPreflightResult & {
-  pnpmBuildApproval: DevShellPnpmBuildApprovalPreflight & { status: "failed" };
-} {
-  return preflight?.pnpmBuildApproval?.status === "failed";
-}
-
-async function findPackageInfo(input: {
-  workspaceRoot: string;
-  cwd: string;
-}): Promise<
-  | {
-      packageRoot: string;
-      packageJsonPath: string;
-      packageManager?: string | undefined;
-    }
-  | undefined
-> {
-  let current = input.cwd;
-  const workspaceRoot = input.workspaceRoot;
-  while (await isWithinWorkspace(workspaceRoot, current)) {
-    const packageJsonPath = join(current, "package.json");
-    const packageInfo = await readPackageInfo(packageJsonPath);
-    if (packageInfo !== undefined) {
-      return {
-        packageRoot: current,
-        packageJsonPath,
-        ...(packageInfo.packageManager !== undefined ? { packageManager: packageInfo.packageManager } : {}),
-      };
-    }
-    if (current === workspaceRoot) {
-      break;
-    }
-    const parent = dirname(current);
-    if (parent === current) {
-      break;
-    }
-    current = parent;
-  }
-  return ;
-}
-
-async function readPackageInfo(packageJsonPath: string): Promise<{ packageManager?: string | undefined } | undefined> {
-  try {
-    const raw = await readFile(packageJsonPath, "utf8");
-    const parsed = JSON.parse(raw) as { packageManager?: unknown };
-    const packageManager =
-      typeof parsed.packageManager === "string" && parsed.packageManager.trim().length > 0
-        ? parsed.packageManager.trim()
-        : undefined;
-    return {
-      ...(packageManager !== undefined ? { packageManager } : {}),
-    };
-  } catch {
-    return ;
-  }
-}
-
-function isPnpmShellCommand(command: string): boolean {
-  const executable = readShellCommandExecutable(command);
-  return executable === "pnpm" || executable === "pnpm.cmd";
-}
-
-function readShellCommandExecutable(command: string): string | undefined {
-  const words = readLeadingShellWords(command, 24);
-  for (const word of words) {
-    if (isShellEnvironmentAssignment(word)) {
-      continue;
-    }
-    return word;
-  }
-  return ;
 }
 
 function buildShellCommandExecutionPlan(input: {
@@ -1221,136 +986,6 @@ function classifyShellCommand(command: string): {
   return /\r|\n/u.test(command)
     ? { commandKind: "multi_line" }
     : { commandKind: "single_line" };
-}
-
-function isShellEnvironmentAssignment(word: string): boolean {
-  const equalsIndex = word.indexOf("=");
-  if (equalsIndex <= 0) {
-    return false;
-  }
-  const name = word.slice(0, equalsIndex);
-  return /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name);
-}
-
-function readLeadingShellWords(command: string, maxWords: number): string[] {
-  const words: string[] = [];
-  let word = "";
-  let quote: "'" | "\"" | undefined;
-  let escaping = false;
-  for (let index = 0; index < command.length; index += 1) {
-    const char = command[index]!;
-    if (escaping) {
-      word += char;
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (quote !== undefined) {
-      if (char === quote) {
-        quote = undefined;
-      } else {
-        word += char;
-      }
-      continue;
-    }
-    if (char === "'" || char === "\"") {
-      quote = char;
-      continue;
-    }
-    if (/\s/u.test(char)) {
-      if (word.length > 0) {
-        words.push(word);
-        if (words.length >= maxWords) {
-          return words;
-        }
-        word = "";
-      }
-      continue;
-    }
-    if (";&|()<>".includes(char)) {
-      if (word.length > 0) {
-        words.push(word);
-      }
-      return words;
-    }
-    word += char;
-  }
-  if (word.length > 0) {
-    words.push(word);
-  }
-  return quote === undefined && escaping === false ? words : [];
-}
-
-async function runShellCommandOnce(input: {
-  command: string;
-  shellPath: string;
-  cwd: string;
-  workspaceRoot: string;
-  envNames: string[];
-  envMode: "inherit" | "allowlist";
-  timeoutMs: number;
-}): Promise<{ exitCode: number; stdout: string; stderr: string; timedOut: boolean }> {
-  const env = buildShellEnv(input.shellPath, input.envNames, input.envMode, input.workspaceRoot);
-  return new Promise((resolvePromise) => {
-    const child = spawn(input.shellPath, ["-lc", input.command], {
-      cwd: input.cwd,
-      env,
-      detached: process.platform !== "win32",
-      stdio: "pipe",
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      signalProcessTree(child, "SIGKILL");
-    }, input.timeoutMs);
-    timeout.unref();
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", (error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      resolvePromise({
-        exitCode: 1,
-        stdout,
-        stderr: stderr.length > 0 ? stderr : error.message,
-        timedOut,
-      });
-    });
-    child.on("exit", (code) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      resolvePromise({
-        exitCode: timedOut ? 124 : code ?? 1,
-        stdout,
-        stderr,
-        timedOut,
-      });
-    });
-  });
-}
-
-function boundTextByBytes(text: string, maxBytes: number): string {
-  const buffer = Buffer.from(text, "utf8");
-  if (buffer.byteLength <= maxBytes) {
-    return text;
-  }
-  return `${buffer.subarray(0, maxBytes).toString("utf8")}...[truncated]`;
 }
 
 async function buildReadiness(input: {
