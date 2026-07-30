@@ -33,6 +33,11 @@ test("Desktop OTA renderer callbacks resolve the preload bridge in page context"
     14,
   );
   assert.match(source, /CFFIXED_USER_HOME: input\.isolatedHome/u);
+  assert.doesNotMatch(source, /\bcloseLaunch\b/u);
+  assert.match(
+    source,
+    /await forceCloseLaunch\(activeLaunch, installedAppPath\);\s+activeLaunch = undefined;/u,
+  );
 });
 
 test("Desktop OTA native relaunch excludes the replaced main process", () => {
