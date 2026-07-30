@@ -12,12 +12,23 @@ import {
 import { providerToolAliasForCanonicalName } from "../../agents/reference-react/src/modelToolCallActions.js";
 import type { StepContext, StepIO } from "../../src/kestrel/contracts/execution.js";
 import type { ModelRequest, ModelResponse, ModelToolIntent, ModelToolSpec } from "../../src/kestrel/contracts/model-io.js";
+import {
+  buildModelRequestEconomicsManifest,
+  buildToolSurfaceManifest,
+  countTextTokens,
+  resolveModelTokenCounter,
+  type ModelEconomicsProfileV1,
+} from "../../src/economics/index.js";
 
 import { normalizeContinuationOffer, type ContinuationOfferV1 } from "../../src/runtime/continuationOffer.js";
 import { createRuntimeContinuationState } from "../../src/runtime/continuationState.js";
 import { stringifySanitizedJson } from "../../src/runtime/jsonSanitizer.js";
-import { appendUserTurnToTranscript, readActiveTaskGoalFromTranscript } from "../../src/runtime/modelTranscript.js";
-import { planKestrelAgentCompaction } from "../../src/runtime/KestrelAgentContextBuilder.js";
+import { RunCancelledError } from "../../src/runtime/RuntimeFailure.js";
+import {
+  appendUserTurnToTranscript,
+  readActiveTaskGoalFromTranscript,
+  type ModelTranscript,
+} from "../../src/runtime/modelTranscript.js";
 import { contractTest } from "../helpers/contract-test.js";
 
 
@@ -474,13 +485,13 @@ function compactionRetryTranscript() {
       content:
         index === 0
           ? "Preserve the active task while compacting."
-          : `Durable evidence ${index}.`,
+          : `Durable evidence ${index}. `.repeat(220),
     })),
   };
 }
 
 function compactionRetryContext(
-  transcript: ReturnType<typeof compactionRetryTranscript>,
+  transcript: ModelTranscript,
   maxSummaryAttempts: 1 | 2,
   mode: "observe" | "enforce" = "enforce",
 ): StepContext {
@@ -525,10 +536,7 @@ function compactionRetryContext(
 }
 
 function largeCompactionTool(): ModelToolSpec {
-  return {
-    ...READ_TEXT_TOOL,
-    description: "Read a text file. " + "schema ".repeat(10_000),
-  };
+  return READ_TEXT_TOOL;
 }
 
 function compactionCapabilityManifest() {
@@ -541,25 +549,14 @@ function compactionCapabilityManifest() {
   }];
 }
 
-function compactionSummary(
-  activeTaskItemId: string,
-  coveredItemIds: string[],
-  anchorItemIds: string[],
-  text = "Preserved durable evidence.",
-) {
+function compactionSummary(text = "Preserved durable evidence.") {
   return {
-    version: 1,
-    activeTaskItemId,
     decisions: [],
     constraints: [],
-    evidence:
-      anchorItemIds.length === 0
-        ? []
-        : [{ text, sourceItemIds: anchorItemIds }],
+    evidence: [text],
     fileState: [],
     blockers: [],
     nextActions: [],
-    coveredItemIds,
   };
 }
 
@@ -568,7 +565,6 @@ function sufficientCompactionVerdict() {
     version: 1,
     sufficient: true,
     categories: {
-      activeTask: true,
       decisions: true,
       constraints: true,
       evidence: true,
@@ -2121,86 +2117,163 @@ contractTest("runtime.hermetic", "agent loop enforces phase-scoped tool exposure
   assert.deepEqual(selection.excludedToolNames, ["fs.search_text"]);
 });
 
-contractTest("runtime.hermetic", "agent loop compaction prompt preserves constraint-critical tool facts", async () => {
+contractTest("runtime.hermetic", "observe-mode token compaction uses repeated bounded chunks without verification", async () => {
   const requests: ModelRequest[] = [];
-  const ctx = context();
-  ctx.event.payload.message = "you can use your tools to continue";
-  const originalTask = [
-    "Older work included a zero-result search for privileged.",
-    "x".repeat(130_000),
-  ].join("\n");
-  ctx.session.state.agent = {
-    goal: "stale follow-up task",
-    retryContext: {
-      failure: {
-        code: "DECISION_SCHEMA_FAILED",
-        message: "Missing tool call.",
-        details: {
-          modelFeedback: "Retry guidance: call a concrete tool.",
-        },
-        schemaCategory: "tool_call",
-      },
-    },
-    modelTranscript: {
-      version: 1,
-      windowId: 1,
-      items: [
-        {
-          id: "mt_1_0001_user",
-          createdAt: "2026-06-15T12:00:00.000Z",
-          kind: "user",
-          content: originalTask,
-        },
-        {
-          id: "mt_1_0002_user",
-          createdAt: "2026-06-15T12:01:00.000Z",
-          kind: "user",
-          content: "Later follow-up that must not replace the active task identity.",
-        },
-      ],
-    },
-  };
-
+  const transcript = compactionRetryTranscript();
   const transition = await buildStep({
-    tools: [READ_TEXT_TOOL],
-  })(ctx, {
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(compactionRetryContext(transcript, 1, "observe"), {
     useModel: async (request) => {
       requests.push(request);
       if (request.metadata?.phase === "agent.compaction") {
-        return {
-          output: {
-            version: 1,
-            activeTaskItemId: "mt_1_0001_user",
-            decisions: [],
-            constraints: [],
-            evidence: [],
-            fileState: [],
-            blockers: [],
-            nextActions: [],
-            coveredItemIds: [],
-          },
-        } as ModelResponse<unknown>;
+        return { output: compactionSummary() } as ModelResponse<unknown>;
       }
       if (request.metadata?.phase === "agent.compaction.verify") {
-        return {
-          output: {
-            version: 1,
-            sufficient: true,
-            categories: {
-              activeTask: true,
-              decisions: true,
-              constraints: true,
-              evidence: true,
-              fileState: true,
-              blockers: true,
-              nextActions: true,
-            },
-            reason: "All required categories remain available.",
-          },
-        } as ModelResponse<unknown>;
+        throw new Error("observe mode must not verify summaries");
       }
       return modelResponse({
-        reason: "Read the requested file after compaction.",
+        reason: "Continue after compaction.",
+        nextAction: { kind: "tool", name: "fs.read_text", input: { path: "README.md" } },
+      });
+    },
+  } satisfies StepIO);
+  const compactionRequests = requests.filter((request) => request.metadata?.phase === "agent.compaction");
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(compactionRequests.length > 1, true);
+  assert.equal(requests.some((request) => request.metadata?.phase === "agent.compaction.verify"), false);
+  assert.equal(compactionRequests.every((request) => request.model === "test/agent"), true);
+  assert.equal(
+    compactionRequests.every(
+      (request) => request.metadata?.contextSections === undefined,
+    ),
+    true,
+  );
+  const transcriptPatch = (transition.statePatch?.agent as Record<string, unknown>).modelTranscript as {
+    compactions?: Array<{
+      summarySource?: unknown;
+      replacedItemIds?: unknown[];
+      sourceWindowHash?: unknown;
+    }>;
+  };
+  assert.equal(transcriptPatch.compactions?.length, compactionRequests.length);
+  assert.equal(transcriptPatch.compactions?.every((record) => record.summarySource === "model"), true);
+  assert.equal(
+    transcriptPatch.compactions?.every(
+      (record) =>
+        (record.replacedItemIds?.length ?? 0) > 0 &&
+        typeof record.sourceWindowHash === "string",
+    ),
+    true,
+  );
+  assert.equal(readActiveTaskGoalFromTranscript(transcriptPatch), "Preserve the active task while compacting.");
+});
+
+contractTest("runtime.hermetic", "action admission includes manifest message and request-control overhead", async () => {
+  const transcript = compactionRetryTranscript();
+  const calibrationContext = compactionRetryContext(
+    transcript,
+    1,
+    "observe",
+  );
+  const calibrationAssembly = calibrationContext.event.payload
+    .runtimeAssembly as {
+      harnessEconomics: {
+        modelProfiles: ModelEconomicsProfileV1[];
+      };
+    };
+  const calibrationProfile =
+    calibrationAssembly.harnessEconomics.modelProfiles[0]!;
+  calibrationProfile.contextWindowTokens = 1_000_000;
+  let actionRequest: ModelRequest | undefined;
+  await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(calibrationContext, {
+    useModel: async (request) => {
+      actionRequest = request;
+      return modelResponse({
+        reason: "Calibrate the action request.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+  assert.ok(actionRequest);
+  const contextSections = actionRequest.metadata?.contextSections as
+    | Parameters<
+        typeof buildModelRequestEconomicsManifest
+      >[0]["contextSections"]
+    | undefined;
+  assert.ok(contextSections);
+  const counter = resolveModelTokenCounter(
+    calibrationProfile.counting.counter,
+    calibrationProfile.counting.counterVersion,
+  );
+  const manifest = buildModelRequestEconomicsManifest({
+    request: actionRequest,
+    contextSections,
+    modelProfile: calibrationProfile,
+  });
+  const contextTokens = contextSections.reduce(
+    (total, section) => total + section.count.tokens,
+    0,
+  );
+  const toolSchemaTokens = buildToolSurfaceManifest(
+    actionRequest.tools ?? [],
+    counter,
+  ).count.tokens;
+  const previousApproximation = countTextTokens(
+    JSON.stringify({
+      model: actionRequest.model,
+      reasoning: { mode: "provider_visible" },
+      providerOptions: {
+        openrouter: { endpoint: "chat" },
+        openai: {},
+        anthropic: {},
+      },
+    }),
+    counter,
+  ).tokens;
+  assert.equal(
+    manifest.providerOverhead.tokens > previousApproximation,
+    true,
+  );
+
+  const pressureContext = compactionRetryContext(
+    transcript,
+    1,
+    "observe",
+  );
+  const pressureAssembly = pressureContext.event.payload.runtimeAssembly as {
+    harnessEconomics: {
+      policy: ReturnType<typeof phaseScopedEconomicsPolicy>;
+      modelProfiles: ModelEconomicsProfileV1[];
+    };
+  };
+  const pressureProfile = pressureAssembly.harnessEconomics.modelProfiles[0]!;
+  pressureProfile.contextWindowTokens =
+    contextTokens +
+    pressureAssembly.harnessEconomics.policy.context.outputReserveTokens +
+    pressureAssembly.harnessEconomics.policy.context.safetyReserveTokens +
+    toolSchemaTokens +
+    manifest.providerOverhead.tokens;
+  const requests: ModelRequest[] = [];
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(pressureContext, {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        return { output: compactionSummary() } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue after overhead-triggered compaction.",
         nextAction: {
           kind: "tool",
           name: "fs.read_text",
@@ -2211,71 +2284,64 @@ contractTest("runtime.hermetic", "agent loop compaction prompt preserves constra
   } satisfies StepIO);
 
   assert.equal(transition.status, "RUNNING");
-  const compactionRequest = requests.find((request) => request.metadata?.phase === "agent.compaction");
-  assert.ok(compactionRequest);
-  assert.equal(requests.some((request) => request.metadata?.phase === "agent.compaction.verify"), false);
-  assert.equal((compactionRequest.input as Record<string, unknown>).taskInstruction, originalTask);
-  const systemContent = compactionRequest.messages?.find((message) => message.role === "system")?.content;
-  assert.equal(typeof systemContent, "string");
-  assert.match(
-    systemContent as string,
-    /Preserve constraint facts, zero-result searches, the chronologically latest successful or failed tool results, exact mutation summaries, open todos, and current blockers/u,
+  assert.equal(
+    requests.some(
+      (request) => request.metadata?.phase === "agent.compaction",
+    ),
+    true,
   );
-  assert.match(systemContent as string, /Do not select a newer follow-up user item/u);
-  const compactionInstruction = compactionRequest.messages?.at(-1)?.content;
-  assert.equal(typeof compactionInstruction, "string");
-  assert.match(compactionInstruction as string, /Retained active task item id: "mt_1_0001_user"/u);
-  assert.match(compactionInstruction as string, /Exact replaced item ids: \[\]/u);
-  assert.deepEqual(
-    (compactionRequest.responseSchema?.properties as Record<string, unknown>).activeTaskItemId,
-    { type: "string", enum: ["mt_1_0001_user"] },
-  );
-  assert.deepEqual(
-    (compactionRequest.responseSchema?.properties as Record<string, unknown>).coveredItemIds,
-    { type: "array", items: { type: "string" }, maxItems: 0 },
-  );
-  const finalRequest = requests.find((request) => request.metadata?.phase === "agent.loop");
-  assert.ok(finalRequest);
-  assert.match(JSON.stringify(finalRequest.messages), /Retry guidance: call a concrete tool/u);
-  const agentPatch = transition.statePatch?.agent as Record<string, unknown>;
-  assert.equal(readActiveTaskGoalFromTranscript(agentPatch.modelTranscript), originalTask);
 });
 
-contractTest("runtime.hermetic", "agent loop corrects missing compaction anchors with the same maintenance model", async () => {
+contractTest("runtime.hermetic", "profile-backed compaction admits a rendered write-heavy source that raw transcript tokens would reject", async () => {
   const requests: ModelRequest[] = [];
-  const transcript = compactionRetryTranscript();
-  const plan = planKestrelAgentCompaction(transcript);
-  const missingAnchorItemId = plan.replacedItemIds.at(-1);
-  assert.ok(missingAnchorItemId);
-  const ctx = compactionRetryContext(transcript, 2);
-
+  const writeContent = `${"token ".repeat(15_000)}RAW_WRITE_END_MARKER`;
+  const transcript: ModelTranscript = {
+    version: 1,
+    windowId: 1,
+    items: [
+      {
+        id: "task",
+        createdAt: "2026-07-30T12:00:00.000Z",
+        kind: "user",
+        content: "Preserve the active task while compacting.",
+      },
+      {
+        id: "write-call",
+        createdAt: "2026-07-30T12:00:01.000Z",
+        kind: "tool_call",
+        toolName: "fs.write_text",
+        toolCallId: "write-pair",
+        toolInput: { path: "src/large.ts", content: writeContent },
+      },
+      {
+        id: "write-result",
+        createdAt: "2026-07-30T12:00:02.000Z",
+        kind: "tool_result",
+        toolName: "fs.write_text",
+        toolCallId: "write-pair",
+        toolOutput: { text: "Updated src/large.ts." },
+      },
+      {
+        id: "tail",
+        createdAt: "2026-07-30T12:00:03.000Z",
+        kind: "assistant_text",
+        content: "Next action remains validation.",
+      },
+    ],
+  };
   const transition = await buildStep({
     tools: [largeCompactionTool()],
     capabilityManifest: compactionCapabilityManifest(),
-  })(ctx, {
+  })(compactionRetryContext(transcript, 1, "observe"), {
     useModel: async (request) => {
       requests.push(request);
       if (request.metadata?.phase === "agent.compaction") {
-        const attempt = request.metadata.compactionAttempt;
         return {
-          output: compactionSummary(
-            plan.activeTaskItemId,
-            plan.replacedItemIds,
-            attempt === 1
-              ? plan.replacedItemIds.filter(
-                  (itemId) => itemId !== missingAnchorItemId,
-                )
-              : plan.replacedItemIds,
-          ),
-        } as ModelResponse<unknown>;
-      }
-      if (request.metadata?.phase === "agent.compaction.verify") {
-        return {
-          output: sufficientCompactionVerdict(),
+          output: compactionSummary("The large write completed."),
         } as ModelResponse<unknown>;
       }
       return modelResponse({
-        reason: "Continue after corrected compaction.",
+        reason: "Continue after compacting the write.",
         nextAction: {
           kind: "tool",
           name: "fs.read_text",
@@ -2284,206 +2350,70 @@ contractTest("runtime.hermetic", "agent loop corrects missing compaction anchors
       });
     },
   } satisfies StepIO);
-
   const compactionRequests = requests.filter(
     (request) => request.metadata?.phase === "agent.compaction",
   );
-  const verificationRequests = requests.filter(
-    (request) => request.metadata?.phase === "agent.compaction.verify",
+  const compactionSourcePrompt = String(
+    compactionRequests[0]?.messages?.[1]?.content ?? "",
   );
+  const transcriptPatch = (
+    transition.statePatch?.agent as Record<string, unknown>
+  ).modelTranscript as {
+    compactions?: Array<{ summarySource?: unknown; failureCode?: unknown }>;
+  };
+
   assert.equal(transition.status, "RUNNING");
-  assert.equal(compactionRequests.length, 2);
-  assert.equal(verificationRequests.length, 1);
-  assert.deepEqual(
-    compactionRequests.map((request) => [
-      request.metadata?.compactionAttempt,
-      request.metadata?.maxSummaryAttempts,
-      request.metadata?.compactionAttemptKind,
-      request.metadata?.modelBudgetClass,
-    ]),
-    [
-      [1, 2, "initial", "maintenance"],
-      [2, 2, "correction", "maintenance"],
-    ],
-  );
-  assert.deepEqual(
-    [...compactionRequests, ...verificationRequests].map(
-      (request) => request.model,
-    ),
-    ["test/agent", "test/agent", "test/agent"],
-  );
-  const correctionMessage = compactionRequests[1]?.messages?.at(-1)?.content;
-  assert.equal(typeof correctionMessage, "string");
-  assert.match(correctionMessage as string, /complete corrected replacement/u);
-  assert.match(correctionMessage as string, new RegExp(missingAnchorItemId, "u"));
-  assert.match(correctionMessage as string, /Previous rejected response/u);
+  assert.equal(compactionRequests.length, 1);
+  assert.match(compactionSourcePrompt, /"contentBytes":90020/u);
+  assert.doesNotMatch(compactionSourcePrompt, /RAW_WRITE_END_MARKER/u);
+  assert.equal(transcriptPatch.compactions?.at(-1)?.summarySource, "model");
+  assert.equal(transcriptPatch.compactions?.at(-1)?.failureCode, undefined);
 });
 
-contractTest("runtime.hermetic", "observe-mode compaction skips semantic verification", async () => {
+contractTest("runtime.hermetic", "enforce-mode token compaction independently verifies every bounded chunk", async () => {
   const requests: ModelRequest[] = [];
-  const transcript = {
-    ...compactionRetryTranscript(),
-    items: compactionRetryTranscript().items.map((item) => ({
-      ...item,
-      content: item.content.repeat(300),
-    })),
-  };
-  const plan = planKestrelAgentCompaction(transcript);
-
+  const transcript = compactionRetryTranscript();
   const transition = await buildStep({
     tools: [largeCompactionTool()],
     capabilityManifest: compactionCapabilityManifest(),
-  })(compactionRetryContext(transcript, 2, "observe"), {
+  })(compactionRetryContext(transcript, 1, "enforce"), {
     useModel: async (request) => {
       requests.push(request);
       if (request.metadata?.phase === "agent.compaction") {
-        return {
-          output: compactionSummary(
-            plan.activeTaskItemId,
-            plan.replacedItemIds,
-            plan.replacedItemIds,
-          ),
-        } as ModelResponse<unknown>;
+        return { output: compactionSummary() } as ModelResponse<unknown>;
       }
       if (request.metadata?.phase === "agent.compaction.verify") {
-        throw new Error("observe mode must not invoke semantic verification");
+        return { output: sufficientCompactionVerdict() } as ModelResponse<unknown>;
       }
       return modelResponse({
-        reason: "Continue after locally validated observe-mode compaction.",
-        nextAction: {
-          kind: "tool",
-          name: "fs.read_text",
-          input: { path: "README.md" },
-        },
+        reason: "Continue after verified compaction.",
+        nextAction: { kind: "tool", name: "fs.read_text", input: { path: "README.md" } },
       });
     },
   } satisfies StepIO);
+  const summaryCount = requests.filter((request) => request.metadata?.phase === "agent.compaction").length;
+  const verifierCount = requests.filter((request) => request.metadata?.phase === "agent.compaction.verify").length;
 
   assert.equal(transition.status, "RUNNING");
-  assert.equal(
-    requests.filter(
-      (request) => request.metadata?.phase === "agent.compaction",
-    ).length,
-    1,
-  );
-  assert.equal(
-    requests.filter(
-      (request) => request.metadata?.phase === "agent.compaction.verify",
-    ).length,
-    0,
-  );
+  assert.equal(summaryCount > 1, true);
+  assert.equal(verifierCount, summaryCount);
 });
 
-contractTest("runtime.hermetic", "agent loop corrects invalid JSON and unknown compaction provenance", async () => {
-  for (const scenario of [
-    {
-      name: "invalid-json",
-      firstResponse: () => "not-json",
-      expectedCorrection: /must be valid JSON/u,
-    },
-    {
-      name: "unknown-anchor",
-      firstResponse: (
-        activeTaskItemId: string,
-        replacedItemIds: string[],
-      ) => compactionSummary(
-        activeTaskItemId,
-        replacedItemIds,
-        [...replacedItemIds, "item-invented"],
-      ),
-      expectedCorrection: /unknown semantic anchor item ids.*item-invented/u,
-    },
-    {
-      name: "duplicate-coverage",
-      firstResponse: (
-        activeTaskItemId: string,
-        replacedItemIds: string[],
-      ) => compactionSummary(
-        activeTaskItemId,
-        [
-          ...replacedItemIds.slice(0, 1),
-          ...replacedItemIds.slice(0, 1),
-        ],
-        replacedItemIds.slice(0, 1),
-      ),
-      expectedCorrection: /coveredItemIds contains duplicate item ids/u,
-    },
-  ]) {
-    const requests: ModelRequest[] = [];
-    const transcript = compactionRetryTranscript();
-    const plan = planKestrelAgentCompaction(transcript);
-    const transition = await buildStep({
-      tools: [largeCompactionTool()],
-      capabilityManifest: compactionCapabilityManifest(),
-    })(compactionRetryContext(transcript, 2), {
-      useModel: async (request) => {
-        requests.push(request);
-        if (request.metadata?.phase === "agent.compaction") {
-          return {
-            output:
-              request.metadata.compactionAttempt === 1
-                ? scenario.firstResponse(
-                    plan.activeTaskItemId,
-                    plan.replacedItemIds,
-                  )
-                : compactionSummary(
-                    plan.activeTaskItemId,
-                    plan.replacedItemIds,
-                    plan.replacedItemIds,
-                  ),
-          } as ModelResponse<unknown>;
-        }
-        if (request.metadata?.phase === "agent.compaction.verify") {
-          return {
-            output: sufficientCompactionVerdict(),
-          } as ModelResponse<unknown>;
-        }
-        return modelResponse({
-          reason: `Continue after ${scenario.name} correction.`,
-          nextAction: {
-            kind: "tool",
-            name: "fs.read_text",
-            input: { path: "README.md" },
-          },
-        });
-      },
-    } satisfies StepIO);
-
-    assert.equal(transition.status, "RUNNING");
-    const compactionRequests = requests.filter(
-      (request) => request.metadata?.phase === "agent.compaction",
-    );
-    assert.equal(compactionRequests.length, 2);
-    assert.match(
-      String(compactionRequests[1]?.messages?.at(-1)?.content),
-      scenario.expectedCorrection,
-    );
-  }
-});
-
-contractTest("runtime.hermetic", "agent loop regenerates and reverifies a semantically rejected compaction", async () => {
+contractTest("runtime.hermetic", "enforce-mode maintenance budgeting reserves verifier summaries and correction reasons", async () => {
   const requests: ModelRequest[] = [];
-  const transcript = compactionRetryTranscript();
-  const plan = planKestrelAgentCompaction(transcript);
-  const ctx = compactionRetryContext(transcript, 2);
-
+  const longSummary = compactionSummary(
+    `Preserved evidence ${"summary-detail ".repeat(400)}`,
+  );
+  const longVerifierReason =
+    `Evidence needs correction. ${"verifier-detail ".repeat(350)}`;
   const transition = await buildStep({
     tools: [largeCompactionTool()],
     capabilityManifest: compactionCapabilityManifest(),
-  })(ctx, {
+  })(compactionRetryContext(compactionRetryTranscript(), 2, "enforce"), {
     useModel: async (request) => {
       requests.push(request);
       if (request.metadata?.phase === "agent.compaction") {
-        return {
-          output: compactionSummary(
-            plan.activeTaskItemId,
-            plan.replacedItemIds,
-            plan.replacedItemIds,
-            request.metadata.compactionAttempt === 1
-              ? "Initial compact evidence."
-              : "Corrected compact evidence.",
-          ),
-        } as ModelResponse<unknown>;
+        return { output: longSummary } as ModelResponse<unknown>;
       }
       if (request.metadata?.phase === "agent.compaction.verify") {
         return {
@@ -2496,13 +2426,13 @@ contractTest("runtime.hermetic", "agent loop regenerates and reverifies a semant
                     ...sufficientCompactionVerdict().categories,
                     evidence: false,
                   },
-                  reason: "The evidence is too weak.",
+                  reason: longVerifierReason,
                 }
               : sufficientCompactionVerdict(),
         } as ModelResponse<unknown>;
       }
       return modelResponse({
-        reason: "Continue after verifier-approved compaction.",
+        reason: "Continue after budgeted verification.",
         nextAction: {
           kind: "tool",
           name: "fs.read_text",
@@ -2511,285 +2441,587 @@ contractTest("runtime.hermetic", "agent loop regenerates and reverifies a semant
       });
     },
   } satisfies StepIO);
-
-  const maintenanceRequests = requests.filter(
-    (request) => request.metadata?.modelBudgetClass === "maintenance",
+  const maintenanceRequests = requests.filter((request) =>
+    request.metadata?.phase === "agent.compaction" ||
+    request.metadata?.phase === "agent.compaction.verify"
   );
+  const correctionRequests = maintenanceRequests.filter(
+    (request) => request.metadata?.compactionAttemptKind === "correction",
+  );
+  const tokenCounter = resolveModelTokenCounter(
+    "tiktoken:o200k_base",
+    "1.0.21",
+  );
+
   assert.equal(transition.status, "RUNNING");
-  assert.deepEqual(
-    maintenanceRequests.map((request) => [
-      request.metadata?.phase,
-      request.metadata?.compactionAttempt,
-      request.metadata?.compactionAttemptKind,
-    ]),
-    [
-      ["agent.compaction", 1, "initial"],
-      ["agent.compaction.verify", 1, "initial"],
-      ["agent.compaction", 2, "correction"],
-      ["agent.compaction.verify", 2, "correction"],
-    ],
-  );
-  assert.equal(
-    maintenanceRequests.every((request) => request.model === "test/agent"),
-    true,
-  );
-  const correctionMessage = maintenanceRequests[2]?.messages?.at(-1)?.content;
-  assert.equal(typeof correctionMessage, "string");
-  assert.match(correctionMessage as string, /semantic_verifier/u);
-  assert.match(correctionMessage as string, /The evidence is too weak/u);
-  assert.match(correctionMessage as string, /"evidence":false/u);
+  assert.equal(correctionRequests.length > 0, true);
+  for (const request of maintenanceRequests) {
+    assert.equal(request.providerOptions?.openrouter?.maxTokens, 1_000);
+    assert.equal(request.providerOptions?.openai?.maxTokens, 1_000);
+    assert.equal(request.providerOptions?.anthropic?.maxTokens, 1_000);
+    const inputTokens = countTextTokens(
+      JSON.stringify({
+        model: request.model,
+        messages: request.messages,
+        responseSchema: request.responseSchema,
+        responseFormat: request.responseFormat,
+        reasoning: request.reasoning,
+        providerOptions: request.providerOptions,
+      }),
+      tokenCounter,
+    ).tokens;
+    assert.equal(
+      inputTokens + 1_000 + 250 <= 10_000,
+      true,
+      `${String(request.metadata?.phase)} ${String(
+        request.metadata?.compactionAttemptKind,
+      )} exceeded the maintenance context window`,
+    );
+  }
 });
 
-contractTest("runtime.hermetic", "agent loop exhausts two invalid summaries without mutating the transcript", async () => {
+contractTest("runtime.hermetic", "token compaction charges a long active task before selecting the retained tail", async () => {
   const requests: ModelRequest[] = [];
+  const activeTask = `Preserve this long active task. ${"required-detail ".repeat(
+    2_400,
+  )}`;
   const transcript = compactionRetryTranscript();
-  const originalTranscript = structuredClone(transcript);
-  const plan = planKestrelAgentCompaction(transcript);
-  const ctx = compactionRetryContext(transcript, 2);
-
-  await assert.rejects(
-    () => buildStep({
-      tools: [largeCompactionTool()],
-      capabilityManifest: compactionCapabilityManifest(),
-    })(ctx, {
-      useModel: async (request) => {
-        requests.push(request);
-        return {
-          output: compactionSummary(
-            plan.activeTaskItemId,
-            plan.replacedItemIds,
-            [],
-          ),
-        } as ModelResponse<unknown>;
-      },
-    } satisfies StepIO),
-    (error: unknown) => {
-      const failure = error as {
-        code?: unknown;
-        details?: Record<string, unknown>;
-      };
-      assert.equal(
-        failure.code,
-        "HARNESS_ECONOMICS_COMPACTION_INSUFFICIENT",
-      );
-      assert.equal(failure.details?.compactionAttempt, 2);
-      assert.equal(failure.details?.maxSummaryAttempts, 2);
-      assert.equal(failure.details?.correctionExhausted, true);
-      assert.deepEqual(
-        failure.details?.missingAnchorItemIds,
-        plan.replacedItemIds,
-      );
-      return true;
-    },
-  );
-
-  assert.equal(
-    requests.filter(
-      (request) => request.metadata?.phase === "agent.compaction",
-    ).length,
-    2,
-  );
-  assert.deepEqual(
-    (ctx.session.state.agent as Record<string, unknown>).modelTranscript,
-    originalTranscript,
-  );
-});
-
-contractTest("runtime.hermetic", "agent loop preserves one-attempt compaction policy behavior", async () => {
-  const requests: ModelRequest[] = [];
-  const transcript = compactionRetryTranscript();
-  const plan = planKestrelAgentCompaction(transcript);
-  await assert.rejects(
-    () => buildStep({
-      tools: [largeCompactionTool()],
-      capabilityManifest: compactionCapabilityManifest(),
-    })(compactionRetryContext(transcript, 1), {
-      useModel: async (request) => {
-        requests.push(request);
-        return {
-          output: compactionSummary(
-            plan.activeTaskItemId,
-            plan.replacedItemIds,
-            [],
-          ),
-        } as ModelResponse<unknown>;
-      },
-    } satisfies StepIO),
-    (error: unknown) => {
-      const details = (error as { details?: Record<string, unknown> }).details;
-      assert.equal(details?.compactionAttempt, 1);
-      assert.equal(details?.maxSummaryAttempts, 1);
-      assert.equal(details?.correctionExhausted, true);
-      return true;
-    },
-  );
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0]?.metadata?.compactionAttemptKind, "initial");
-});
-
-contractTest("runtime.hermetic", "agent loop does not retry provider failures or malformed verifier responses", async () => {
-  const transcript = compactionRetryTranscript();
-  const plan = planKestrelAgentCompaction(transcript);
-  const providerRequests: ModelRequest[] = [];
-  const providerFailure = new Error("maintenance provider unavailable");
-  await assert.rejects(
-    () => buildStep({
-      tools: [largeCompactionTool()],
-      capabilityManifest: compactionCapabilityManifest(),
-    })(compactionRetryContext(transcript, 2), {
-      useModel: async (request) => {
-        providerRequests.push(request);
-        throw providerFailure;
-      },
-    } satisfies StepIO),
-    (error: unknown) => error === providerFailure,
-  );
-  assert.equal(providerRequests.length, 1);
-
-  const malformedRequests: ModelRequest[] = [];
-  await assert.rejects(
-    () => buildStep({
-      tools: [largeCompactionTool()],
-      capabilityManifest: compactionCapabilityManifest(),
-    })(compactionRetryContext(transcript, 2), {
-      useModel: async (request) => {
-        malformedRequests.push(request);
-        if (request.metadata?.phase === "agent.compaction") {
-          return {
-            output: compactionSummary(
-              plan.activeTaskItemId,
-              plan.replacedItemIds,
-              plan.replacedItemIds,
-            ),
-          } as ModelResponse<unknown>;
-        }
-        return { output: "not-json" } as ModelResponse<unknown>;
-      },
-    } satisfies StepIO),
-    /must be valid JSON/u,
-  );
-  assert.deepEqual(
-    malformedRequests.map((request) => request.metadata?.phase),
-    ["agent.compaction", "agent.compaction.verify"],
-  );
-});
-
-contractTest("runtime.hermetic", "enforced compaction verifies semantics and avoids an undersized maintenance model", async () => {
-  const requests: ModelRequest[] = [];
-  const ctx = context();
-  const largeSchemaTool: ModelToolSpec = {
-    ...READ_TEXT_TOOL,
-    description: "Read a text file. " + "schema ".repeat(10_000),
+  transcript.items[0] = {
+    ...transcript.items[0]!,
+    content: activeTask,
   };
-  ctx.event.payload.runtimeAssembly = {
-    modelProvider: "test-provider",
-    model: "test/agent",
-    harnessEconomics: {
-      version: 1,
-      policy: phaseScopedEconomicsPolicy("enforce"),
-      modelProfiles: [
-        {
-          version: 1,
-          profileId: "test-provider:test-agent:v1",
-          provider: "test-provider",
-          model: "test/agent",
-          contextWindowTokens: 10_000,
-          maxOutputTokens: 1_000,
-          counting: {
-            counter: "tiktoken:o200k_base",
-            counterVersion: "1.0.21",
-            method: "model_tokenizer",
-            confidence: "model_compatible",
-          },
-          cache: { behavior: "none" },
-        },
-        {
-          version: 1,
-          profileId: "test-provider:test-small:v1",
-          provider: "test-provider",
-          model: "test/small",
-          contextWindowTokens: 1_000,
-          maxOutputTokens: 200,
-          counting: {
-            counter: "tiktoken:o200k_base",
-            counterVersion: "1.0.21",
-            method: "model_tokenizer",
-            confidence: "model_compatible",
-          },
-          cache: { behavior: "none" },
-        },
-      ],
-    },
-  };
+  const ctx = compactionRetryContext(transcript, 1, "observe");
   ctx.session.state.agent = {
-    modelTranscript: {
-      version: 1,
-      windowId: 1,
-      items: [{
-        id: "mt_1_0001_user",
-        createdAt: "2026-07-22T12:00:00.000Z",
-        kind: "user",
-        content: "Preserve the active task while reducing context cost.",
-      }],
-    },
+    ...(ctx.session.state.agent as Record<string, unknown>),
+    goal: activeTask,
+    modelTranscript: transcript,
   };
 
   const transition = await buildStep({
-    tools: [largeSchemaTool],
-    maintenanceModel: "test/small",
-    capabilityManifest: [{
-      name: "fs.read_text",
-      description: "Read a text file",
-      capabilityClasses: ["filesystem.read"],
-      executionClass: "read_only",
-      toolFamily: "filesystem",
-    }],
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
   })(ctx, {
     useModel: async (request) => {
       requests.push(request);
       if (request.metadata?.phase === "agent.compaction") {
-        return {
-          output: {
-            version: 1,
-            activeTaskItemId: "mt_1_0001_user",
-            decisions: [],
-            constraints: [],
-            evidence: [],
-            fileState: [],
-            blockers: [],
-            nextActions: [],
-            coveredItemIds: [],
-          },
-        } as ModelResponse<unknown>;
+        return { output: compactionSummary() } as ModelResponse<unknown>;
       }
-      if (request.metadata?.phase === "agent.compaction.verify") {
+      return modelResponse({
+        reason: "Continue with the long active task intact.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+  const transcriptPatch = (
+    transition.statePatch?.agent as Record<string, unknown>
+  ).modelTranscript;
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(
+    requests.some((request) => request.metadata?.phase === "agent.compaction"),
+    true,
+  );
+  assert.equal(
+    readActiveTaskGoalFromTranscript(transcriptPatch),
+    activeTask.trim(),
+  );
+});
+
+contractTest("runtime.hermetic", "oversized maintenance summaries fall back within the reserved summary budget", async () => {
+  const requests: ModelRequest[] = [];
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(compactionRetryContext(compactionRetryTranscript(), 1, "observe"), {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
         return {
-          output: {
-            version: 1,
-            sufficient: true,
-            categories: {
-              activeTask: true,
-              decisions: true,
-              constraints: true,
-              evidence: true,
-              fileState: true,
-              blockers: true,
-              nextActions: true,
-            },
-            reason: "The active task is preserved.",
-          },
+          output: compactionSummary(
+            `Unbounded model summary ${"model-output ".repeat(2_000)}`,
+          ),
         } as ModelResponse<unknown>;
       }
       return modelResponse({
-        reason: "Read the requested file.",
+        reason: "Continue from the bounded runtime fallback.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+  const transcriptPatch = (
+    transition.statePatch?.agent as Record<string, unknown>
+  ).modelTranscript as {
+    items?: Array<{ kind?: unknown; content?: unknown }>;
+    compactions?: Array<{ summarySource?: unknown; failureCode?: unknown }>;
+  };
+  const summaryItems =
+    transcriptPatch.items?.filter(
+      (item) => item.kind === "compaction_summary",
+    ) ?? [];
+  const tokenCounter = resolveModelTokenCounter(
+    "tiktoken:o200k_base",
+    "1.0.21",
+  );
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(
+    requests
+      .filter((request) => request.metadata?.phase === "agent.compaction")
+      .every(
+        (request) =>
+          request.providerOptions?.openrouter?.maxTokens === 1_000 &&
+          request.providerOptions?.openai?.maxTokens === 1_000 &&
+          request.providerOptions?.anthropic?.maxTokens === 1_000,
+      ),
+    true,
+  );
+  assert.equal(
+    transcriptPatch.compactions?.at(-1)?.summarySource,
+    "runtime_fallback",
+  );
+  assert.equal(
+    transcriptPatch.compactions?.at(-1)?.failureCode,
+    "HARNESS_ECONOMICS_COMPACTION_SUMMARY_INVALID",
+  );
+  assert.equal(
+    summaryItems.every(
+      (item) =>
+        countTextTokens(String(item.content ?? ""), tokenCounter).tokens <=
+        1_000,
+    ),
+    true,
+  );
+});
+
+contractTest("runtime.hermetic", "provider failure bounds rich runtime fallback state to the reserved summary budget", async () => {
+  const ctx = compactionRetryContext(
+    compactionRetryTranscript(),
+    1,
+    "observe",
+  );
+  ctx.session.state.agent = {
+    ...(ctx.session.state.agent as Record<string, unknown>),
+    decisionReason: `Chosen direction ${"decision-detail ".repeat(1_000)}`,
+    planDocument: {
+      objective: `Durable plan ${"plan-detail ".repeat(1_000)}`,
+      successCriteria: [`Criterion ${"criterion-detail ".repeat(1_000)}`],
+      constraints: [`Constraint ${"constraint-detail ".repeat(1_000)}`],
+    },
+    waitingFor: {
+      reason: `Blocked on evidence ${"blocker-detail ".repeat(1_000)}`,
+      message: `Wait state ${"waiting-detail ".repeat(1_000)}`,
+    },
+    nextAction: {
+      kind: "tool",
+      name: "fs.read_text",
+      input: {
+        path: `src/${"nested/".repeat(300)}target.ts`,
+      },
+    },
+    visibleTodos: {
+      objective: "Finish compaction recovery",
+      items: [
+        {
+          id: "verify",
+          text: `Verify recovery ${"todo-detail ".repeat(1_000)}`,
+          status: "in_progress",
+        },
+      ],
+    },
+  };
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(ctx, {
+    useModel: async (request) => {
+      if (request.metadata?.phase === "agent.compaction") {
+        throw new Error("maintenance unavailable");
+      }
+      return modelResponse({
+        reason: "Continue from bounded runtime state.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+  const transcriptPatch = (
+    transition.statePatch?.agent as Record<string, unknown>
+  ).modelTranscript as {
+    items?: Array<{ kind?: unknown; content?: unknown }>;
+  };
+  const summaries =
+    transcriptPatch.items?.filter(
+      (item) => item.kind === "compaction_summary",
+    ) ?? [];
+  const tokenCounter = resolveModelTokenCounter(
+    "tiktoken:o200k_base",
+    "1.0.21",
+  );
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(summaries.length > 0, true);
+  assert.equal(
+    summaries.every(
+      (item) =>
+        countTextTokens(String(item.content ?? ""), tokenCounter).tokens <=
+        1_000,
+    ),
+    true,
+  );
+  assert.equal(
+    summaries.every((item) =>
+      String(item.content).includes(
+        "persisted artifacts and current runtime evidence remain authoritative",
+      )
+    ),
+    true,
+  );
+  assert.equal(
+    summaries.every((item) => {
+      const summary = JSON.parse(String(item.content)) as {
+        decisions: unknown[];
+        blockers: unknown[];
+        nextActions: unknown[];
+      };
+      return (
+        summary.decisions.length > 0 &&
+        summary.blockers.length > 0 &&
+        summary.nextActions.length > 0
+      );
+    }),
+    true,
+  );
+});
+
+contractTest("runtime.hermetic", "invalid JSON exhausts retries into a durable fallback and continues", async () => {
+  const requests: ModelRequest[] = [];
+  const transcript = compactionRetryTranscript();
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(compactionRetryContext(transcript, 2, "observe"), {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        return { output: "rejected-output-marker" } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue from runtime fallback.",
         nextAction: { kind: "tool", name: "fs.read_text", input: { path: "README.md" } },
       });
     },
   } satisfies StepIO);
+  const compactionRequests = requests.filter((request) => request.metadata?.phase === "agent.compaction");
+  const correction = String(compactionRequests[1]?.messages?.at(-1)?.content ?? "");
+  const transcriptPatch = (transition.statePatch?.agent as Record<string, unknown>).modelTranscript as {
+    items?: Array<{ kind?: unknown; content?: unknown }>;
+    compactions?: Array<{ summarySource?: unknown; failureCode?: unknown }>;
+  };
 
   assert.equal(transition.status, "RUNNING");
-  assert.equal(requests.find((request) => request.metadata?.phase === "agent.compaction")?.model, "test/agent");
-  assert.equal(requests.find((request) => request.metadata?.phase === "agent.compaction.verify")?.model, "test/agent");
+  assert.equal(compactionRequests.length >= 2, true);
+  assert.equal(compactionRequests.length % 2, 0);
+  assert.match(correction, /must be valid JSON/u);
+  assert.doesNotMatch(correction, /rejected-output-marker/u);
+  assert.equal(transcriptPatch.compactions?.at(-1)?.summarySource, "runtime_fallback");
+  assert.equal(transcriptPatch.compactions?.at(-1)?.failureCode, "HARNESS_ECONOMICS_COMPACTION_SUMMARY_INVALID");
+  assert.match(
+    String(transcriptPatch.items?.find((item) => item.kind === "compaction_summary")?.content ?? ""),
+    /persisted artifacts and current runtime evidence remain authoritative/u,
+  );
+});
+
+contractTest("runtime.hermetic", "verifier rejection retries with categories and can recover", async () => {
+  const requests: ModelRequest[] = [];
+  const transcript = compactionRetryTranscript();
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(compactionRetryContext(transcript, 2, "enforce"), {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        return { output: compactionSummary() } as ModelResponse<unknown>;
+      }
+      if (request.metadata?.phase === "agent.compaction.verify") {
+        return {
+          output: request.metadata.compactionAttempt === 1
+            ? {
+                ...sufficientCompactionVerdict(),
+                sufficient: false,
+                categories: { ...sufficientCompactionVerdict().categories, evidence: false },
+                reason: "Evidence is incomplete.",
+              }
+            : sufficientCompactionVerdict(),
+        } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue after corrected summary.",
+        nextAction: { kind: "tool", name: "fs.read_text", input: { path: "README.md" } },
+      });
+    },
+  } satisfies StepIO);
+  const corrections = requests.filter(
+    (request) => request.metadata?.phase === "agent.compaction" && request.metadata?.compactionAttemptKind === "correction",
+  );
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(corrections.length > 0, true);
+  assert.match(String(corrections[0]?.messages?.at(-1)?.content ?? ""), /"evidence":false/u);
+});
+
+contractTest("runtime.hermetic", "maintenance provider failure uses runtime fallback without persisting provider messages", async () => {
+  const requests: ModelRequest[] = [];
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(compactionRetryContext(compactionRetryTranscript(), 2, "observe"), {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        throw new Error("secret provider detail");
+      }
+      return modelResponse({
+        reason: "Continue after provider fallback.",
+        nextAction: { kind: "tool", name: "fs.read_text", input: { path: "README.md" } },
+      });
+    },
+  } satisfies StepIO);
+  const transcriptPatch = (transition.statePatch?.agent as Record<string, unknown>).modelTranscript as {
+    compactions?: Array<{ summarySource?: unknown; failureCode?: unknown; failureMessage?: unknown }>;
+  };
+  const serialized = JSON.stringify(transcriptPatch);
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transcriptPatch.compactions?.at(-1)?.summarySource, "runtime_fallback");
+  assert.equal(transcriptPatch.compactions?.at(-1)?.failureCode, "COMPACTION_MAINTENANCE_PROVIDER_FAILED");
+  assert.doesNotMatch(serialized, /secret provider detail/u);
+});
+
+contractTest("runtime.hermetic", "maintenance cancellation propagates and non-model programming errors remain visible", async () => {
+  const cancellation = new RunCancelledError();
+  await assert.rejects(
+    () => buildStep({
+      tools: [largeCompactionTool()],
+      capabilityManifest: compactionCapabilityManifest(),
+    })(compactionRetryContext(compactionRetryTranscript(), 1, "observe"), {
+      useModel: async () => {
+        throw cancellation;
+      },
+    } satisfies StepIO),
+    (error: unknown) => error === cancellation,
+  );
+
+  const providerAbort = new Error("provider request aborted");
+  providerAbort.name = "AbortError";
+  const abortTransition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(compactionRetryContext(compactionRetryTranscript(), 1, "observe"), {
+    useModel: async (request) => {
+      if (request.metadata?.phase === "agent.compaction") {
+        throw providerAbort;
+      }
+      return modelResponse({
+        reason: "Continue after provider abort fallback.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+  const abortTranscript = (
+    abortTransition.statePatch?.agent as Record<string, unknown>
+  ).modelTranscript as {
+    compactions?: Array<{ summarySource?: unknown; failureCode?: unknown }>;
+  };
+  assert.equal(abortTransition.status, "RUNNING");
+  assert.equal(
+    abortTranscript.compactions?.at(-1)?.summarySource,
+    "runtime_fallback",
+  );
+  assert.equal(
+    abortTranscript.compactions?.at(-1)?.failureCode,
+    "COMPACTION_MAINTENANCE_PROVIDER_FAILED",
+  );
+
+  const programmingError = new Error("programming invariant failed");
+  await assert.rejects(
+    () => buildStep({
+      tools: [largeCompactionTool()],
+      capabilityManifest: compactionCapabilityManifest(),
+    })(compactionRetryContext(compactionRetryTranscript(), 1, "observe"), {
+      useModel: async () => Object.defineProperty(
+        {},
+        "output",
+        { get: () => { throw programmingError; } },
+      ) as ModelResponse<unknown>,
+    } satisfies StepIO),
+    (error: unknown) => error === programmingError,
+  );
+});
+
+contractTest("runtime.hermetic", "legacy admission without a model profile compacts and continues", async () => {
+  const requests: ModelRequest[] = [];
+  const ctx = context();
+  const writeContent = `${"token ".repeat(22_000)}RAW_WRITE_END_MARKER`;
+  const transcript: ModelTranscript = {
+    version: 1 as const,
+    windowId: 1,
+    items: [
+      { id: "task", createdAt: "2026-07-29T12:00:00.000Z", kind: "user" as const, content: "Legacy active task" },
+      {
+        id: "write-call",
+        createdAt: "2026-07-29T12:00:01.000Z",
+        kind: "tool_call",
+        toolName: "fs.write_text",
+        toolCallId: "write-pair",
+        toolInput: { path: "src/legacy-large.ts", content: writeContent },
+      },
+      {
+        id: "write-result",
+        createdAt: "2026-07-29T12:00:02.000Z",
+        kind: "tool_result",
+        toolName: "fs.write_text",
+        toolCallId: "write-pair",
+        toolOutput: { text: "Updated src/legacy-large.ts." },
+      },
+      ...Array.from({ length: 24 }, (_, index) => ({
+        id: `tail-${index}`,
+        createdAt: `2026-07-29T12:01:${String(index).padStart(2, "0")}.000Z`,
+        kind: "assistant_text" as const,
+        content: `Recent tail ${index}.`,
+      })),
+    ],
+  };
+  ctx.event.payload = {};
+  ctx.session.state.agent = { goal: "Legacy active task", modelTranscript: transcript };
+  const transition = await buildStep({
+    tools: [READ_TEXT_TOOL],
+    maintenanceModel: "test/maintenance",
+    capabilityManifest: compactionCapabilityManifest(),
+  })(ctx, {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        return { output: compactionSummary() } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue after legacy compaction.",
+        nextAction: { kind: "tool", name: "fs.read_text", input: { path: "README.md" } },
+      });
+    },
+  } satisfies StepIO);
+  const compactionRequests = requests.filter(
+    (request) => request.metadata?.phase === "agent.compaction",
+  );
+  const compactionSourcePrompt = String(
+    compactionRequests[0]?.messages?.[1]?.content ?? "",
+  );
+  const transcriptPatch = (
+    transition.statePatch?.agent as Record<string, unknown>
+  ).modelTranscript as {
+    compactions?: Array<{ summarySource?: unknown; failureCode?: unknown }>;
+  };
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(compactionRequests.length, 1);
+  assert.equal(compactionRequests[0]?.model, "test/maintenance");
+  assert.equal(
+    compactionRequests[0]?.providerOptions?.openrouter?.maxTokens,
+    4_096,
+  );
+  assert.equal(
+    compactionRequests[0]?.providerOptions?.openai?.maxTokens,
+    4_096,
+  );
+  assert.equal(
+    compactionRequests[0]?.providerOptions?.anthropic?.maxTokens,
+    4_096,
+  );
+  assert.equal(requests.some((request) => request.metadata?.phase === "agent.compaction.verify"), false);
+  assert.match(compactionSourcePrompt, /"contentBytes":132020/u);
+  assert.doesNotMatch(compactionSourcePrompt, /RAW_WRITE_END_MARKER/u);
+  assert.equal(transcriptPatch.compactions?.at(-1)?.summarySource, "model");
+  assert.equal(transcriptPatch.compactions?.at(-1)?.failureCode, undefined);
+});
+
+contractTest("runtime.hermetic", "legacy oversized-source planning does not spend tail budget on the separately retained active task", async () => {
+  const requests: ModelRequest[] = [];
+  const ctx = context();
+  const activeTask = `Legacy long active task ${"active ".repeat(8_000)}`;
+  const transcript: ModelTranscript = {
+    version: 1,
+    windowId: 1,
+    items: [
+      {
+        id: "task",
+        createdAt: "2026-07-30T12:00:00.000Z",
+        kind: "user",
+        content: activeTask,
+      },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        id: `history-${index}`,
+        createdAt: `2026-07-30T12:01:${String(index).padStart(2, "0")}.000Z`,
+        kind: "assistant_text" as const,
+        content: `HISTORY_${index}_MARKER ${"history".repeat(1_425)}`,
+      })),
+      ...Array.from({ length: 24 }, (_, index) => ({
+        id: `tail-${index}`,
+        createdAt: `2026-07-30T12:02:${String(index).padStart(2, "0")}.000Z`,
+        kind: "assistant_text" as const,
+        content: `Recent tail ${index}.`,
+      })),
+    ],
+  };
+  ctx.event.payload = {};
+  ctx.session.state.agent = {
+    goal: activeTask,
+    modelTranscript: transcript,
+  };
+
+  const transition = await buildStep({
+    tools: [READ_TEXT_TOOL],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(ctx, {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        return { output: compactionSummary() } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue after legacy bounded compaction.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+  const compactionRequest = requests.find(
+    (request) => request.metadata?.phase === "agent.compaction",
+  );
+  const sourcePrompt = String(
+    compactionRequest?.messages?.[1]?.content ?? "",
+  );
+
+  assert.equal(transition.status, "RUNNING");
+  assert.match(sourcePrompt, /HISTORY_10_MARKER/u);
+  assert.doesNotMatch(sourcePrompt, /Legacy long active task/u);
 });
 
 contractTest("runtime.hermetic", "agent loop exposes mission control context and accepts proactive task proposal", async () => {

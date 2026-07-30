@@ -1,7 +1,9 @@
 import type { StepAgent, StepContext, StepIO, Transition, UserWaitForMatcher } from "../../../../src/kestrel/contracts/execution.js";
 import type { ModelReasoningRequest, ModelRequest, ModelResponse, ModelToolSpec } from "../../../../src/kestrel/contracts/model-io.js";
 import {
+  buildModelRequestEconomicsManifest,
   buildToolSurfaceManifest,
+  countTextTokens,
   parseHarnessEconomicsControlV1,
   resolveModelEconomicsProfileV1,
   resolveModelTokenCounter,
@@ -51,14 +53,16 @@ import {
   buildKestrelCompactionSummarySchema,
   buildKestrelCompactionSufficiencyMessages,
   buildKestrelAgentValidationFeedbackMessage,
+  estimateKestrelCompactionSourceTokens,
   planKestrelAgentCompaction,
   shouldCompactKestrelAgentContext,
   KESTREL_COMPACTION_SUMMARY_SCHEMA,
   KESTREL_COMPACTION_SUFFICIENCY_SCHEMA,
-  parseKestrelCompactionSummaryV1,
+  parseKestrelCompactionSummaryV2,
   parseKestrelCompactionSufficiencyVerdictV1,
   type KestrelAgentCannotSatisfyReasonCode,
   type KestrelAgentCompactionCorrectionV1,
+  type KestrelCompactionSummaryV2,
   type KestrelAgentFinalizeStatus,
 } from "../../../../src/runtime/KestrelAgentContextBuilder.js";
 import {
@@ -70,8 +74,13 @@ import {
   appendCorrectionToTranscript,
   appendToolResultToTranscript,
   appendTodoUpdateToTranscript,
+  estimateModelTranscriptItemsTokens,
+  planTokenBudgetedModelTranscriptCompaction,
   readActiveTaskGoalFromTranscript,
+  readActiveTaskItemIdFromTranscript,
   normalizeModelTranscript,
+  type ModelTranscript,
+  type ModelTranscriptCompactionPlan,
 } from "../../../../src/runtime/modelTranscript.js";
 import {
   resolveDeliberatorPromptVariant,
@@ -122,6 +131,7 @@ import {
   analyzeVisibleTodoFinalizeReadiness,
   normalizeVisibleTodoState,
   normalizeVisibleTodoResidualGapData,
+  renderVisibleTodosForModel,
   type VisibleTodoState,
 } from "../../../../src/runtime/visibleTodos.js";
 import {
@@ -130,6 +140,11 @@ import {
 } from "../../../../src/runtime/userReplyIntent.js";
 import { readActiveWaitState } from "../../../../src/runtime/waitState.js";
 import { readActiveSkillPackContext } from "../../../../src/runtime/agent-context/runtimeContext.js";
+import {
+  buildActiveProcessEvidence,
+  buildRecentFilesystemEvidence,
+  buildRecentToolResultEvidence,
+} from "../../../../src/runtime/agent-context/evidenceContext.js";
 import {
   resolveKestrelTurnObjective,
   shouldStartFreshUserMessageTaskEpoch,
@@ -425,11 +440,42 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       stepIndex: ctx.stepIndex,
       ...(tokenCounter !== undefined ? { tokenCounter } : {}),
     });
+    const initialParallelToolCalls = shouldEnableParallelToolCalls({
+      tools: initialFilteredTools.tools,
+      capabilityManifest,
+      modeResolution,
+      executionPolicy,
+    });
+    const observedCapabilities =
+      extractObservedCapabilitiesFromFeedback(reactState);
+    const modeScopedControlToolNames = controlToolNamesForInteractionMode({
+      interactionMode: modeResolution.interactionMode,
+      eventType: ctx.event.type,
+      eventPayload,
+      executableWorkspaceToolsAvailable,
+    });
+    const finalizeStatuses = finalizeStatusesForInteractionMode({
+      interactionMode: modeResolution.interactionMode,
+      executableWorkspaceToolsAvailable,
+    });
+    const cannotSatisfyReasonCodes =
+      cannotSatisfyReasonCodesForInteractionMode({
+        interactionMode: modeResolution.interactionMode,
+      });
+    const initialActionTools = buildModelToolAliasRegistry(
+      initialFilteredTools.tools,
+      {
+        controlToolNames: modeScopedControlToolNames,
+        finalizeStatuses,
+        cannotSatisfyReasonCodes,
+      },
+    ).requestTools;
     contextRequest = await compactContextRequestIfNeeded({
       io,
       config,
       contextRequest,
-      tools: initialFilteredTools.tools,
+      actionTools: initialActionTools,
+      actionParallelToolCalls: initialParallelToolCalls,
       reactState,
       eventPayload,
       goal,
@@ -449,30 +495,10 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       contextRequest,
     }) ?? goal;
 
-    const observedCapabilities = extractObservedCapabilitiesFromFeedback(reactState);
-    const modeScopedControlToolNames = controlToolNamesForInteractionMode({
-      interactionMode: modeResolution.interactionMode,
-      eventType: ctx.event.type,
-      eventPayload,
-      executableWorkspaceToolsAvailable,
-    });
-    const finalizeStatuses = finalizeStatusesForInteractionMode({
-      interactionMode: modeResolution.interactionMode,
-      executableWorkspaceToolsAvailable,
-    });
-    const cannotSatisfyReasonCodes = cannotSatisfyReasonCodesForInteractionMode({
-      interactionMode: modeResolution.interactionMode,
-    });
     let activeReactState: Record<string, unknown> = {
       ...reactState,
       modelTranscript: contextRequest.transcript,
     };
-    const initialParallelToolCalls = shouldEnableParallelToolCalls({
-      tools: initialFilteredTools.tools,
-      capabilityManifest,
-      modeResolution,
-      executionPolicy,
-    });
     let response = await askDeliberator(
       io,
       config,
@@ -1050,21 +1076,7 @@ async function askDeliberator(
     messages: messages ?? [],
     tools: requestTools,
     reasoning: config.reasoningRequest ?? { mode: "provider_visible" },
-    providerOptions: {
-      openrouter: {
-        endpoint: "chat",
-        toolChoice,
-        parallelToolCalls,
-      },
-      openai: {
-        toolChoice,
-        parallelToolCalls,
-      },
-      anthropic: {
-        toolChoice,
-        parallelToolCalls,
-      },
-    },
+    providerOptions: deliberatorProviderOptions(toolChoice, parallelToolCalls),
     metadata: {
       phase: "agent.loop",
       stepAgent: "agent.loop",
@@ -1088,11 +1100,20 @@ async function askDeliberator(
   return io.useModel<ModelResponse<unknown>>(request);
 }
 
+function isRunCancellation(error: unknown): boolean {
+  if (error instanceof RuntimeFailure && error.code === "RUN_CANCELLED") {
+    return true;
+  }
+  const record = asRecord(error);
+  return record?.code === "RUN_CANCELLED";
+}
+
 async function compactContextRequestIfNeeded(input: {
   io: StepIO;
   config: AgentLoopStepConfig;
   contextRequest: ReturnType<typeof buildContextRequest>;
-  tools: ModelToolSpec[];
+  actionTools: ModelToolSpec[];
+  actionParallelToolCalls: boolean;
   reactState: Record<string, unknown>;
   eventPayload: Record<string, unknown>;
   goal: string;
@@ -1108,204 +1129,460 @@ async function compactContextRequestIfNeeded(input: {
   activeSkillPack?: unknown;
   stepIndex: number;
 }): Promise<ReturnType<typeof buildContextRequest>> {
+  return compactContextRequestTokenAware(input);
+}
+
+type CompactionRequestInput = Parameters<
+  typeof compactContextRequestIfNeeded
+>[0];
+
+interface CompactionBudget {
+  retainedTailTokenBudget: number;
+  maxMaintenanceSourceTokens: number;
+  summaryTokenBudget?: number | undefined;
+  legacy: boolean;
+}
+
+async function compactContextRequestTokenAware(
+  input: CompactionRequestInput,
+): Promise<ReturnType<typeof buildContextRequest>> {
   const runtimeEconomics = readRuntimeEconomics(input.eventPayload);
-  const contextTokens = input.contextRequest.metadata.manifestSections.reduce(
-    (total, section) => total + section.count.tokens,
-    0,
+  const actionTokenCounter = tokenCounterForProfile(
+    runtimeEconomics.modelProfile,
   );
-  const toolSchemaTokens = buildToolSurfaceManifest(input.tools).count.tokens;
-  if (shouldCompactKestrelAgentContext({
-    transcript: input.contextRequest.transcript,
-    ...(runtimeEconomics.policy !== undefined ? { policy: runtimeEconomics.policy } : {}),
-    ...(runtimeEconomics.modelProfile !== undefined ? { modelProfile: runtimeEconomics.modelProfile } : {}),
-    contextTokens,
-    toolSchemaTokens,
-  }) === false) {
-    return input.contextRequest;
-  }
-  const compactionSource = normalizeModelTranscript(input.contextRequest.transcript);
-  if (compactionSource === undefined) {
-    throw new Error("Compaction requires a valid model transcript.");
-  }
-  const compactionPlan = planKestrelAgentCompaction(compactionSource);
-  const { activeTaskItemId, replacedItemIds } = compactionPlan;
-  const configuredMaintenanceModel = input.config.maintenanceModel ?? input.config.agentModel;
-  const maintenanceEconomics = readRuntimeEconomics(input.eventPayload, configuredMaintenanceModel);
-  const maintenanceModel = runtimeEconomics.policy !== undefined && configuredMaintenanceModel !== input.config.agentModel
-    ? canSafelyCompactWithProfile({
-        profile: maintenanceEconomics.modelProfile,
-        policy: runtimeEconomics.policy,
-        sourceTokens: contextTokens,
-      })
+  const toolSchemaTokens = buildToolSurfaceManifest(
+    input.actionTools,
+    actionTokenCounter,
+  ).count.tokens;
+  const configuredMaintenanceModel =
+    input.config.maintenanceModel ?? input.config.agentModel;
+  const configuredMaintenanceEconomics = readRuntimeEconomics(
+    input.eventPayload,
+    configuredMaintenanceModel,
+  );
+  const maintenanceModel =
+    runtimeEconomics.policy === undefined ||
+    configuredMaintenanceModel === input.config.agentModel ||
+    configuredMaintenanceEconomics.modelProfile !== undefined
       ? configuredMaintenanceModel
-      : input.config.agentModel
-    : configuredMaintenanceModel;
+      : input.config.agentModel;
+  const maintenanceProfile =
+    maintenanceModel === configuredMaintenanceModel
+      ? configuredMaintenanceEconomics.modelProfile
+      : runtimeEconomics.modelProfile;
+  const maintenanceTokenCounter = tokenCounterForProfile(maintenanceProfile);
   const maxSummaryAttempts =
     runtimeEconomics.policy?.compaction.maxSummaryAttempts ?? 1;
-  let correction: KestrelAgentCompactionCorrectionV1 | undefined;
-  let compactedTranscript:
-    | ReturnType<typeof buildKestrelAgentCompactedTranscript>
-    | undefined;
-  for (
-    let compactionAttempt = 1;
-    compactionAttempt <= maxSummaryAttempts;
-    compactionAttempt += 1
-  ) {
-    const compactionAttemptKind =
-      compactionAttempt === 1 ? "initial" : "correction";
-    const response = await input.io.useModel<ModelResponse<unknown>>({
-      model: maintenanceModel,
-      input: {
-        version: "compaction-v1",
-        taskInstruction:
-          readActiveTaskGoalFromTranscript(input.contextRequest.transcript) ??
-          input.goal,
-      },
-      messages: buildKestrelAgentCompactionMessages({
-        contextMessages: input.contextRequest.contextMessages,
-        activeTaskItemId,
-        replacedItemIds,
-        sourceItems: compactionSource.items,
-        ...(correction !== undefined ? { correction } : {}),
-      }),
-      responseFormat: "json",
-      responseSchema: buildKestrelCompactionSummarySchema(
-        activeTaskItemId,
-        replacedItemIds,
-      ),
-      reasoning: { mode: "off" },
-      providerOptions: {
-        openrouter: { endpoint: "chat", toolChoice: "none" },
-        openai: { toolChoice: "none" },
-        anthropic: { toolChoice: "none" },
-      },
-      metadata: {
-        phase: "agent.compaction",
-        stepAgent: "agent.loop",
-        requestedModel: maintenanceModel,
-        ...(input.config.agentProvider !== undefined ? { requestedProvider: input.config.agentProvider } : {}),
-        modelRole: "compaction",
-        modelBudgetClass: "maintenance",
-        reasoningRetentionScope: input.config.reasoningRetentionScope ?? "default",
-        contextBuilder: input.contextRequest.metadata.builder,
-        contextBuilderVersion: input.contextRequest.metadata.version,
-        contextSections: input.contextRequest.metadata.manifestSections,
-        compactionAttempt,
-        maxSummaryAttempts,
-        compactionAttemptKind,
-      },
+  let contextRequest = input.contextRequest;
+
+  while (true) {
+    const contextTokens = totalContextTokens(contextRequest);
+    const providerOverheadTokens = estimateActionProviderOverheadTokens({
+      model: input.config.agentModel,
+      contextRequest,
+      reasoning:
+        input.config.reasoningRequest ?? { mode: "provider_visible" },
+      toolChoice: "required",
+      parallelToolCalls: input.actionParallelToolCalls,
+      modelProfile: runtimeEconomics.modelProfile,
     });
-    const summary = response.output ?? response.text;
-    let parsedSummary: ReturnType<
-      typeof parseKestrelCompactionSummaryV1
-    >;
-    let proposedTranscript: ReturnType<
-      typeof buildKestrelAgentCompactedTranscript
-    >;
-    try {
-      parsedSummary = parseKestrelCompactionSummaryV1(summary);
-      proposedTranscript = buildKestrelAgentCompactedTranscript({
-        transcript: input.contextRequest.transcript,
-        summary: parsedSummary,
-      });
-    } catch (error) {
-      const failure = readCompactionFailure(error);
-      if (failure === undefined) {
-        throw error;
-      }
-      if (compactionAttempt < maxSummaryAttempts) {
-        correction = {
-          source: "summary_validation",
-          reason: failure.message,
-          rejectedResponse: summary,
-        };
-        continue;
-      }
-      throw annotateCompactionFailure(failure, {
-        compactionAttempt,
-        maxSummaryAttempts,
-        failureSource: "summary_validation",
-      });
+    if (
+      shouldCompactKestrelAgentContext({
+        transcript: contextRequest.transcript,
+        ...(runtimeEconomics.policy !== undefined
+          ? { policy: runtimeEconomics.policy }
+          : {}),
+        ...(runtimeEconomics.modelProfile !== undefined
+          ? { modelProfile: runtimeEconomics.modelProfile }
+          : {}),
+        contextTokens,
+        toolSchemaTokens,
+        providerOverheadTokens,
+      }) === false
+    ) {
+      return contextRequest;
     }
-    if (runtimeEconomics.policy?.mode === "enforce") {
-      const sufficiencyResponse = await input.io.useModel<
-        ModelResponse<unknown>
-      >({
-        model: maintenanceModel,
-        input: { version: "compaction-sufficiency-v1" },
-        messages: buildKestrelCompactionSufficiencyMessages({
-          sourceItems: compactionSource.items,
-          proposedSummary: parsedSummary,
-        }),
-        responseFormat: "json",
-        responseSchema:
-          KESTREL_COMPACTION_SUFFICIENCY_SCHEMA as unknown as Record<
-            string,
-            unknown
-          >,
-        reasoning: { mode: "off" },
-        providerOptions: {
-          openrouter: { endpoint: "chat", toolChoice: "none" },
-          openai: { toolChoice: "none" },
-          anthropic: { toolChoice: "none" },
-        },
-        metadata: {
-          phase: "agent.compaction.verify",
-          stepAgent: "agent.loop",
-          requestedModel: maintenanceModel,
-          ...(input.config.agentProvider !== undefined
-            ? { requestedProvider: input.config.agentProvider }
-            : {}),
-          modelRole: "compaction_sufficiency",
-          modelBudgetClass: "maintenance",
-          reasoningRetentionScope:
-            input.config.reasoningRetentionScope ?? "default",
-          compactionAttempt,
-          maxSummaryAttempts,
-          compactionAttemptKind,
-        },
-      });
-      try {
-        parseKestrelCompactionSufficiencyVerdictV1(
-          sufficiencyResponse.output ?? sufficiencyResponse.text,
-        );
-      } catch (error) {
-        const failure = readCompactionFailure(error);
-        if (
-          failure === undefined ||
-          failure.details?.reason !== "semantic_verifier_rejected"
-        ) {
-          throw error;
-        }
-        if (compactionAttempt < maxSummaryAttempts) {
-          const verifierCategories = readVerifierCategories(failure);
-          correction = {
-            source: "semantic_verifier",
-            reason: failure.message,
-            rejectedResponse: parsedSummary,
-            ...(verifierCategories !== undefined
-              ? { verifierCategories }
-              : {}),
-          };
-          continue;
-        }
-        throw annotateCompactionFailure(failure, {
-          compactionAttempt,
-          maxSummaryAttempts,
-          failureSource: "semantic_verifier",
-        });
-      }
-    }
-    compactedTranscript = proposedTranscript;
-    break;
-  }
-  if (compactedTranscript === undefined) {
-    throw createRuntimeFailure(
-      "HARNESS_ECONOMICS_COMPACTION_INSUFFICIENT",
-      "Compaction attempts were exhausted without an accepted summary.",
-      { maxSummaryAttempts },
+
+    const compactionSource = normalizeModelTranscript(
+      contextRequest.transcript,
     );
+    if (compactionSource === undefined) {
+      throw new Error("Compaction requires a valid model transcript.");
+    }
+    const budget = buildCompactionBudget({
+      contextRequest,
+      transcript: compactionSource,
+      policy: runtimeEconomics.policy,
+      actionProfile: runtimeEconomics.modelProfile,
+      maintenanceProfile,
+      maintenanceModel,
+      toolSchemaTokens,
+      providerOverheadTokens,
+      actionTokenCounter,
+      maintenanceTokenCounter,
+    });
+    const plan = buildRuntimeCompactionPlan({
+      transcript: compactionSource,
+      budget,
+      tailTokenCounter: actionTokenCounter,
+      maintenanceTokenCounter,
+    });
+    if (plan.replacedItems.length === 0) {
+      throwRequiredContextBudgetFailure(contextTokens, toolSchemaTokens);
+    }
+    const summaryTokenBudget =
+      budget.summaryTokenBudget ??
+      Math.max(
+        minimumRuntimeFallbackSummaryTokens(actionTokenCounter),
+        Math.min(
+          maintenanceProfile?.maxOutputTokens ??
+            LEGACY_COMPACTION_MAX_OUTPUT_TOKENS,
+          estimateModelTranscriptItemsTokens(
+            plan.replacedItems,
+            actionTokenCounter,
+          ) - 1,
+        ),
+      );
+
+    const sourceTokens = estimateKestrelCompactionSourceTokens(
+      plan.replacedItems,
+      maintenanceTokenCounter,
+    );
+    let acceptedSummary: KestrelCompactionSummaryV2 | undefined;
+    let fallbackFailureCode: string | undefined =
+      sourceTokens > budget.maxMaintenanceSourceTokens
+        ? "HARNESS_ECONOMICS_COMPACTION_SOURCE_OVERSIZED"
+        : undefined;
+    let correction: KestrelAgentCompactionCorrectionV1 | undefined;
+
+    if (fallbackFailureCode === undefined) {
+      for (
+        let compactionAttempt = 1;
+        compactionAttempt <= maxSummaryAttempts;
+        compactionAttempt += 1
+      ) {
+        const compactionAttemptKind =
+          compactionAttempt === 1 ? "initial" : "correction";
+        let response: ModelResponse<unknown>;
+        try {
+          response = await input.io.useModel<ModelResponse<unknown>>({
+            model: maintenanceModel,
+            input: { version: "compaction-v2" },
+            messages: buildKestrelAgentCompactionMessages({
+              sourceItems: plan.replacedItems,
+              ...(correction !== undefined ? { correction } : {}),
+            }),
+            responseFormat: "json",
+            responseSchema: buildKestrelCompactionSummarySchema(),
+            reasoning: { mode: "off" },
+            providerOptions: maintenanceProviderOptions(summaryTokenBudget),
+            metadata: {
+              phase: "agent.compaction",
+              stepAgent: "agent.loop",
+              requestedModel: maintenanceModel,
+              ...(input.config.agentProvider !== undefined
+                ? { requestedProvider: input.config.agentProvider }
+                : {}),
+              modelRole: "compaction",
+              modelBudgetClass: "maintenance",
+              reasoningRetentionScope:
+                input.config.reasoningRetentionScope ?? "default",
+              contextBuilder: contextRequest.metadata.builder,
+              contextBuilderVersion: contextRequest.metadata.version,
+              compactionAttempt,
+              maxSummaryAttempts,
+              compactionAttemptKind,
+            },
+          });
+        } catch (error) {
+          if (isRunCancellation(error)) {
+            throw error;
+          }
+          fallbackFailureCode = "COMPACTION_MAINTENANCE_PROVIDER_FAILED";
+          break;
+        }
+
+        try {
+          acceptedSummary = parseKestrelCompactionSummaryV2(
+            response.output ?? response.text,
+          );
+          assertCompactionSummaryFitsTokenBudget(
+            acceptedSummary,
+            summaryTokenBudget,
+            actionTokenCounter,
+          );
+        } catch (error) {
+          const failure = readCompactionFailure(error);
+          if (failure === undefined) {
+            throw error;
+          }
+          acceptedSummary = undefined;
+          if (compactionAttempt < maxSummaryAttempts) {
+            correction = {
+              source: "summary_validation",
+              reason: failure.message,
+            };
+            continue;
+          }
+          fallbackFailureCode = failure.code;
+          break;
+        }
+
+        if (runtimeEconomics.policy?.mode === "enforce") {
+          let sufficiencyResponse: ModelResponse<unknown>;
+          try {
+            sufficiencyResponse = await input.io.useModel<
+              ModelResponse<unknown>
+            >({
+              model: maintenanceModel,
+              input: { version: "compaction-sufficiency-v1" },
+              messages: buildKestrelCompactionSufficiencyMessages({
+                sourceItems: plan.replacedItems,
+                proposedSummary: acceptedSummary,
+              }),
+              responseFormat: "json",
+              responseSchema:
+                KESTREL_COMPACTION_SUFFICIENCY_SCHEMA as unknown as Record<
+                  string,
+                  unknown
+                >,
+              reasoning: { mode: "off" },
+              providerOptions: maintenanceProviderOptions(summaryTokenBudget),
+              metadata: {
+                phase: "agent.compaction.verify",
+                stepAgent: "agent.loop",
+                requestedModel: maintenanceModel,
+                ...(input.config.agentProvider !== undefined
+                  ? { requestedProvider: input.config.agentProvider }
+                  : {}),
+                modelRole: "compaction_sufficiency",
+                modelBudgetClass: "maintenance",
+                reasoningRetentionScope:
+                  input.config.reasoningRetentionScope ?? "default",
+                compactionAttempt,
+                maxSummaryAttempts,
+                compactionAttemptKind,
+              },
+            });
+          } catch (error) {
+            if (isRunCancellation(error)) {
+              throw error;
+            }
+            acceptedSummary = undefined;
+            fallbackFailureCode = "COMPACTION_VERIFIER_PROVIDER_FAILED";
+            break;
+          }
+          try {
+            parseKestrelCompactionSufficiencyVerdictV1(
+              sufficiencyResponse.output ?? sufficiencyResponse.text,
+            );
+          } catch (error) {
+            const failure = readCompactionFailure(error);
+            if (failure === undefined) {
+              throw error;
+            }
+            if (failure.details?.reason !== "semantic_verifier_rejected") {
+              acceptedSummary = undefined;
+              fallbackFailureCode = failure.code;
+              break;
+            }
+            acceptedSummary = undefined;
+            if (compactionAttempt < maxSummaryAttempts) {
+              const verifierCategories = readVerifierCategories(failure);
+              correction = {
+                source: "semantic_verifier",
+                reason: failure.message,
+                ...(verifierCategories !== undefined
+                  ? { verifierCategories }
+                  : {}),
+              };
+              continue;
+            }
+            fallbackFailureCode = failure.code;
+            break;
+          }
+        }
+        break;
+      }
+    }
+
+    const summarySource =
+      acceptedSummary === undefined
+        ? ("runtime_fallback" as const)
+        : ("model" as const);
+    let compactedTranscript = buildKestrelAgentCompactedTranscript({
+      transcript: contextRequest.transcript,
+      plan,
+      summary:
+        acceptedSummary ??
+        buildRuntimeFallbackCompactionSummary(
+          input.reactState,
+          compactionSource,
+          summaryTokenBudget,
+          actionTokenCounter,
+        ),
+      summarySource,
+      ...(summarySource === "runtime_fallback"
+        ? {
+            failureCode:
+              fallbackFailureCode ?? "COMPACTION_SUMMARY_ATTEMPTS_EXHAUSTED",
+          }
+        : {}),
+    });
+    let nextContextRequest = rebuildCompactedContextRequest(
+      input,
+      compactedTranscript,
+      runtimeEconomics.modelProfile,
+    );
+
+    if (
+      acceptedSummary !== undefined &&
+      totalContextTokens(nextContextRequest) >= contextTokens
+    ) {
+      compactedTranscript = buildKestrelAgentCompactedTranscript({
+        transcript: contextRequest.transcript,
+        plan,
+        summary: buildRuntimeFallbackCompactionSummary(
+          input.reactState,
+          compactionSource,
+          summaryTokenBudget,
+          actionTokenCounter,
+        ),
+        summarySource: "runtime_fallback",
+        failureCode: "HARNESS_ECONOMICS_COMPACTION_NON_REDUCING",
+      });
+      nextContextRequest = rebuildCompactedContextRequest(
+        input,
+        compactedTranscript,
+        runtimeEconomics.modelProfile,
+      );
+    }
+    if (totalContextTokens(nextContextRequest) >= contextTokens) {
+      throwRequiredContextBudgetFailure(contextTokens, toolSchemaTokens);
+    }
+    contextRequest = nextContextRequest;
   }
+}
+
+function buildCompactionBudget(input: {
+  contextRequest: ReturnType<typeof buildContextRequest>;
+  transcript: ModelTranscript;
+  policy?: HarnessEconomicsPolicyV1 | undefined;
+  actionProfile?: ModelEconomicsProfileV1 | undefined;
+  maintenanceProfile?: ModelEconomicsProfileV1 | undefined;
+  maintenanceModel: string;
+  toolSchemaTokens: number;
+  providerOverheadTokens: number;
+  actionTokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
+  maintenanceTokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
+}): CompactionBudget {
+  if (input.policy === undefined || input.actionProfile === undefined) {
+    return {
+      retainedTailTokenBudget: Number.MAX_SAFE_INTEGER,
+      maxMaintenanceSourceTokens: 120_000,
+      legacy: true,
+    };
+  }
+  const nonTranscriptTokens = input.contextRequest.metadata.manifestSections
+    .filter((section) => section.id.startsWith("transcript:") === false)
+    .reduce((total, section) => total + section.count.tokens, 0);
+  const availableActionInput = Math.max(
+    0,
+    input.actionProfile.contextWindowTokens -
+      input.policy.context.outputReserveTokens -
+      input.policy.context.safetyReserveTokens -
+      input.toolSchemaTokens -
+      input.providerOverheadTokens,
+  );
+  const maintenanceProfile = input.maintenanceProfile ?? input.actionProfile;
+  const summaryTokenBudget = Math.max(
+    input.policy.context.outputReserveTokens,
+    minimumRuntimeFallbackSummaryTokens(input.actionTokenCounter),
+  );
+  const activeTaskItemId = readActiveTaskItemIdFromTranscript(input.transcript);
+  const activeTaskTokens = estimateModelTranscriptItemsTokens(
+    input.transcript.items.filter((item) => item.id === activeTaskItemId),
+    input.actionTokenCounter,
+  );
+  return {
+    retainedTailTokenBudget: Math.max(
+      0,
+      availableActionInput -
+        nonTranscriptTokens -
+        activeTaskTokens -
+        summaryTokenBudget,
+    ),
+    maxMaintenanceSourceTokens: Math.max(
+      1,
+      maintenanceProfile.contextWindowTokens -
+        summaryTokenBudget -
+        input.policy.context.safetyReserveTokens -
+        estimateMaintenanceOverheadTokens({
+          model: input.maintenanceModel,
+          tokenCounter: input.maintenanceTokenCounter,
+          mode: input.policy.mode,
+          maxSummaryAttempts: input.policy.compaction.maxSummaryAttempts,
+          summaryInputReserveTokens: summaryTokenBudget,
+        }),
+    ),
+    summaryTokenBudget,
+    legacy: false,
+  };
+}
+
+function buildRuntimeCompactionPlan(input: {
+  transcript: ModelTranscript;
+  budget: CompactionBudget;
+  tailTokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
+  maintenanceTokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
+}): ModelTranscriptCompactionPlan {
+  if (input.budget.legacy) {
+    const legacyPlan = planKestrelAgentCompaction(input.transcript).plan;
+    const legacySourceTokens = estimateKestrelCompactionSourceTokens(
+      legacyPlan.replacedItems,
+      input.maintenanceTokenCounter,
+    );
+    if (legacySourceTokens <= input.budget.maxMaintenanceSourceTokens) {
+      return legacyPlan;
+    }
+    const activeTaskItemId = readActiveTaskItemIdFromTranscript(
+      input.transcript,
+    );
+    return planTokenBudgetedModelTranscriptCompaction({
+      transcript: input.transcript,
+      retainedTailTokenBudget: estimateModelTranscriptItemsTokens(
+        legacyPlan.retainedItems.filter(
+          (item) => item.id !== activeTaskItemId,
+        ),
+        input.tailTokenCounter,
+      ),
+      maxReplacedTokens: input.budget.maxMaintenanceSourceTokens,
+      tokenCounter: input.tailTokenCounter,
+      estimateReplacedItemsTokens: (items) =>
+        estimateKestrelCompactionSourceTokens(
+          items,
+          input.maintenanceTokenCounter,
+        ),
+    });
+  }
+  return planTokenBudgetedModelTranscriptCompaction({
+    transcript: input.transcript,
+    retainedTailTokenBudget: input.budget.retainedTailTokenBudget,
+    maxReplacedTokens: input.budget.maxMaintenanceSourceTokens,
+    tokenCounter: input.tailTokenCounter,
+    estimateReplacedItemsTokens: (items) =>
+      estimateKestrelCompactionSourceTokens(
+        items,
+        input.maintenanceTokenCounter,
+      ),
+  });
+}
+
+function rebuildCompactedContextRequest(
+  input: CompactionRequestInput,
+  compactedTranscript: ModelTranscript,
+  modelProfile?: ModelEconomicsProfileV1 | undefined,
+): ReturnType<typeof buildContextRequest> {
   return buildContextRequest({
     reactState: {
       ...input.reactState,
@@ -1331,40 +1608,427 @@ async function compactContextRequestIfNeeded(input: {
     activeProjectContext: input.activeProjectContext,
     activeSkillPack: input.activeSkillPack,
     stepIndex: input.stepIndex,
-    ...(runtimeEconomics.modelProfile?.counting.method === "model_tokenizer"
+    ...(modelProfile?.counting.method === "model_tokenizer"
       ? {
           tokenCounter: resolveModelTokenCounter(
-            runtimeEconomics.modelProfile.counting.counter,
-            runtimeEconomics.modelProfile.counting.counterVersion,
+            modelProfile.counting.counter,
+            modelProfile.counting.counterVersion,
           ),
         }
       : {}),
   });
 }
 
-function readCompactionFailure(error: unknown): RuntimeFailure | undefined {
-  return error instanceof RuntimeFailure &&
-    error.code === "HARNESS_ECONOMICS_COMPACTION_INSUFFICIENT"
-    ? error
+function buildRuntimeFallbackCompactionSummary(
+  reactState: Record<string, unknown>,
+  transcript: ModelTranscript,
+  maxTokens: number,
+  tokenCounter?: ReturnType<typeof resolveModelTokenCounter>,
+): KestrelCompactionSummaryV2 {
+  const plan =
+    asRecord(reactState.planDocument) ??
+    asRecord(reactState.plan) ??
+    asRecord(reactState.activePlan);
+  const visibleTodos = normalizeVisibleTodoState(reactState.visibleTodos);
+  const nextAction = asRecord(reactState.nextAction);
+  const waitingFor = asRecord(reactState.waitingFor);
+  const lastAction = asRecord(reactState.lastActionResult);
+  return fitRuntimeFallbackSummaryToTokenBudget({
+    summary: {
+      decisions: boundedStrings([
+        readActiveTaskGoalFromTranscript(transcript) !== undefined
+          ? `Active task: ${readActiveTaskGoalFromTranscript(transcript)}`
+          : undefined,
+        asString(reactState.decisionReason),
+        asString(asRecord(reactState.decision)?.reason),
+        compactRuntimeValue(plan),
+      ]),
+      constraints: boundedStrings([
+        compactRuntimeValue(plan?.successCriteria),
+        compactRuntimeValue(plan?.constraints),
+      ]),
+      evidence: boundedStrings([
+        ...(buildRecentToolResultEvidence({
+          lastActionResult: reactState.lastActionResult,
+          transcript,
+        }) ?? []),
+        ...(buildActiveProcessEvidence(reactState, transcript) ?? []),
+        RUNTIME_FALLBACK_AUTHORITY_NOTE,
+      ]),
+      fileState: boundedStrings(
+        buildRecentFilesystemEvidence(reactState) ?? [],
+      ),
+      blockers: boundedStrings([
+        asString(waitingFor?.reason),
+        asString(waitingFor?.message),
+        asString(lastAction?.error),
+        compactRuntimeValue(waitingFor),
+      ]),
+      nextActions: boundedStrings([
+        renderVisibleTodosForModel(visibleTodos),
+        compactRuntimeValue(nextAction),
+      ]),
+    },
+    maxTokens,
+    tokenCounter,
+  });
+}
+
+const RUNTIME_FALLBACK_AUTHORITY_NOTE =
+  "Earlier freeform details were not semantically summarized; persisted artifacts and current runtime evidence remain authoritative.";
+
+const COMPACTION_SUMMARY_FIELDS = [
+  "decisions",
+  "constraints",
+  "blockers",
+  "nextActions",
+  "fileState",
+  "evidence",
+] as const;
+
+function minimumRuntimeFallbackSummary(): KestrelCompactionSummaryV2 {
+  return {
+    decisions: [],
+    constraints: [],
+    evidence: [RUNTIME_FALLBACK_AUTHORITY_NOTE],
+    fileState: [],
+    blockers: [],
+    nextActions: [],
+  };
+}
+
+function minimumRuntimeFallbackSummaryTokens(
+  tokenCounter?: ReturnType<typeof resolveModelTokenCounter>,
+): number {
+  return compactionSummaryTokens(
+    minimumRuntimeFallbackSummary(),
+    tokenCounter,
+  );
+}
+
+function fitRuntimeFallbackSummaryToTokenBudget(input: {
+  summary: KestrelCompactionSummaryV2;
+  maxTokens: number;
+  tokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
+}): KestrelCompactionSummaryV2 {
+  const fitted = minimumRuntimeFallbackSummary();
+  const maxTokens = Math.max(
+    minimumRuntimeFallbackSummaryTokens(input.tokenCounter),
+    Math.trunc(input.maxTokens),
+  );
+  const deferred: Array<{
+    field: (typeof COMPACTION_SUMMARY_FIELDS)[number];
+    value: string;
+  }> = [];
+  const maxFieldLength = Math.max(
+    ...COMPACTION_SUMMARY_FIELDS.map(
+      (field) => input.summary[field].length,
+    ),
+  );
+  for (let index = 0; index < maxFieldLength; index += 1) {
+    for (const field of COMPACTION_SUMMARY_FIELDS) {
+      const value = input.summary[field][index];
+      if (value === undefined) {
+        continue;
+      }
+      if (value === RUNTIME_FALLBACK_AUTHORITY_NOTE) {
+        continue;
+      }
+      const candidate = {
+        ...fitted,
+        [field]: [...fitted[field], value],
+      };
+      if (compactionSummaryTokens(candidate, input.tokenCounter) <= maxTokens) {
+        fitted[field].push(value);
+        continue;
+      }
+      deferred.push({ field, value });
+    }
+  }
+  for (const { field, value } of deferred) {
+    const prefix = longestCompactionSummaryValuePrefix({
+        summary: fitted,
+        field,
+        value,
+        maxTokens,
+        tokenCounter: input.tokenCounter,
+      });
+    if (prefix !== undefined) {
+      fitted[field].push(prefix);
+      break;
+    }
+  }
+  return fitted;
+}
+
+function longestCompactionSummaryValuePrefix(input: {
+  summary: KestrelCompactionSummaryV2;
+  field: (typeof COMPACTION_SUMMARY_FIELDS)[number];
+  value: string;
+  maxTokens: number;
+  tokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
+}): string | undefined {
+  let lower = 0;
+  let upper = input.value.length;
+  while (lower < upper) {
+    const midpoint = Math.ceil((lower + upper) / 2);
+    const candidate = {
+      ...input.summary,
+      [input.field]: [
+        ...input.summary[input.field],
+        input.value.slice(0, midpoint),
+      ],
+    };
+    if (
+      compactionSummaryTokens(candidate, input.tokenCounter) <= input.maxTokens
+    ) {
+      lower = midpoint;
+    } else {
+      upper = midpoint - 1;
+    }
+  }
+  const prefix = input.value.slice(0, lower);
+  return prefix.length > 0 ? prefix : undefined;
+}
+
+function compactionSummaryTokens(
+  summary: KestrelCompactionSummaryV2,
+  tokenCounter?: ReturnType<typeof resolveModelTokenCounter>,
+): number {
+  return countTextTokens(JSON.stringify(summary), tokenCounter).tokens;
+}
+
+function assertCompactionSummaryFitsTokenBudget(
+  summary: KestrelCompactionSummaryV2,
+  maxTokens: number,
+  tokenCounter?: ReturnType<typeof resolveModelTokenCounter>,
+): void {
+  const summaryTokens = compactionSummaryTokens(summary, tokenCounter);
+  if (summaryTokens > maxTokens) {
+    throw createRuntimeFailure(
+      "HARNESS_ECONOMICS_COMPACTION_SUMMARY_INVALID",
+      "Compaction summary exceeds the reserved summary token budget.",
+      {
+        reason: "summary_token_budget_exceeded",
+        summaryTokens,
+        maxTokens,
+      },
+    );
+  }
+}
+
+function boundedStrings(values: Array<string | undefined>): string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value?.trim())
+        .filter(
+          (value): value is string => value !== undefined && value.length > 0,
+        )
+        .map((value) => value.slice(0, 1_200)),
+    ),
+  ].slice(0, 8);
+}
+
+function compactRuntimeValue(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function totalContextTokens(
+  contextRequest: ReturnType<typeof buildContextRequest>,
+): number {
+  return contextRequest.metadata.manifestSections.reduce(
+    (total, section) => total + section.count.tokens,
+    0,
+  );
+}
+
+function tokenCounterForProfile(profile?: ModelEconomicsProfileV1 | undefined) {
+  return profile?.counting.method === "model_tokenizer"
+    ? resolveModelTokenCounter(
+        profile.counting.counter,
+        profile.counting.counterVersion,
+      )
     : undefined;
 }
 
-function annotateCompactionFailure(
-  failure: RuntimeFailure,
-  input: {
-    compactionAttempt: number;
-    maxSummaryAttempts: number;
-    failureSource: KestrelAgentCompactionCorrectionV1["source"];
-  },
-): RuntimeFailure {
-  return createRuntimeFailure(failure.code, failure.message, {
-    ...(failure.details ?? {}),
-    compactionAttempt: input.compactionAttempt,
-    maxSummaryAttempts: input.maxSummaryAttempts,
-    failureSource: input.failureSource,
-    correctionExhausted:
-      input.compactionAttempt >= input.maxSummaryAttempts,
-  });
+function estimateMaintenanceOverheadTokens(input: {
+  model: string;
+  tokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
+  mode: HarnessEconomicsPolicyV1["mode"];
+  maxSummaryAttempts: number;
+  summaryInputReserveTokens: number;
+}): number {
+  const requestTokens = (
+    messages: ModelRequest["messages"],
+    responseSchema: Record<string, unknown>,
+  ) =>
+    countTextTokens(
+      JSON.stringify({
+        model: input.model,
+        messages,
+        responseSchema,
+        responseFormat: "json",
+        reasoning: { mode: "off" },
+        providerOptions: maintenanceProviderOptions(
+          input.summaryInputReserveTokens,
+        ),
+      }),
+      input.tokenCounter,
+    ).tokens;
+  const estimates = [
+    requestTokens(
+      buildKestrelAgentCompactionMessages({ sourceItems: [] }),
+      buildKestrelCompactionSummarySchema(),
+    ),
+  ];
+  if (input.maxSummaryAttempts > 1) {
+    estimates.push(
+      requestTokens(
+        buildKestrelAgentCompactionMessages({
+          sourceItems: [],
+          correction: {
+            source: "semantic_verifier",
+            reason: "",
+            verifierCategories: {
+              decisions: false,
+              constraints: false,
+              evidence: false,
+              fileState: false,
+              blockers: false,
+              nextActions: false,
+            },
+          },
+        }),
+        buildKestrelCompactionSummarySchema(),
+      ) +
+        (input.mode === "enforce"
+          ? input.summaryInputReserveTokens
+          : 0),
+    );
+  }
+  if (input.mode === "enforce") {
+    estimates.push(
+      requestTokens(
+        buildKestrelCompactionSufficiencyMessages({
+          sourceItems: [],
+          proposedSummary: {
+            decisions: [],
+            constraints: [],
+            evidence: [],
+            fileState: [],
+            blockers: [],
+            nextActions: [],
+          },
+        }),
+        KESTREL_COMPACTION_SUFFICIENCY_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+      ) + input.summaryInputReserveTokens,
+    );
+  }
+  return Math.max(...estimates);
+}
+
+const LEGACY_COMPACTION_MAX_OUTPUT_TOKENS = 4_096;
+
+function estimateActionProviderOverheadTokens(input: {
+  model: string;
+  contextRequest: ReturnType<typeof buildContextRequest>;
+  reasoning: ModelReasoningRequest;
+  toolChoice: "required";
+  parallelToolCalls: boolean;
+  modelProfile?: ModelEconomicsProfileV1 | undefined;
+}): number {
+  return buildModelRequestEconomicsManifest({
+    request: {
+      model: input.model,
+      input: input.contextRequest.modelInput,
+      messages: input.contextRequest.messages,
+      reasoning: input.reasoning,
+      providerOptions: deliberatorProviderOptions(
+        input.toolChoice,
+        input.parallelToolCalls,
+      ),
+    },
+    contextSections: input.contextRequest.metadata.manifestSections,
+    ...(input.modelProfile !== undefined
+      ? { modelProfile: input.modelProfile }
+      : {}),
+  }).providerOverhead.tokens;
+}
+
+function deliberatorProviderOptions(
+  toolChoice: "required",
+  parallelToolCalls: boolean,
+) {
+  return {
+    openrouter: {
+      endpoint: "chat" as const,
+      toolChoice,
+      parallelToolCalls,
+    },
+    openai: {
+      toolChoice,
+      parallelToolCalls,
+    },
+    anthropic: {
+      toolChoice,
+      parallelToolCalls,
+    },
+  };
+}
+
+function maintenanceProviderOptions(maxTokens: number) {
+  const boundedMaxTokens = Math.max(1, Math.trunc(maxTokens));
+  return {
+    openrouter: {
+      endpoint: "chat" as const,
+      toolChoice: "none" as const,
+      maxTokens: boundedMaxTokens,
+    },
+    openai: {
+      toolChoice: "none" as const,
+      maxTokens: boundedMaxTokens,
+    },
+    anthropic: {
+      toolChoice: "none" as const,
+      maxTokens: boundedMaxTokens,
+    },
+  };
+}
+
+function throwRequiredContextBudgetFailure(
+  contextTokens: number,
+  toolSchemaTokens: number,
+): never {
+  throw createRuntimeFailure(
+    "HARNESS_ECONOMICS_CONTEXT_ADMISSION_BLOCKED",
+    "Required model context cannot fit the selected economics budget after deterministic compaction.",
+    {
+      reason: "required_budget_exhausted",
+      contextTokens,
+      toolSchemaTokens,
+    },
+  );
+}
+
+function readCompactionFailure(error: unknown): RuntimeFailure | undefined {
+  return error instanceof RuntimeFailure &&
+    error.code === "HARNESS_ECONOMICS_COMPACTION_SUMMARY_INVALID"
+    ? error
+    : undefined;
 }
 
 function readVerifierCategories(
@@ -1380,7 +2044,6 @@ function readVerifierCategories(
     return undefined;
   }
   const fields = [
-    "activeTask",
     "decisions",
     "constraints",
     "evidence",
@@ -1458,18 +2121,6 @@ function readRuntimeEconomics(eventPayload: Record<string, unknown>, requestedMo
       ? { modelProfile: resolveModelEconomicsProfileV1(control, provider, model) }
       : {}),
   };
-}
-
-function canSafelyCompactWithProfile(input: {
-  profile?: ModelEconomicsProfileV1 | undefined;
-  policy: HarnessEconomicsPolicyV1;
-  sourceTokens: number;
-}): boolean {
-  if (input.profile === undefined) return false;
-  const usableInputTokens = input.profile.contextWindowTokens
-    - input.policy.context.outputReserveTokens
-    - input.policy.context.safetyReserveTokens;
-  return input.sourceTokens <= usableInputTokens;
 }
 
 function readRuntimeShellKind(
