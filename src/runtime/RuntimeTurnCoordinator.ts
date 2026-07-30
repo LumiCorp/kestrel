@@ -44,7 +44,11 @@ export interface RuntimeTurnCoordinatorServiceOptions {
   threadRuntime?: RuntimeTurnThreadRuntime | undefined;
   directRun: (
     event: RuntimeEvent,
-    options?: { signal?: AbortSignal | undefined },
+    options?: {
+      signal?: AbortSignal | undefined;
+      runId?: string | undefined;
+      runStart?: "create" | "prestarted" | undefined;
+    },
   ) => Promise<NormalizedOutput>;
   getSession?: ((sessionId: string) => Promise<SessionRecord | undefined>) | undefined;
   readFinalizedPayload?: ((sessionId: string) => Promise<unknown>) | undefined;
@@ -159,12 +163,17 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
     if (this.threadRuntime === undefined) {
       const compiled = materializeCompiledRuntimeTurn(prepared);
       const output = await this.directRun({
-        id: compiled.input.runId ?? randomUUID(),
+        id: compiled.input.eventId ?? randomUUID(),
         type: compiled.input.eventType,
         sessionId: compiled.input.sessionId,
         payload: compiled.payload,
         ...(compiled.input.stepAgent !== undefined ? { stepAgent: compiled.input.stepAgent } : {}),
-      }, options);
+      }, {
+        ...options,
+        ...(compiled.input.runId !== undefined
+          ? { runId: compiled.input.runId, runStart: "create" as const }
+          : {}),
+      });
       return { prepared, output };
     }
 

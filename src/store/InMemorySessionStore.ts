@@ -1,13 +1,39 @@
 import type { EffectExecutionStatus, RuntimeError, TransitionStatus } from "../kestrel/contracts/base.js";
 import type { RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { EffectResult, RegionWorkIntent, RegionWorkItem } from "../kestrel/contracts/execution.js";
-import type { CommitStepInput, CommitStepResult, LegacySessionArchive, OutboxEventRecord, PersistedArtifact, PersistedClaim, PersistedRunRecord, PersistedRunStateRecord, PersistedRunSummaryRecord, SessionProductStateRecord, SessionRecord, SessionStore } from "../kestrel/contracts/store.js";
+import type {
+  ConversationTurnRecord,
+  ConversationTurnSegmentRecord,
+  ConversationTurnTerminalEnvelopeV1,
+} from "../kestrel/contracts/orchestration.js";
+import type {
+  ClaimConversationTurnExecutionInput,
+  ClaimConversationTurnExecutionResult,
+  CommitStepInput,
+  CommitStepResult,
+  LegacySessionArchive,
+  OutboxEventRecord,
+  PersistedArtifact,
+  PersistedClaim,
+  PersistedRunRecord,
+  PersistedRunStateRecord,
+  PersistedRunSummaryRecord,
+  RunLifecycleSettlement,
+  SessionProductStateRecord,
+  SessionRecord,
+  SessionStore,
+  UpdateConversationTurnTerminalEnvelopeInput,
+} from "../kestrel/contracts/store.js";
 
 import {
   normalizeRuntimeStateForPersist,
   validateRuntimeSessionState,
 } from "../runtime/state.js";
 import { SessionBusyError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import {
+  buildCanonicalWaitingFor,
+  readActiveWaitState,
+} from "../runtime/waitState.js";
 import { InMemoryOrchestrationStore } from "../orchestration/InMemoryOrchestrationStore.js";
 import type { ProductProjectSnapshot } from "../project/contracts.js";
 import {
@@ -82,6 +108,8 @@ export class InMemorySessionStore implements SessionStore {
   private readonly artifacts: PersistedArtifact[] = [];
   private readonly claims: PersistedClaim[] = [];
   private readonly regionWorkItems: InMemoryRegionWorkItem[] = [];
+  private readonly conversationTurns = new Map<string, ConversationTurnRecord>();
+  private readonly conversationTurnSegments = new Map<string, ConversationTurnSegmentRecord>();
   private readonly legacyArchives: LegacySessionArchive[] = [];
   private readonly sessionVersions: InMemorySessionVersion[] = [];
   private outboxIdCounter = 1;
@@ -350,6 +378,76 @@ export class InMemorySessionStore implements SessionStore {
     }
   }
 
+  async recoverOrphanedActiveRun(
+    sessionId: string,
+  ): Promise<{ runId?: string | undefined }> {
+    const session = this.sessions.get(sessionId);
+    if (session === undefined || session.activeRunId === undefined) {
+      return {};
+    }
+    const runId = session.activeRunId;
+    const error: RuntimeError = {
+      code: "RUNNER_ORPHANED_ACTIVE_RUN",
+      message: "The process-owned runner no longer has a live execution for this persisted run.",
+      details: { sessionId, runId },
+    };
+    const now = new Date().toISOString();
+    const run = this.runs.get(runId);
+    if (run !== undefined) {
+      run.status = "FAILED";
+      run.completedAt = now;
+      run.error = error;
+    }
+    const turn = [...this.conversationTurns.values()].find(
+      (record) => record.activeRunId === runId,
+    );
+    if (turn !== undefined) {
+      const claim = asRecord(turn.metadata?.executionClaim);
+      const terminalEnvelope: ConversationTurnTerminalEnvelopeV1 = {
+        version: "v1",
+        turnRequestIdentity:
+          asString(claim?.turnRequestIdentity) ?? `recovered:${turn.turnId}`,
+        terminalSubmissionIdentity:
+          asString(claim?.submissionIdentity) ?? `recovered:${runId}`,
+        runId,
+        status: "FAILED",
+        handoff: { state: "failed", finalizationError: error },
+      };
+      this.conversationTurns.set(turn.turnId, {
+        ...turn,
+        status: "FAILED",
+        activeRunId: undefined,
+        terminalRunId: runId,
+        terminalStatus: "FAILED",
+        completedAt: now,
+        updatedAt: now,
+        metadata: {
+          ...(turn.metadata ?? {}),
+          terminalEnvelope,
+        },
+      });
+      const thread = await this.orchestrationStore.getThread(turn.threadId);
+      if (thread?.activeRunId === runId) {
+        await this.orchestrationStore.upsertThread({
+          ...thread,
+          status: "FAILED",
+          activeRunId: undefined,
+          currentRequestId: undefined,
+          waitFor: undefined,
+          lastRunStatus: "FAILED",
+          metadata: {
+            ...(thread.metadata ?? {}),
+            terminalEnvelope,
+          },
+          updatedAt: now,
+        });
+      }
+    }
+    await this.releaseRunLease(runId, sessionId);
+    this.operationLog.push(`recoverOrphanedActiveRun:${sessionId}:${runId}`);
+    return { runId };
+  }
+
   async cancelActiveRun(sessionId: string, error?: RuntimeError): Promise<{ runId?: string | undefined }> {
     const session = this.sessions.get(sessionId);
     if (session === undefined || session.activeRunId === undefined) {
@@ -379,6 +477,24 @@ export class InMemorySessionStore implements SessionStore {
       error: undefined,
     });
     this.operationLog.push(`startRun:${runId}`);
+  }
+
+  async validatePrestartedRun(runId: string, event: RuntimeEvent): Promise<void> {
+    const run = this.runs.get(runId);
+    const session = this.sessions.get(event.sessionId);
+    if (
+      run === undefined ||
+      run.sessionId !== event.sessionId ||
+      run.status !== "RUNNING" ||
+      session?.activeRunId !== runId
+    ) {
+      throw createRuntimeFailure(
+        "PRESTARTED_RUN_INVALID",
+        `Run '${runId}' is not the active prestarted run for session '${event.sessionId}'.`,
+        { runId, sessionId: event.sessionId },
+      );
+    }
+    this.operationLog.push(`validatePrestartedRun:${runId}`);
   }
 
   async commitStep(input: CommitStepInput): Promise<CommitStepResult> {
@@ -841,8 +957,302 @@ export class InMemorySessionStore implements SessionStore {
       .map((event) => ({ ...event }));
   }
 
+  async claimConversationTurnExecution(
+    input: ClaimConversationTurnExecutionInput,
+  ): Promise<ClaimConversationTurnExecutionResult> {
+    const session = this.sessions.get(input.sessionId);
+    const thread = await this.orchestrationStore.getThread(input.threadId);
+    if (session === undefined || thread === null || thread.sessionId !== input.sessionId) {
+      throw createRuntimeFailure(
+        "STORE_CONVERSATION_TURN_CLAIM_INVALID",
+        "Conversation turn execution claim does not reference an existing thread session.",
+        { turnId: input.turnId, threadId: input.threadId, sessionId: input.sessionId },
+      );
+    }
+
+    const existing = this.conversationTurns.get(input.turnId);
+    const existingClaim = asRecord(existing?.metadata?.executionClaim);
+    const storedTurnIdentity = asString(existingClaim?.turnRequestIdentity);
+    if (
+      existing !== undefined &&
+      storedTurnIdentity !== undefined &&
+      storedTurnIdentity !== input.turnRequestIdentity
+    ) {
+      throw createRuntimeFailure(
+        "CONVERSATION_TURN_IDENTITY_CONFLICT",
+        `Conversation turn '${input.turnId}' was already claimed by a different initial request.`,
+        { turnId: input.turnId },
+      );
+    }
+    if (existing?.status === "COMPLETED" || existing?.status === "FAILED") {
+      const terminalEnvelope = readTerminalEnvelope(existing.metadata);
+      if (terminalEnvelope === undefined) {
+        throw createRuntimeFailure(
+          "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+          `Conversation turn '${input.turnId}' is terminal without a replay envelope.`,
+          { turnId: input.turnId, runId: existing.terminalRunId },
+        );
+      }
+      return { kind: "terminal", terminalEnvelope };
+    }
+    const consumedSubmission = [...this.conversationTurnSegments.values()].find(
+      (segment) =>
+        segment.turnId === input.turnId &&
+        asString(asRecord(segment.metadata)?.submissionIdentity) === input.submissionIdentity,
+    );
+    if (consumedSubmission !== undefined) {
+      return { kind: "already_running", runId: consumedSubmission.runId };
+    }
+    if (existing?.status === "RUNNING") {
+      const activeRunId = existing.activeRunId;
+      const activeRun = activeRunId === undefined ? undefined : this.runs.get(activeRunId);
+      if (activeRun?.status === "RUNNING") {
+        return { kind: "already_running", runId: activeRun.runId };
+      }
+      if (activeRun !== undefined) {
+        if (activeRun.status === "WAITING") {
+          const activeWait = readActiveWaitState(asRecord(session.state.agent));
+          if (activeWait !== undefined) {
+            await this.completeRun(activeRun.runId, "WAITING", activeRun.error, {
+              wait: buildCanonicalWaitingFor({
+                waitFor: activeWait,
+                resumeStepAgent: activeWait.resumeStepAgent,
+                resumeToken: activeWait.resumeToken,
+                reason: activeWait.reason,
+                resumeInstruction: activeWait.resumeInstruction,
+                blockedAction: activeWait.blockedAction,
+              }),
+            });
+          } else {
+            await this.completeRun(activeRun.runId, "FAILED", {
+              code: "RECOVERED_WAIT_STATE_INVALID",
+              message: "Persisted WAITING run has no canonical wait to resume.",
+              details: { turnId: input.turnId, runId: activeRun.runId },
+            });
+            const failedTurn = this.conversationTurns.get(input.turnId);
+            const terminalEnvelope = readTerminalEnvelope(failedTurn?.metadata);
+            if (terminalEnvelope === undefined) {
+              throw createRuntimeFailure(
+                "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+                `Recovered turn '${input.turnId}' has no replay envelope.`,
+                { turnId: input.turnId, runId: activeRun.runId },
+              );
+            }
+            return { kind: "terminal", terminalEnvelope };
+          }
+        } else {
+          await this.completeRun(activeRun.runId, activeRun.status, activeRun.error);
+          const terminalTurn = this.conversationTurns.get(input.turnId);
+          const terminalEnvelope = readTerminalEnvelope(terminalTurn?.metadata);
+          if (terminalEnvelope === undefined) {
+            throw createRuntimeFailure(
+              "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+              `Recovered turn '${input.turnId}' has no replay envelope.`,
+              { turnId: input.turnId, runId: activeRun.runId },
+            );
+          }
+          return { kind: "terminal", terminalEnvelope };
+        }
+      } else {
+      const error: RuntimeError = {
+        code: "CONVERSATION_TURN_CLAIM_ORPHANED",
+        message: `Conversation turn '${input.turnId}' references a missing active run.`,
+        details: { turnId: input.turnId, runId: activeRunId },
+      };
+      const terminalEnvelope: ConversationTurnTerminalEnvelopeV1 = {
+        version: "v1",
+        turnRequestIdentity: storedTurnIdentity ?? input.turnRequestIdentity,
+        terminalSubmissionIdentity: asString(existingClaim?.submissionIdentity) ?? input.submissionIdentity,
+        runId: activeRunId ?? input.proposedRunId,
+        status: "FAILED",
+        handoff: { state: "failed", finalizationError: error },
+      };
+      const now = new Date().toISOString();
+      this.conversationTurns.set(input.turnId, {
+        ...existing,
+        status: "FAILED",
+        terminalRunId: activeRunId,
+        terminalStatus: "FAILED",
+        completedAt: now,
+        updatedAt: now,
+        metadata: {
+          ...(existing.metadata ?? {}),
+          terminalEnvelope,
+        },
+      });
+      await this.orchestrationStore.upsertThread({
+        ...thread,
+        status: "FAILED",
+        activeRunId: undefined,
+        currentRequestId: undefined,
+        waitFor: undefined,
+        lastRunStatus: "FAILED",
+        metadata: {
+          ...(thread.metadata ?? {}),
+          terminalEnvelope,
+        },
+        updatedAt: now,
+      });
+      if (activeRunId !== undefined) {
+        await this.releaseRunLease(activeRunId, input.sessionId);
+      }
+      return { kind: "terminal", terminalEnvelope };
+      }
+    }
+    if (session.activeRunId !== undefined && session.activeRunId !== input.proposedRunId) {
+      return { kind: "already_running", runId: session.activeRunId };
+    }
+
+    const now = input.startedAt;
+    session.activeRunId = input.proposedRunId;
+    session.updatedAt = now;
+    this.runs.set(input.proposedRunId, {
+      runId: input.proposedRunId,
+      sessionId: input.sessionId,
+      status: "RUNNING",
+      eventType: input.eventType,
+      startedAt: now,
+      completedAt: undefined,
+      error: undefined,
+    });
+    const rootRunId = existing?.rootRunId ?? input.proposedRunId;
+    this.conversationTurns.set(input.turnId, {
+      turnId: input.turnId,
+      threadId: input.threadId,
+      sessionId: input.sessionId,
+      rootRunId,
+      status: "RUNNING",
+      initialEventType: existing?.initialEventType ?? input.eventType,
+      activeRunId: input.proposedRunId,
+      startedAt: existing?.startedAt ?? now,
+      updatedAt: now,
+      metadata: {
+        ...(existing?.metadata ?? {}),
+        ...(input.segment.metadata ?? {}),
+        executionClaim: {
+          turnRequestIdentity: input.turnRequestIdentity,
+          submissionIdentity: input.submissionIdentity,
+          submissionKind: input.submissionKind,
+        },
+        suspensionEnvelope: undefined,
+        terminalEnvelope: undefined,
+      },
+    });
+    this.conversationTurnSegments.set(input.segment.segmentId, {
+      ...input.segment,
+      runId: input.proposedRunId,
+      metadata: {
+        ...(input.segment.metadata ?? {}),
+        submissionIdentity: input.submissionIdentity,
+        submissionKind: input.submissionKind,
+      },
+    });
+    await this.orchestrationStore.upsertThread({
+      ...thread,
+      status: "RUNNING",
+      activeRunId: input.proposedRunId,
+      currentRequestId: undefined,
+      lastRunStatus: "RUNNING",
+      waitFor: undefined,
+      metadata: {
+        ...(thread.metadata ?? {}),
+        ...(input.segment.metadata ?? {}),
+        activeTurnId: input.turnId,
+        executionClaim: {
+          turnRequestIdentity: input.turnRequestIdentity,
+          submissionIdentity: input.submissionIdentity,
+          submissionKind: input.submissionKind,
+        },
+        suspensionEnvelope: undefined,
+        terminalEnvelope: undefined,
+      },
+      updatedAt: now,
+    });
+    this.operationLog.push(`claimConversationTurnExecution:${input.turnId}:${input.proposedRunId}`);
+    return { kind: "claimed", runId: input.proposedRunId };
+  }
+
+  async updateConversationTurnTerminalEnvelope(
+    input: UpdateConversationTurnTerminalEnvelopeInput,
+  ): Promise<boolean> {
+    const turn = this.conversationTurns.get(input.turnId);
+    const currentEnvelope = readTerminalEnvelope(turn?.metadata);
+    const currentClaim = asRecord(turn?.metadata?.executionClaim);
+    if (
+      turn === undefined ||
+      turn.terminalRunId !== input.runId ||
+      asString(currentClaim?.submissionIdentity) !== input.terminalSubmissionIdentity ||
+      currentEnvelope?.runId !== input.runId ||
+      currentEnvelope.handoff.state !== "pending" ||
+      input.envelope.runId !== input.runId ||
+      input.envelope.terminalSubmissionIdentity !== input.terminalSubmissionIdentity
+    ) {
+      return false;
+    }
+    const updatedAt = new Date().toISOString();
+    this.conversationTurns.set(input.turnId, {
+      ...turn,
+      metadata: {
+        ...(turn.metadata ?? {}),
+        terminalEnvelope: input.envelope,
+      },
+      updatedAt,
+    });
+    await this.orchestrationStore.updateTerminalEnvelope({
+      threadId: turn.threadId,
+      turnId: input.turnId,
+      runId: input.runId,
+      envelope: input.envelope,
+      updatedAt,
+    });
+    return true;
+  }
+
+  async upsertConversationTurn(record: ConversationTurnRecord): Promise<void> {
+    this.conversationTurns.set(record.turnId, structuredClone(record));
+  }
+
+  async appendConversationTurnSegment(record: ConversationTurnSegmentRecord): Promise<void> {
+    if (this.conversationTurnSegments.has(record.segmentId) === false) {
+      this.conversationTurnSegments.set(record.segmentId, structuredClone(record));
+    }
+  }
+
+  async getConversationTurn(turnId: string): Promise<ConversationTurnRecord | null> {
+    const value = this.conversationTurns.get(turnId);
+    return value === undefined ? null : structuredClone(value);
+  }
+
+  async listConversationTurns(input: {
+    threadId?: string | undefined;
+    sessionId?: string | undefined;
+    status?: ConversationTurnRecord["status"] | undefined;
+    limit?: number | undefined;
+  } = {}): Promise<ConversationTurnRecord[]> {
+    return [...this.conversationTurns.values()]
+      .filter((record) => input.threadId === undefined || record.threadId === input.threadId)
+      .filter((record) => input.sessionId === undefined || record.sessionId === input.sessionId)
+      .filter((record) => input.status === undefined || record.status === input.status)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, input.limit ?? Number.MAX_SAFE_INTEGER)
+      .map((record) => structuredClone(record));
+  }
+
+  async listConversationTurnSegments(turnId: string): Promise<ConversationTurnSegmentRecord[]> {
+    return [...this.conversationTurnSegments.values()]
+      .filter((record) => record.turnId === turnId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((record) => structuredClone(record));
+  }
+
   async upsertThread(thread: Parameters<InMemoryOrchestrationStore["upsertThread"]>[0]): Promise<void> {
     return this.orchestrationStore.upsertThread(thread);
+  }
+
+  async updateThreadAfterRun(
+    input: Parameters<InMemoryOrchestrationStore["updateThreadAfterRun"]>[0],
+  ): Promise<boolean> {
+    return this.orchestrationStore.updateThreadAfterRun(input);
   }
 
   async getThread(threadId: string) {
@@ -1032,12 +1442,128 @@ export class InMemorySessionStore implements SessionStore {
     this.operationLog.push(`legacyArchived:${archive.sessionId}`);
   }
 
-  async completeRun(runId: string, status: TransitionStatus, error?: RuntimeError): Promise<void> {
+  async completeRun(
+    runId: string,
+    status: TransitionStatus,
+    error?: RuntimeError,
+    settlement?: RunLifecycleSettlement,
+  ): Promise<void> {
     const run = this.runs.get(runId);
     if (run !== undefined) {
+      const now = new Date().toISOString();
+      const turn = [...this.conversationTurns.values()].find((record) => record.activeRunId === runId);
+      const thread = turn === undefined
+        ? null
+        : await this.orchestrationStore.getThread(turn.threadId);
+      if (
+        turn !== undefined &&
+        (
+          thread === null ||
+          thread.activeRunId !== runId ||
+          asString(asRecord(turn.metadata?.executionClaim)?.turnRequestIdentity) === undefined ||
+          asString(asRecord(turn.metadata?.executionClaim)?.submissionIdentity) === undefined
+        )
+      ) {
+        throw createRuntimeFailure(
+          "STORE_THREAD_SETTLEMENT_CONFLICT",
+          `Run '${runId}' no longer owns its conversation turn and thread.`,
+          { runId, turnId: turn.turnId },
+        );
+      }
+      if (turn !== undefined && status === "WAITING" && settlement?.wait === undefined) {
+        throw createRuntimeFailure(
+          "STORE_WAIT_SETTLEMENT_REQUIRED",
+          `Run '${runId}' cannot enter WAITING without a canonical wait settlement.`,
+          { runId, turnId: turn.turnId },
+        );
+      }
       run.status = status;
-      run.completedAt = new Date().toISOString();
+      run.completedAt = now;
       run.error = error;
+      if (turn !== undefined) {
+        const claim = asRecord(turn.metadata?.executionClaim) ?? {};
+        if (status === "WAITING" && settlement?.wait !== undefined) {
+          const suspensionEnvelope = {
+            version: "v1" as const,
+            turnRequestIdentity: asString(claim.turnRequestIdentity) ?? "",
+            submissionIdentity: asString(claim.submissionIdentity) ?? "",
+            runId,
+            wait: settlement.wait,
+          };
+          this.conversationTurns.set(turn.turnId, {
+            ...turn,
+            status: "WAITING",
+            updatedAt: now,
+            metadata: {
+              ...(turn.metadata ?? {}),
+              suspensionEnvelope,
+            },
+          });
+          if (thread !== null) {
+            await this.orchestrationStore.upsertThread({
+              ...thread,
+              status: "WAITING",
+              currentRequestId: undefined,
+              lastRunStatus: "WAITING",
+              waitFor: {
+                kind: settlement.wait.kind,
+                eventType: settlement.wait.eventType,
+                ...(settlement.wait.timeoutMs !== undefined
+                  ? { timeoutMs: settlement.wait.timeoutMs }
+                  : {}),
+                ...(settlement.wait.metadata !== undefined
+                  ? { metadata: settlement.wait.metadata }
+                  : {}),
+                ...(settlement.wait.interaction !== undefined
+                  ? { interaction: settlement.wait.interaction }
+                  : {}),
+              },
+              metadata: {
+                ...(thread.metadata ?? {}),
+                suspensionEnvelope,
+              },
+              updatedAt: now,
+            });
+          }
+        } else if (status === "COMPLETED" || status === "FAILED") {
+          const terminalEnvelope: ConversationTurnTerminalEnvelopeV1 = {
+            version: "v1",
+            turnRequestIdentity: asString(claim.turnRequestIdentity) ?? "",
+            terminalSubmissionIdentity: asString(claim.submissionIdentity) ?? "",
+            runId,
+            status,
+            handoff: { state: "pending" },
+          };
+          this.conversationTurns.set(turn.turnId, {
+            ...turn,
+            status,
+            activeRunId: undefined,
+            terminalRunId: runId,
+            terminalStatus: status,
+            completedAt: now,
+            updatedAt: now,
+            metadata: {
+              ...(turn.metadata ?? {}),
+              terminalEnvelope,
+            },
+          });
+          if (thread !== null) {
+            await this.orchestrationStore.upsertThread({
+              ...thread,
+              status,
+              activeRunId: undefined,
+              currentRequestId: undefined,
+              waitFor: undefined,
+              lastRunStatus: status,
+              metadata: {
+                ...(thread.metadata ?? {}),
+                terminalEnvelope,
+              },
+              updatedAt: now,
+            });
+          }
+        }
+      }
       await this.releaseRunLease(runId, run.sessionId);
     }
     this.operationLog.push(`completeRun:${runId}:${status}`);
@@ -1142,4 +1668,31 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readTerminalEnvelope(
+  metadata: Record<string, unknown> | undefined,
+): ConversationTurnTerminalEnvelopeV1 | undefined {
+  const value = asRecord(metadata?.terminalEnvelope);
+  const handoff = asRecord(value?.handoff);
+  const status = value?.status;
+  if (
+    value?.version !== "v1" ||
+    asString(value.turnRequestIdentity) === undefined ||
+    asString(value.terminalSubmissionIdentity) === undefined ||
+    asString(value.runId) === undefined ||
+    (status !== "COMPLETED" && status !== "FAILED") ||
+    (
+      handoff?.state !== "pending" &&
+      handoff?.state !== "delivered" &&
+      handoff?.state !== "failed"
+    )
+  ) {
+    return ;
+  }
+  return structuredClone(value) as unknown as ConversationTurnTerminalEnvelopeV1;
 }

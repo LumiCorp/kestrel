@@ -4,9 +4,13 @@ import type { TuiProfile } from "../../cli/contracts.js";
 import type {
   RunEvent,
 } from "../kestrel/contracts/events.js";
+import type { RuntimeError } from "../kestrel/contracts/base.js";
 import type {
   ContextCheckpointRecord,
   ContextSummaryArtifactRecord,
+  ConversationTurnFinalizedPayloadV1,
+  ConversationTurnSubmissionKind,
+  ConversationTurnTerminalEnvelopeV1,
   RunTurnAttachment,
   ThreadRecord,
 } from "../kestrel/contracts/orchestration.js";
@@ -15,6 +19,7 @@ import type {
   ReplayStore,
   SessionRepository,
 } from "../kestrel/contracts/store.js";
+import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
 import type { DelegationServicePort, DialogServicePort } from "../../tools/contracts.js";
 import { buildRuntimeIdentityMetadata } from "../profile/runtimeProfile.js";
 import {
@@ -320,28 +325,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
             metadata: mergedMetadata,
             updatedAt: new Date().toISOString(),
           };
-    if (activeThread !== thread) {
-      await this.store.upsertThread(activeThread);
-    }
     const existingTurn = await this.store.getConversationTurn?.(turnId);
-    await this.store.upsertConversationTurn?.({
-      turnId,
-      threadId: activeThread.threadId,
-      sessionId: activeThread.sessionId,
-      ...(existingTurn?.rootRunId !== undefined ? { rootRunId: existingTurn.rootRunId } : {}),
-      ...(existingTurn?.activeRunId !== undefined ? { activeRunId: existingTurn.activeRunId } : {}),
-      ...(existingTurn?.terminalRunId !== undefined ? { terminalRunId: existingTurn.terminalRunId } : {}),
-      ...(existingTurn?.terminalStatus !== undefined ? { terminalStatus: existingTurn.terminalStatus } : {}),
-      status: "RUNNING",
-      initialEventType: existingTurn?.initialEventType ?? input.eventType,
-      startedAt: existingTurn?.startedAt ?? turnStartedAt,
-      updatedAt: turnStartedAt,
-      metadata: {
-        ...(existingTurn?.metadata ?? {}),
-        interactionMode: input.interactionMode,
-        actSubmode: input.actSubmode,
-      },
-    });
     await this.resolveSubmitGateCheckpoints(activeThread);
     const resolvedLatestSummary = (await this.store.listContextSummaryArtifacts(activeThread.threadId))[0];
     if (resolvedLatestSummary !== undefined && resolvedLatestSummary.artifactId !== latestSummary?.artifactId) {
@@ -360,7 +344,6 @@ export class ThreadRuntime implements ThreadRuntimePort {
         metadata: mergedMetadata,
         updatedAt: new Date().toISOString(),
       };
-      await this.store.upsertThread(activeThread);
     }
     const assembly = await this.runtimeComposer.composeThreadAssembly({
       thread: activeThread,
@@ -370,17 +353,102 @@ export class ThreadRuntime implements ThreadRuntimePort {
     const contextPolicy = contextPolicyId === undefined
       ? undefined
       : await this.resolveContextPolicyDefinition(contextPolicyId);
+    const submissionKind = resolveConversationTurnSubmissionKind(
+      submittedMetadata,
+      input.resumeBlockedRun,
+    );
+    const storedClaim = asRecord(existingTurn?.metadata?.executionClaim);
+    const submittedTurnRequestIdentity = buildTurnRequestIdentity({
+        turnId,
+        threadId: activeThread.threadId,
+        sessionId: activeThread.sessionId,
+        eventType: input.eventType,
+        message: input.message,
+        startedAt: existingTurn?.startedAt ?? turnStartedAt,
+        execution: buildTurnExecutionIdentity(input),
+      });
+    const turnRequestIdentity =
+      submissionKind === "initial"
+        ? submittedTurnRequestIdentity
+        : readNonEmptyString(storedClaim?.turnRequestIdentity) ?? submittedTurnRequestIdentity;
+    const submissionIdentity = buildSubmissionIdentity({
+      turnId,
+      submissionKind,
+      eventType: input.eventType,
+      message: input.message,
+      metadata: submittedMetadata,
+      execution: buildTurnExecutionIdentity(input),
+    });
+    const proposedRunId = randomUUID();
+    const eventId = randomUUID();
+    const segmentKind = resolveTurnSegmentKind(input.metadata, input.resumeBlockedRun);
+    const claimResult = await this.store.claimConversationTurnExecution({
+      turnId,
+      threadId: activeThread.threadId,
+      sessionId: activeThread.sessionId,
+      turnRequestIdentity,
+      submissionIdentity,
+      submissionKind,
+      proposedRunId,
+      eventType: input.eventType,
+      startedAt: turnStartedAt,
+      segment: {
+        segmentId: `turn-segment-${hashString(`${turnId}:${submissionIdentity}`)}`,
+        turnId,
+        threadId: activeThread.threadId,
+        sessionId: activeThread.sessionId,
+        runId: proposedRunId,
+        kind: segmentKind,
+        eventType: input.eventType,
+        requestId: readNonEmptyString(input.metadata?.requestId),
+        grantId: readNonEmptyString(input.metadata?.grantId),
+        messageHash: hashString(input.message),
+        createdAt: turnStartedAt,
+        metadata: {
+          ...mergedMetadata,
+          submissionIdentity,
+          submissionKind,
+          ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+          ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
+        },
+      },
+    });
+    if (claimResult.kind === "already_running") {
+      throw createRuntimeFailure(
+        "THREAD_RUN_ALREADY_ACTIVE",
+        `Turn '${turnId}' already has an executing or consumed submission.`,
+        { threadId: activeThread.threadId, turnId, runId: claimResult.runId },
+      );
+    }
+    if (claimResult.kind === "terminal") {
+      return this.replayTerminalTurn(activeThread.threadId, claimResult.terminalEnvelope);
+    }
+    activeThread = await this.requireThread(activeThread.threadId);
     this.emit("thread.turn_submitted", activeThread.threadId, {
       eventType: input.eventType,
     });
-    const result = await this.turnOrchestrator.execute(activeThread, {
-      ...input,
-      metadata: {
-        ...mergedMetadata,
-        turnId,
-        activeTurnId: turnId,
-        ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
-        runtimeAssembly: {
+    let result: SubmitTurnResult;
+    try {
+      result = await this.turnOrchestrator.execute(activeThread, {
+        ...input,
+        runtimeTurn: {
+          ...(input.runtimeTurn ?? {
+            sessionId: activeThread.sessionId,
+            message: input.message,
+            eventType: input.eventType,
+          }),
+          sessionId: activeThread.sessionId,
+          runId: proposedRunId,
+          eventId,
+          message: input.message,
+          eventType: input.eventType,
+        },
+        metadata: {
+          ...mergedMetadata,
+          turnId,
+          activeTurnId: turnId,
+          ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
+          runtimeAssembly: {
           bundleId: assembly.record.bundleId,
           agentProfileId:
             readAssemblyString(assembly.bundle?.metadata, "agentProfileId") ??
@@ -421,55 +489,17 @@ export class ThreadRuntime implements ThreadRuntimePort {
           ...(assembly.bundle?.metadata?.harnessEconomics !== undefined
             ? { harnessEconomics: assembly.bundle.metadata.harnessEconomics }
             : {}),
+          },
         },
-      },
-    });
+      });
+    } catch (error) {
+      await this.recordTerminalHandoffFailure(turnId, asRuntimeError(error));
+      throw error;
+    }
     const turnUpdatedAt = new Date().toISOString();
-    const turnStatus = result.output.status === "WAITING" ? "WAITING" : result.output.status;
-    const outputRun = await this.store.getRun(result.output.runId);
-    const missingPreStartFailure = isMissingRunPreStartFailureOutput(result.output) && outputRun === null;
-    const existingRootRunId = missingPreStartFailure
-      ? await this.resolveExistingRunId(existingTurn?.rootRunId)
-      : existingTurn?.rootRunId;
-    const existingActiveRunId = missingPreStartFailure
-      ? await this.resolveExistingRunId(existingTurn?.activeRunId)
-      : existingTurn?.activeRunId;
-    const existingTerminalRunId = missingPreStartFailure
-      ? await this.resolveExistingRunId(existingTurn?.terminalRunId)
-      : existingTurn?.terminalRunId;
-    const rootRunId = existingRootRunId ?? (missingPreStartFailure ? undefined : result.output.runId);
-    const activeRunId = missingPreStartFailure ? existingActiveRunId : result.output.runId;
-    const terminalRunId = missingPreStartFailure ? existingTerminalRunId : result.output.runId;
-    await this.store.upsertConversationTurn?.({
-      turnId,
-      threadId: activeThread.threadId,
-      sessionId: activeThread.sessionId,
-      ...(rootRunId !== undefined ? { rootRunId } : {}),
-      ...(activeRunId !== undefined ? { activeRunId } : {}),
-      status: turnStatus,
-      initialEventType: existingTurn?.initialEventType ?? input.eventType,
-      ...(result.output.status === "COMPLETED" || result.output.status === "FAILED"
-        ? {
-            ...(terminalRunId !== undefined ? { terminalRunId } : {}),
-            terminalStatus: result.output.status,
-            completedAt: turnUpdatedAt,
-          }
-        : {}),
-      startedAt: existingTurn?.startedAt ?? turnStartedAt,
-      updatedAt: turnUpdatedAt,
-      metadata: {
-        ...(existingTurn?.metadata ?? {}),
-        interactionMode: input.interactionMode,
-        actSubmode: input.actSubmode,
-        outputStatus: result.output.status,
-        ...(missingPreStartFailure
-          ? {
-              preStartFailureRunId: result.output.runId,
-              preStartFailureCode: "SESSION_BUSY",
-            }
-          : {}),
-      },
-    });
+    if (result.output.status === "COMPLETED" || result.output.status === "FAILED") {
+      await this.recordDeliveredTerminalHandoff(turnId, result);
+    }
     await this.appendRunEventPreservingMissingPreStartFailure(result.output, {
       runId: result.output.runId,
       sessionId: activeThread.sessionId,
@@ -480,22 +510,6 @@ export class ThreadRuntime implements ThreadRuntimePort {
         threadId: activeThread.threadId,
         turnId,
         eventType: input.eventType,
-      },
-    });
-    await this.store.appendConversationTurnSegment?.({
-      segmentId: `turn-segment-${randomUUID()}`,
-      turnId,
-      threadId: activeThread.threadId,
-      sessionId: activeThread.sessionId,
-      runId: result.output.runId,
-      kind: resolveTurnSegmentKind(input.metadata, input.resumeBlockedRun),
-      eventType: input.eventType,
-      requestId: readNonEmptyString(input.metadata?.requestId),
-      grantId: readNonEmptyString(input.metadata?.grantId),
-      messageHash: hashString(input.message),
-      createdAt: turnUpdatedAt,
-      metadata: {
-        outputStatus: result.output.status,
       },
     });
     await this.appendRunEventPreservingMissingPreStartFailure(result.output, {
@@ -1161,6 +1175,200 @@ export class ThreadRuntime implements ThreadRuntimePort {
     };
   }
 
+  private async replayTerminalTurn(
+    threadId: string,
+    envelope: ConversationTurnTerminalEnvelopeV1,
+  ): Promise<SubmitTurnResult> {
+    if (envelope.handoff.state === "pending") {
+      throw createRuntimeFailure(
+        "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+        `Run '${envelope.runId}' completed before its terminal handoff was recorded.`,
+        { threadId, runId: envelope.runId },
+      );
+    }
+    if (envelope.handoff.state === "failed") {
+      throw createRuntimeFailure(
+        envelope.handoff.finalizationError.code,
+        envelope.handoff.finalizationError.message,
+        envelope.handoff.finalizationError.details,
+      );
+    }
+    if (envelope.output === undefined) {
+      throw createRuntimeFailure(
+        "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+        `Run '${envelope.runId}' has no replayable normalized output.`,
+        { threadId, runId: envelope.runId },
+      );
+    }
+    const thread = await this.requireThread(threadId);
+    const finalizedPayload = envelope.handoff.finalizedPayload === undefined
+      ? undefined
+      : await this.readFinalizedPayload(thread.sessionId, envelope.handoff.finalizedPayload);
+    return {
+      thread,
+      output: envelope.output,
+      assistantText: envelope.handoff.assistantText,
+      ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
+    };
+  }
+
+  private async recordDeliveredTerminalHandoff(
+    turnId: string,
+    result: SubmitTurnResult,
+  ): Promise<void> {
+    try {
+      const turn = await this.store.getConversationTurn?.(turnId);
+      const envelope = readTerminalEnvelope(turn?.metadata?.terminalEnvelope);
+      if (
+        turn === null ||
+        turn === undefined ||
+        envelope === undefined ||
+        envelope.runId !== result.output.runId ||
+        envelope.status !== result.output.status
+      ) {
+        throw createRuntimeFailure(
+          "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+          `Turn '${turnId}' has no matching pending terminal envelope.`,
+          { turnId, runId: result.output.runId, status: result.output.status },
+        );
+      }
+      const finalizedPayload = result.finalizedPayload === undefined
+        ? undefined
+        : await this.persistFinalizedPayload(
+            turn.sessionId,
+            result.output.runId,
+            result.finalizedPayload,
+          );
+      const delivered: ConversationTurnTerminalEnvelopeV1 =
+        envelope.status === "COMPLETED"
+          ? {
+              ...envelope,
+              output: result.output,
+              handoff: {
+                state: "delivered",
+                assistantText: requireAssistantText(result.assistantText, turnId),
+                ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
+              },
+            }
+          : {
+              ...envelope,
+              output: result.output,
+              handoff: {
+                state: "delivered",
+                assistantText: null,
+                ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
+              },
+            };
+      const updated = await this.store.updateConversationTurnTerminalEnvelope({
+        turnId,
+        runId: result.output.runId,
+        terminalSubmissionIdentity: envelope.terminalSubmissionIdentity,
+        envelope: delivered,
+      });
+      if (updated === false) {
+        throw createRuntimeFailure(
+          "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+          `Turn '${turnId}' no longer owns the pending terminal handoff.`,
+          { turnId, runId: result.output.runId },
+        );
+      }
+    } catch (error) {
+      await this.recordTerminalHandoffFailure(turnId, asRuntimeError(error));
+      throw error;
+    }
+  }
+
+  private async recordTerminalHandoffFailure(
+    turnId: string,
+    finalizationError: RuntimeError,
+  ): Promise<void> {
+    const turn = await this.store.getConversationTurn?.(turnId);
+    const envelope = readTerminalEnvelope(turn?.metadata?.terminalEnvelope);
+    if (
+      turn === null ||
+      turn === undefined ||
+      envelope === undefined ||
+      envelope.handoff.state !== "pending"
+    ) {
+      return;
+    }
+    const failed: ConversationTurnTerminalEnvelopeV1 = {
+      ...envelope,
+      handoff: { state: "failed", finalizationError },
+    };
+    await this.store.updateConversationTurnTerminalEnvelope({
+      turnId,
+      runId: envelope.runId,
+      terminalSubmissionIdentity: envelope.terminalSubmissionIdentity,
+      envelope: failed,
+    });
+  }
+
+  private async persistFinalizedPayload(
+    sessionId: string,
+    runId: string,
+    value: unknown,
+  ): Promise<ConversationTurnFinalizedPayloadV1> {
+    const serialized = stringifySanitizedJson(value);
+    const sanitized = JSON.parse(serialized) as unknown;
+    const byteCount = Buffer.byteLength(serialized, "utf8");
+    const sha256 = createHash("sha256").update(serialized).digest("hex");
+    if (byteCount <= 64 * 1024) {
+      return { storage: "inline", value: sanitized, byteCount, sha256 };
+    }
+    const artifacts = await this.store.appendArtifacts(runId, sessionId, 0, [{
+      type: "conversation_turn_finalized_payload.v1",
+      payload: {
+        version: "v1",
+        finalizedPayload: sanitized,
+        byteCount,
+        sha256,
+      },
+    }]);
+    const artifact = artifacts[0];
+    if (artifact === undefined) {
+      throw createRuntimeFailure(
+        "RUNTIME_TERMINAL_HANDOFF_PAYLOAD_PERSIST_FAILED",
+        `Finalized payload for run '${runId}' was not persisted.`,
+        { runId, sessionId },
+      );
+    }
+    return { storage: "artifact", artifactId: artifact.artifactId, byteCount, sha256 };
+  }
+
+  private async readFinalizedPayload(
+    sessionId: string,
+    reference: ConversationTurnFinalizedPayloadV1,
+  ): Promise<unknown> {
+    const value = reference.storage === "inline"
+      ? reference.value
+      : (await this.store.getArtifact({
+          artifactId: reference.artifactId,
+          sessionId,
+        }))?.payload.finalizedPayload;
+    if (value === undefined) {
+      throw createRuntimeFailure(
+        "RUNTIME_TERMINAL_HANDOFF_PAYLOAD_MISSING",
+        "The finalized payload artifact is unavailable.",
+        {
+          sessionId,
+          ...(reference.storage === "artifact" ? { artifactId: reference.artifactId } : {}),
+        },
+      );
+    }
+    const serialized = stringifySanitizedJson(value);
+    const byteCount = Buffer.byteLength(serialized, "utf8");
+    const sha256 = createHash("sha256").update(serialized).digest("hex");
+    if (byteCount !== reference.byteCount || sha256 !== reference.sha256) {
+      throw createRuntimeFailure(
+        "RUNTIME_TERMINAL_HANDOFF_PAYLOAD_CORRUPT",
+        "The finalized payload failed digest validation.",
+        { expectedByteCount: reference.byteCount, actualByteCount: byteCount },
+      );
+    }
+    return JSON.parse(serialized) as unknown;
+  }
+
   private async requireThread(threadId: string): Promise<ThreadRecord> {
     const thread = await this.store.getThread(threadId);
     if (thread === null) {
@@ -1193,6 +1401,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
           checkpointId: checkpoint.checkpointId,
           action: checkpoint.recommendedAction,
           issuedBy: "runtime.auto",
+          summaryThread: thread,
         });
         const timestamp = new Date().toISOString();
         const runId = checkpoint.runId ?? thread.activeRunId ?? `checkpoint-${checkpoint.checkpointId}`;
@@ -1886,6 +2095,160 @@ function resolveTurnSegmentKind(
   return "submission";
 }
 
+function resolveConversationTurnSubmissionKind(
+  metadata: Record<string, unknown> | undefined,
+  resumeBlockedRun: boolean | undefined,
+): ConversationTurnSubmissionKind {
+  if (readNonEmptyString(metadata?.steerId) !== undefined) {
+    return "steer";
+  }
+  if (readNonEmptyString(metadata?.followUpId) !== undefined) {
+    return "follow_up";
+  }
+  if (
+    resumeBlockedRun === true ||
+    readNonEmptyString(metadata?.requestId) !== undefined ||
+    readNonEmptyString(metadata?.grantId) !== undefined
+  ) {
+    return "resume";
+  }
+  return "initial";
+}
+
+function buildTurnRequestIdentity(input: {
+  turnId: string;
+  threadId: string;
+  sessionId: string;
+  eventType: string;
+  message?: string | undefined;
+  startedAt: string;
+  execution: Record<string, unknown>;
+}): string {
+  return hashCanonicalValue(input.message !== undefined
+    ? {
+        kind: "initial_turn_request",
+        turnId: input.turnId,
+        threadId: input.threadId,
+        sessionId: input.sessionId,
+        eventType: input.eventType,
+        message: input.message,
+        execution: input.execution,
+      }
+    : {
+        kind: "legacy_turn_request",
+        turnId: input.turnId,
+        threadId: input.threadId,
+        sessionId: input.sessionId,
+        eventType: input.eventType,
+        startedAt: input.startedAt,
+      });
+}
+
+function buildSubmissionIdentity(input: {
+  turnId: string;
+  submissionKind: ConversationTurnSubmissionKind;
+  eventType: string;
+  message: string;
+  metadata?: Record<string, unknown> | undefined;
+  execution: Record<string, unknown>;
+}): string {
+  return hashCanonicalValue({
+    kind: input.submissionKind,
+    turnId: input.turnId,
+    eventType: input.eventType,
+    message: input.message,
+    requestId: readNonEmptyString(input.metadata?.requestId),
+    grantId: readNonEmptyString(input.metadata?.grantId),
+    steerId: readNonEmptyString(input.metadata?.steerId),
+    followUpId: readNonEmptyString(input.metadata?.followUpId),
+    sourceMessageId: readNonEmptyString(input.metadata?.sourceMessageId),
+    execution: input.execution,
+  });
+}
+
+function buildTurnExecutionIdentity(
+  input: Pick<
+    SubmitTurnInput,
+    | "attachments"
+    | "interactionMode"
+    | "actSubmode"
+    | "executionPolicy"
+    | "stepAgent"
+    | "manualCompaction"
+    | "autoCompaction"
+  >,
+): Record<string, unknown> {
+  return {
+    attachments: input.attachments?.map((attachment) => ({
+      attachmentId: attachment.attachmentId,
+      threadId: attachment.threadId,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      sha256: attachment.sha256,
+      kind: attachment.kind,
+    })),
+    interactionMode: input.interactionMode,
+    actSubmode: input.actSubmode,
+    executionPolicy: input.executionPolicy,
+    stepAgent: input.stepAgent,
+    manualCompaction: input.manualCompaction,
+    autoCompaction: input.autoCompaction,
+  };
+}
+
+function requireAssistantText(value: string | null, turnId: string): string {
+  const text = readNonEmptyString(value);
+  if (text === undefined) {
+    throw createRuntimeFailure(
+      "RUNTIME_TERMINAL_HANDOFF_INVALID",
+      `Completed turn '${turnId}' did not produce nonempty assistant text.`,
+      { turnId },
+    );
+  }
+  return text;
+}
+
+function readTerminalEnvelope(value: unknown): ConversationTurnTerminalEnvelopeV1 | undefined {
+  const envelope = asRecord(value);
+  const handoff = asRecord(envelope?.handoff);
+  if (
+    envelope?.version !== "v1" ||
+    (envelope.status !== "COMPLETED" && envelope.status !== "FAILED") ||
+    readNonEmptyString(envelope.turnRequestIdentity) === undefined ||
+    readNonEmptyString(envelope.terminalSubmissionIdentity) === undefined ||
+    readNonEmptyString(envelope.runId) === undefined ||
+    (
+      handoff?.state !== "pending" &&
+      handoff?.state !== "delivered" &&
+      handoff?.state !== "failed"
+    )
+  ) {
+    return undefined;
+  }
+  if (
+    handoff.state === "delivered" &&
+    envelope.status === "COMPLETED" &&
+    readNonEmptyString(handoff.assistantText) === undefined
+  ) {
+    return undefined;
+  }
+  if (
+    handoff.state === "delivered" &&
+    envelope.status === "FAILED" &&
+    handoff.assistantText !== null
+  ) {
+    return undefined;
+  }
+  return value as ConversationTurnTerminalEnvelopeV1;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
 function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
@@ -1904,6 +2267,27 @@ function extractAllowedCapabilities(
 
 function hashString(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function hashCanonicalValue(value: unknown): string {
+  return hashString(JSON.stringify(sortCanonicalValue(value)));
+}
+
+function sortCanonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sortCanonicalValue(entry));
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    const entry = (value as Record<string, unknown>)[key];
+    if (entry !== undefined) {
+      sorted[key] = sortCanonicalValue(entry);
+    }
+  }
+  return sorted;
 }
 
 function canonicalMainThreadId(sessionId: string): string {

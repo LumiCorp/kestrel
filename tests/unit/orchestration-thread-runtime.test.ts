@@ -17,6 +17,8 @@ import {
   materializeUserFacingWaitInteraction,
   readInteractionPrompt,
 } from "../../src/runtime/assistantResponseContract.js";
+import { buildCanonicalWaitingFor } from "../../src/runtime/waitState.js";
+import type { RuntimeWaitMatcher } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -24,7 +26,7 @@ import { contractTest } from "../helpers/contract-test.js";
 class QueueTurnExecutor implements TurnExecutor {
   readonly inputs: TurnExecutionInput[] = [];
   private readonly queue: TurnExecutionResult[];
-  private readonly sessionStore: InMemorySessionStore;
+  protected readonly sessionStore: InMemorySessionStore;
 
   constructor(sessionStore: InMemorySessionStore, queue: TurnExecutionResult[]) {
     this.sessionStore = sessionStore;
@@ -37,7 +39,39 @@ class QueueTurnExecutor implements TurnExecutor {
     if (next === undefined) {
       throw new Error("No queued turn result");
     }
-    return materializeFixtureAssistantResponse(next);
+    return this.settleFixture(input, next);
+  }
+
+  protected async settleFixture(
+    input: TurnExecutionInput,
+    result: TurnExecutionResult,
+  ): Promise<TurnExecutionResult> {
+    const runId = input.runtimeTurn?.runId;
+    if (runId === undefined) {
+      throw new Error("Thread executor fixture requires a prestarted run ID");
+    }
+    const materialized = materializeFixtureAssistantResponse({
+      ...result,
+      output: {
+        ...result.output,
+        runId,
+        sessionId: input.sessionId,
+      },
+    });
+    await this.sessionStore.completeRun(
+      runId,
+      materialized.output.status,
+      materialized.output.errors[0],
+      materialized.output.status === "WAITING" && materialized.output.waitFor !== undefined
+        ? {
+            wait: buildCanonicalWaitingFor({
+              waitFor: materialized.output.waitFor as RuntimeWaitMatcher,
+              resumeStepAgent: input.stepAgent,
+            }),
+          }
+        : undefined,
+    );
+    return materialized;
   }
 
   async getSession(sessionId: string): Promise<SessionRecord | null> {
@@ -428,7 +462,7 @@ contractTest("runtime.hermetic", "ThreadRuntime derives operator session summari
   assert.deepEqual(sessionStore.listRunInputs[1], { limit: 51 });
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime preserves pre-start kernel failures whose run row was never created", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime preserves failures on the atomically prestarted run", async () => {
   const sessionStore = new RunForeignKeyEnforcingStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -471,13 +505,11 @@ contractTest("runtime.hermetic", "ThreadRuntime preserves pre-start kernel failu
   });
   const turn = turns[0];
   assert.equal(turn?.status, "FAILED");
-  assert.equal(turn?.rootRunId, undefined);
+  assert.equal(turn?.rootRunId, result.output.runId);
   assert.equal(turn?.activeRunId, undefined);
-  assert.equal(turn?.terminalRunId, undefined);
+  assert.equal(turn?.terminalRunId, result.output.runId);
   assert.equal(turn?.terminalStatus, "FAILED");
-  assert.equal(turn?.metadata?.outputStatus, "FAILED");
-  assert.equal(turn?.metadata?.preStartFailureRunId, "run-pre-start-failure");
-  assert.equal(turn?.metadata?.preStartFailureCode, "SESSION_BUSY");
+  assert.equal((await sessionStore.getRun(result.output.runId))?.status, "FAILED");
 });
 
 contractTest("runtime.hermetic", "ThreadRuntime skips side-band reply events when the active run row is stale", async () => {
@@ -541,11 +573,11 @@ contractTest("runtime.hermetic", "ThreadRuntime skips side-band reply events whe
   const turns = await sessionStore.listConversationTurns({
     threadId: "thread-stale-reply",
   });
-  assert.equal(turns[0]?.metadata?.preStartFailureRunId, "run-pre-start-reply-failure");
-  assert.equal(turns[0]?.metadata?.preStartFailureCode, "SESSION_BUSY");
+  assert.equal(turns[0]?.terminalRunId, result.output.runId);
+  assert.equal((await sessionStore.getRun(result.output.runId))?.status, "FAILED");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime surfaces missing run rows for non-pre-start failures", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime always owns a run row before executor completion", async () => {
   const sessionStore = new RunForeignKeyEnforcingStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -567,14 +599,13 @@ contractTest("runtime.hermetic", "ThreadRuntime surfaces missing run rows for no
     title: "Missing success",
   });
 
-  await assert.rejects(
-    runtime.submitTurn({
-      threadId: "thread-missing-success",
-      message: "complete without a run row",
-      eventType: "user.message",
-    }),
-    /missing run row for run-missing-success/u,
-  );
+  const result = await runtime.submitTurn({
+    threadId: "thread-missing-success",
+    message: "complete with a prestarted run row",
+    eventType: "user.message",
+  });
+  assert.equal(result.output.status, "COMPLETED");
+  assert.equal((await sessionStore.getRun(result.output.runId))?.status, "COMPLETED");
 });
 
 contractTest("runtime.hermetic", "ThreadRuntime fails closed when a session has multiple root threads and no canonical main thread", async () => {
@@ -655,7 +686,7 @@ contractTest("runtime.hermetic", "ThreadRuntime persists operator-facing user in
   const status = await runtime.getThreadStatus("thread-parent");
   assert.equal(status?.openRequests.length, 1);
   assert.equal(status?.thread.currentRequestId, result.wait?.request?.requestId);
-  assert.equal(status?.openRequests[0]?.runId, "run-wait-1");
+  assert.equal(status?.openRequests[0]?.runId, result.output.runId);
 });
 
 contractTest("runtime.hermetic", "ThreadRuntime supersedes stale waits when a new continuation wait replaces them", async () => {
@@ -994,12 +1025,12 @@ contractTest("runtime.hermetic", "ThreadRuntime preserves identical waiting prom
     threadId: "thread-repeated-wait",
     title: "Repeated wait thread",
   });
-  await runtime.submitTurn({
+  const firstResult = await runtime.submitTurn({
     threadId: "thread-repeated-wait",
     message: "Inspect the first workspace",
     eventType: "user.message",
   });
-  await runtime.submitTurn({
+  const secondResult = await runtime.submitTurn({
     threadId: "thread-repeated-wait",
     message: "Inspect another workspace",
     eventType: "user.message",
@@ -1013,13 +1044,13 @@ contractTest("runtime.hermetic", "ThreadRuntime preserves identical waiting prom
       role: "assistant",
       text: "Which workspace should I inspect?",
       timestamp: history[0]?.timestamp,
-      data: { kind: "runtime.assistant_text", runId: "run-repeated-wait-1" },
+      data: { kind: "runtime.assistant_text", runId: firstResult.output.runId },
     },
     {
       role: "assistant",
       text: "Which workspace should I inspect?",
       timestamp: history[1]?.timestamp,
-      data: { kind: "runtime.assistant_text", runId: "run-repeated-wait-2" },
+      data: { kind: "runtime.assistant_text", runId: secondResult.output.runId },
     },
   ]);
 });
@@ -1265,7 +1296,7 @@ contractTest("runtime.hermetic", "ThreadRuntime resolves approval requests and e
     threadId: "thread-approval",
   });
   assert.equal(requests[0]?.status, "RESOLVED");
-  assert.equal(requests[0]?.runId, "run-approval-1");
+  assert.equal(requests[0]?.runId, waiting.output.runId);
   const replay = await sessionStore.getReplayStream({
     threadId: "thread-approval",
   });
@@ -1415,7 +1446,7 @@ contractTest("runtime.hermetic", "ThreadRuntime spawns delegated child threads w
   assert.equal(delegations[0]?.delegationId, handle.delegationId);
   assert.equal(delegations[0]?.childThreadId, handle.childThreadId);
   assert.equal(delegations[0]?.status, "COMPLETED");
-  assert.equal(delegations[0]?.childRunId, "run-child-1");
+  assert.equal(delegations[0]?.childRunId, executor.inputs[0]?.runtimeTurn?.runId);
 
   const child = await runtime.getThreadStatus(handle.childThreadId);
   assert.equal(child?.thread.parentThreadId, "thread-root");
@@ -2090,20 +2121,20 @@ contractTest("runtime.hermetic", "ThreadRuntime records replay-aware compaction 
   );
 
   const status = await runtime.getThreadStatus("thread-compact");
-  assert.equal(status?.latestSummary?.summary.includes("Run run-compact-1 finished with status COMPLETED."), true);
+  assert.equal(status?.latestSummary?.summary.includes(`Run ${result.output.runId} finished with status COMPLETED.`), true);
   assert.equal(
     (status?.latestSummary?.metadata?.structuredSummary as { version?: string } | undefined)?.version,
     "v1",
   );
   assert.deepEqual(
     (status?.latestSummary?.metadata?.structuredSummary as { sourceRunIds?: string[] } | undefined)?.sourceRunIds,
-    ["run-compact-1"],
+    [result.output.runId],
   );
 
   const events = await sessionStore.listThreadCompactionEvents("thread-compact");
   assert.equal(events.length, 1);
   assert.equal(events[0]?.action, "compact");
-  assert.equal(events[0]?.runId, "run-compact-1");
+  assert.equal(events[0]?.runId, result.output.runId);
   assert.equal(events[0]?.summaryArtifactId, status?.latestSummary?.artifactId);
   const replay = await sessionStore.getReplayStream({
     threadId: "thread-compact",
@@ -2563,7 +2594,7 @@ contractTest("runtime.hermetic", "ThreadRuntime steerThread persists operator st
   assert.equal(executor.inputs[0]?.metadata?.steering, true);
 
   const replay = await sessionStore.getReplayStream({
-    runId: "run-steer-1",
+    runId: result.result?.output.runId,
   });
   const steeringEvent = replay.find((event) => event.type === "operator.steered");
   assert.equal(steeringEvent?.metadata?.threadId, "thread-steer");
@@ -2634,21 +2665,21 @@ contractTest("runtime.hermetic", "ThreadRuntime queues steering during a running
         await new Promise<void>((resolve) => {
           releaseMainTurn = resolve;
         });
-        return {
+        return this.settleFixture(input, {
           output: buildOutput({
             runId: "run-main-1",
             status: "COMPLETED",
           }),
           assistantText: "Main turn completed.",
-        };
+        });
       }
-      return {
+      return this.settleFixture(input, {
         output: buildOutput({
           runId: "run-steer-2",
           status: "COMPLETED",
         }),
         assistantText: "Steering applied.",
-      };
+      });
     }
   }(sessionStore, []);
   const runtime = new ThreadRuntime({
@@ -2677,7 +2708,7 @@ contractTest("runtime.hermetic", "ThreadRuntime queues steering during a running
 
   assert.equal(queued.status, "queued");
   assert.equal(queued.pendingSteer?.message, "Pause after the current step and regroup.");
-  assert.equal(mainResult.output.runId, "run-main-1");
+  assert.equal(mainResult.output.runId, executor.inputs[0]?.runtimeTurn?.runId);
 
   for (let attempt = 0; attempt < 10 && executor.inputs.length < 2; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2688,7 +2719,7 @@ contractTest("runtime.hermetic", "ThreadRuntime queues steering during a running
   assert.equal(executor.inputs[1]?.message, "Pause after the current step and regroup.");
 
   const replay = await sessionStore.getReplayStream({
-    runId: "run-steer-2",
+    runId: executor.inputs[1]?.runtimeTurn?.runId,
   });
   const steeringEvent = replay.find((event) => event.type === "operator.steered");
   assert.equal(steeringEvent?.metadata?.threadId, "thread-steer-queued");
@@ -2705,7 +2736,7 @@ contractTest("runtime.hermetic", "ThreadRuntime drains queued steering as operat
         await new Promise<void>((resolve) => {
           releaseMainTurn = resolve;
         });
-        return {
+        return this.settleFixture(input, {
           output: buildOutput({
             runId: "run-main-wait-1",
             status: "WAITING",
@@ -2720,15 +2751,15 @@ contractTest("runtime.hermetic", "ThreadRuntime drains queued steering as operat
             },
           }),
           assistantText: "Reply continue to resume.",
-        };
+        });
       }
-      return {
+      return this.settleFixture(input, {
         output: buildOutput({
           runId: "run-steer-after-wait-1",
           status: "COMPLETED",
         }),
         assistantText: "Steering applied after wait.",
-      };
+      });
     }
   }(sessionStore, []);
   const runtime = new ThreadRuntime({
@@ -4085,7 +4116,7 @@ contractTest("runtime.hermetic", "ThreadRuntime composes and injects a thread-sc
   assert.equal(status?.activeAssembly?.bundleId, expectedBundleId);
   assert.deepEqual(status?.assemblyBundle?.toolAllowlist, ["fs.read_text", "web.search"]);
 
-  await runtime.submitTurn({
+  const result = await runtime.submitTurn({
     threadId: "thread-assembly",
     message: "inspect state",
     eventType: "user.message",
@@ -4118,7 +4149,7 @@ contractTest("runtime.hermetic", "ThreadRuntime composes and injects a thread-sc
   assert.equal(status?.thread.environmentPresetId, "web_balanced");
   assert.equal(status?.thread.effectiveAssemblyId, expectedBundleId);
   const replay = await sessionStore.getReplayStream({
-    runId: "run-assembly-1",
+    runId: result.output.runId,
   });
   assert.equal(replay.some((event) => event.type === "runtime.assembly.changed"), true);
 });
@@ -4259,6 +4290,233 @@ contractTest("runtime.hermetic", "ThreadRuntime surfaces compatibility downgrade
     inbox.items.some((item) => item.kind === "compatibility_downgrade_attention"),
     true,
   );
+});
+
+contractTest("runtime.hermetic", "ThreadRuntime replays a delivered terminal turn without executing it again", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "ignored-replay-run",
+        status: "COMPLETED",
+      }),
+      assistantText: "A durable answer.",
+      finalizedPayload: {
+        message: "A durable answer.",
+        source: "inline",
+      },
+    },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile(),
+  });
+  await runtime.startThread({
+    threadId: "thread-terminal-replay",
+    title: "Terminal replay",
+  });
+  const input = {
+    threadId: "thread-terminal-replay",
+    message: "Run this once",
+    eventType: "user.message",
+    metadata: { turnId: "turn-terminal-replay" },
+  };
+
+  const first = await runtime.submitTurn(input);
+  const replay = await runtime.submitTurn(input);
+
+  assert.equal(executor.inputs.length, 1);
+  assert.equal(replay.output.runId, first.output.runId);
+  assert.equal(replay.assistantText, "A durable answer.");
+  assert.deepEqual(replay.finalizedPayload, {
+    message: "A durable answer.",
+    source: "inline",
+  });
+});
+
+contractTest("runtime.hermetic", "ThreadRuntime stores oversized finalized payloads as digest-validated artifacts", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const oversizedPayload = { text: "x".repeat(70 * 1024) };
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "ignored-artifact-replay-run",
+        status: "COMPLETED",
+      }),
+      assistantText: "Large payload stored.",
+      finalizedPayload: oversizedPayload,
+    },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile(),
+  });
+  await runtime.startThread({
+    threadId: "thread-artifact-replay",
+    title: "Artifact replay",
+  });
+  const input = {
+    threadId: "thread-artifact-replay",
+    message: "Persist a large payload",
+    eventType: "user.message",
+    metadata: { turnId: "turn-artifact-replay" },
+  };
+
+  await runtime.submitTurn(input);
+  const turn = await sessionStore.getConversationTurn("turn-artifact-replay");
+  const envelope = asRecord(turn?.metadata?.terminalEnvelope);
+  const handoff = asRecord(envelope?.handoff);
+  const payloadReference = asRecord(handoff?.finalizedPayload);
+  assert.equal(payloadReference?.storage, "artifact");
+  assert.equal(typeof payloadReference?.artifactId, "string");
+  assert.equal(typeof payloadReference?.sha256, "string");
+  assert.equal(typeof payloadReference?.byteCount, "number");
+
+  const replay = await runtime.submitTurn(input);
+  assert.equal(executor.inputs.length, 1);
+  assert.deepEqual(replay.finalizedPayload, oversizedPayload);
+});
+
+contractTest("runtime.hermetic", "ThreadRuntime records and rethrows terminal handoff validation failure", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "ignored-invalid-handoff-run",
+        status: "COMPLETED",
+      }),
+      assistantText: null,
+    },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile(),
+  });
+  await runtime.startThread({
+    threadId: "thread-invalid-handoff",
+    title: "Invalid handoff",
+  });
+  const input = {
+    threadId: "thread-invalid-handoff",
+    message: "Complete without text",
+    eventType: "user.message",
+    metadata: { turnId: "turn-invalid-handoff" },
+  };
+
+  await assert.rejects(
+    runtime.submitTurn(input),
+    (error: unknown) =>
+      asRecord(error)?.code === "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+  );
+  await assert.rejects(
+    runtime.submitTurn(input),
+    (error: unknown) =>
+      asRecord(error)?.code === "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+  );
+  assert.equal(executor.inputs.length, 1);
+});
+
+contractTest("runtime.hermetic", "ThreadRuntime rejects a different initial request reusing a terminal turn ID", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "ignored-identity-run",
+        status: "COMPLETED",
+      }),
+      assistantText: "Original answer.",
+    },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile(),
+  });
+  await runtime.startThread({
+    threadId: "thread-turn-identity",
+    title: "Turn identity",
+  });
+  await runtime.submitTurn({
+    threadId: "thread-turn-identity",
+    message: "Original request",
+    eventType: "user.message",
+    metadata: { turnId: "turn-identity" },
+  });
+
+  await assert.rejects(
+    runtime.submitTurn({
+      threadId: "thread-turn-identity",
+      message: "Different request",
+      eventType: "user.message",
+      metadata: { turnId: "turn-identity" },
+    }),
+    (error: unknown) =>
+      asRecord(error)?.code === "CONVERSATION_TURN_IDENTITY_CONFLICT",
+  );
+  assert.equal(executor.inputs.length, 1);
+});
+
+contractTest("runtime.hermetic", "ThreadRuntime turn identity binds attachment content without hashing volatile payload fields", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "ignored-attachment-identity-run",
+        status: "COMPLETED",
+      }),
+      assistantText: "Attachment handled.",
+    },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile(),
+  });
+  await runtime.startThread({
+    threadId: "thread-attachment-identity",
+    title: "Attachment identity",
+  });
+  const baseInput = {
+    threadId: "thread-attachment-identity",
+    message: "Use this attachment",
+    eventType: "user.message",
+    metadata: { turnId: "turn-attachment-identity" },
+    attachments: [{
+      attachmentId: "attachment-identity",
+      filename: "context.txt",
+      mimeType: "text/plain",
+      sizeBytes: 7,
+      sha256: "a".repeat(64),
+      kind: "text" as const,
+      createdAt: "2026-07-30T12:00:00.000Z",
+      text: "context",
+    }],
+  };
+
+  await runtime.submitTurn(baseInput);
+  await runtime.submitTurn({
+    ...baseInput,
+    attachments: [{
+      ...baseInput.attachments[0]!,
+      createdAt: "2026-07-30T13:00:00.000Z",
+      text: "different transport payload",
+    }],
+  });
+  await assert.rejects(
+    runtime.submitTurn({
+      ...baseInput,
+      attachments: [{
+        ...baseInput.attachments[0]!,
+        sha256: "b".repeat(64),
+      }],
+    }),
+    (error: unknown) =>
+      asRecord(error)?.code === "CONVERSATION_TURN_IDENTITY_CONFLICT",
+  );
+  assert.equal(executor.inputs.length, 1);
 });
 
 function buildOutput(input: {

@@ -47,6 +47,7 @@ export interface RuntimeTurnProjectContext {
 export interface RuntimeTurnInput {
   sessionId: string;
   runId?: string | undefined;
+  eventId?: string | undefined;
   message: string;
   eventType: string;
   attachments?: RunTurnAttachment[] | undefined;

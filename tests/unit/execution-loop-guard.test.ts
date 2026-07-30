@@ -5,7 +5,9 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
+import type { RuntimeError, TransitionStatus } from "../../src/kestrel/contracts/base.js";
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
+import type { RunLifecycleSettlement } from "../../src/kestrel/contracts/store.js";
 
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
@@ -21,6 +23,20 @@ interface ReactActionFlowRow {
   actionName?: string | undefined;
   actionInputHash?: string | undefined;
   evidenceLedgerCount?: number | undefined;
+}
+
+class WaitSettlementCapturingStore extends InMemorySessionStore {
+  lastSettlement: RunLifecycleSettlement | undefined;
+
+  override async completeRun(
+    runId: string,
+    status: TransitionStatus,
+    error?: RuntimeError,
+    settlement?: RunLifecycleSettlement,
+  ): Promise<void> {
+    this.lastSettlement = settlement;
+    await super.completeRun(runId, status, error, settlement);
+  }
 }
 
 function buildReactActionFlowTable(events: Array<Record<string, unknown>>): ReactActionFlowRow[] {
@@ -478,6 +494,83 @@ contractTest("runtime.hermetic", "ExecutionEngine keeps repeated validation feed
   assert.equal(output.errors[0]?.details?.step, "agent.loop");
   assert.equal(typeof output.errors[0]?.details?.actionSignatureHash, "string");
   assert.equal(typeof output.errors[0]?.details?.latestEvidenceHash, "string");
+  const persisted = await store.getSession("session-loop-guard-rejection-details");
+  const closeoutLatch = (
+    persisted?.state.agent as Record<string, unknown> | undefined
+  )?.closeoutLatch as Record<string, unknown> | undefined;
+  assert.equal(closeoutLatch?.version, "v1");
+  assert.equal(closeoutLatch?.closeoutAttempted, true);
+  assert.equal(closeoutLatch?.active, true);
+  assert.equal(typeof closeoutLatch?.closeoutRequiredForEvidenceHash, "string");
+});
+
+contractTest("runtime.hermetic", "ExecutionEngine treats appended duplicate audit rows as unchanged semantic evidence", async () => {
+  const store = new InMemorySessionStore();
+  const kestrel = new Kestrel({
+    store,
+    toolGateway: {
+      call: async () => null as never,
+    },
+    modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
+    guardrails: {
+      maxStepsPerRun: 40,
+      maxStepVisits: 40,
+    },
+  });
+  let visits = 0;
+
+  kestrel.registerStep("agent.loop", async () => {
+    visits += 1;
+    return {
+      status: "RUNNING",
+      nextStepAgent: "agent.loop",
+      statePatch: {
+        agent: {
+          nextAction: {
+            kind: "tool",
+            name: "web.fetch",
+            input: {
+              url: `https://example.test/retry/${visits}`,
+            },
+          },
+          observations: [
+            {
+              summary: "The source still reports the same claim.",
+              goalMet: false,
+            },
+          ],
+          evidenceLedger: Array.from({ length: visits }, (_, index) => ({
+            id: `audit-${index}`,
+            version: "v1",
+            createdAt: `2026-07-30T10:00:${String(index).padStart(2, "0")}.000Z`,
+            source: "tool",
+            kind: "web",
+            status: "passed",
+            summary: "Stable source claim.",
+            resultIdentity: "web:stable-source-claim",
+            target: {
+              type: "url",
+              value: "https://example.test/source",
+            },
+            facts: {},
+          })),
+        },
+      },
+    };
+  });
+
+  const output = await kestrel.run({
+    id: "evt-loop-guard-duplicate-audit-evidence",
+    type: "user.message",
+    sessionId: "session-loop-guard-duplicate-audit-evidence",
+    payload: {},
+    stepAgent: "agent.loop",
+  });
+
+  assert.equal(output.status, "FAILED");
+  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
+  assert.equal(output.errors[0]?.details?.guardType, "NO_PROGRESS_REASONING_LOOP");
+  assert.equal(visits < 10, true);
 });
 
 contractTest("runtime.hermetic", "ExecutionEngine completes visible-todo finalize loops with documented residual gap", async () => {
@@ -501,8 +594,21 @@ contractTest("runtime.hermetic", "ExecutionEngine completes visible-todo finaliz
       evidenceLedger: [
         {
           id: "ev-build",
+          version: "v1",
+          createdAt: "2026-07-30T00:00:00.000Z",
+          source: "runtime",
+          kind: "process_result",
           status: "passed",
           summary: "Build and lint passed.",
+          facts: {
+            verifierBindingId: "runtime:build",
+          },
+          claimImpact: {
+            success: "supports",
+            reason: "registered_runtime_verifier_passed",
+            scope: "goal",
+            requirementIds: ["build"],
+          },
         },
       ],
       agent: {
@@ -683,7 +789,7 @@ contractTest("runtime.hermetic", "ExecutionEngine does not complete residual-gap
 });
 
 contractTest("runtime.hermetic", "ExecutionEngine pauses and asks for operator guidance on missing filesystem path loops", async () => {
-  const store = new InMemorySessionStore();
+  const store = new WaitSettlementCapturingStore();
   const kestrel = new Kestrel({
     store,
     toolGateway: {
@@ -747,6 +853,10 @@ contractTest("runtime.hermetic", "ExecutionEngine pauses and asks for operator g
   assert.equal(runState.reasonCode, "tool_input_invalid");
   assert.equal((terminal.waitingFor as Record<string, unknown> | undefined)?.reason, "tool_input_invalid");
   assert.equal(readActiveWaitState(terminal)?.source, "waitingFor");
+  assert.equal(
+    store.lastSettlement?.wait?.resumeInstruction,
+    "Reply with how to handle fs.read_text path ./ghost-file.txt.",
+  );
 });
 
 contractTest("runtime.hermetic", "ExecutionEngine resumes loop visit stalls on high-confidence continue while clearing canonical wait state before the resumed step", async () => {
@@ -1006,7 +1116,9 @@ contractTest("runtime.hermetic", "ExecutionEngine checkpoints repeated no-progre
     },
   });
 
+  let reasoningRevision = 0;
   kestrel.registerStep("agent.loop", async (ctx) => {
+    reasoningRevision += 1;
     const react = (ctx.session.state.agent ?? {}) as Record<string, unknown>;
     return {
       status: "RUNNING",
@@ -1027,6 +1139,11 @@ contractTest("runtime.hermetic", "ExecutionEngine checkpoints repeated no-progre
             {
               summary: "Inspected workspace prompt files.",
               goalMet: false,
+            },
+          ],
+          blockers: [
+            {
+              code: `DISPATCH_FIXTURE_REVISION_${reasoningRevision}`,
             },
           ],
         },
@@ -1059,6 +1176,7 @@ contractTest("runtime.hermetic", "ExecutionEngine checkpoints repeated no-progre
               goalMet: false,
             },
           ],
+          blockers: [],
         },
       },
     };
@@ -1081,7 +1199,7 @@ contractTest("runtime.hermetic", "ExecutionEngine checkpoints repeated no-progre
   const diagnostic = (output.waitFor?.metadata as Record<string, unknown>)?.diagnostic as
     | Record<string, unknown>
     | undefined;
-  assert.equal(diagnostic?.guardType, "NO_PROGRESS_REASONING_LOOP");
+  assert.equal(diagnostic?.guardType, "IDENTICAL_CONTROL_STATE");
   assert.equal(diagnostic?.stepAgent, "agent.exec.dispatch");
   assert.equal(diagnostic?.toolName, "fs.read_text");
 
@@ -1090,7 +1208,7 @@ contractTest("runtime.hermetic", "ExecutionEngine checkpoints repeated no-progre
   const loopStall = agent?.loopStall as Record<string, unknown> | undefined;
   assert.equal(loopStall?.reason, "loop_visit_stall");
   assert.equal(readActiveWaitState(agent)?.resumeStepAgent, "agent.loop");
-  assert.equal((loopStall?.diagnostic as Record<string, unknown> | undefined)?.guardType, "NO_PROGRESS_REASONING_LOOP");
+  assert.equal((loopStall?.diagnostic as Record<string, unknown> | undefined)?.guardType, "IDENTICAL_CONTROL_STATE");
   assert.equal(loopStall?.resumeInstruction, (output.waitFor?.metadata as Record<string, unknown>)?.question);
   assert.equal((loopStall?.blockedAction as Record<string, unknown> | undefined)?.name, "fs.read_text");
   assert.deepEqual(

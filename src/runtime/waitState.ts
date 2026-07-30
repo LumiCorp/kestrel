@@ -1,5 +1,5 @@
 export type RuntimeWaitKind = "approval" | "effect" | "region_merge" | "tool" | "user";
-export type CanonicalRuntimeWaitKind = "approval" | "tool" | "user";
+export type CanonicalRuntimeWaitKind = RuntimeWaitKind;
 
 export interface RuntimeWaitMatcher {
   kind: RuntimeWaitKind;
@@ -21,6 +21,7 @@ export interface ActiveRuntimeWaitState extends RuntimeWaitMatcher {
 export interface CanonicalRuntimeWaitingFor {
   kind: CanonicalRuntimeWaitKind;
   eventType: string;
+  timeoutMs?: number | undefined;
   reason: string;
   resumeInstruction: string;
   blockedAction?: unknown | undefined;
@@ -74,6 +75,7 @@ export function buildWaitResumeToken(input: {
   return JSON.stringify({
     kind: input.waitFor.kind,
     eventType: input.waitFor.eventType,
+    timeoutMs: input.waitFor.timeoutMs,
     resumeStepAgent: input.resumeStepAgent ?? "",
     metadata: sortValue(input.waitFor.metadata),
     interaction: sortValue(input.waitFor.interaction),
@@ -99,8 +101,9 @@ export function buildCanonicalWaitingFor(input: {
     readNonEmptyString(metadata?.prompt) ??
     `Resume when ${input.waitFor.eventType} is received.`;
   return {
-    kind: toCanonicalWaitKind(input.waitFor.kind),
+    kind: input.waitFor.kind,
     eventType: input.waitFor.eventType,
+    ...(input.waitFor.timeoutMs !== undefined ? { timeoutMs: input.waitFor.timeoutMs } : {}),
     reason,
     resumeInstruction,
     ...(input.blockedAction !== undefined ? { blockedAction: input.blockedAction } : {}),
@@ -173,16 +176,6 @@ function readWaitKind(value: unknown): RuntimeWaitKind | undefined {
   return value === "approval" || value === "effect" || value === "region_merge" || value === "tool" || value === "user"
     ? value
     : undefined;
-}
-
-function toCanonicalWaitKind(kind: RuntimeWaitKind): CanonicalRuntimeWaitKind {
-  if (kind === "approval") {
-    return "approval";
-  }
-  if (kind === "user") {
-    return "user";
-  }
-  return "tool";
 }
 
 function readNonEmptyString(value: unknown): string | undefined {

@@ -232,6 +232,7 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor preserves canonica
   const runtimeTurn: RuntimeTurnInput = {
     sessionId: "session-threaded",
     runId: "run-canonical",
+    eventId: "event-canonical",
     message: "continue",
     eventType: "user.message",
     interactionMode: "build",
@@ -280,7 +281,7 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor preserves canonica
     runtimeTurn,
   });
 
-  assert.equal(event?.id, "run-canonical");
+  assert.equal(event?.id, "event-canonical");
   assert.equal(event?.payload.interactionMode, "build");
   assert.equal(event?.payload.actSubmode, "full_auto");
   assert.equal(asRecord(event?.payload.clientCapabilities)?.surface, "tui");

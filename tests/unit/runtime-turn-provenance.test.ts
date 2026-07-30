@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 
 import { ThreadRuntime } from "../../src/orchestration/ThreadRuntime.js";
+import type { TurnExecutionResult } from "../../src/orchestration/contracts.js";
 import { RunReplayService } from "../../src/replay/RunReplayService.js";
+import { buildCanonicalWaitingFor } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -12,28 +14,34 @@ contractTest("runtime.hermetic", "ThreadRuntime groups a submitted run into a du
     sessionStore: store,
     executor: {
       getSession: (sessionId) => store.getSession(sessionId),
-      executeTurn: async (input) => ({
-        output: {
-          status: "COMPLETED",
-          sessionId: input.sessionId,
-          runId: "run-turn-1",
-          finalStep: "react.exec.finalize",
-          quality: {
-            citationCoverage: 1,
-            unresolvedClaims: 0,
-            reworkRate: 0,
-            thrashIndex: 0,
+      executeTurn: async (input) => {
+        const runId = input.runtimeTurn?.runId;
+        if (runId === undefined) throw new Error("Provenance fixture requires a prestarted run");
+        const result: TurnExecutionResult = {
+          output: {
+            status: "COMPLETED",
+            sessionId: input.sessionId,
+            runId,
+            finalStep: "react.exec.finalize",
+            quality: {
+              citationCoverage: 1,
+              unresolvedClaims: 0,
+              reworkRate: 0,
+              thrashIndex: 0,
+            },
+            errors: [],
+            telemetry: {
+              stepsExecuted: 1,
+              toolCalls: 0,
+              modelCalls: 0,
+              durationMs: 1,
+            },
           },
-          errors: [],
-          telemetry: {
-            stepsExecuted: 1,
-            toolCalls: 0,
-            modelCalls: 0,
-            durationMs: 1,
-          },
-        },
-        assistantText: "Implemented the runtime plan.",
-      }),
+          assistantText: "Implemented the runtime plan.",
+        };
+        await store.completeRun(runId, "COMPLETED");
+        return result;
+      },
     },
   });
 
@@ -52,7 +60,7 @@ contractTest("runtime.hermetic", "ThreadRuntime groups a submitted run into a du
   const turns = await store.listConversationTurns({ threadId: thread.threadId });
   assert.equal(turns.length, 1);
   assert.equal(turns[0]?.status, "COMPLETED");
-  assert.equal(turns[0]?.rootRunId, "run-turn-1");
+  assert.equal(turns[0]?.rootRunId, turns[0]?.terminalRunId);
 
   const segments = await store.listConversationTurnSegments(turns[0]!.turnId);
   assert.equal(segments.length, 1);
@@ -69,25 +77,41 @@ contractTest("runtime.hermetic", "ThreadRuntime appends resume replies as segmen
       getSession: (sessionId) => store.getSession(sessionId),
       executeTurn: async (input) => {
         callCount += 1;
+        const runId = input.runtimeTurn?.runId;
+        if (runId === undefined) throw new Error("Resume fixture requires a prestarted run");
         const assistantText =
           callCount === 1
             ? "Need one more detail"
             : "Completed the rewrite using the command processor plan.";
+        const output = normalizedOutput({
+          sessionId: input.sessionId,
+          runId,
+          status: callCount === 1 ? "WAITING" : "COMPLETED",
+          ...(callCount === 1
+            ? {
+                waitFor: {
+                  kind: "user",
+                  eventType: "user.reply",
+                  metadata: { prompt: "Need one more detail" },
+                },
+              }
+            : {}),
+        });
+        await store.completeRun(
+          runId,
+          output.status,
+          undefined,
+          output.status === "WAITING" && output.waitFor !== undefined
+            ? {
+                wait: buildCanonicalWaitingFor({
+                  waitFor: output.waitFor,
+                  resumeStepAgent: input.stepAgent,
+                }),
+              }
+            : undefined,
+        );
         return {
-          output: normalizedOutput({
-            sessionId: input.sessionId,
-            runId: callCount === 1 ? "run-waiting" : "run-resumed",
-            status: callCount === 1 ? "WAITING" : "COMPLETED",
-            ...(callCount === 1
-              ? {
-                  waitFor: {
-                    kind: "user",
-                    eventType: "user.reply",
-                    metadata: { prompt: "Need one more detail" },
-                  },
-                }
-              : {}),
-          }),
+          output,
           assistantText,
         };
       },
@@ -116,13 +140,14 @@ contractTest("runtime.hermetic", "ThreadRuntime appends resume replies as segmen
 
   const turns = await store.listConversationTurns({ threadId: thread.threadId });
   assert.equal(turns.length, 1);
-  assert.equal(turns[0]?.rootRunId, "run-waiting");
-  assert.equal(turns[0]?.activeRunId, "run-resumed");
-  assert.equal(turns[0]?.terminalRunId, "run-resumed");
+  assert.notEqual(turns[0]?.rootRunId, turns[0]?.terminalRunId);
+  assert.equal(turns[0]?.activeRunId, undefined);
   assert.equal(turns[0]?.status, "COMPLETED");
 
   const segments = await store.listConversationTurnSegments(turns[0]!.turnId);
   assert.deepEqual(segments.map((segment) => segment.kind), ["submission", "user_reply"]);
+  assert.equal(turns[0]?.rootRunId, segments[0]?.runId);
+  assert.equal(turns[0]?.terminalRunId, segments[1]?.runId);
   assert.equal(segments[1]?.requestId, waiting.wait.request.requestId);
 });
 

@@ -1,4 +1,4 @@
-import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionRecord, AssemblyChangeProposalRecord, ContextCheckpointRecord, ContextPolicyDefinitionRecord, ContextSummaryArtifactRecord, DelegationRecord, InteractionRequestRecord, OperatorAttentionRecord, OperatorFocusRecord, SpecialistDefinitionRecord, ThreadAssemblyRecord, ThreadCompactionEventRecord, ThreadRecord } from "../kestrel/contracts/orchestration.js";
+import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionRecord, AssemblyChangeProposalRecord, ContextCheckpointRecord, ContextPolicyDefinitionRecord, ContextSummaryArtifactRecord, ConversationTurnTerminalEnvelopeV1, DelegationRecord, InteractionRequestRecord, OperatorAttentionRecord, OperatorFocusRecord, SpecialistDefinitionRecord, ThreadAssemblyRecord, ThreadCompactionEventRecord, ThreadRecord } from "../kestrel/contracts/orchestration.js";
 import { parseHarnessEconomicsPolicyV1 } from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
@@ -25,8 +25,53 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
     this.threads.set(thread.threadId, clone(thread));
   }
 
+  async updateThreadAfterRun(input: {
+    thread: ThreadRecord;
+    turnId: string;
+    runId: string;
+  }): Promise<boolean> {
+    const current = this.threads.get(input.thread.threadId);
+    const executionClaim = asRecord(current?.metadata?.executionClaim);
+    if (
+      current === undefined ||
+      current.metadata?.activeTurnId !== input.turnId ||
+      executionClaim?.activeRunId !== input.runId
+    ) {
+      return false;
+    }
+    this.threads.set(input.thread.threadId, clone(input.thread));
+    return true;
+  }
+
   async getThread(threadId: string): Promise<ThreadRecord | null> {
     return cloneOrNull(this.threads.get(threadId));
+  }
+
+  async updateTerminalEnvelope(input: {
+    threadId: string;
+    turnId: string;
+    runId: string;
+    envelope: ConversationTurnTerminalEnvelopeV1;
+    updatedAt: string;
+  }): Promise<boolean> {
+    const thread = this.threads.get(input.threadId);
+    const currentEnvelope = asRecord(thread?.metadata?.terminalEnvelope);
+    if (
+      thread === undefined ||
+      thread.metadata?.activeTurnId !== input.turnId ||
+      currentEnvelope?.runId !== input.runId
+    ) {
+      return false;
+    }
+    this.threads.set(input.threadId, clone({
+      ...thread,
+      metadata: {
+        ...(thread.metadata ?? {}),
+        terminalEnvelope: input.envelope,
+      },
+      updatedAt: input.updatedAt,
+    }));
+    return true;
   }
 
   async listThreads(input: {
@@ -302,4 +347,10 @@ function clone<T>(value: T): T {
 
 function cloneOrNull<T>(value: T | undefined): T | null {
   return value === undefined ? null : clone(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }

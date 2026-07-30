@@ -258,6 +258,7 @@ contractTest("runtime.hermetic", "post-tool verification normalizes running exec
   const verification = buildPostToolVerification({
     reactState: {},
     nextCapabilities: {},
+    newFactsCount: 0,
     toolName: "exec_command",
     action: {
       kind: "tool",

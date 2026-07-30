@@ -508,6 +508,7 @@ export interface EvidenceClaimImpact {
 
 export interface EvidenceLedgerEntry {
   id: string;
+  resultIdentity?: string | undefined;
   version: "v1" | string;
   createdAt: string;
   stepIndex?: number | undefined;

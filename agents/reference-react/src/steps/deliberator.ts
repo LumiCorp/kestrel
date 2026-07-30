@@ -183,6 +183,12 @@ const PLAN_MODE_CONTROL_TOOL_NAMES = [
   ...EXECUTION_MODE_CONTROL_TOOL_NAMES,
   "kestrel.handoff_to_build",
 ] as const;
+const CLOSEOUT_CONTROL_TOOL_NAMES = new Set([
+  "kestrel.finalize",
+  "kestrel.cannot_satisfy",
+  "kestrel.ask_user",
+  "kestrel.handoff_to_build",
+]);
 
 function controlToolNamesForInteractionMode(input: {
   interactionMode: InteractionMode;
@@ -378,18 +384,21 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const activeProjectContext = readActiveProjectContext(ctx.event.payload.projectContext);
     const activeSkillPackContext = readActiveSkillPackContext(ctx.event.payload.skillPack);
     const runtimeEconomics = readRuntimeEconomics(eventPayload);
+    const closeoutAttemptActive = isCloseoutAttemptActive(reactState.closeoutLatch);
     const tokenCounter = runtimeEconomics.modelProfile?.counting.method === "model_tokenizer"
       ? resolveModelTokenCounter(
           runtimeEconomics.modelProfile.counting.counter,
           runtimeEconomics.modelProfile.counting.counterVersion,
         )
       : undefined;
-    const modeScopedDeliberatorTools = filterDeliberatorToolsForMode({
-      tools: deliberatorTools,
-      capabilityManifest,
-      modeResolution,
-      executionPolicy,
-    });
+    const modeScopedDeliberatorTools = closeoutAttemptActive
+      ? []
+      : filterDeliberatorToolsForMode({
+          tools: deliberatorTools,
+          capabilityManifest,
+          modeResolution,
+          executionPolicy,
+        });
     const economicsScopedDeliberatorTools = selectToolsForEconomicsPolicyV1({
       tools: modeScopedDeliberatorTools,
       capabilityManifest,
@@ -448,12 +457,15 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     });
     const observedCapabilities =
       extractObservedCapabilitiesFromFeedback(reactState);
-    const modeScopedControlToolNames = controlToolNamesForInteractionMode({
+    const availableModeControlToolNames = controlToolNamesForInteractionMode({
       interactionMode: modeResolution.interactionMode,
       eventType: ctx.event.type,
       eventPayload,
       executableWorkspaceToolsAvailable,
     });
+    const modeScopedControlToolNames = closeoutAttemptActive
+      ? availableModeControlToolNames.filter((name) => CLOSEOUT_CONTROL_TOOL_NAMES.has(name))
+      : availableModeControlToolNames;
     const finalizeStatuses = finalizeStatusesForInteractionMode({
       interactionMode: modeResolution.interactionMode,
       executableWorkspaceToolsAvailable,
@@ -777,6 +789,7 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
     decisionReason: undefined,
     decisionTrace: undefined,
     loopGuard: undefined,
+    closeoutLatch: undefined,
     terminal: undefined,
     assistantText: null,
     finalOutput: undefined,
@@ -792,6 +805,15 @@ function buildAgentLoopStatePatch(agentPatch: Record<string, unknown>): Record<s
     agent,
     evidenceLedger,
   };
+}
+
+function isCloseoutAttemptActive(value: unknown): boolean {
+  const record = asRecord(value);
+  return record?.version === "v1" &&
+    record.closeoutAttempted === true &&
+    record.active === true &&
+    typeof record.closeoutRequiredForEvidenceHash === "string" &&
+    record.closeoutRequiredForEvidenceHash.trim().length > 0;
 }
 
 function clearLegacyGoalPatch(): { goal?: undefined } {
@@ -2535,6 +2557,7 @@ function toAgentLoopActionTransition(
   }
   const nextAction = cloneActionSnapshot(actionWithToolCallIds);
   const lastAction = cloneActionSnapshot(actionWithToolCallIds);
+  const closeoutLatch = asRecord(reactState.closeoutLatch);
   const transition: Transition = {
     status: "RUNNING",
     nextStepAgent: targetStep,
@@ -2559,6 +2582,15 @@ function toAgentLoopActionTransition(
       modelTranscript,
       ...clearLegacyGoalPatch(),
       ...(compiled.verification !== undefined ? { decisionVerification: compiled.verification } : {}),
+      ...(closeoutLatch !== undefined
+        ? {
+            closeoutLatch: {
+              ...closeoutLatch,
+              active: false,
+              selectedActionKind: action.kind,
+            },
+          }
+        : {}),
       decisionReason,
       lastDecisionAtStep: stepIndex,
       decisionTrace: traces,

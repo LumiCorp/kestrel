@@ -404,6 +404,11 @@ contractTest("runtime.process", "startRun reconciles a stale terminal lease befo
       ],
       rowCount: 1,
     },
+    {
+      match: /^SELECT turn_id, thread_id, session_id, root_run_id, status, initial_event_type,\s+active_run_id, terminal_run_id, terminal_status, metadata_json,\s+started_at, updated_at, completed_at\s+FROM conversation_turns\s+WHERE active_run_id = \$1\s+FOR UPDATE/,
+      rows: [],
+      rowCount: 0,
+    },
     { match: /^UPDATE runs\s+SET status = \$2,/i, rowCount: 1 },
     { match: /^UPDATE sessions\s+SET active_run_id = NULL,/i, rowCount: 1 },
     { match: /^UPDATE sessions\s+SET active_run_id = \$2,/i, rows: [{ session_id: "session-stale" }], rowCount: 1 },
@@ -462,7 +467,12 @@ contractTest("runtime.process", "process-owned orphan recovery fails and release
       }],
       rowCount: 1,
     },
-    { match: /^UPDATE runs\s+SET status = 'FAILED',/i, rowCount: 1 },
+    {
+      match: /^SELECT turn_id, thread_id, session_id, root_run_id, status, initial_event_type,\s+active_run_id, terminal_run_id, terminal_status, metadata_json,\s+started_at, updated_at, completed_at\s+FROM conversation_turns\s+WHERE active_run_id = \$1\s+FOR UPDATE/,
+      rows: [],
+      rowCount: 0,
+    },
+    { match: /^UPDATE runs\s+SET status = \$2,/i, rowCount: 1 },
     { match: /^UPDATE sessions\s+SET active_run_id = NULL,/i, rowCount: 1 },
     { match: /^COMMIT/ },
   ]);
@@ -473,7 +483,8 @@ contractTest("runtime.process", "process-owned orphan recovery fails and release
   assert.deepEqual(result, { runId: "run-orphaned" });
   const runUpdate = sql.queries.find((query) => query.text.startsWith("UPDATE runs"));
   assert.equal(runUpdate?.values?.[0], "run-orphaned");
-  assert.deepEqual(JSON.parse(runUpdate?.values?.[1] as string), {
+  assert.equal(runUpdate?.values?.[1], "FAILED");
+  assert.deepEqual(JSON.parse(runUpdate?.values?.[2] as string), {
     code: "RUNNER_ORPHANED_ACTIVE_RUN",
     message: "The process-owned runner no longer has a live execution for this persisted run.",
     details: {
@@ -511,6 +522,12 @@ contractTest("runtime.process", "startRun releases a missing active run row befo
       rows: [],
       rowCount: 0,
     },
+    {
+      match: /^SELECT turn_id, thread_id, session_id, root_run_id, status, initial_event_type,\s+active_run_id, terminal_run_id, terminal_status, metadata_json,\s+started_at, updated_at, completed_at\s+FROM conversation_turns\s+WHERE active_run_id = \$1\s+FOR UPDATE/,
+      rows: [],
+      rowCount: 0,
+    },
+    { match: /^UPDATE runs\s+SET status = \$2,/i, rowCount: 0 },
     { match: /^UPDATE sessions\s+SET active_run_id = NULL,/i, rowCount: 1 },
     {
       match: /^UPDATE sessions\s+SET active_run_id = \$2,/i,
@@ -543,7 +560,13 @@ contractTest("runtime.process", "startRun releases a missing active run row befo
       query.text.includes("SET active_run_id = $2") && query.values?.[1] === "run-new",
   );
   assert.equal(leaseUpdate !== undefined, true);
-  assert.equal(sql.queries.some((query) => query.text.startsWith("UPDATE runs")), false);
+  const missingRunRecovery = sql.queries.find((query) =>
+    query.text.startsWith("UPDATE runs")
+  );
+  assert.deepEqual(
+    missingRunRecovery?.values?.slice(0, 2),
+    ["run-missing", "FAILED"],
+  );
   sql.assertExhausted();
 });
 

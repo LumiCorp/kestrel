@@ -372,6 +372,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService leaves unsupport
 
 contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService uses direct run when no thread runtime is configured", async () => {
   let directEvent: RuntimeEvent | undefined;
+  let directRunId: string | undefined;
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
       defaultInteractionMode: "chat",
@@ -379,8 +380,9 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService uses direct run 
       modeSystemV2Enabled: true,
       toolBatchCheckpointSize: 5,
     },
-    directRun: async (event) => {
+    directRun: async (event, options) => {
       directEvent = event;
+      directRunId = options?.runId;
       return output("COMPLETED");
     },
     getSession: async () => sessionRecord("session-coordinator", "Completed direct test turn."),
@@ -395,7 +397,8 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService uses direct run 
     stepAgent: "agent.custom",
   });
 
-  assert.equal(directEvent?.id, "run-explicit");
+  assert.notEqual(directEvent?.id, "run-explicit");
+  assert.equal(directRunId, "run-explicit");
   assert.equal(directEvent?.type, "user.message");
   assert.equal(directEvent?.sessionId, "session-coordinator");
   assert.equal(directEvent?.stepAgent, "agent.custom");

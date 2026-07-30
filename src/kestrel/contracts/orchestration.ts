@@ -3,7 +3,7 @@ import type {
   ShellKind,
   ShellPresetId,
 } from "../../profile/runtimeProfile.js";
-import type { TransitionStatus } from "./base.js";
+import type { RuntimeError, TransitionStatus } from "./base.js";
 import type {
   NormalizedOutput,
   WaitForMatcher,
@@ -300,6 +300,7 @@ export interface ThreadCompactionEventRecord {
 }
 
 export type ConversationTurnStatus = "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
+export type ConversationTurnSubmissionKind = "initial" | "resume" | "steer" | "follow_up";
 export type ConversationTurnSegmentKind =
   | "submission"
   | "resume"
@@ -322,6 +323,66 @@ export interface ConversationTurnRecord {
   completedAt?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
 }
+
+export interface ConversationTurnSuspensionEnvelopeV1 {
+  version: "v1";
+  turnRequestIdentity: string;
+  submissionIdentity: string;
+  runId: string;
+  wait: import("../../runtime/waitState.js").CanonicalRuntimeWaitingFor;
+}
+
+export type ConversationTurnFinalizedPayloadV1 =
+  | {
+      storage: "inline";
+      value: unknown;
+      byteCount: number;
+      sha256: string;
+    }
+  | {
+      storage: "artifact";
+      artifactId: string;
+      byteCount: number;
+      sha256: string;
+    };
+
+interface ConversationTurnTerminalEnvelopeBaseV1 {
+  version: "v1";
+  turnRequestIdentity: string;
+  terminalSubmissionIdentity: string;
+  runId: string;
+  output?: NormalizedOutput | undefined;
+}
+
+export type ConversationTurnTerminalEnvelopeV1 =
+  | (ConversationTurnTerminalEnvelopeBaseV1 & {
+      status: "COMPLETED";
+      handoff:
+        | { state: "pending" }
+        | {
+            state: "delivered";
+            assistantText: string;
+            finalizedPayload?: ConversationTurnFinalizedPayloadV1 | undefined;
+          }
+        | {
+            state: "failed";
+            finalizationError: RuntimeError;
+          };
+    })
+  | (ConversationTurnTerminalEnvelopeBaseV1 & {
+      status: "FAILED";
+      handoff:
+        | { state: "pending" }
+        | {
+            state: "delivered";
+            assistantText: null;
+            finalizedPayload?: ConversationTurnFinalizedPayloadV1 | undefined;
+          }
+        | {
+            state: "failed";
+            finalizationError: RuntimeError;
+          };
+    });
 
 export interface ConversationTurnSegmentRecord {
   segmentId: string;

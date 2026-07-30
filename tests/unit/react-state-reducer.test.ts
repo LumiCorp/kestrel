@@ -9,6 +9,7 @@ import {
   readLatestActiveArtifactVerificationFacts,
 } from "../../agents/reference-react/src/artifactVerificationFacts.js";
 import { applyReactStateEvent } from "../../agents/reference-react/src/reactStateReducer.js";
+import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { contractTest } from "../helpers/contract-test.js";
 
 
@@ -38,6 +39,186 @@ contractTest("runtime.hermetic", "tool results append evidence without committin
   assert.equal(ledger[0]?.source, "tool");
   assert.equal(result.transition.reason, "tool_result_observed:fs.read_text");
   assert.deepEqual(result.transition.consumedEvidenceIds, []);
+  assert.equal(result.transition.newFactsCount, 1);
+  assert.deepEqual(result.transition.novelEvidenceIds, [ledger[0]?.id]);
+});
+
+contractTest("runtime.hermetic", "semantic novelty ignores audit time and changed inputs", () => {
+  const first = applyReactStateEvent({
+    reactState: {},
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 1,
+      toolName: "web.fetch",
+      toolInput: { url: "https://example.test/report", selector: "main" },
+      toolOutput: {
+        url: "https://example.test/report",
+        text: "stable claim",
+        completedAt: "2026-07-30T10:00:00.000Z",
+        durationMs: 10,
+      },
+    },
+  });
+  const repeated = applyReactStateEvent({
+    reactState: first.reactState,
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 2,
+      toolName: "web.fetch",
+      toolInput: { url: "https://example.test/report", selector: "article" },
+      toolOutput: {
+        url: "https://example.test/report",
+        text: "stable claim",
+        completedAt: "2026-07-30T11:00:00.000Z",
+        durationMs: 999,
+      },
+    },
+  });
+
+  assert.equal(repeated.transition.newFactsCount, 0);
+  assert.deepEqual(repeated.transition.novelEvidenceIds, []);
+  assert.equal(repeated.transition.duplicateOfEvidenceIds.length, 1);
+  assert.equal((repeated.reactState.evidenceLedger as unknown[]).length, 2);
+});
+
+contractTest("runtime.hermetic", "semantic novelty survives bounded audit-ledger eviction", () => {
+  let reactState: Record<string, unknown> = {};
+  const firstEvent = {
+    type: "tool_result_observed" as const,
+    stepIndex: 1,
+    toolName: "web.fetch",
+    toolInput: { url: "https://example.test/stable", selector: "main" },
+    toolOutput: {
+      url: "https://example.test/stable",
+      text: "stable claim",
+      completedAt: "2026-07-30T10:00:00.000Z",
+    },
+  };
+  reactState = applyReactStateEvent({
+    reactState,
+    event: firstEvent,
+  }).reactState;
+
+  for (let index = 0; index < 90; index += 1) {
+    reactState = applyReactStateEvent({
+      reactState,
+      event: {
+        type: "tool_result_observed",
+        stepIndex: index + 2,
+        toolName: "web.fetch",
+        toolInput: { url: `https://example.test/unique/${index}` },
+        toolOutput: {
+          url: `https://example.test/unique/${index}`,
+          text: `unique claim ${index}`,
+        },
+      },
+    }).reactState;
+  }
+
+  assert.equal((reactState.evidenceLedger as unknown[]).length, 80);
+  assert.equal(
+    (reactState.evidenceIdentityHistory as unknown[]).length,
+    91,
+  );
+
+  const repeated = applyReactStateEvent({
+    reactState,
+    event: {
+      ...firstEvent,
+      stepIndex: 100,
+      toolInput: { url: "https://example.test/stable", selector: "article" },
+      toolOutput: {
+        ...firstEvent.toolOutput,
+        completedAt: "2026-07-30T11:00:00.000Z",
+      },
+    },
+  });
+
+  assert.equal(repeated.transition.newFactsCount, 0);
+  assert.deepEqual(repeated.transition.novelEvidenceIds, []);
+  assert.equal((repeated.reactState.evidenceLedger as unknown[]).length, 80);
+});
+
+contractTest("runtime.hermetic", "filesystem revisions and pages have distinct canonical identities", () => {
+  const first = applyReactStateEvent({
+    reactState: {},
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 1,
+      toolName: "fs.read_text",
+      toolInput: { path: "/app/a.txt", offsetBytes: 0, maxBytes: 10, expectedRevision: "r1" },
+      toolOutput: { path: "/app/a.txt", revision: "r1", text: "first page" },
+    },
+  });
+  const nextPage = applyReactStateEvent({
+    reactState: first.reactState,
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 2,
+      toolName: "fs.read_text",
+      toolInput: { path: "/app/a.txt", offsetBytes: 10, maxBytes: 10, expectedRevision: "r1" },
+      toolOutput: { path: "/app/a.txt", revision: "r1", text: "second page" },
+    },
+  });
+  const revised = applyReactStateEvent({
+    reactState: nextPage.reactState,
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 3,
+      toolName: "fs.read_text",
+      toolInput: { path: "/app/a.txt", offsetBytes: 0, maxBytes: 10, expectedRevision: "r2" },
+      toolOutput: { path: "/app/a.txt", revision: "r2", text: "revised" },
+    },
+  });
+
+  assert.equal(nextPage.transition.newFactsCount, 1);
+  assert.equal(revised.transition.newFactsCount, 1);
+});
+
+contractTest("runtime.hermetic", "filesystem search and list constraints have distinct canonical identities", () => {
+  const firstSearch = applyReactStateEvent({
+    reactState: {},
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 1,
+      toolName: "fs.search_text",
+      toolInput: { path: "/app", query: "alpha", glob: "*.ts", caseSensitive: false },
+      toolOutput: { path: "/app", revision: "r1", query: "alpha", matches: [] },
+    },
+  });
+  const secondSearch = applyReactStateEvent({
+    reactState: firstSearch.reactState,
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 2,
+      toolName: "fs.search_text",
+      toolInput: { path: "/app", query: "beta", glob: "*.ts", caseSensitive: false },
+      toolOutput: { path: "/app", revision: "r1", query: "beta", matches: [] },
+    },
+  });
+  const firstList = applyReactStateEvent({
+    reactState: secondSearch.reactState,
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 3,
+      toolName: "fs.list",
+      toolInput: { path: "/app", recursive: false, includeHidden: false },
+      toolOutput: { path: "/app", revision: "r1", entries: [] },
+    },
+  });
+  const secondList = applyReactStateEvent({
+    reactState: firstList.reactState,
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 4,
+      toolName: "fs.list",
+      toolInput: { path: "/app", recursive: true, includeHidden: true, maxDepth: 2 },
+      toolOutput: { path: "/app", revision: "r1", entries: [] },
+    },
+  });
+
+  assert.equal(secondSearch.transition.newFactsCount, 1);
+  assert.equal(secondList.transition.newFactsCount, 1);
 });
 
 contractTest("runtime.hermetic", "filesystem search evidence preserves zero-match constraint facts", () => {
@@ -276,6 +457,99 @@ contractTest("runtime.hermetic", "policy corrections are recorded in the canonic
   assert.equal(ledger.at(-1)?.kind, "policy_correction");
   assert.equal(result.transition.reason, "artifact_not_verified");
   assert.deepEqual(result.transition.blockedEvidenceIds, [ledger.at(-1)?.id]);
+});
+
+contractTest("runtime.hermetic", "artifact support includes only explicitly passed requirements", () => {
+  const result = applyReactStateEvent({
+    reactState: {},
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 9,
+      toolName: "fs.verify_json",
+      toolInput: { path: "/app/result.json" },
+      toolOutput: {
+        artifactVerification: {
+          target: "/app/result.json",
+          status: "passed",
+          requirements: [
+            { id: "todo-a", status: "passed" },
+            { id: "todo-b", status: "failed" },
+          ],
+        },
+      },
+    },
+  });
+  const ledger = parseEvidenceLedger(result.reactState.evidenceLedger);
+  const verification = ledger.find((entry) => entry.kind === "artifact_verification");
+  assert.equal(verification?.claimImpact?.success, "supports");
+  assert.deepEqual(verification?.claimImpact?.requirementIds, ["todo-a"]);
+});
+
+contractTest("runtime.hermetic", "artifact support reduces from the full verification projection", () => {
+  const compactOutput = {
+    artifactVerification: {
+      target: "/app/result.json",
+      status: "passed",
+      requirementsSummary: { total: 1, passed: 1 },
+    },
+  };
+  const fullOutput = {
+    artifactVerification: {
+      target: "/app/result.json",
+      status: "passed",
+      requirements: [{ id: "todo-large", status: "passed" }],
+    },
+  };
+  const toolResult = buildAgentToolSuccessResult({
+    toolName: "fs.verify_json",
+    input: { path: "/app/result.json" },
+    output: compactOutput,
+  });
+  toolResult.projections = {
+    rawReceived: { sha256: "full", bytes: 70_000, tokens: 70_000 },
+    persistedOutput: compactOutput,
+    verificationOutput: fullOutput,
+    modelVisibleOutput: toolResult.modelContext,
+  };
+
+  const result = applyReactStateEvent({
+    reactState: {},
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 10,
+      toolName: "fs.verify_json",
+      toolInput: { path: "/app/result.json" },
+      toolOutput: toolResult,
+    },
+  });
+  const verification = parseEvidenceLedger(result.reactState.evidenceLedger)
+    .find((entry) => entry.kind === "artifact_verification");
+  assert.equal(verification?.claimImpact?.success, "supports");
+  assert.deepEqual(verification?.claimImpact?.requirementIds, ["todo-large"]);
+});
+
+contractTest("runtime.hermetic", "successful generic process evidence remains neutral", () => {
+  const result = applyReactStateEvent({
+    reactState: {},
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 10,
+      toolName: "exec_command",
+      toolInput: {
+        command: "true",
+        executionRole: {
+          role: "requirement_verification",
+          requirementIds: ["todo-a"],
+        },
+      },
+      toolOutput: { status: "COMPLETED", exitCode: 0, output: "" },
+    },
+  });
+  const ledger = parseEvidenceLedger(result.reactState.evidenceLedger);
+  assert.equal(
+    ledger.some((entry) => entry.claimImpact?.success === "supports"),
+    false,
+  );
 });
 
 contractTest("runtime.hermetic", "completion evidence summary derives tool, check, file, and verify support tokens", () => {

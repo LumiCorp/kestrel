@@ -39,7 +39,11 @@ export interface RuntimeThreadedTurnExecutorOptions {
   getSession(sessionId: string): Promise<SessionRecord | null>;
   runKernel(
     event: RuntimeEvent,
-    options?: { signal?: AbortSignal | undefined }
+    options?: {
+      signal?: AbortSignal | undefined;
+      runId?: string | undefined;
+      runStart?: "create" | "prestarted" | undefined;
+    }
   ): Promise<NormalizedOutput>;
   refreshToolRuntime(input?: RuntimeTurnInput | undefined): Promise<unknown>;
   resolveAvailableToolAllowlist(
@@ -145,7 +149,7 @@ export class RuntimeThreadedTurnExecutor {
     );
     const output = await this.runKernel(
       {
-        id: runtimeTurn.input.runId ?? randomUUID(),
+        id: runtimeTurn.input.eventId ?? randomUUID(),
         type: input.eventType,
         sessionId: input.sessionId,
         ...(threadedStepAgent !== undefined
@@ -155,6 +159,9 @@ export class RuntimeThreadedTurnExecutor {
       },
       {
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
+        ...(runtimeTurn.input.runId !== undefined
+          ? { runId: runtimeTurn.input.runId, runStart: "prestarted" as const }
+          : {}),
       }
     );
     const session = await this.getSession(input.sessionId);

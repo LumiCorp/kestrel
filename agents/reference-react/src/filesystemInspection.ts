@@ -64,7 +64,9 @@ export function buildFilesystemInspectionActionKey(
   if (toolName === "fs.read_text") {
     return buildStableInspectionKey(toolName, {
       path: normalizedPath,
+      offsetBytes: normalizeNonNegativeInt(input?.offsetBytes),
       maxBytes: normalizePositiveInt(input?.maxBytes),
+      expectedRevision: asString(input?.expectedRevision),
     });
   }
   return buildStableInspectionKey(toolName, {

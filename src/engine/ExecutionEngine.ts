@@ -435,9 +435,13 @@ export class ExecutionEngine {
 
   async run(
     event: RuntimeEvent,
-    options: { signal?: AbortSignal | undefined } = {},
+    options: {
+      signal?: AbortSignal | undefined;
+      runId?: string | undefined;
+      runStart?: "create" | "prestarted" | undefined;
+    } = {},
   ): Promise<NormalizedOutput> {
-    const runId = this.runLifecycleController.createRunId();
+    const runId = options.runId ?? this.runLifecycleController.createRunId();
     const runStartedAt = Date.now();
     let guardrails = this.runLifecycleController.createGuardrails(event);
     const errors: RuntimeError[] = [];
@@ -462,6 +466,7 @@ export class ExecutionEngine {
         const runStart = await this.runLifecycleController.startRun({
           runId,
           event,
+          prestarted: options.runStart === "prestarted",
         });
         session = runStart.session;
         lastStepAgent = runStart.lastStepAgent ?? lastStepAgent;
