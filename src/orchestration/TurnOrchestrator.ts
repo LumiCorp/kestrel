@@ -108,7 +108,31 @@ export class TurnOrchestrator {
       ...(metadata !== undefined ? { metadata } : {}),
       updatedAt,
     };
-    await this.store.upsertThread(updatedThread);
+    const activeTurnId = readNonEmptyString(runningThread.metadata?.activeTurnId);
+    const threadUpdated = activeTurnId !== undefined &&
+      await this.store.updateThreadAfterRun({
+        thread: updatedThread,
+        turnId: activeTurnId,
+        runId: output.runId,
+      });
+    if (threadUpdated === false) {
+      if (request !== undefined) {
+        await this.store.upsertInteractionRequest({
+          ...request,
+          status: "CANCELLED",
+          resolvedAt: new Date().toISOString(),
+        });
+      }
+      const currentThread = await this.store.getThread(thread.threadId);
+      return {
+        thread: currentThread ?? updatedThread,
+        output,
+        assistantText,
+        ...(execution.session !== undefined ? { session: execution.session } : {}),
+        ...(execution.finalizedPayload !== undefined ? { finalizedPayload: execution.finalizedPayload } : {}),
+        compactionAction: decision.action,
+      };
+    }
 
     const result: SubmitTurnResult = {
       thread: updatedThread,
@@ -140,10 +164,14 @@ export class TurnOrchestrator {
     thread: ThreadRecord;
   }): Promise<string | undefined> {
     const run = await this.store.getRun(input.nextRunId);
-    if (run !== null && run.sessionId === input.sessionId) {
+    if (
+      run !== null &&
+      run.sessionId === input.sessionId &&
+      (run.status === "RUNNING" || run.status === "WAITING")
+    ) {
       return input.nextRunId;
     }
-    return input.thread.activeRunId;
+    return run === null ? input.thread.activeRunId : undefined;
   }
 }
 
@@ -178,12 +206,22 @@ function buildCanonicalRuntimeTurn(input: {
 function normalizeSubmittedMetadata(
   submitted: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (submitted === undefined || Array.isArray(submitted.history) === false) {
-    return submitted;
+  if (submitted === undefined) {
+    return undefined;
+  }
+  const {
+    activeTurnId: _activeTurnId,
+    executionClaim: _executionClaim,
+    suspensionEnvelope: _suspensionEnvelope,
+    terminalEnvelope: _terminalEnvelope,
+    ...safeSubmitted
+  } = submitted;
+  if (Array.isArray(safeSubmitted.history) === false) {
+    return safeSubmitted;
   }
   return {
-    ...submitted,
-    history: normalizeSubmittedHistory(submitted.history) ?? [],
+    ...safeSubmitted,
+    history: normalizeSubmittedHistory(safeSubmitted.history) ?? [],
   };
 }
 
@@ -234,6 +272,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && Array.isArray(value) === false
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 export function mergeSubmittedHistoryMetadata(

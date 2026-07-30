@@ -11,6 +11,8 @@ import type {
 import type {
   CommitStepInput,
   CommitStepResult,
+  ClaimConversationTurnExecutionInput,
+  ClaimConversationTurnExecutionResult,
   GetArtifactInput,
   ListArtifactsInput,
   PersistedArtifact,
@@ -20,12 +22,14 @@ import type {
   PersistedRunStateRecord,
   ProviderReasoningEncryptedRecord,
   ProviderReasoningRecordKind,
+  RunLifecycleSettlement,
   OutboxEventRecord,
   PersistedEffect,
   SessionProductStateRecord,
   SessionRecord,
   SessionStore,
   LegacySessionArchive,
+  UpdateConversationTurnTerminalEnvelopeInput,
 } from "../kestrel/contracts/store.js";
 import type {
   EffectResult,
@@ -40,6 +44,8 @@ import type {
   AssemblyProposalStatus,
   ConversationTurnRecord,
   ConversationTurnSegmentRecord,
+  ConversationTurnSuspensionEnvelopeV1,
+  ConversationTurnTerminalEnvelopeV1,
   ContextCheckpointRecord,
   ContextPolicyDefinitionRecord,
   ContextSummaryArtifactRecord,
@@ -53,7 +59,7 @@ import type {
   ThreadAssemblyRecord,
   ThreadRecord,
 } from "../kestrel/contracts/orchestration.js";
-import { SessionBusyError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { SessionBusyError, asRuntimeError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import {
   normalizeRuntimeStateForPersist,
   validateRuntimeSessionState,
@@ -65,6 +71,11 @@ import {
 } from "../runtime/stateDiagnostics.js";
 import { normalizeOptionalTimestampString, normalizeTimestampString } from "../runtime/timestamps.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
+import {
+  buildCanonicalWaitingFor,
+  readActiveWaitState,
+  type CanonicalRuntimeWaitingFor,
+} from "../runtime/waitState.js";
 import { PostgresOrchestrationStore } from "../orchestration/PostgresOrchestrationStore.js";
 import {
   normalizeProjectSnapshot,
@@ -802,6 +813,51 @@ export class PostgresSessionStore implements SessionStore {
     });
   }
 
+  async validatePrestartedRun(runId: string, event: RuntimeEvent): Promise<void> {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<{
+      run_id: string | null;
+      run_session_id: string | null;
+      event_type: string | null;
+      run_status: string | null;
+      active_run_id: string | null;
+    }>(
+      `SELECT runs.run_id,
+              runs.session_id AS run_session_id,
+              runs.event_type,
+              runs.status AS run_status,
+              sessions.active_run_id
+         FROM sessions
+         LEFT JOIN runs
+           ON runs.run_id = $1
+        WHERE sessions.session_id = $2`,
+      [runId, event.sessionId],
+    );
+    const row = result.rows[0];
+    if (
+      row?.run_id !== runId ||
+      row.run_session_id !== event.sessionId ||
+      row.event_type !== event.type ||
+      row.run_status !== "RUNNING" ||
+      row.active_run_id !== runId
+    ) {
+      throw createRuntimeFailure(
+        "PRESTARTED_RUN_INVALID",
+        `Run '${runId}' is not a valid prestarted run for session '${event.sessionId}'.`,
+        {
+          runId,
+          sessionId: event.sessionId,
+          eventType: event.type,
+          observedRunId: row?.run_id ?? undefined,
+          observedRunSessionId: row?.run_session_id ?? undefined,
+          observedEventType: row?.event_type ?? undefined,
+          observedRunStatus: row?.run_status ?? undefined,
+          observedActiveRunId: row?.active_run_id ?? undefined,
+        },
+      );
+    }
+  }
+
   async recoverOrphanedActiveRun(sessionId: string): Promise<{ runId?: string | undefined }> {
     await this.ensureSchemaV3();
     return this.withTransaction(async (executor) => {
@@ -823,28 +879,16 @@ export class PostgresSessionStore implements SessionStore {
         );
       }
 
-      if (activeRun !== null) {
-        await executor.query(
-          `UPDATE runs
-              SET status = 'FAILED',
-                  completed_at = COALESCE(completed_at, NOW()),
-                  error_json = $2::jsonb
-            WHERE run_id = $1`,
-          [
-            activeRun.runId,
-            stringifySanitizedJson({
-              code: "RUNNER_ORPHANED_ACTIVE_RUN",
-              message: "The process-owned runner no longer has a live execution for this persisted run.",
-              details: {
-                sessionId: session.sessionId,
-                runId: activeRun.runId,
-              },
-            }),
-          ],
-        );
-      }
-
-      await this.releaseActiveRunLeaseWithExecutor(executor, session.sessionId, session.activeRunId);
+      const orphanError: RuntimeError = {
+        code: "RUNNER_ORPHANED_ACTIVE_RUN",
+        message: "The process-owned runner no longer has a live execution for this persisted run.",
+        details: { sessionId: session.sessionId, runId: session.activeRunId },
+      };
+      await this.projectRecoveredRunWithExecutor(executor, session, {
+        runId: session.activeRunId,
+        status: "FAILED",
+        error: orphanError,
+      });
       return { runId: session.activeRunId };
     });
   }
@@ -1306,6 +1350,390 @@ export class PostgresSessionStore implements SessionStore {
 
   async appendRunEvent(event: RunEvent): Promise<void> {
     await this.appendRunEventsBatch([event]);
+  }
+
+  async claimConversationTurnExecution(
+    input: ClaimConversationTurnExecutionInput,
+  ): Promise<ClaimConversationTurnExecutionResult> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      if (
+        input.segment.turnId !== input.turnId ||
+        input.segment.threadId !== input.threadId ||
+        input.segment.sessionId !== input.sessionId ||
+        input.segment.runId !== input.proposedRunId
+      ) {
+        throw createRuntimeFailure(
+          "STORE_CONVERSATION_TURN_CLAIM_INVALID",
+          "The conversation turn segment does not match the execution claim.",
+          { turnId: input.turnId, proposedRunId: input.proposedRunId },
+        );
+      }
+
+      const session = await this.getSessionLeaseStateForUpdate(input.sessionId, executor);
+      if (session === null) {
+        throw createRuntimeFailure(
+          "STORE_SESSION_NOT_FOUND",
+          `Session does not exist: ${input.sessionId}.`,
+          { sessionId: input.sessionId, runId: input.proposedRunId },
+        );
+      }
+
+      const threadResult = await executor.query<{
+        thread_id: string;
+        session_id: string;
+        active_run_id: string | null;
+        metadata_json: Record<string, unknown> | null;
+      }>(
+        `SELECT thread_id, session_id, active_run_id, metadata_json
+           FROM orchestration_threads
+          WHERE thread_id = $1
+          FOR UPDATE`,
+        [input.threadId],
+      );
+      const thread = threadResult.rows[0];
+      if (thread === undefined || thread.session_id !== input.sessionId) {
+        throw createRuntimeFailure(
+          "STORE_CONVERSATION_TURN_THREAD_INVALID",
+          `Thread '${input.threadId}' does not belong to session '${input.sessionId}'.`,
+          { threadId: input.threadId, sessionId: input.sessionId },
+        );
+      }
+
+      const turnResult = await executor.query<ConversationTurnRow>(
+        `SELECT turn_id, thread_id, session_id, root_run_id, status, initial_event_type,
+                active_run_id, terminal_run_id, terminal_status, metadata_json,
+                started_at, updated_at, completed_at
+           FROM conversation_turns
+          WHERE turn_id = $1
+          FOR UPDATE`,
+        [input.turnId],
+      );
+      const existingTurn = turnResult.rows[0];
+      const existingClaim = readRecord(existingTurn?.metadata_json?.executionClaim);
+      const existingTurnIdentity = readNonEmptyString(existingClaim?.turnRequestIdentity);
+      if (
+        existingTurnIdentity !== undefined &&
+        existingTurnIdentity !== input.turnRequestIdentity
+      ) {
+        throw createRuntimeFailure(
+          "CONVERSATION_TURN_IDENTITY_CONFLICT",
+          `Turn '${input.turnId}' was already claimed by a different initial request.`,
+          { turnId: input.turnId },
+        );
+      }
+      if (
+        existingTurn !== undefined &&
+        (existingTurn.thread_id !== input.threadId || existingTurn.session_id !== input.sessionId)
+      ) {
+        throw createRuntimeFailure(
+          "STORE_CONVERSATION_TURN_CLAIM_INVALID",
+          `Turn '${input.turnId}' belongs to a different thread or session.`,
+          { turnId: input.turnId },
+        );
+      }
+
+      if (existingTurn?.status === "COMPLETED" || existingTurn?.status === "FAILED") {
+        const terminalEnvelope = readConversationTurnTerminalEnvelope(
+          existingTurn.metadata_json?.terminalEnvelope,
+        );
+        if (terminalEnvelope === undefined) {
+          throw createRuntimeFailure(
+            "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+            `Turn '${input.turnId}' is terminal without a replay envelope.`,
+            { turnId: input.turnId },
+          );
+        }
+        return { kind: "terminal", terminalEnvelope };
+      }
+
+      const consumedSubmission = await executor.query<{ run_id: string }>(
+        `SELECT run_id
+           FROM conversation_turn_segments
+          WHERE turn_id = $1
+            AND metadata_json->>'submissionIdentity' = $2
+          LIMIT 1`,
+        [input.turnId, input.submissionIdentity],
+      );
+      const consumedRunId = consumedSubmission.rows[0]?.run_id;
+      if (consumedRunId !== undefined) {
+        return { kind: "already_running", runId: consumedRunId };
+      }
+
+      let recoveredExistingWait = false;
+      if (existingTurn?.status === "RUNNING" && existingTurn.active_run_id !== null) {
+        const activeRun = await this.getRunLeaseStateForUpdate(existingTurn.active_run_id, executor);
+        if (activeRun?.status === "RUNNING") {
+          return { kind: "already_running", runId: existingTurn.active_run_id };
+        }
+
+        if (activeRun !== null) {
+          let recoveredStatus = activeRun.status;
+          let recoveredError: RuntimeError | null =
+            activeRun.error == null ? null : asRuntimeError(activeRun.error);
+          let recoveredWait: CanonicalRuntimeWaitingFor | undefined;
+          if (activeRun.status === "WAITING") {
+            const activeWait = readActiveWaitState(this.asRecord(session.state.agent));
+            if (activeWait === undefined) {
+              recoveredStatus = "FAILED";
+              recoveredError = {
+                code: "RECOVERED_WAIT_STATE_INVALID",
+                message: "Persisted WAITING run has no canonical wait to resume.",
+                details: {
+                  sessionId: input.sessionId,
+                  turnId: input.turnId,
+                  runId: activeRun.runId,
+                },
+              };
+            } else {
+              recoveredWait = buildCanonicalWaitingFor({
+                waitFor: activeWait,
+                resumeStepAgent: activeWait.resumeStepAgent,
+                resumeToken: activeWait.resumeToken,
+                reason: activeWait.reason,
+                resumeInstruction: activeWait.resumeInstruction,
+                blockedAction: activeWait.blockedAction,
+              });
+            }
+          }
+          await this.projectRecoveredRunWithExecutor(executor, session, {
+            runId: activeRun.runId,
+            status: recoveredStatus,
+            ...(recoveredError !== null ? { error: recoveredError } : {}),
+            ...(recoveredWait !== undefined ? { wait: recoveredWait } : {}),
+          });
+          if (recoveredStatus === "WAITING") {
+            recoveredExistingWait = true;
+          } else {
+            const recoveredTurn = await executor.query<ConversationTurnRow>(
+              `SELECT turn_id, thread_id, session_id, root_run_id, status, initial_event_type,
+                      active_run_id, terminal_run_id, terminal_status, metadata_json,
+                      started_at, updated_at, completed_at
+                 FROM conversation_turns
+                WHERE turn_id = $1`,
+              [input.turnId],
+            );
+            const terminalEnvelope = readConversationTurnTerminalEnvelope(
+              recoveredTurn.rows[0]?.metadata_json?.terminalEnvelope,
+            );
+            if (terminalEnvelope === undefined) {
+              throw createRuntimeFailure(
+                "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+                `Recovered turn '${input.turnId}' has no replay envelope.`,
+                { turnId: input.turnId, runId: activeRun.runId },
+              );
+            }
+            return { kind: "terminal", terminalEnvelope };
+          }
+        } else {
+          const orphanError: RuntimeError = {
+            code: "CONVERSATION_TURN_CLAIM_ORPHANED",
+            message: "The conversation turn referenced a run that cannot finish the claim.",
+            details: {
+              turnId: input.turnId,
+              runId: existingTurn.active_run_id,
+            },
+          };
+          const terminalEnvelope: ConversationTurnTerminalEnvelopeV1 = {
+            version: "v1",
+            turnRequestIdentity: input.turnRequestIdentity,
+            terminalSubmissionIdentity:
+              readNonEmptyString(existingClaim?.submissionIdentity) ?? input.submissionIdentity,
+            runId: existingTurn.active_run_id,
+            status: "FAILED",
+            handoff: { state: "failed", finalizationError: orphanError },
+          };
+          await executor.query(
+            `UPDATE conversation_turns
+                SET status = 'FAILED',
+                    active_run_id = NULL,
+                    terminal_run_id = $2,
+                    terminal_status = 'FAILED',
+                    metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                      || jsonb_build_object('terminalEnvelope', $3::jsonb),
+                    updated_at = NOW(),
+                    completed_at = NOW()
+              WHERE turn_id = $1`,
+            [input.turnId, existingTurn.active_run_id, stringifySanitizedJson(terminalEnvelope)],
+          );
+          await executor.query(
+            `UPDATE orchestration_threads
+                SET status = 'FAILED',
+                    active_run_id = NULL,
+                    current_request_id = NULL,
+                    last_run_status = 'FAILED',
+                    wait_for_json = NULL,
+                    metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                      || jsonb_build_object('terminalEnvelope', $3::jsonb),
+                    updated_at = NOW()
+              WHERE thread_id = $1
+                AND active_run_id = $2`,
+            [input.threadId, existingTurn.active_run_id, stringifySanitizedJson(terminalEnvelope)],
+          );
+          await this.releaseActiveRunLeaseWithExecutor(
+            executor,
+            input.sessionId,
+            existingTurn.active_run_id,
+          );
+          return { kind: "terminal", terminalEnvelope };
+        }
+      }
+
+      if (recoveredExistingWait === false) {
+        await this.reconcileTerminalActiveRunWithExecutor(executor, session);
+      }
+      await this.acquireRunLeaseWithExecutor(executor, input.proposedRunId, input.sessionId);
+      await executor.query(
+        `INSERT INTO runs (run_id, session_id, event_type, status, started_at)
+         VALUES ($1, $2, $3, 'RUNNING', $4::timestamptz)`,
+        [input.proposedRunId, input.sessionId, input.eventType, normalizeTimestampString(input.startedAt)],
+      );
+
+      const claimMetadata = {
+        turnRequestIdentity: input.turnRequestIdentity,
+        submissionIdentity: input.submissionIdentity,
+        submissionKind: input.submissionKind,
+        activeRunId: input.proposedRunId,
+      };
+      await executor.query(
+        `INSERT INTO conversation_turns
+           (turn_id, thread_id, session_id, root_run_id, status, initial_event_type,
+            active_run_id, terminal_run_id, terminal_status, metadata_json, started_at, updated_at, completed_at)
+         VALUES ($1, $2, $3, $4, 'RUNNING', $5, $4, NULL, NULL,
+                 COALESCE($8::jsonb, '{}'::jsonb)
+                   || jsonb_build_object('executionClaim', $6::jsonb),
+                 $7::timestamptz, $7::timestamptz, NULL)
+         ON CONFLICT (turn_id) DO UPDATE
+            SET status = 'RUNNING',
+                active_run_id = EXCLUDED.active_run_id,
+                terminal_run_id = NULL,
+                terminal_status = NULL,
+                metadata_json = (
+                  COALESCE(conversation_turns.metadata_json, '{}'::jsonb)
+                    || COALESCE($8::jsonb, '{}'::jsonb)
+                    || jsonb_build_object('executionClaim', $6::jsonb)
+                ) - 'suspensionEnvelope' - 'terminalEnvelope',
+                updated_at = EXCLUDED.updated_at,
+                completed_at = NULL`,
+        [
+          input.turnId,
+          input.threadId,
+          input.sessionId,
+          input.proposedRunId,
+          input.eventType,
+          stringifySanitizedJson(claimMetadata),
+          normalizeTimestampString(input.startedAt),
+          stringifySanitizedJson(input.segment.metadata ?? null),
+        ],
+      );
+      await executor.query(
+        `INSERT INTO conversation_turn_segments
+           (segment_id, turn_id, thread_id, session_id, run_id, kind, event_type,
+            request_id, grant_id, message_hash, metadata_json, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                 COALESCE($11::jsonb, '{}'::jsonb)
+                   || jsonb_build_object('submissionIdentity', $12::text),
+                 $13::timestamptz)
+         ON CONFLICT (segment_id) DO NOTHING`,
+        [
+          input.segment.segmentId,
+          input.segment.turnId,
+          input.segment.threadId,
+          input.segment.sessionId,
+          input.segment.runId,
+          input.segment.kind,
+          input.segment.eventType,
+          input.segment.requestId ?? null,
+          input.segment.grantId ?? null,
+          input.segment.messageHash,
+          stringifySanitizedJson(input.segment.metadata ?? null),
+          input.submissionIdentity,
+          normalizeTimestampString(input.segment.createdAt),
+        ],
+      );
+      await executor.query(
+        `UPDATE orchestration_threads
+            SET status = 'RUNNING',
+                active_run_id = $2,
+                current_request_id = NULL,
+                last_run_status = 'RUNNING',
+                wait_for_json = NULL,
+                metadata_json = (
+                  COALESCE(metadata_json, '{}'::jsonb)
+                    || COALESCE($5::jsonb, '{}'::jsonb)
+                    || jsonb_build_object(
+                         'activeTurnId', $3::text,
+                         'executionClaim', $4::jsonb
+                       )
+                ) - 'suspensionEnvelope' - 'terminalEnvelope',
+                updated_at = NOW()
+          WHERE thread_id = $1`,
+        [
+          input.threadId,
+          input.proposedRunId,
+          input.turnId,
+          stringifySanitizedJson(claimMetadata),
+          stringifySanitizedJson(input.segment.metadata ?? null),
+        ],
+      );
+      return { kind: "claimed", runId: input.proposedRunId };
+    });
+  }
+
+  async updateConversationTurnTerminalEnvelope(
+    input: UpdateConversationTurnTerminalEnvelopeInput,
+  ): Promise<boolean> {
+    await this.ensureSchemaV3();
+    if (
+      input.envelope.runId !== input.runId ||
+      input.envelope.terminalSubmissionIdentity !== input.terminalSubmissionIdentity
+    ) {
+      throw createRuntimeFailure(
+        "STORE_CONVERSATION_TURN_HANDOFF_INVALID",
+        "The terminal handoff envelope does not match its claimed run and submission.",
+        { turnId: input.turnId, runId: input.runId },
+      );
+    }
+    return this.withTransaction(async (executor) => {
+      const updatedTurn = await executor.query<{ thread_id: string }>(
+        `UPDATE conversation_turns
+            SET metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                  || jsonb_build_object('terminalEnvelope', $4::jsonb),
+                updated_at = NOW()
+          WHERE turn_id = $1
+            AND terminal_run_id = $2
+            AND metadata_json->'executionClaim'->>'submissionIdentity' = $3
+            AND metadata_json->'terminalEnvelope'->>'runId' = $2
+            AND metadata_json->'terminalEnvelope'->'handoff'->>'state' = 'pending'
+          RETURNING thread_id`,
+        [
+          input.turnId,
+          input.runId,
+          input.terminalSubmissionIdentity,
+          stringifySanitizedJson(input.envelope),
+        ],
+      );
+      const threadId = updatedTurn.rows[0]?.thread_id;
+      if (threadId === undefined) {
+        return false;
+      }
+      await executor.query(
+        `UPDATE orchestration_threads
+            SET metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                  || jsonb_build_object('terminalEnvelope', $4::jsonb),
+                updated_at = NOW()
+          WHERE thread_id = $1
+            AND metadata_json->>'activeTurnId' = $2
+            AND metadata_json->'terminalEnvelope'->>'runId' = $3`,
+        [
+          threadId,
+          input.turnId,
+          input.runId,
+          stringifySanitizedJson(input.envelope),
+        ],
+      );
+      return true;
+    });
   }
 
   async upsertConversationTurn(record: ConversationTurnRecord): Promise<void> {
@@ -2161,6 +2589,13 @@ export class PostgresSessionStore implements SessionStore {
     return this.orchestrationStore.upsertThread(thread);
   }
 
+  async updateThreadAfterRun(
+    input: Parameters<PostgresOrchestrationStore["updateThreadAfterRun"]>[0],
+  ): Promise<boolean> {
+    await this.ensureSchemaV3();
+    return this.orchestrationStore.updateThreadAfterRun(input);
+  }
+
   async getThread(threadId: string): Promise<ThreadRecord | null> {
     await this.ensureSchemaV3();
     return this.orchestrationStore.getThread(threadId);
@@ -2401,6 +2836,7 @@ export class PostgresSessionStore implements SessionStore {
     runId: string,
     status: TransitionStatus,
     error?: RuntimeError,
+    settlement?: RunLifecycleSettlement,
   ): Promise<void> {
     await this.ensureSchemaV3();
     await this.withTransaction(async (executor) => {
@@ -2414,21 +2850,163 @@ export class PostgresSessionStore implements SessionStore {
         [runId, status, stringifySanitizedJson(error ?? null)],
       );
       const sessionId = runResult.rows[0]?.session_id;
+      if (sessionId === undefined) {
+        throw createRuntimeFailure(
+          "STORE_RUN_NOT_FOUND",
+          `Run does not exist: ${runId}.`,
+          { runId, status },
+        );
+      }
+
+      const turnResult = await executor.query<ConversationTurnRow>(
+        `SELECT turn_id, thread_id, session_id, root_run_id, status, initial_event_type,
+                active_run_id, terminal_run_id, terminal_status, metadata_json,
+                started_at, updated_at, completed_at
+           FROM conversation_turns
+          WHERE active_run_id = $1
+          FOR UPDATE`,
+        [runId],
+      );
+      const turn = turnResult.rows[0];
+      if (turn !== undefined) {
+        const claim = readRecord(turn.metadata_json?.executionClaim);
+        const turnRequestIdentity = readNonEmptyString(claim?.turnRequestIdentity);
+        const submissionIdentity = readNonEmptyString(claim?.submissionIdentity);
+        if (turnRequestIdentity === undefined || submissionIdentity === undefined) {
+          throw createRuntimeFailure(
+            "STORE_CONVERSATION_TURN_CLAIM_INVALID",
+            `Run '${runId}' has no valid active conversation turn claim.`,
+            { runId, turnId: turn.turn_id },
+          );
+        }
+
+        if (status === "WAITING") {
+          if (settlement?.wait === undefined) {
+            throw createRuntimeFailure(
+              "STORE_WAIT_SETTLEMENT_REQUIRED",
+              `Run '${runId}' cannot enter WAITING without a canonical wait settlement.`,
+              { runId, turnId: turn.turn_id },
+            );
+          }
+          const suspensionEnvelope: ConversationTurnSuspensionEnvelopeV1 = {
+            version: "v1",
+            turnRequestIdentity,
+            submissionIdentity,
+            runId,
+            wait: settlement.wait,
+          };
+          await executor.query(
+            `UPDATE conversation_turns
+                SET status = 'WAITING',
+                    metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                      || jsonb_build_object('suspensionEnvelope', $2::jsonb),
+                    updated_at = NOW()
+              WHERE turn_id = $1
+                AND active_run_id = $3`,
+            [turn.turn_id, stringifySanitizedJson(suspensionEnvelope), runId],
+          );
+          const threadUpdate = await executor.query(
+            `UPDATE orchestration_threads
+                SET status = 'WAITING',
+                    active_run_id = $2,
+                    current_request_id = NULL,
+                    last_run_status = 'WAITING',
+                    wait_for_json = $3::jsonb,
+                    metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                      || jsonb_build_object('suspensionEnvelope', $4::jsonb),
+                    updated_at = NOW()
+              WHERE thread_id = $1
+                AND active_run_id = $2
+                AND metadata_json->>'activeTurnId' = $5
+                AND metadata_json->'executionClaim'->>'turnRequestIdentity' = $6
+                AND metadata_json->'executionClaim'->>'submissionIdentity' = $7`,
+            [
+              turn.thread_id,
+              runId,
+              stringifySanitizedJson(settlement.wait),
+              stringifySanitizedJson(suspensionEnvelope),
+              turn.turn_id,
+              turnRequestIdentity,
+              submissionIdentity,
+            ],
+          );
+          if (threadUpdate.rowCount !== 1) {
+            throw createRuntimeFailure(
+              "STORE_THREAD_SETTLEMENT_CONFLICT",
+              `Run '${runId}' no longer owns thread '${turn.thread_id}'.`,
+              { runId, turnId: turn.turn_id, threadId: turn.thread_id },
+            );
+          }
+        } else if (status === "COMPLETED" || status === "FAILED") {
+          const terminalEnvelope: ConversationTurnTerminalEnvelopeV1 = {
+            version: "v1",
+            turnRequestIdentity,
+            terminalSubmissionIdentity: submissionIdentity,
+            runId,
+            status,
+            handoff: { state: "pending" },
+          };
+          await executor.query(
+            `UPDATE conversation_turns
+                SET status = $2,
+                    active_run_id = NULL,
+                    terminal_run_id = $3,
+                    terminal_status = $2,
+                    metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                      || jsonb_build_object('terminalEnvelope', $4::jsonb),
+                    updated_at = NOW(),
+                    completed_at = NOW()
+              WHERE turn_id = $1
+                AND active_run_id = $3`,
+            [turn.turn_id, status, runId, stringifySanitizedJson(terminalEnvelope)],
+          );
+          const threadUpdate = await executor.query(
+            `UPDATE orchestration_threads
+                SET status = $2,
+                    active_run_id = NULL,
+                    current_request_id = NULL,
+                    last_run_status = $2,
+                    wait_for_json = NULL,
+                    metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                      || jsonb_build_object('terminalEnvelope', $4::jsonb),
+                    updated_at = NOW()
+              WHERE thread_id = $1
+                AND active_run_id = $3
+                AND metadata_json->>'activeTurnId' = $5
+                AND metadata_json->'executionClaim'->>'turnRequestIdentity' = $6
+                AND metadata_json->'executionClaim'->>'submissionIdentity' = $7`,
+            [
+              turn.thread_id,
+              status,
+              runId,
+              stringifySanitizedJson(terminalEnvelope),
+              turn.turn_id,
+              turnRequestIdentity,
+              submissionIdentity,
+            ],
+          );
+          if (threadUpdate.rowCount !== 1) {
+            throw createRuntimeFailure(
+              "STORE_THREAD_SETTLEMENT_CONFLICT",
+              `Run '${runId}' no longer owns thread '${turn.thread_id}'.`,
+              { runId, turnId: turn.turn_id, threadId: turn.thread_id },
+            );
+          }
+        }
+      }
       await executor.query(
         "DELETE FROM provider_reasoning_state WHERE run_id = $1 AND record_kind = 'continuation'",
         [runId],
       );
-      if (sessionId !== undefined) {
-        await executor.query(
-          `UPDATE sessions
-              SET active_run_id = NULL,
-                  active_run_started_at = NULL,
-                  updated_at = NOW()
-            WHERE session_id = $1
-              AND active_run_id = $2`,
-          [sessionId, runId],
-        );
-      }
+      await executor.query(
+        `UPDATE sessions
+            SET active_run_id = NULL,
+                active_run_started_at = NULL,
+                updated_at = NOW()
+          WHERE session_id = $1
+            AND active_run_id = $2`,
+        [sessionId, runId],
+      );
     });
   }
 
@@ -2544,7 +3122,19 @@ export class PostgresSessionStore implements SessionStore {
     }
 
     if (activeRun === null) {
-      await this.releaseActiveRunLeaseWithExecutor(executor, session.sessionId, session.activeRunId);
+      const orphanError: RuntimeError = {
+        code: "CONVERSATION_TURN_CLAIM_ORPHANED",
+        message: "The active conversation turn references a run that no longer exists.",
+        details: {
+          sessionId: session.sessionId,
+          runId: session.activeRunId,
+        },
+      };
+      await this.projectRecoveredRunWithExecutor(executor, session, {
+        runId: session.activeRunId,
+        status: "FAILED",
+        error: orphanError,
+      });
       return;
     }
 
@@ -2553,25 +3143,250 @@ export class PostgresSessionStore implements SessionStore {
       return;
     }
 
-    if (activeRun !== null && (activeRun.status === "RUNNING" || activeRun.completedAt === undefined)) {
-      await executor.query(
-        `UPDATE runs
-            SET status = $2,
-                completed_at = COALESCE(completed_at, NOW()),
-                error_json = CASE
-                  WHEN error_json IS NULL THEN $3::jsonb
-                  ELSE error_json
-                END
-          WHERE run_id = $1`,
-        [
-          activeRun.runId,
-          terminalStatus,
-          stringifySanitizedJson(this.buildRecoveredRunError(terminalStatus, session.state)),
-        ],
-      );
+    let recoveredStatus = terminalStatus;
+    let recoveredError = this.buildRecoveredRunError(terminalStatus, session.state);
+    let recoveredWait: CanonicalRuntimeWaitingFor | undefined;
+    if (terminalStatus === "WAITING") {
+      const activeWait = readActiveWaitState(this.asRecord(session.state.agent));
+      if (activeWait === undefined) {
+        recoveredStatus = "FAILED";
+        recoveredError = {
+          code: "RECOVERED_WAIT_STATE_INVALID",
+          message: "Persisted WAITING session state has no canonical wait to resume.",
+          details: {
+            sessionId: session.sessionId,
+            runId: activeRun.runId,
+          },
+        };
+      } else {
+        recoveredWait = buildCanonicalWaitingFor({
+          waitFor: activeWait,
+          resumeStepAgent: activeWait.resumeStepAgent,
+          resumeToken: activeWait.resumeToken,
+          reason: activeWait.reason,
+          resumeInstruction: activeWait.resumeInstruction,
+          blockedAction: activeWait.blockedAction,
+        });
+      }
     }
 
-    await this.releaseActiveRunLeaseWithExecutor(executor, session.sessionId, session.activeRunId);
+    await this.projectRecoveredRunWithExecutor(executor, session, {
+      runId: activeRun.runId,
+      status: recoveredStatus,
+      ...(recoveredError !== null ? { error: recoveredError } : {}),
+      ...(recoveredWait !== undefined ? { wait: recoveredWait } : {}),
+    });
+  }
+
+  private async projectRecoveredRunWithExecutor(
+    executor: SqlExecutor,
+    session: LockedSessionLeaseState,
+    input: {
+      runId: string;
+      status: Exclude<TransitionStatus, "RUNNING">;
+      error?: RuntimeError | undefined;
+      wait?: CanonicalRuntimeWaitingFor | undefined;
+    },
+  ): Promise<void> {
+    const turnResult = await executor.query<ConversationTurnRow>(
+      `SELECT turn_id, thread_id, session_id, root_run_id, status, initial_event_type,
+              active_run_id, terminal_run_id, terminal_status, metadata_json,
+              started_at, updated_at, completed_at
+         FROM conversation_turns
+        WHERE active_run_id = $1
+        FOR UPDATE`,
+      [input.runId],
+    );
+    const turn = turnResult.rows[0];
+    const claim = readRecord(turn?.metadata_json?.executionClaim);
+    const turnRequestIdentity =
+      readNonEmptyString(claim?.turnRequestIdentity) ??
+      (turn === undefined ? `recovered:${input.runId}` : `recovered:${turn.turn_id}`);
+    const submissionIdentity =
+      readNonEmptyString(claim?.submissionIdentity) ?? `recovered:${input.runId}`;
+
+    await executor.query(
+      `UPDATE runs
+          SET status = $2,
+              completed_at = COALESCE(completed_at, NOW()),
+              error_json = CASE
+                WHEN error_json IS NULL THEN $3::jsonb
+                ELSE error_json
+              END
+        WHERE run_id = $1`,
+      [input.runId, input.status, stringifySanitizedJson(input.error ?? null)],
+    );
+
+    if (turn !== undefined && input.status === "WAITING") {
+      if (input.wait === undefined) {
+        throw createRuntimeFailure(
+          "STORE_WAIT_SETTLEMENT_REQUIRED",
+          `Recovered run '${input.runId}' cannot enter WAITING without a canonical wait.`,
+          { runId: input.runId, turnId: turn.turn_id },
+        );
+      }
+      const suspensionEnvelope: ConversationTurnSuspensionEnvelopeV1 = {
+        version: "v1",
+        turnRequestIdentity,
+        submissionIdentity,
+        runId: input.runId,
+        wait: input.wait,
+      };
+      const turnUpdate = await executor.query(
+        `UPDATE conversation_turns
+            SET status = 'WAITING',
+                metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                  || jsonb_build_object('suspensionEnvelope', $3::jsonb),
+                updated_at = NOW()
+          WHERE turn_id = $1
+            AND active_run_id = $2`,
+        [turn.turn_id, input.runId, stringifySanitizedJson(suspensionEnvelope)],
+      );
+      if (turnUpdate.rowCount !== 1) {
+        throw createRuntimeFailure(
+          "STORE_CONVERSATION_TURN_SETTLEMENT_CONFLICT",
+          `Recovered run '${input.runId}' no longer owns turn '${turn.turn_id}'.`,
+          { runId: input.runId, turnId: turn.turn_id },
+        );
+      }
+      const threadUpdate = await executor.query(
+        `UPDATE orchestration_threads
+            SET status = 'WAITING',
+                active_run_id = $2,
+                current_request_id = NULL,
+                last_run_status = 'WAITING',
+                wait_for_json = $3::jsonb,
+                metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                  || jsonb_build_object('suspensionEnvelope', $4::jsonb),
+                updated_at = NOW()
+          WHERE thread_id = $1
+            AND active_run_id = $2
+            AND metadata_json->>'activeTurnId' = $5`,
+        [
+          turn.thread_id,
+          input.runId,
+          stringifySanitizedJson(input.wait),
+          stringifySanitizedJson(suspensionEnvelope),
+          turn.turn_id,
+        ],
+      );
+      await this.assertRecoveredThreadProjectionWithExecutor(executor, {
+        threadId: turn.thread_id,
+        turnId: turn.turn_id,
+        runId: input.runId,
+        rowCount: threadUpdate.rowCount,
+      });
+    } else if (turn !== undefined && input.status !== "WAITING") {
+      const terminalEnvelope: ConversationTurnTerminalEnvelopeV1 = {
+        version: "v1",
+        turnRequestIdentity,
+        terminalSubmissionIdentity: submissionIdentity,
+        runId: input.runId,
+        status: input.status,
+        handoff: input.status === "COMPLETED"
+          ? { state: "pending" }
+          : {
+              state: "failed",
+              finalizationError: input.error ?? {
+                code: "RECOVERED_STALE_FAILED_RUN",
+                message: "Recovered a failed run without a persisted runtime error.",
+                details: { sessionId: session.sessionId, runId: input.runId },
+              },
+            },
+      };
+      const turnUpdate = await executor.query(
+        `UPDATE conversation_turns
+            SET status = $2,
+                active_run_id = NULL,
+                terminal_run_id = $3,
+                terminal_status = $2,
+                metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                  || jsonb_build_object('terminalEnvelope', $4::jsonb),
+                updated_at = NOW(),
+                completed_at = NOW()
+          WHERE turn_id = $1
+            AND active_run_id = $3`,
+        [
+          turn.turn_id,
+          input.status,
+          input.runId,
+          stringifySanitizedJson(terminalEnvelope),
+        ],
+      );
+      if (turnUpdate.rowCount !== 1) {
+        throw createRuntimeFailure(
+          "STORE_CONVERSATION_TURN_SETTLEMENT_CONFLICT",
+          `Recovered run '${input.runId}' no longer owns turn '${turn.turn_id}'.`,
+          { runId: input.runId, turnId: turn.turn_id },
+        );
+      }
+      const threadUpdate = await executor.query(
+        `UPDATE orchestration_threads
+            SET status = $2,
+                active_run_id = NULL,
+                current_request_id = NULL,
+                last_run_status = $2,
+                wait_for_json = NULL,
+                metadata_json = COALESCE(metadata_json, '{}'::jsonb)
+                  || jsonb_build_object('terminalEnvelope', $4::jsonb),
+                updated_at = NOW()
+          WHERE thread_id = $1
+            AND active_run_id = $3
+            AND metadata_json->>'activeTurnId' = $5`,
+        [
+          turn.thread_id,
+          input.status,
+          input.runId,
+          stringifySanitizedJson(terminalEnvelope),
+          turn.turn_id,
+        ],
+      );
+      await this.assertRecoveredThreadProjectionWithExecutor(executor, {
+        threadId: turn.thread_id,
+        turnId: turn.turn_id,
+        runId: input.runId,
+        rowCount: threadUpdate.rowCount,
+      });
+    }
+
+    await this.releaseActiveRunLeaseWithExecutor(
+      executor,
+      session.sessionId,
+      input.runId,
+    );
+  }
+
+  private async assertRecoveredThreadProjectionWithExecutor(
+    executor: SqlExecutor,
+    input: {
+      threadId: string;
+      turnId: string;
+      runId: string;
+      rowCount: number;
+    },
+  ): Promise<void> {
+    if (input.rowCount === 1) {
+      return;
+    }
+    const current = await executor.query<{ active_run_id: string | null }>(
+      `SELECT active_run_id
+         FROM orchestration_threads
+        WHERE thread_id = $1
+        FOR UPDATE`,
+      [input.threadId],
+    );
+    if (current.rows[0]?.active_run_id !== input.runId) {
+      return;
+    }
+    throw createRuntimeFailure(
+      "STORE_THREAD_SETTLEMENT_CONFLICT",
+      `Recovered run '${input.runId}' still owns thread '${input.threadId}' but its projection could not be settled.`,
+      {
+        runId: input.runId,
+        turnId: input.turnId,
+        threadId: input.threadId,
+      },
+    );
   }
 
   private async releaseActiveRunLeaseWithExecutor(
@@ -2590,7 +3405,9 @@ export class PostgresSessionStore implements SessionStore {
     );
   }
 
-  private readSessionTerminalStatus(state: Record<string, unknown>): TransitionStatus | undefined {
+  private readSessionTerminalStatus(
+    state: Record<string, unknown>,
+  ): Exclude<TransitionStatus, "RUNNING"> | undefined {
     const react = this.asRecord(state.agent);
     const terminal = this.asRecord(react?.terminal);
     const status = terminal?.status;
@@ -3223,4 +4040,57 @@ function mapModelCallProvenanceRow(row: ModelCallProvenanceRow): ModelCallProven
     ...(row.latency_ms !== null ? { latencyMs: row.latency_ms } : {}),
     status: row.status,
   };
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readConversationTurnTerminalEnvelope(
+  value: unknown,
+): ConversationTurnTerminalEnvelopeV1 | undefined {
+  const envelope = readRecord(value);
+  const handoff = readRecord(envelope?.handoff);
+  if (handoff === undefined) {
+    return undefined;
+  }
+  const status = envelope?.status;
+  const handoffState = handoff?.state;
+  if (
+    envelope?.version !== "v1" ||
+    (status !== "COMPLETED" && status !== "FAILED") ||
+    readNonEmptyString(envelope.turnRequestIdentity) === undefined ||
+    readNonEmptyString(envelope.terminalSubmissionIdentity) === undefined ||
+    readNonEmptyString(envelope.runId) === undefined ||
+    (handoffState !== "pending" && handoffState !== "delivered" && handoffState !== "failed")
+  ) {
+    return undefined;
+  }
+  if (
+    handoffState === "delivered" &&
+    status === "COMPLETED" &&
+    readNonEmptyString(handoff.assistantText) === undefined
+  ) {
+    return undefined;
+  }
+  if (handoffState === "delivered" && status === "FAILED" && handoff.assistantText !== null) {
+    return undefined;
+  }
+  const finalizationError = readRecord(handoff.finalizationError);
+  if (
+    handoffState === "failed" &&
+    (
+      readNonEmptyString(finalizationError?.code) === undefined ||
+      readNonEmptyString(finalizationError?.message) === undefined
+    )
+  ) {
+    return undefined;
+  }
+  return value as ConversationTurnTerminalEnvelopeV1;
 }

@@ -5117,6 +5117,102 @@ contractTest("runtime.hermetic", "agent loop rejects plan-mode external side-eff
   assert.doesNotMatch(JSON.stringify(agent), /act\.full_auto|switch to act full auto/u);
 });
 
+contractTest("runtime.hermetic", "hash-bound closeout attempts expose only mode-valid terminal controls", async () => {
+  for (const [interactionMode, eventType, expectedTools] of [
+    [
+      "chat",
+      "user.message",
+      ["kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy"],
+    ],
+    [
+      "build",
+      "user.message",
+      ["kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy"],
+    ],
+    [
+      "plan",
+      "user.message",
+      [
+        "kestrel_finalize",
+        "kestrel_ask_user",
+        "kestrel_cannot_satisfy",
+        "kestrel_handoff_to_build",
+      ],
+    ],
+    [
+      "build",
+      "job.run",
+      ["kestrel_finalize", "kestrel_cannot_satisfy"],
+    ],
+    [
+      "plan",
+      "job.run",
+      ["kestrel_finalize", "kestrel_cannot_satisfy", "kestrel_handoff_to_build"],
+    ],
+  ] as const) {
+    const closeoutContext = context();
+    closeoutContext.event.type = eventType;
+    closeoutContext.event.payload = {
+      message: "Finish the current task.",
+      interactionMode,
+      modeSystemV2Enabled: true,
+      resumeBlockedRun: true,
+    };
+    closeoutContext.session.state.agent = {
+      interactionMode,
+      modeSystemV2Enabled: true,
+      goal: "Finish the current task.",
+      modelTranscript: transcriptForTask("Finish the current task."),
+      closeoutLatch: {
+        version: "v1",
+        closeoutRequiredForEvidenceHash: "evidence-hash",
+        closeoutAttempted: true,
+        active: true,
+      },
+    };
+    let requestToolNames: string[] = [];
+
+    const transition = await buildStep({
+      tools: [READ_TEXT_TOOL, WRITE_TEXT_TOOL],
+      capabilityManifest: [
+        {
+          name: "fs.read_text",
+          description: "Read a text file",
+          capabilityClasses: ["filesystem.read"],
+          executionClass: "read_only",
+        },
+        {
+          name: "fs.write_text",
+          description: "Write a text file",
+          capabilityClasses: ["filesystem.write"],
+          executionClass: "sandboxed_only",
+        },
+      ],
+    })(closeoutContext, {
+      useModel: async (request: ModelRequest) => {
+        requestToolNames = (request.tools ?? []).map((tool) => tool.name);
+        return modelResponse({
+          version: "v1",
+          reason: "No further in-scope work remains.",
+          nextAction: {
+            kind: "finalize",
+            finalizeReason: "out_of_scope",
+            message: "No further work is in scope for this task.",
+          },
+        });
+      },
+    } satisfies StepIO);
+
+    assert.deepEqual(requestToolNames, expectedTools);
+    const agent = transition.statePatch?.agent as Record<string, unknown>;
+    assert.equal((agent.closeoutLatch as Record<string, unknown>)?.active, false);
+    assert.equal(
+      (agent.closeoutLatch as Record<string, unknown>)?.selectedActionKind,
+      "finalize",
+    );
+  }
+});
+
 contractTest("runtime.hermetic", "agent loop rejects ask_user and preserves a noninteractive retry surface for SWE job runs", async () => {
   const sweContext = context();
   sweContext.event.type = "job.run";

@@ -10,6 +10,8 @@ import {
   isDevShellLifecycleTool,
   normalizeDevShellLifecycle,
 } from "../../../src/runtime/devshellLifecycle.js";
+import type { AgentToolEvidenceIdentityV1 } from "../../../src/kestrel/contracts/model-io.js";
+import { buildFilesystemInspectionActionKey } from "./filesystemInspection.js";
 import type {
   ActiveControllerFailure,
   EvidenceClaimImpact,
@@ -51,6 +53,7 @@ export function buildToolEvidenceEntries(input: {
   workItem?: unknown;
   contextPreviewBytes?: number | undefined;
   reused?: boolean | undefined;
+  evidenceIdentity?: AgentToolEvidenceIdentityV1 | undefined;
 }): EvidenceLedgerEntry[] {
   const output = asRecord(input.toolOutput);
   const status = inferToolStatus(output);
@@ -112,7 +115,18 @@ export function buildToolEvidenceEntries(input: {
       : {}),
   };
   const derived = buildDerivedToolEvidence(input, base);
-  return [base, ...derived];
+  return [base, ...derived].map((entry, index) => ({
+    ...entry,
+    resultIdentity: index === 0
+      ? buildToolResultIdentity({
+          toolName: input.toolName,
+          toolInput: input.toolInput,
+          toolOutput: input.toolOutput,
+          evidenceIdentity: input.evidenceIdentity,
+          entry,
+        })
+      : buildEvidenceClaimIdentity(entry),
+  }));
 }
 
 export function buildPolicyCorrectionEvidenceEntry(input: {
@@ -542,6 +556,9 @@ function parseEvidenceLedgerEntry(value: unknown): EvidenceLedgerEntry | undefin
   const createdAt = asString(root.createdAt) ?? buildEvidenceCreatedAt();
   return {
     id,
+    ...(asString(root.resultIdentity) !== undefined
+      ? { resultIdentity: asString(root.resultIdentity) }
+      : {}),
     version: "v1",
     createdAt,
     ...(typeof root.stepIndex === "number" && Number.isFinite(root.stepIndex)
@@ -978,8 +995,11 @@ function buildDerivedToolEvidence(
       (status === "passed" || status === "failed" || status === "inconclusive")
     ) {
       const requirementIds = asArray(artifactVerification.requirements)
-        .map((item) => asString(asRecord(item)?.id)?.trim())
+        .map((item) => asRecord(item))
+        .filter((item) => item?.status === "passed")
+        .map((item) => asString(item?.id)?.trim())
         .filter((item): item is string => item !== undefined && item.length > 0);
+      const supportsRequirements = status === "passed" && requirementIds.length > 0;
       return [
         {
           ...base,
@@ -999,7 +1019,7 @@ function buildDerivedToolEvidence(
             ...(base.links ?? {}),
             artifactTarget: target,
           },
-          nextUse: status === "passed"
+          nextUse: supportsRequirements
             ? {
                 supports: target,
                 invalidatesRepeat: true,
@@ -1010,10 +1030,12 @@ function buildDerivedToolEvidence(
                 invalidatesRepeat: true,
               },
           claimImpact: {
-            success: status === "passed" ? "supports" : "neutral",
-            reason: status === "passed"
-              ? "artifact_verification_passed"
-              : "artifact_verification_failed_feedback",
+            success: supportsRequirements ? "supports" : "neutral",
+            reason: supportsRequirements
+              ? "artifact_verification_requirements_passed"
+              : status === "passed"
+                ? "artifact_verification_unbound"
+                : "artifact_verification_failed_feedback",
             scope: "artifact",
             target,
             ...(requirementIds.length > 0 ? { requirementIds } : {}),
@@ -1587,6 +1609,7 @@ function parseClaimImpact(value: unknown): EvidenceClaimImpact | undefined {
     root?.scope === "helper" ||
     root?.scope === "environment" ||
     root?.scope === "policy" ||
+    root?.scope === "goal" ||
     root?.scope === "general"
     ? root.scope
     : undefined;
@@ -1613,6 +1636,165 @@ function sanitizeRecord(value: Record<string, unknown>): Record<string, unknown>
 
 function stableEvidenceSalt(value: unknown): string {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+function buildToolResultIdentity(input: {
+  toolName: string;
+  toolInput?: Record<string, unknown> | undefined;
+  toolOutput: unknown;
+  evidenceIdentity?: AgentToolEvidenceIdentityV1 | undefined;
+  entry: EvidenceLedgerEntry;
+}): string {
+  const adapterIdentity = parseAgentToolEvidenceIdentity(input.evidenceIdentity);
+  if (adapterIdentity !== undefined) {
+    return `tool:v1:${stableEvidenceSalt(adapterIdentity)}`;
+  }
+  const runtimeIdentity = buildRuntimeToolEvidenceIdentity(
+    input.toolName,
+    input.toolInput,
+    asRecord(input.toolOutput),
+  );
+  if (runtimeIdentity !== undefined) {
+    return `tool:v1:${stableEvidenceSalt(runtimeIdentity)}`;
+  }
+  return `tool:v1:${stableEvidenceSalt({
+    scope: "verification_output",
+    toolName: input.toolName,
+    status: input.entry.status,
+    target: input.entry.target,
+    output: stripVolatileVerificationFields(input.toolOutput),
+  })}`;
+}
+
+function buildEvidenceClaimIdentity(entry: EvidenceLedgerEntry): string {
+  return `claim:v1:${stableEvidenceSalt({
+    source: entry.source,
+    kind: entry.kind,
+    status: entry.status,
+    target: entry.target,
+    facts: stripVolatileVerificationFields(entry.facts),
+    claimImpact: entry.claimImpact,
+    links: {
+      sourcePath: entry.links?.sourcePath,
+      artifactTarget: entry.links?.artifactTarget,
+      processId: entry.links?.processId,
+    },
+  })}`;
+}
+
+function parseAgentToolEvidenceIdentity(
+  value: AgentToolEvidenceIdentityV1 | undefined,
+): AgentToolEvidenceIdentityV1 | undefined {
+  const scope = asString(value?.scope)?.trim();
+  const key = asString(value?.key)?.trim();
+  const revision = asString(value?.revision)?.trim();
+  if (value?.version !== "v1" || scope === undefined || scope.length === 0 || key === undefined || key.length === 0) {
+    return undefined;
+  }
+  return {
+    version: "v1",
+    scope,
+    key,
+    ...(revision !== undefined && revision.length > 0 ? { revision } : {}),
+  };
+}
+
+function buildRuntimeToolEvidenceIdentity(
+  toolName: string,
+  toolInput: Record<string, unknown> | undefined,
+  output: Record<string, unknown> | undefined,
+): AgentToolEvidenceIdentityV1 | undefined {
+  if (toolName === "fs.read_text" || toolName === "fs.search_text" || toolName === "fs.list") {
+    const path = asString(output?.path) ?? asString(toolInput?.path);
+    if (path === undefined) {
+      return undefined;
+    }
+    const inspectionKey = buildFilesystemInspectionActionKey(toolName, {
+      ...(toolInput ?? {}),
+      path,
+    });
+    if (inspectionKey === undefined) {
+      return undefined;
+    }
+    const observedRevision =
+      asString(output?.revision) ??
+      asString(output?.contentRevision) ??
+      asString(output?.etag);
+    return {
+      version: "v1",
+      scope: "filesystem",
+      key: inspectionKey,
+      revision:
+        observedRevision ??
+        stableEvidenceSalt(stripVolatileVerificationFields(output)),
+    };
+  }
+  if (
+    toolName === "dev.process.read" ||
+    toolName === "dev.process.write_and_read" ||
+    toolName === "exec_command"
+  ) {
+    const processId = asString(output?.processId) ?? asString(toolInput?.processId);
+    return {
+      version: "v1",
+      scope: "process_read",
+      key: processId ?? toolName,
+      revision: stableEvidenceSalt({
+        status: output?.status,
+        exitCode: output?.exitCode,
+        output: stripVolatileVerificationFields(output),
+      }),
+    };
+  }
+  const url =
+    asString(output?.url) ??
+    asString(toolInput?.url) ??
+    asString(output?.sourceUrl);
+  if (
+    url !== undefined ||
+    toolName.startsWith("web.") ||
+    toolName.includes("source")
+  ) {
+    return {
+      version: "v1",
+      scope: "source",
+      key: url ?? toolName,
+      revision: stableEvidenceSalt(stripVolatileVerificationFields(output)),
+    };
+  }
+  return undefined;
+}
+
+const VOLATILE_VERIFICATION_FIELDS = new Set([
+  "auditId",
+  "completedAt",
+  "durationMs",
+  "elapsedMs",
+  "latencyMs",
+  "requestId",
+  "startedAt",
+  "submittedAt",
+  "timestamp",
+  "toolCallId",
+  "updatedAt",
+  "verifiedAt",
+]);
+
+function stripVolatileVerificationFields(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripVolatileVerificationFields(entry));
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (VOLATILE_VERIFICATION_FIELDS.has(key) || entry === undefined) {
+      continue;
+    }
+    result[key] = stripVolatileVerificationFields(entry);
+  }
+  return result;
 }
 
 function stableStringify(value: unknown): string {

@@ -14,19 +14,25 @@ import { contractTest } from "../helpers/contract-test.js";
 
 class ConcurrentExecutor implements TurnExecutor {
   readonly entered: TurnExecutionInput[] = [];
-  private readonly releases = new Map<string, (result: TurnExecutionResult) => void>();
+  private readonly releases = new Map<string, {
+    input: TurnExecutionInput;
+    resolve: (result: TurnExecutionResult) => void;
+  }>();
 
   constructor(private readonly store: InMemorySessionStore) {}
 
   async executeTurn(input: TurnExecutionInput): Promise<TurnExecutionResult> {
     this.entered.push(structuredClone(input));
-    return new Promise((resolve) => this.releases.set(input.sessionId, resolve));
+    return new Promise((resolve) => this.releases.set(input.sessionId, { input, resolve }));
   }
 
-  release(sessionId: string): void {
-    const resolve = this.releases.get(sessionId);
-    if (resolve === undefined) throw new Error(`Session '${sessionId}' has not entered execution.`);
-    resolve({ output: completed(sessionId), assistantText: "done" });
+  async release(sessionId: string): Promise<void> {
+    const pending = this.releases.get(sessionId);
+    if (pending === undefined) throw new Error(`Session '${sessionId}' has not entered execution.`);
+    const runId = pending.input.runtimeTurn?.runId;
+    if (runId === undefined) throw new Error("Concurrent fixture requires a prestarted run.");
+    await this.store.completeRun(runId, "COMPLETED");
+    pending.resolve({ output: completed(sessionId, runId), assistantText: "done" });
   }
 
   async getSession(sessionId: string): Promise<SessionRecord | null> {
@@ -43,25 +49,32 @@ contractTest("runtime.process", "Desktop conversation authority permits concurre
 
   const first = runtime.submitTurn({ threadId: "thread-a", message: "first", eventType: "user.message" });
   await waitUntil(() => executor.entered.length === 1);
+  const firstActiveTurnId = (await store.getThread("thread-a"))?.metadata?.activeTurnId;
+  assert.equal(typeof firstActiveTurnId, "string");
   await assert.rejects(
     runtime.submitTurn({ threadId: "thread-a", message: "duplicate", eventType: "user.message" }),
     (error: unknown) => (error as { code?: string }).code === "THREAD_RUN_ALREADY_ACTIVE",
+  );
+  assert.equal(
+    (await store.getThread("thread-a"))?.metadata?.activeTurnId,
+    firstActiveTurnId,
+    "a rejected submission must not replace the running turn owner",
   );
 
   const second = runtime.submitTurn({ threadId: "thread-b", message: "independent", eventType: "user.message" });
   await waitUntil(() => executor.entered.length === 2);
   assert.deepEqual(new Set(executor.entered.map((input) => input.sessionId)), new Set(["session-a", "session-b"]));
 
-  executor.release("session-a");
-  executor.release("session-b");
+  await executor.release("session-a");
+  await executor.release("session-b");
   assert.deepEqual((await Promise.all([first, second])).map((result) => result.output.status), ["COMPLETED", "COMPLETED"]);
 });
 
-function completed(sessionId: string): NormalizedOutput {
+function completed(sessionId: string, runId: string): NormalizedOutput {
   return {
     status: "COMPLETED",
     sessionId,
-    runId: `run-${sessionId}`,
+    runId,
     quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
     errors: [],
     telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },

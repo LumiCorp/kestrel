@@ -8,6 +8,7 @@ import type { SessionRecord } from "../kestrel/contracts/store.js";
 import { computeQualityMetrics } from "../quality/QualityMetrics.js";
 import { asRuntimeError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import type { FilesystemResumeReadBudgetDetail } from "../runtime/filesystemResumeBudget.js";
+import { buildCanonicalWaitingFor, readActiveWaitState } from "../runtime/waitState.js";
 import type { Guardrails } from "./Guardrails.js";
 import { Guardrails as GuardrailsRuntime } from "./Guardrails.js";
 import type { WaitResumeCoordinator } from "./WaitResumeCoordinator.js";
@@ -104,6 +105,7 @@ export class RunLifecycleController {
   async startRun(input: {
     runId: string;
     event: RuntimeEvent;
+    prestarted?: boolean | undefined;
   }): Promise<{ session: SessionRecord; progressSeq: number; lastStepAgent: string | undefined }> {
     const loadedSession = this.options.normalizeLegacyExecutionSession(
       await this.options.deps.store.ensureSession(input.event.sessionId, input.event.stepAgent),
@@ -122,7 +124,11 @@ export class RunLifecycleController {
 
     const session = loadedSession;
 
-    await this.options.deps.store.startRun(input.runId, input.event);
+    if (input.prestarted === true) {
+      await this.options.deps.store.validatePrestartedRun(input.runId, input.event);
+    } else {
+      await this.options.deps.store.startRun(input.runId, input.event);
+    }
     await this.options.appendRunEvent(input.runId, input.event.sessionId, "run.started", "INFO", {
       eventType: input.event.type,
       stepAgentOverride: input.event.stepAgent,
@@ -230,7 +236,38 @@ export class RunLifecycleController {
         await this.options.settleOwnedExecCommandProcesses(input.runId, activeSession);
       }
     }
-    await this.options.deps.store.completeRun(input.runId, status, terminalErrors[0]);
+    const persistedWait = status === "WAITING"
+      ? readActiveWaitState(asRecord(asRecord(input.transition.statePatch)?.agent)) ??
+        readActiveWaitState(asRecord(
+          this.options.normalizeLegacyExecutionSession(
+            await this.options.deps.store.getSession(input.sessionId),
+          )?.state.agent,
+        ))
+      : undefined;
+    const canonicalWait = status === "WAITING"
+      ? persistedWait !== undefined
+        ? buildCanonicalWaitingFor({
+            waitFor: persistedWait,
+            resumeStepAgent: persistedWait.resumeStepAgent,
+            resumeToken: persistedWait.resumeToken,
+            reason: persistedWait.reason,
+            resumeInstruction: persistedWait.resumeInstruction,
+            blockedAction: persistedWait.blockedAction,
+          })
+        : this.options.waitResumeCoordinator.buildWaitingForFromTransition({
+          waitFor: input.transition.waitFor,
+          resumeStepAgent: input.transition.nextStepAgent ?? input.currentStep,
+          blockedAction: asRecord(
+            asRecord(asRecord(input.transition.statePatch)?.agent)?.nextAction,
+          ),
+        })
+      : undefined;
+    await this.options.deps.store.completeRun(
+      input.runId,
+      status,
+      terminalErrors[0],
+      canonicalWait !== undefined ? { wait: canonicalWait } : undefined,
+    );
     const terminalSessionForLease = await this.options.deps.store.getSession(input.sessionId);
     const terminalSession = this.options.normalizeLegacyExecutionSession(terminalSessionForLease);
     if (terminalSession !== undefined) {

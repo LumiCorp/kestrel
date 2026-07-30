@@ -2621,6 +2621,9 @@ export function createRuntimeFactoryWithStore(
         options.enableUserTerminals === true,
         options.enableWorkspaceChanges === true,
         options.resolveAttachments,
+        store.recoverOrphanedActiveRun === undefined
+          ? undefined
+          : (sessionId) => store.recoverOrphanedActiveRun!(sessionId),
       );
     },
   };

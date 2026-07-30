@@ -2032,11 +2032,12 @@ contractTest("runtime.hermetic", "exec.dispatch reuses cached tool outcomes inst
   const workingPlan = react.workingPlan as Record<string, unknown>;
   const traces = (react.decisionTrace ?? []) as Array<Record<string, unknown>>;
   assert.equal(traces.some((trace) => trace.eventType === "decision.deduped"), true);
-  assert.deepEqual(react.latestEvidenceDelta, {
-    kind: "duplicate_cached_result",
-    toolName: "free.weather.current",
-    cachedStepIndex: 1,
-  });
+  const latestEvidenceDelta = react.latestEvidenceDelta as Record<string, unknown>;
+  assert.equal(latestEvidenceDelta.kind, "duplicate_cached_result");
+  assert.equal(latestEvidenceDelta.toolName, "free.weather.current");
+  assert.equal(latestEvidenceDelta.cachedStepIndex, 1);
+  assert.equal(latestEvidenceDelta.newFactsCount, 0);
+  assert.deepEqual(latestEvidenceDelta.novelEvidenceIds, []);
   const postToolVerification = (react.postToolVerification ?? {}) as Record<string, unknown>;
   assert.equal(postToolVerification.resultQuality, "ok");
   assert.equal(exec.substate, "collect");
@@ -4526,7 +4527,7 @@ contractTest("runtime.hermetic", "exec.dispatch does not reuse lastActionResult 
   assert.equal(toolCalls, 1);
 });
 
-contractTest("runtime.hermetic", "exec.dispatch marks duplicate_executed_result for repeated fresh web output", async () => {
+contractTest("runtime.hermetic", "exec.dispatch keeps duplicate diagnostics from overriding reducer novelty", async () => {
   const step = createExecDispatchStep(buildExecConfig());
   const repeatedOutput = {
     results: [
@@ -4598,12 +4599,16 @@ contractTest("runtime.hermetic", "exec.dispatch marks duplicate_executed_result 
   );
 
   const react = (transition.statePatch?.agent ?? {}) as Record<string, unknown>;
-  assert.deepEqual(react.latestEvidenceDelta, {
-    kind: "duplicate_executed_result",
-    toolName: "internet.search",
-    duplicateCount: 2,
-    matchedPriorStep: 2,
-  });
+  const latestEvidenceDelta = react.latestEvidenceDelta as Record<string, unknown>;
+  assert.equal(latestEvidenceDelta.kind, "duplicate_executed_result");
+  assert.equal(latestEvidenceDelta.toolName, "internet.search");
+  assert.equal(latestEvidenceDelta.duplicateCount, 2);
+  assert.equal(latestEvidenceDelta.matchedPriorStep, 2);
+  assert.equal(latestEvidenceDelta.newFactsCount, 1);
+  assert.equal(
+    (latestEvidenceDelta.novelEvidenceIds as unknown[] | undefined)?.length,
+    1,
+  );
   const postToolVerification = (react.postToolVerification ?? {}) as Record<string, unknown>;
   const duplicateResult = (postToolVerification.duplicateResult ?? {}) as Record<string, unknown>;
   assert.equal(duplicateResult.kind, "duplicate_executed_result");

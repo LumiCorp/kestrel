@@ -147,7 +147,11 @@ export class Kestrel {
 
   async run(
     event: RuntimeEvent,
-    options: { signal?: AbortSignal | undefined } = {},
+    options: {
+      signal?: AbortSignal | undefined;
+      runId?: string | undefined;
+      runStart?: "create" | "prestarted" | undefined;
+    } = {},
   ): Promise<NormalizedOutput> {
     return this.engine.run(event, options);
   }

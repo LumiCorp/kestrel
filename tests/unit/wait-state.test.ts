@@ -128,6 +128,36 @@ contractTest("runtime.hermetic", "buildWaitResumeToken is stable across metadata
   assert.match(left, /agent\.exec\.dispatch/u);
 });
 
+contractTest("runtime.hermetic", "canonical waits preserve every runtime kind and timeout", () => {
+  for (const kind of ["approval", "effect", "region_merge", "tool", "user"] as const) {
+    const canonical = buildCanonicalWaitingFor({
+      waitFor: {
+        kind,
+        eventType: `${kind}.ready`,
+        timeoutMs: 12_345,
+        metadata: { resumeInstruction: `resume ${kind}` },
+      },
+      resumeStepAgent: "agent.exec.dispatch",
+    });
+    const read = readActiveWaitState({ waitingFor: canonical });
+    assert.equal(read?.kind, kind);
+    assert.equal(read?.timeoutMs, 12_345);
+    assert.equal(read?.eventType, `${kind}.ready`);
+  }
+});
+
+contractTest("runtime.hermetic", "wait timeout participates in resume-token identity", () => {
+  const short = buildWaitResumeToken({
+    waitFor: { kind: "region_merge", eventType: "region.completed", timeoutMs: 1_000 },
+    resumeStepAgent: "agent.exec.wait_region",
+  });
+  const long = buildWaitResumeToken({
+    waitFor: { kind: "region_merge", eventType: "region.completed", timeoutMs: 5_000 },
+    resumeStepAgent: "agent.exec.wait_region",
+  });
+  assert.notEqual(short, long);
+});
+
 contractTest("runtime.hermetic", "readWaitResumeStepAgent only reads canonical waitingFor", () => {
   assert.equal(readWaitResumeStepAgent({ wait: { resumeStepAgent: "agent.exec.collect" } }), undefined);
 });

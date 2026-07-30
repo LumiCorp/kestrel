@@ -81,6 +81,47 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
     );
   }
 
+  async updateThreadAfterRun(input: {
+    thread: ThreadRecord;
+    turnId: string;
+    runId: string;
+  }): Promise<boolean> {
+    await this.ensureSchema();
+    const thread = input.thread;
+    const result = await this.db.query(
+      `UPDATE orchestration_threads
+          SET session_id = $2,
+              title = $3,
+              status = $4,
+              parent_thread_id = $5,
+              active_run_id = $6,
+              current_request_id = $7,
+              last_run_status = $8,
+              wait_for_json = $9::jsonb,
+              metadata_json = $10::jsonb,
+              updated_at = $11::timestamptz
+        WHERE thread_id = $1
+          AND metadata_json->>'activeTurnId' = $12
+          AND metadata_json->'executionClaim'->>'activeRunId' = $13`,
+      [
+        thread.threadId,
+        thread.sessionId,
+        thread.title,
+        thread.status,
+        thread.parentThreadId ?? null,
+        thread.activeRunId ?? null,
+        thread.currentRequestId ?? null,
+        thread.lastRunStatus ?? null,
+        stringifySanitizedJson(thread.waitFor ?? null),
+        stringifySanitizedJson(thread.metadata ?? null),
+        normalizeTimestampString(thread.updatedAt),
+        input.turnId,
+        input.runId,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
   async getThread(threadId: string): Promise<ThreadRecord | null> {
     await this.ensureSchema();
     const result = await this.db.query<Record<string, unknown>>(

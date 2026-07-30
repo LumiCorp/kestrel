@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { AllowlistedToolGateway } from "../../src/io/ToolGateway.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
+import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -26,6 +27,64 @@ contractTest("runtime.hermetic", "region work item claiming is deterministic wit
 
   const third = await store.claimNextRegionWorkItem("region-round-robin", "beta");
   assert.equal(third?.region, "gamma");
+});
+
+contractTest("runtime.hermetic", "engine preserves a durable region-merge wait across a fresh user turn", async () => {
+  const store = new InMemorySessionStore();
+  const kestrel = new Kestrel({
+    store,
+    toolGateway: new AllowlistedToolGateway({}),
+    modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
+  });
+  let regionWorkerVisits = 0;
+  kestrel.registerStep("seed.wait", async () => ({
+    status: "WAITING",
+    nextStepAgent: "fallback",
+    waitFor: {
+      kind: "region_merge",
+      eventType: "system.meta_reasoning",
+      timeoutMs: 30_000,
+      metadata: { regionId: "research" },
+    },
+  }));
+  kestrel.registerStep("region.worker", async () => {
+    regionWorkerVisits += 1;
+    return { status: "COMPLETED" };
+  });
+  kestrel.registerStep("fallback", async () => ({ status: "COMPLETED" }));
+
+  const suspended = await kestrel.run({
+    id: "evt-region-merge-suspend",
+    type: "test.seed_wait",
+    sessionId: "region-merge-fresh-turn",
+    payload: {},
+    stepAgent: "seed.wait",
+  });
+  assert.equal(suspended.status, "WAITING");
+  assert.equal(suspended.waitFor?.kind, "region_merge");
+  assert.equal(suspended.waitFor?.timeoutMs, 30_000);
+  const suspendedSession = await store.getSession("region-merge-fresh-turn");
+  assert.equal(
+    readActiveWaitState(
+      suspendedSession?.state.agent as Record<string, unknown> | undefined,
+    )?.kind,
+    "region_merge",
+  );
+
+  await store.spawnRegionWorkItems("region-merge-fresh-turn", [
+    { region: "research", stepAgent: "region.worker" },
+  ]);
+  const freshTurn = await kestrel.run({
+    id: "evt-region-merge-fresh-user",
+    type: "user.message",
+    sessionId: "region-merge-fresh-turn",
+    payload: { message: "Any update?" },
+  });
+
+  assert.equal(freshTurn.status, "WAITING");
+  assert.equal(freshTurn.waitFor?.kind, "region_merge");
+  assert.equal(regionWorkerVisits, 0);
+  assert.equal(store.getRegionWorkItems()[0]?.status, "PENDING");
 });
 
 contractTest("runtime.hermetic", "engine emits merge conflict checkpoint when sync patch violates namespaced merge contract", async () => {

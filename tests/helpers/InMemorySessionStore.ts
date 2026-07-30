@@ -1,8 +1,30 @@
 import type { EffectExecutionStatus, RuntimeError, TransitionStatus } from "../../src/kestrel/contracts/base.js";
 import type { RunEvent, RunLogEntry, RuntimeEvent } from "../../src/kestrel/contracts/events.js";
 import type { EffectResult, RegionWorkIntent, RegionWorkItem } from "../../src/kestrel/contracts/execution.js";
-import type { ConversationTurnRecord, ConversationTurnSegmentRecord, ModelCallProvenanceRecord } from "../../src/kestrel/contracts/orchestration.js";
-import type { CommitStepInput, CommitStepResult, LegacySessionArchive, OutboxEventRecord, PersistedArtifact, PersistedClaim, PersistedRunRecord, PersistedRunStateRecord, PersistedRunSummaryRecord, SessionRecord, SessionStore } from "../../src/kestrel/contracts/store.js";
+import type {
+  ConversationTurnRecord,
+  ConversationTurnSegmentRecord,
+  ConversationTurnSuspensionEnvelopeV1,
+  ConversationTurnTerminalEnvelopeV1,
+  ModelCallProvenanceRecord,
+} from "../../src/kestrel/contracts/orchestration.js";
+import type {
+  ClaimConversationTurnExecutionInput,
+  ClaimConversationTurnExecutionResult,
+  CommitStepInput,
+  CommitStepResult,
+  LegacySessionArchive,
+  OutboxEventRecord,
+  PersistedArtifact,
+  PersistedClaim,
+  PersistedRunRecord,
+  PersistedRunStateRecord,
+  PersistedRunSummaryRecord,
+  RunLifecycleSettlement,
+  SessionRecord,
+  SessionStore,
+  UpdateConversationTurnTerminalEnvelopeInput,
+} from "../../src/kestrel/contracts/store.js";
 
 import {
   normalizeRuntimeStateForPersist,
@@ -14,6 +36,11 @@ import {
   readInvalidStatePath,
 } from "../../src/runtime/stateDiagnostics.js";
 import { InMemoryOrchestrationStore } from "../../src/orchestration/InMemoryOrchestrationStore.js";
+import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import {
+  buildCanonicalWaitingFor,
+  readActiveWaitState,
+} from "../../src/runtime/waitState.js";
 
 interface InMemorySession {
   sessionId: string;
@@ -380,6 +407,24 @@ export class InMemorySessionStore implements SessionStore {
     this.operationLog.push(`startRun:${runId}`);
   }
 
+  async validatePrestartedRun(runId: string, event: RuntimeEvent): Promise<void> {
+    const run = this.runs.get(runId);
+    const session = this.sessions.get(event.sessionId);
+    if (
+      run === undefined ||
+      run.sessionId !== event.sessionId ||
+      run.eventType !== event.type ||
+      run.status !== "RUNNING" ||
+      session?.activeRunId !== runId
+    ) {
+      throw createRuntimeFailure(
+        "PRESTARTED_RUN_INVALID",
+        `Run '${runId}' is not a valid prestarted run.`,
+        { runId, sessionId: event.sessionId, eventType: event.type },
+      );
+    }
+  }
+
   async commitStep(input: CommitStepInput): Promise<CommitStepResult> {
     const session = this.sessions.get(input.sessionId);
     if (session === undefined) {
@@ -624,6 +669,245 @@ export class InMemorySessionStore implements SessionStore {
 
   async appendRunEvent(event: RunEvent): Promise<void> {
     await this.appendRunEventsBatch([event]);
+  }
+
+  async claimConversationTurnExecution(
+    input: ClaimConversationTurnExecutionInput,
+  ): Promise<ClaimConversationTurnExecutionResult> {
+    const session = this.sessions.get(input.sessionId);
+    const thread = await this.orchestrationStore.getThread(input.threadId);
+    if (session === undefined || thread === null || thread.sessionId !== input.sessionId) {
+      throw createRuntimeFailure(
+        "STORE_CONVERSATION_TURN_CLAIM_INVALID",
+        "Conversation turn claim does not reference an existing thread session.",
+        { turnId: input.turnId, threadId: input.threadId, sessionId: input.sessionId },
+      );
+    }
+    const existing = this.conversationTurns.get(input.turnId);
+    const claim = testRecord(existing?.metadata?.executionClaim);
+    const storedTurnIdentity = testString(claim?.turnRequestIdentity);
+    if (
+      storedTurnIdentity !== undefined &&
+      storedTurnIdentity !== input.turnRequestIdentity
+    ) {
+      throw createRuntimeFailure(
+        "CONVERSATION_TURN_IDENTITY_CONFLICT",
+        `Turn '${input.turnId}' was already claimed by a different initial request.`,
+        { turnId: input.turnId },
+      );
+    }
+    if (existing?.status === "COMPLETED" || existing?.status === "FAILED") {
+      const terminalEnvelope = testTerminalEnvelope(existing.metadata?.terminalEnvelope);
+      if (terminalEnvelope === undefined) {
+        throw createRuntimeFailure(
+          "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+          `Turn '${input.turnId}' is terminal without a replay envelope.`,
+          { turnId: input.turnId },
+        );
+      }
+      return { kind: "terminal", terminalEnvelope };
+    }
+    const consumed = this.conversationTurnSegments.find(
+      (segment) =>
+        segment.turnId === input.turnId &&
+        testRecord(segment.metadata)?.submissionIdentity === input.submissionIdentity,
+    );
+    if (consumed !== undefined) {
+      return { kind: "already_running", runId: consumed.runId };
+    }
+    if (existing?.status === "RUNNING" && existing.activeRunId !== undefined) {
+      const activeRun = this.runs.get(existing.activeRunId);
+      if (activeRun?.status === "RUNNING") {
+        return { kind: "already_running", runId: existing.activeRunId };
+      }
+      if (activeRun !== undefined) {
+        if (activeRun.status === "WAITING") {
+          const activeWait = readActiveWaitState(testRecord(session.state.agent));
+          if (activeWait !== undefined) {
+            await this.completeRun(activeRun.runId, "WAITING", activeRun.error, {
+              wait: buildCanonicalWaitingFor({
+                waitFor: activeWait,
+                resumeStepAgent: activeWait.resumeStepAgent,
+                resumeToken: activeWait.resumeToken,
+                reason: activeWait.reason,
+                resumeInstruction: activeWait.resumeInstruction,
+                blockedAction: activeWait.blockedAction,
+              }),
+            });
+          } else {
+            await this.completeRun(activeRun.runId, "FAILED", {
+              code: "RECOVERED_WAIT_STATE_INVALID",
+              message: "Persisted WAITING run has no canonical wait to resume.",
+              details: { turnId: input.turnId, runId: activeRun.runId },
+            });
+            const failedEnvelope = testTerminalEnvelope(
+              this.conversationTurns.get(input.turnId)?.metadata?.terminalEnvelope,
+            );
+            if (failedEnvelope === undefined) {
+              throw createRuntimeFailure(
+                "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+                `Recovered turn '${input.turnId}' has no replay envelope.`,
+                { turnId: input.turnId, runId: activeRun.runId },
+              );
+            }
+            return { kind: "terminal", terminalEnvelope: failedEnvelope };
+          }
+        } else {
+          await this.completeRun(activeRun.runId, activeRun.status, activeRun.error);
+          const terminalEnvelope = testTerminalEnvelope(
+            this.conversationTurns.get(input.turnId)?.metadata?.terminalEnvelope,
+          );
+          if (terminalEnvelope === undefined) {
+            throw createRuntimeFailure(
+              "RUNTIME_TERMINAL_HANDOFF_INCOMPLETE",
+              `Recovered turn '${input.turnId}' has no replay envelope.`,
+              { turnId: input.turnId, runId: activeRun.runId },
+            );
+          }
+          return { kind: "terminal", terminalEnvelope };
+        }
+      } else {
+      const finalizationError: RuntimeError = {
+        code: "CONVERSATION_TURN_CLAIM_ORPHANED",
+        message: "The conversation turn referenced a run that cannot finish the claim.",
+        details: { turnId: input.turnId, runId: existing.activeRunId },
+      };
+      const terminalEnvelope: ConversationTurnTerminalEnvelopeV1 = {
+        version: "v1",
+        turnRequestIdentity: storedTurnIdentity ?? input.turnRequestIdentity,
+        terminalSubmissionIdentity:
+          testString(claim?.submissionIdentity) ?? input.submissionIdentity,
+        runId: existing.activeRunId,
+        status: "FAILED",
+        handoff: { state: "failed", finalizationError },
+      };
+      const now = new Date().toISOString();
+      this.conversationTurns.set(input.turnId, {
+        ...existing,
+        status: "FAILED",
+        activeRunId: undefined,
+        terminalRunId: existing.activeRunId,
+        terminalStatus: "FAILED",
+        updatedAt: now,
+        completedAt: now,
+        metadata: { ...(existing.metadata ?? {}), terminalEnvelope },
+      });
+      await this.orchestrationStore.upsertThread({
+        ...thread,
+        status: "FAILED",
+        activeRunId: undefined,
+        currentRequestId: undefined,
+        waitFor: undefined,
+        lastRunStatus: "FAILED",
+        metadata: { ...(thread.metadata ?? {}), terminalEnvelope },
+        updatedAt: now,
+      });
+      await this.releaseRunLease(existing.activeRunId, input.sessionId);
+      return { kind: "terminal", terminalEnvelope };
+      }
+    }
+    if (session.activeRunId !== undefined && session.activeRunId !== input.proposedRunId) {
+      return { kind: "already_running", runId: session.activeRunId };
+    }
+
+    const startedAt = input.startedAt;
+    session.activeRunId = input.proposedRunId;
+    session.updatedAt = startedAt;
+    this.runs.set(input.proposedRunId, {
+      runId: input.proposedRunId,
+      sessionId: input.sessionId,
+      eventType: input.eventType,
+      status: "RUNNING",
+      startedAt,
+      completedAt: undefined,
+      error: undefined,
+    });
+    const executionClaim = {
+      turnRequestIdentity: input.turnRequestIdentity,
+      submissionIdentity: input.submissionIdentity,
+      submissionKind: input.submissionKind,
+      activeRunId: input.proposedRunId,
+    };
+    this.conversationTurns.set(input.turnId, {
+      turnId: input.turnId,
+      threadId: input.threadId,
+      sessionId: input.sessionId,
+      rootRunId: existing?.rootRunId ?? input.proposedRunId,
+      status: "RUNNING",
+      initialEventType: existing?.initialEventType ?? input.eventType,
+      activeRunId: input.proposedRunId,
+      startedAt: existing?.startedAt ?? startedAt,
+      updatedAt: startedAt,
+      metadata: {
+        ...(existing?.metadata ?? {}),
+        ...(input.segment.metadata ?? {}),
+        executionClaim,
+        suspensionEnvelope: undefined,
+        terminalEnvelope: undefined,
+      },
+    });
+    this.conversationTurnSegments.push({
+      ...structuredClone(input.segment),
+      metadata: {
+        ...(input.segment.metadata ?? {}),
+        submissionIdentity: input.submissionIdentity,
+      },
+    });
+    await this.orchestrationStore.upsertThread({
+      ...thread,
+      status: "RUNNING",
+      activeRunId: input.proposedRunId,
+      currentRequestId: undefined,
+      lastRunStatus: "RUNNING",
+      waitFor: undefined,
+      metadata: {
+        ...(thread.metadata ?? {}),
+        ...(input.segment.metadata ?? {}),
+        activeTurnId: input.turnId,
+        executionClaim,
+        suspensionEnvelope: undefined,
+        terminalEnvelope: undefined,
+      },
+      updatedAt: startedAt,
+    });
+    this.operationLog.push(`claimConversationTurnExecution:${input.turnId}:${input.proposedRunId}`);
+    return { kind: "claimed", runId: input.proposedRunId };
+  }
+
+  async updateConversationTurnTerminalEnvelope(
+    input: UpdateConversationTurnTerminalEnvelopeInput,
+  ): Promise<boolean> {
+    const turn = this.conversationTurns.get(input.turnId);
+    const currentEnvelope = testTerminalEnvelope(turn?.metadata?.terminalEnvelope);
+    const currentClaim = asRecord(turn?.metadata?.executionClaim);
+    if (
+      turn === undefined ||
+      turn.terminalRunId !== input.runId ||
+      testString(currentClaim?.submissionIdentity) !== input.terminalSubmissionIdentity ||
+      currentEnvelope?.runId !== input.runId ||
+      currentEnvelope.handoff.state !== "pending" ||
+      input.envelope.runId !== input.runId ||
+      input.envelope.terminalSubmissionIdentity !== input.terminalSubmissionIdentity
+    ) {
+      return false;
+    }
+    const updatedAt = new Date().toISOString();
+    this.conversationTurns.set(input.turnId, {
+      ...turn,
+      metadata: {
+        ...(turn.metadata ?? {}),
+        terminalEnvelope: input.envelope,
+      },
+      updatedAt,
+    });
+    await this.orchestrationStore.updateTerminalEnvelope({
+      threadId: turn.threadId,
+      turnId: input.turnId,
+      runId: input.runId,
+      envelope: input.envelope,
+      updatedAt,
+    });
+    return true;
   }
 
   async upsertConversationTurn(record: ConversationTurnRecord): Promise<void> {
@@ -954,6 +1238,12 @@ export class InMemorySessionStore implements SessionStore {
     return this.orchestrationStore.upsertThread(thread);
   }
 
+  async updateThreadAfterRun(
+    input: Parameters<InMemoryOrchestrationStore["updateThreadAfterRun"]>[0],
+  ): Promise<boolean> {
+    return this.orchestrationStore.updateThreadAfterRun(input);
+  }
+
   async getThread(threadId: string) {
     return this.orchestrationStore.getThread(threadId);
   }
@@ -1137,12 +1427,100 @@ export class InMemorySessionStore implements SessionStore {
     this.operationLog.push(`legacyArchived:${archive.sessionId}`);
   }
 
-  async completeRun(runId: string, status: TransitionStatus, error?: RuntimeError): Promise<void> {
+  async completeRun(
+    runId: string,
+    status: TransitionStatus,
+    error?: RuntimeError,
+    settlement?: RunLifecycleSettlement,
+  ): Promise<void> {
     const run = this.runs.get(runId);
     if (run !== undefined) {
       run.status = status;
       run.completedAt = new Date().toISOString();
       run.error = error;
+      const turn = [...this.conversationTurns.values()].find(
+        (candidate) => candidate.activeRunId === runId,
+      );
+      if (turn !== undefined) {
+        const claim = testRecord(turn.metadata?.executionClaim);
+        const turnRequestIdentity = testString(claim?.turnRequestIdentity);
+        const submissionIdentity = testString(claim?.submissionIdentity);
+        const thread = await this.orchestrationStore.getThread(turn.threadId);
+        if (
+          turnRequestIdentity === undefined ||
+          submissionIdentity === undefined ||
+          thread === null ||
+          thread.activeRunId !== runId
+        ) {
+          throw createRuntimeFailure(
+            "STORE_THREAD_SETTLEMENT_CONFLICT",
+            `Run '${runId}' no longer owns its conversation turn and thread.`,
+            { runId, turnId: turn.turnId, threadId: turn.threadId },
+          );
+        }
+        const now = new Date().toISOString();
+        if (status === "WAITING") {
+          if (settlement?.wait === undefined) {
+            throw createRuntimeFailure(
+              "STORE_WAIT_SETTLEMENT_REQUIRED",
+              `Run '${runId}' cannot enter WAITING without a canonical wait settlement.`,
+              { runId, turnId: turn.turnId },
+            );
+          }
+          const suspensionEnvelope: ConversationTurnSuspensionEnvelopeV1 = {
+            version: "v1",
+            turnRequestIdentity,
+            submissionIdentity,
+            runId,
+            wait: settlement.wait,
+          };
+          this.conversationTurns.set(turn.turnId, {
+            ...turn,
+            status: "WAITING",
+            updatedAt: now,
+            metadata: { ...(turn.metadata ?? {}), suspensionEnvelope },
+          });
+          await this.orchestrationStore.upsertThread({
+            ...thread,
+            status: "WAITING",
+            activeRunId: runId,
+            currentRequestId: undefined,
+            lastRunStatus: "WAITING",
+            waitFor: settlement.wait,
+            metadata: { ...(thread.metadata ?? {}), suspensionEnvelope },
+            updatedAt: now,
+          });
+        } else if (status === "COMPLETED" || status === "FAILED") {
+          const terminalEnvelope: ConversationTurnTerminalEnvelopeV1 = {
+            version: "v1",
+            turnRequestIdentity,
+            terminalSubmissionIdentity: submissionIdentity,
+            runId,
+            status,
+            handoff: { state: "pending" },
+          };
+          this.conversationTurns.set(turn.turnId, {
+            ...turn,
+            status,
+            activeRunId: undefined,
+            terminalRunId: runId,
+            terminalStatus: status,
+            updatedAt: now,
+            completedAt: now,
+            metadata: { ...(turn.metadata ?? {}), terminalEnvelope },
+          });
+          await this.orchestrationStore.upsertThread({
+            ...thread,
+            status,
+            activeRunId: undefined,
+            currentRequestId: undefined,
+            waitFor: undefined,
+            lastRunStatus: status,
+            metadata: { ...(thread.metadata ?? {}), terminalEnvelope },
+            updatedAt: now,
+          });
+        }
+      }
       await this.releaseRunLease(runId, run.sessionId);
     }
     this.operationLog.push(`completeRun:${runId}:${status}`);
@@ -1189,4 +1567,30 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+const testRecord = asRecord;
+
+function testString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function testTerminalEnvelope(value: unknown): ConversationTurnTerminalEnvelopeV1 | undefined {
+  const envelope = testRecord(value);
+  const handoff = testRecord(envelope?.handoff);
+  if (
+    envelope?.version !== "v1" ||
+    (envelope.status !== "COMPLETED" && envelope.status !== "FAILED") ||
+    testString(envelope.turnRequestIdentity) === undefined ||
+    testString(envelope.terminalSubmissionIdentity) === undefined ||
+    testString(envelope.runId) === undefined ||
+    (
+      handoff?.state !== "pending" &&
+      handoff?.state !== "delivered" &&
+      handoff?.state !== "failed"
+    )
+  ) {
+    return undefined;
+  }
+  return value as ConversationTurnTerminalEnvelopeV1;
 }

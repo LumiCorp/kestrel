@@ -40,6 +40,7 @@ export interface RuntimeExecState {
 export interface RuntimeWaitState {
   kind?: string | undefined;
   eventType?: string | undefined;
+  timeoutMs?: number | undefined;
   resumeStepAgent?: string | undefined;
   resumeToken?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
@@ -49,6 +50,7 @@ export interface RuntimeWaitState {
 export interface RuntimeCanonicalWaitingForState {
   kind?: string | undefined;
   eventType?: string | undefined;
+  timeoutMs?: number | undefined;
   reason?: string | undefined;
   resumeInstruction?: string | undefined;
   resumeStepAgent?: string | undefined;
@@ -320,6 +322,8 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
     if (
       waitingFor.kind !== "user" &&
       waitingFor.kind !== "approval" &&
+      waitingFor.kind !== "effect" &&
+      waitingFor.kind !== "region_merge" &&
       waitingFor.kind !== "tool"
     ) {
       return {
@@ -336,6 +340,22 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
         message: "state.agent.waitingFor.eventType is required",
         details: {
           path: "state.agent.waitingFor.eventType",
+        },
+      };
+    }
+    if (
+      waitingFor.timeoutMs !== undefined &&
+      (
+        typeof waitingFor.timeoutMs !== "number" ||
+        Number.isFinite(waitingFor.timeoutMs) === false ||
+        waitingFor.timeoutMs < 0
+      )
+    ) {
+      return {
+        code: "RUNTIME_STATE_INVALID",
+        message: "state.agent.waitingFor.timeoutMs must be a non-negative finite number",
+        details: {
+          path: "state.agent.waitingFor.timeoutMs",
         },
       };
     }

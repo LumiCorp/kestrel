@@ -140,13 +140,20 @@ export class LoopGuardCoordinator {
     statePatch: Record<string, unknown> | undefined;
     transition: Transition;
   }): Record<string, unknown> | undefined {
-    if (input.statePatch === undefined) {
-      return input.statePatch;
+    const statePatch = input.statePatch ?? (
+      input.transition.status === "WAITING" ||
+      input.transition.status === "COMPLETED" ||
+      input.transition.status === "FAILED"
+        ? { agent: {} }
+        : undefined
+    );
+    if (statePatch === undefined) {
+      return ;
     }
 
-    const reactPatch = asRecord(input.statePatch.agent);
+    const reactPatch = asRecord(statePatch.agent);
     if (reactPatch === undefined) {
-      return input.statePatch;
+      return statePatch;
     }
 
     const priorReact = asRecord(input.sessionState.agent) ?? {};
@@ -170,7 +177,13 @@ export class LoopGuardCoordinator {
       input.transition.waitFor,
       actionSignature,
     );
-    const evidenceHash = stableHash(normalizeAgentFeedbackForLoopGuard(reactPatch));
+    const evidenceHash = stableHash(normalizeAgentFeedbackForLoopGuard({
+      ...reactPatch,
+      evidenceLedger:
+        statePatch.evidenceLedger ??
+        reactPatch.evidenceLedger ??
+        input.sessionState.evidenceLedger,
+    }));
     const observationMarker = latestObservationSummary(reactPatch.observations);
     const waitToken = this.waitResumeCoordinator.buildWaitResumeToken(
       input.transition.waitFor,
@@ -234,14 +247,66 @@ export class LoopGuardCoordinator {
     if (cycleKind === "reasoning") {
       const reasoningRepeats = nextHistory.filter(
         (entry) =>
+          entry.stepName === "agent.loop" &&
           entry.cycleKind === "reasoning" &&
-          entry.actionSignature === actionSignature &&
           entry.evidenceHash === evidenceHash &&
           entry.observationMarker === observationMarker &&
           entry.pendingExecutionHash === pendingExecutionHash,
       ).length;
       const reasoningLoopThreshold = 3;
-      if (reasoningRepeats >= reasoningLoopThreshold) {
+      if (
+        input.stepName === "agent.loop" &&
+        input.transition.status === "RUNNING" &&
+        reasoningRepeats >= reasoningLoopThreshold
+      ) {
+        const priorCloseoutLatch = readCloseoutLatch(priorReact.closeoutLatch);
+        if (
+          priorCloseoutLatch?.closeoutRequiredForEvidenceHash !== evidenceHash ||
+          priorCloseoutLatch.closeoutAttempted !== true
+        ) {
+          input.transition.status = "RUNNING";
+          input.transition.nextStepAgent = "agent.loop";
+          input.transition.waitFor = undefined;
+          const normalizedReactPatch = this.normalizeReactRuntimePatch(
+            input.stepName,
+            {
+              ...reactPatch,
+              nextAction: undefined,
+              commandBatch: undefined,
+              retryContext: {
+                failure: asRecord(reactPatch.retryContext)?.failure ?? {
+                  code: "NO_PROGRESS_REASONING_LOOP",
+                  message:
+                    "No new semantic evidence was produced across three reasoning cycles. Use one mode-valid closeout control now.",
+                  details: {
+                    ...buildNoProgressReasoningLoopDetails(loopGuardReactPatch, reasoningLoopThreshold),
+                    ...attemptedActionDiagnostics,
+                  },
+                },
+                requiredCorrection: {
+                  action: "select_mode_valid_closeout_control",
+                  evidenceHash,
+                },
+              },
+              closeoutLatch: {
+                version: "v1",
+                closeoutRequiredForEvidenceHash: evidenceHash,
+                closeoutAttempted: true,
+                active: true,
+              },
+            },
+            input.transition,
+          );
+          return {
+            ...statePatch,
+            agent: {
+              ...normalizedReactPatch,
+              loopGuard: {
+                history: nextHistory,
+              },
+            },
+          };
+        }
         throw new GuardrailViolationError(
           "LOOP_GUARD_TRIGGERED",
           `Loop guard triggered for step '${input.stepName}' after repeated no-progress reasoning cycles.`,
@@ -266,20 +331,6 @@ export class LoopGuardCoordinator {
           entry.evidenceHash === evidenceHash,
       ).length;
       const repeatedSameToolCycleThreshold = 3;
-      if (repeatedToolCycles >= repeatedSameToolCycleThreshold) {
-        throw new GuardrailViolationError(
-          "LOOP_GUARD_TRIGGERED",
-          `Loop guard triggered for step '${input.stepName}' after repeated same-tool cycles for '${toolCycleMarker.toolName}'.`,
-          {
-            guardType: "REPEATED_SAME_TOOL_CYCLE",
-            toolName: toolCycleMarker.toolName,
-            toolInputHash: toolCycleMarker.inputHash,
-            repeats: repeatedToolCycles,
-            threshold: repeatedSameToolCycleThreshold,
-            ...attemptedActionDiagnostics,
-          },
-        );
-      }
       if (retrievalCycleMarker !== undefined) {
         const repeatedRetrievalPivots = nextHistory.filter((entry) => {
           if (isRetrievalHistoryEntry(entry) === false) {
@@ -313,6 +364,20 @@ export class LoopGuardCoordinator {
             },
           );
         }
+      }
+      if (repeatedToolCycles >= repeatedSameToolCycleThreshold) {
+        throw new GuardrailViolationError(
+          "LOOP_GUARD_TRIGGERED",
+          `Loop guard triggered for step '${input.stepName}' after repeated same-tool cycles for '${toolCycleMarker.toolName}'.`,
+          {
+            guardType: "REPEATED_SAME_TOOL_CYCLE",
+            toolName: toolCycleMarker.toolName,
+            toolInputHash: toolCycleMarker.inputHash,
+            repeats: repeatedToolCycles,
+            threshold: repeatedSameToolCycleThreshold,
+            ...attemptedActionDiagnostics,
+          },
+        );
       }
       if (toolCycleMarker.lowYield === true && toolCycleMarker.sourceCluster !== undefined) {
         const repeatedLowYieldSourceCycles = nextHistory.filter(
@@ -376,7 +441,7 @@ export class LoopGuardCoordinator {
     );
 
     return {
-      ...input.statePatch,
+      ...statePatch,
       agent: {
         ...normalizedReactPatch,
         loopGuard: {
@@ -690,10 +755,6 @@ export class LoopGuardCoordinator {
     if (hasVisibleTodoFinalizeContinuationSignal(reactState) === false) {
       return ;
     }
-    if (hasSuccessfulExecutionEvidence(input.session.state, reactState) === false) {
-      return ;
-    }
-
     const visibleTodos = normalizeVisibleTodoState(reactState.visibleTodos);
     const finalizeAction = asRecord(reactState.lastAction);
     if (finalizeAction?.kind !== "finalize" || finalizeAction.finalizeReason !== "goal_satisfied") {
@@ -710,6 +771,15 @@ export class LoopGuardCoordinator {
       residualGap,
     });
     if (readiness.complete === false || readiness.residualOpenItems.length === 0) {
+      return ;
+    }
+    if (
+      hasTargetBoundCompletionSupport(
+        input.session.state,
+        visibleTodos,
+        new Set(readiness.residualOpenItems.map((item) => item.id)),
+      ) === false
+    ) {
       return ;
     }
 
@@ -1566,48 +1636,117 @@ function latestObservationSummary(value: unknown): string {
   return typeof summary === "string" ? summary : "";
 }
 
-function readCapabilityClassesFromFeedback(reactState: Record<string, unknown>): string[] {
-  const capabilities = new Set<string>();
-  const add = (value: unknown): void => {
-    if (Array.isArray(value) === false) {
-      return;
-    }
-    for (const item of value) {
-      if (typeof item !== "string") {
-        continue;
-      }
-      const normalized = item.trim();
-      if (normalized.length > 0) {
-        capabilities.add(normalized);
-      }
-    }
+function normalizeAgentFeedbackForLoopGuard(reactState: Record<string, unknown>): Record<string, unknown> {
+  const ledgerEvidence = asArray(reactState.evidenceLedger)
+    .map((value) => asRecord(value))
+    .filter((entry): entry is Record<string, unknown> => entry !== undefined)
+    .map((entry) => {
+      const target = asRecord(entry.target);
+      const claimImpact = asRecord(entry.claimImpact);
+      const facts = asRecord(entry.facts);
+      return {
+        resultIdentity: asString(entry.resultIdentity) ?? "",
+        kind: asString(entry.kind) ?? "",
+        status: asString(entry.status) ?? "",
+        target: {
+          type: asString(target?.type) ?? "",
+          value: asString(target?.normalizedValue) ?? asString(target?.value) ?? "",
+        },
+        revision:
+          asString(facts?.revision) ??
+          asString(facts?.contentRevision) ??
+          asString(facts?.expectedRevision) ??
+          "",
+        claimImpact: {
+          success: asString(claimImpact?.success) ?? "",
+          scope: asString(claimImpact?.scope) ?? "",
+          target: asString(claimImpact?.target) ?? "",
+          requirementIds: asArray(claimImpact?.requirementIds)
+            .map((value) => asString(value))
+            .filter((value): value is string => value !== undefined)
+            .sort(),
+        },
+      };
+    });
+  const identityHistory = asArray(reactState.evidenceIdentityHistory)
+    .map((value) => asRecord(value))
+    .filter((entry): entry is Record<string, unknown> => entry !== undefined)
+    .map((entry) => {
+      const target = asRecord(entry.target);
+      const claimImpact = asRecord(entry.claimImpact);
+      return {
+        resultIdentity: asString(entry.resultIdentity) ?? "",
+        kind: asString(entry.kind) ?? "",
+        status: asString(entry.status) ?? "",
+        target: {
+          type: asString(target?.type) ?? "",
+          value: asString(target?.value) ?? "",
+        },
+        revision: asString(entry.revision) ?? "",
+        claimImpact: {
+          success: asString(claimImpact?.success) ?? "",
+          scope: asString(claimImpact?.scope) ?? "",
+          target: asString(claimImpact?.target) ?? "",
+          requirementIds: asArray(claimImpact?.requirementIds)
+            .map((value) => asString(value))
+            .filter((value): value is string => value !== undefined)
+            .sort(),
+        },
+      };
+    })
+    .filter((entry) => entry.resultIdentity.length > 0);
+  const unidentifiedLedgerEvidence = ledgerEvidence
+    .filter((entry) => entry.resultIdentity.length === 0);
+  const evidenceBySemanticHash = new Map<string, Record<string, unknown>>();
+  for (const entry of identityHistory.length > 0
+    ? [...identityHistory, ...unidentifiedLedgerEvidence]
+    : ledgerEvidence) {
+    evidenceBySemanticHash.set(stableHash(entry), entry);
+  }
+  const evidence = [...evidenceBySemanticHash.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, entry]) => entry);
+  const visibleTodos = normalizeVisibleTodoState(reactState.visibleTodos);
+  return {
+    evidence,
+    visibleTodos: visibleTodos?.items.map((item) => ({
+      id: item.id,
+      status: item.status,
+    })),
+    blockers: asArray(reactState.blockers)
+      .map((value) => asRecord(value))
+      .filter((value): value is Record<string, unknown> => value !== undefined)
+      .map((value) => ({
+        code: asString(value.code) ?? "",
+        target: asString(value.target) ?? "",
+        requirementId: asString(value.requirementId) ?? "",
+      })),
   };
-  if (Array.isArray(reactState.observations)) {
-    for (const item of reactState.observations) {
-      add(asRecord(item)?.capabilityClasses);
-    }
-  }
-  const lastActionResult = asRecord(reactState.lastActionResult);
-  add(lastActionResult?.capabilityClasses);
-  const resultItems = Array.isArray(lastActionResult?.items) ? lastActionResult.items : [];
-  for (const item of resultItems) {
-    add(asRecord(item)?.capabilityClasses);
-  }
-  return [...capabilities].sort((left, right) => left.localeCompare(right));
 }
 
-function normalizeAgentFeedbackForLoopGuard(reactState: Record<string, unknown>): Record<string, unknown> {
-  const lastActionResult = asRecord(reactState.lastActionResult);
+interface CloseoutLatchV1 {
+  version: "v1";
+  closeoutRequiredForEvidenceHash: string;
+  closeoutAttempted: true;
+  active?: boolean | undefined;
+}
+
+function readCloseoutLatch(value: unknown): CloseoutLatchV1 | undefined {
+  const record = asRecord(value);
+  const evidenceHash = asString(record?.closeoutRequiredForEvidenceHash)?.trim();
+  if (
+    record?.version !== "v1" ||
+    record.closeoutAttempted !== true ||
+    evidenceHash === undefined ||
+    evidenceHash.length === 0
+  ) {
+    return ;
+  }
   return {
-    capabilities: readCapabilityClassesFromFeedback(reactState),
-    lastActionResultKind: typeof lastActionResult?.kind === "string" ? lastActionResult.kind : "",
-    lastActionResultStatus: typeof lastActionResult?.status === "string" ? lastActionResult.status : "",
-    lastActionTool:
-      typeof lastActionResult?.toolName === "string"
-        ? lastActionResult.toolName
-        : typeof lastActionResult?.name === "string"
-          ? lastActionResult.name
-          : "",
+    version: "v1",
+    closeoutRequiredForEvidenceHash: evidenceHash,
+    closeoutAttempted: true,
+    ...(typeof record.active === "boolean" ? { active: record.active } : {}),
   };
 }
 
@@ -2130,54 +2269,32 @@ function hasVisibleTodoFinalizeContinuationSignal(reactState: Record<string, unk
   );
 }
 
-function hasSuccessfulExecutionEvidence(
+function hasTargetBoundCompletionSupport(
   sessionState: Record<string, unknown>,
-  reactState: Record<string, unknown>,
+  todos: ReturnType<typeof normalizeVisibleTodoState>,
+  residualTodoIds: ReadonlySet<string>,
 ): boolean {
-  if (hasPassedEvidenceLedger(sessionState)) {
-    return true;
-  }
-  const postToolVerification = asRecord(reactState.postToolVerification);
-  if (postToolVerification !== undefined && hasPositivePostToolVerification(postToolVerification)) {
-    return true;
-  }
-  const lastActionResult = asRecord(reactState.lastActionResult);
-  if (lastActionResult !== undefined && hasObservedExecutionSuccess(lastActionResult)) {
-    return true;
-  }
-  return false;
-}
-
-function hasPassedEvidenceLedger(sessionState: Record<string, unknown>): boolean {
-  return asArray(sessionState.evidenceLedger)
-    .map((item) => asRecord(item))
-    .some((item) => item?.status === "passed");
-}
-
-function hasPositivePostToolVerification(verification: Record<string, unknown>): boolean {
-  if (asString(verification.resultQuality) !== "ok") {
+  const requiredIds = (todos?.items ?? [])
+    .filter((item) => item.status === "done" && residualTodoIds.has(item.id) === false)
+    .map((item) => item.id);
+  if (requiredIds.length === 0) {
     return false;
   }
-  const newFactsCount = asNumber(verification.newFactsCount);
-  if (newFactsCount !== undefined && newFactsCount > 0) {
-    return true;
+  const supportedIds = new Set<string>();
+  for (const value of asArray(sessionState.evidenceLedger)) {
+    const entry = asRecord(value);
+    const impact = asRecord(entry?.claimImpact);
+    if (entry?.status !== "passed" || impact?.success !== "supports") {
+      continue;
+    }
+    for (const requirementId of asArray(impact.requirementIds)) {
+      const id = asString(requirementId)?.trim();
+      if (id !== undefined && id.length > 0) {
+        supportedIds.add(id);
+      }
+    }
   }
-  return asArray(verification.newCapabilities).length > 0;
-}
-
-function hasObservedExecutionSuccess(lastActionResult: Record<string, unknown>): boolean {
-  if (lastActionResult.ok === false || asString(lastActionResult.status) === "failed") {
-    return false;
-  }
-  const status = asString(lastActionResult.status);
-  if (status === undefined) {
-    return false;
-  }
-  const kind = asString(lastActionResult.kind);
-  if (kind === "tool_batch") {
-    return asArray(lastActionResult.items).length > 0 || asRecord(lastActionResult.output) !== undefined;
-  }
-  return kind === "tool" && asRecord(lastActionResult.output) !== undefined;
+  return requiredIds.every((id) => supportedIds.has(id));
 }
 
 function buildDocumentedFinalizeGapMessage(gap: {

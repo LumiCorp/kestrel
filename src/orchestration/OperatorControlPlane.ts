@@ -512,6 +512,7 @@ export class OperatorControlPlane {
     checkpointId: string;
     action: ContextCheckpointAction;
     issuedBy?: string | undefined;
+    summaryThread?: ThreadRecord | undefined;
   }): Promise<ThreadStatusSnapshot> {
     const checkpoint = await this.store.getContextCheckpoint(input.checkpointId);
     if (checkpoint === null || checkpoint.threadId !== input.threadId) {
@@ -529,12 +530,23 @@ export class OperatorControlPlane {
       );
     }
     const status = await this.requireThreadStatus(input.threadId);
+    const summaryThread = input.summaryThread ?? status.thread;
+    if (
+      summaryThread.threadId !== status.thread.threadId ||
+      summaryThread.sessionId !== status.thread.sessionId
+    ) {
+      throw createRuntimeFailure(
+        "OPERATOR_CONTEXT_CHECKPOINT_THREAD_INVALID",
+        `Context checkpoint summary input does not match thread '${input.threadId}'.`,
+        { checkpointId: input.checkpointId, threadId: input.threadId },
+      );
+    }
     await this.persistFocus(status.thread.sessionId, input.threadId, input.issuedBy ?? "operator");
     const checkpointRunId =
       checkpoint.runId ?? status.thread.activeRunId ?? `checkpoint-${checkpoint.checkpointId}`;
     if (input.action === "compact") {
       await this.persistCheckpointSummaryAction({
-        thread: status.thread,
+        thread: summaryThread,
         checkpoint,
         runId: checkpointRunId,
         action: "compact",
@@ -544,7 +556,7 @@ export class OperatorControlPlane {
     }
     if (input.action === "summarize_forward") {
       await this.persistCheckpointSummaryAction({
-        thread: status.thread,
+        thread: summaryThread,
         checkpoint,
         runId: checkpointRunId,
         action: "summarize_forward",

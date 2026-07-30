@@ -46,8 +46,10 @@ import type {
   ContextCheckpointStatus,
   ContextPolicyDefinitionRecord,
   ContextSummaryArtifactRecord,
+  ConversationTurnSubmissionKind,
   ConversationTurnRecord,
   ConversationTurnSegmentRecord,
+  ConversationTurnTerminalEnvelopeV1,
   ConversationTurnStatus,
   DelegationRecord,
   InteractionRequestRecord,
@@ -146,6 +148,35 @@ export interface PersistedRunStateRecord {
   baseVersion: number;
   state: Record<string, unknown>;
   deltaCount: number;
+}
+
+export interface ClaimConversationTurnExecutionInput {
+  turnId: string;
+  threadId: string;
+  sessionId: string;
+  turnRequestIdentity: string;
+  submissionIdentity: string;
+  submissionKind: ConversationTurnSubmissionKind;
+  proposedRunId: string;
+  eventType: string;
+  segment: ConversationTurnSegmentRecord;
+  startedAt: string;
+}
+
+export type ClaimConversationTurnExecutionResult =
+  | { kind: "claimed"; runId: string }
+  | { kind: "already_running"; runId: string }
+  | { kind: "terminal"; terminalEnvelope: ConversationTurnTerminalEnvelopeV1 };
+
+export interface UpdateConversationTurnTerminalEnvelopeInput {
+  turnId: string;
+  runId: string;
+  terminalSubmissionIdentity: string;
+  envelope: ConversationTurnTerminalEnvelopeV1;
+}
+
+export interface RunLifecycleSettlement {
+  wait?: import("../../runtime/waitState.js").CanonicalRuntimeWaitingFor | undefined;
 }
 
 export type ProviderReasoningRecordKind = "continuation" | "retained_visible";
@@ -350,7 +381,13 @@ export interface RunRepository {
   releaseRunLease(runId: string, sessionId: string): Promise<void>;
   cancelActiveRun(sessionId: string, error?: RuntimeError): Promise<{ runId?: string | undefined }>;
   startRun(runId: string, event: RuntimeEvent): Promise<void>;
-  completeRun(runId: string, status: TransitionStatus, error?: RuntimeError): Promise<void>;
+  validatePrestartedRun(runId: string, event: RuntimeEvent): Promise<void>;
+  completeRun(
+    runId: string,
+    status: TransitionStatus,
+    error?: RuntimeError,
+    settlement?: RunLifecycleSettlement | undefined,
+  ): Promise<void>;
 }
 
 export interface StepCommitStore {
@@ -435,6 +472,11 @@ export interface ThreadStore {
   }): Promise<ConversationTurnRecord[]>;
   listConversationTurnSegments?(turnId: string): Promise<ConversationTurnSegmentRecord[]>;
   upsertThread(thread: ThreadRecord): Promise<void>;
+  updateThreadAfterRun(input: {
+    thread: ThreadRecord;
+    turnId: string;
+    runId: string;
+  }): Promise<boolean>;
   getThread(threadId: string): Promise<ThreadRecord | null>;
   listThreads(input?: {
     parentThreadId?: string | undefined;
@@ -545,9 +587,26 @@ export interface ReplayStore
     EventStore,
     ArtifactStore,
     ThreadStore,
-    AssemblyStore {}
+    AssemblyStore {
+  claimConversationTurnExecution(
+    input: ClaimConversationTurnExecutionInput,
+  ): Promise<ClaimConversationTurnExecutionResult>;
+  updateConversationTurnTerminalEnvelope(
+    input: UpdateConversationTurnTerminalEnvelopeInput,
+  ): Promise<boolean>;
+}
 
 export interface SessionStore
   extends RuntimeStore,
     ThreadStore,
-    AssemblyStore {}
+    AssemblyStore {
+  recoverOrphanedActiveRun?(
+    sessionId: string,
+  ): Promise<{ runId?: string | undefined }>;
+  claimConversationTurnExecution(
+    input: ClaimConversationTurnExecutionInput,
+  ): Promise<ClaimConversationTurnExecutionResult>;
+  updateConversationTurnTerminalEnvelope(
+    input: UpdateConversationTurnTerminalEnvelopeInput,
+  ): Promise<boolean>;
+}

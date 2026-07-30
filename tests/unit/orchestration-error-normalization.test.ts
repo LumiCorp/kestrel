@@ -28,8 +28,18 @@ class StaticTurnExecutor implements TurnExecutor {
     this.result = result;
   }
 
-  async executeTurn(_input: TurnExecutionInput): Promise<TurnExecutionResult> {
-    return this.result;
+  async executeTurn(input: TurnExecutionInput): Promise<TurnExecutionResult> {
+    const runId = input.runtimeTurn?.runId;
+    if (runId === undefined) {
+      throw new Error("Static fixture requires a prestarted run.");
+    }
+    const output = {
+      ...this.result.output,
+      runId,
+      sessionId: input.sessionId,
+    };
+    await this.sessionStore.completeRun(runId, output.status, output.errors[0]);
+    return { ...this.result, output };
   }
 
   async getSession(sessionId: string): Promise<SessionRecord | null> {
@@ -143,7 +153,7 @@ contractTest("runtime.hermetic", "ThreadRuntime emits normalized thread and supe
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime keeps prior active run when failed output run is not persisted", async () => {
+contractTest("runtime.hermetic", "ThreadRuntime atomically projects failed output over stale thread run metadata", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore: store,
@@ -185,11 +195,14 @@ contractTest("runtime.hermetic", "ThreadRuntime keeps prior active run when fail
   });
 
   assert.equal(result.output.status, "FAILED");
-  assert.equal(result.output.runId, "run-unpersisted");
-  assert.equal(result.thread.activeRunId, "run-persisted");
+  assert.notEqual(result.output.runId, "run-unpersisted");
+  assert.equal((await store.getRun(result.output.runId))?.status, "FAILED");
+  assert.equal(result.thread.activeRunId, undefined);
+  assert.equal(result.thread.status, "FAILED");
 
   const persistedThread = await store.getThread("thread-active-run");
-  assert.equal(persistedThread?.activeRunId, "run-persisted");
+  assert.equal(persistedThread?.activeRunId, undefined);
+  assert.equal(persistedThread?.status, "FAILED");
 });
 
 contractTest("runtime.hermetic", "DelegationSupervisor emits normalized limit and compatibility failures", async () => {

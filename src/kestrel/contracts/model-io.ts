@@ -204,6 +204,13 @@ export interface AgentToolPresentation {
   artifacts?: AgentToolArtifactPresentation[] | undefined;
 }
 
+export interface AgentToolEvidenceIdentityV1 {
+  version: "v1";
+  scope: string;
+  key: string;
+  revision?: string | undefined;
+}
+
 export interface AgentToolResult {
   toolName: string;
   status: "OK" | "FAILED";
@@ -217,6 +224,7 @@ export interface AgentToolResult {
     modelVisibleOutput: unknown;
   } | undefined;
   presentation?: AgentToolPresentation | undefined;
+  evidenceIdentity?: AgentToolEvidenceIdentityV1 | undefined;
 }
 
 export interface ModelToolIntent {

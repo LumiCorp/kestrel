@@ -1238,12 +1238,13 @@ export function buildPostToolVerification(input: {
   toolName?: string | undefined;
   action?: unknown;
   duplicateResult?: ReadOnlyResultDuplicateVerdict | undefined;
+  newFactsCount: number;
 }): Record<string, unknown> {
   const prior = capabilityEvidenceFromAgentFeedback(input.reactState);
   const nextKeys = Object.keys(input.nextCapabilities);
   const priorKeys = new Set(Object.keys(prior));
   const newCapabilities = nextKeys.filter((key) => priorKeys.has(key) === false);
-  const evidenceCount = estimateEvidenceCount(input.output, input.toolName);
+  const evidenceCount = input.newFactsCount;
   const internetDiagnostics = readWebExtractionDiagnostics(input.toolName, input.output);
   const devShellDiagnostics = readDevShellVerificationDiagnostics(
     input.toolName,
@@ -1278,8 +1279,7 @@ export function buildPostToolVerification(input: {
   const evidenceRecovery = evidenceRecoverySummary?.latest;
   const resultQuality =
     internetDiagnostics?.lowYield === true ||
-    evidenceRecovery?.lowSignal === true ||
-    evidenceCount === 0
+    evidenceRecovery?.lowSignal === true
       ? "partial"
       : "ok";
   return {

@@ -374,6 +374,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
           output: reusableOutput,
           toolName: actionForDispatch.name,
           action: actionForDispatch,
+          newFactsCount: reducerResult.transition.newFactsCount,
         });
         const lastActionResult = buildToolActionResultFeedback({
           toolName: actionForDispatch.name,
@@ -397,6 +398,11 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
           kind: "filesystem_inspection_cached_result",
           toolName: actionForDispatch.name,
           cachedStepIndex: reusableFilesystemInspection.stepIndex,
+          resultIdentity: reducerResult.transition.resultIdentity,
+          producedEvidenceIds: reducerResult.transition.producedEvidenceIds,
+          novelEvidenceIds: reducerResult.transition.novelEvidenceIds,
+          duplicateOfEvidenceIds: reducerResult.transition.duplicateOfEvidenceIds,
+          newFactsCount: reducerResult.transition.newFactsCount,
         };
         const execPatch = {
           pendingApproval: undefined,
@@ -540,6 +546,22 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
           status: reusableOutcome.status,
           summary: reusableOutcome.summary,
         };
+        const reducerResult = applyReactStateEvent({
+          reactState,
+          event: {
+            type: "tool_result_observed",
+            stepIndex: ctx.stepIndex,
+            toolName: actionForDispatch.name,
+            toolInput: withActionExecutionRoleMetadata(
+              actionForDispatch.input,
+              "executionRole" in actionForDispatch ? actionForDispatch.executionRole : undefined,
+            ),
+            toolOutput: reusableOutput,
+            inputHash: actionInputHash,
+            reused: true,
+            workspaceRoot: workspaceRootForReducer,
+          },
+        });
         const postToolVerification = buildPostToolVerification({
           reactState,
           nextCapabilities,
@@ -547,11 +569,17 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
           toolName: actionForDispatch.name,
           action: actionForDispatch,
           duplicateResult,
+          newFactsCount: reducerResult.transition.newFactsCount,
         });
         const latestEvidenceDelta = {
           kind: "duplicate_cached_result",
           toolName: actionForDispatch.name,
           cachedStepIndex: reusableOutcome.stepIndex,
+          resultIdentity: reducerResult.transition.resultIdentity,
+          producedEvidenceIds: reducerResult.transition.producedEvidenceIds,
+          novelEvidenceIds: reducerResult.transition.novelEvidenceIds,
+          duplicateOfEvidenceIds: reducerResult.transition.duplicateOfEvidenceIds,
+          newFactsCount: reducerResult.transition.newFactsCount,
           ...(duplicateResult?.duplicateCount !== undefined
             ? { duplicateCount: duplicateResult.duplicateCount }
             : {}),
@@ -571,22 +599,6 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
           capabilityClasses,
           reused: true,
           status: "cached",
-        });
-        const reducerResult = applyReactStateEvent({
-          reactState,
-          event: {
-            type: "tool_result_observed",
-            stepIndex: ctx.stepIndex,
-            toolName: actionForDispatch.name,
-            toolInput: withActionExecutionRoleMetadata(
-              actionForDispatch.input,
-              "executionRole" in actionForDispatch ? actionForDispatch.executionRole : undefined,
-            ),
-            toolOutput: reusableOutput,
-            inputHash: actionInputHash,
-            reused: true,
-            workspaceRoot: workspaceRootForReducer,
-          },
         });
         const regionLastActionResult = buildToolActionResultFeedback({
           toolName: actionForDispatch.name,
@@ -734,6 +746,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         toolName: actionForDispatch.name,
         action: actionForDispatch,
         duplicateResult,
+        newFactsCount: reducerResult.transition.newFactsCount,
       });
       const lastActionResult = buildToolActionResultFeedback({
         toolName: actionForDispatch.name,
@@ -747,6 +760,11 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
           ? "duplicate_executed_result"
           : "fresh_result",
         toolName: actionForDispatch.name,
+        resultIdentity: reducerResult.transition.resultIdentity,
+        producedEvidenceIds: reducerResult.transition.producedEvidenceIds,
+        novelEvidenceIds: reducerResult.transition.novelEvidenceIds,
+        duplicateOfEvidenceIds: reducerResult.transition.duplicateOfEvidenceIds,
+        newFactsCount: reducerResult.transition.newFactsCount,
         ...(duplicateResult?.duplicateCount !== undefined
           ? { duplicateCount: duplicateResult.duplicateCount }
           : {}),
@@ -1344,6 +1362,7 @@ function resumePendingEffect(input: {
     toolName,
     action: input.reactState.nextAction,
     duplicateResult,
+    newFactsCount: reducerResult.transition.newFactsCount,
   });
   const lastActionResult = buildToolActionResultFeedback({
     toolName,
@@ -1359,6 +1378,11 @@ function resumePendingEffect(input: {
         ? "duplicate_executed_result"
         : "fresh_result",
     toolName,
+    resultIdentity: reducerResult.transition.resultIdentity,
+    producedEvidenceIds: reducerResult.transition.producedEvidenceIds,
+    novelEvidenceIds: reducerResult.transition.novelEvidenceIds,
+    duplicateOfEvidenceIds: reducerResult.transition.duplicateOfEvidenceIds,
+    newFactsCount: reducerResult.transition.newFactsCount,
     ...(duplicateResult?.duplicateCount !== undefined
       ? { duplicateCount: duplicateResult.duplicateCount }
       : {}),
@@ -1543,6 +1567,7 @@ function resumeDurableToolBatch(input: {
       toolName: pendingItem.name,
       action: input.reactState.nextAction,
       duplicateResult,
+      newFactsCount: reducerResult.transition.newFactsCount,
     });
     const lastActionResult = {
       kind: "tool_batch",
@@ -1679,6 +1704,7 @@ function finalizeDurableToolBatch(input: {
       hasRemaining: false,
     },
     action: input.reactState.nextAction,
+    newFactsCount: 0,
   });
   const execPatch = {
     pendingAction: undefined,
@@ -1888,8 +1914,12 @@ async function executeToolBatchChunk(input: {
         checkpointSize: normalizedCheckpointSize,
       }
     : undefined;
-  const reducedReactState = toolResults.reduce<Record<string, unknown>>((state, item, index) => applyReactStateEvent({
-      reactState: state,
+  const batchReduction = toolResults.reduce<{
+    reactState: Record<string, unknown>;
+    newFactsCount: number;
+  }>((state, item, index) => {
+    const reducerResult = applyReactStateEvent({
+      reactState: state.reactState,
       event: {
         type: "tool_result_observed",
         stepIndex: input.stepIndex + index,
@@ -1899,9 +1929,20 @@ async function executeToolBatchChunk(input: {
         toolCallId: item.toolCallId,
         inputHash: hashToolInput(item.name, item.input),
         reused: item.reused,
-        workspaceRoot: readActiveWorkspaceRootFromExecState(asRecord(state.exec)),
+        workspaceRoot: readActiveWorkspaceRootFromExecState(
+          asRecord(state.reactState.exec),
+        ),
       },
-    }).reactState, input.reactState);
+    });
+    return {
+      reactState: reducerResult.reactState,
+      newFactsCount: state.newFactsCount + reducerResult.transition.newFactsCount,
+    };
+  }, {
+    reactState: input.reactState,
+    newFactsCount: 0,
+  });
+  const reducedReactState = batchReduction.reactState;
 
   const postToolVerification = buildPostToolVerification({
     reactState: input.reactState,
@@ -1912,6 +1953,7 @@ async function executeToolBatchChunk(input: {
       hasRemaining,
     },
     action: input.reactState.nextAction,
+    newFactsCount: batchReduction.newFactsCount,
   });
   const lastActionResult = {
     kind: "tool_batch",

@@ -34,6 +34,7 @@ export const FRESH_TURN_AGENT_CONTROL_KEYS = [
   "decisionConfidence",
   "loopConvergence",
   "loopStall",
+  "closeoutLatch",
 ] as const;
 
 const RETIRED_FRESH_TURN_AGENT_CONTROL_KEYS = [
@@ -173,6 +174,9 @@ export class ContinuationCoordinator {
     }
     const continuationState = this.readContinuationState(input.session.state);
     const reactState = asRecord(input.session.state.agent) ?? {};
+    if (readActiveWaitState(reactState)?.kind === "region_merge") {
+      return input.session;
+    }
     const waitReason = readContinuationWaitReason(reactState);
     if (continuationState !== undefined && isContinuationWaitReason(waitReason)) {
       return input.session;

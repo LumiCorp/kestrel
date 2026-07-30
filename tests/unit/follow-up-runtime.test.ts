@@ -8,6 +8,8 @@ import {
   type TurnExecutionResult,
   type TurnExecutor,
 } from "../../src/orchestration/index.js";
+import { buildCanonicalWaitingFor } from "../../src/runtime/waitState.js";
+import type { RuntimeWaitMatcher } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { contractTest } from "../helpers/contract-test.js";
 
@@ -22,7 +24,27 @@ class FollowUpExecutor implements TurnExecutor {
     this.inputs.push(structuredClone(input));
     const result = this.results.shift();
     if (result === undefined) throw new Error("No queued result");
-    return result;
+    const runId = input.runtimeTurn?.runId;
+    if (runId === undefined) throw new Error("Follow-up fixture requires a prestarted run");
+    const output = {
+      ...result.output,
+      runId,
+      sessionId: input.sessionId,
+    };
+    await this.store.completeRun(
+      runId,
+      output.status,
+      output.errors[0],
+      output.status === "WAITING" && output.waitFor !== undefined
+        ? {
+            wait: buildCanonicalWaitingFor({
+              waitFor: output.waitFor as RuntimeWaitMatcher,
+              resumeStepAgent: input.stepAgent,
+            }),
+          }
+        : undefined,
+    );
+    return { ...result, output };
   }
   async getSession(sessionId: string): Promise<SessionRecord | null> {
     return this.store.getSession(sessionId);

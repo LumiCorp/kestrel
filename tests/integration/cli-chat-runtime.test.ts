@@ -242,7 +242,8 @@ contractTest("runtime.process", "KestrelChatRuntime consumes execution authoriza
       sessionId: "session-environment-app",
     },
   ]);
-  assert.equal(events[0]?.id, preparedTurn.runId);
+  assert.equal(typeof events[0]?.id, "string");
+  assert.notEqual(events[0]?.id, preparedTurn.runId);
   assert.equal("mcpAuthorization" in (events[0]?.payload ?? {}), false);
   assert.equal(
     JSON.stringify(events[0]?.payload).includes("signed-run-ticket"),
