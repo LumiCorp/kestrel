@@ -20,10 +20,9 @@ const modeItems = [
   },
   {
     title: "Work",
-    url: "/",
+    url: "/projects",
     icon: Bot,
     isActive: (pathname: string) =>
-      pathname === "/" ||
       pathname.startsWith("/threads") ||
       pathname.startsWith("/projects") ||
       pathname.startsWith("/search"),

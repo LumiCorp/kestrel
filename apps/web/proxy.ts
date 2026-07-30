@@ -21,7 +21,7 @@ export async function proxy(request: NextRequest) {
 
   // Allow public routes without redirecting
   const publicRoutes = [
-    "/", // Kestrel One landing page
+    "/", // Kestrel landing page
     "/sign-in",
     "/sign-up",
     "/forget-password",
@@ -30,7 +30,10 @@ export async function proxy(request: NextRequest) {
     "/accept-invitation",
     "/shared",
     "/brand",
+    "/product",
     "/manifest.webmanifest",
+    "/robots.txt",
+    "/sitemap.xml",
     "/api/auth",
     "/api/dev/auto-login",
   ];

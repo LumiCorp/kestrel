@@ -79,7 +79,7 @@ contractTest(
   () => {
     assert.deepEqual(
       PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES.map((entry) => entry.route).sort(),
-      ["/", "/admin", "/apps", "/dashboard", "/knowledge"],
+      ["/admin", "/apps", "/dashboard", "/knowledge", "/projects"],
     );
 
     for (const entry of PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES) {
