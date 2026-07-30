@@ -73,6 +73,14 @@ contractTest("desktop.hermetic", "Settings keeps healthy readiness quiet while r
 
   assert.match(source, /attentionCapabilities\.length > 0 \? \(/u);
   assert.match(source, /Secure credential storage is unavailable on this system\./u);
+  assert.match(
+    source,
+    /kestrelOneBusy \|\| view\?\.credentialStore\.available === false/u,
+  );
+  assert.match(
+    source,
+    /Secure credential storage is required before signing in\./u,
+  );
   assert.match(source, /Last checked/u);
   assert.match(source, /runAction\(action\)/u);
   assert.doesNotMatch(source, /No setup blockers/u);

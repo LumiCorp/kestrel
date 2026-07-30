@@ -1108,11 +1108,18 @@ export function SettingsWorkspace({
               <button
                 className="primary-button"
                 type="button"
-                disabled={kestrelOneBusy}
+                disabled={
+                  kestrelOneBusy || view?.credentialStore.available === false
+                }
                 onClick={() => void signInToKestrelOne()}
               >
                 Sign in with Kestrel One
               </button>
+              {view?.credentialStore.available === false ? (
+                <small>
+                  Secure credential storage is required before signing in.
+                </small>
+              ) : null}
               {kestrelOneAuthorization?.state === "awaiting_user" ? (
                 <small>Waiting for browser sign-in…</small>
               ) : null}
