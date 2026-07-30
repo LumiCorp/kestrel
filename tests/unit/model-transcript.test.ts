@@ -654,6 +654,140 @@ contractTest("runtime.hermetic", "rebase after compaction skips retained and rep
   assert.equal(rebased?.items.at(-1)?.id, "mt_2_0002_user");
 });
 
+contractTest("runtime.hermetic", "rebase after repeated partial compactions does not resurrect earlier replaced items", () => {
+  const original = {
+    version: 1 as const,
+    windowId: 1,
+    items: [
+      {
+        id: "task",
+        createdAt: "2026-07-30T00:00:00.000Z",
+        kind: "user" as const,
+        content: "Active task",
+      },
+      {
+        id: "old-a",
+        createdAt: "2026-07-30T00:00:01.000Z",
+        kind: "assistant_text" as const,
+        content: "Old A",
+      },
+      {
+        id: "old-b",
+        createdAt: "2026-07-30T00:00:02.000Z",
+        kind: "assistant_text" as const,
+        content: "Old B",
+      },
+      {
+        id: "tail",
+        createdAt: "2026-07-30T00:00:03.000Z",
+        kind: "assistant_text" as const,
+        content: "Recent tail",
+      },
+    ],
+  };
+  const first = compactModelTranscript({
+    transcript: original,
+    summary: "First summary",
+    plan: {
+      replacedItems: [original.items[1]!],
+      retainedItems: [original.items[0]!, ...original.items.slice(2)],
+    },
+  });
+  const second = compactModelTranscript({
+    transcript: first,
+    summary: "Second summary",
+    plan: {
+      replacedItems: [first.items[0]!],
+      retainedItems: first.items.slice(1),
+    },
+  });
+  const rebased = rebaseModelTranscriptAfterCompaction({
+    compactedTranscript: second,
+    outgoingTranscript: {
+      ...original,
+      items: [
+        ...original.items,
+        {
+          id: "new",
+          createdAt: "2026-07-30T00:00:04.000Z",
+          kind: "assistant_text",
+          content: "New after compaction",
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    rebased?.items.map((item) => item.content),
+    ["Second summary", "Active task", "Old B", "Recent tail", "New after compaction"],
+  );
+});
+
+contractTest("runtime.hermetic", "rebase preserves complete lineage after more than twenty partial compactions", () => {
+  const task = {
+    id: "task",
+    createdAt: "2026-07-30T00:00:00.000Z",
+    kind: "user" as const,
+    content: "Active task",
+  };
+  const historicalItems = Array.from({ length: 22 }, (_, index) => ({
+    id: `old-${index}`,
+    createdAt: `2026-07-30T00:01:${String(index).padStart(2, "0")}.000Z`,
+    kind: "assistant_text" as const,
+    content: `Old ${index}`,
+  }));
+  const original = {
+    version: 1 as const,
+    windowId: 1,
+    items: [task, ...historicalItems],
+  };
+  let compacted = normalizeModelTranscript(original);
+  assert.ok(compacted);
+  for (let index = 0; index < 21; index += 1) {
+    const replacedItem = compacted.items.find(
+      (item) => item.id === `old-${index}`,
+    );
+    assert.ok(replacedItem);
+    compacted = compactModelTranscript({
+      transcript: compacted,
+      summary: `Summary ${index}`,
+      plan: {
+        replacedItems: [replacedItem],
+        retainedItems: compacted.items.filter(
+          (item) => item.id !== replacedItem.id,
+        ),
+      },
+    });
+  }
+  const normalized = normalizeModelTranscript(compacted);
+  assert.equal(normalized?.compactions?.length, 21);
+
+  const rebased = rebaseModelTranscriptAfterCompaction({
+    compactedTranscript: normalized,
+    outgoingTranscript: {
+      ...original,
+      items: [
+        ...original.items,
+        {
+          id: "new",
+          createdAt: "2026-07-30T00:02:00.000Z",
+          kind: "assistant_text" as const,
+          content: "New after compaction",
+        },
+      ],
+    },
+  });
+
+  assert.equal(
+    rebased?.items.some((item) => item.content === "Old 0"),
+    false,
+  );
+  assert.equal(
+    rebased?.items.some((item) => item.content === "New after compaction"),
+    true,
+  );
+});
+
 contractTest("runtime.hermetic", "large tool results store bounded visible output with an internal raw-output ref", () => {
   const transcript = appendToolResultToTranscript({
     transcript: undefined,
@@ -1327,4 +1461,27 @@ contractTest("runtime.hermetic", "compaction drops dangling tool calls from reta
   assert.equal(compacted.items.some((item) => item.kind === "tool_call"), false);
   assert.doesNotMatch(rendered, /Transcript repair/u);
   assert.doesNotMatch(rendered, /missing\.txt/u);
+});
+
+contractTest("runtime.hermetic", "legacy compaction records normalize as model summaries", () => {
+  const transcript = normalizeModelTranscript({
+    version: 1,
+    windowId: 2,
+    items: [{
+      id: "mt_2_0001_compaction_summary",
+      createdAt: "2026-07-30T00:00:00.000Z",
+      kind: "compaction_summary",
+      content: "Legacy summary.",
+    }],
+    compactions: [{
+      id: "compaction_2",
+      createdAt: "2026-07-30T00:00:00.000Z",
+      summaryItemId: "mt_2_0001_compaction_summary",
+      replacedItemIds: ["old"],
+      retainedItemIds: ["task"],
+    }],
+  });
+
+  assert.equal(transcript?.compactions?.[0]?.summarySource, "model");
+  assert.equal(transcript?.compactions?.[0]?.failureCode, undefined);
 });

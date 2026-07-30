@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { HarnessEconomicsPolicyV1, ModelEconomicsProfileV1 } from "../../src/economics/index.js";
+import {
+  countTextTokens,
+  type HarnessEconomicsPolicyV1,
+  type ModelEconomicsProfileV1,
+} from "../../src/economics/index.js";
 
 import { buildModelToolAliasRegistry } from "../../agents/reference-react/src/modelToolCallActions.js";
 import {
@@ -12,6 +16,8 @@ import {
   buildKestrelAgentContext as buildContextRequest,
   buildKestrelAgentCompactionMessages,
   buildKestrelCompactionSummarySchema,
+  buildKestrelCompactionSourceUnits,
+  buildKestrelCompactionSufficiencyMessages,
   buildKestrelAgentContext,
   buildKestrelAgentCompactedTranscript,
   buildKestrelAgentToolModelContext,
@@ -19,10 +25,16 @@ import {
   buildKestrelAgentToolSurface,
   buildKestrelAgentValidationFeedbackMessage,
   buildKestrelTerminalBenchRepairPrompt,
+  estimateKestrelCompactionSourceTokens,
+  KESTREL_COMPACTION_SUFFICIENCY_SCHEMA,
   shouldCompactKestrelAgentContext,
 } from "../../src/runtime/KestrelAgentContextBuilder.js";
 import { contractTest } from "../helpers/contract-test.js";
-import { readActiveTaskGoalFromTranscript } from "../../src/runtime/modelTranscript.js";
+import {
+  estimateModelTranscriptItemsTokens,
+  planTokenBudgetedModelTranscriptCompaction,
+  readActiveTaskGoalFromTranscript,
+} from "../../src/runtime/modelTranscript.js";
 
 
 contractTest("runtime.hermetic", "Kestrel agent context builder preserves the compatibility request output", () => {
@@ -535,448 +547,517 @@ contractTest("runtime.hermetic", "Kestrel deliberator system prompt keeps contex
   assert.match(systemPrompt, /truthfully describes that exact selected action/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder owns compaction prompt messages", () => {
-  const messages = buildKestrelAgentCompactionMessages({
-    activeTaskItemId: "user_1_1",
-    replacedItemIds: [],
-    contextMessages: [
-      {
-        role: "user",
-        content: "<runtime_context>\nTask: Continue\n</runtime_context>",
-      },
-    ],
-  });
-
-  assert.equal(messages[0]?.role, "system");
-  assert.match(String(messages[0]?.content), /Summarize the older transcript for continuation/u);
-  assert.equal(messages[1]?.role, "user");
-  assert.match(String(messages[1]?.content), /Task: Continue/u);
-  assert.equal(messages[2]?.role, "user");
-  assert.match(String(messages[0]?.content), /Set activeTaskItemId to the exact retained active task item id supplied below/u);
-  assert.match(String(messages[2]?.content), /Retained active task item id: "user_1_1"/u);
-  assert.deepEqual(
-    (buildKestrelCompactionSummarySchema("user_1_1", []).properties as Record<string, unknown>).activeTaskItemId,
-    { type: "string", enum: ["user_1_1"] },
-  );
-  assert.deepEqual(
-    (buildKestrelCompactionSummarySchema("user_1_1", []).properties as Record<string, unknown>).coveredItemIds,
-    { type: "array", items: { type: "string" }, maxItems: 0 },
-  );
-  assert.deepEqual(
-    (buildKestrelCompactionSummarySchema("user_1_1", ["item-2", "item-3"]).properties as Record<string, unknown>).coveredItemIds,
+contractTest("runtime.hermetic", "V2 compaction prompt and schema contain semantic text only", () => {
+  const sourceItems = [
     {
-      type: "array",
-      items: { type: "string", enum: ["item-2", "item-3"] },
-      minItems: 2,
-      maxItems: 2,
+      id: "old-user-id",
+      createdAt: "2026-07-29T12:00:00.000Z",
+      kind: "user" as const,
+      content: "Preserve the current blocker.",
     },
-  );
-  assert.equal(shouldCompactKestrelAgentContext({ transcript: { version: 1, windowId: 1, items: [] } }), false);
-  const transcript = {
-      version: 1,
-      windowId: 1,
-      items: [
-        {
-          id: "user_1_1",
-          createdAt: "2026-07-22T00:00:00.000Z",
-          kind: "user",
-          content: "Older work.",
-          stepIndex: 1,
-        },
-        {
-          id: "user_1_2",
-          createdAt: "2026-07-22T00:01:00.000Z",
-          kind: "user",
-          content: "A later follow-up.",
-          stepIndex: 2,
-        },
-      ],
-    };
-  assert.throws(() => buildKestrelAgentCompactedTranscript({
-    transcript,
-    summary: undefined,
-  }), /must be an object/u);
-  assert.throws(() => buildKestrelAgentCompactedTranscript({
-    transcript,
-    summary: {
-      version: 1,
-      activeTaskItemId: "user_1_2",
-      decisions: [],
-      constraints: [],
-      evidence: [],
-      fileState: [],
-      blockers: [],
-      nextActions: [],
-      coveredItemIds: [],
+    {
+      id: "old-call-id",
+      createdAt: "2026-07-29T12:01:00.000Z",
+      kind: "tool_call" as const,
+      toolName: "fs.search_text",
+      toolCallId: "call-1",
+      toolInput: { query: "compaction" },
     },
-  }), /does not identify the retained active task item/u);
-  const compacted = buildKestrelAgentCompactedTranscript({
-    transcript,
-    summary: {
-      version: 1,
-      activeTaskItemId: "user_1_1",
-      decisions: [],
-      constraints: [],
-      evidence: [],
-      fileState: [],
-      blockers: [],
-      nextActions: [],
-      coveredItemIds: [],
+    {
+      id: "old-result-id",
+      createdAt: "2026-07-29T12:02:00.000Z",
+      kind: "tool_result" as const,
+      toolName: "fs.search_text",
+      toolCallId: "call-1",
+      toolOutput: { matches: [] },
     },
-  });
-  assert.equal(compacted.items[0]?.kind, "compaction_summary");
-});
-
-contractTest("runtime.hermetic", "Kestrel compaction binds source item ids to their semantic payloads", () => {
+  ];
   const messages = buildKestrelAgentCompactionMessages({
-    activeTaskItemId: "item-user",
-    replacedItemIds: ["item-call", "item-result"],
-    contextMessages: [
-      {
-        role: "assistant",
-        content: "This unanchored rendering must not be duplicated.",
-      },
-    ],
-    sourceItems: [
-      {
-        id: "item-user",
-        createdAt: "2026-07-29T12:00:00.000Z",
-        kind: "user",
-        content: "Inspect the exact failure.",
-      },
-      {
-        id: "item-call",
-        createdAt: "2026-07-29T12:01:00.000Z",
-        kind: "tool_call",
-        toolName: "fs.search_text",
-        toolCallId: "call-1",
-        toolInput: { query: "semantic anchors" },
-      },
-      {
-        id: "item-result",
-        createdAt: "2026-07-29T12:02:00.000Z",
-        kind: "tool_result",
-        toolName: "fs.search_text",
-        toolCallId: "call-1",
-        toolOutput: { matches: [] },
-      },
-    ],
+    sourceItems,
+    correction: {
+      source: "summary_validation",
+      reason: "The response was malformed.",
+    },
   });
+  const rendered = JSON.stringify(messages);
+  const sourcePrompt = String(messages[1]?.content ?? "");
+  const schema = buildKestrelCompactionSummarySchema();
+  const sufficiencyMessages = buildKestrelCompactionSufficiencyMessages({
+    sourceItems,
+    proposedSummary: {
+      decisions: [],
+      constraints: [],
+      evidence: ["The search returned no matches."],
+      fileState: [],
+      blockers: ["The current blocker remains unresolved."],
+      nextActions: [],
+    },
+  });
+  const sufficiencyCategories = (
+    KESTREL_COMPACTION_SUFFICIENCY_SCHEMA.properties.categories.properties
+  );
 
-  assert.equal(messages.length, 2);
-  const sourcePrompt = String(messages[1]?.content);
-  assert.doesNotMatch(sourcePrompt, /unanchored rendering/u);
-  assert.match(sourcePrompt, /"id":"item-user".*"content":"Inspect the exact failure."/u);
-  assert.match(sourcePrompt, /"id":"item-call".*"toolInput":\{"query":"semantic anchors"\}/u);
-  assert.match(sourcePrompt, /"id":"item-result".*"toolOutput":\{"matches":\[\]\}/u);
-  assert.match(sourcePrompt, /"id":"item-call".*"disposition":"replaced"/u);
-  assert.match(sourcePrompt, /"id":"item-user".*"disposition":"retained"/u);
+  assert.match(rendered, /Preserve the current blocker/u);
+  assert.match(sourcePrompt, /"kind":"tool".*"toolName":"fs.search_text"/u);
+  assert.match(sourcePrompt, /"input":\{"query":"compaction"\}/u);
+  assert.match(sourcePrompt, /"output":\{"matches":\[\]\}/u);
+  assert.match(rendered, /The response was malformed/u);
+  assert.doesNotMatch(rendered, /old-user-id|old-call-id|old-result-id/u);
+  assert.doesNotMatch(rendered, /activeTaskItemId|coveredItemIds|sourceItemIds|rejectedResponse/u);
+  assert.deepEqual(Object.keys(schema.properties as Record<string, unknown>), [
+    "decisions",
+    "constraints",
+    "evidence",
+    "fileState",
+    "blockers",
+    "nextActions",
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify({
+      messages: sufficiencyMessages,
+      schema: KESTREL_COMPACTION_SUFFICIENCY_SCHEMA,
+    }),
+    /activeTask|active task continuity/u,
+  );
+  assert.deepEqual(Object.keys(sufficiencyCategories), [
+    "decisions",
+    "constraints",
+    "evidence",
+    "fileState",
+    "blockers",
+    "nextActions",
+  ]);
 });
 
-contractTest("runtime.hermetic", "enforce-mode compaction uses resolved model token pressure", () => {
-  const policy: HarnessEconomicsPolicyV1 = {
-    version: 1,
-    policyId: "economics:compaction:test",
-    mode: "enforce",
-    counting: { estimatorVersion: "1", allowEstimatedEnforcement: true },
-    context: { outputReserveTokens: 10, safetyReserveTokens: 5, sections: [] },
-    compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
-    tools: { exposure: "assembly_allowlist", modelContextMaxTokens: 20, allowedFamiliesByPhase: {} },
-    cache: { mode: "provider_default" },
-  };
-  const modelProfile: ModelEconomicsProfileV1 = {
+contractTest("runtime.hermetic", "token pressure triggers compaction in observe and enforce modes", () => {
+  const transcript = { version: 1 as const, windowId: 1, items: [] };
+  const profile = {
     version: 1,
     profileId: "test:model:v1",
     provider: "test",
     model: "model",
     contextWindowTokens: 100,
     maxOutputTokens: 10,
-    counting: { counter: "test", counterVersion: "1", method: "model_tokenizer", confidence: "model_compatible" },
-    cache: { behavior: "none" },
-  };
-  const transcript = { version: 1 as const, windowId: 1, items: [] };
-
-  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 79, toolSchemaTokens: 5 }), false);
-  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 80, toolSchemaTokens: 5 }), true);
-  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 55, toolSchemaTokens: 30 }), true);
-});
-
-contractTest("runtime.hermetic", "observe-mode token pressure never changes compaction behavior", () => {
-  const transcript = { version: 1 as const, windowId: 1, items: [] };
-  const policy = {
-    version: 1,
-    policyId: "economics:observe:test",
-    mode: "observe",
-    counting: { estimatorVersion: "1", allowEstimatedEnforcement: true },
-    context: { outputReserveTokens: 10, safetyReserveTokens: 5, sections: [] },
-    compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
-    tools: { exposure: "assembly_allowlist", modelContextMaxTokens: 20, allowedFamiliesByPhase: {} },
-    cache: { mode: "provider_default" },
-  } satisfies HarnessEconomicsPolicyV1;
-  const modelProfile = {
-    version: 1,
-    profileId: "test:model:v1",
-    provider: "test",
-    model: "model",
-    contextWindowTokens: 100,
-    maxOutputTokens: 10,
-    counting: { counter: "test", counterVersion: "1", method: "model_tokenizer", confidence: "model_compatible" },
+    counting: {
+      counter: "test",
+      counterVersion: "1",
+      method: "model_tokenizer",
+      confidence: "model_compatible",
+    },
     cache: { behavior: "none" },
   } satisfies ModelEconomicsProfileV1;
-
-  assert.equal(shouldCompactKestrelAgentContext({ transcript, policy, modelProfile, contextTokens: 1_000, toolSchemaTokens: 500 }), false);
-});
-
-contractTest("runtime.hermetic", "Kestrel compaction fails closed when a replaced item lacks semantic coverage", () => {
-  const transcript = {
-    version: 1,
-    windowId: 1,
-    items: Array.from({ length: 26 }, (_, index) => ({
-      id: `item-${index}`,
-      createdAt: `2026-07-22T00:00:${String(index).padStart(2, "0")}.000Z`,
-      kind: index === 0 ? "user" : "assistant_text",
-      content: index === 0 ? "Active task" : `Evidence ${index}`,
-    })),
-  };
-
-  assert.throws(() => buildKestrelAgentCompactedTranscript({
-    transcript,
-    summary: {
+  for (const mode of ["observe", "enforce"] as const) {
+    const policy = {
       version: 1,
-      activeTaskItemId: "item-0",
-      decisions: [],
-      constraints: [],
-      evidence: [],
-      fileState: [],
-      blockers: [],
-      nextActions: [],
-      coveredItemIds: [],
-    },
-  }), /replaced item ids missing from coveredItemIds/u);
+      policyId: `economics:${mode}:test`,
+      mode,
+      counting: { estimatorVersion: "1", allowEstimatedEnforcement: true },
+      context: { outputReserveTokens: 10, safetyReserveTokens: 5, sections: [] },
+      compaction: { requireStructuredAnchors: true, maxSummaryAttempts: 1 },
+      tools: { exposure: "assembly_allowlist", modelContextMaxTokens: 20, allowedFamiliesByPhase: {} },
+      cache: { mode: "provider_default" },
+    } satisfies HarnessEconomicsPolicyV1;
+    assert.equal(
+      shouldCompactKestrelAgentContext({
+        transcript,
+        policy,
+        modelProfile: profile,
+        contextTokens: 80,
+        toolSchemaTokens: 5,
+      }),
+      true,
+    );
+  }
 });
 
-contractTest("runtime.hermetic", "Kestrel compaction fails closed when duplicate covered ids hide a replaced item", () => {
+contractTest("runtime.hermetic", "token-budgeted plans keep the active task and tool pairs atomic", () => {
   const transcript = {
-    version: 1,
+    version: 1 as const,
     windowId: 1,
-    items: Array.from({ length: 27 }, (_, index) => ({
-      id: `item-${index}`,
-      createdAt: `2026-07-22T00:00:${String(index).padStart(2, "0")}.000Z`,
-      kind: index === 0 ? "user" as const : "assistant_text" as const,
-      content: index === 0 ? "Active task" : `Evidence ${index}`,
-    })),
+    items: [
+      { id: "task", createdAt: "2026-07-29T12:00:00.000Z", kind: "user" as const, content: "Active task" },
+      { id: "call", createdAt: "2026-07-29T12:01:00.000Z", kind: "tool_call" as const, toolName: "fs.read_text", toolCallId: "pair", toolInput: { path: "a.ts" } },
+      { id: "result", createdAt: "2026-07-29T12:02:00.000Z", kind: "tool_result" as const, toolName: "fs.read_text", toolCallId: "pair", toolOutput: { content: "evidence" } },
+      { id: "middle", createdAt: "2026-07-29T12:03:00.000Z", kind: "assistant_text" as const, content: "Unprocessed middle history" },
+      { id: "tail", createdAt: "2026-07-29T12:04:00.000Z", kind: "assistant_text" as const, content: "Recent tail" },
+    ],
   };
-
-  assert.throws(() => buildKestrelAgentCompactedTranscript({
+  const counter = { id: "chars", version: "1", count: (value: string) => value.length };
+  const pairBudget = JSON.stringify(transcript.items[1]).length + JSON.stringify(transcript.items[2]).length;
+  const plan = planTokenBudgetedModelTranscriptCompaction({
     transcript,
-    summary: {
-      version: 1,
-      activeTaskItemId: "item-0",
-      decisions: [],
-      constraints: [],
-      evidence: [{
-        text: "Only the first replaced item was preserved.",
-        sourceItemIds: ["item-1"],
-      }],
-      fileState: [],
-      blockers: [],
-      nextActions: [],
-      coveredItemIds: ["item-1", "item-1"],
-    },
-  }), /coveredItemIds contains duplicate item ids \["item-1"\]/u);
+    retainedTailTokenBudget: JSON.stringify(transcript.items[4]).length,
+    maxReplacedTokens: pairBudget,
+    tokenCounter: counter,
+  });
+
+  assert.deepEqual(plan.replacedItems.map((item) => item.id), ["call", "result"]);
+  assert.equal(plan.retainedItems.some((item) => item.id === "task"), true);
+  assert.equal(plan.retainedItems.some((item) => item.id === "middle"), true);
+  assert.equal(plan.retainedItems.some((item) => item.id === "tail"), true);
 });
 
-contractTest("runtime.hermetic", "Kestrel compaction rejects unknown semantic anchor ids", () => {
-  const transcript = {
-    version: 1,
-    windowId: 1,
-    items: Array.from({ length: 27 }, (_, index) => ({
-      id: `item-${index}`,
-      createdAt: `2026-07-22T00:00:${String(index).padStart(2, "0")}.000Z`,
-      kind: index === 0 ? "user" as const : "assistant_text" as const,
-      content: index === 0 ? "Active task" : `Evidence ${index}`,
-    })),
-  };
-
-  assert.throws(() => buildKestrelAgentCompactedTranscript({
-    transcript,
-    summary: {
-      version: 1,
-      activeTaskItemId: "item-0",
-      decisions: [],
-      constraints: [],
-      evidence: [{
-        text: "Preserved evidence with invented provenance.",
-        sourceItemIds: ["item-1", "item-2", "item-invented"],
-      }],
-      fileState: [],
-      blockers: [],
-      nextActions: [],
-      coveredItemIds: ["item-1", "item-2"],
+contractTest("runtime.hermetic", "maintenance source preserves orphan tool-result evidence", () => {
+  const units = buildKestrelCompactionSourceUnits([
+    {
+      id: "orphan-result",
+      createdAt: "2026-07-30T12:00:00.000Z",
+      kind: "tool_result",
+      toolName: "fs.search_text",
+      toolInput: { path: "src/runtime", query: "compaction" },
+      toolOutput: {
+        matches: [{ path: "src/runtime/modelTranscript.ts", line: 42 }],
+      },
+      rawOutputRef: "artifact://search-result",
+      truncated: true,
     },
-  }), /unknown semantic anchor item ids \["item-invented"\]/u);
+  ]);
+
+  assert.deepEqual(units, [
+    {
+      kind: "tool",
+      toolName: "fs.search_text",
+      input: { path: "src/runtime", query: "compaction" },
+      output: {
+        matches: [{ path: "src/runtime/modelTranscript.ts", line: 42 }],
+      },
+      rawOutputRef: "artifact://search-result",
+      truncated: true,
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(units), /orphan-result|createdAt/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel compaction keeps paired tool provenance machine-only", () => {
+contractTest("runtime.hermetic", "maintenance chunks use compact rendered-source tokens while retained tails use raw tokens", () => {
+  const writeContent = `${"const value = 1;\n".repeat(1_000)}end`;
+  const historicalItems = Array.from({ length: 2 }, (_, index) => [
+    {
+      id: `call-${index}`,
+      createdAt: `2026-07-29T12:01:0${index}.000Z`,
+      kind: "tool_call" as const,
+      toolName: "fs.write_text",
+      toolCallId: `pair-${index}`,
+      toolInput: {
+        path: `src/file-${index}.ts`,
+        content: writeContent,
+      },
+    },
+    {
+      id: `result-${index}`,
+      createdAt: `2026-07-29T12:01:1${index}.000Z`,
+      kind: "tool_result" as const,
+      toolName: "fs.write_text",
+      toolCallId: `pair-${index}`,
+      toolOutput: { text: `Updated src/file-${index}.ts.` },
+    },
+  ]).flat();
+  const tail = {
+    id: "tail",
+    createdAt: "2026-07-29T12:02:00.000Z",
+    kind: "assistant_text" as const,
+    content: "Recent provider-visible tail.",
+  };
   const transcript = {
-    version: 1,
+    version: 1 as const,
     windowId: 1,
     items: [
       {
-        id: "mt_1_0001_user",
-        createdAt: "2026-07-22T00:00:00.000Z",
-        kind: "user",
-        content: "Complete the long-running task.",
+        id: "task",
+        createdAt: "2026-07-29T12:00:00.000Z",
+        kind: "user" as const,
+        content: "Active task",
       },
-      {
-        id: "mt_1_0002_tool_call",
-        createdAt: "2026-07-22T00:00:01.000Z",
-        kind: "tool_call",
-        toolName: "fs.read_text",
-        toolInput: { path: "src/app.ts" },
-        toolCallId: "call-1",
-      },
-      {
-        id: "mt_1_0003_tool_result",
-        createdAt: "2026-07-22T00:00:02.000Z",
-        kind: "tool_result",
-        toolName: "fs.read_text",
-        toolCallId: "call-1",
-        toolOutput: { text: "export const ready = true;" },
-      },
-      ...Array.from({ length: 24 }, (_, index) => ({
-        id: `tail-${index}`,
-        createdAt: `2026-07-22T00:01:${String(index).padStart(2, "0")}.000Z`,
-        kind: "assistant_text",
-        content: `Later retained work ${index}`,
-      })),
+      ...historicalItems,
+      tail,
     ],
   };
-
-  const compacted = buildKestrelAgentCompactedTranscript({
+  const counter = {
+    id: "chars",
+    version: "1",
+    count: (value: string) => value.length,
+  };
+  const rawSourceTokens = estimateModelTranscriptItemsTokens(
+    historicalItems,
+    counter,
+  );
+  const renderedSourceTokens = estimateKestrelCompactionSourceTokens(
+    historicalItems,
+    counter,
+  );
+  const rawTailTokens = estimateModelTranscriptItemsTokens([tail], counter);
+  const plan = planTokenBudgetedModelTranscriptCompaction({
     transcript,
-    summary: {
-      version: 1,
-      activeTaskItemId: "mt_1_0001_user",
-      decisions: [],
-      constraints: [],
-      evidence: [{
-        text: "The inspected file reported the ready export.",
-        sourceItemIds: ["mt_1_0003_tool_result"],
-      }],
-      fileState: [],
-      blockers: [],
-      nextActions: [],
-      coveredItemIds: ["mt_1_0002_tool_call", "mt_1_0003_tool_result"],
-    },
+    retainedTailTokenBudget: rawTailTokens,
+    maxReplacedTokens: renderedSourceTokens,
+    tokenCounter: counter,
+    estimateReplacedItemsTokens: (items) =>
+      estimateKestrelCompactionSourceTokens(items, counter),
   });
 
-  const replacedItemIds = compacted.compactions?.at(-1)?.replacedItemIds;
-  assert.ok(replacedItemIds);
-  assert.equal(replacedItemIds.includes("mt_1_0002_tool_call"), true);
-  assert.equal(replacedItemIds.includes("mt_1_0003_tool_result"), true);
-  assert.equal(
-    compacted.items[0]?.content?.includes("mt_1_0002_tool_call"),
-    false,
+  assert.equal(renderedSourceTokens < rawSourceTokens, true);
+  assert.deepEqual(
+    plan.replacedItems.map((item) => item.id),
+    ["call-0", "result-0", "call-1", "result-1"],
+  );
+  assert.deepEqual(
+    plan.retainedItems.map((item) => item.id),
+    ["task", "tail"],
   );
 });
 
-contractTest("runtime.hermetic", "repeated compaction preserves the active task and explicit semantic-anchor provenance", () => {
-  const activeTask = "Implement the token-efficient harness without losing the accepted behavior.";
-  const original = {
-    version: 1,
+contractTest("runtime.hermetic", "explicit partial compaction preserves middle history and durable fallback lineage", () => {
+  const transcript = {
+    version: 1 as const,
     windowId: 1,
-    items: Array.from({ length: 30 }, (_, index) => ({
-      id: `first-${index}`,
-      createdAt: `2026-07-22T00:${String(index).padStart(2, "0")}:00.000Z`,
-      kind: index === 0 ? "user" : "assistant_text",
-      content: index === 0 ? activeTask : `First-window evidence ${index}`,
+    items: Array.from({ length: 6 }, (_, index) => ({
+      id: `item-${index}`,
+      createdAt: `2026-07-29T12:00:0${index}.000Z`,
+      kind: index === 0 ? "user" as const : "assistant_text" as const,
+      content: index === 0 ? "Active task" : `Evidence ${index}`,
     })),
   };
-  const firstReplacedIds = original.items.slice(1, 6).map((item) => item.id);
-  const first = buildKestrelAgentCompactedTranscript({
-    transcript: original,
+  const compacted = buildKestrelAgentCompactedTranscript({
+    transcript,
+    plan: {
+      replacedItems: transcript.items.slice(1, 3),
+      retainedItems: [transcript.items[0]!, ...transcript.items.slice(3)],
+    },
     summary: {
-      version: 1,
-      activeTaskItemId: "first-0",
       decisions: [],
-      constraints: [{ text: "Preserve the first-window constraint.", sourceItemIds: firstReplacedIds }],
-      evidence: [],
+      constraints: [],
+      evidence: ["Runtime evidence remains authoritative."],
       fileState: [],
       blockers: [],
       nextActions: [],
-      coveredItemIds: firstReplacedIds,
     },
+    summarySource: "runtime_fallback",
+    failureCode: "COMPACTION_MAINTENANCE_PROVIDER_FAILED",
   });
-  const secondSource = {
-    ...first,
-    items: [
-      ...first.items,
-      ...Array.from({ length: 30 }, (_, index) => ({
-        id: `second-${index}`,
-        createdAt: `2026-07-22T01:${String(index).padStart(2, "0")}:00.000Z`,
-        kind: "assistant_text" as const,
-        content: `Second-window evidence ${index}`,
-      })),
-    ],
-  };
-  const retainedIds = new Set(["first-0", ...secondSource.items.slice(-24).map((item) => item.id)]);
-  const secondReplacedIds = secondSource.items.filter((item) => retainedIds.has(item.id) === false).map((item) => item.id);
-  const second = buildKestrelAgentCompactedTranscript({
-    transcript: secondSource,
-    summary: {
-      version: 1,
-      activeTaskItemId: "first-0",
-      decisions: [],
-      constraints: [{ text: "Preserve both compaction windows.", sourceItemIds: secondReplacedIds }],
-      evidence: [],
-      fileState: [],
-      blockers: [],
-      nextActions: [],
-      coveredItemIds: secondReplacedIds,
-    },
-  });
-  const thirdSource = {
-    ...second,
-    items: [
-      ...second.items,
-      ...Array.from({ length: 30 }, (_, index) => ({
-        id: `third-${index}`,
-        createdAt: `2026-07-22T02:${String(index).padStart(2, "0")}:00.000Z`,
-        kind: "assistant_text" as const,
-        content: `Third-window evidence ${index}`,
-      })),
-    ],
-  };
-  const thirdRetainedIds = new Set(["first-0", ...thirdSource.items.slice(-24).map((item) => item.id)]);
-  const thirdReplacedIds = thirdSource.items.filter((item) => thirdRetainedIds.has(item.id) === false).map((item) => item.id);
-  const third = buildKestrelAgentCompactedTranscript({
-    transcript: thirdSource,
-    summary: {
-      version: 1,
-      activeTaskItemId: "first-0",
-      decisions: [{ text: "Keep the reviewed harness design.", sourceItemIds: thirdReplacedIds }],
-      constraints: [{ text: "Preserve all three compaction windows.", sourceItemIds: thirdReplacedIds }],
-      evidence: [{ text: "Prior windows contain accepted evidence.", sourceItemIds: thirdReplacedIds }],
-      fileState: [{ text: "Workspace state remains attributable.", sourceItemIds: thirdReplacedIds }],
-      blockers: [{ text: "No unresolved blocker may be hidden.", sourceItemIds: thirdReplacedIds }],
-      nextActions: [{ text: "Continue from the retained state.", sourceItemIds: thirdReplacedIds }],
-      coveredItemIds: thirdReplacedIds,
-    },
-  });
+  const record = compacted.compactions?.at(-1);
 
-  assert.equal(readActiveTaskGoalFromTranscript(third), activeTask);
-  assert.equal(third.compactions?.length, 3);
-  const latestSummary = JSON.parse(third.items.find((item) => item.kind === "compaction_summary")?.content ?? "null") as Record<string, unknown>;
-  assert.equal(latestSummary.coveredItemIds, undefined);
-  assert.deepEqual(latestSummary.decisions, ["Keep the reviewed harness design."]);
-  assert.deepEqual(latestSummary.constraints, ["Preserve all three compaction windows."]);
-  assert.deepEqual(latestSummary.evidence, ["Prior windows contain accepted evidence."]);
-  assert.deepEqual(latestSummary.fileState, ["Workspace state remains attributable."]);
-  assert.deepEqual(latestSummary.blockers, ["No unresolved blocker may be hidden."]);
-  assert.deepEqual(latestSummary.nextActions, ["Continue from the retained state."]);
-  assert.deepEqual(third.compactions?.at(-1)?.replacedItemIds, thirdReplacedIds);
-  assert.equal(typeof third.compactions?.at(-1)?.sourceWindowHash, "string");
+  assert.deepEqual(compacted.items.map((item) => item.id).slice(1), [
+    "item-0",
+    "item-3",
+    "item-4",
+    "item-5",
+  ]);
+  assert.deepEqual(record?.replacedItemIds, ["item-1", "item-2"]);
+  assert.equal(record?.summarySource, "runtime_fallback");
+  assert.equal(record?.failureCode, "COMPACTION_MAINTENANCE_PROVIDER_FAILED");
+  assert.equal(typeof record?.sourceWindowHash, "string");
+  assert.equal(typeof record?.summaryHash, "string");
+});
+
+contractTest("runtime.hermetic", "V2 compaction phase uses at least 50 percent fewer input tokens than the old protocol", () => {
+  const activeTask = {
+    id: "active-task",
+    createdAt: "2026-07-29T12:00:00.000Z",
+    kind: "user" as const,
+    content: "Preserve the active task and current constraints.",
+  };
+  const historicalItems = Array.from({ length: 10 }, (_, index) => [
+    {
+      id: `call-${index}`,
+      createdAt: "2026-07-29T12:01:00.000Z",
+      kind: "tool_call" as const,
+      toolName: "fs.write_text",
+      toolCallId: `pair-${index}`,
+      toolInput: {
+        path: `src/file-${index}.ts`,
+        content: `constraint blocker evidence file state next action ${index}\n${"x".repeat(10_000)}`,
+      },
+    },
+    {
+      id: `result-${index}`,
+      createdAt: "2026-07-29T12:01:01.000Z",
+      kind: "tool_result" as const,
+      toolName: "fs.write_text",
+      toolCallId: `pair-${index}`,
+      toolOutput: {
+        text: `Updated src/file-${index}.ts; validation remains blocked.`,
+        rawOutputRef: `artifact-${index}`,
+        truncated: false,
+      },
+    },
+  ]).flat();
+  const recentTail = {
+    id: "recent-tail",
+    createdAt: "2026-07-29T12:02:00.000Z",
+    kind: "assistant_text" as const,
+    content: "Next action: run pnpm validate.",
+  };
+  const transcript = {
+    version: 1 as const,
+    windowId: 1,
+    items: [activeTask, ...historicalItems, recentTail],
+  };
+  const plan = {
+    replacedItems: historicalItems,
+    retainedItems: [activeTask, recentTail],
+  };
+  const replacedItemIds = historicalItems.map((item) => item.id);
+  const legacySourceItems = transcript.items;
+  const legacyMessages = [
+    {
+      role: "system",
+      content: [
+        "Summarize the older transcript for continuation.",
+        "Preserve durable user intent, completed work, current files/results known from the transcript, open todos or blockers, and the next useful handoff.",
+        "Preserve constraint facts, zero-result searches, the chronologically latest successful or failed tool results, exact mutation summaries, open todos, and current blockers.",
+        "Set activeTaskItemId to the exact retained active task item id supplied below. Do not select a newer follow-up user item.",
+        "Set coveredItemIds to exactly the supplied replaced item ids. Do not include retained item ids.",
+        "Every replaced semantic item must appear in at least one semantic anchor sourceItemIds list.",
+        "A matched tool_call and tool_result are one semantic unit: cite either item id in the relevant anchor and Kestrel will preserve provenance for the complete pair.",
+        "Do not invent evidence or hidden state.",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        "Write the compact continuation summary now.",
+        `Retained active task item id: ${JSON.stringify(activeTask.id)}`,
+        `Exact replaced item ids: ${JSON.stringify(replacedItemIds)}`,
+        "Source transcript items:",
+        JSON.stringify(
+          legacySourceItems.map((item) => ({
+            ...item,
+            disposition: replacedItemIds.includes(item.id)
+              ? "replaced"
+              : "retained",
+          })),
+        ),
+      ].join("\n"),
+    },
+  ];
+  const anchorSchema = {
+    type: "array",
+    items: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        text: { type: "string" },
+        sourceItemIds: { type: "array", items: { type: "string" } },
+      },
+      required: ["text", "sourceItemIds"],
+    },
+  };
+  const legacySummarySchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      version: { type: "integer", enum: [1] },
+      activeTaskItemId: { type: "string", enum: [activeTask.id] },
+      decisions: anchorSchema,
+      constraints: anchorSchema,
+      evidence: anchorSchema,
+      fileState: anchorSchema,
+      blockers: anchorSchema,
+      nextActions: anchorSchema,
+      coveredItemIds: {
+        type: "array",
+        items: { type: "string", enum: replacedItemIds },
+        minItems: replacedItemIds.length,
+        maxItems: replacedItemIds.length,
+      },
+    },
+    required: [
+      "version",
+      "activeTaskItemId",
+      "decisions",
+      "constraints",
+      "evidence",
+      "fileState",
+      "blockers",
+      "nextActions",
+      "coveredItemIds",
+    ],
+  };
+  const v2Summary = {
+    decisions: ["Use the existing architecture."],
+    constraints: ["Do not add a migration."],
+    evidence: ["The write operations completed."],
+    fileState: ["src/file-9.ts was updated."],
+    blockers: ["Validation remains pending."],
+    nextActions: ["Run pnpm validate."],
+  };
+  const legacyAnchor = (text: string) => ({
+    text,
+    sourceItemIds: [historicalItems[1]!.id],
+  });
+  const legacySummary = {
+    version: 1,
+    activeTaskItemId: activeTask.id,
+    decisions: [legacyAnchor(v2Summary.decisions[0]!)],
+    constraints: [legacyAnchor(v2Summary.constraints[0]!)],
+    evidence: [legacyAnchor(v2Summary.evidence[0]!)],
+    fileState: [legacyAnchor(v2Summary.fileState[0]!)],
+    blockers: [legacyAnchor(v2Summary.blockers[0]!)],
+    nextActions: [legacyAnchor(v2Summary.nextActions[0]!)],
+    coveredItemIds: replacedItemIds,
+  };
+  const legacyVerifierMessages = [
+    {
+      role: "system",
+      content: [
+        "Judge whether the proposed compact summary is sufficient to replace the supplied source transcript.",
+        "Check active task, decisions, constraints, evidence and provenance, file/workspace state, unresolved blockers, and next actions independently.",
+        "Reject invented, weakened, or omitted facts. Return only the required JSON verdict.",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        sourceItems: legacySourceItems,
+        proposedSummary: legacySummary,
+      }),
+    },
+  ];
+  const legacyPhaseInput = {
+    summary: {
+      messages: legacyMessages,
+      responseSchema: legacySummarySchema,
+    },
+    verifier: {
+      messages: legacyVerifierMessages,
+      responseSchema: KESTREL_COMPACTION_SUFFICIENCY_SCHEMA,
+    },
+  };
+  const v2Messages = buildKestrelAgentCompactionMessages({
+    sourceItems: historicalItems,
+  });
+  const v2PhaseInput = {
+    summary: {
+      messages: v2Messages,
+      responseSchema: buildKestrelCompactionSummarySchema(),
+    },
+    verifier: {
+      messages: buildKestrelCompactionSufficiencyMessages({
+        sourceItems: historicalItems,
+        proposedSummary: v2Summary,
+      }),
+      responseSchema: KESTREL_COMPACTION_SUFFICIENCY_SCHEMA,
+    },
+  };
+  const legacyTokens = countTextTokens(
+    JSON.stringify(legacyPhaseInput),
+  ).tokens;
+  const v2Tokens = countTextTokens(JSON.stringify(v2PhaseInput)).tokens;
+  const compacted = buildKestrelAgentCompactedTranscript({
+    transcript,
+    plan,
+    summary: v2Summary,
+  });
+  const renderedV2 = JSON.stringify(v2PhaseInput);
+  const renderedCompacted = JSON.stringify(compacted);
+
+  assert.equal(v2Tokens * 2 <= legacyTokens, true);
+  assert.equal(renderedV2.includes("x".repeat(2_000)), false);
+  assert.match(String(v2Messages[1]?.content ?? ""), /"contentBytes":/u);
+  assert.equal(readActiveTaskGoalFromTranscript(compacted), activeTask.content);
+  assert.match(renderedCompacted, /Do not add a migration/u);
+  assert.match(renderedCompacted, /Validation remains pending/u);
+  assert.match(renderedCompacted, /src\/file-9\.ts was updated/u);
+  assert.match(renderedCompacted, /Run pnpm validate/u);
 });
 
 contractTest("runtime.hermetic", "Kestrel agent context builder owns the provider-facing tool surface", () => {

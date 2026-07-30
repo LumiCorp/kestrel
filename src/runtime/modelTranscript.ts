@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
 import type { ModelMessage } from "../kestrel/contracts/model-io.js";
+import {
+  countTextTokens,
+  type ExactTokenCounter,
+} from "../economics/tokenCounting.js";
 import { buildAgentToolSuccessResult, isAgentToolResult } from "../../tools/toolResult.js";
 
 import { renderVisibleTodosForModel, type VisibleTodoState } from "./visibleTodos.js";
@@ -45,12 +49,18 @@ export interface ModelTranscriptCompactionRecord {
   sourceWindowHash?: string | undefined;
   summaryHash?: string | undefined;
   categoryCoverage?: Record<string, number> | undefined;
+  summarySource?: "model" | "runtime_fallback" | undefined;
+  failureCode?: string | undefined;
 }
 
 export interface ModelTranscriptCompactionPlan {
   retainedItems: ModelTranscriptItem[];
   replacedItems: ModelTranscriptItem[];
 }
+
+export type ModelTranscriptItemsTokenEstimator = (
+  items: readonly ModelTranscriptItem[],
+) => number;
 
 export interface ModelTranscriptValidationResult {
   ok: boolean;
@@ -239,13 +249,23 @@ export function compactModelTranscript(input: {
   transcript: unknown;
   summary: string;
   retainedTailItems?: number | undefined;
+  plan?: ModelTranscriptCompactionPlan | undefined;
   categoryCoverage?: Record<string, number> | undefined;
+  summarySource?: "model" | "runtime_fallback" | undefined;
+  failureCode?: string | undefined;
 }): ModelTranscript {
-  const transcript = normalizeModelTranscript(input.transcript) ?? { version: 1, windowId: 1, items: [] };
-  const plan = planModelTranscriptCompaction({
-    transcript,
-    retainedTailItems: input.retainedTailItems,
-  });
+  const transcript = normalizeModelTranscript(input.transcript) ?? {
+    version: 1,
+    windowId: 1,
+    items: [],
+  };
+  const plan =
+    input.plan ??
+    planModelTranscriptCompaction({
+      transcript,
+      retainedTailItems: input.retainedTailItems,
+    });
+  validateExplicitCompactionPlan(transcript, plan);
   const retainedItems = plan.retainedItems;
   const replacedItems = plan.replacedItems;
   const nextWindowId = transcript.windowId + 1;
@@ -264,19 +284,19 @@ export function compactModelTranscript(input: {
     retainedItemIds: retainedItems.map((item) => item.id),
     sourceWindowHash: hashTranscriptValue(replacedItems),
     summaryHash: hashTranscriptValue(input.summary.trim()),
-    ...(input.categoryCoverage !== undefined ? { categoryCoverage: { ...input.categoryCoverage } } : {}),
+    ...(input.categoryCoverage !== undefined
+      ? { categoryCoverage: { ...input.categoryCoverage } }
+      : {}),
+    summarySource: input.summarySource ?? "model",
+    ...(input.failureCode !== undefined
+      ? { failureCode: input.failureCode }
+      : {}),
   };
   return {
     version: 1,
     windowId: nextWindowId,
-    items: dedupeTranscriptItemsById([
-      summaryItem,
-      ...retainedItems,
-    ]),
-    compactions: [
-      ...(transcript.compactions ?? []),
-      compactionRecord,
-    ].slice(-20),
+    items: dedupeTranscriptItemsById([summaryItem, ...retainedItems]),
+    compactions: [...(transcript.compactions ?? []), compactionRecord],
   };
 }
 
@@ -303,7 +323,80 @@ export function planModelTranscriptCompaction(input: {
   };
 }
 
-function readActiveTaskItemFromTranscript(transcript: ModelTranscript): ModelTranscriptItem | undefined {
+export function planTokenBudgetedModelTranscriptCompaction(input: {
+  transcript: unknown;
+  retainedTailTokenBudget: number;
+  maxReplacedTokens: number;
+  tokenCounter?: ExactTokenCounter | undefined;
+  estimateReplacedItemsTokens?:
+    | ModelTranscriptItemsTokenEstimator
+    | undefined;
+}): ModelTranscriptCompactionPlan {
+  const transcript = normalizeModelTranscript(input.transcript) ?? {
+    version: 1,
+    windowId: 1,
+    items: [],
+  };
+  const activeTaskItem = readActiveTaskItemFromTranscript(transcript);
+  const retainedTail = selectProviderValidTailByTokenBudget(
+    transcript.items.filter((item) => item.id !== activeTaskItem?.id),
+    input.retainedTailTokenBudget,
+    input.tokenCounter,
+  );
+  const protectedIds = new Set([
+    ...(activeTaskItem !== undefined ? [activeTaskItem.id] : []),
+    ...retainedTail.map((item) => item.id),
+  ]);
+  const eligibleUnits = buildAtomicTranscriptUnits(transcript.items)
+    .map((unit) => unit.filter((item) => protectedIds.has(item.id) === false))
+    .filter((unit) => unit.length > 0);
+  const replacedIds = new Set<string>();
+  const replacedItems: ModelTranscriptItem[] = [];
+  let replacedTokens = 0;
+  const maxReplacedTokens = Math.max(0, Math.trunc(input.maxReplacedTokens));
+  for (const unit of eligibleUnits) {
+    const candidateItems = [...replacedItems, ...unit];
+    const candidateTokens =
+      input.estimateReplacedItemsTokens?.(candidateItems) ??
+      estimateModelTranscriptItemsTokens(candidateItems, input.tokenCounter);
+    if (
+      replacedIds.size > 0 &&
+      candidateTokens > maxReplacedTokens
+    ) {
+      break;
+    }
+    for (const item of unit) {
+      replacedIds.add(item.id);
+      replacedItems.push(item);
+    }
+    replacedTokens = candidateTokens;
+    if (replacedTokens >= maxReplacedTokens) {
+      break;
+    }
+  }
+  return {
+    retainedItems: transcript.items.filter(
+      (item) => replacedIds.has(item.id) === false,
+    ),
+    replacedItems: transcript.items.filter((item) => replacedIds.has(item.id)),
+  };
+}
+
+export function estimateModelTranscriptItemsTokens(
+  items: readonly ModelTranscriptItem[],
+  tokenCounter?: ExactTokenCounter | undefined,
+): number {
+  return items.reduce(
+    (total, item) =>
+      total +
+      countTextTokens(stringifyForTranscript(item), tokenCounter).tokens,
+    0,
+  );
+}
+
+function readActiveTaskItemFromTranscript(
+  transcript: ModelTranscript,
+): ModelTranscriptItem | undefined {
   return transcript.items.find((item) => {
     if (item.kind !== "user") return false;
     const content = item.content?.trim();
@@ -317,15 +410,15 @@ export function rebaseModelTranscriptAfterCompaction(input: {
 }): ModelTranscript | undefined {
   const compacted = normalizeModelTranscript(input.compactedTranscript);
   const outgoing = normalizeModelTranscript(input.outgoingTranscript);
-  const latestCompaction = compacted?.compactions?.at(-1);
-  if (compacted === undefined || outgoing === undefined || latestCompaction === undefined) {
+  const compactions = compacted?.compactions ?? [];
+  if (compacted === undefined || outgoing === undefined || compactions.length === 0) {
     return ;
   }
 
   const existingIds = new Set(compacted.items.map((item) => item.id));
   const skippedIds = new Set([
-    ...latestCompaction.replacedItemIds,
-    ...latestCompaction.retainedItemIds,
+    ...compactions.flatMap((compaction) => compaction.replacedItemIds),
+    ...compactions.flatMap((compaction) => compaction.retainedItemIds),
     ...existingIds,
   ]);
   const newItems = dedupeTranscriptItemsById(outgoing.items)
@@ -583,17 +676,18 @@ function renderToolResultContent(item: ModelTranscriptItem): string {
 const TOOL_INPUT_PREVIEW_CHARS = 500;
 
 function renderToolInputForTranscript(item: ModelTranscriptItem): string {
-  const compact = compactKnownToolInputForTranscript(item);
-  return JSON.stringify(compact ?? item.toolInput ?? {});
+  return JSON.stringify(projectModelTranscriptToolInput(item) ?? {});
 }
 
-function compactKnownToolInputForTranscript(item: ModelTranscriptItem): Record<string, unknown> | undefined {
+export function projectModelTranscriptToolInput(
+  item: ModelTranscriptItem,
+): Record<string, unknown> | undefined {
   const input = item.toolInput;
   if (input === undefined) {
     return ;
   }
   if (item.toolName !== "fs.write_text" && item.toolName !== "fs_write_text") {
-    return ;
+    return input;
   }
   const content = asStringForSummary(input.content);
   if (content === undefined) {
@@ -618,6 +712,89 @@ function previewText(value: string, maxChars: number): string {
     return value;
   }
   return `${value.slice(0, maxChars)}\n[omitted ${value.length - maxChars} chars]`;
+}
+
+function selectProviderValidTailByTokenBudget(
+  items: ModelTranscriptItem[],
+  retainedTailTokenBudget: number,
+  tokenCounter?: ExactTokenCounter | undefined,
+): ModelTranscriptItem[] {
+  const budget = Math.max(0, Math.trunc(retainedTailTokenBudget));
+  const providerValidItems = selectProviderValidTail(items, items.length);
+  const units = buildAtomicTranscriptUnits(providerValidItems);
+  const selectedUnits: ModelTranscriptItem[][] = [];
+  let selectedTokens = 0;
+  for (let index = units.length - 1; index >= 0; index -= 1) {
+    const unit = units[index] ?? [];
+    const unitTokens = estimateModelTranscriptItemsTokens(unit, tokenCounter);
+    if (selectedTokens + unitTokens > budget) {
+      break;
+    }
+    selectedUnits.unshift(unit);
+    selectedTokens += unitTokens;
+  }
+  return selectedUnits.flat();
+}
+
+function buildAtomicTranscriptUnits(
+  items: ModelTranscriptItem[],
+): ModelTranscriptItem[][] {
+  const toolItemsByCallId = new Map<string, ModelTranscriptItem[]>();
+  for (const item of items) {
+    const toolCallId =
+      item.kind === "tool_call"
+        ? canonicalToolCallId(item)
+        : item.kind === "tool_result"
+          ? item.toolCallId
+          : undefined;
+    if (toolCallId === undefined) {
+      continue;
+    }
+    toolItemsByCallId.set(toolCallId, [
+      ...(toolItemsByCallId.get(toolCallId) ?? []),
+      item,
+    ]);
+  }
+  const emittedToolCallIds = new Set<string>();
+  const units: ModelTranscriptItem[][] = [];
+  for (const item of items) {
+    const toolCallId =
+      item.kind === "tool_call"
+        ? canonicalToolCallId(item)
+        : item.kind === "tool_result"
+          ? item.toolCallId
+          : undefined;
+    if (toolCallId === undefined) {
+      units.push([item]);
+      continue;
+    }
+    if (emittedToolCallIds.has(toolCallId)) {
+      continue;
+    }
+    emittedToolCallIds.add(toolCallId);
+    units.push(toolItemsByCallId.get(toolCallId) ?? [item]);
+  }
+  return units;
+}
+
+function validateExplicitCompactionPlan(
+  transcript: ModelTranscript,
+  plan: ModelTranscriptCompactionPlan,
+): void {
+  const transcriptIds = new Set(transcript.items.map((item) => item.id));
+  const plannedIds = [
+    ...plan.replacedItems.map((item) => item.id),
+    ...plan.retainedItems.map((item) => item.id),
+  ];
+  if (
+    plannedIds.length !== transcript.items.length ||
+    new Set(plannedIds).size !== transcript.items.length ||
+    plannedIds.some((id) => transcriptIds.has(id) === false)
+  ) {
+    throw new Error(
+      "Explicit transcript compaction plan must partition the current transcript exactly once.",
+    );
+  }
 }
 
 function dedupeTranscriptItemsById(items: ModelTranscriptItem[]): ModelTranscriptItem[] {
@@ -696,10 +873,17 @@ function normalizeCompactions(value: unknown): ModelTranscriptCompactionRecord[]
       ...(asRecord(record.categoryCoverage) !== undefined
         ? { categoryCoverage: Object.fromEntries(Object.entries(asRecord(record.categoryCoverage)!).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))) }
         : {}),
+      summarySource:
+        record.summarySource === "runtime_fallback"
+          ? "runtime_fallback"
+          : "model",
+      ...(asString(record.failureCode) !== undefined
+        ? { failureCode: asString(record.failureCode) }
+        : {}),
     };
     normalized.push(compaction);
   }
-  return normalized.slice(-20);
+  return normalized;
 }
 
 function isTranscriptKind(value: string | undefined): value is ModelTranscriptItemKind {
