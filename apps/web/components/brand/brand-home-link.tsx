@@ -8,7 +8,7 @@ export function BrandHomeLink({ className }: { className?: string }) {
     <Link
       aria-label="Kestrel One home"
       className={cn("flex items-center overflow-hidden", className)}
-      href="/"
+      href="/projects"
       title="Kestrel One home"
     >
       <BrandLockup

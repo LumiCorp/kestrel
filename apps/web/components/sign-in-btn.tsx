@@ -11,7 +11,7 @@ export async function SignInButton() {
   return (
     <Link
       className="flex justify-center"
-      href={session?.session ? "/" : "/sign-in"}
+      href={session?.session ? "/projects" : "/sign-in"}
     >
       <Button className="justify-between gap-2" variant="default">
         {session?.session ? (
@@ -61,7 +61,7 @@ export async function SignInFallback() {
   return (
     <Link
       className="flex justify-center"
-      href={guessIsSignIn ? "/" : "/sign-in"}
+      href={guessIsSignIn ? "/projects" : "/sign-in"}
     >
       <Button className="justify-between gap-2" variant="default">
         {guessIsSignIn ? (

@@ -289,12 +289,11 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   ),
 
   page(
-    "app/(workspace)/page.tsx",
+    "app/(marketing)/page.tsx",
     "/",
-    "threads",
-    "authenticated",
-    "redirect-sign-in",
-    { primaryNavigation: true },
+    "public",
+    "public",
+    "public",
   ),
   page(
     "app/(workspace)/threads/page.tsx",
@@ -330,6 +329,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "projects",
     "authenticated",
     "redirect-sign-in",
+    { primaryNavigation: true },
   ),
   page(
     "app/(workspace)/projects/new/page.tsx",

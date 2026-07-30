@@ -15,7 +15,7 @@ export const metadata = createMetadata({
     default: "Kestrel One",
   },
   description: "Unified auth, chat, knowledge, and admin.",
-  metadataBase: new URL("https://kestrel.one"),
+  metadataBase: new URL("https://kestrelagents.dev"),
 });
 
 export default function RootLayout({

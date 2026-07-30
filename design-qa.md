@@ -301,3 +301,93 @@ The source is a populated conversation at 1487 x 1058 pixels. The implementation
 - [P3] Once the runtime exposes typed file/output artifacts, add the compact outcome row shown in the source visual as a structured conversation component.
 
 final result: passed
+
+---
+
+# Landing Page Design QA
+
+## Visual truth
+
+- Primary source: `apps/web/public/product/desktop/checkout-result.png`
+- Kestrel One source: `apps/web/public/product/kestrel-one/knowledge.png`
+- Implementation: `artifacts/landing-page-desktop.png`
+- Paired comparison: `artifacts/landing-page-comparison.png`
+- Responsive implementation: `artifacts/landing-page-mobile.png`
+- Source state: Kestrel Desktop completed task with verified tests, dark theme
+- Implementation state: signed out, landing page hero, default Desktop product tab, dark system theme
+- Browser viewport: 1440 × 1000 CSS px for desktop and 390 × 844 CSS px for mobile
+- Captured implementation size: 1425 × 990 px desktop and 375 × 834 px mobile
+
+The primary source is a real Kestrel Desktop product state centered on a user
+job and its verified outcome. The Kestrel One showcase uses the existing
+Knowledge workspace. The comparison evaluates whether the marketing surface
+extends the established design language while keeping product value—not
+internal release administration—at the center.
+
+## Full-view comparison
+
+The paired comparison places the completed Desktop task on the left and the
+landing page implementation on the right. The hero preserves the legible
+request, verified outcome, passing-test evidence, and handoff state inside the
+product frame.
+
+Focused regions checked:
+
+1. Announcement bar and primary navigation
+2. Hero hierarchy, CTA pairing, and product frame
+3. Desktop/Kestrel One product tabs and imagery
+4. Mobile announcement, header, hero, CTA stack, and image sizing
+
+## Fidelity surfaces
+
+- Typography: headings, labels, supporting copy, and button text use the
+  existing Kestrel One font stack and semantic foreground tokens.
+- Spacing and layout: the desktop composition maintains a deliberate two-column
+  hero; the mobile layout reflows to one column without horizontal overflow.
+- Color and tokens: implementation uses semantic Kestrel One classes and
+  palette variables; no new raw color values were introduced.
+- Image quality: both featured product images are real repository screenshots,
+  load at their natural dimensions, and are contained without stretching.
+- Copy: Kestrel Desktop and Kestrel One are consistently identified as Beta.
+  The page explicitly states that Beta is a product stage, not a private
+  program.
+
+## Interaction and runtime checks
+
+- Desktop and Kestrel One product tabs switch selected state.
+- Desktop navigation anchor links reach their named sections.
+- Mobile navigation opens and closes as a sheet with all primary destinations.
+- Hero, product, documentation, download, and sign-in actions have real targets.
+- Desktop and mobile document widths were checked; neither state overflows.
+- Browser console was checked after the final render: no warnings or errors.
+- Public product images were verified after adding `/product` to the public
+  route allowlist.
+
+## Comparison history
+
+- Iteration 1: the landing route rendered, but product images were redirected
+  through authentication.
+- Fix: made the owned `/product` asset namespace public in the application
+  proxy.
+- Iteration 2: all hero and product showcase images load at natural dimensions;
+  desktop, mobile, tab, navigation, and console checks pass.
+- Iteration 3: replaced the internal `Release readiness` Project capture with a
+  completed user task, tightened the crop around the outcome, and moved the
+  Kestrel One showcase to shared Knowledge. Desktop and mobile comparisons,
+  image loads, tab state, overflow, and console checks pass.
+- Hardening pass: added a keyboard skip link and visible footer and announcement
+  focus states, increased the mobile navigation target, offset in-page anchors
+  for the sticky header, and added public crawl metadata for the new public
+  root. The approved landing-page hierarchy remains intact.
+- Asset review: removed the degraded Mission Control capture from the Desktop
+  product showcase, reused the completed checkout task as the proof state, and
+  tightened the Kestrel One Knowledge capture around its user-facing workspace.
+
+## Findings
+
+- P0: none
+- P1: none
+- P2: none
+- P3: none
+
+final result: passed
