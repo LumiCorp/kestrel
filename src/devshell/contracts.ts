@@ -90,7 +90,6 @@ export interface DevShellProcessRecord {
   commandKind?: "single_line" | "multi_line" | undefined;
   strictModeApplied?: boolean | undefined;
   strictModeReason?: string | undefined;
-  preflight?: DevShellPreflightResult | undefined;
   sourceWriteGuard?: DevShellSourceWriteGuardResult | undefined;
 }
 
@@ -107,7 +106,6 @@ export interface DevShellCommandInput {
   timeoutMs?: number | undefined;
   allowedEnvNames?: string[] | undefined;
   envMode?: DevShellEnvMode | undefined;
-  packageManagerPreflight?: DevShellPackageManagerPreflightConfig | undefined;
   sourceWriteAuthority?: DevShellSourceWriteAuthority | undefined;
   sourceWriteGuard?: DevShellSourceWriteGuardRequest | undefined;
   strictMultiline?: boolean | undefined;
@@ -163,7 +161,6 @@ export interface DevShellRunResult {
   commandKind?: "single_line" | "multi_line" | undefined;
   strictModeApplied?: boolean | undefined;
   strictModeReason?: string | undefined;
-  preflight?: DevShellPreflightResult | undefined;
   sourceWriteGuard?: DevShellSourceWriteGuardResult | undefined;
   unauthorizedSourceWrites?: DevShellUnauthorizedSourceWrite[] | undefined;
 }
@@ -189,7 +186,6 @@ export interface DevProcessStartResult {
   commandKind?: "single_line" | "multi_line" | undefined;
   strictModeApplied?: boolean | undefined;
   strictModeReason?: string | undefined;
-  preflight?: DevShellPreflightResult | undefined;
   sourceWriteGuard?: DevShellSourceWriteGuardResult | undefined;
   unauthorizedSourceWrites?: DevShellUnauthorizedSourceWrite[] | undefined;
 }
@@ -222,7 +218,6 @@ export interface DevProcessReadResult {
   commandKind?: "single_line" | "multi_line" | undefined;
   strictModeApplied?: boolean | undefined;
   strictModeReason?: string | undefined;
-  preflight?: DevShellPreflightResult | undefined;
   sourceWriteGuard?: DevShellSourceWriteGuardResult | undefined;
   unauthorizedSourceWrites?: DevShellUnauthorizedSourceWrite[] | undefined;
 }
@@ -232,33 +227,6 @@ export interface DevProcessWriteAndReadResult extends DevProcessReadResult {
 }
 
 export type DevProcessStopResult = DevProcessReadResult;
-
-export interface DevShellPackageManagerPreflightConfig {
-  pnpmApproveBuilds?: "approve_all" | "disabled" | undefined;
-}
-
-export interface DevShellPreflightResult {
-  pnpmBuildApproval?: DevShellPnpmBuildApprovalPreflight | undefined;
-}
-
-export type DevShellPnpmBuildApprovalPreflightStatus =
-  | "skipped"
-  | "applied"
-  | "already_applied"
-  | "failed";
-
-export interface DevShellPnpmBuildApprovalPreflight {
-  status: DevShellPnpmBuildApprovalPreflightStatus;
-  reason?: string | undefined;
-  command?: string | undefined;
-  cwd?: string | undefined;
-  packageJsonPath?: string | undefined;
-  packageManager?: string | undefined;
-  exitCode?: number | undefined;
-  stdout?: string | undefined;
-  stderr?: string | undefined;
-  timedOut?: boolean | undefined;
-}
 
 export type DevShellSourceWriteMode = "source_readonly" | "captured_source_write" | "approved_source_write" | "checkpoint_worktree";
 export type DevShellSourceMutationPolicy = "reject" | "capture" | "direct";

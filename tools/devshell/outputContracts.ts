@@ -22,7 +22,6 @@ const COMMON_PROCESS_READ_FIELDS: ModelToolContract["fields"] = {
   commandKind: { type: "string" },
   strictModeApplied: { type: "boolean" },
   strictModeReason: { type: "string" },
-  preflight: { type: "object" },
   sourceWriteGuard: { type: "object" },
   unauthorizedSourceWrites: { type: "array" },
 };
@@ -50,7 +49,6 @@ export const DEV_SHELL_RUN_OUTPUT_CONTRACT: ModelToolContract = {
     commandKind: { type: "string" },
     strictModeApplied: { type: "boolean" },
     strictModeReason: { type: "string" },
-    preflight: { type: "object" },
     sourceWriteGuard: { type: "object" },
     unauthorizedSourceWrites: { type: "array" },
   },

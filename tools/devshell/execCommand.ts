@@ -17,7 +17,6 @@ import type { SharedToolContext, SharedToolModule } from "../contracts.js";
 import { createToolInputError, readNumber, readString } from "../helpers.js";
 import {
   buildDevShellCommandOptions,
-  buildDevShellPackageManagerPreflight,
   buildDevShellSourceWriteAuthority,
   buildDevShellSourceWriteGuardRequest,
   parseStringArrayField,
@@ -370,9 +369,6 @@ function buildStartProcessInput(
     ...(config.maxReadBytes !== undefined ? { maxReadBytes: config.maxReadBytes } : {}),
     ...(config.allowedEnvNames !== undefined ? { allowedEnvNames: config.allowedEnvNames } : {}),
     ...(envMode !== undefined ? { envMode } : {}),
-    ...(buildDevShellPackageManagerPreflight(context) !== undefined
-      ? { packageManagerPreflight: buildDevShellPackageManagerPreflight(context) }
-      : {}),
     ...(sourceWriteAuthority !== undefined ? { sourceWriteAuthority } : {}),
     ...(sourceWriteGuard !== undefined ? { sourceWriteGuard } : {}),
   };
@@ -456,6 +452,7 @@ function mapProcessResult(
     ...(result.command !== undefined ? { command: result.command } : {}),
     ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
     ...(result.workspaceRoot !== undefined ? { workspaceRoot: result.workspaceRoot } : {}),
+    ...(result.failureReason !== undefined ? { failureReason: result.failureReason } : {}),
     ...(visibleSourceWriteGuard !== undefined ? { sourceWriteGuard: visibleSourceWriteGuard } : {}),
     ...(result.unauthorizedSourceWrites !== undefined ? { unauthorizedSourceWrites: result.unauthorizedSourceWrites } : {}),
     ...(result.sourceWriteGuard?.changedFiles !== undefined

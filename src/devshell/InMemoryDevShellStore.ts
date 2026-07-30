@@ -37,25 +37,8 @@ function cloneProcess(record: DevShellProcessRecord): DevShellProcessRecord {
     },
     requestedTools: [...record.requestedTools],
     envNames: [...record.envNames],
-    ...(record.preflight !== undefined ? { preflight: clonePreflight(record.preflight) } : {}),
     ...(record.sourceWriteGuard !== undefined
       ? { sourceWriteGuard: cloneSourceWriteGuard(record.sourceWriteGuard) }
-      : {}),
-  };
-}
-
-function clonePreflight(record: DevShellProcessRecord["preflight"]): DevShellProcessRecord["preflight"] {
-  if (record === undefined) {
-    return ;
-  }
-  return {
-    ...record,
-    ...(record.pnpmBuildApproval !== undefined
-      ? {
-          pnpmBuildApproval: {
-            ...record.pnpmBuildApproval,
-          },
-        }
       : {}),
   };
 }

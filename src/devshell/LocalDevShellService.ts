@@ -243,7 +243,6 @@ export class LocalDevShellService implements DevShellServicePort {
           ...(latest.commandKind !== undefined ? { commandKind: latest.commandKind } : {}),
           ...(latest.strictModeApplied !== undefined ? { strictModeApplied: latest.strictModeApplied } : {}),
           ...(latest.strictModeReason !== undefined ? { strictModeReason: latest.strictModeReason } : {}),
-          ...(latest.preflight !== undefined ? { preflight: latest.preflight } : {}),
           ...(latest.sourceWriteGuard !== undefined ? { sourceWriteGuard: latest.sourceWriteGuard } : {}),
           ...(latest.unauthorizedSourceWrites !== undefined
             ? { unauthorizedSourceWrites: latest.unauthorizedSourceWrites }
@@ -282,7 +281,6 @@ export class LocalDevShellService implements DevShellServicePort {
       ...(latest.commandKind !== undefined ? { commandKind: latest.commandKind } : {}),
       ...(latest.strictModeApplied !== undefined ? { strictModeApplied: latest.strictModeApplied } : {}),
       ...(latest.strictModeReason !== undefined ? { strictModeReason: latest.strictModeReason } : {}),
-      ...(latest.preflight !== undefined ? { preflight: latest.preflight } : {}),
       ...(latest.sourceWriteGuard !== undefined ? { sourceWriteGuard: latest.sourceWriteGuard } : {}),
       ...(latest.unauthorizedSourceWrites !== undefined
         ? { unauthorizedSourceWrites: latest.unauthorizedSourceWrites }
