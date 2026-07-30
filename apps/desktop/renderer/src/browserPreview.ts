@@ -187,7 +187,8 @@ export function ensureBrowserPreviewBridge(): void {
     }
     return nextRun;
   };
-  const bridge = {
+  let bridge: DesktopBridge;
+  const implementedBridge = {
     async getBridgeInfo() {
       return {
         connected: true,
@@ -225,6 +226,18 @@ export function ensureBrowserPreviewBridge(): void {
     },
     async getSettings() {
       return settings;
+    },
+    async getPendingUninstallResult() {
+      return undefined;
+    },
+    async getKestrelOneAccount() {
+      return { status: "signed_out" as const };
+    },
+    async getKestrelOneEnvironments() {
+      return createPreviewEnvironmentStatus();
+    },
+    async refreshKestrelOneEnrollments() {
+      return createPreviewEnvironmentStatus();
     },
     async getCapabilities() {
       return resolveDesktopCapabilityView({
@@ -641,6 +654,12 @@ export function ensureBrowserPreviewBridge(): void {
         fullSearchAvailable: true,
       };
     },
+    async listWorkspaceSkills() {
+      return [];
+    },
+    async syncWorkspaceSkills() {
+      return [];
+    },
     async watchProjectFiles() {
       return;
     },
@@ -987,6 +1006,9 @@ export function ensureBrowserPreviewBridge(): void {
       projectRunListeners.add(listener);
       return () => projectRunListeners.delete(listener);
     },
+    onCommand() {
+      return () => {};
+    },
     async openProjectRunPreview() {
       return;
     },
@@ -1110,9 +1132,38 @@ export function ensureBrowserPreviewBridge(): void {
     async openPath(_input: DesktopPathTargetInput) {
       return;
     },
-  } as unknown as DesktopBridge;
+  };
+
+  bridge = new Proxy(implementedBridge, {
+    get(target, property, receiver) {
+      if (Reflect.has(target, property)) {
+        return Reflect.get(target, property, receiver);
+      }
+      if (property === "onBootState" || property === "onUpdateState") {
+        return () => () => {};
+      }
+      if (typeof property === "string") {
+        return async () => {
+          throw new Error(
+            `${property} is unavailable in the browser preview.`,
+          );
+        };
+      }
+      return undefined;
+    },
+  }) as unknown as DesktopBridge;
 
   previewWindow.kestrelDesktop = bridge;
+}
+
+function createPreviewEnvironmentStatus() {
+  return {
+    enrollments: [],
+    environments: [],
+    globalCapacity: 0,
+    activeRuns: 0,
+    activity: [],
+  };
 }
 
 function createPreviewWorkspaceChanges(

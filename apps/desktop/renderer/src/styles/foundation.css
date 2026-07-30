@@ -29,6 +29,15 @@ select {
   font-family: var(--font-ui);
 }
 
+input[type="checkbox"],
+input[type="radio"] {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  appearance: auto;
+  accent-color: var(--status-ready);
+}
+
 code,
 pre,
 kbd,
@@ -95,6 +104,23 @@ textarea {
 .danger-button,
 .danger-icon-button {
   color: var(--status-failed);
+}
+
+.renderer-failure {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  background: var(--bg-pane);
+  color: var(--text-primary);
+  text-align: center;
+}
+
+.renderer-failure p {
+  margin: 0;
+  color: var(--text-secondary);
 }
 
 .health-healthy > span,

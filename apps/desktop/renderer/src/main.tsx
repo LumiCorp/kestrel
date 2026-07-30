@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { DesktopApp } from "./DesktopApp";
 import { FileEditorApp } from "./FileEditorApp";
+import { RendererErrorBoundary } from "./RendererErrorBoundary";
 import { ensureBrowserPreviewBridge } from "./browserPreview";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
@@ -25,18 +26,20 @@ const columnNumber = parseSourcePosition(params.get("columnNumber"));
 
 createRoot(root).render(
   <StrictMode>
-    {editorView && filePath !== null && projectPath !== null && projectLabel !== null ? (
-      <FileEditorApp
-        filePath={filePath}
-        projectPath={projectPath}
-        projectLabel={projectLabel}
-        {...(threadId !== null ? { threadId } : {})}
-        {...(lineNumber !== undefined ? { lineNumber } : {})}
-        {...(columnNumber !== undefined ? { columnNumber } : {})}
-      />
-    ) : (
-      <DesktopApp />
-    )}
+    <RendererErrorBoundary>
+      {editorView && filePath !== null && projectPath !== null && projectLabel !== null ? (
+        <FileEditorApp
+          filePath={filePath}
+          projectPath={projectPath}
+          projectLabel={projectLabel}
+          {...(threadId !== null ? { threadId } : {})}
+          {...(lineNumber !== undefined ? { lineNumber } : {})}
+          {...(columnNumber !== undefined ? { columnNumber } : {})}
+        />
+      ) : (
+        <DesktopApp />
+      )}
+    </RendererErrorBoundary>
   </StrictMode>,
 );
 

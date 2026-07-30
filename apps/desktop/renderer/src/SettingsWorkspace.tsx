@@ -35,6 +35,8 @@ import {
   type ToolServicesNavigationRequest,
 } from "./ToolServicesSettings";
 
+type SettingsPage = "general" | DesktopCapabilityCategory;
+
 const CATEGORY_ORDER: DesktopCapabilityCategory[] = [
   "models",
   "tools_services",
@@ -44,13 +46,26 @@ const CATEGORY_ORDER: DesktopCapabilityCategory[] = [
   "permissions",
 ];
 
-const CATEGORY_LABELS: Record<DesktopCapabilityCategory, string> = {
+const SETTINGS_PAGE_ORDER: SettingsPage[] = ["general", ...CATEGORY_ORDER];
+
+const SETTINGS_PAGE_LABELS: Record<SettingsPage, string> = {
+  general: "General",
   models: "Models",
   tools_services: "Tools & services",
   local_capabilities: "Local capabilities",
   connections: "Connections",
   workspace_data: "Workspace & data",
   permissions: "Permissions",
+};
+
+const SETTINGS_PAGE_DESCRIPTIONS: Record<SettingsPage, string> = {
+  general: "Readiness, appearance, and default Apps.",
+  models: "Providers and conversation model configurations.",
+  tools_services: "Hosted tools and compatible MCP connectors.",
+  local_capabilities: "Filesystem, developer shell, and sandboxed execution.",
+  connections: "Kestrel One environments and connected Apps.",
+  workspace_data: "Projects, runtime storage, privacy, and removal.",
+  permissions: "Operating-system access used by Desktop features.",
 };
 
 interface SettingsWorkspaceProps {
@@ -86,6 +101,9 @@ export function SettingsWorkspace({
   onError,
 }: SettingsWorkspaceProps) {
   const [view, setView] = useState<DesktopCapabilityView>();
+  const [activePage, setActivePage] = useState<SettingsPage>(() =>
+    settingsPageFromHash(window.location.hash),
+  );
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<DesktopCapability>();
   const [draft, setDraft] = useState<Record<string, string | boolean>>({});
@@ -180,6 +198,14 @@ export function SettingsWorkspace({
         }
       })
       .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const syncPageFromHash = () => {
+      setActivePage(settingsPageFromHash(window.location.hash));
+    };
+    window.addEventListener("hashchange", syncPageFromHash);
+    return () => window.removeEventListener("hashchange", syncPageFromHash);
   }, []);
 
   useEffect(() => {
@@ -280,7 +306,10 @@ export function SettingsWorkspace({
     const target = view.capabilities.find(
       (capability) => capability.id === initialCapabilityId,
     );
-    if (target !== undefined && isConfigurable(target)) openEditor(target);
+    if (target !== undefined) {
+      navigateToSettingsPage(target.category);
+      if (isConfigurable(target)) openEditor(target);
+    }
     setOpenedTarget(initialCapabilityId);
   }, [initialCapabilityId, openedTarget, view]);
 
@@ -450,15 +479,26 @@ export function SettingsWorkspace({
   ): (() => void | Promise<void>) | undefined {
     if (capability.category === "tools_services") {
       return () => {
+        navigateToSettingsPage("tools_services");
         setToolServicesNavigationRequest((current) =>
           createToolServicesNavigationRequest(capability.id, current),
         );
-        document
-          .getElementById("settings-tools_services")
-          ?.scrollIntoView({ behavior: "smooth", block: "start" });
       };
     }
     return actionFor(capability);
+  }
+
+  function navigateToSettingsPage(page: SettingsPage): void {
+    setActivePage(page);
+    const nextHash = `#settings-${page}`;
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, "", nextHash);
+    }
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(".settings-surface")?.scrollTo({
+        top: 0,
+      });
+    });
   }
 
   function openEditor(capability: DesktopCapability): void {
@@ -690,7 +730,7 @@ export function SettingsWorkspace({
       <header className="surface-header">
         <div>
           <h1>Settings</h1>
-          <p>Models, Apps, environments, permissions, and local setup.</p>
+          <p>{SETTINGS_PAGE_DESCRIPTIONS[activePage]}</p>
         </div>
         <button
           className="secondary-button"
@@ -707,6 +747,26 @@ export function SettingsWorkspace({
         </button>
       </header>
 
+      <nav
+        className="settings-category-nav"
+        aria-label="Settings categories"
+      >
+        {SETTINGS_PAGE_ORDER.map((page) => (
+          <a
+            aria-current={activePage === page ? "page" : undefined}
+            className={activePage === page ? "active" : undefined}
+            href={`#settings-${page}`}
+            key={page}
+            onClick={(event) => {
+              event.preventDefault();
+              navigateToSettingsPage(page);
+            }}
+          >
+            {SETTINGS_PAGE_LABELS[page]}
+          </a>
+        ))}
+      </nav>
+
       {view !== undefined ? (
         <>
           {view.credentialStore.available ? null : (
@@ -717,7 +777,7 @@ export function SettingsWorkspace({
               </span>
             </div>
           )}
-          {attentionCapabilities.length > 0 ? (
+          {activePage === "general" && attentionCapabilities.length > 0 ? (
             <section
               className="capability-attention-queue"
               aria-labelledby="capability-attention-title"
@@ -774,16 +834,6 @@ export function SettingsWorkspace({
               </div>
             </section>
           ) : null}
-          <nav
-            className="settings-category-nav"
-            aria-label="Settings categories"
-          >
-            {CATEGORY_ORDER.map((category) => (
-              <a href={`#settings-${category}`} key={category}>
-                {CATEGORY_LABELS[category]}
-              </a>
-            ))}
-          </nav>
         </>
       ) : null}
 
@@ -793,10 +843,11 @@ export function SettingsWorkspace({
         </p>
       ) : null}
 
-      <section
-        className="settings-section"
-        aria-labelledby="data-privacy-title"
-      >
+      {activePage === "workspace_data" ? (
+        <section
+          className="settings-section"
+          aria-labelledby="data-privacy-title"
+        >
         <div className="settings-section-heading">
           <div>
             <h2 id="data-privacy-title">Data & Privacy</h2>
@@ -821,7 +872,7 @@ export function SettingsWorkspace({
                 <option value="complete">Complete removal</option>
               </select>
             </label>
-            <label>
+            <label className="settings-check">
               <input
                 type="checkbox"
                 checked={uninstallDisconnectKestrelOne}
@@ -842,7 +893,7 @@ export function SettingsWorkspace({
                   setUninstallExportWorktreesDirectory(event.currentTarget.value)}
               />
             </label>
-            <label>
+            <label className="settings-check">
               <input
                 type="checkbox"
                 checked={uninstallDiscardWorktrees}
@@ -985,12 +1036,14 @@ export function SettingsWorkspace({
             </div>
           ) : null}
         </div>
-      </section>
+        </section>
+      ) : null}
 
-      <section
-        className="settings-section"
-        aria-labelledby="kestrel-one-environments-title"
-      >
+      {activePage === "connections" ? (
+        <section
+          className="settings-section"
+          aria-labelledby="kestrel-one-environments-title"
+        >
         <div className="settings-section-heading">
           <div>
             <h2 id="kestrel-one-environments-title">
@@ -1441,37 +1494,39 @@ export function SettingsWorkspace({
             </article>
           ))}
         </div>
-      </section>
+        </section>
+      ) : null}
 
-      <div className="settings-sections" aria-busy={loading}>
-        {CATEGORY_ORDER.map((category) => {
-          const capabilities = grouped.get(category) ?? [];
-          if (category === "tools_services" && view !== undefined) {
+      {activePage === "general" ? null : (
+        <div className="settings-sections" aria-busy={loading}>
+          {(() => {
+            const category = activePage;
+            const capabilities = grouped.get(category) ?? [];
+            if (category === "tools_services" && view !== undefined) {
+              return (
+                <ToolServicesSettings
+                  capabilities={capabilities}
+                  credentialStoreAvailable={view.credentialStore.available}
+                  navigationRequest={toolServicesNavigationRequest}
+                  key={category}
+                  onCapabilitiesChange={(nextView) => {
+                    commitCapabilityView(nextView);
+                  }}
+                  onNotice={setNotice}
+                  onOpenMcp={onOpenMcp}
+                  onError={onError}
+                />
+              );
+            }
             return (
-              <ToolServicesSettings
-                capabilities={capabilities}
-                credentialStoreAvailable={view.credentialStore.available}
-                navigationRequest={toolServicesNavigationRequest}
-                key={category}
-                onCapabilitiesChange={(nextView) => {
-                  commitCapabilityView(nextView);
-                }}
-                onNotice={setNotice}
-                onOpenMcp={onOpenMcp}
-                onError={onError}
-              />
-            );
-          }
-          return (
-            <section
-              className="settings-section"
-              key={category}
-              aria-labelledby={`settings-${category}-title`}
-              id={`settings-${category}`}
-            >
+              <section
+                className="settings-section"
+                aria-labelledby={`settings-${category}-title`}
+                id={`settings-${category}`}
+              >
               <div className="settings-section-heading">
                 <h2 id={`settings-${category}-title`}>
-                  {CATEGORY_LABELS[category]}
+                    {SETTINGS_PAGE_LABELS[category]}
                 </h2>
                 <span>
                   {capabilities.length}{" "}
@@ -1537,15 +1592,17 @@ export function SettingsWorkspace({
                   );
                 })}
               </div>
-            </section>
-          );
-        })}
-      </div>
+              </section>
+            );
+          })()}
+        </div>
+      )}
 
-      <section
-        className="settings-section"
-        aria-labelledby="model-configurations-title"
-      >
+      {activePage === "models" ? (
+        <section
+          className="settings-section"
+          aria-labelledby="model-configurations-title"
+        >
         <div className="settings-section-heading">
           <div>
             <h2 id="model-configurations-title">
@@ -1720,12 +1777,14 @@ export function SettingsWorkspace({
             </div>
           </form>
         </div>
-      </section>
+        </section>
+      ) : null}
 
-      <section
-        className="settings-section"
-        aria-labelledby="desktop-preferences-title"
-      >
+      {activePage === "general" ? (
+        <section
+          className="settings-section"
+          aria-labelledby="desktop-preferences-title"
+        >
         <div className="settings-section-heading">
           <h2 id="desktop-preferences-title">Desktop preferences</h2>
         </div>
@@ -1774,7 +1833,8 @@ export function SettingsWorkspace({
             ))}
           </div>
         </div>
-      </section>
+        </section>
+      ) : null}
 
       {editing !== undefined ? (
         <div
@@ -1800,7 +1860,7 @@ export function SettingsWorkspace({
             <div className="provider-dialog-header">
               <div>
                 <span className="surface-kicker">
-                  {CATEGORY_LABELS[editing.category]}
+                  {SETTINGS_PAGE_LABELS[editing.category]}
                 </span>
                 <h2 id="capability-dialog-title">{editing.name}</h2>
                 <p id="capability-dialog-description">
@@ -1986,6 +2046,15 @@ function supportsEnablement(capability: DesktopCapability): boolean {
     capability.id === "local.developer_shell" ||
     capability.id === "local.sandbox_code"
   );
+}
+
+function settingsPageFromHash(hash: string): SettingsPage {
+  const candidate = hash.startsWith("#settings-")
+    ? hash.slice("#settings-".length)
+    : "";
+  return SETTINGS_PAGE_ORDER.includes(candidate as SettingsPage)
+    ? (candidate as SettingsPage)
+    : "general";
 }
 
 function isConfigurable(capability: DesktopCapability): boolean {

@@ -20,7 +20,9 @@ contractTest(
   "desktop.hermetic",
   "Desktop uninstall wizard enforces blockers and renders partial completion",
   async () => {
-    const browser = new Window({ url: "http://localhost/" });
+    const browser = new Window({
+      url: "http://localhost/#settings-workspace_data",
+    });
     Object.assign(browser, {
       kestrelDesktop: {
         getCapabilities: async () => ({
@@ -155,6 +157,94 @@ contractTest(
     assert.match(container.textContent, /connection-1.*failed/u);
     assert.match(container.textContent, /desktop_helper: scheduled/u);
     assert.match(container.textContent, /DESKTOP_HELPER_PARTIAL/u);
+
+    await act(async () => root.unmount());
+  },
+);
+
+contractTest(
+  "desktop.hermetic",
+  "Settings navigation remains available when capability readiness fails",
+  async () => {
+    const browser = new Window({
+      url: "http://localhost/#settings-general",
+    });
+    Object.assign(browser, {
+      kestrelDesktop: {
+        getCapabilities: async () => {
+          throw new Error("Local Core is unavailable");
+        },
+        getKestrelOneEnvironments: async () => {
+          throw new Error("not configured");
+        },
+        getKestrelOneAccount: async () => {
+          throw new Error("not configured");
+        },
+        getPendingUninstallResult: async () => undefined,
+        getModelCatalog: async () => ({ models: [] }),
+      },
+    });
+    Object.assign(globalThis, {
+      React,
+      window: browser,
+      document: browser.document,
+      Node: browser.Node,
+      HTMLElement: browser.HTMLElement,
+      HTMLInputElement: browser.HTMLInputElement,
+      HTMLSelectElement: browser.HTMLSelectElement,
+      Event: browser.Event,
+      InputEvent: browser.InputEvent,
+      MouseEvent: browser.MouseEvent,
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+      cancelAnimationFrame: () => {},
+      IS_REACT_ACT_ENVIRONMENT: true,
+    });
+    const container = browser.document.createElement(
+      "div",
+    ) as unknown as HTMLDivElement;
+    browser.document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <SettingsWorkspace
+          settings={toDesktopRendererSettings(createDefaultDesktopSettings())}
+          onSettings={async () =>
+            toDesktopRendererSettings(createDefaultDesktopSettings())}
+          onOpenMcp={() => {}}
+          onAddProject={async () => {}}
+          onCreateUninstallPlan={async () => {
+            throw new Error("not used");
+          }}
+          onApplyUninstallPlan={async () => {
+            throw new Error("not used");
+          }}
+          onRequestMicrophone={async () => {}}
+          onError={() => {}}
+        />,
+      );
+    });
+    await flush();
+
+    const navigation = container.querySelector(
+      'nav[aria-label="Settings categories"]',
+    );
+    assert.ok(navigation, "Expected Settings navigation after readiness failure.");
+    const workspaceDataLink = [...navigation.querySelectorAll("a")].find(
+      (candidate) => candidate.textContent?.trim() === "Workspace & data",
+    );
+    assert.ok(workspaceDataLink, "Expected Workspace & data navigation.");
+
+    await act(async () => workspaceDataLink.click());
+    assert.equal(browser.location.hash, "#settings-workspace_data");
+    assert.match(container.textContent, /Data & Privacy/u);
+    assert.ok(
+      controlInLabel<HTMLSelectElement>(container, "Removal scope"),
+      "Expected uninstall controls to remain reachable.",
+    );
 
     await act(async () => root.unmount());
   },
