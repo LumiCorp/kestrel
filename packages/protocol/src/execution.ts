@@ -15,6 +15,38 @@ export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v3" as const
 export const RUNNER_WAITING_PROMPT_HISTORY_KIND = "runtime.waiting_prompt" as const;
 export const RUNNER_ASSISTANT_TEXT_HISTORY_KIND = "runtime.assistant_text" as const;
 
+export interface ConversationMessageCursor {
+  completedAt: string;
+  turnId: string;
+}
+
+export function encodeConversationMessageCursor(cursor: ConversationMessageCursor): string {
+  requireIsoTimestamp(cursor.completedAt, "conversation message cursor.completedAt");
+  requireNonEmptyString(cursor.turnId, "conversation message cursor.turnId");
+  return `v1:${encodeURIComponent(cursor.completedAt)}:${encodeURIComponent(cursor.turnId)}`;
+}
+
+export function parseConversationMessageCursor(
+  value: unknown,
+  label = "conversation message cursor",
+): ConversationMessageCursor {
+  const encoded = requireNonEmptyString(value, label);
+  const parts = encoded.split(":");
+  if (parts.length !== 3 || parts[0] !== "v1") {
+    throw new RunnerProtocolContractError(`${label} is invalid`);
+  }
+  try {
+    const completedAt = decodeURIComponent(parts[1] ?? "");
+    const turnId = decodeURIComponent(parts[2] ?? "");
+    requireIsoTimestamp(completedAt, `${label}.completedAt`);
+    requireNonEmptyString(turnId, `${label}.turnId`);
+    return { completedAt, turnId };
+  } catch (error) {
+    if (error instanceof RunnerProtocolContractError) throw error;
+    throw new RunnerProtocolContractError(`${label} is invalid`);
+  }
+}
+
 export const RUNNER_COMMAND_TYPES = [
   "profile.list",
   "profile.get",
@@ -26,6 +58,7 @@ export const RUNNER_COMMAND_TYPES = [
   "session.state",
   "operator.inbox",
   "operator.thread",
+  "conversation.messages.list",
   "operator.runs",
   "operator.run",
   "operator.run.reasoning",
@@ -162,6 +195,7 @@ export const RUNNER_EVENT_TYPES = [
   "session.state",
   "operator.inbox",
   "operator.thread",
+  "conversation.messages",
   "operator.runs",
   "operator.run",
   "operator.run.reasoning",
@@ -739,6 +773,32 @@ export interface OperatorThreadCommandPayload {
   threadId: string;
 }
 
+export interface ConversationMessagesListCommandPayload {
+  threadId: string;
+  afterCursor?: string | undefined;
+  limit?: number | undefined;
+}
+
+export interface RunnerConversationMessage {
+  messageId: string;
+  turnId: string;
+  threadId: string;
+  sessionId: string;
+  runId: string;
+  completedAt: string;
+  result: {
+    assistantText: string;
+    output: unknown;
+  };
+}
+
+export interface ConversationMessagesEventPayload {
+  threadId: string;
+  messages: RunnerConversationMessage[];
+  nextCursor?: string | undefined;
+  hasMore: boolean;
+}
+
 export interface OperatorRunsCommandPayload {
   sessionId?: string | undefined;
   status?: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | undefined;
@@ -1032,6 +1092,7 @@ export interface RunnerCommandPayloadByType {
   "session.state": SessionStateCommandPayload;
   "operator.inbox": OperatorInboxCommandPayload;
   "operator.thread": OperatorThreadCommandPayload;
+  "conversation.messages.list": ConversationMessagesListCommandPayload;
   "operator.runs": OperatorRunsCommandPayload;
   "operator.run": OperatorRunCommandPayload;
   "operator.run.reasoning": OperatorRunReasoningCommandPayload;
@@ -1553,6 +1614,7 @@ export interface RunnerEventPayloadByType {
   "session.state": SessionStateEventPayload;
   "operator.inbox": OperatorInboxEventPayload;
   "operator.thread": OperatorThreadEventPayload;
+  "conversation.messages": ConversationMessagesEventPayload;
   "operator.runs": OperatorRunsEventPayload;
   "operator.run": OperatorRunEventPayload;
   "operator.run.reasoning": OperatorRunReasoningEventPayload;
@@ -1610,6 +1672,7 @@ export interface RunnerResponseByCommandType {
   "session.state": RunnerEventEnvelope<"session.state">;
   "operator.inbox": RunnerEventEnvelope<"operator.inbox">;
   "operator.thread": RunnerEventEnvelope<"operator.thread">;
+  "conversation.messages.list": RunnerEventEnvelope<"conversation.messages">;
   "operator.runs": RunnerEventEnvelope<"operator.runs">;
   "operator.run": RunnerEventEnvelope<"operator.run">;
   "operator.run.reasoning": RunnerEventEnvelope<"operator.run.reasoning">;
@@ -1674,6 +1737,7 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "session.state": ["session.state"],
   "operator.inbox": ["operator.inbox"],
   "operator.thread": ["operator.thread"],
+  "conversation.messages.list": ["conversation.messages"],
   "operator.runs": ["operator.runs"],
   "operator.run": ["operator.run"],
   "operator.run.reasoning": ["operator.run.reasoning"],
@@ -2024,6 +2088,14 @@ function parseRunnerCommandPayloadV2(
       break;
     case "operator.thread":
       requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      break;
+    case "conversation.messages.list":
+      rejectUnknownFields(payload, label, ["threadId", "afterCursor", "limit"]);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      if (payload.afterCursor !== undefined) {
+        parseConversationMessageCursor(payload.afterCursor, `${label}.afterCursor`);
+      }
+      validateOptionalIntegerRange(payload.limit, `${label}.limit`, 1, 500);
       break;
     case "operator.runs":
       rejectUnknownFields(payload, label, ["sessionId", "status", "limit"]);
@@ -2476,6 +2548,59 @@ function parseRunnerEventPayloadV2(
     case "operator.run":
       requireRecord(payload.view, `${label}.view`);
       break;
+    case "conversation.messages": {
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      if (!Array.isArray(payload.messages)) {
+        throw new RunnerProtocolContractError(`${label}.messages must be an array`);
+      }
+      payload.messages.forEach((entry, index) => {
+        const message = requireRecord(entry, `${label}.messages[${index}]`);
+        requireNonEmptyString(message.messageId, `${label}.messages[${index}].messageId`);
+        requireNonEmptyString(message.turnId, `${label}.messages[${index}].turnId`);
+        requireNonEmptyString(message.threadId, `${label}.messages[${index}].threadId`);
+        requireNonEmptyString(message.sessionId, `${label}.messages[${index}].sessionId`);
+        requireNonEmptyString(message.runId, `${label}.messages[${index}].runId`);
+        if (message.messageId !== `terminal:${message.runId as string}`) {
+          throw new RunnerProtocolContractError(`${label}.messages[${index}].messageId must match its runId`);
+        }
+        if (message.threadId !== payload.threadId) {
+          throw new RunnerProtocolContractError(`${label}.messages[${index}].threadId must match payload.threadId`);
+        }
+        requireIsoTimestamp(message.completedAt, `${label}.messages[${index}].completedAt`);
+        const result = requireRecord(message.result, `${label}.messages[${index}].result`);
+        requireNonEmptyString(result.assistantText, `${label}.messages[${index}].result.assistantText`);
+        if (!Object.hasOwn(result, "output")) {
+          throw new RunnerProtocolContractError(`${label}.messages[${index}].result.output is required`);
+        }
+        validateRunnerRunOutput(result.output, `${label}.messages[${index}].result.output`);
+        const output = requireRecord(result.output, `${label}.messages[${index}].result.output`);
+        if (output.status !== "COMPLETED") {
+          throw new RunnerProtocolContractError(`${label}.messages[${index}].result.output.status must be 'COMPLETED'`);
+        }
+        if (output.runId !== message.runId) {
+          throw new RunnerProtocolContractError(`${label}.messages[${index}].result.output.runId must match message.runId`);
+        }
+        if (output.sessionId !== message.sessionId) {
+          throw new RunnerProtocolContractError(`${label}.messages[${index}].result.output.sessionId must match message.sessionId`);
+        }
+      });
+      for (let index = 1; index < payload.messages.length; index += 1) {
+        const previous = requireRecord(payload.messages[index - 1], `${label}.messages[${index - 1}]`);
+        const current = requireRecord(payload.messages[index], `${label}.messages[${index}]`);
+        const ordered = String(previous.completedAt).localeCompare(String(current.completedAt))
+          || String(previous.turnId).localeCompare(String(current.turnId));
+        if (ordered >= 0) {
+          throw new RunnerProtocolContractError(`${label}.messages must be strictly chronological`);
+        }
+      }
+      if (payload.nextCursor !== undefined) {
+        parseConversationMessageCursor(payload.nextCursor, `${label}.nextCursor`);
+      }
+      if (typeof payload.hasMore !== "boolean") {
+        throw new RunnerProtocolContractError(`${label}.hasMore must be a boolean`);
+      }
+      break;
+    }
     case "operator.run.reasoning":
       requireNonEmptyString(payload.runId, `${label}.runId`);
       if (!Array.isArray(payload.entries)) {
@@ -3722,6 +3847,14 @@ function requireBoolean(value: unknown, label: string): boolean {
     throw new RunnerProtocolContractError(`${label} must be a boolean`);
   }
   return value;
+}
+
+function requireIsoTimestamp(value: unknown, label: string): string {
+  const timestamp = requireNonEmptyString(value, label);
+  if (Number.isNaN(Date.parse(timestamp)) || new Date(timestamp).toISOString() !== timestamp) {
+    throw new RunnerProtocolContractError(`${label} must be an ISO timestamp`);
+  }
+  return timestamp;
 }
 
 function validateOptionalBoolean(value: unknown, label: string): void {

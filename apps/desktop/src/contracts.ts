@@ -54,6 +54,8 @@ import type {
   DesktopWorkspacePromotionPreviewResult,
   DesktopWorkspacePromotionUndoResult,
   DesktopOperatorControlRequest,
+  DesktopOperatorControlResult,
+  DesktopConversationMessagePage,
   DesktopOperatorInboxItem,
   DesktopRuntimeStoreReset,
   DesktopSupportBundle,
@@ -196,6 +198,8 @@ export type {
   DesktopRuntimeThreadInspection,
   RunTurnAttachment,
   DesktopOperatorControlRequest,
+  DesktopOperatorControlResult,
+  DesktopConversationMessagePage,
   DesktopOperatorInboxItem,
   DesktopRuntimeThreadNextAction,
   DesktopRuntimeThreadPlan,
@@ -411,7 +415,12 @@ export interface DesktopBridge {
   removeAttachment(threadId: string, attachmentId: string): Promise<boolean>;
   submitOperatorControl(
     request: DesktopOperatorControlRequest,
-  ): Promise<DesktopRuntimeThreadInspection>;
+  ): Promise<DesktopOperatorControlResult>;
+  listConversationMessages(
+    threadId: string,
+    afterCursor?: string,
+    limit?: number,
+  ): Promise<DesktopConversationMessagePage>;
   cancelRun(
     request: DesktopRunCancelRequest,
   ): Promise<DesktopRunCancellationResult>;

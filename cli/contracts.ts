@@ -379,6 +379,7 @@ export interface TuiSessionMeta {
   delegation?: DelegationTaskMeta | undefined;
   operatorState?: OperatorAffordancePayload | undefined;
   focusedThreadId?: string | undefined;
+  terminalMessageCursor?: string | undefined;
 }
 
 export interface SessionsFile {

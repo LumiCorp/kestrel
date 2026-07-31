@@ -20,6 +20,8 @@ import type {
   DesktopRuntimeRunTimelineEntry,
   DesktopRuntimeThreadBlocker,
   DesktopRuntimeThreadInspection,
+  DesktopOperatorControlResult,
+  DesktopConversationMessagePage,
   DesktopRuntimeThreadNextAction,
   DesktopRuntimeThreadPlan,
   DesktopRuntimeThreadStatus,
@@ -449,14 +451,41 @@ export async function runDesktopOperatorControl(input: {
   adapter: Pick<WebRunnerAdapter, "sendControl">;
   request: DesktopOperatorControlRequest & { attachments?: import("../../../src/kestrel/contracts/orchestration.js").RunTurnAttachment[] | undefined };
   context: WebRunnerRequestContext;
-}): Promise<DesktopRuntimeThreadInspection> {
+}): Promise<DesktopOperatorControlResult> {
   const event = await input.adapter.sendControl({ type: "operator.control", ...input.request }, input.context);
   if (event.type !== "operator.controlled") {
     throw createDesktopError({ code: "desktop.operator_control_unexpected_response", message: `Runner returned '${event.type}' for operator.control.` });
   }
   const view = event.payload.view;
   if (view === undefined) throw createDesktopError({ code: "desktop.operator_control_missing_view", message: "Runner did not return the authoritative thread view." });
-  return parseDesktopRuntimeThreadInspection(view);
+  return {
+    view: parseDesktopRuntimeThreadInspection(view),
+    ...(event.payload.result !== undefined ? { result: event.payload.result as unknown as DesktopOperatorControlResult["result"] } : {}),
+    ...(event.payload.disposition !== undefined ? { disposition: event.payload.disposition } : {}),
+    ...(event.payload.runId !== undefined ? { runId: event.payload.runId } : {}),
+  };
+}
+
+export async function listDesktopConversationMessages(input: {
+  adapter: Pick<WebRunnerAdapter, "sendControl">;
+  threadId: string;
+  afterCursor?: string | undefined;
+  limit?: number | undefined;
+  context: WebRunnerRequestContext;
+}): Promise<DesktopConversationMessagePage> {
+  const event = await input.adapter.sendControl({
+    type: "conversation.messages.list",
+    threadId: input.threadId,
+    ...(input.afterCursor !== undefined ? { afterCursor: input.afterCursor } : {}),
+    ...(input.limit !== undefined ? { limit: input.limit } : {}),
+  }, input.context);
+  if (event.type !== "conversation.messages") {
+    throw createDesktopError({
+      code: "desktop.conversation_messages_unexpected_response",
+      message: `Runner returned '${event.type}' for conversation.messages.list.`,
+    });
+  }
+  return event.payload as DesktopConversationMessagePage;
 }
 
 export async function getDesktopOperatorRun(input: {

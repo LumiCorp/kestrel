@@ -152,6 +152,9 @@ const desktopBridge: DesktopBridge = {
   submitOperatorControl(request) {
     return ipcRenderer.invoke("desktop:operator-control", request);
   },
+  listConversationMessages(threadId, afterCursor, limit) {
+    return ipcRenderer.invoke("desktop:conversation-messages", threadId, afterCursor, limit);
+  },
   cancelRun(
     request: DesktopRunCancelRequest,
   ): Promise<DesktopRunCancellationResult> {

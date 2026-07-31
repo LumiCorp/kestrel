@@ -65,6 +65,12 @@ export interface WebRunTurnRequest {
 
 export type WebControlCommand =
   | {
+      type: "conversation.messages.list";
+      threadId: string;
+      afterCursor?: string | undefined;
+      limit?: number | undefined;
+    }
+  | {
       type: "ping";
       nonce?: string | undefined;
     }

@@ -9,6 +9,54 @@ import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
 import { createEmptyProjectSnapshot } from "../../src/project/state.js";
 import { contractTest } from "../helpers/contract-test.js";
 
+contractTest("runtime.process", "completed conversation message reads use durable handoff filters and cursor ordering", async () => {
+  const sql = new ScriptedSqlExecutor([{
+    match: /FROM conversation_turns[\s\S]*completed_at, turn_id\) >[\s\S]*handoff'[\s\S]*assistantText'[\s\S]*ORDER BY completed_at ASC, turn_id ASC/u,
+    rows: [{
+      turn_id: "turn-2",
+      thread_id: "thread-1",
+      session_id: "session-1",
+      root_run_id: "run-2",
+      status: "COMPLETED",
+      initial_event_type: "user.message",
+      active_run_id: null,
+      terminal_run_id: "run-2",
+      terminal_status: "COMPLETED",
+      metadata_json: {
+        terminalEnvelope: {
+          version: "v1",
+          turnRequestIdentity: "request-2",
+          terminalSubmissionIdentity: "submission-2",
+          runId: "run-2",
+          status: "COMPLETED",
+          output: { status: "COMPLETED", sessionId: "session-1", runId: "run-2", errors: [] },
+          handoff: { state: "delivered", assistantText: "Second answer." },
+        },
+      },
+      started_at: "2026-07-31T10:00:00.000Z",
+      updated_at: "2026-07-31T10:02:00.000Z",
+      completed_at: "2026-07-31T10:02:00.000Z",
+    }],
+  }]);
+  const store = new PostgresSessionStore(sql);
+  const turns = await store.listConversationTurns({
+    threadId: "thread-1",
+    status: "COMPLETED",
+    terminalMessagesOnly: true,
+    completedAfter: { completedAt: "2026-07-31T10:01:00.000Z", turnId: "turn-1" },
+    limit: 101,
+  });
+  assert.equal(turns[0]?.turnId, "turn-2");
+  assert.deepEqual(sql.queries[0]?.values, [
+    "thread-1",
+    "COMPLETED",
+    "2026-07-31T10:01:00.000Z",
+    "turn-1",
+    101,
+  ]);
+  sql.assertExhausted();
+});
+
 
 contractTest("runtime.process", "getSession normalizes database Date timestamps before protocol projection", async () => {
   const updatedAt = new Date("2026-07-14T23:27:08.000Z");

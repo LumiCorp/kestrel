@@ -25,7 +25,9 @@ import { parseJobInputV1 } from "./job/contracts.js";
 import type {
   JobRunCommandPayload,
   OperatorControlCommandPayload,
+  OperatorControlledEventPayload,
 } from "./protocol/contracts.js";
+import { extractWaitPrompt } from "../src/runtime/waitForPrompt.js";
 import { formatDoctorInspection, formatReplayInspection } from "./runtime/inspectionFormatting.js";
 import { runWebCommand } from "./webCommand.js";
 import { WorkspaceStore } from "./workspace/WorkspaceStore.js";
@@ -659,12 +661,13 @@ async function runOperatorCommand(
   if (subcommand === "resume-wait") {
     const threadId = readRequiredFlag(rest, "--thread-id");
     const reason = readFlag(rest, "--reason");
-    await sendOperatorControl({
+    const result = await sendOperatorControl({
       action: "retry",
       threadId,
       ...(reason !== undefined ? { message: reason } : {}),
     });
     process.stdout.write(`resume-wait dispatched thread=${threadId}\n`);
+    printOperatorTerminalResult(result);
     return;
   }
   if (subcommand === "approve") {
@@ -672,7 +675,7 @@ async function runOperatorCommand(
     const requestId = readRequiredFlag(rest, "--request-id");
     const allowToolClasses = parseToolClasses(readMultiFlag(rest, "--allow-tool-class"));
     const allowCapabilities = readMultiFlag(rest, "--allow-capability");
-    await sendOperatorControl({
+    const result = await sendOperatorControl({
       action: "approve",
       threadId,
       requestId,
@@ -682,18 +685,20 @@ async function runOperatorCommand(
     process.stdout.write(
       `approve dispatched thread=${threadId} request=${requestId} toolClasses=${allowToolClasses.length} capabilities=${allowCapabilities.length}\n`,
     );
+    printOperatorTerminalResult(result);
     return;
   }
   if (subcommand === "retry-delegation") {
     const threadId = readRequiredFlag(rest, "--thread-id");
     const delegationId = readRequiredFlag(rest, "--delegation-id");
-    await sendOperatorControl({
+    const result = await sendOperatorControl({
       action: "supersede_child_thread",
       threadId,
       delegationId,
       message: "Retry delegation requested via operator quick path.",
     });
     process.stdout.write(`retry-delegation dispatched thread=${threadId} delegation=${delegationId}\n`);
+    printOperatorTerminalResult(result);
     return;
   }
   if (subcommand === "doctor-export") {
@@ -799,15 +804,29 @@ async function runRuntimeCommand(
 
 async function sendOperatorControl(
   payload: OperatorControlCommandPayload,
-): Promise<void> {
+): Promise<OperatorControlledEventPayload> {
   const client = createConfiguredCliProtocolClient();
   try {
     const response = await client.sendCommand("operator.control", payload);
     if (response.type !== "operator.controlled") {
       throw new Error(`Unexpected operator response '${response.type}'.`);
     }
+    return response.payload;
   } finally {
     await client.close();
+  }
+}
+
+function printOperatorTerminalResult(payload: OperatorControlledEventPayload): void {
+  const result = payload.result;
+  if (result === undefined) return;
+  if (result.output.status === "WAITING") {
+    const prompt = extractWaitPrompt(result.output.waitFor);
+    if (prompt !== undefined) process.stdout.write(`${prompt}\n`);
+    return;
+  }
+  if (result.assistantText !== null) {
+    process.stdout.write(`${result.assistantText}\n`);
   }
 }
 
