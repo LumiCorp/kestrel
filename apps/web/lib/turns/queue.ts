@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
@@ -74,23 +74,34 @@ async function sendTurn(boss: PgBoss, turnId: string) {
   }
 }
 
-async function dispatchTurnOrFail(boss: PgBoss, turnId: string) {
+async function dispatchTurnOrReconcile(boss: PgBoss, turnId: string) {
   try {
     await sendTurn(boss, turnId);
   } catch (error) {
-    await completeDurableThreadTurn({
-      turnId,
-      status: "failed",
-      failureCode: "TURN_DISPATCH_FAILED",
-      failureMessage:
-        "The Kestrel agent could not start this turn. Please try again.",
-    });
+    try {
+      if (await hasNonterminalJob(boss, turnId)) {
+        return;
+      }
+      const state = await readDurableDispatchState(turnId);
+      if (
+        state &&
+        (state.queueState !== "running" ||
+          state.activeTurnId !== turnId ||
+          (state.status !== "queued" &&
+            state.status !== "waiting_for_input"))
+      ) {
+        return;
+      }
+    } catch {
+      // Preserve the durable dispatch intent when the send result cannot be
+      // reconciled. Existing maintenance will retry once state is readable.
+    }
     throw error;
   }
 }
 
 export async function enqueueDurableThreadTurn(turnId: string) {
-  await dispatchTurnOrFail(await getTurnBoss(), turnId);
+  await dispatchTurnOrReconcile(await getTurnBoss(), turnId);
 }
 
 export async function finalizeExhaustedDurableTurnJob(input: {
@@ -117,6 +128,36 @@ async function hasNonterminalJob(boss: PgBoss, turnId: string) {
     { data: { turnId } },
   );
   return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
+}
+
+async function readDurableDispatchState(turnId: string) {
+  const [state] = await knowledgeDb
+    .select({
+      activeTurnId: schema.threadTurnQueueState.activeTurnId,
+      queueState: schema.threadTurnQueueState.state,
+      status: schema.threadTurns.status,
+    })
+    .from(schema.threadTurns)
+    .innerJoin(
+      schema.threadTurnQueueState,
+      eq(schema.threadTurnQueueState.threadId, schema.threadTurns.threadId),
+    )
+    .where(eq(schema.threadTurns.id, turnId))
+    .limit(1);
+  return state;
+}
+
+async function hasResolvedUnconsumedRuntimeInteraction(turnId: string) {
+  const interaction = await knowledgeDb.query.threadInteractions.findFirst({
+    columns: { id: true },
+    where: and(
+      eq(schema.threadInteractions.turnId, turnId),
+      eq(schema.threadInteractions.source, "runtime"),
+      eq(schema.threadInteractions.status, "resolved"),
+      isNull(schema.threadInteractions.resumedAt),
+    ),
+  });
+  return Boolean(interaction);
 }
 
 async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
@@ -146,12 +187,18 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
       continue;
     }
     if (turn.status === "queued" && turn.queueState === "running") {
-      await dispatchTurnOrFail(boss, turn.turnId);
+      await dispatchTurnOrReconcile(boss, turn.turnId);
       continue;
     }
     // A waiting turn is intentionally quiescent: its next worker job is only
     // created after the exact durable interaction request is resolved.
     if (turn.status === "waiting_for_input") {
+      if (
+        turn.queueState === "running" &&
+        (await hasResolvedUnconsumedRuntimeInteraction(turn.turnId))
+      ) {
+        await dispatchTurnOrReconcile(boss, turn.turnId);
+      }
       continue;
     }
     if (turn.status === "running") {
@@ -208,7 +255,7 @@ export async function startDurableThreadTurnWorker() {
               workerSignal: job.signal,
             });
             if (result.nextTurnId) {
-              await dispatchTurnOrFail(boss, result.nextTurnId);
+              await dispatchTurnOrReconcile(boss, result.nextTurnId);
             }
             await drainMobilePushOutbox().catch(reportPushFailure);
           } catch (error) {

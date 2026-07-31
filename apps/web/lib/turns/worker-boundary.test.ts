@@ -70,7 +70,7 @@ contractTest(
 
     assert.match(queueSource, /await reconcileDurableThreadTurnQueueWithBoss/u);
     assert.match(queueSource, /NONTERMINAL_JOB_STATES/u);
-    assert.match(queueSource, /await dispatchTurnOrFail\(/u);
+    assert.match(queueSource, /await dispatchTurnOrReconcile\(/u);
     assert.match(queueSource, /failureCode: "TURN_WORKER_INTERRUPTED"/u);
   },
 );
