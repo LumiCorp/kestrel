@@ -16,6 +16,7 @@ import type {
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
   OperatorControlCommandPayload,
+  ConversationMessagesListCommandPayload,
   OperatorInboxCommandPayload,
   OperatorRunCommandPayload,
   OperatorRunReasoningCommandPayload,
@@ -197,6 +198,15 @@ export class CommandRouter {
       if (command.type === "operator.thread") {
         const payload = validateOperatorThreadPayload(command.payload);
         await this.host.operatorThread(command.id, payload, command.metadata);
+        return;
+      }
+
+      if (command.type === "conversation.messages.list") {
+        await this.host.conversationMessagesList(
+          command.id,
+          command.payload as ConversationMessagesListCommandPayload,
+          command.metadata,
+        );
         return;
       }
 

@@ -14,4 +14,4 @@ export * from "./FollowUpQueue.js";
 export * from "./OperatorSessionProjection.js";
 export * from "./RuntimeSessionStateProjection.js";
 export { DelegationSupervisor, type DelegationTaskUpdate } from "./DelegationSupervisor.js";
-export { ThreadRuntime, createTurnExecutor } from "./ThreadRuntime.js";
+export { ThreadRuntime, createTurnExecutor, type DetachedTurnLifecycleEvent } from "./ThreadRuntime.js";

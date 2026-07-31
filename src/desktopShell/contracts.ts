@@ -318,6 +318,39 @@ export interface DesktopOperatorControlRequest {
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
 }
 
+export interface DesktopTerminalResult {
+  assistantText: string | null;
+  output: Record<string, unknown> & {
+    status: string;
+    runId: string;
+    sessionId: string;
+    waitFor?: unknown;
+  };
+  finalizedPayload?: unknown | undefined;
+}
+
+export interface DesktopOperatorControlResult {
+  view: DesktopRuntimeThreadInspection;
+  result?: DesktopTerminalResult | undefined;
+  disposition?: "accepted" | "completed" | undefined;
+  runId?: string | undefined;
+}
+
+export interface DesktopConversationMessagePage {
+  threadId: string;
+  messages: Array<{
+    messageId: string;
+    turnId: string;
+    threadId: string;
+    sessionId: string;
+    runId: string;
+    completedAt: string;
+    result: { assistantText: string; output: unknown };
+  }>;
+  nextCursor?: string | undefined;
+  hasMore: boolean;
+}
+
 export function parseDesktopOperatorControlRequest(
   value: unknown,
 ): DesktopOperatorControlRequest {

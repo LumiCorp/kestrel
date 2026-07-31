@@ -2215,6 +2215,8 @@ export class PostgresSessionStore implements SessionStore {
     threadId?: string | undefined;
     sessionId?: string | undefined;
     status?: ConversationTurnRecord["status"] | undefined;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    terminalMessagesOnly?: boolean | undefined;
     limit?: number | undefined;
   } = {}): Promise<ConversationTurnRecord[]> {
     await this.ensureSchemaV3();
@@ -2232,7 +2234,18 @@ export class PostgresSessionStore implements SessionStore {
       values.push(input.status);
       clauses.push(`status = $${values.length}`);
     }
-    const limit = Math.max(1, Math.min(500, Math.trunc(input.limit ?? 100)));
+    if (input.completedAfter !== undefined) {
+      values.push(input.completedAfter.completedAt, input.completedAfter.turnId);
+      clauses.push(`(completed_at, turn_id) > ($${values.length - 1}, $${values.length})`);
+    }
+    if (input.terminalMessagesOnly === true) {
+      clauses.push(`status = 'COMPLETED'`);
+      clauses.push(`completed_at IS NOT NULL`);
+      clauses.push(`metadata_json->'terminalEnvelope'->'handoff'->>'state' = 'delivered'`);
+      clauses.push(`jsonb_typeof(metadata_json->'terminalEnvelope'->'handoff'->'assistantText') = 'string'`);
+      clauses.push(`btrim(metadata_json->'terminalEnvelope'->'handoff'->>'assistantText') <> ''`);
+    }
+    const limit = Math.max(1, Math.min(501, Math.trunc(input.limit ?? 100)));
     values.push(limit);
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const result = await this.db.query<ConversationTurnRow>(
@@ -2241,7 +2254,11 @@ export class PostgresSessionStore implements SessionStore {
               started_at, updated_at, completed_at
          FROM conversation_turns
          ${whereClause}
-        ORDER BY updated_at DESC, turn_id ASC
+        ORDER BY ${input.completedAfter !== undefined
+          ? "completed_at ASC, turn_id ASC"
+          : input.terminalMessagesOnly === true
+            ? "completed_at DESC NULLS LAST, turn_id DESC"
+            : "updated_at DESC, turn_id ASC"}
         LIMIT $${values.length}`,
       values,
     );

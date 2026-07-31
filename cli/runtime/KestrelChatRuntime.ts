@@ -98,7 +98,7 @@ import {
   type SharedToolContext,
 } from "../../tools/index.js";
 import { registerAgent } from "./AgentFactory.js";
-import type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
+import type { DelegationTaskUpdate, DetachedTurnLifecycleEvent } from "../../src/orchestration/index.js";
 import { buildExecutionPolicyFromPack } from "./approvalPolicyPacks.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { InProcessMissionControlRunnerClient } from "./MissionControlRunnerClient.js";
@@ -238,6 +238,7 @@ export interface RuntimeFactory {
       | undefined,
     onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
     onRunEvent?: ((event: RunEvent) => void) | undefined,
+    onDetachedTurnEvent?: ((event: DetachedTurnLifecycleEvent) => void) | undefined,
   ): RuntimeBootstrap;
 }
 
@@ -274,6 +275,7 @@ export interface KestrelChatRuntimeOptions {
     | undefined;
   onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined;
   onRunEvent?: ((event: RunEvent) => void) | undefined;
+  onDetachedTurnEvent?: ((event: DetachedTurnLifecycleEvent) => void) | undefined;
 }
 
 export class KestrelChatRuntime {
@@ -353,6 +355,7 @@ export class KestrelChatRuntime {
       options.onReasoning,
       options.onTaskUpdate,
       options.onRunEvent,
+      options.onDetachedTurnEvent,
     );
 
     this.kestrel = bootstrap.kestrel;
@@ -719,6 +722,14 @@ export class KestrelChatRuntime {
 
   async getOperatorThreadView(threadId: string) {
     return this.threadRuntime?.getOperatorThreadView(threadId) ?? null;
+  }
+
+  async listCompletedConversationMessages(input: {
+    threadId: string;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    limit: number;
+  }) {
+    return this.threadRuntime?.listCompletedConversationMessages(input) ?? [];
   }
 
   async listOperatorRuns(
@@ -3059,6 +3070,7 @@ function createDefaultRuntime(
     | undefined,
   onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
   onRunEvent?: ((event: RunEvent) => void) | undefined,
+  onDetachedTurnEvent?: ((event: DetachedTurnLifecycleEvent) => void) | undefined,
 ): RuntimeBootstrap {
   const storeHandle = createSessionStoreFromEnv({
     ...(profile.storeDriver !== undefined
@@ -3074,6 +3086,7 @@ function createDefaultRuntime(
     onReasoning,
     onTaskUpdate,
     onRunEvent,
+    onDetachedTurnEvent,
     storeHandle.store,
     storeHandle.close,
     undefined,
@@ -3106,6 +3119,7 @@ export function createRuntimeFactoryWithStore(
       onReasoning,
       onTaskUpdate,
       onRunEvent,
+      onDetachedTurnEvent,
     ) {
       const environment = options.resolveEnvironment?.(profile);
       return createRuntimeWithStore(
@@ -3117,6 +3131,7 @@ export function createRuntimeFactoryWithStore(
         onReasoning,
         onTaskUpdate,
         onRunEvent,
+        onDetachedTurnEvent,
         store,
         async () => {},
         environment,
@@ -3142,6 +3157,7 @@ function createRuntimeWithStore(
     | undefined,
   onTaskUpdate: ((update: DelegationTaskUpdate) => void) | undefined,
   onRunEvent: ((event: RunEvent) => void) | undefined,
+  onDetachedTurnEvent: ((event: DetachedTurnLifecycleEvent) => void) | undefined,
   store: SessionStore,
   closeStore: () => Promise<void>,
   environment?: KestrelRuntimeEnvironment | undefined,
@@ -3448,6 +3464,7 @@ function createRuntimeWithStore(
       );
       onTaskUpdate?.(update);
     },
+    onDetachedTurnEvent,
   });
   toolContext.delegationService = threadRuntime.getDelegationService();
   toolContext.dialogService = threadRuntime.getDialogService();

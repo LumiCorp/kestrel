@@ -26,11 +26,144 @@ import {
   undoArchiveRendererThread,
 } from "../renderer/src/state.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
+import { projectDesktopTerminalMessage } from "../renderer/src/terminalProjection.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 contractTest("desktop.hermetic", "new Desktop conversations default to the local checkout", () => {
   assert.equal(createRendererThread().workspaceMode, "local");
+});
+
+contractTest("runtime.terminal-message-delivery", "Desktop projects terminal messages after pending users and suppresses duplicate run identities", () => {
+  const thread = createRendererThread();
+  const state = {
+    entries: {},
+    activeThreadId: thread.id,
+    threads: [thread],
+    theme: "system" as const,
+  };
+  const first = projectDesktopTerminalMessage(state, {
+    threadId: thread.id,
+    runId: "run-terminal-1",
+    turnId: "turn-terminal-1",
+    assistantText: "The durable answer.",
+    status: "COMPLETED",
+    timestamp: "2026-07-31T10:00:01.000Z",
+    pendingUser: {
+      text: "Finish this task",
+      timestamp: "2026-07-31T10:00:00.000Z",
+    },
+  });
+  assert.equal(first.outcome, "projected");
+  assert.deepEqual(first.state.threads[0]?.transcript.map((line) => [line.role, line.text]), [
+    ["user", "Finish this task"],
+    ["assistant", "The durable answer."],
+  ]);
+  assert.equal(first.state.threads[0]?.transcript[1]?.terminal?.runId, "run-terminal-1");
+
+  const duplicate = projectDesktopTerminalMessage(first.state, {
+    threadId: thread.id,
+    runId: "run-terminal-1",
+    assistantText: "The durable answer.",
+    status: "COMPLETED",
+    timestamp: "2026-07-31T10:00:02.000Z",
+  });
+  assert.equal(duplicate.outcome, "duplicate");
+  assert.equal(duplicate.state.threads[0]?.transcript.length, 2);
+
+  const hydrated = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-renderer-vite",
+    capturedAt: "2026-07-31T10:00:03.000Z",
+    entries: serializeDesktopRendererState(first.state),
+  });
+  assert.equal(hydrated.threads[0]?.transcript[1]?.terminal?.runId, "run-terminal-1");
+  const recoveredDuplicate = projectDesktopTerminalMessage(hydrated, {
+    threadId: thread.id,
+    runId: "run-terminal-1",
+    assistantText: "The durable answer.",
+    status: "COMPLETED",
+    timestamp: "2026-07-31T10:00:04.000Z",
+  });
+  assert.equal(recoveredDuplicate.outcome, "duplicate");
+  assert.equal(recoveredDuplicate.state.threads[0]?.transcript.length, 2);
+});
+
+contractTest("runtime.terminal-message-delivery", "Desktop preserves authoritative assistant text verbatim", () => {
+  const thread = createRendererThread();
+  const assistantText = "  indented Markdown\n\n";
+  const projection = projectDesktopTerminalMessage({
+    entries: {},
+    activeThreadId: thread.id,
+    threads: [thread],
+    theme: "system",
+  }, {
+    threadId: thread.id,
+    runId: "run-verbatim-answer",
+    assistantText,
+    status: "COMPLETED",
+    timestamp: "2026-07-31T10:00:00.000Z",
+  });
+  assert.equal(projection.state.threads[0]?.transcript[0]?.text, assistantText);
+});
+
+contractTest("runtime.terminal-message-delivery", "Desktop renders waiting and failed terminal results as visible system messages", () => {
+  const thread = createRendererThread();
+  const initial = {
+    entries: {},
+    activeThreadId: thread.id,
+    threads: [thread],
+    theme: "system" as const,
+  };
+  const waiting = projectDesktopTerminalMessage(initial, {
+    threadId: thread.id,
+    runId: "run-waiting-result",
+    assistantText: null,
+    status: "WAITING",
+    timestamp: "2026-07-31T10:00:00.000Z",
+    waitingPrompt: "Choose a workspace.",
+  });
+  assert.deepEqual(waiting.state.threads[0]?.transcript[0], {
+    role: "system",
+    text: "Choose a workspace.",
+    timestamp: "2026-07-31T10:00:00.000Z",
+    terminal: { runId: "run-waiting-result" },
+  });
+  const failed = projectDesktopTerminalMessage(waiting.state, {
+    threadId: thread.id,
+    runId: "run-failed-result",
+    assistantText: null,
+    status: "FAILED",
+    timestamp: "2026-07-31T10:00:01.000Z",
+    failureMessage: "Provider connection failed.",
+  });
+  assert.equal(failed.state.threads[0]?.transcript[1]?.role, "system");
+  assert.equal(failed.state.threads[0]?.transcript[1]?.text, "Provider connection failed.");
+});
+
+contractTest("runtime.terminal-message-delivery", "Desktop exposes completed results that violate the assistantText contract", () => {
+  const thread = createRendererThread();
+  const projection = projectDesktopTerminalMessage({
+    entries: {},
+    activeThreadId: thread.id,
+    threads: [thread],
+    theme: "system",
+  }, {
+    threadId: thread.id,
+    runId: "run-missing-answer",
+    assistantText: null,
+    status: "COMPLETED",
+    timestamp: "2026-07-31T10:00:00.000Z",
+    data: {
+      kind: "desktop.terminal-outcome.v1",
+      runId: "run-missing-answer",
+      terminalEvent: "run.completed",
+      resultStatus: "COMPLETED",
+    },
+  });
+  assert.equal(projection.outcome, "contract_failure");
+  assert.match(projection.state.threads[0]?.transcript[0]?.text ?? "", /could not be delivered/u);
+  assert.equal(projection.state.threads[0]?.transcript[0]?.data, undefined);
 });
 
 contractTest("desktop.hermetic", "Vite renderer preserves an explicitly managed persisted conversation", () => {

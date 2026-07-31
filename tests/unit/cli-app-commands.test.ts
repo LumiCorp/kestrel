@@ -7,7 +7,7 @@ import path from "node:path";
 import React from "react";
 import { renderToString } from "ink";
 
-import { App } from "../../cli/app/App.js";
+import { App, terminalMessageRecoveryThreadId } from "../../cli/app/App.js";
 import {
   bootstrapTuiApp,
   deriveStartupPersistedUiState,
@@ -44,6 +44,10 @@ contractTest("runtime.process", "Local Core platform parsing accepts exact Node 
   assert.equal(parseLocalCorePlatform("darwin"), "darwin");
   assert.equal(parseLocalCorePlatform("LINUX"), undefined);
   assert.equal(parseLocalCorePlatform(""), undefined);
+});
+
+contractTest("runtime.process", "TUI recovery resolves the canonical main thread for a session", () => {
+  assert.equal(terminalMessageRecoveryThreadId("session-1"), "thread-main:session-1");
 });
 
 async function createAppHarness(input: {

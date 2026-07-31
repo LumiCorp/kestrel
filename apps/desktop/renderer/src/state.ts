@@ -52,6 +52,7 @@ export interface RendererTranscriptLine {
     sender: "kestrel" | "collaborator" | "system";
     status?: "failed" | "cancelled" | undefined;
   } | undefined;
+  terminal?: { runId: string; turnId?: string | undefined } | undefined;
 }
 
 export interface RendererThread {
@@ -64,6 +65,7 @@ export interface RendererThread {
   updatedAt: string;
   transcript: RendererTranscriptLine[];
   pendingWaitEventType?: string | undefined;
+  terminalMessageCursor?: string | undefined;
   mode: RendererMode;
   workspaceMode: RendererWorkspaceMode;
   workspaceBaseRef: string;
@@ -189,6 +191,10 @@ export function appendRendererTranscript(
 ): DesktopRendererState {
   return updateRendererThread(state, threadId, (thread) => {
     if (line.dialog !== undefined && thread.transcript.some((item) => item.dialog?.messageId === line.dialog?.messageId)) {
+      return thread;
+    }
+    const runId = terminalRunId(line);
+    if (runId !== undefined && thread.transcript.some((item) => terminalRunId(item) === runId)) {
       return thread;
     }
     const firstUserText =
@@ -500,6 +506,9 @@ export function serializeDesktopRendererState(
         ...(thread.pendingWaitEventType !== undefined
           ? { pendingWaitEventType: thread.pendingWaitEventType }
           : { pendingWaitEventType: undefined }),
+        ...(thread.terminalMessageCursor !== undefined
+          ? { terminalMessageCursor: thread.terminalMessageCursor }
+          : { terminalMessageCursor: undefined }),
         interactionMode: thread.mode,
         workspaceMode: thread.workspaceMode,
         workspaceBaseRef: thread.workspaceBaseRef,
@@ -798,6 +807,9 @@ function collectThreads(store: {
           rawState.pendingWaitEventType.trim().length > 0
             ? { pendingWaitEventType: rawState.pendingWaitEventType.trim() }
             : {}),
+          ...(typeof rawState.terminalMessageCursor === "string" && rawState.terminalMessageCursor.trim().length > 0
+            ? { terminalMessageCursor: rawState.terminalMessageCursor }
+            : {}),
           mode,
           workspaceMode,
           workspaceBaseRef,
@@ -887,6 +899,7 @@ function compactTranscriptLine(
       ? { attachments: line.attachments }
       : {}),
     ...(line.dialog !== undefined ? { dialog: line.dialog } : {}),
+    ...(line.terminal !== undefined ? { terminal: line.terminal } : {}),
   };
   if (
     serializedByteLength(compacted) <=
@@ -898,6 +911,7 @@ function compactTranscriptLine(
     role: compacted.role,
     text: compacted.text,
     timestamp: compacted.timestamp,
+    ...(compacted.terminal !== undefined ? { terminal: compacted.terminal } : {}),
   };
 }
 
@@ -937,10 +951,30 @@ function parseTranscriptLine(value: unknown): RendererTranscriptLine[] {
           ? normalizeTimestamp(line.timestamp)
           : new Date().toISOString(),
       ...(line.data !== undefined ? { data: line.data } : {}),
+      ...(parseTerminalTranscriptData(line.terminal) !== undefined ? { terminal: parseTerminalTranscriptData(line.terminal) } : {}),
       ...(parseDialogTranscriptData(line.dialog) !== undefined ? { dialog: parseDialogTranscriptData(line.dialog) } : {}),
       ...parseRendererAttachments(line.attachments),
     },
   ];
+}
+
+function parseTerminalTranscriptData(value: unknown): RendererTranscriptLine["terminal"] {
+  const terminal = asRecord(value);
+  if (typeof terminal?.runId !== "string" || terminal.runId.trim().length === 0) return undefined;
+  return {
+    runId: terminal.runId,
+    ...(typeof terminal.turnId === "string" && terminal.turnId.trim().length > 0 ? { turnId: terminal.turnId } : {}),
+  };
+}
+
+function terminalRunId(line: RendererTranscriptLine): string | undefined {
+  if (line.terminal?.runId !== undefined) return line.terminal.runId;
+  const data = asRecord(line.data);
+  return data?.kind === "desktop.terminal-outcome.v1"
+    && typeof data.runId === "string"
+    && data.runId.trim().length > 0
+    ? data.runId
+    : undefined;
 }
 
 function parseDialogTranscriptData(value: unknown): RendererTranscriptLine["dialog"] {

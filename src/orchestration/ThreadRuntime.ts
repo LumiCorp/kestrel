@@ -11,6 +11,7 @@ import type {
   ConversationTurnFinalizedPayloadV1,
   ConversationTurnSubmissionKind,
   ConversationTurnTerminalEnvelopeV1,
+  ConversationTurnRecord,
   RunTurnAttachment,
   ThreadRecord,
 } from "../kestrel/contracts/orchestration.js";
@@ -91,7 +92,13 @@ export interface ThreadRuntimeOptions {
   onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined;
   structuredSummaryGenerator?: ContextStructuredSummaryGenerator | undefined;
   resolveAttachments?: ((threadId: string, attachmentIds: string[]) => Promise<RunTurnAttachment[]>) | undefined;
+  onDetachedTurnEvent?: ((event: DetachedTurnLifecycleEvent) => void) | undefined;
 }
+
+export type DetachedTurnLifecycleEvent =
+  | { type: "started"; threadId: string; sessionId: string; runId: string; eventType: string }
+  | { type: "completed"; threadId: string; sessionId: string; runId: string; result: SubmitTurnResult }
+  | { type: "failed"; threadId: string; sessionId: string; runId: string; result?: SubmitTurnResult | undefined; error: RuntimeError };
 
 export class ThreadRuntime implements ThreadRuntimePort {
   private readonly sessionStore: SessionRepository;
@@ -111,12 +118,14 @@ export class ThreadRuntime implements ThreadRuntimePort {
   private readonly followUpMutations = new Map<string, Promise<void>>();
   private readonly activeThreadSubmissions = new Set<string>();
   private readonly resolveAttachments?: ThreadRuntimeOptions["resolveAttachments"];
+  private readonly onDetachedTurnEvent?: ThreadRuntimeOptions["onDetachedTurnEvent"];
 
   constructor(options: ThreadRuntimeOptions) {
     this.sessionStore = options.sessionStore;
     this.store = options.orchestrationStore ?? (options.sessionStore as ReplayStore);
     this.profile = options.profile;
     this.resolveAttachments = options.resolveAttachments;
+    this.onDetachedTurnEvent = options.onDetachedTurnEvent;
     this.interactionManager = new InteractionManager(this.store);
     this.contextPolicyManager = new ContextPolicyManager(this.store, {
       ...(options.structuredSummaryGenerator !== undefined
@@ -187,8 +196,51 @@ export class ThreadRuntime implements ThreadRuntimePort {
     return this.delegationSupervisor;
   }
 
-  async listConversationTurns(input: { threadId?: string | undefined; sessionId?: string | undefined; limit?: number | undefined } = {}) { return this.store.listConversationTurns?.(input) ?? []; }
+  async listConversationTurns(input: { threadId?: string | undefined; sessionId?: string | undefined; status?: ConversationTurnRecord["status"] | undefined; completedAfter?: { completedAt: string; turnId: string } | undefined; terminalMessagesOnly?: boolean | undefined; limit?: number | undefined } = {}) { return this.store.listConversationTurns?.(input) ?? []; }
   async listConversationTurnSegments(turnId: string) { return this.store.listConversationTurnSegments?.(turnId) ?? []; }
+
+  async listCompletedConversationMessages(input: {
+    threadId: string;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    limit: number;
+  }): Promise<Array<{
+    messageId: string;
+    turnId: string;
+    threadId: string;
+    sessionId: string;
+    runId: string;
+    completedAt: string;
+    result: { assistantText: string; output: NormalizedOutput };
+  }>> {
+    const turns = await this.listConversationTurns({
+      threadId: input.threadId,
+      status: "COMPLETED",
+      terminalMessagesOnly: true,
+      ...(input.completedAfter !== undefined ? { completedAfter: input.completedAfter } : {}),
+      limit: input.limit,
+    });
+    return turns.flatMap((turn) => {
+      const envelope = readTerminalEnvelope(turn.metadata?.terminalEnvelope);
+      if (
+        turn.completedAt === undefined
+        || envelope?.status !== "COMPLETED"
+        || envelope.handoff.state !== "delivered"
+        || envelope.output === undefined
+      ) return [];
+      return [{
+        messageId: `terminal:${envelope.runId}`,
+        turnId: turn.turnId,
+        threadId: turn.threadId,
+        sessionId: turn.sessionId,
+        runId: envelope.runId,
+        completedAt: turn.completedAt,
+        result: {
+          assistantText: envelope.handoff.assistantText,
+          output: envelope.output,
+        },
+      }];
+    });
+  }
 
   async startThread(input: {
     threadId?: string | undefined;
@@ -1458,7 +1510,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
         const updatedThread = removePendingSteer(status.thread, nextSteer.steerId);
         await this.store.upsertThread(updatedThread);
         try {
-          const result = await this.submitTurn({
+          const result = await this.executeDetachedTurn({
             threadId,
             message: nextSteer.message,
             eventType: "operator.steer",
@@ -1494,6 +1546,61 @@ export class ThreadRuntime implements ThreadRuntimePort {
     }
   }
 
+  private async executeDetachedTurn(input: SubmitTurnInput): Promise<SubmitTurnResult> {
+    const thread = await this.requireThread(input.threadId);
+    const runId = input.runtimeTurn?.runId ?? randomUUID();
+    const runtimeTurn = {
+      ...(input.runtimeTurn ?? {
+        sessionId: thread.sessionId,
+        message: input.message,
+        eventType: input.eventType,
+      }),
+      sessionId: thread.sessionId,
+      runId,
+    };
+    this.onDetachedTurnEvent?.({
+      type: "started",
+      threadId: thread.threadId,
+      sessionId: thread.sessionId,
+      runId,
+      eventType: input.eventType,
+    });
+    try {
+      const result = await this.submitTurn({ ...input, runtimeTurn });
+      if (result.output.status === "FAILED") {
+        this.onDetachedTurnEvent?.({
+          type: "failed",
+          threadId: thread.threadId,
+          sessionId: thread.sessionId,
+          runId,
+          result,
+          error: result.output.errors[0] ?? {
+            code: "RUN_FAILED",
+            message: "Detached run failed.",
+          },
+        });
+      } else {
+        this.onDetachedTurnEvent?.({
+          type: "completed",
+          threadId: thread.threadId,
+          sessionId: thread.sessionId,
+          runId,
+          result,
+        });
+      }
+      return result;
+    } catch (error) {
+      this.onDetachedTurnEvent?.({
+        type: "failed",
+        threadId: thread.threadId,
+        sessionId: thread.sessionId,
+        runId,
+        error: asRuntimeError(error),
+      });
+      throw error;
+    }
+  }
+
   private async processFollowUps(threadId: string): Promise<void> {
     if (this.followUpProcessors.has(threadId)) return;
     this.followUpProcessors.add(threadId);
@@ -1512,7 +1619,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
           const attachments = next.attachmentIds.length === 0
             ? undefined
             : await this.resolveQueuedAttachments(threadId, next.attachmentIds);
-          const result = await this.submitTurn({
+          const result = await this.executeDetachedTurn({
             threadId,
             message: next.message,
             eventType: next.source === "dialog" ? "dialog.message" : "user.follow_up",
@@ -1706,7 +1813,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
       },
     });
     try {
-      await this.submitTurn({
+      await this.executeDetachedTurn({
         threadId: input.parentThreadId,
         message: `Child reconciliation summary: ${fanIn.summary}`,
         eventType: "operator.reconcile_children",
