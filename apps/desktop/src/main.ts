@@ -252,7 +252,10 @@ declare global {
     | undefined;
   var __kestrelDesktopProfileOverride:
     | {
-        presetId?: "desktop_dev_local" | undefined;
+        presetId?:
+          | "desktop_safe_local"
+          | "desktop_dev_local"
+          | undefined;
         capabilityPacks?:
           | Array<
               | "balanced"

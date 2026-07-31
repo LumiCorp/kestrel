@@ -21,8 +21,10 @@ export type CapabilityPackId =
   | "desktop_host"
   | "sandbox_code";
 export type ShellPresetId =
+  | "cli_safe_local"
   | "cli_dev_local"
   | "web_balanced"
+  | "desktop_safe_local"
   | "desktop_dev_local"
   | "workspace_hosted";
 export type ModelProviderId = "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
@@ -76,17 +78,45 @@ const PACK_TOOL_NAMES: Record<CapabilityPackId, string[]> = {
 };
 
 export const SHELL_PRESET_PACKS: Record<ShellPresetId, CapabilityPackId[]> = {
+  cli_safe_local: ["balanced", "filesystem", "sandbox_code"],
   cli_dev_local: ["balanced", "filesystem", "dev_shell"],
   web_balanced: ["balanced"],
+  desktop_safe_local: [
+    "balanced",
+    "filesystem",
+    "sandbox_code",
+    "desktop_host",
+  ],
   desktop_dev_local: ["balanced", "filesystem", "dev_shell", "desktop_host"],
   workspace_hosted: ["balanced", "filesystem", "dev_shell"],
 };
 
 const DEFAULT_PRESET_BY_SHELL: Record<ShellKind, ShellPresetId> = {
-  cli: "cli_dev_local",
+  cli: "cli_safe_local",
   web: "web_balanced",
-  desktop: "desktop_dev_local",
+  desktop: "desktop_safe_local",
 };
+
+const LEGACY_GENERATED_DESKTOP_CAPABILITY_PACKS: CapabilityPackId[] = [
+  "balanced",
+  "filesystem",
+  "dev_shell",
+  "desktop_host",
+  "sandbox_code",
+];
+
+export function isLegacyGeneratedDesktopSelection(input: {
+  presetId: unknown;
+  capabilityPacks: readonly unknown[] | undefined;
+}): boolean {
+  return input.presetId !== "desktop_safe_local" &&
+    input.capabilityPacks !== undefined &&
+    input.capabilityPacks.length ===
+      LEGACY_GENERATED_DESKTOP_CAPABILITY_PACKS.length &&
+    LEGACY_GENERATED_DESKTOP_CAPABILITY_PACKS.every(
+      (pack, index) => input.capabilityPacks?.[index] === pack,
+    );
+}
 
 export function resolveRuntimeProfileSelection(
   input: RuntimeProfileAuthoringInput,
@@ -192,8 +222,10 @@ export function normalizeShellKind(value: unknown): ShellKind {
 }
 
 export function normalizeShellPresetId(value: unknown): ShellPresetId | undefined {
-  return value === "cli_dev_local" ||
+  return value === "cli_safe_local" ||
+      value === "cli_dev_local" ||
       value === "web_balanced" ||
+      value === "desktop_safe_local" ||
       value === "desktop_dev_local" ||
       value === "workspace_hosted"
     ? value

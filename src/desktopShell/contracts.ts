@@ -1414,7 +1414,9 @@ export type DesktopModelProvider =
   | "lmstudio";
 export type DesktopAppearanceTheme = "system" | "light" | "dark";
 export type DesktopDatabaseMode = "default" | "external";
-export type DesktopShellPresetId = "desktop_dev_local";
+export type DesktopShellPresetId =
+  | "desktop_safe_local"
+  | "desktop_dev_local";
 export type DesktopCapabilityPackId =
   | "balanced"
   | "filesystem"

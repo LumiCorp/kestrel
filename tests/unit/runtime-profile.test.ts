@@ -2,40 +2,88 @@ import assert from "node:assert/strict";
 
 import {
   expandCapabilityPacks,
+  isLegacyGeneratedDesktopSelection,
   resolveRuntimeProfileSelection,
 } from "../../src/profile/runtimeProfile.js";
 import { DEFAULT_BALANCED_TOOL_ALLOWLIST, FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
 import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "CLI defaults resolve to the local developer preset", () => {
+contractTest("runtime.hermetic", "CLI defaults resolve to the isolated local preset", () => {
   const resolved = resolveRuntimeProfileSelection({
     shellKind: "cli",
   });
 
-  assert.equal(resolved.presetId, "cli_dev_local");
-  assert.deepEqual(resolved.capabilityPacks, ["balanced", "filesystem", "dev_shell"]);
+  assert.equal(resolved.presetId, "cli_safe_local");
+  assert.deepEqual(resolved.capabilityPacks, ["balanced", "filesystem", "sandbox_code"]);
   assert.equal(resolved.toolAllowlist.includes("fs.write_text"), false);
   assert.equal(resolved.toolAllowlist.includes("fs.create_text"), true);
   assert.equal(resolved.toolAllowlist.includes("fs.edit_text"), true);
   assert.equal(resolved.toolAllowlist.includes("fs.apply_patch"), true);
   assert.equal(resolved.toolAllowlist.includes("artifact.read"), true);
   assert.equal(resolved.toolAllowlist.includes("repo.trace"), true);
-  assert.equal(resolved.toolAllowlist.includes("dev.shell.run"), true);
-  assert.equal(resolved.toolAllowlist.includes("dev.process.write"), true);
-  assert.equal(resolved.toolAllowlist.includes("dev.process.read"), true);
-  assert.equal(resolved.toolAllowlist.includes("dev.process.stop"), true);
-  assert.equal(resolved.toolAllowlist.includes("code.execute"), false);
+  assert.equal(resolved.toolAllowlist.includes("dev.shell.run"), false);
+  assert.equal(resolved.toolAllowlist.includes("dev.process.write"), false);
+  assert.equal(resolved.toolAllowlist.includes("dev.process.read"), false);
+  assert.equal(resolved.toolAllowlist.includes("dev.process.stop"), false);
+  assert.equal(resolved.toolAllowlist.includes("code.execute"), true);
 });
 
-contractTest("runtime.hermetic", "desktop defaults add the host-open capability without exposing it to CLI", () => {
+contractTest("runtime.hermetic", "desktop defaults combine isolated code with the separately governed host-open capability", () => {
   const cli = resolveRuntimeProfileSelection({ shellKind: "cli" });
   const desktop = resolveRuntimeProfileSelection({ shellKind: "desktop" });
 
-  assert.equal(desktop.presetId, "desktop_dev_local");
-  assert.deepEqual(desktop.capabilityPacks, ["balanced", "filesystem", "dev_shell", "desktop_host"]);
+  assert.equal(desktop.presetId, "desktop_safe_local");
+  assert.deepEqual(desktop.capabilityPacks, ["balanced", "filesystem", "desktop_host", "sandbox_code"]);
   assert.equal(desktop.toolAllowlist.includes("desktop.host.open"), true);
+  assert.equal(desktop.toolAllowlist.includes("dev.shell.run"), false);
+  assert.equal(desktop.toolAllowlist.includes("code.execute"), true);
   assert.equal(cli.toolAllowlist.includes("desktop.host.open"), false);
+});
+
+contractTest("runtime.hermetic", "developer presets remain explicit host-shell opt-ins", () => {
+  const cli = resolveRuntimeProfileSelection({
+    shellKind: "cli",
+    presetId: "cli_dev_local",
+  });
+  const desktop = resolveRuntimeProfileSelection({
+    shellKind: "desktop",
+    presetId: "desktop_dev_local",
+  });
+
+  assert.equal(cli.toolAllowlist.includes("dev.shell.run"), true);
+  assert.equal(cli.toolAllowlist.includes("code.execute"), false);
+  assert.equal(desktop.toolAllowlist.includes("dev.shell.run"), true);
+  assert.equal(desktop.toolAllowlist.includes("desktop.host.open"), true);
+});
+
+contractTest("runtime.hermetic", "only the untouched legacy Desktop default sequence is classified as generated", () => {
+  assert.equal(
+    isLegacyGeneratedDesktopSelection({
+      presetId: "desktop_dev_local",
+      capabilityPacks: [
+        "balanced",
+        "filesystem",
+        "dev_shell",
+        "desktop_host",
+        "sandbox_code",
+      ],
+    }),
+    true,
+  );
+  assert.equal(
+    isLegacyGeneratedDesktopSelection({
+      presetId: "desktop_dev_local",
+      capabilityPacks: [
+        "balanced",
+        "filesystem",
+        "desktop_host",
+        "sandbox_code",
+        "dev_shell",
+      ],
+    }),
+    false,
+  );
 });
 
 contractTest("runtime.hermetic", "web defaults stay narrow and do not expose local mutation tools", () => {
