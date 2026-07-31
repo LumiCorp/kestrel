@@ -25,19 +25,19 @@ contractTest("runtime.hermetic", "ProfileStore bootstraps default profile when f
   assert.deepEqual(profileIds, ["reference", "kestrel"]);
   assert.equal(profiles[0]?.agent, "reference-react");
   assert.equal(profiles[0]?.shellKind, "cli");
-  assert.equal(profiles[0]?.presetId, "cli_dev_local");
-  assert.deepEqual(profiles[0]?.capabilityPacks, ["balanced", "filesystem", "dev_shell"]);
+  assert.equal(profiles[0]?.presetId, "cli_safe_local");
+  assert.deepEqual(profiles[0]?.capabilityPacks, ["balanced", "filesystem", "sandbox_code"]);
   assert.equal(profiles[0]?.guardrails?.maxStepVisits, 80);
   assert.equal(profiles[0]?.toolQueue?.perRunConcurrency, 8);
   assert.equal(profiles[0]?.toolQueue?.globalConcurrency, 24);
-  assert.equal(profiles[0]?.codeMode?.enabled, false);
-  assert.equal(profiles[0]?.devShell?.enabled, true);
-  assert.equal(profiles[0]?.devShell?.envMode, "inherit");
+  assert.equal(profiles[0]?.codeMode?.enabled, true);
+  assert.equal(profiles[0]?.devShell?.enabled, false);
   assert.equal(profiles[0]?.codeMode?.sandbox.executor, "docker");
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.run"), true);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.write"), true);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.read"), true);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.stop"), true);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("code.execute"), true);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.run"), false);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.write"), false);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.read"), false);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.stop"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.start"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.input"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.status"), false);
@@ -50,10 +50,102 @@ contractTest("runtime.hermetic", "ProfileStore bootstraps default profile when f
   assert.equal(profiles[0]?.toolAllowlist?.includes("fs.replace_text"), false);
 
   const persisted = parseProfilesFile(await readFile(path.join(tempDir, "profiles.json"), "utf8"));
+  assert.equal(persisted.sourceVersion, 7);
+  assert.equal(
+    persisted.managedProfileOverlays?.["kestrel@cli_safe_local"] !== undefined,
+    true,
+  );
   assert.equal(persisted.profiles[0]?.modelProvider, undefined);
   assert.equal(persisted.profiles[0]?.model, undefined);
   assert.equal(persisted.profiles[0]?.environmentShellKind, undefined);
   assert.equal(persisted.profiles[0]?.environmentPresetId, undefined);
+});
+
+contractTest("runtime.hermetic", "ProfileStore v7 migrates only generated local profiles and emits the isolation notice once", async () => {
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-safe-migration-"),
+  );
+  const filePath = path.join(tempDir, "profiles.json");
+  await writeFile(
+    filePath,
+    `${JSON.stringify({
+      version: 6,
+      profiles: [
+        {
+          id: "reference",
+          label: "Reference React",
+          agent: "reference-react",
+          sessionPrefix: "reference",
+          shellKind: "cli",
+          presetId: "cli_dev_local",
+          capabilityPacks: ["balanced", "filesystem", "dev_shell"],
+          modeSystemV2Enabled: true,
+          default: true,
+        },
+        {
+          id: "custom-developer",
+          label: "Custom Developer",
+          agent: "reference-react",
+          sessionPrefix: "custom-developer",
+          shellKind: "cli",
+          presetId: "cli_dev_local",
+          capabilityPacks: ["balanced", "filesystem", "dev_shell"],
+          modeSystemV2Enabled: true,
+          default: false,
+        },
+      ],
+      managedProfileOverlays: {
+        "kestrel@cli_dev_local": {
+          approvalPolicyPackId: "production",
+          theme: { brandAlt: "#123456" },
+        },
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  const store = new ProfileStore(tempDir);
+
+  const first = await store.load();
+  const reference = first.find((profile) => profile.id === "reference");
+  const custom = first.find((profile) => profile.id === "custom-developer");
+  const managed = first.find((profile) => profile.id === "kestrel");
+
+  assert.equal(reference?.presetId, "cli_safe_local");
+  assert.deepEqual(reference?.capabilityPacks, [
+    "balanced",
+    "filesystem",
+    "sandbox_code",
+  ]);
+  assert.equal(reference?.devShell?.enabled, false);
+  assert.equal(reference?.codeMode?.enabled, true);
+  assert.equal(custom?.presetId, "cli_dev_local");
+  assert.deepEqual(custom?.capabilityPacks, [
+    "balanced",
+    "filesystem",
+    "dev_shell",
+  ]);
+  assert.equal(custom?.devShell?.enabled, true);
+  assert.equal(managed?.presetId, "cli_safe_local");
+  assert.equal(managed?.approvalPolicyPackId, "production");
+  assert.equal(managed?.theme?.brandAlt, "#123456");
+  assert.deepEqual(store.consumeLoadNotices(), [
+    "Generated local profiles now use isolated execution. Select the cli_dev_local developer preset to restore host-shell access.",
+  ]);
+
+  const persisted = JSON.parse(await readFile(filePath, "utf8"));
+  assert.equal(persisted.version, 7);
+  assert.equal(
+    persisted.managedProfileOverlays["kestrel@cli_safe_local"].theme.brandAlt,
+    "#123456",
+  );
+  assert.equal(persisted.managedProfileOverlays["kestrel@cli_dev_local"], undefined);
+  assert.equal(
+    (await readFile(`${filePath}.v6.bak`, "utf8")).includes('"version": 6'),
+    true,
+  );
+
+  await store.load();
+  assert.deepEqual(store.consumeLoadNotices(), []);
 });
 
 contractTest("runtime.hermetic", "ProfileStore applies shared model policy when profiles.json is missing", async () => {
@@ -178,7 +270,7 @@ contractTest("runtime.hermetic", "ProfileStore reconciles persisted Kestrel-One 
   );
   assert.deepEqual(firstLoad, secondLoad);
   assert.equal(firstPersisted, secondPersisted);
-  assert.equal(JSON.parse(firstPersisted).version, 6);
+  assert.equal(JSON.parse(firstPersisted).version, 7);
   assert.equal(
     JSON.parse(firstPersisted).profiles.some(
       (profile: { id?: string }) => profile.id === "kestrel-one",
@@ -234,10 +326,10 @@ contractTest("runtime.hermetic", "ProfileStore adds Kestrel-One profile to exist
   );
 
   const saved = parseProfilesFile(await readFile(filePath, "utf8"));
-  assert.equal(saved.sourceVersion, 6);
+  assert.equal(saved.sourceVersion, 7);
   assert.equal(saved.profiles.some((profile) => profile.id === "kestrel"), false);
   assert.equal(
-    saved.managedProfileOverlays?.["kestrel@cli_dev_local"]?.default,
+    saved.managedProfileOverlays?.["kestrel@cli_safe_local"]?.default,
     true,
   );
 });
@@ -285,11 +377,11 @@ contractTest("runtime.hermetic", "ProfileStore preserves a version-5 managed ove
   assert.equal(managed?.theme?.brandAlt, "#123456");
   const saved = JSON.parse(await readFile(filePath, "utf8"));
   assert.equal(
-    saved.managedProfileOverlays["kestrel@cli_dev_local"].approvalPolicyPackId,
+    saved.managedProfileOverlays["kestrel@cli_safe_local"].approvalPolicyPackId,
     "production",
   );
   assert.equal(
-    saved.managedProfileOverlays["kestrel@cli_dev_local"].theme.brandAlt,
+    saved.managedProfileOverlays["kestrel@cli_safe_local"].theme.brandAlt,
     "#123456",
   );
   assert.equal(
@@ -470,21 +562,20 @@ contractTest("runtime.hermetic", "ProfileStore backfills guardrail defaults for 
 
   assert.equal(profiles[0]?.guardrails?.maxStepVisits, 80);
   assert.equal(profiles[0]?.shellKind, "cli");
-  assert.equal(profiles[0]?.presetId, "cli_dev_local");
+  assert.equal(profiles[0]?.presetId, "cli_safe_local");
   assert.equal(profiles[0]?.capabilityPacks?.includes("filesystem"), true);
   assert.equal(profiles[0]?.toolAllowlist?.includes("free.weather.forecast"), true);
   assert.equal(profiles[0]?.toolAllowlist?.includes("FinalizeAnswer"), true);
   assert.equal(profiles[0]?.toolQueue?.checkpointSize, 10);
   assert.equal(profiles[0]?.toolQueue?.retryCount, 1);
-  assert.equal(profiles[0]?.codeMode?.enabled, false);
-  assert.equal(profiles[0]?.devShell?.enabled, true);
-  assert.equal(profiles[0]?.devShell?.envMode, "inherit");
+  assert.equal(profiles[0]?.codeMode?.enabled, true);
+  assert.equal(profiles[0]?.devShell?.enabled, false);
   assert.equal(profiles[0]?.modeSystemV2Enabled, true);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("code.execute"), false);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.run"), true);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.write"), true);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.read"), true);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.stop"), true);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("code.execute"), true);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.run"), false);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.write"), false);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.read"), false);
+  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.stop"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.start"), false);
   for (const toolName of FILESYSTEM_TOOL_NAMES.filter(
     (toolName) => toolName !== "fs.write_text" && toolName !== "fs.replace_text",
@@ -555,6 +646,7 @@ contractTest("runtime.hermetic", "ProfileStore migrates reference profiles onto 
 
   assert.equal(profiles[0]?.modeSystemV2Enabled, true);
   assert.deepEqual(store.consumeLoadNotices(), [
+    "Generated local profiles now use isolated execution. Select the cli_dev_local developer preset to restore host-shell access.",
     "Migrated profile 'reference' to mode-system v2 for the reference harness.",
   ]);
 });

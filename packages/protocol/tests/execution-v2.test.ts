@@ -425,6 +425,23 @@ contractTest("packages.hermetic", "canonical command parser accepts every regist
   }
 });
 
+contractTest("packages.hermetic", "canonical execution profile contracts accept isolated local presets", () => {
+  for (const environmentPresetId of [
+    "cli_safe_local",
+    "desktop_safe_local",
+  ] as const) {
+    const parsed = parseRunnerCommandV2({
+      id: `command:${environmentPresetId}`,
+      type: "execution-profile.resolve",
+      payload: { environmentPresetId },
+    });
+    assert.equal(
+      parsed.payload.environmentPresetId,
+      environmentPresetId,
+    );
+  }
+});
+
 contractTest("packages.hermetic", "canonical command parser rejects unknown and malformed payloads", () => {
   assert.throws(
     () => parseRunnerCommandV2({}),

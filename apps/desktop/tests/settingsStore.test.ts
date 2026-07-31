@@ -59,6 +59,9 @@ contractTest(
     );
 
     assert.deepEqual(settings, createDefaultDesktopSettings());
+    assert.equal(settings.presetId, "desktop_safe_local");
+    assert.equal(settings.capabilityPacks.includes("dev_shell"), false);
+    assert.equal(settings.capabilityPacks.includes("sandbox_code"), true);
     assert.equal(settings.providerSelectionCompletedAt, undefined);
   },
 );
@@ -153,13 +156,52 @@ contractTest(
     const restored = await readDesktopSettings(settingsPath);
 
     assert.equal(restored.selectedProvider, "openrouter");
-    assert.equal(restored.presetId, "desktop_dev_local");
+    assert.equal(restored.presetId, "desktop_safe_local");
     assert.equal(restored.capabilityPacks.includes("filesystem"), true);
     assert.deepEqual(restored.projects, []);
     assert.equal(restored.openrouterApiKey, "legacy-key");
     assert.equal(restored.advancedWorkspaceEnabled, true);
     assert.equal(typeof restored.providerSelectionCompletedAt, "string");
     assert.equal(typeof restored.setupCompletedAt, "string");
+  },
+);
+
+contractTest(
+  "desktop.hermetic",
+  "readDesktopSettings removes dev shell only from the untouched legacy default capability sequence",
+  async () => {
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-desktop-settings-safe-migration-"),
+    );
+    const settingsPath = path.join(tempDir, "desktop-settings.json");
+    await writeFile(
+      settingsPath,
+      `${JSON.stringify({
+        version: 10,
+        selectedProvider: "openrouter",
+        databaseMode: "default",
+        presetId: "desktop_dev_local",
+        capabilityPacks: [
+          "balanced",
+          "filesystem",
+          "dev_shell",
+          "desktop_host",
+          "sandbox_code",
+        ],
+        projects: [],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const restored = await readDesktopSettings(settingsPath);
+
+    assert.equal(restored.presetId, "desktop_safe_local");
+    assert.deepEqual(restored.capabilityPacks, [
+      "balanced",
+      "filesystem",
+      "desktop_host",
+      "sandbox_code",
+    ]);
   },
 );
 
@@ -291,6 +333,7 @@ contractTest(
     assert.equal(saved.selectedProvider, "openai");
     assert.equal(saved.databaseMode, "default");
     assert.equal(saved.presetId, "desktop_dev_local");
+    assert.equal(restored.presetId, "desktop_dev_local");
     assert.deepEqual(saved.capabilityPacks, [
       "balanced",
       "filesystem",

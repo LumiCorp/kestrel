@@ -153,7 +153,12 @@ export interface ProfileGetCommandPayload {
 }
 
 export interface ExecutionProfileResolveCommandPayload {
-  environmentPresetId: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+  environmentPresetId:
+    | "cli_safe_local"
+    | "cli_dev_local"
+    | "desktop_safe_local"
+    | "desktop_dev_local"
+    | "workspace_hosted";
   managedConfiguration?: Record<string, unknown> | undefined;
   authoringProfileId?: string | undefined;
 }
@@ -767,7 +772,12 @@ export interface ExecutionProfileResolvedEventPayload {
     version: number;
   };
   environmentPreset: {
-    id: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+    id:
+      | "cli_safe_local"
+      | "cli_dev_local"
+      | "desktop_safe_local"
+      | "desktop_dev_local"
+      | "workspace_hosted";
     version: number;
   };
   resolvedProfile: TuiProfile;

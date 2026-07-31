@@ -1904,12 +1904,14 @@ function validateExecutionProfileResolvePayload(
   }
   const record = value as Record<string, unknown>;
   if (
+    record.environmentPresetId !== "cli_safe_local" &&
     record.environmentPresetId !== "cli_dev_local" &&
+    record.environmentPresetId !== "desktop_safe_local" &&
     record.environmentPresetId !== "desktop_dev_local" &&
     record.environmentPresetId !== "workspace_hosted"
   ) {
     throw new Error(
-      "execution-profile.resolve payload.environmentPresetId must be cli_dev_local, desktop_dev_local, or workspace_hosted",
+      "execution-profile.resolve payload.environmentPresetId must be cli_safe_local, cli_dev_local, desktop_safe_local, desktop_dev_local, or workspace_hosted",
     );
   }
   if (

@@ -7,6 +7,7 @@ import {
   resolveProfileWithModelPolicy,
   type ResolvedModelPolicy,
 } from "../profile/modelPolicy.js";
+import { isLegacyGeneratedDesktopSelection } from "../profile/runtimeProfile.js";
 import {
   createDesktopModelConfiguration,
   getDesktopAppDefinition,
@@ -73,8 +74,17 @@ export function resolveDesktopKestrelOneProfile(input: {
   const capabilityPacks = Array.isArray(input.settings.capabilityPacks)
     ? input.settings.capabilityPacks
     : [];
+  const environmentPresetId =
+    isLegacyGeneratedDesktopSelection({
+      presetId: input.settings.presetId,
+      capabilityPacks,
+    })
+      ? "desktop_safe_local"
+      : capabilityPacks.includes("dev_shell")
+        ? "desktop_dev_local"
+        : "desktop_safe_local";
   const base = composeKestrelOneProfile({
-    environmentPresetId: "desktop_dev_local",
+    environmentPresetId,
     overlay: {
       label: `${resolved.configuration.name} · Kestrel One`,
       approvalPolicyPackId,

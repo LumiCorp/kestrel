@@ -664,7 +664,12 @@ export interface ProfileGetCommandPayload {
 }
 
 export interface ExecutionProfileResolveCommandPayload {
-  environmentPresetId: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+  environmentPresetId:
+    | "cli_safe_local"
+    | "cli_dev_local"
+    | "desktop_safe_local"
+    | "desktop_dev_local"
+    | "workspace_hosted";
   managedConfiguration?: Record<string, unknown> | undefined;
   authoringProfileId?: string | undefined;
 }
@@ -1094,7 +1099,12 @@ export interface ExecutionProfileResolvedEventPayload {
     version: number;
   };
   environmentPreset: {
-    id: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+    id:
+      | "cli_safe_local"
+      | "cli_dev_local"
+      | "desktop_safe_local"
+      | "desktop_dev_local"
+      | "workspace_hosted";
     version: number;
   };
   resolvedProfile: RunnerProfile;
@@ -1923,7 +1933,9 @@ function parseRunnerCommandPayloadV2(
       break;
     case "execution-profile.resolve":
       validateEnum(payload.environmentPresetId, `${label}.environmentPresetId`, [
+        "cli_safe_local",
         "cli_dev_local",
+        "desktop_safe_local",
         "desktop_dev_local",
         "workspace_hosted",
       ]);
@@ -3581,7 +3593,9 @@ function validateProfileResolutionProvenance(value: unknown, label: string): voi
 function validateEnvironmentPresetProvenance(value: unknown, label: string): void {
   const record = requireRecord(value, label);
   validateEnum(record.id, `${label}.id`, [
+    "cli_safe_local",
     "cli_dev_local",
+    "desktop_safe_local",
     "desktop_dev_local",
     "workspace_hosted",
   ]);
