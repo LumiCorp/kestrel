@@ -50,6 +50,18 @@
       "result": "killed"
     },
     {
+      "id": "mission-control-attempt-identity-bypass",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "sourceSha256": "eee7cf331e363b8ebda814c7c2f455b08040a721cad6c3c34570f5d7d6c64ee5",
+      "testFiles": [
+        "tests/integration/mission-control-execution-authority.test.ts"
+      ],
+      "testsSha256": "8b996c63d9814a31f4ece7f9eb156069d20042aa02f239bf2f32f86a5ab8c313",
+      "command": "node --import tsx --test --test-name-pattern=canonical attempts control exact runner execution tests/integration/mission-control-execution-authority.test.ts",
+      "result": "killed"
+    },
+    {
       "id": "mission-control-drag-lifecycle-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
@@ -86,6 +98,18 @@
       "result": "killed"
     },
     {
+      "id": "mission-control-premature-cancel-completion",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "sourceSha256": "eee7cf331e363b8ebda814c7c2f455b08040a721cad6c3c34570f5d7d6c64ee5",
+      "testFiles": [
+        "tests/integration/mission-control-execution-authority.test.ts"
+      ],
+      "testsSha256": "8b996c63d9814a31f4ece7f9eb156069d20042aa02f239bf2f32f86a5ab8c313",
+      "command": "node --import tsx --test --test-name-pattern=canonical attempts control exact runner execution tests/integration/mission-control-execution-authority.test.ts",
+      "result": "killed"
+    },
+    {
       "id": "mission-control-project-isolation-bypass",
       "contractId": "runtime.mission-control-project-persistence",
       "target": "src/missionControl/projectAuthority.ts",
@@ -95,6 +119,18 @@
       ],
       "testsSha256": "da7e8cf2a94a91fe62e87b6c3ffebb7b0178d88169e19b1a989b39e12f8be620",
       "command": "node --import tsx --test --test-name-pattern=project state, receipts, and outbox tests/mission-control-project-authority.postgres.test.ts",
+      "result": "killed"
+    },
+    {
+      "id": "mission-control-stale-event-bypass",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "sourceSha256": "eee7cf331e363b8ebda814c7c2f455b08040a721cad6c3c34570f5d7d6c64ee5",
+      "testFiles": [
+        "tests/integration/mission-control-execution-authority.test.ts"
+      ],
+      "testsSha256": "8b996c63d9814a31f4ece7f9eb156069d20042aa02f239bf2f32f86a5ab8c313",
+      "command": "node --import tsx --test --test-name-pattern=canonical attempts control exact runner execution tests/integration/mission-control-execution-authority.test.ts",
       "result": "killed"
     },
     {
