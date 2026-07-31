@@ -51,6 +51,10 @@ import { GitWorkspace } from "./GitWorkspace";
 import { McpWorkspace } from "./McpWorkspace";
 import { MissionControlWorkspace } from "./MissionControlWorkspace";
 import {
+  isUnifiedMissionControlProjectEnabled,
+  UnifiedMissionControlWorkspace,
+} from "./UnifiedMissionControlWorkspace";
+import {
   extractDesktopTerminalOutcome,
   getDesktopOutcomeHandoff,
   OutcomeHandoff,
@@ -1156,6 +1160,27 @@ export function DesktopApp() {
     newConversation(projectPath);
   }
 
+  function openMissionControlConversation(sessionId: string): void {
+    const matches = state?.threads.filter(
+      (thread) => thread.sessionId === sessionId,
+    ) ?? [];
+    if (matches.length !== 1) {
+      setSurfaceError(
+        "mission-control",
+        matches.length === 0
+          ? "The linked conversation is not available in this Desktop window."
+          : "The linked conversation identity is ambiguous.",
+      );
+      return;
+    }
+    setState((current) =>
+      current === undefined
+        ? current
+        : selectRendererThread(current, matches[0]!.id),
+    );
+    setSurface("chat");
+  }
+
   function openWorkSurface(nextSurface: DesktopSurface): void {
     setMissionControlRunId(undefined);
     setSurface(nextSurface);
@@ -1241,6 +1266,11 @@ export function DesktopApp() {
       : undefined;
   const conversationProjectLabel = threadProject?.label
     ?? (threadProjectPath === undefined ? "No project" : "Unavailable project");
+  const unifiedMissionControlEnabled =
+    isUnifiedMissionControlProjectEnabled(
+      threadProject?.id,
+      window.location.search,
+    );
   const showInspector = surface === "chat" && inspectorOpen;
   return (
     <div className="desktop-app">
@@ -1760,13 +1790,23 @@ export function DesktopApp() {
                 onError={(error) => setSurfaceError("projects", error)}
               />
             ) : surface === "mission-control" ? (
-              <MissionControlWorkspace
-                sessionId={activeThread.sessionId}
-                project={threadProject}
-                refreshVersion={missionControlRevision}
-                initialRunId={missionControlRunId}
-                onError={(error) => setSurfaceError("mission-control", error)}
-              />
+              unifiedMissionControlEnabled && threadProject?.id !== undefined ? (
+                <UnifiedMissionControlWorkspace
+                  project={{ ...threadProject, id: threadProject.id }}
+                  onReturnToConversation={() => setSurface("chat")}
+                  onOpenConversation={openMissionControlConversation}
+                  onStartConversation={startProjectConversation}
+                  onError={(error) => setSurfaceError("mission-control", error)}
+                />
+              ) : (
+                <MissionControlWorkspace
+                  sessionId={activeThread.sessionId}
+                  project={threadProject}
+                  refreshVersion={missionControlRevision}
+                  initialRunId={missionControlRunId}
+                  onError={(error) => setSurfaceError("mission-control", error)}
+                />
+              )
             ) : surface === "diff" ? (
               <DiffWorkspace
                 key={`${activeThread.id}:${activeThread.diffScopeKind}:${activeThread.diffRevision}`}

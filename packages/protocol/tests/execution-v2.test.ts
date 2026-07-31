@@ -201,6 +201,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "workspace.validation.submit": { sessionId: "session-1", threadId: "thread-1", resultIds: ["result-1"] },
   "workspace.git.inspect": { sessionId: "session-1", threadId: "thread-1" },
   "workspace.git.action": { sessionId: "session-1", threadId: "thread-1", candidateFingerprint: `sha256:${"a".repeat(64)}`, action: { kind: "fetch", remote: "origin" } },
+  "mission_control.project.get": { projectId: "11111111-1111-4111-8111-111111111111" },
   "project.snapshot.get": { sessionId: "session-1" },
   "project.snapshot.update": { sessionId: "session-1", snapshot: {} },
   "project.action": {
@@ -313,6 +314,10 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "workspace.review": { sessionId: "session-1", threadId: "thread-1", operation: "list", snapshot: {} },
   "workspace.validation": { sessionId: "session-1", threadId: "thread-1", operation: "inspect", snapshot: {} },
   "workspace.git": { sessionId: "session-1", threadId: "thread-1", operation: "inspect", snapshot: {} },
+  "mission_control.project": {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    project: {},
+  },
   "project.snapshot": { sessionId: "session-1", snapshot: {} },
   "project.review": { sessionId: "session-1", detail: {} },
   "mcp.status": { status: {} },

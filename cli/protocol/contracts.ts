@@ -273,6 +273,10 @@ export interface TaskGraphUpdateCommandPayload {
   expectedVersion?: number | undefined;
 }
 
+export interface MissionControlProjectGetCommandPayload {
+  projectId: string;
+}
+
 export interface ProjectSnapshotGetCommandPayload {
   sessionId: string;
 }
@@ -508,6 +512,7 @@ export interface RunnerCommandPayloadByType {
   "workspace.validation.submit": WorkspaceValidationSubmitCommandPayload;
   "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
   "workspace.git.action": WorkspaceGitActionCommandPayload;
+  "mission_control.project.get": MissionControlProjectGetCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
@@ -845,6 +850,11 @@ export interface WorkspaceReviewEventPayload { sessionId: string; threadId: stri
 export interface WorkspaceValidationEventPayload { sessionId: string; threadId: string; operation: "inspect" | "run" | "cancel" | "submit"; snapshot: WorkspaceValidationSnapshot; runId?: string | undefined }
 export interface WorkspaceGitEventPayload { sessionId: string; threadId: string; operation: "inspect" | "action"; snapshot: WorkspaceGitSnapshot }
 
+export interface MissionControlProjectEventPayload {
+  projectId: string;
+  project: Record<string, unknown>;
+}
+
 export interface ProjectSnapshotEventPayload {
   sessionId: string;
   snapshot: ProductProjectSnapshot;
@@ -906,6 +916,7 @@ export interface RunnerEventPayloadByType {
   "workspace.review": WorkspaceReviewEventPayload;
   "workspace.validation": WorkspaceValidationEventPayload;
   "workspace.git": WorkspaceGitEventPayload;
+  "mission_control.project": MissionControlProjectEventPayload;
   "project.snapshot": ProjectSnapshotEventPayload;
   "project.review": ProjectReviewEventPayload;
   "mcp.status": McpStatusEventPayload;

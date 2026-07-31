@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
 import { createEmptyProjectSnapshot } from "../../../src/project/state.js";
+import { createEmptyMissionControlProjectDocument } from "../../../src/missionControl/projectAuthority.js";
 import {
+  getDesktopMissionControlProject,
   getDesktopOperatorRun,
   getDesktopOperatorThread,
   getDesktopProjectSnapshot,
@@ -18,6 +20,80 @@ const context: WebRunnerRequestContext = {
     actorType: "operator",
   },
 };
+
+contractTest("desktop.hermetic", "Desktop Mission Control reads the canonical project document by registered UUID", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const calls: unknown[] = [];
+  const project = {
+    projectId,
+    schemaVersion: 1 as const,
+    revision: 0,
+    authorityEpoch: 0,
+    document: createEmptyMissionControlProjectDocument(projectId),
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  };
+  const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
+    async sendControl(command, requestContext) {
+      calls.push({ command, requestContext });
+      return {
+        id: "event-project",
+        type: "mission_control.project",
+        ts: "2026-07-10T12:00:00.000Z",
+        payload: { projectId, project: { ...project } },
+      };
+    },
+  };
+
+  const response = await getDesktopMissionControlProject({
+    adapter,
+    projectId,
+    context,
+  });
+
+  assert.deepEqual(response, { projectId, project });
+  assert.deepEqual(calls, [{
+    command: { type: "mission_control.project.get", projectId },
+    requestContext: context,
+  }]);
+});
+
+contractTest("desktop.hermetic", "Desktop Mission Control rejects cross-project canonical responses", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const otherProjectId = "22222222-2222-4222-8222-222222222222";
+  const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
+    async sendControl() {
+      return {
+        id: "event-project-mismatch",
+        type: "mission_control.project",
+        ts: "2026-07-10T12:00:00.000Z",
+        payload: {
+          projectId: otherProjectId,
+          project: {
+            projectId: otherProjectId,
+            schemaVersion: 1,
+            revision: 0,
+            authorityEpoch: 0,
+            document: createEmptyMissionControlProjectDocument(otherProjectId),
+            createdAt: "1970-01-01T00:00:00.000Z",
+            updatedAt: "1970-01-01T00:00:00.000Z",
+          },
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => getDesktopMissionControlProject({ adapter, projectId, context }),
+    (error: unknown) => {
+      assert.equal(
+        (error as { code?: string }).code,
+        "desktop.mission_control_project_invalid_response",
+      );
+      return true;
+    },
+  );
+});
 
 contractTest("desktop.hermetic", "Desktop Mission Control reads authoritative project snapshots through the runner", async () => {
   const calls: unknown[] = [];

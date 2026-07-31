@@ -68,6 +68,7 @@ export const RUNNER_COMMAND_TYPES = [
   "workspace.validation.submit",
   "workspace.git.inspect",
   "workspace.git.action",
+  "mission_control.project.get",
   "project.snapshot.get",
   "project.snapshot.update",
   "project.action",
@@ -174,6 +175,7 @@ export const RUNNER_EVENT_TYPES = [
   "workspace.review",
   "workspace.validation",
   "workspace.git",
+  "mission_control.project",
   "project.snapshot",
   "project.review",
   "mcp.status",
@@ -982,6 +984,10 @@ export interface WorkspaceValidationSubmitCommandPayload { sessionId: string; th
 export interface WorkspaceGitInspectCommandPayload { sessionId: string; threadId: string }
 export interface WorkspaceGitActionCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; expectedHeadSha?: string | undefined; action: Record<string, unknown> }
 
+export interface MissionControlProjectGetCommandPayload {
+  projectId: string;
+}
+
 export interface ProjectSnapshotGetCommandPayload {
   sessionId: string;
 }
@@ -1064,6 +1070,7 @@ export interface RunnerCommandPayloadByType {
   "workspace.validation.submit": WorkspaceValidationSubmitCommandPayload;
   "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
   "workspace.git.action": WorkspaceGitActionCommandPayload;
+  "mission_control.project.get": MissionControlProjectGetCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
@@ -1484,6 +1491,11 @@ export interface WorkspaceReviewEventPayload { sessionId: string; threadId: stri
 export interface WorkspaceValidationEventPayload { sessionId: string; threadId: string; operation: "inspect" | "run" | "cancel" | "submit"; snapshot: Record<string, unknown>; runId?: string | undefined }
 export interface WorkspaceGitEventPayload { sessionId: string; threadId: string; operation: "inspect" | "action"; snapshot: Record<string, unknown> }
 
+export interface MissionControlProjectEventPayload {
+  projectId: string;
+  project: Record<string, unknown>;
+}
+
 export interface ProjectSnapshotEventPayload {
   sessionId: string;
   snapshot: RunnerProjectSnapshot;
@@ -1545,6 +1557,7 @@ export interface RunnerEventPayloadByType {
   "workspace.review": WorkspaceReviewEventPayload;
   "workspace.validation": WorkspaceValidationEventPayload;
   "workspace.git": WorkspaceGitEventPayload;
+  "mission_control.project": MissionControlProjectEventPayload;
   "project.snapshot": ProjectSnapshotEventPayload;
   "project.review": ProjectReviewEventPayload;
   "mcp.status": McpStatusEventPayload;
@@ -1630,6 +1643,7 @@ export interface RunnerResponseByCommandType {
   "workspace.validation.submit": RunnerEventEnvelope<"workspace.validation">;
   "workspace.git.inspect": RunnerEventEnvelope<"workspace.git">;
   "workspace.git.action": RunnerEventEnvelope<"workspace.git">;
+  "mission_control.project.get": RunnerEventEnvelope<"mission_control.project">;
   "project.snapshot.get": RunnerEventEnvelope<"project.snapshot">;
   "project.snapshot.update": RunnerEventEnvelope<"project.snapshot">;
   "project.action": RunnerEventEnvelope<"project.snapshot">;
@@ -1693,6 +1707,7 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "workspace.validation.submit": ["workspace.validation"],
   "workspace.git.inspect": ["workspace.git"],
   "workspace.git.action": ["workspace.git"],
+  "mission_control.project.get": ["mission_control.project"],
   "project.snapshot.get": ["project.snapshot"],
   "project.snapshot.update": ["project.snapshot"],
   "project.action": ["project.snapshot"],
@@ -1976,6 +1991,9 @@ function parseRunnerCommandPayloadV2(
     case "workspace.promotion.list":
     case "project.snapshot.get":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      break;
+    case "mission_control.project.get":
+      requireNonEmptyString(payload.projectId, `${label}.projectId`);
       break;
     case "operator.inbox":
       validateOptionalNonEmptyString(payload.sessionId, `${label}.sessionId`);
@@ -2589,6 +2607,10 @@ function parseRunnerEventPayloadV2(
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); validateEnum(payload.operation, `${label}.operation`, ["inspect", "run", "cancel", "submit"]); requireRecord(payload.snapshot, `${label}.snapshot`); validateOptionalNonEmptyString(payload.runId, `${label}.runId`); break;
     case "workspace.git":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); validateEnum(payload.operation, `${label}.operation`, ["inspect", "action"]); requireRecord(payload.snapshot, `${label}.snapshot`); break;
+    case "mission_control.project":
+      requireNonEmptyString(payload.projectId, `${label}.projectId`);
+      requireRecord(payload.project, `${label}.project`);
+      break;
     case "project.snapshot":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       requireRecord(payload.snapshot, `${label}.snapshot`);

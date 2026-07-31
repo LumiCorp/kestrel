@@ -1,4 +1,8 @@
 import { parseTaskAction } from "../../../src/missionControl/contracts.js";
+import {
+  parseMissionControlProjectStateRecord,
+  requireMissionControlProjectId,
+} from "../../../src/missionControl/projectAuthority.js";
 import { parseProductProjectBoardAction } from "../../../src/project/contracts.js";
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
 import type {
@@ -19,8 +23,52 @@ import type {
   DesktopRuntimeThreadSummary,
   DesktopThreadWorkspaceContext,
   DesktopOperatorControlRequest,
+  DesktopMissionControlProjectResponse,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
+
+export async function getDesktopMissionControlProject(input: {
+  adapter: Pick<WebRunnerAdapter, "sendControl">;
+  projectId: unknown;
+  context: WebRunnerRequestContext;
+}): Promise<DesktopMissionControlProjectResponse> {
+  let projectId: string;
+  try {
+    projectId = requireMissionControlProjectId(input.projectId);
+  } catch (error) {
+    throw createDesktopError({
+      code: "desktop.invalid_mission_control_project_id",
+      message: "Desktop Mission Control requires a registered project UUID.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+  const event = await input.adapter.sendControl(
+    { type: "mission_control.project.get", projectId },
+    input.context,
+  );
+  if (event.type !== "mission_control.project") {
+    throw createDesktopError({
+      code: "desktop.mission_control_project_unexpected_response",
+      message: `Runner returned '${event.type}' for mission_control.project.get.`,
+    });
+  }
+  try {
+    const project = parseMissionControlProjectStateRecord(event.payload.project);
+    if (
+      event.payload.projectId !== projectId ||
+      project.projectId !== projectId
+    ) {
+      throw new Error("Mission Control project response identity did not match.");
+    }
+    return { projectId, project };
+  } catch (error) {
+    throw createDesktopError({
+      code: "desktop.mission_control_project_invalid_response",
+      message: "Runner returned an invalid Mission Control project document.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 export async function getDesktopProjectSnapshot(input: {
   adapter: Pick<WebRunnerAdapter, "sendControl">;
