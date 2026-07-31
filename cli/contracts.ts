@@ -311,7 +311,21 @@ export interface ProfilesFileV6 {
   };
 }
 
-export type ProfilesFile = ProfilesFileV4 | ProfilesFileV5 | ProfilesFileV6;
+export interface ProfilesFileV7 {
+  version: 7;
+  profiles: TuiProfile[];
+  managedProfileOverlays: {
+    "kestrel@cli_safe_local"?: KestrelOneManagedProfileOverlay | undefined;
+    "kestrel@cli_dev_local"?: KestrelOneManagedProfileOverlay | undefined;
+    "kestrel@workspace_hosted"?: KestrelOneManagedProfileOverlay | undefined;
+  };
+}
+
+export type ProfilesFile =
+  | ProfilesFileV4
+  | ProfilesFileV5
+  | ProfilesFileV6
+  | ProfilesFileV7;
 
 export interface TuiSessionMeta {
   name: string;

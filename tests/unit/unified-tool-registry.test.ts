@@ -2312,7 +2312,9 @@ contractTest("runtime.hermetic", "Kestrel-One profile exposes only model-visible
 
 contractTest("runtime.hermetic", "every canonical Kestrel One environment exposes dialogs without legacy delegation tools", async () => {
   for (const environmentPresetId of [
+    "cli_safe_local",
     "cli_dev_local",
+    "desktop_safe_local",
     "desktop_dev_local",
     "workspace_hosted",
   ] as const) {

@@ -425,7 +425,9 @@ export interface DesktopManagedProjectRun {
 }
 export type DesktopModelProvider = "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
 export type DesktopDatabaseMode = "default" | "external";
-export type DesktopShellPresetId = "desktop_dev_local";
+export type DesktopShellPresetId =
+  | "desktop_safe_local"
+  | "desktop_dev_local";
 export type DesktopCapabilityPackId = "balanced" | "filesystem" | "dev_shell" | "sandbox_code";
 export type DesktopCapabilityCategory = "models" | "tools_services" | "local_capabilities" | "connections" | "workspace_data" | "permissions";
 export type DesktopCapabilityId = "model.openrouter" | "model.openai" | "model.anthropic" | "model.ollama" | "model.lmstudio" | "tools.internet.tavily" | "tools.weather" | "tools.network.free" | "local.filesystem" | "local.developer_shell" | "local.sandbox_code" | "connections.mcp" | "data.workspace" | "data.database" | "permission.microphone";

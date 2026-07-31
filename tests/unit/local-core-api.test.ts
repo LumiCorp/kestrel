@@ -1873,7 +1873,7 @@ contractTest("runtime.process", "Local Core registers a Core-owned Desktop execu
     ) as { executionConfig: { profileId?: unknown } };
     assert.match(
       String(initialResponse.executionConfig.profileId),
-      /^kestrel:desktop_dev_local:[a-f0-9]{64}$/u,
+      /^kestrel:desktop_safe_local:[a-f0-9]{64}$/u,
     );
     const initial = parseLocalCoreDesktopExecutionConfig(
       initialResponse.executionConfig,
@@ -1881,11 +1881,11 @@ contractTest("runtime.process", "Local Core registers a Core-owned Desktop execu
     assert.equal(initial.version, 1);
     assert.match(
       initial.profileId,
-      /^kestrel:desktop_dev_local:[a-f0-9]{64}$/u,
+      /^kestrel:desktop_safe_local:[a-f0-9]{64}$/u,
     );
     assert.equal(initial.resolvedProfile.id, initial.profileId);
     assert.equal(initial.resolvedProfile.shellKind, "desktop");
-    assert.equal(initial.resolvedProfile.presetId, "desktop_dev_local");
+    assert.equal(initial.resolvedProfile.presetId, "desktop_safe_local");
     assert.equal(initial.resolvedProfile.modelProvider, "openrouter");
 
     assert.throws(
@@ -2039,11 +2039,11 @@ contractTest("runtime.process", "Local Core registers a Core-owned Desktop execu
     });
     assert.match(
       resolved.profileId,
-      /^kestrel:desktop_dev_local:[a-f0-9]{64}$/u,
+      /^kestrel:desktop_safe_local:[a-f0-9]{64}$/u,
     );
     assert.equal(resolved.policy.id, "kestrel");
     assert.equal(resolved.policy.version, 2);
-    assert.equal(resolved.environmentPreset.id, "desktop_dev_local");
+    assert.equal(resolved.environmentPreset.id, "desktop_safe_local");
     assert.equal(resolved.resolvedProfile.agentProfileId, "kestrel");
     assert.equal(resolved.resolvedProfile.modelProvider, "ollama");
     assert.equal(resolved.resolvedProfile.model, "llama3.2:latest");

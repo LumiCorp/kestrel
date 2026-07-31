@@ -113,12 +113,20 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
     });
     assert.match(
       executionProfile.profileId,
-      /^kestrel:cli_dev_local:[a-f0-9]{64}$/u,
+      /^kestrel:cli_safe_local:[a-f0-9]{64}$/u,
     );
     assert.equal(executionProfile.resolvedProfile.agentProfileId, "kestrel");
     assert.equal(
       executionProfile.resolvedProfile.presetId,
-      "cli_dev_local",
+      "cli_safe_local",
+    );
+    assert.equal(
+      executionProfile.resolvedProfile.toolAllowlist?.includes("dev.shell.run"),
+      false,
+    );
+    assert.equal(
+      executionProfile.resolvedProfile.toolAllowlist?.includes("code.execute"),
+      true,
     );
     assert.deepEqual(
       executionProfile.resolvedProfile.toolAllowlist?.filter(

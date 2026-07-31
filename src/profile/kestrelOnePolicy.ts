@@ -177,7 +177,12 @@ export const KESTREL_ONE_ENVIRONMENT_PRESETS: Readonly<
     Readonly<KestrelOneEnvironmentPresetDefinition>
   >
 > = Object.freeze({
+  cli_safe_local: Object.freeze({ id: "cli_safe_local", version: 1 }),
   cli_dev_local: Object.freeze({ id: "cli_dev_local", version: 1 }),
+  desktop_safe_local: Object.freeze({
+    id: "desktop_safe_local",
+    version: 1,
+  }),
   desktop_dev_local: Object.freeze({
     id: "desktop_dev_local",
     version: 1,
@@ -463,7 +468,10 @@ function sortJsonValue(value: unknown): unknown {
 function shellKindForPreset(
   presetId: ComposeKestrelOneProfileInput["environmentPresetId"],
 ): ShellKind {
-  if (presetId === "desktop_dev_local") return "desktop";
+  if (
+    presetId === "desktop_safe_local" ||
+    presetId === "desktop_dev_local"
+  ) return "desktop";
   if (presetId === "workspace_hosted") return "web";
   return "cli";
 }

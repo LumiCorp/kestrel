@@ -50,7 +50,13 @@ export interface LocalCoreExecutionProfileResolution {
     version: number;
   };
   environmentPreset: {
-    id: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted" | "web_balanced";
+    id:
+      | "cli_safe_local"
+      | "cli_dev_local"
+      | "desktop_safe_local"
+      | "desktop_dev_local"
+      | "workspace_hosted"
+      | "web_balanced";
     version: number;
   };
   resolvedProfile: TuiProfile;
@@ -159,7 +165,9 @@ export function parseLocalCoreExecutionProfileResolution(
     "execution profile resolution.environmentPreset",
   );
   if (
+    environmentPreset.id !== "cli_safe_local" &&
     environmentPreset.id !== "cli_dev_local" &&
+    environmentPreset.id !== "desktop_safe_local" &&
     environmentPreset.id !== "desktop_dev_local" &&
     environmentPreset.id !== "workspace_hosted" &&
     environmentPreset.id !== "web_balanced"
@@ -192,7 +200,9 @@ export function parseLocalCoreExecutionProfileResolution(
     );
   }
   if (
+    profile.presetId !== "cli_safe_local" &&
     profile.presetId !== "cli_dev_local" &&
+    profile.presetId !== "desktop_safe_local" &&
     profile.presetId !== "desktop_dev_local" &&
     profile.presetId !== "workspace_hosted" &&
     profile.presetId !== "web_balanced"
@@ -454,7 +464,7 @@ export interface LocalCoreDesktopProfileSnapshot {
   label: string;
   agent: "reference-react";
   shellKind: "desktop";
-  presetId: "desktop_dev_local";
+  presetId: "desktop_safe_local" | "desktop_dev_local";
   modelProvider: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
   model: string;
   modeSystemV2Enabled: true;
@@ -489,7 +499,7 @@ export function parseLocalCoreDesktopExecutionConfig(
   }
   if (
     typeof record.profileId !== "string" ||
-    /^kestrel:desktop_dev_local:[a-f0-9]{64}$/u.test(record.profileId) ===
+    /^kestrel:desktop_(?:safe|dev)_local:[a-f0-9]{64}$/u.test(record.profileId) ===
       false
   ) {
     throw new Error(
@@ -530,7 +540,10 @@ export function parseLocalCoreDesktopExecutionConfig(
   if (profile.shellKind !== "desktop") {
     throw new Error("Local Core Desktop execution config resolvedProfile must target the Desktop shell.");
   }
-  if (profile.presetId !== "desktop_dev_local") {
+  if (
+    profile.presetId !== "desktop_safe_local" &&
+    profile.presetId !== "desktop_dev_local"
+  ) {
     throw new Error("Local Core Desktop execution config resolvedProfile must use the Desktop preset.");
   }
   if (
@@ -572,7 +585,7 @@ export function parseLocalCoreDesktopExecutionConfig(
       label,
       agent: "reference-react",
       shellKind: "desktop",
-      presetId: "desktop_dev_local",
+      presetId: profile.presetId,
       modelProvider: profile.modelProvider,
       model,
       modeSystemV2Enabled: true,

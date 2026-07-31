@@ -65,8 +65,13 @@ export function ensureBrowserPreviewBridge(): void {
   let settings: DesktopRendererSettings = {
     selectedProvider: "openrouter",
     databaseMode: "default",
-    presetId: "desktop_dev_local",
-    capabilityPacks: ["balanced", "filesystem", "dev_shell"],
+    presetId: "desktop_safe_local",
+    capabilityPacks: [
+      "balanced",
+      "filesystem",
+      "desktop_host",
+      "sandbox_code",
+    ],
     projects: [
       { path: "/workspace/kestrel", label: "kestrel" },
       { path: "/workspace/demo-agent", label: "demo-agent" },
