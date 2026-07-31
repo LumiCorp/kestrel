@@ -64,6 +64,7 @@ import type {
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
   MissionControlMigrationExecuteCommandPayload,
+  MissionControlActionExecuteCommandPayload,
   MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
   ProfileListCommandPayload,
@@ -456,6 +457,11 @@ export interface RunnerRuntime {
   executeMissionControlMigration?:
     | ((
         input: MissionControlMigrationExecuteCommandPayload
+      ) => Promise<MissionControlProjectStateRecord>)
+    | undefined;
+  executeMissionControlAction?:
+    | ((
+        input: MissionControlActionExecuteCommandPayload
       ) => Promise<MissionControlProjectStateRecord>)
     | undefined;
   updateProjectSnapshot?:
@@ -1909,6 +1915,32 @@ export class RunnerHost {
       {
         code: "RUNNER_RUNTIME_ERROR",
         message: "Mission Control migration authority is unavailable.",
+      },
+      { commandId }
+    );
+  }
+
+  async missionControlActionExecute(
+    commandId: string,
+    payload: MissionControlActionExecuteCommandPayload,
+    metadata?: RunnerCommandMetadata
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.executeMissionControlAction === "function") {
+        const project = await runtime.executeMissionControlAction(payload);
+        this.writer.emit(
+          "mission_control.project",
+          { projectId: project.projectId, project: { ...project } },
+          { commandId }
+        );
+        return;
+      }
+    }
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Mission Control command authority is unavailable.",
       },
       { commandId }
     );

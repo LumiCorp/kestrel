@@ -24,6 +24,7 @@ import type {
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
   MissionControlMigrationExecuteCommandPayload,
+  MissionControlActionExecuteCommandPayload,
   MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
   ProfileListCommandPayload,
@@ -457,6 +458,15 @@ export class CommandRouter {
         await this.host.missionControlMigrationExecute(
           command.id,
           validateMissionControlMigrationExecutePayload(command.payload),
+          command.metadata
+        );
+        return;
+      }
+
+      if (command.type === "mission_control.action.execute") {
+        await this.host.missionControlActionExecute(
+          command.id,
+          validateMissionControlActionExecutePayload(command.payload),
           command.metadata
         );
         return;
@@ -1267,6 +1277,25 @@ function validateMissionControlMigrationExecutePayload(
   ) {
     throw new Error(
       "mission_control.migration.execute payload.action must be an object"
+    );
+  }
+  return { action: record.action as Record<string, unknown> };
+}
+
+function validateMissionControlActionExecutePayload(
+  payload: unknown
+): MissionControlActionExecuteCommandPayload {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("mission_control.action.execute payload must be an object");
+  }
+  const record = payload as Record<string, unknown>;
+  if (
+    typeof record.action !== "object" ||
+    record.action === null ||
+    Array.isArray(record.action)
+  ) {
+    throw new Error(
+      "mission_control.action.execute payload.action must be an object"
     );
   }
   return { action: record.action as Record<string, unknown> };

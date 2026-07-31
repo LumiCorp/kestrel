@@ -87,6 +87,7 @@ import type {
   MissionControlMigrationSourceBinding,
 } from "../missionControl/migrationContracts.js";
 import { requireMissionControlMigrationFingerprint } from "../missionControl/migrationContracts.js";
+import { fingerprintLegacySource } from "../missionControl/migrationAuthority.js";
 import {
   MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
   assertMissionControlExpectedRevision,
@@ -184,6 +185,16 @@ type MissionControlMigrationBindingRow = Record<string, unknown> & {
   action_id: string;
   bound_at: unknown;
 };
+
+function requireLegacySessionSourceId(sourceId: string): string {
+  const prefix = "session:";
+  if (sourceId.startsWith(prefix) === false || sourceId.length === prefix.length) {
+    throw new Error(
+      `Mission Control legacy source ${sourceId} is not a session snapshot.`,
+    );
+  }
+  return sourceId.slice(prefix.length);
+}
 
 function readMissionControlRunCorrelation(value: unknown) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -664,6 +675,165 @@ export class PostgresSessionStore implements SessionStore {
           );
         }
       }
+      const authorityTransition = input.authorityTransition;
+      if (authorityTransition?.type === "activate") {
+        if (current.authorityEpoch !== 0) {
+          throw new Error(
+            `Mission Control project ${projectId} is already active.`,
+          );
+        }
+        const nextAuthorityEpoch = current.authorityEpoch + 1;
+        for (const claim of authorityTransition.sourceClaims) {
+          const sourceId = requireMissionControlActionId(claim.sourceId);
+          const sessionId = requireLegacySessionSourceId(sourceId);
+          const sourceFingerprint = requireMissionControlMigrationFingerprint(
+            claim.sourceFingerprint,
+          );
+          const session = await this.getSessionForUpdate(sessionId, executor);
+          if (session === null) {
+            throw new Error(
+              `Mission Control legacy source ${sourceId} is unavailable.`,
+            );
+          }
+          const productState = await this.getSessionProductStateRowForUpdate(
+            sessionId,
+            executor,
+          );
+          const snapshot =
+            productState === null
+              ? readProjectSnapshotFromRuntimeState(session.state)
+              : normalizeProjectSnapshot(productState.project_snapshot_json);
+          const projectPath = snapshot.setup.workspaceRoot.trim();
+          const source: MissionControlLegacyProjectSource = {
+            sourceId,
+            kind: "session_snapshot",
+            sessionId,
+            sourceVersion:
+              productState === null
+                ? session.version
+                : this.normalizeSafeInteger(
+                    productState.version,
+                    "Mission Control legacy source version",
+                  ),
+            ...(projectPath.length === 0 ? {} : { projectPath }),
+            snapshot,
+          };
+          if (fingerprintLegacySource(source) !== sourceFingerprint) {
+            throw new Error(
+              `Mission Control legacy source ${sourceId} changed before activation.`,
+            );
+          }
+          const bindingResult =
+            await executor.query<MissionControlMigrationBindingRow>(
+              `SELECT source_id, project_id, source_fingerprint, action_id, bound_at
+                 FROM mission_control_migration_source_bindings
+                WHERE source_id = $1
+                FOR UPDATE`,
+              [sourceId],
+            );
+          const binding = bindingResult.rows[0];
+          if (binding !== undefined && binding.project_id !== projectId) {
+            throw new Error(
+              `Mission Control legacy source ${sourceId} is bound to another project.`,
+            );
+          }
+          const lockResult = await executor.query<{
+            project_id: string;
+            authority_epoch: number | string;
+          }>(
+            `SELECT project_id, authority_epoch
+               FROM mission_control_legacy_source_locks
+              WHERE source_id = $1
+              FOR UPDATE`,
+            [sourceId],
+          );
+          const lock = lockResult.rows[0];
+          if (lock !== undefined) {
+            throw new Error(
+              `Mission Control legacy source ${sourceId} is already frozen by project ${lock.project_id}.`,
+            );
+          }
+          if (productState === null) {
+            await this.persistSessionProjectSnapshotWithExecutor({
+              executor,
+              session,
+              current: null,
+              snapshot,
+            });
+          }
+          await executor.query(
+            `INSERT INTO mission_control_legacy_source_locks (
+               source_id, project_id, authority_epoch, source_fingerprint, frozen_at
+             ) VALUES ($1, $2, $3, $4, $5)`,
+            [
+              sourceId,
+              projectId,
+              nextAuthorityEpoch,
+              sourceFingerprint,
+              normalizeTimestampString(authorityTransition.transitionedAt),
+            ],
+          );
+        }
+      }
+      if (authorityTransition?.type === "rollback") {
+        if (current.authorityEpoch === 0) {
+          throw new Error(
+            `Mission Control project ${projectId} is not active.`,
+          );
+        }
+        for (const entry of authorityTransition.exports) {
+          const sourceId = requireMissionControlActionId(entry.sourceId);
+          const sessionId = requireLegacySessionSourceId(sourceId);
+          const lockResult = await executor.query<{
+            project_id: string;
+            authority_epoch: number | string;
+          }>(
+            `SELECT project_id, authority_epoch
+               FROM mission_control_legacy_source_locks
+              WHERE source_id = $1
+              FOR UPDATE`,
+            [sourceId],
+          );
+          const lock = lockResult.rows[0];
+          if (
+            lock?.project_id !== projectId ||
+            this.normalizeSafeInteger(
+              lock.authority_epoch,
+              "Mission Control legacy source authority epoch",
+            ) !== current.authorityEpoch
+          ) {
+            throw new Error(
+              `Mission Control legacy source ${sourceId} is not frozen by the active authority epoch.`,
+            );
+          }
+          const session = await this.getSessionForUpdate(sessionId, executor);
+          if (session === null) {
+            throw new Error(
+              `Mission Control legacy source ${sourceId} is unavailable for rollback.`,
+            );
+          }
+          const productState = await this.getSessionProductStateRowForUpdate(
+            sessionId,
+            executor,
+          );
+          await this.persistSessionProjectSnapshotWithExecutor({
+            executor,
+            session,
+            current: productState,
+            snapshot: normalizeProjectSnapshot(
+              entry.snapshot,
+              entry.snapshot.graphVersion,
+            ),
+          });
+          await executor.query(
+            `DELETE FROM mission_control_legacy_source_locks
+              WHERE source_id = $1
+                AND project_id = $2
+                AND authority_epoch = $3`,
+            [sourceId, projectId, current.authorityEpoch],
+          );
+        }
+      }
       const transition = input.apply(structuredClone(current.document));
       const document = parseMissionControlProjectDocument(
         transition.document,
@@ -673,11 +843,20 @@ export class PostgresSessionStore implements SessionStore {
         `UPDATE mission_control_projects
             SET revision = revision + 1,
                 document_json = $2::jsonb,
+                authority_epoch = $3,
                 updated_at = NOW()
           WHERE project_id = $1
           RETURNING project_id, schema_version, revision, authority_epoch,
                     document_json, created_at, updated_at`,
-        [projectId, stringifySanitizedJson(document)],
+        [
+          projectId,
+          stringifySanitizedJson(document),
+          authorityTransition?.type === "activate"
+            ? current.authorityEpoch + 1
+            : authorityTransition?.type === "rollback"
+              ? 0
+              : current.authorityEpoch,
+        ],
       );
       const updatedRow = updatedResult.rows[0];
       if (updatedRow === undefined) {
@@ -836,6 +1015,10 @@ export class PostgresSessionStore implements SessionStore {
           `Session ${input.sessionId} is legacy_readonly and cannot be mutated`,
         );
       }
+      await this.assertLegacyMissionControlSourceWritable(
+        input.sessionId,
+        executor,
+      );
       const current = await this.getSessionProductStateRowForUpdate(input.sessionId, executor);
       const graphVersion = input.graphVersion ?? 1;
       const baseSnapshot = current === null
@@ -869,6 +1052,10 @@ export class PostgresSessionStore implements SessionStore {
           `Session ${input.sessionId} is legacy_readonly and cannot be mutated`,
         );
       }
+      await this.assertLegacyMissionControlSourceWritable(
+        input.sessionId,
+        executor,
+      );
       const current = await this.getSessionProductStateRowForUpdate(input.sessionId, executor);
       return this.persistSessionProjectSnapshotWithExecutor({
         executor,
@@ -3999,6 +4186,37 @@ export class PostgresSessionStore implements SessionStore {
       [sessionId],
     );
     return result.rows[0] ?? null;
+  }
+
+  private async assertLegacyMissionControlSourceWritable(
+    sessionId: string,
+    executor: SqlExecutor,
+  ): Promise<void> {
+    const sourceId = `session:${sessionId}`;
+    const result = await executor.query<{
+      project_id: string;
+      authority_epoch: number | string;
+    }>(
+      `SELECT project_id, authority_epoch
+         FROM mission_control_legacy_source_locks
+        WHERE source_id = $1`,
+      [sourceId],
+    );
+    const lock = result.rows[0];
+    if (lock !== undefined) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_LEGACY_SOURCE_FROZEN",
+        `Legacy Mission Control source ${sourceId} is frozen by canonical project ${lock.project_id}.`,
+        {
+          sessionId,
+          projectId: lock.project_id,
+          authorityEpoch: this.normalizeSafeInteger(
+            lock.authority_epoch,
+            "Mission Control legacy source authority epoch",
+          ),
+        },
+      );
+    }
   }
 
   private async persistSessionProjectSnapshotWithExecutor(input: {

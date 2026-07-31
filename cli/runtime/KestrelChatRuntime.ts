@@ -66,6 +66,18 @@ import {
   KESTREL_ONE_POLICY_ID,
   MissionControlMigrationService,
   MissionControlProjectService,
+  MissionControlAuthorityService,
+  MissionControlExecutionRuntime,
+  MissionControlReviewService,
+  isMissionControlProjectActive,
+  parseMissionControlExecutionAction,
+  parseMissionControlProjectAction,
+  parseMissionControlReviewAction,
+  requireMissionControlProjectId,
+  requireMissionControlActionId,
+  requireMissionControlExpectedRevision,
+  missionControlActiveWorkCount,
+  type MissionControlReviewEvidenceResolver,
   type MissionControlProjectStateRecord,
 } from "../../src/index.js";
 import type {
@@ -93,6 +105,7 @@ import { registerAgent } from "./AgentFactory.js";
 import type { DelegationTaskUpdate } from "../../src/orchestration/index.js";
 import { buildExecutionPolicyFromPack } from "./approvalPolicyPacks.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { InProcessMissionControlRunnerClient } from "./MissionControlRunnerClient.js";
 import { MacOsDesktopHostOpenService } from "../../src/desktopShell/hostOpen.js";
 import { createTerminalBenchDevShellServiceFromEnv } from "../../src/devshell/TerminalBenchDevShellService.js";
 import { createRuntimeHeapDiagnosticsFromEnv } from "../../src/runtime/heapDiagnostics.js";
@@ -167,6 +180,7 @@ export type RunTurnResult = RuntimeTurnResult & {
 
 interface RuntimeBootstrap {
   kestrel: Kestrel;
+  missionControlStore?: SessionStore | undefined;
   missionControlMigrationService?: MissionControlMigrationService | undefined;
   missionControlProjectService?: MissionControlProjectService | undefined;
   threadRuntime?: ThreadRuntime | undefined;
@@ -278,6 +292,15 @@ export class KestrelChatRuntime {
   private readonly missionControlProjectService:
     | MissionControlProjectService
     | undefined;
+  private readonly missionControlAuthorityService:
+    | MissionControlAuthorityService
+    | undefined;
+  private readonly missionControlExecutionRuntime:
+    | MissionControlExecutionRuntime
+    | undefined;
+  private readonly missionControlReviewService:
+    | MissionControlReviewService
+    | undefined;
   private readonly threadRuntime: ThreadRuntime | undefined;
   private readonly taskGraphStore: ProductTaskGraphStore | undefined;
   private readonly projectStore: ProductProjectStateStore | undefined;
@@ -320,6 +343,7 @@ export class KestrelChatRuntime {
   private readonly prepareHostedMcpRuntime: RuntimeBootstrap["prepareHostedMcpRuntime"];
   private readonly releaseRuntimeAuthorization: RuntimeBootstrap["releaseRuntimeAuthorization"];
   private readonly reasoningPolicyReady: Promise<unknown>;
+  private readonly missionControlProfileId: string;
 
   private finalizedPayload: unknown;
 
@@ -343,6 +367,7 @@ export class KestrelChatRuntime {
     );
 
     this.kestrel = bootstrap.kestrel;
+    this.missionControlProfileId = profile.id;
     this.missionControlMigrationService =
       bootstrap.missionControlMigrationService;
     this.missionControlProjectService = bootstrap.missionControlProjectService;
@@ -458,6 +483,53 @@ export class KestrelChatRuntime {
         return readResumeStepAgentFromSession(session?.state);
       },
     });
+    const missionControlStore = bootstrap.missionControlStore;
+    this.missionControlAuthorityService =
+      missionControlStore === undefined
+        ? undefined
+        : new MissionControlAuthorityService(missionControlStore);
+    if (missionControlStore === undefined) {
+      this.missionControlExecutionRuntime = undefined;
+      this.missionControlReviewService = undefined;
+    } else {
+      const runner = new InProcessMissionControlRunnerClient({
+        runStart: (payload) =>
+          this.runTurn(payload.turn as unknown as RunTurnInput),
+        operatorControl: (payload) => {
+          if (
+            payload.action !== "retry" &&
+            payload.action !== "reply"
+          ) {
+            throw createRuntimeFailure(
+              "MISSION_CONTROL_OPERATOR_ACTION_INVALID",
+              `Mission Control cannot dispatch operator action '${payload.action}'.`,
+            );
+          }
+          return this.performAcceptedOperatorAction({
+            ...payload,
+            action: payload.action,
+          });
+        },
+        cancel: (payload) => this.cancelMissionControlRun(payload),
+        inspectRun: (payload) => this.inspectMissionControlRun(payload.runId),
+      });
+      this.missionControlExecutionRuntime =
+        new MissionControlExecutionRuntime(
+          missionControlStore as SessionStore & {
+            markMissionControlOutboxDelivered: NonNullable<
+              SessionStore["markMissionControlOutboxDelivered"]
+            >;
+            recordMissionControlOutboxFailure: NonNullable<
+              SessionStore["recordMissionControlOutboxFailure"]
+            >;
+          },
+          runner,
+        );
+      this.missionControlReviewService = new MissionControlReviewService(
+        missionControlStore,
+        this.createMissionControlReviewEvidenceResolver(),
+      );
+    }
   }
 
   getEntryStepAgent(): string {
@@ -774,7 +846,20 @@ export class KestrelChatRuntime {
         "Mission Control project authority is unavailable.",
       );
     }
-    return this.missionControlProjectService.getProject(input.projectId);
+    let project = await this.missionControlProjectService.getProject(
+      input.projectId,
+    );
+    if (
+      isMissionControlProjectActive(project.authorityEpoch) &&
+      this.missionControlExecutionRuntime !== undefined
+    ) {
+      await this.missionControlExecutionRuntime.reconcile(project.projectId);
+      await this.driveMissionControlAutopilot(project.projectId);
+      project = await this.missionControlProjectService.getProject(
+        project.projectId,
+      );
+    }
+    return project;
   }
 
   async executeMissionControlMigration(input: {
@@ -790,6 +875,80 @@ export class KestrelChatRuntime {
       input.action,
     );
     return mutation.project;
+  }
+
+  async executeMissionControlAction(input: {
+    action: Record<string, unknown>;
+  }): Promise<MissionControlProjectStateRecord> {
+    const type =
+      typeof input.action.type === "string" ? input.action.type : undefined;
+    if (type === undefined) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_ACTION_INVALID",
+        "Mission Control action type is required.",
+      );
+    }
+    if (type === "authority.activate" || type === "authority.rollback") {
+      if (this.missionControlAuthorityService === undefined) {
+        throw createRuntimeFailure(
+          "MISSION_CONTROL_AUTHORITY_UNAVAILABLE",
+          "Mission Control authority activation is unavailable.",
+        );
+      }
+      const mutation = await this.missionControlAuthorityService.execute(
+        input.action,
+      );
+      if (
+        type === "authority.activate" &&
+        this.missionControlExecutionRuntime !== undefined
+      ) {
+        await this.missionControlExecutionRuntime.reconcile(
+          mutation.project.projectId,
+        );
+      }
+      return mutation.project;
+    }
+    const projectId = requireMissionControlProjectId(input.action.projectId);
+    await this.requireActiveMissionControlProject(projectId);
+    let project: MissionControlProjectStateRecord;
+    if (type === "review.prepare") {
+      project = await this.prepareMissionControlReview(input.action);
+    } else if (type.startsWith("execution.")) {
+      if (this.missionControlExecutionRuntime === undefined) {
+        throw createRuntimeFailure(
+          "MISSION_CONTROL_EXECUTION_UNAVAILABLE",
+          "Mission Control execution authority is unavailable.",
+        );
+      }
+      parseMissionControlExecutionAction(input.action);
+      project = (
+        await this.missionControlExecutionRuntime.execute(input.action)
+      ).project;
+    } else if (type.startsWith("review.")) {
+      if (this.missionControlReviewService === undefined) {
+        throw createRuntimeFailure(
+          "MISSION_CONTROL_REVIEW_UNAVAILABLE",
+          "Mission Control Review authority is unavailable.",
+        );
+      }
+      parseMissionControlReviewAction(input.action);
+      project = (await this.missionControlReviewService.execute(input.action))
+        .project;
+    } else {
+      if (this.missionControlProjectService === undefined) {
+        throw createRuntimeFailure(
+          "MISSION_CONTROL_PROJECT_UNAVAILABLE",
+          "Mission Control project authority is unavailable.",
+        );
+      }
+      parseMissionControlProjectAction(input.action);
+      project = (await this.missionControlProjectService.execute(input.action))
+        .project;
+    }
+    await this.driveMissionControlAutopilot(project.projectId);
+    return (
+      await this.missionControlProjectService!.getProject(project.projectId)
+    );
   }
 
   async updateProjectSnapshot(input: {
@@ -2546,6 +2705,317 @@ export class KestrelChatRuntime {
     }
   }
 
+  private async requireActiveMissionControlProject(
+    projectId: string,
+  ): Promise<MissionControlProjectStateRecord> {
+    if (this.missionControlProjectService === undefined) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_PROJECT_UNAVAILABLE",
+        "Mission Control project authority is unavailable.",
+      );
+    }
+    const project = await this.missionControlProjectService.getProject(
+      projectId,
+    );
+    if (isMissionControlProjectActive(project.authorityEpoch) === false) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_PROJECT_NOT_ACTIVE",
+        "Mission Control commands remain read-only until project migration is activated.",
+        { projectId },
+      );
+    }
+    return project;
+  }
+
+  private async driveMissionControlAutopilot(
+    projectId: string,
+  ): Promise<void> {
+    if (
+      this.missionControlProjectService === undefined ||
+      this.missionControlExecutionRuntime === undefined
+    ) {
+      return;
+    }
+    for (;;) {
+      const project = await this.missionControlProjectService.getProject(
+        projectId,
+      );
+      if (
+        isMissionControlProjectActive(project.authorityEpoch) === false ||
+        project.document.autopilot.enabled === false ||
+        Object.values(project.document.items).some(
+          (item) => item.phase === "needs_attention",
+        ) ||
+        missionControlActiveWorkCount(project.document) >=
+          project.document.autopilot.wipLimit
+      ) {
+        return;
+      }
+      const item = Object.values(project.document.items)
+        .filter((candidate) => candidate.phase === "ready")
+        .sort(
+          (left, right) =>
+            left.order - right.order || left.id.localeCompare(right.id),
+        )[0];
+      if (item === undefined) return;
+      const sessionId = randomUUID();
+      await this.missionControlExecutionRuntime.execute({
+        type: "execution.start",
+        projectId,
+        actionId: randomUUID(),
+        actionTs: new Date().toISOString(),
+        expectedRevision: project.revision,
+        itemId: item.id,
+        expectedItemVersion: item.version,
+        attemptId: randomUUID(),
+        initiatedBy: "autopilot",
+        profileId: this.missionControlProfileId,
+        sessionId,
+        threadId: sessionId,
+      });
+    }
+  }
+
+  private async cancelMissionControlRun(input: {
+    sessionId: string;
+    runId?: string | undefined;
+    commandId?: string | undefined;
+  }): Promise<{
+    sessionId: string;
+    runId: string;
+    threadId?: string | undefined;
+  }> {
+    if (input.runId === undefined || input.commandId === undefined) {
+      throw createRuntimeFailure(
+        "RUN_CANCEL_NOT_FOUND",
+        "Mission Control cancellation requires the exact run and command identity.",
+        { sessionId: input.sessionId },
+      );
+    }
+    const inspected = await this.inspectMissionControlRun(input.runId);
+    const view = asRecord(inspected.view);
+    const missionControl = asRecord(view?.missionControl);
+    if (
+      inspected.sessionId !== input.sessionId ||
+      missionControl?.runId !== input.runId ||
+      missionControl?.commandId !== input.commandId
+    ) {
+      throw createRuntimeFailure(
+        "RUN_CANCEL_NOT_FOUND",
+        "Mission Control cancellation target no longer owns the active run.",
+        {
+          sessionId: input.sessionId,
+          runId: input.runId,
+          commandId: input.commandId,
+          activeRunId: missionControl?.runId,
+          activeCommandId: missionControl?.commandId,
+        },
+      );
+    }
+    const cancelled = await this.cancelActiveRun(input.sessionId);
+    if (cancelled.runId !== undefined && cancelled.runId !== input.runId) {
+      throw createRuntimeFailure(
+        "RUN_CANCEL_NOT_FOUND",
+        "Mission Control cancellation resolved a different active run.",
+        {
+          sessionId: input.sessionId,
+          runId: input.runId,
+          activeRunId: cancelled.runId,
+        },
+      );
+    }
+    return {
+      sessionId: input.sessionId,
+      runId: input.runId,
+      threadId: inspected.threadId,
+    };
+  }
+
+  private async inspectMissionControlRun(runId: string): Promise<{
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    view: unknown;
+  }> {
+    const view = await this.getOperatorRunView(runId);
+    if (view === null) {
+      throw createRuntimeFailure(
+        "OPERATOR_RUN_NOT_FOUND",
+        `Mission Control run '${runId}' was not found.`,
+        { runId },
+      );
+    }
+    return {
+      sessionId: view.run.sessionId,
+      threadId: view.threadId ?? view.run.sessionId,
+      runId: view.run.runId,
+      view,
+    };
+  }
+
+  private createMissionControlReviewEvidenceResolver():
+    MissionControlReviewEvidenceResolver {
+    return {
+      resolve: async (input) => {
+        const [changes, validation, inspected] = await Promise.all([
+          this.inspectWorkspaceChanges({
+            sessionId: input.sessionId,
+            threadId: input.threadId,
+            scope: { kind: "uncommitted" },
+          }),
+          this.inspectWorkspaceValidation({
+            sessionId: input.sessionId,
+            threadId: input.threadId,
+          }),
+          this.inspectMissionControlRun(input.runId),
+        ]);
+        const validationResults = input.references.validationResults.flatMap(
+          (referenceId) => {
+            const result = validation.results.find(
+              (candidate) => candidate.resultId === referenceId,
+            );
+            if (result === undefined) return [];
+            return [
+              {
+                referenceId: result.resultId,
+                actionId: result.actionId,
+                candidateFingerprint: result.candidateFingerprint,
+                outcome:
+                  result.outcome === "passed"
+                    ? ("passed" as const)
+                    : result.outcome === "stale"
+                      ? ("stale" as const)
+                      : ("failed" as const),
+              },
+            ];
+          },
+        );
+        const view = asRecord(inspected.view);
+        const run = asRecord(view?.run);
+        const status = missionControlReviewRunStatus(run?.status);
+        return {
+          change: {
+            referenceId: input.references.change,
+            workspaceRoot: changes.workspaceRoot,
+            candidateFingerprint: changes.candidateFingerprint,
+            outcome: changes.files.length === 0 ? "no_change" : "changes",
+            conflicted: changes.conflicted,
+          },
+          validationResults,
+          conditional: [],
+          linkedRuns: [
+            {
+              sessionId: inspected.sessionId,
+              threadId: inspected.threadId,
+              runId: inspected.runId,
+              status,
+            },
+          ],
+        };
+      },
+      currentCandidate: async (input) => {
+        const changes = await this.inspectWorkspaceChanges({
+          sessionId: input.sessionId,
+          threadId: input.threadId,
+          scope: { kind: "uncommitted" },
+        });
+        return { candidateFingerprint: changes.candidateFingerprint };
+      },
+    };
+  }
+
+  private async prepareMissionControlReview(
+    actionValue: Record<string, unknown>,
+  ): Promise<MissionControlProjectStateRecord> {
+    if (this.missionControlReviewService === undefined) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_REVIEW_UNAVAILABLE",
+        "Mission Control Review authority is unavailable.",
+      );
+    }
+    const action = parseMissionControlReviewPrepareAction(actionValue);
+    const project = await this.requireActiveMissionControlProject(
+      action.projectId,
+    );
+    const item = project.document.items[action.itemId];
+    const attempt = item?.attempts.find(
+      (candidate) => candidate.id === action.attemptId,
+    );
+    const run = attempt?.runs.find(
+      (candidate) => candidate.runId === attempt.currentRunId,
+    );
+    if (
+      item === undefined ||
+      attempt === undefined ||
+      run === undefined ||
+      attempt.status !== "completed"
+    ) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_REVIEW_NOT_READY",
+        "Mission Control Review requires the exact completed current attempt.",
+        { projectId: action.projectId, itemId: action.itemId },
+      );
+    }
+    const [changes, validation] = await Promise.all([
+      this.inspectWorkspaceChanges({
+        sessionId: run.sessionId,
+        threadId: run.threadId,
+        scope: { kind: "uncommitted" },
+      }),
+      this.inspectWorkspaceValidation({
+        sessionId: run.sessionId,
+        threadId: run.threadId,
+      }),
+    ]);
+    const requiredActions =
+      item.completionContract?.validation.mode === "required"
+        ? item.completionContract.validation.actionIds
+        : [];
+    const validationResults = requiredActions.map((actionId) => {
+      const result = [...validation.results]
+        .reverse()
+        .find(
+          (candidate) =>
+            candidate.actionId === actionId &&
+            candidate.candidateFingerprint === changes.candidateFingerprint,
+        );
+      if (result === undefined) {
+        throw createRuntimeFailure(
+          "MISSION_CONTROL_REVIEW_VALIDATION_MISSING",
+          `Mission Control required validation '${actionId}' has no current result.`,
+          { projectId: action.projectId, itemId: action.itemId, actionId },
+        );
+      }
+      return result.resultId;
+    });
+    const mutation = await this.missionControlReviewService.execute({
+      type: "review.admit",
+      projectId: action.projectId,
+      actionId: action.actionId,
+      actionTs: action.actionTs,
+      expectedRevision: action.expectedRevision,
+      itemId: action.itemId,
+      expectedItemVersion: action.expectedItemVersion,
+      attemptId: action.attemptId,
+      expectedAttemptVersion: action.expectedAttemptVersion,
+      candidate: {
+        workspaceRoot: changes.workspaceRoot,
+        candidateFingerprint: changes.candidateFingerprint,
+        ...(changes.headSha === undefined ? {} : { commitSha: changes.headSha }),
+      },
+      evidence: {
+        change: changes.candidateFingerprint,
+        validationResults,
+        automatedReviews: [],
+        deliveries: [],
+        artifacts: [],
+        checkpoints: [],
+        previews: [],
+      },
+    });
+    return mutation.project;
+  }
+
   async refreshToolRuntime(): Promise<ToolRuntimeStatus> {
     return this.kestrel.refreshToolRuntime();
   }
@@ -2589,6 +3059,7 @@ export class KestrelChatRuntime {
   }
 
   async close(): Promise<void> {
+    this.missionControlExecutionRuntime?.close();
     await this.closePool();
   }
 
@@ -3052,6 +3523,7 @@ function createRuntimeWithStore(
 
   return {
     kestrel,
+    missionControlStore: store,
     missionControlMigrationService,
     missionControlProjectService,
     threadRuntime,
@@ -3592,6 +4064,91 @@ export async function closeRuntimeResources(
 
 function asError(value: unknown, fallbackMessage: string): Error {
   return value instanceof Error ? value : new Error(fallbackMessage);
+}
+
+function parseMissionControlReviewPrepareAction(
+  value: Record<string, unknown>,
+): {
+  projectId: string;
+  actionId: string;
+  actionTs: string;
+  expectedRevision: number;
+  itemId: string;
+  expectedItemVersion: number;
+  attemptId: string;
+  expectedAttemptVersion: number;
+} {
+  const allowed = [
+    "type",
+    "projectId",
+    "actionId",
+    "actionTs",
+    "expectedRevision",
+    "itemId",
+    "expectedItemVersion",
+    "attemptId",
+    "expectedAttemptVersion",
+  ];
+  for (const key of Object.keys(value)) {
+    if (allowed.includes(key) === false) {
+      throw new Error(
+        `Mission Control Review preparation contains unknown field '${key}'.`,
+      );
+    }
+  }
+  if (value.type !== "review.prepare") {
+    throw new Error("Mission Control Review preparation type is invalid.");
+  }
+  const actionTs = requireText(value.actionTs, "actionTs");
+  if (Number.isNaN(Date.parse(actionTs))) {
+    throw new Error("actionTs must be an ISO timestamp.");
+  }
+  return {
+    projectId: requireMissionControlProjectId(value.projectId),
+    actionId: requireMissionControlActionId(value.actionId),
+    actionTs,
+    expectedRevision: requireMissionControlExpectedRevision(
+      value.expectedRevision,
+    ),
+    itemId: requireText(value.itemId, "itemId"),
+    expectedItemVersion: requirePositiveSafeInteger(
+      value.expectedItemVersion,
+      "expectedItemVersion",
+    ),
+    attemptId: requireText(value.attemptId, "attemptId"),
+    expectedAttemptVersion: requirePositiveSafeInteger(
+      value.expectedAttemptVersion,
+      "expectedAttemptVersion",
+    ),
+  };
+}
+
+function missionControlReviewRunStatus(
+  value: unknown,
+): "completed" | "failed" | "cancelled" | "running" | "waiting" {
+  if (value === "COMPLETED") return "completed";
+  if (value === "WAITING") return "waiting";
+  if (value === "RUNNING") return "running";
+  if (value === "FAILED") return "failed";
+  throw new Error(`Mission Control linked run status is invalid: ${String(value)}.`);
+}
+
+function requireText(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function requirePositiveSafeInteger(value: unknown, field: string): number {
+  if (
+    typeof value !== "number" ||
+    Number.isSafeInteger(value) === false ||
+    value <= 0
+  ) {
+    throw new Error(`${field} must be a positive safe integer.`);
+  }
+  return value;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

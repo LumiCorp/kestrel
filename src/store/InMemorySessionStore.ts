@@ -40,6 +40,7 @@ import type {
   MissionControlLegacyProjectSource,
   MissionControlMigrationSourceBinding,
 } from "../missionControl/migrationContracts.js";
+import { fingerprintLegacySource } from "../missionControl/migrationAuthority.js";
 import { requireMissionControlMigrationFingerprint } from "../missionControl/migrationContracts.js";
 import {
   normalizeProjectSnapshot,
@@ -137,6 +138,15 @@ export class InMemorySessionStore implements SessionStore {
   private readonly missionControlMigrationBindings = new Map<
     string,
     MissionControlMigrationSourceBinding
+  >();
+  private readonly missionControlLegacySourceLocks = new Map<
+    string,
+    {
+      projectId: string;
+      authorityEpoch: number;
+      sourceFingerprint: string;
+      frozenAt: string;
+    }
   >();
   private readonly runs = new Map<string, InMemoryRun>();
   private readonly effects: InMemoryEffect[] = [];
@@ -302,6 +312,53 @@ export class InMemorySessionStore implements SessionStore {
     if (new Set(releases).size !== releases.length) {
       throw new Error("Mission Control migration source releases must be unique.");
     }
+    const authorityTransition = input.authorityTransition;
+    if (authorityTransition?.type === "activate") {
+      if (current.authorityEpoch !== 0) {
+        throw new Error(`Mission Control project ${projectId} is already active.`);
+      }
+      const sources = await this.listMissionControlLegacySources();
+      for (const claim of authorityTransition.sourceClaims) {
+        const sourceId = requireMissionControlActionId(claim.sourceId);
+        const sourceFingerprint = requireMissionControlMigrationFingerprint(
+          claim.sourceFingerprint,
+        );
+        const source = sources.find((candidate) => candidate.sourceId === sourceId);
+        const binding = this.missionControlMigrationBindings.get(sourceId);
+        if (
+          source === undefined ||
+          fingerprintLegacySource(source) !== sourceFingerprint ||
+          (binding !== undefined && binding.projectId !== projectId)
+        ) {
+          throw new Error(
+            `Mission Control legacy source ${sourceId} changed or is not bound to project ${projectId}.`,
+          );
+        }
+        const lock = this.missionControlLegacySourceLocks.get(sourceId);
+        if (lock !== undefined && lock.projectId !== projectId) {
+          throw new Error(
+            `Mission Control legacy source ${sourceId} is frozen by another project.`,
+          );
+        }
+      }
+    }
+    if (authorityTransition?.type === "rollback") {
+      if (current.authorityEpoch === 0) {
+        throw new Error(`Mission Control project ${projectId} is not active.`);
+      }
+      for (const entry of authorityTransition.exports) {
+        const sourceId = requireMissionControlActionId(entry.sourceId);
+        const lock = this.missionControlLegacySourceLocks.get(sourceId);
+        if (
+          lock?.projectId !== projectId ||
+          lock.authorityEpoch !== current.authorityEpoch
+        ) {
+          throw new Error(
+            `Mission Control legacy source ${sourceId} is not frozen by the active authority epoch.`,
+          );
+        }
+      }
+    }
     const transition = input.apply(structuredClone(current.document));
     const document = parseMissionControlProjectDocument(
       transition.document,
@@ -310,6 +367,12 @@ export class InMemorySessionStore implements SessionStore {
     const project: MissionControlProjectStateRecord = {
       ...current,
       revision: current.revision + 1,
+      authorityEpoch:
+        authorityTransition?.type === "activate"
+          ? current.authorityEpoch + 1
+          : authorityTransition?.type === "rollback"
+            ? 0
+            : current.authorityEpoch,
       document,
       updatedAt: timestamp,
     };
@@ -355,6 +418,31 @@ export class InMemorySessionStore implements SessionStore {
       const binding = this.missionControlMigrationBindings.get(sourceId);
       if (binding?.projectId === projectId) {
         this.missionControlMigrationBindings.delete(sourceId);
+      }
+    }
+    if (authorityTransition?.type === "activate") {
+      for (const claim of authorityTransition.sourceClaims) {
+        this.missionControlLegacySourceLocks.set(claim.sourceId, {
+          projectId,
+          authorityEpoch: project.authorityEpoch,
+          sourceFingerprint: claim.sourceFingerprint,
+          frozenAt: authorityTransition.transitionedAt,
+        });
+      }
+    }
+    if (authorityTransition?.type === "rollback") {
+      for (const entry of authorityTransition.exports) {
+        const sessionId = requireLegacySessionSourceId(entry.sourceId);
+        const session = await this.ensureSession(sessionId);
+        this.persistProductSnapshot(
+          session,
+          normalizeProjectSnapshot(
+            entry.snapshot,
+            entry.snapshot.graphVersion,
+          ),
+          this.productStates.get(sessionId),
+        );
+        this.missionControlLegacySourceLocks.delete(entry.sourceId);
       }
     }
 
@@ -424,6 +512,7 @@ export class InMemorySessionStore implements SessionStore {
     reason?: string | undefined;
     apply: (snapshot: ProductProjectSnapshot) => ProductProjectSnapshot | Promise<ProductProjectSnapshot>;
   }): Promise<SessionProductStateRecord> {
+    this.assertLegacyMissionControlSourceWritable(input.sessionId);
     const session = await this.ensureSession(input.sessionId);
     const current = this.productStates.get(input.sessionId);
     const graphVersion = input.graphVersion ?? 1;
@@ -442,6 +531,7 @@ export class InMemorySessionStore implements SessionStore {
     sessionId: string;
     snapshot: ProductProjectSnapshot;
   }): Promise<SessionProductStateRecord> {
+    this.assertLegacyMissionControlSourceWritable(input.sessionId);
     const session = await this.ensureSession(input.sessionId);
     const current = this.productStates.get(input.sessionId);
     return this.persistProductSnapshot(
@@ -1927,6 +2017,22 @@ export class InMemorySessionStore implements SessionStore {
     return this.mapProductState(next);
   }
 
+  private assertLegacyMissionControlSourceWritable(sessionId: string): void {
+    const sourceId = `session:${sessionId}`;
+    const lock = this.missionControlLegacySourceLocks.get(sourceId);
+    if (lock !== undefined) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_LEGACY_SOURCE_FROZEN",
+        `Legacy Mission Control source ${sourceId} is frozen by canonical project ${lock.projectId}.`,
+        {
+          sessionId,
+          projectId: lock.projectId,
+          authorityEpoch: lock.authorityEpoch,
+        },
+      );
+    }
+  }
+
   private mapProductState(state: InMemoryProductState): SessionProductStateRecord {
     return {
       sessionId: state.sessionId,
@@ -1950,6 +2056,16 @@ export class InMemorySessionStore implements SessionStore {
       ...(run.error !== undefined ? { error: run.error } : {}),
     };
   }
+}
+
+function requireLegacySessionSourceId(sourceId: string): string {
+  const prefix = "session:";
+  if (sourceId.startsWith(prefix) === false || sourceId.length === prefix.length) {
+    throw new Error(
+      `Mission Control legacy source ${sourceId} is not a session snapshot.`,
+    );
+  }
+  return sourceId.slice(prefix.length);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

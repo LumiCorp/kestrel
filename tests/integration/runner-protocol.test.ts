@@ -3395,11 +3395,15 @@ contractTest("runtime.process", "task graph commands emit graph snapshots throug
   await host.close();
 });
 
-contractTest("runtime.process", "Mission Control project reads and migration commands preserve exact project identity", async () => {
+contractTest(
+  ["runtime.process", "desktop.mission-control-boundary"],
+  "Mission Control project reads, migration, and action commands preserve exact project identity",
+  async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const projectId = "11111111-1111-4111-8111-111111111111";
   const migrationActions: unknown[] = [];
+  const authorityActions: unknown[] = [];
   const project = (inputProjectId: string) => ({
     projectId: inputProjectId,
     schemaVersion: 1 as const,
@@ -3423,6 +3427,13 @@ contractTest("runtime.process", "Mission Control project reads and migration com
     executeMissionControlMigration: async (input) => {
       migrationActions.push(input.action);
       return project(String(input.action.projectId));
+    },
+    executeMissionControlAction: async (input) => {
+      authorityActions.push(input.action);
+      return {
+        ...project(String(input.action.projectId)),
+        authorityEpoch: 1,
+      };
     },
     getToolRuntimeStatus: async () => ({
       healthy: true,
@@ -3492,9 +3503,32 @@ contractTest("runtime.process", "Mission Control project reads and migration com
   assert.deepEqual(migrationActions, [migrationAction]);
   assert.equal(events[0]?.type, "mission_control.project");
   assert.equal(events[0]?.payload.projectId, projectId);
+  events.length = 0;
+  const authorityAction = {
+    type: "authority.activate",
+    projectId,
+    actionId: "authority-action",
+    actionTs: "2026-07-31T12:01:00.000Z",
+    expectedRevision: 1,
+  };
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-mission-control-action",
+    type: "mission_control.action.execute",
+    payload: { action: authorityAction },
+  }));
+  await tick();
+  assert.deepEqual(authorityActions, [authorityAction]);
+  assert.equal(events[0]?.type, "mission_control.project");
+  assert.equal(events[0]?.payload.projectId, projectId);
+  assert.equal(
+    (events[0]?.payload.project as { authorityEpoch?: number } | undefined)
+      ?.authorityEpoch,
+    1,
+  );
   rl.close();
   await host.close();
-});
+  },
+);
 
 contractTest("runtime.process", "CommandRouter enforces bounded operator.runs filters", async () => {
   const output = new PassThrough();

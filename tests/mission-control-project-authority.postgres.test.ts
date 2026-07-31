@@ -6,9 +6,14 @@ import { join } from "node:path";
 
 import {
   MissionControlActionIdentityConflictError,
+  MissionControlProjectService,
   MissionControlRevisionConflictError,
   createEmptyMissionControlProjectDocument,
 } from "../src/missionControl/projectAuthority.js";
+import {
+  MissionControlAuthorityGateError,
+  MissionControlAuthorityService,
+} from "../src/missionControl/authority.js";
 import {
   MissionControlMigrationGateError,
   MissionControlMigrationService,
@@ -17,6 +22,7 @@ import {
 import { createEmptyProjectSnapshot } from "../src/project/state.js";
 import type { ProductProjectSnapshot } from "../src/project/contracts.js";
 import { createSessionStoreFromEnv } from "../src/store/createSessionStore.js";
+import { InMemorySessionStore } from "../src/store/InMemorySessionStore.js";
 import { contractTest } from "./helpers/contract-test.js";
 
 const FINGERPRINT_A = "a".repeat(64);
@@ -525,6 +531,207 @@ contractTest(
   },
 );
 
+contractTest(
+  "runtime.mission-control-project-persistence",
+  "authority cutover freezes legacy writes and rollback exports complete canonical state",
+  async (context) => {
+    const databaseUrl =
+      process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL?.trim();
+    const temporaryRoot =
+      databaseUrl === undefined
+        ? await mkdtemp(join(tmpdir(), "kestrel-mc-authority-"))
+        : undefined;
+    const handle = createSessionStoreFromEnv(
+      databaseUrl === undefined
+        ? {
+            driver: "sqlite",
+            sqlitePath: join(temporaryRoot!, "runtime"),
+            enforceSchemaV3: false,
+          }
+        : {
+            driver: "postgres",
+            databaseUrl,
+            enforceSchemaV3: false,
+          },
+    );
+    await handle.ready();
+    context.after(async () => {
+      await handle.close();
+      if (temporaryRoot !== undefined) {
+        await rm(temporaryRoot, { recursive: true, force: true });
+      }
+    });
+
+    const store = handle.store;
+    const projectId = randomUUID();
+    const driftProjectId = randomUUID();
+    await seedLegacy(
+      store,
+      "legacy-authority",
+      legacySnapshot(
+        "/workspace/authority",
+        task("legacy-task", "Legacy work"),
+      ),
+    );
+    await seedLegacy(
+      store,
+      "legacy-drift-at-cutover",
+      legacySnapshot(
+        "/workspace/drift-at-cutover",
+        task("drift-task", "Before drift"),
+      ),
+    );
+
+    const authority = new MissionControlAuthorityService(store);
+    const projects = new MissionControlProjectService(store);
+    const stagedDocument = await isolatedStagedDocument(
+      projectId,
+      "legacy-authority",
+      legacySnapshot(
+        "/workspace/authority",
+        task("legacy-task", "Legacy work"),
+      ),
+    );
+    const driftStagedDocument = await isolatedStagedDocument(
+      driftProjectId,
+      "legacy-drift-at-cutover",
+      legacySnapshot(
+        "/workspace/drift-at-cutover",
+        task("drift-task", "Before drift"),
+      ),
+    );
+    const actualSources = await store.listMissionControlLegacySources?.();
+    assert.ok(actualSources);
+    alignStagedSource(
+      stagedDocument,
+      actualSources.find(
+        (source) => source.sourceId === "session:legacy-authority",
+      ),
+    );
+    alignStagedSource(
+      driftStagedDocument,
+      actualSources.find(
+        (source) =>
+          source.sourceId === "session:legacy-drift-at-cutover",
+      ),
+    );
+    await store.updateMissionControlProjectState({
+      projectId,
+      actionId: "stage-authority",
+      requestFingerprint: "1".repeat(64),
+      expectedRevision: 0,
+      apply: () => ({ document: stagedDocument, effects: [] }),
+    });
+    await store.updateMissionControlProjectState({
+      projectId: driftProjectId,
+      actionId: "stage-authority-drift",
+      requestFingerprint: "2".repeat(64),
+      expectedRevision: 0,
+      apply: () => ({ document: driftStagedDocument, effects: [] }),
+    });
+    await seedLegacy(
+      store,
+      "legacy-drift-at-cutover",
+      legacySnapshot(
+        "/workspace/drift-at-cutover",
+        task("drift-task", "After drift"),
+      ),
+    );
+    await assert.rejects(
+      authority.execute({
+        type: "authority.activate",
+        projectId: driftProjectId,
+        actionId: "activate-drifted",
+        actionTs: "2026-07-30T15:00:00.000Z",
+        expectedRevision: 1,
+      }),
+      (error: unknown) =>
+        error instanceof MissionControlAuthorityGateError &&
+        error.reason === "source_drift",
+    );
+    assert.equal(
+      (await projects.getProject(driftProjectId)).authorityEpoch,
+      0,
+    );
+
+    const activated = await authority.execute({
+      type: "authority.activate",
+      projectId,
+      actionId: "activate-authority",
+      actionTs: "2026-07-30T15:01:00.000Z",
+      expectedRevision: 1,
+    });
+    assert.equal(activated.project.authorityEpoch, 1);
+    assert.equal(activated.project.revision, 2);
+    assert.ok(store.saveSessionProjectSnapshot);
+    await assert.rejects(
+      () => store.saveSessionProjectSnapshot!({
+        sessionId: "legacy-authority",
+        snapshot: legacySnapshot(
+          "/workspace/authority",
+          task("forbidden-task", "Forbidden dual write"),
+        ),
+      }),
+      (error: unknown) =>
+        (error as { code?: string }).code ===
+        "MISSION_CONTROL_LEGACY_SOURCE_FROZEN",
+    );
+
+    const canonical = await projects.execute({
+      type: "item.create",
+      projectId,
+      actionId: "canonical-create",
+      actionTs: "2026-07-30T15:02:00.000Z",
+      expectedRevision: 2,
+      itemId: "canonical-task",
+      title: "Canonical work",
+      instructions: "Created after project authority cutover.",
+      createdBy: "operator",
+      completionContract: {
+        workType: "non_code",
+        changeOutcome: "no_change",
+        validation: {
+          mode: "not_applicable",
+          reason: "No source change is required.",
+        },
+        requiredEvidence: [],
+      },
+      order: 2,
+    });
+    assert.equal(canonical.project.document.items["canonical-task"]?.phase, "ready");
+
+    const rolledBack = await authority.execute({
+      type: "authority.rollback",
+      projectId,
+      actionId: "rollback-authority",
+      actionTs: "2026-07-30T15:03:00.000Z",
+      expectedRevision: 3,
+      operatorId: "operator",
+    });
+    assert.equal(rolledBack.project.authorityEpoch, 0);
+    assert.equal(rolledBack.project.document.autopilot.enabled, false);
+    const exported = await store.getSessionProductState?.("legacy-authority");
+    assert.equal(
+      exported?.projectSnapshot.taskQueue.tasks["canonical-task"]?.title,
+      "Canonical work",
+    );
+    assert.equal(
+      exported?.projectSnapshot.activity.at(-1)?.timestamp,
+      "2026-07-30T15:03:00.000Z",
+    );
+
+    await store.saveSessionProjectSnapshot({
+      sessionId: "legacy-authority",
+      snapshot: exported!.projectSnapshot,
+    });
+    assert.equal(
+      (await store.getSessionProductState?.("legacy-authority"))?.projectSnapshot
+        .taskQueue.tasks["canonical-task"]?.title,
+      "Canonical work",
+    );
+  },
+);
+
 function registration(
   projectId: string,
   path: string,
@@ -595,4 +802,46 @@ async function seedLegacy(
 ): Promise<void> {
   await store.ensureSession(sessionId);
   await store.saveSessionProjectSnapshot?.({ sessionId, snapshot });
+}
+
+async function isolatedStagedDocument(
+  projectId: string,
+  sessionId: string,
+  snapshot: ProductProjectSnapshot,
+) {
+  const store = new InMemorySessionStore();
+  await seedLegacy(store, sessionId, snapshot);
+  return (
+    await new MissionControlMigrationService(store).execute(
+      stageAction(
+        projectId,
+        `stage-${sessionId}`,
+        0,
+        [registration(projectId, snapshot.setup.workspaceRoot)],
+      ),
+    )
+  ).project.document;
+}
+
+function alignStagedSource(
+  document: Awaited<ReturnType<typeof isolatedStagedDocument>>,
+  source:
+    | NonNullable<
+        Awaited<
+          ReturnType<
+            NonNullable<
+              ReturnType<typeof createSessionStoreFromEnv>["store"]["listMissionControlLegacySources"]
+            >
+          >
+        >
+      >[number]
+    | undefined,
+): void {
+  assert.ok(source);
+  const migrationSource = document.migration?.sources.find(
+    (candidate) => candidate.sourceId === source.sourceId,
+  );
+  assert.ok(migrationSource);
+  migrationSource.sourceVersion = source.sourceVersion;
+  migrationSource.sourceFingerprint = fingerprintLegacySource(source);
 }

@@ -425,6 +425,9 @@ const desktopBridge: DesktopBridge = {
   executeMissionControlMigration(intent) {
     return ipcRenderer.invoke("desktop:execute-mission-control-migration", intent);
   },
+  executeMissionControlAction(intent) {
+    return ipcRenderer.invoke("desktop:execute-mission-control-action", intent);
+  },
   getProjectSnapshot(sessionId): Promise<DesktopProjectSnapshotResponse> {
     return ipcRenderer.invoke("desktop:get-project-snapshot", sessionId);
   },
