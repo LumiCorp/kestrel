@@ -105,8 +105,8 @@
       "id": "local-core-authority-lock-theft",
       "contractId": "local-core.authority-lock",
       "target": "src/localCore/api.ts",
-      "find": "status.lock.lock.ownerPid === process.pid\n    && status.lock.lock.authorityId === authorityId",
-      "replace": "true\n    && true",
+      "find": "status.lock.lock.ownerPid === process.pid &&\n    status.lock.lock.authorityId === authorityId",
+      "replace": "true &&\n    true",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=does not steal or unlink", "tests/unit/local-core-api.test.ts"],
       "testFiles": ["tests/unit/local-core-api.test.ts"]
