@@ -201,8 +201,22 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "workspace.validation.submit": { sessionId: "session-1", threadId: "thread-1", resultIds: ["result-1"] },
   "workspace.git.inspect": { sessionId: "session-1", threadId: "thread-1" },
   "workspace.git.action": { sessionId: "session-1", threadId: "thread-1", candidateFingerprint: `sha256:${"a".repeat(64)}`, action: { kind: "fetch", remote: "origin" } },
+  "mission_control.project.get": { projectId: "11111111-1111-4111-8111-111111111111" },
+  "mission_control.action.execute": {
+    action: {
+      type: "item.create",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      actionId: "create-1",
+      actionTs: "2026-07-30T00:00:00.000Z",
+      expectedRevision: 0,
+      itemId: "item-1",
+      title: "Canonical work",
+      instructions: "Exercise the project-scoped authority.",
+      createdBy: "operator",
+      order: 1,
+    },
+  },
   "project.snapshot.get": { sessionId: "session-1" },
-  "project.snapshot.update": { sessionId: "session-1", snapshot: {} },
   "project.action": {
     type: "branch.create",
     sessionId: "session-1",
@@ -313,6 +327,10 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "workspace.review": { sessionId: "session-1", threadId: "thread-1", operation: "list", snapshot: {} },
   "workspace.validation": { sessionId: "session-1", threadId: "thread-1", operation: "inspect", snapshot: {} },
   "workspace.git": { sessionId: "session-1", threadId: "thread-1", operation: "inspect", snapshot: {} },
+  "mission_control.project": {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    project: {},
+  },
   "project.snapshot": { sessionId: "session-1", snapshot: {} },
   "project.review": { sessionId: "session-1", detail: {} },
   "mcp.status": { status: {} },
@@ -573,27 +591,7 @@ contractTest("packages.hermetic", "canonical command parser rejects unknown and 
   }
 });
 
-contractTest("packages.hermetic", "canonical project actions reject malformed provided optional fields", () => {
-  const proposalRevision = parseRunnerCommandV2({
-    id: "command-task-proposal-revision",
-    type: "project.action",
-    payload: {
-      type: "task.propose",
-      sessionId: "session-1",
-      actionId: "action-proposal-revision",
-      actionTs: "2026-07-13T12:00:00.000Z",
-      taskId: "T-2",
-      title: "Revise the proposal",
-      instructions: "Preserve the human approval boundary.",
-      order: 1,
-    },
-  });
-  assert.equal(proposalRevision.type, "project.action");
-  if (proposalRevision.type === "project.action" && proposalRevision.payload.type === "task.propose") {
-    assert.equal(proposalRevision.payload.taskId, "T-2");
-    assert.equal(proposalRevision.payload.order, 1);
-  }
-
+contractTest("packages.hermetic", "canonical project actions reject retired lifecycle authorities and malformed Git fields", () => {
   assert.throws(
     () => parseRunnerCommandV2({
       id: "command-git-push-invalid-branch",
@@ -604,57 +602,19 @@ contractTest("packages.hermetic", "canonical project actions reject malformed pr
         branchName: 42,
       },
     }),
-    /branchName must be a string/u,
+    /optional field must be a string/u,
   );
 
-  assert.throws(
-    () => parseRunnerCommandV2({
-      id: "command-task-create-invalid-priority",
-      type: "project.action",
-      payload: {
-        type: "task.create",
-        sessionId: "session-1",
-        actionId: "action-1",
-        actionTs: "2026-07-13T12:00:00.000Z",
-        title: "Implement the contract",
-        instructions: "Keep the parser canonical.",
-        priority: "critical",
-      },
-    }),
-    /priority must be one of low, medium, high, urgent/u,
-  );
-  assert.throws(
-    () => parseRunnerCommandV2({
-      id: "command-task-propose-invalid-order",
-      type: "project.action",
-      payload: {
-        type: "task.propose",
-        sessionId: "session-1",
-        actionId: "action-invalid-order",
-        actionTs: "2026-07-13T12:00:00.000Z",
-        title: "Invalid proposal order",
-        instructions: "Reject non-positive proposal order.",
-        order: 0,
-      },
-    }),
-    /order must be a positive integer/u,
-  );
-
-  assert.throws(
-    () => parseRunnerCommandV2({
-      id: "command-task-claim-invalid-agent",
-      type: "project.action",
-      payload: {
-        type: "task.claim",
-        sessionId: "session-1",
-        actionId: "action-2",
-        actionTs: "2026-07-13T12:00:00.000Z",
-        taskId: "task-1",
-        assignedAgentId: false,
-      },
-    }),
-    /assignedAgentId must be a string/u,
-  );
+  for (const type of ["task.create", "task.propose", "board.card.create"]) {
+    assert.throws(
+      () => parseRunnerCommandV2({
+        id: `command-retired-${type}`,
+        type: "project.action",
+        payload: { type, sessionId: "session-1" },
+      }),
+      /project\.action payload\.type is invalid/u,
+    );
+  }
 
   for (const pullRequestNumber of [0, -1, 1.5]) {
     assert.throws(
@@ -830,6 +790,62 @@ contractTest("packages.hermetic", "canonical turn parsing validates structured a
       },
     }),
     /autoCompaction\.state must be one of/u,
+  );
+});
+
+contractTest("packages.hermetic", "canonical execution commands preserve exact Mission Control correlation", () => {
+  const missionControl = {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    itemId: "work-1",
+    attemptId: "attempt-1",
+    commandId: "command-1",
+    runId: "run-1",
+  };
+  const started = parseRunnerCommandV2({
+    id: "command-mission-control-start",
+    type: "run.start",
+    payload: {
+      profileId: "reference",
+      turn: { ...turn, missionControl },
+    },
+  });
+  assert.equal(started.type, "run.start");
+  if (started.type === "run.start") {
+    assert.deepEqual(started.payload.turn.missionControl, missionControl);
+  }
+  const continued = parseRunnerCommandV2({
+    id: "command-mission-control-retry",
+    type: "operator.control",
+    payload: {
+      action: "retry",
+      threadId: "thread-1",
+      completionMode: "accepted",
+      missionControl,
+    },
+  });
+  assert.equal(continued.type, "operator.control");
+  if (continued.type === "operator.control") {
+    assert.deepEqual(continued.payload.missionControl, missionControl);
+  }
+
+  assert.throws(
+    () =>
+      parseRunnerCommandV2({
+        id: "command-invalid-mission-control",
+        type: "run.start",
+        payload: {
+          profileId: "reference",
+          turn: {
+            ...turn,
+            missionControl: {
+              ...missionControl,
+              runId: "",
+              inferredRunId: "latest",
+            },
+          },
+        },
+      }),
+    /missionControl\.inferredRunId is not supported/u,
   );
 });
 

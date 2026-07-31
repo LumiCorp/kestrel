@@ -9,6 +9,10 @@ import type {
   MissionControlProjectStateRecord,
 } from "../../missionControl/projectAuthority.js";
 import type {
+  MissionControlLegacyProjectSource,
+  MissionControlMigrationSourceBinding,
+} from "../../missionControl/migrationContracts.js";
+import type {
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointKind,
   WorkspaceCheckpointRole,
@@ -141,10 +145,19 @@ export interface PersistedRunRecord {
   error?: RuntimeError | undefined;
 }
 
+export interface PersistedMissionControlRunCorrelation {
+  projectId: string;
+  itemId: string;
+  attemptId: string;
+  commandId: string;
+  runId: string;
+}
+
 export interface PersistedRunSummaryRecord {
   run: PersistedRunRecord;
   eventCount: number;
   threadId?: string | undefined;
+  missionControl?: PersistedMissionControlRunCorrelation | undefined;
 }
 
 export interface PersistedRunStateRecord {
@@ -377,9 +390,22 @@ export interface MissionControlProjectRepository {
   updateMissionControlProjectState(
     input: MissionControlProjectMutationInput,
   ): Promise<MissionControlProjectMutationResult>;
+  listMissionControlLegacySources?(): Promise<MissionControlLegacyProjectSource[]>;
+  listMissionControlMigrationSourceBindings?(): Promise<
+    MissionControlMigrationSourceBinding[]
+  >;
   listMissionControlOutbox(
     projectId: string,
   ): Promise<MissionControlOutboxRecord[]>;
+  markMissionControlOutboxDelivered?(
+    projectId: string,
+    effectId: string,
+  ): Promise<void>;
+  recordMissionControlOutboxFailure?(
+    projectId: string,
+    effectId: string,
+    error: string,
+  ): Promise<void>;
 }
 
 export interface RunRepository {

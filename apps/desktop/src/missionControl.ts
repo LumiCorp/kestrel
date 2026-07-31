@@ -1,9 +1,16 @@
-import { parseTaskAction } from "../../../src/missionControl/contracts.js";
-import { parseProductProjectBoardAction } from "../../../src/project/contracts.js";
+import { randomUUID } from "node:crypto";
+
+import {
+  parseMissionControlProjectStateRecord,
+  requireMissionControlExpectedRevision,
+  requireMissionControlProjectId,
+} from "../../../src/missionControl/projectAuthority.js";
+import {
+  requireMissionControlMigrationFingerprint,
+} from "../../../src/missionControl/migrationContracts.js";
+import { parseMissionControlCompletionContract } from "../../../src/missionControl/reviewContracts.js";
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
 import type {
-  DesktopProjectAction,
-  DesktopProjectSnapshotResponse,
   DesktopRuntimeRunIndex,
   DesktopRuntimeRunIndexEntry,
   DesktopRuntimeRunIndexQuery,
@@ -19,54 +26,396 @@ import type {
   DesktopRuntimeThreadSummary,
   DesktopThreadWorkspaceContext,
   DesktopOperatorControlRequest,
+  DesktopMissionControlProjectResponse,
+  DesktopMissionControlActionIntent,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
 
-export async function getDesktopProjectSnapshot(input: {
+export async function getDesktopMissionControlProject(input: {
   adapter: Pick<WebRunnerAdapter, "sendControl">;
-  sessionId: unknown;
+  projectId: unknown;
   context: WebRunnerRequestContext;
-}): Promise<DesktopProjectSnapshotResponse> {
-  const sessionId = parseSessionId(input.sessionId);
-  const event = await input.adapter.sendControl(
-    { type: "project.snapshot.get", sessionId },
-    input.context,
-  );
-  if (event.type !== "project.snapshot") {
-    throw createDesktopError({
-      code: "desktop.project_snapshot_unexpected_response",
-      message: `Runner returned '${event.type}' for project.snapshot.get.`,
-    });
-  }
-  return event.payload;
-}
-
-export async function runDesktopProjectAction(input: {
-  adapter: Pick<WebRunnerAdapter, "sendControl">;
-  action: unknown;
-  context: WebRunnerRequestContext;
-}): Promise<DesktopProjectSnapshotResponse> {
-  let action: DesktopProjectAction;
+}): Promise<DesktopMissionControlProjectResponse> {
+  let projectId: string;
   try {
-    action = parseDesktopProjectAction(input.action);
+    projectId = requireMissionControlProjectId(input.projectId);
   } catch (error) {
     throw createDesktopError({
-      code: "desktop.invalid_project_action",
-      message: "Desktop project action is invalid.",
+      code: "desktop.invalid_mission_control_project_id",
+      message: "Desktop Mission Control requires a registered project UUID.",
       details: error instanceof Error ? error.message : String(error),
     });
   }
   const event = await input.adapter.sendControl(
-    { type: "project.action", action },
+    { type: "mission_control.project.get", projectId },
     input.context,
   );
-  if (event.type !== "project.snapshot") {
+  if (event.type !== "mission_control.project") {
     throw createDesktopError({
-      code: "desktop.task_action_unexpected_response",
-      message: `Runner returned '${event.type}' for project.action.`,
+      code: "desktop.mission_control_project_unexpected_response",
+      message: `Runner returned '${event.type}' for mission_control.project.get.`,
     });
   }
-  return event.payload;
+  try {
+    const project = parseMissionControlProjectStateRecord(event.payload.project);
+    if (
+      event.payload.projectId !== projectId ||
+      project.projectId !== projectId
+    ) {
+      throw new Error("Mission Control project response identity did not match.");
+    }
+    return { projectId, project };
+  } catch (error) {
+    throw createDesktopError({
+      code: "desktop.mission_control_project_invalid_response",
+      message: "Runner returned an invalid Mission Control project document.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function executeDesktopMissionControlAction(input: {
+  adapter: Pick<WebRunnerAdapter, "sendControl">;
+  intent: unknown;
+  registeredProjectIds: string[];
+  profileId: string;
+  actionId: string;
+  actionTs: string;
+  context: WebRunnerRequestContext;
+}): Promise<DesktopMissionControlProjectResponse> {
+  let intent: DesktopMissionControlActionIntent;
+  try {
+    intent = parseDesktopMissionControlActionIntent(input.intent);
+  } catch (error) {
+    throw createDesktopError({
+      code: "desktop.invalid_mission_control_action_intent",
+      message: "Desktop Mission Control command is invalid.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+  if (input.registeredProjectIds.includes(intent.projectId) === false) {
+    throw createDesktopError({
+      code: "desktop.unregistered_mission_control_project",
+      message: "Desktop Mission Control commands require a registered project.",
+    });
+  }
+  const base = {
+    projectId: intent.projectId,
+    actionId: input.actionId,
+    actionTs: input.actionTs,
+    expectedRevision: intent.expectedRevision,
+  };
+  const itemBase =
+    "itemId" in intent
+      ? {
+          ...base,
+          itemId: intent.itemId,
+          expectedItemVersion: intent.expectedItemVersion,
+        }
+      : undefined;
+  const attemptBase =
+    itemBase !== undefined && "attemptId" in intent
+      ? {
+          ...itemBase,
+          attemptId: intent.attemptId,
+          expectedAttemptVersion: intent.expectedAttemptVersion,
+        }
+      : undefined;
+  const action: Record<string, unknown> =
+    intent.type === "create"
+          ? {
+              ...base,
+              type: "item.create",
+              itemId: randomUUID(),
+              title: intent.title,
+              instructions: intent.instructions,
+              createdBy: "operator",
+              completionContract: intent.completionContract,
+              order: intent.expectedRevision,
+            }
+          : intent.type === "approve"
+            ? { ...itemBase!, type: "item.approve" }
+            : intent.type === "return_to_ready"
+              ? { ...itemBase!, type: "item.return_to_ready" }
+              : intent.type === "discard"
+                ? { ...itemBase!, type: "item.discard" }
+                : intent.type === "restore"
+                  ? { ...itemBase!, type: "item.restore" }
+                  : intent.type === "start"
+                    ? {
+                        ...itemBase!,
+                        type: "execution.start",
+                        attemptId: randomUUID(),
+                        initiatedBy: "operator",
+                        profileId: input.profileId,
+                        sessionId: randomUUID(),
+                        threadId: undefined,
+                      }
+                    : intent.type === "retry"
+                      ? {
+                          ...itemBase!,
+                          type: "execution.retry",
+                          attemptId: randomUUID(),
+                        }
+                      : intent.type === "reply"
+                        ? {
+                            ...attemptBase!,
+                            type: "execution.reply",
+                            requestId: intent.requestId,
+                            message: intent.message,
+                          }
+                        : intent.type === "stop"
+                          ? {
+                              ...attemptBase!,
+                              type: "execution.stop",
+                              runId: intent.runId,
+                              commandId: intent.commandId,
+                            }
+                          : intent.type === "prepare_review"
+                            ? {
+                                ...attemptBase!,
+                                type: "review.prepare",
+                              }
+                            : intent.type === "accept"
+                              ? {
+                                  ...attemptBase!,
+                                  type: "review.accept",
+                                  candidateFingerprint:
+                                    intent.candidateFingerprint,
+                                  bundleId: intent.bundleId,
+                                  operatorId: "desktop-operator",
+                                }
+                              : intent.type === "request_changes"
+                                ? {
+                                    ...attemptBase!,
+                                    type: "review.request_changes",
+                                    candidateFingerprint:
+                                      intent.candidateFingerprint,
+                                    bundleId: intent.bundleId,
+                                    operatorId: "desktop-operator",
+                                    ...(intent.reason === undefined
+                                      ? {}
+                                      : { reason: intent.reason }),
+                                  }
+                                : intent.type === "configure_autopilot"
+                                  ? {
+                                      ...base,
+                                      type: "autopilot.configure",
+                                      enabled: intent.enabled,
+                                      wipLimit: intent.wipLimit,
+                                      ...(intent.enabled
+                                        ? { confirmedAt: input.actionTs }
+                                        : {}),
+                                    }
+                                  : (() => {
+                                      throw new Error(
+                                        `Unsupported Mission Control action intent: ${String(
+                                          (intent as { type?: unknown }).type,
+                                        )}.`,
+                                      );
+                                    })();
+  if (intent.type === "start") {
+    const sessionId = action.sessionId as string;
+    action.threadId = sessionId;
+  }
+  const event = await input.adapter.sendControl(
+    { type: "mission_control.action.execute", action },
+    input.context,
+  );
+  if (event.type !== "mission_control.project") {
+    throw createDesktopError({
+      code: "desktop.mission_control_action_unexpected_response",
+      message: `Runner returned '${event.type}' for mission_control.action.execute.`,
+    });
+  }
+  try {
+    const project = parseMissionControlProjectStateRecord(event.payload.project);
+    if (
+      event.payload.projectId !== intent.projectId ||
+      project.projectId !== intent.projectId
+    ) {
+      throw new Error("Mission Control command response identity did not match.");
+    }
+    return { projectId: intent.projectId, project };
+  } catch (error) {
+    throw createDesktopError({
+      code: "desktop.mission_control_action_invalid_response",
+      message: "Runner returned an invalid Mission Control project response.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export function parseDesktopMissionControlActionIntent(
+  value: unknown,
+): DesktopMissionControlActionIntent {
+  const record = requireObject(value, "Mission Control action intent");
+  const type = requireText(record.type, "type");
+  const base = {
+    projectId: requireMissionControlProjectId(record.projectId),
+    expectedRevision: requireMissionControlExpectedRevision(
+      record.expectedRevision,
+    ),
+  };
+  const baseKeys = ["type", "projectId", "expectedRevision"];
+  if (type === "create") {
+    requireExactKeys(record, [
+      ...baseKeys,
+      "title",
+      "instructions",
+      "completionContract",
+    ]);
+    return {
+      ...base,
+      type,
+      title: requireText(record.title, "title"),
+      instructions: requireText(record.instructions, "instructions"),
+      completionContract: parseMissionControlCompletionContract(
+        record.completionContract,
+      ),
+    };
+  }
+  if (type === "configure_autopilot") {
+    requireExactKeys(record, [
+      ...baseKeys,
+      "enabled",
+      "wipLimit",
+      "confirmed",
+    ]);
+    const enabled = requireBoolean(record.enabled, "enabled");
+    const confirmed = requireBoolean(record.confirmed, "confirmed");
+    if (enabled && confirmed === false) {
+      throw new Error("Enabling Mission Control Autopilot requires confirmation.");
+    }
+    return {
+      ...base,
+      type,
+      enabled,
+      wipLimit: requireBoundedPositiveInteger(record.wipLimit, "wipLimit", 64),
+      confirmed,
+    };
+  }
+  const itemBase = {
+    ...base,
+    itemId: requireText(record.itemId, "itemId"),
+    expectedItemVersion: requirePositiveInteger(
+      record.expectedItemVersion,
+      "expectedItemVersion",
+    ),
+  };
+  const itemKeys = [...baseKeys, "itemId", "expectedItemVersion"];
+  if (
+    type === "approve" ||
+    type === "return_to_ready" ||
+    type === "discard" ||
+    type === "restore" ||
+    type === "start" ||
+    type === "retry"
+  ) {
+    requireExactKeys(record, itemKeys);
+    return { ...itemBase, type };
+  }
+  const attemptBase = {
+    ...itemBase,
+    attemptId: requireText(record.attemptId, "attemptId"),
+    expectedAttemptVersion: requirePositiveInteger(
+      record.expectedAttemptVersion,
+      "expectedAttemptVersion",
+    ),
+  };
+  const attemptKeys = [
+    ...itemKeys,
+    "attemptId",
+    "expectedAttemptVersion",
+  ];
+  if (type === "reply") {
+    requireExactKeys(record, [...attemptKeys, "requestId", "message"]);
+    return {
+      ...attemptBase,
+      type,
+      requestId: requireText(record.requestId, "requestId"),
+      message: requireText(record.message, "message"),
+    };
+  }
+  if (type === "stop") {
+    requireExactKeys(record, [...attemptKeys, "runId", "commandId"]);
+    return {
+      ...attemptBase,
+      type,
+      runId: requireText(record.runId, "runId"),
+      commandId: requireText(record.commandId, "commandId"),
+    };
+  }
+  if (type === "prepare_review") {
+    requireExactKeys(record, attemptKeys);
+    return { ...attemptBase, type };
+  }
+  if (type === "accept" || type === "request_changes") {
+    requireIntentKeys(
+      record,
+      [...attemptKeys, "candidateFingerprint", "bundleId"],
+      type === "request_changes" ? ["reason"] : [],
+    );
+    return {
+      ...attemptBase,
+      type,
+      candidateFingerprint: requireMissionControlMigrationFingerprint(
+        record.candidateFingerprint,
+        "candidateFingerprint",
+      ),
+      bundleId: requireMissionControlMigrationFingerprint(
+        record.bundleId,
+        "bundleId",
+      ),
+      ...(record.reason === undefined
+        ? {}
+        : { reason: requireText(record.reason, "reason") }),
+    };
+  }
+  throw new Error(`Unsupported Mission Control action intent: ${type}.`);
+}
+
+function requireIntentKeys(
+  value: Record<string, unknown>,
+  required: string[],
+  optional: string[],
+): void {
+  const allowed = new Set([...required, ...optional]);
+  if (
+    Object.keys(value).some((key) => allowed.has(key) === false) ||
+    required.some((key) => key in value === false)
+  ) {
+    throw new Error("Mission Control action intent fields are invalid.");
+  }
+}
+
+function requireObject(
+  value: unknown,
+  field: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${field} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireText(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function requireExactKeys(
+  value: Record<string, unknown>,
+  keys: string[],
+): void {
+  const allowed = new Set(keys);
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
+  const missing = keys.filter((key) => !(key in value));
+  if (unexpected.length > 0 || missing.length > 0) {
+    throw new Error("Mission Control migration intent fields are invalid.");
+  }
 }
 
 export async function getDesktopOperatorThread(input: {
@@ -576,33 +925,6 @@ function parseSessionIndexEntry(
     latestStatus: parseRunStatus(entry.latestStatus, `${label}.latestStatus`),
     latestStartedAt: requireTimestamp(entry.latestStartedAt, `${label}.latestStartedAt`),
   };
-}
-
-function parseDesktopProjectAction(value: unknown): DesktopProjectAction {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("Desktop project action must be an object.");
-  }
-  const type = (value as { type?: unknown }).type;
-  if (typeof type !== "string") {
-    throw new Error("Desktop project action type is invalid.");
-  }
-  if (type.startsWith("task.")) {
-    return parseTaskAction(value);
-  }
-  if (type.startsWith("board.")) {
-    return parseProductProjectBoardAction(value);
-  }
-  throw new Error("Desktop project action type is invalid.");
-}
-
-function parseSessionId(value: unknown): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw createDesktopError({
-      code: "desktop.invalid_project_session",
-      message: "Desktop project session ID must be a non-empty string.",
-    });
-  }
-  return value;
 }
 
 function parseThreadId(value: unknown): string {

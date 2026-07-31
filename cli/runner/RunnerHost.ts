@@ -38,6 +38,7 @@ import type {
   WorkspaceReviewSnapshot,
   WorkspaceValidationSnapshot,
   WorkspaceGitSnapshot,
+  MissionControlProjectStateRecord,
 } from "../../src/index.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
@@ -62,13 +63,14 @@ import type {
   OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
+  MissionControlActionExecuteCommandPayload,
+  MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
   ProfileListCommandPayload,
   ProjectActionCommandPayload,
   ProjectReviewActionCommandPayload,
   ProjectReviewGetCommandPayload,
   ProjectSnapshotGetCommandPayload,
-  ProjectSnapshotUpdateCommandPayload,
   RunCancelCommandPayload,
   RunnerCommandMetadata,
   RunnerPingCommandPayload,
@@ -268,7 +270,7 @@ export interface RunnerRuntime {
     | undefined;
   performAcceptedOperatorAction?:
     | ((input: OperatorControlCommandPayload & {
-        action: "approve" | "reject" | "reply";
+        action: "approve" | "reject" | "reply" | "retry";
         issuedBy?: string | undefined;
         signal?: AbortSignal | undefined;
       }) => Promise<{
@@ -445,10 +447,15 @@ export interface RunnerRuntime {
         input: ProjectSnapshotGetCommandPayload
       ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
     | undefined;
-  updateProjectSnapshot?:
+  getMissionControlProject?:
     | ((
-        input: ProjectSnapshotUpdateCommandPayload
-      ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
+        input: MissionControlProjectGetCommandPayload
+      ) => Promise<MissionControlProjectStateRecord>)
+    | undefined;
+  executeMissionControlAction?:
+    | ((
+        input: MissionControlActionExecuteCommandPayload
+      ) => Promise<MissionControlProjectStateRecord>)
     | undefined;
   performProjectAction?:
     | ((
@@ -688,6 +695,7 @@ export class RunnerHost {
         {
           commandId,
           sessionId: turn.sessionId,
+          threadId: turn.sessionId,
           ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
         }
       );
@@ -759,6 +767,7 @@ export class RunnerHost {
           {
             commandId,
             sessionId: turn.sessionId,
+            threadId: turn.sessionId,
             ...(concurrent.runId !== undefined ? { runId: concurrent.runId } : {}),
           },
         );
@@ -809,6 +818,7 @@ export class RunnerHost {
       {
         commandId,
         sessionId: turn.sessionId,
+        threadId: turn.sessionId,
         ...(requestedRunId !== undefined ? { runId: requestedRunId } : {}),
       }
     );
@@ -1532,8 +1542,9 @@ export class RunnerHost {
     this.writer.emit(
       "runner.error",
       {
-        code: "RUNNER_RUNTIME_ERROR",
+        code: "OPERATOR_RUN_NOT_FOUND",
         message: `Run '${payload.runId}' was not found.`,
+        details: { runId: payload.runId },
       },
       { commandId, runId: payload.runId }
     );
@@ -1585,12 +1596,17 @@ export class RunnerHost {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (payload.completionMode === "accepted") {
         if (
-          (payload.action !== "approve" && payload.action !== "reject" && payload.action !== "reply")
+          (
+            payload.action !== "approve" &&
+            payload.action !== "reject" &&
+            payload.action !== "reply" &&
+            payload.action !== "retry"
+          )
           || typeof runtime.performAcceptedOperatorAction !== "function"
         ) {
           this.writer.emit("runner.error", {
             code: "RUNNER_RUNTIME_ERROR",
-            message: "Accepted operator control is available only for approval and reply actions.",
+            message: "Accepted operator control is available only for approval, reply, and retry actions.",
           }, { commandId, threadId: payload.threadId });
           return;
         }
@@ -1835,6 +1851,58 @@ export class RunnerHost {
       {
         code: "RUNNER_RUNTIME_ERROR",
         message: "Project snapshot is unavailable.",
+      },
+      { commandId }
+    );
+  }
+
+  async missionControlProjectGet(
+    commandId: string,
+    payload: MissionControlProjectGetCommandPayload,
+    metadata?: RunnerCommandMetadata
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.getMissionControlProject === "function") {
+        const project = await runtime.getMissionControlProject(payload);
+        this.writer.emit(
+          "mission_control.project",
+          { projectId: project.projectId, project: { ...project } },
+          { commandId }
+        );
+        return;
+      }
+    }
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Mission Control project authority is unavailable.",
+      },
+      { commandId }
+    );
+  }
+
+  async missionControlActionExecute(
+    commandId: string,
+    payload: MissionControlActionExecuteCommandPayload,
+    metadata?: RunnerCommandMetadata
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.executeMissionControlAction === "function") {
+        const project = await runtime.executeMissionControlAction(payload);
+        this.writer.emit(
+          "mission_control.project",
+          { projectId: project.projectId, project: { ...project } },
+          { commandId }
+        );
+        return;
+      }
+    }
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Mission Control command authority is unavailable.",
       },
       { commandId }
     );
@@ -2406,31 +2474,6 @@ export class RunnerHost {
     this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace Git ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
   }
 
-  async projectSnapshotUpdate(
-    commandId: string,
-    payload: ProjectSnapshotUpdateCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
-    for (const runtime of this.selectRuntimes(metadata)) {
-      if (typeof runtime.updateProjectSnapshot === "function") {
-        const snapshot = await runtime.updateProjectSnapshot(payload);
-        this.writer.emit("project.snapshot", snapshot, {
-          commandId,
-          sessionId: snapshot.sessionId,
-        });
-        return;
-      }
-    }
-    this.writer.emit(
-      "runner.error",
-      {
-        code: "RUNNER_RUNTIME_ERROR",
-        message: "Project snapshot is unavailable.",
-      },
-      { commandId }
-    );
-  }
-
   async projectAction(
     commandId: string,
     payload: ProjectActionCommandPayload,
@@ -2438,41 +2481,11 @@ export class RunnerHost {
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.performProjectAction === "function") {
-        try {
-          const snapshot = await runtime.performProjectAction(payload);
-          this.writer.emit("project.snapshot", snapshot, {
-            commandId,
-            sessionId: snapshot.sessionId,
-          });
-        } catch (error) {
-          if (isProjectBoardConflictError(error)) {
-            this.writer.emit(
-              "runner.error",
-              {
-                code:
-                  (error as Error & { code?: string }).code ??
-                  "PROJECT_BOARD_CONFLICT",
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Project board conflict.",
-                details: {
-                  sessionId: payload.sessionId,
-                  ...("expectedBoardVersion" in payload &&
-                  typeof payload.expectedBoardVersion === "number"
-                    ? { expectedBoardVersion: payload.expectedBoardVersion }
-                    : {}),
-                },
-              },
-              {
-                commandId,
-                sessionId: payload.sessionId,
-              }
-            );
-            return;
-          }
-          throw error;
-        }
+        const snapshot = await runtime.performProjectAction(payload);
+        this.writer.emit("project.snapshot", snapshot, {
+          commandId,
+          sessionId: snapshot.sessionId,
+        });
         return;
       }
     }
@@ -3208,20 +3221,6 @@ function isSessionVersionConflictError(error: unknown): error is Error {
     error instanceof Error &&
     typeof (error as Error & { code?: unknown }).code === "string" &&
     (error as Error & { code: string }).code === "SESSION_VERSION_CONFLICT"
-  );
-}
-
-function isProjectBoardConflictError(error: unknown): error is Error {
-  if (
-    !(error instanceof Error) ||
-    typeof (error as Error & { code?: unknown }).code !== "string"
-  ) {
-    return false;
-  }
-  const code = (error as Error & { code: string }).code;
-  return (
-    code === "SESSION_VERSION_CONFLICT" ||
-    code === "PROJECT_BOARD_VERSION_CONFLICT"
   );
 }
 

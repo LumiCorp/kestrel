@@ -1054,7 +1054,7 @@ contractTest("runtime.hermetic", "context request surfaces ledger filesystem fac
   assert.match(rendered, /fs\.search_text \/app\/synonyms\.txt for \\"privileged\\" returned 0 matches/u);
 });
 
-contractTest("runtime.hermetic", "context request includes compact mission control task queue context for project-backed turns", () => {
+contractTest("runtime.hermetic", "context request ignores legacy session task queue state", () => {
   const request = buildContextRequest({
     reactState: {},
     eventPayload: {
@@ -1102,16 +1102,17 @@ contractTest("runtime.hermetic", "context request includes compact mission contr
   });
 
   const rendered = JSON.stringify(request.messages);
-  assert.match(rendered, /Mission Control task queue/u);
-  assert.match(rendered, /sessionId: project-session-1/u);
-  assert.match(rendered, /T-1 \[order 1\] Fix auth callback/u);
-  assert.match(rendered, /agent agent-1/u);
-  assert.match(rendered, /avoid duplicates/u);
-  assert.match(rendered, /task\.propose/u);
-  assert.match(JSON.stringify(request.modelInput.projectTaskQueueContext), /T-2 \[order 2\] Add auth regression test/u);
+  assert.doesNotMatch(rendered, /Mission Control task queue/u);
+  assert.doesNotMatch(rendered, /sessionId: project-session-1/u);
+  assert.doesNotMatch(rendered, /T-1 \[order 1\] Fix auth callback/u);
+  assert.doesNotMatch(rendered, /agent agent-1/u);
+  assert.equal(
+    Object.hasOwn(request.modelInput, "projectTaskQueueContext"),
+    false,
+  );
 });
 
-contractTest("runtime.hermetic", "context request includes every proposed task for Plan reconciliation", () => {
+contractTest("runtime.hermetic", "Plan context does not import legacy session proposals", () => {
   const tasks = Object.fromEntries(
     Array.from({ length: 9 }, (_, index) => {
       const taskNumber = index + 1;
@@ -1144,10 +1145,13 @@ contractTest("runtime.hermetic", "context request includes every proposed task f
     },
   });
 
-  const rendered = JSON.stringify(request.modelInput.projectTaskQueueContext);
-  assert.match(rendered, /T-1 \[order 1\] Proposal 1/u);
-  assert.match(rendered, /T-9 \[order 9\] Proposal 9/u);
-  assert.match(rendered, /taskId/u);
+  const rendered = JSON.stringify(request.messages);
+  assert.doesNotMatch(rendered, /T-1 \[order 1\] Proposal 1/u);
+  assert.doesNotMatch(rendered, /T-9 \[order 9\] Proposal 9/u);
+  assert.equal(
+    Object.hasOwn(request.modelInput, "projectTaskQueueContext"),
+    false,
+  );
 });
 
 contractTest("runtime.hermetic", "context request omits mission control task queue context for non-project turns", () => {

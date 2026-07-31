@@ -49,7 +49,7 @@ import {
 import { DiffWorkspace } from "./DiffWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
 import { McpWorkspace } from "./McpWorkspace";
-import { MissionControlWorkspace } from "./MissionControlWorkspace";
+import { UnifiedMissionControlWorkspace } from "./UnifiedMissionControlWorkspace";
 import {
   extractDesktopTerminalOutcome,
   getDesktopOutcomeHandoff,
@@ -169,8 +169,6 @@ export function DesktopApp() {
   const [inspectorWidth, setInspectorWidth] = useState(() => readDesktopSidebarWidth());
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
-  const [missionControlRevision, setMissionControlRevision] = useState(0);
-  const [missionControlRunId, setMissionControlRunId] = useState<string>();
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>();
   const [timelineHasNewActivity, setTimelineHasNewActivity] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
@@ -402,7 +400,6 @@ export function DesktopApp() {
         || event.type === "run.failed"
         || event.type === "run.cancelled"
       ) {
-        setMissionControlRevision((value) => value + 1);
         if (rendererThread !== undefined && event.type !== "task.updated") {
           setActiveRuns((current) => {
             const next = { ...current };
@@ -530,7 +527,7 @@ export function DesktopApp() {
     void refreshThreadAuthority(activeThread).catch((cause) => {
       setThreadFailure(activeThread.id, "Thread status unavailable", errorMessage(cause));
     });
-  }, [activeThread?.id, missionControlRevision]);
+  }, [activeThread?.id]);
 
   useEffect(() => {
     if (
@@ -1156,8 +1153,28 @@ export function DesktopApp() {
     newConversation(projectPath);
   }
 
+  function openMissionControlConversation(sessionId: string): void {
+    const matches = state?.threads.filter(
+      (thread) => thread.sessionId === sessionId,
+    ) ?? [];
+    if (matches.length !== 1) {
+      setSurfaceError(
+        "mission-control",
+        matches.length === 0
+          ? "The linked conversation is not available in this Desktop window."
+          : "The linked conversation identity is ambiguous.",
+      );
+      return;
+    }
+    setState((current) =>
+      current === undefined
+        ? current
+        : selectRendererThread(current, matches[0]!.id),
+    );
+    setSurface("chat");
+  }
+
   function openWorkSurface(nextSurface: DesktopSurface): void {
-    setMissionControlRunId(undefined);
     setSurface(nextSurface);
     closeWorkNavigator();
   }
@@ -1173,7 +1190,7 @@ export function DesktopApp() {
   }
 
   function inspectOutcomeRun(runId: string): void {
-    setMissionControlRunId(runId);
+    void runId;
     setSurface("mission-control");
   }
 
@@ -1760,13 +1777,22 @@ export function DesktopApp() {
                 onError={(error) => setSurfaceError("projects", error)}
               />
             ) : surface === "mission-control" ? (
-              <MissionControlWorkspace
-                sessionId={activeThread.sessionId}
-                project={threadProject}
-                refreshVersion={missionControlRevision}
-                initialRunId={missionControlRunId}
-                onError={(error) => setSurfaceError("mission-control", error)}
-              />
+              threadProject?.id !== undefined ? (
+                <UnifiedMissionControlWorkspace
+                  project={{ ...threadProject, id: threadProject.id }}
+                  onReturnToConversation={() => setSurface("chat")}
+                  onOpenConversation={openMissionControlConversation}
+                  onStartConversation={startProjectConversation}
+                  onError={(error) => setSurfaceError("mission-control", error)}
+                />
+              ) : (
+                <main className="surface-pane unified-mission-control" id="app-main">
+                  <section className="unified-mission-empty">
+                    <h1>Mission Control</h1>
+                    <p>Reconnect this conversation to a registered project to view project work.</p>
+                  </section>
+                </main>
+              )
             ) : surface === "diff" ? (
               <DiffWorkspace
                 key={`${activeThread.id}:${activeThread.diffScopeKind}:${activeThread.diffRevision}`}

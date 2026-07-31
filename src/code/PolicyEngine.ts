@@ -37,6 +37,7 @@ export function evaluateExecutionPolicy(
     ),
     memoryMb: effective.sandbox.memoryMb,
     cpuShares: effective.sandbox.cpuShares,
+    pidsLimit: effective.sandbox.pidsLimit ?? 64,
     network: resolveNetworkMode(effective, request.network),
     allowDependencyInstall: effective.sandbox.allowDependencyInstall,
     maxOutputBytes: effective.sandbox.maxOutputBytes,
@@ -115,6 +116,11 @@ export function mergeCodeModeConfig(
       ),
       memoryMb: boundedPositiveInt(config?.sandbox?.memoryMb, base.sandbox.memoryMb, 8192),
       cpuShares: boundedPositiveInt(config?.sandbox?.cpuShares, base.sandbox.cpuShares, 2048),
+      pidsLimit: boundedPositiveInt(
+        config?.sandbox?.pidsLimit,
+        base.sandbox.pidsLimit ?? 64,
+        1024,
+      ),
       networkDefault: config?.sandbox?.networkDefault ?? base.sandbox.networkDefault,
       allowDependencyInstall:
         config?.sandbox?.allowDependencyInstall ?? base.sandbox.allowDependencyInstall,

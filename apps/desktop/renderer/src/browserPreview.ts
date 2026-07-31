@@ -8,9 +8,9 @@ import type {
   DesktopLegacyUiStateEntries,
   DesktopManagedProjectRun,
   DesktopMcpServerMutationInput,
+  DesktopMissionControlActionIntent,
   DesktopPathTargetInput,
-  DesktopProjectAction,
-  DesktopProjectSnapshotResponse,
+  DesktopMissionControlProjectResponse,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopRunnerEvent,
@@ -33,18 +33,6 @@ import {
   DESKTOP_DEFAULT_ENABLED_APP_IDS,
   listDesktopAppDefinitions,
 } from "../../../../src/desktopShell/configuration";
-
-type PreviewSnapshot = DesktopProjectSnapshotResponse["snapshot"];
-type PreviewTaskAction = Extract<
-  DesktopProjectAction,
-  { type: `task.${string}` }
->;
-type PreviewBoardAction = Extract<
-  DesktopProjectAction,
-  { type: `board.${string}` }
->;
-type PreviewBoard = PreviewSnapshot["board"];
-type PreviewBoardCard = PreviewBoard["cards"][string];
 
 export function ensureBrowserPreviewBridge(): void {
   const previewWindow = window as unknown as { kestrelDesktop?: DesktopBridge };
@@ -73,8 +61,16 @@ export function ensureBrowserPreviewBridge(): void {
       "sandbox_code",
     ],
     projects: [
-      { path: "/workspace/kestrel", label: "kestrel" },
-      { path: "/workspace/demo-agent", label: "demo-agent" },
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        path: "/workspace/kestrel",
+        label: "kestrel",
+      },
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        path: "/workspace/demo-agent",
+        label: "demo-agent",
+      },
     ],
     advancedWorkspaceEnabled: false,
     setupCompletedAt: new Date().toISOString(),
@@ -102,7 +98,6 @@ export function ensureBrowserPreviewBridge(): void {
   let weatherCredentialConfigured = false;
   let managedMcpServers: import("../../src/contracts").DesktopMcpServerConfig[] =
     [];
-  let previewProjectSnapshot = createPreviewProjectSnapshot();
   let previewFileContent = [
     'import { createKestrelClient } from "@kestrel/sdk";',
     "",
@@ -718,19 +713,15 @@ export function ensureBrowserPreviewBridge(): void {
         scriptName: existing.scriptName,
       });
     },
-    async getProjectSnapshot(
-      sessionId: string,
-    ): Promise<DesktopProjectSnapshotResponse> {
-      return { sessionId, snapshot: previewProjectSnapshot };
+    async getMissionControlProject(
+      projectId: string,
+    ): Promise<DesktopMissionControlProjectResponse> {
+      return createPreviewMissionControlProject(projectId);
     },
-    async runProjectAction(
-      action: DesktopProjectAction,
-    ): Promise<DesktopProjectSnapshotResponse> {
-      previewProjectSnapshot = applyPreviewProjectAction(
-        previewProjectSnapshot,
-        action,
-      );
-      return { sessionId: action.sessionId, snapshot: previewProjectSnapshot };
+    async executeMissionControlAction(
+      intent: DesktopMissionControlActionIntent,
+    ): Promise<DesktopMissionControlProjectResponse> {
+      return createPreviewMissionControlProject(intent.projectId);
     },
     async getOperatorThread(
       threadId: string,
@@ -1170,7 +1161,6 @@ function createPreviewEnvironmentStatus() {
     activity: [],
   };
 }
-
 function createPreviewWorkspaceChanges(
   sessionId: string,
   threadId: string,
@@ -1502,220 +1492,116 @@ function createPreviewWorkspaceGit(
   };
 }
 
-function createPreviewProjectSnapshot(): DesktopProjectSnapshotResponse["snapshot"] {
+function createPreviewMissionControlProject(
+  projectId: string,
+): DesktopMissionControlProjectResponse {
   const now = new Date().toISOString();
-  const earlier = new Date(Date.now() - 48_000).toISOString();
   return {
-    version: 1,
-    graphVersion: 1,
-    setup: {
-      workspaceRoot: "/workspace/kestrel",
-      repoRoot: "/workspace/kestrel",
-      repoLabel: "kestrel",
-      defaultBranch: "main",
-      providerProfileId: "reference-web",
-      githubConnected: true,
-      browserReady: true,
-      codeReady: true,
-      mcpReady: true,
-    },
-    policy: {
-      sandboxMode: "workspace_write",
-      approvalMode: "on_request",
-      toolClassPolicy: {},
-      browserScope: "project",
-      githubScope: "project",
-      mcpScope: "project",
-      taskOverrides: {},
-      recentDecisions: [],
-    },
-    board: {
-      version: 1,
-      boardVersion: 5,
-      nextCardNumber: 5,
-      lanes: ["idea", "planned", "wip", "testing", "done"],
-      settings: { autopilotEnabled: false, wipLimit: 2 },
-      cards: {
-        "K-1": {
-          id: "K-1",
-          title: "Define hosted app cutover",
-          prompt:
-            "Document the path, package, and deployment transition from Web Client to Kestrel One.",
-          lane: "idea",
-          order: 1,
-          createdAt: earlier,
-          updatedAt: earlier,
-          threads: [],
-          evidence: [
-            {
-              id: "preview-board-evidence-1",
-              timestamp: earlier,
-              source: "operator",
-              outcome: "created",
-              summary: "Card created for the 0.6 repository split.",
-            },
-          ],
-        },
-        "K-2": {
-          id: "K-2",
-          title: "Retire legacy web cockpit",
-          prompt:
-            "Move retained local workflows into Desktop before promoting Kestrel One to apps/web.",
-          lane: "planned",
-          order: 1,
-          createdAt: earlier,
-          updatedAt: now,
-          threads: [],
-          evidence: [
-            {
-              id: "preview-board-evidence-2",
-              timestamp: now,
-              source: "operator",
-              outcome: "moved",
-              summary: "Cutover work is ready for implementation.",
-            },
-          ],
-        },
-        "K-3": {
-          id: "K-3",
-          title: "Package Desktop state bridge",
-          prompt:
-            "Verify the 0.5.1 bridge migrates local state before the hosted path cutover.",
-          lane: "wip",
-          order: 1,
-          createdAt: earlier,
-          updatedAt: now,
-          activeClaim: {
-            threadId: "thread-main:preview-desktop-bridge",
-            sessionId: "preview-desktop-bridge",
-            kind: "implementation",
-            claimedAt: now,
-            claimReason: "copilot",
+    projectId,
+    project: {
+      projectId,
+      schemaVersion: 1,
+      revision: 6,
+      authorityEpoch: 1,
+      document: {
+        schemaVersion: 1,
+        projectId,
+        autopilot: { enabled: false, wipLimit: 2 },
+        items: {
+          "preview-ready": {
+            id: "preview-ready",
+            title: "Prepare the Desktop release",
+            instructions: "Complete the project-scoped release checklist.",
+            createdBy: "operator",
+            phase: "ready",
+            order: 1,
+            attempts: [],
+            version: 1,
+            createdAt: now,
+            updatedAt: now,
           },
-          threads: [
-            {
-              threadId: "thread-main:preview-desktop-bridge",
-              sessionId: "preview-desktop-bridge",
-              kind: "implementation",
-              startedAt: now,
-              status: "active",
-            },
-          ],
-          evidence: [
-            {
-              id: "preview-board-evidence-3",
-              timestamp: now,
-              source: "copilot",
-              outcome: "thread_started",
-              summary: "Implementation thread started.",
-              threadId: "thread-main:preview-desktop-bridge",
-            },
-          ],
-        },
-        "K-4": {
-          id: "K-4",
-          title: "Verify public clone boundary",
-          prompt:
-            "Run release package, source sanitation, and fresh-clone gates from public dependencies.",
-          lane: "testing",
-          order: 1,
-          createdAt: earlier,
-          updatedAt: now,
-          threads: [],
-          evidence: [
-            {
-              id: "preview-board-evidence-4",
-              timestamp: now,
-              source: "implementation_thread",
-              outcome: "success",
-              summary: "Implementation completed and is ready for testing.",
-            },
-          ],
-        },
-      },
-    },
-    taskQueue: {
-      version: 1,
-      queueVersion: 4,
-      nextTaskNumber: 4,
-      tasks: {
-        "T-1": {
-          id: "T-1",
-          title: "Verify public package boundary",
-          instructions:
-            "Run packed consumer checks for protocol, SDK, and Next.",
-          priority: "high",
-          status: "running",
-          createdBy: "user",
-          createdAt: earlier,
-          updatedAt: now,
-          order: 1,
-          threadId: "thread-package-verification",
-          evidence: [
-            {
-              id: "evidence-1",
-              timestamp: now,
-              summary: "Package verification is running.",
-              source: "runtime",
-            },
-          ],
-        },
-        "T-2": {
-          id: "T-2",
-          title: "Review Desktop parity",
-          instructions:
-            "Confirm the static renderer owns retained cockpit workflows.",
-          priority: "medium",
-          status: "ready_for_review",
-          createdBy: "agent",
-          createdAt: earlier,
-          updatedAt: now,
-          order: 2,
-          evidence: [
-            {
-              id: "evidence-2",
-              timestamp: now,
-              summary: "Mission Control bridge implemented.",
-              source: "agent",
-            },
-          ],
-          review: {
-            submittedAt: now,
-            summary: "Ready for operator review.",
+          "preview-active": {
+            id: "preview-active",
+            title: "Verify Mission Control recovery",
+            instructions: "Exercise disconnect, relaunch, and exact-run recovery.",
+            createdBy: "operator",
+            phase: "active",
+            order: 1,
+            currentAttemptId: "preview-attempt",
+            attempts: [{
+              id: "preview-attempt",
+              generation: 1,
+              initiatedBy: "operator",
+              status: "running",
+              version: 2,
+              profileId: "desktop",
+              requestedSessionId: "preview-desktop-bridge",
+              requestedThreadId: "thread-main:preview-desktop-bridge",
+              dispatchCommandId: "preview-command",
+              dispatchRunId: "preview-run",
+              currentRunId: "preview-run",
+              runs: [{
+                sessionId: "preview-desktop-bridge",
+                threadId: "thread-main:preview-desktop-bridge",
+                runId: "preview-run",
+                commandId: "preview-command",
+                acceptedAt: now,
+              }],
+              createdAt: now,
+              updatedAt: now,
+            }],
+            version: 2,
+            createdAt: now,
+            updatedAt: now,
+          },
+          "preview-review": {
+            id: "preview-review",
+            title: "Inspect the frozen candidate",
+            instructions: "Review candidate-bound proof before acceptance.",
+            createdBy: "agent",
+            phase: "review",
+            order: 1,
+            attempts: [],
+            version: 1,
+            createdAt: now,
+            updatedAt: now,
+          },
+          "preview-discarded": {
+            id: "preview-discarded",
+            title: "Retired parallel board",
+            instructions: "Historical preview-only item.",
+            createdBy: "agent",
+            phase: "discarded",
+            order: 1,
+            attempts: [],
+            version: 2,
+            createdAt: now,
+            updatedAt: now,
           },
         },
-        "T-3": {
-          id: "T-3",
-          title: "Archive obsolete web routes",
-          instructions:
-            "Wait for the 0.5.1 Desktop bridge release before path cutover.",
-          priority: "urgent",
-          status: "proposed",
-          createdBy: "agent",
-          createdAt: now,
+        history: [{
+          actionId: "preview-history",
+          actionType: "execution.accepted",
+          revision: 6,
+          timestamp: now,
+          itemId: "preview-active",
+          attemptId: "preview-attempt",
+          disposition: "applied",
+        }],
+        migration: {
+          version: 1,
+          status: "staged",
+          registeredPath: "/workspace/kestrel",
+          sources: [],
+          candidates: [],
+          rebinds: [],
+          stagedAt: now,
           updatedAt: now,
-          order: 3,
-          evidence: [
-            {
-              id: "evidence-3",
-              timestamp: now,
-              summary: "Task proposed by migration planner.",
-              source: "agent",
-            },
-          ],
         },
       },
+      createdAt: now,
+      updatedAt: now,
     },
-    review: {
-      branches: [],
-      worktrees: [],
-      pullRequests: [],
-      recentCommits: [],
-    },
-    workspaceCheckpoints: {
-      recentActivity: [],
-    },
-    activity: [],
   };
 }
 
@@ -2078,497 +1964,5 @@ function createPreviewRuntimeRunIndex(
     hasMore: all.length > limit,
     runs,
     sessions,
-  };
-}
-
-function applyPreviewProjectAction(
-  snapshot: PreviewSnapshot,
-  action: DesktopProjectAction,
-): PreviewSnapshot {
-  return isPreviewBoardAction(action)
-    ? applyPreviewBoardAction(snapshot, action)
-    : applyPreviewTaskAction(snapshot, action);
-}
-
-function applyPreviewTaskAction(
-  snapshot: PreviewSnapshot,
-  action: PreviewTaskAction,
-): PreviewSnapshot {
-  const tasks = { ...snapshot.taskQueue.tasks };
-  if (action.type === "task.create" || action.type === "task.propose") {
-    const taskId = `T-${snapshot.taskQueue.nextTaskNumber}`;
-    tasks[taskId] = {
-      id: taskId,
-      title: action.title,
-      instructions: action.instructions,
-      ...(action.acceptanceCriteria !== undefined
-        ? { acceptanceCriteria: action.acceptanceCriteria }
-        : {}),
-      ...(action.projectPath !== undefined
-        ? { projectPath: action.projectPath }
-        : {}),
-      ...(action.projectLabel !== undefined
-        ? { projectLabel: action.projectLabel }
-        : {}),
-      priority: action.priority ?? "medium",
-      status: action.type === "task.create" ? "queued" : "proposed",
-      createdBy: action.type === "task.create" ? "user" : "agent",
-      createdAt: action.actionTs,
-      updatedAt: action.actionTs,
-      order: Object.keys(tasks).length + 1,
-      evidence: [
-        {
-          id: `${action.actionId}:evidence`,
-          timestamp: action.actionTs,
-          summary: action.summary ?? "Task created.",
-          source: action.type === "task.create" ? "user" : "agent",
-        },
-      ],
-    };
-    return {
-      ...snapshot,
-      taskQueue: {
-        ...snapshot.taskQueue,
-        queueVersion: snapshot.taskQueue.queueVersion + 1,
-        nextTaskNumber: snapshot.taskQueue.nextTaskNumber + 1,
-        tasks,
-      },
-    };
-  }
-
-  if (action.taskId === undefined || tasks[action.taskId] === undefined) {
-    return snapshot;
-  }
-  const current = tasks[action.taskId]!;
-  const status =
-    action.type === "task.approve" ||
-    action.type === "task.retry" ||
-    action.type === "task.request_changes"
-      ? "queued"
-      : action.type === "task.claim" || action.type === "task.mark_running"
-        ? "running"
-        : action.type === "task.needs_attention" || action.type === "task.stop"
-          ? "needs_attention"
-          : action.type === "task.submit_review"
-            ? "ready_for_review"
-            : action.type === "task.accept"
-              ? "done"
-              : action.type === "task.discard"
-                ? "discarded"
-                : current.status;
-  tasks[action.taskId] = {
-    ...current,
-    status,
-    updatedAt: action.actionTs,
-    evidence: [
-      ...current.evidence,
-      {
-        id: `${action.actionId}:evidence`,
-        timestamp: action.actionTs,
-        summary: action.summary ?? action.type.replaceAll("_", " "),
-        source: "runtime",
-      },
-    ],
-  };
-  return {
-    ...snapshot,
-    taskQueue: {
-      ...snapshot.taskQueue,
-      queueVersion: snapshot.taskQueue.queueVersion + 1,
-      tasks,
-    },
-  };
-}
-
-function isPreviewBoardAction(
-  action: DesktopProjectAction,
-): action is PreviewBoardAction {
-  return action.type.startsWith("board.");
-}
-
-function applyPreviewBoardAction(
-  snapshot: PreviewSnapshot,
-  action: PreviewBoardAction,
-): PreviewSnapshot {
-  if (
-    action.expectedBoardVersion !== undefined &&
-    action.expectedBoardVersion !== snapshot.board.boardVersion
-  ) {
-    throw Object.assign(
-      new Error(
-        `Project board version conflict: expected=${action.expectedBoardVersion} actual=${snapshot.board.boardVersion}.`,
-      ),
-      { code: "PROJECT_BOARD_VERSION_CONFLICT" },
-    );
-  }
-
-  switch (action.type) {
-    case "board.autopilot.configure":
-      return replacePreviewBoard(snapshot, {
-        ...snapshot.board,
-        settings: {
-          ...snapshot.board.settings,
-          ...(action.autopilotEnabled !== undefined
-            ? { autopilotEnabled: action.autopilotEnabled }
-            : {}),
-          ...(action.autopilotConfirmedAt !== undefined
-            ? { autopilotConfirmedAt: action.autopilotConfirmedAt }
-            : {}),
-          ...(action.wipLimit !== undefined
-            ? { wipLimit: action.wipLimit }
-            : {}),
-        },
-      });
-    case "board.autopilot.tick":
-      return applyPreviewAutopilotTick(snapshot, action);
-    case "board.card.create": {
-      const cardId = `K-${snapshot.board.nextCardNumber}`;
-      const card: PreviewBoardCard = {
-        id: cardId,
-        title: action.title,
-        prompt: action.prompt,
-        lane: "idea",
-        order: nextPreviewLaneOrder(snapshot.board, "idea"),
-        createdAt: action.actionTs,
-        updatedAt: action.actionTs,
-        threads: [],
-        evidence: [
-          previewBoardEvidence(
-            action,
-            "created",
-            action.summary ?? "Card created.",
-          ),
-        ],
-      };
-      return replacePreviewBoard(snapshot, {
-        ...snapshot.board,
-        nextCardNumber: snapshot.board.nextCardNumber + 1,
-        cards: { ...snapshot.board.cards, [cardId]: card },
-      });
-    }
-    case "board.card.update": {
-      const card = snapshot.board.cards[action.cardId];
-      if (card === undefined) {
-        return snapshot;
-      }
-      return replacePreviewBoardCard(snapshot, {
-        ...card,
-        ...(action.title !== undefined ? { title: action.title } : {}),
-        ...(action.prompt !== undefined ? { prompt: action.prompt } : {}),
-        updatedAt: action.actionTs,
-        evidence: [
-          ...card.evidence,
-          previewBoardEvidence(
-            action,
-            "updated",
-            action.summary ?? "Card updated.",
-          ),
-        ],
-      });
-    }
-    case "board.card.move": {
-      const card = snapshot.board.cards[action.cardId];
-      if (card === undefined) {
-        return snapshot;
-      }
-      return replacePreviewBoardCard(snapshot, {
-        ...card,
-        lane: action.targetLane,
-        order:
-          action.order ??
-          nextPreviewLaneOrder(snapshot.board, action.targetLane, card.id),
-        updatedAt: action.actionTs,
-        evidence: [
-          ...card.evidence,
-          previewBoardEvidence(
-            action,
-            "moved",
-            action.summary ??
-              `Moved from ${card.lane} to ${action.targetLane}.`,
-          ),
-        ],
-      });
-    }
-    case "board.card.manual_done": {
-      const card = snapshot.board.cards[action.cardId];
-      if (card === undefined) {
-        return snapshot;
-      }
-      return replacePreviewBoardCard(snapshot, {
-        ...card,
-        lane: "done",
-        order: nextPreviewLaneOrder(snapshot.board, "done", card.id),
-        activeClaim: undefined,
-        updatedAt: action.actionTs,
-        evidence: [
-          ...card.evidence,
-          previewBoardEvidence(
-            action,
-            "manual_done",
-            action.reason ?? "Card marked done.",
-          ),
-        ],
-      });
-    }
-    case "board.card.delete": {
-      if (snapshot.board.cards[action.cardId] === undefined) {
-        return snapshot;
-      }
-      const cards = { ...snapshot.board.cards };
-      delete cards[action.cardId];
-      return replacePreviewBoard(snapshot, { ...snapshot.board, cards });
-    }
-    case "board.card.start_implementation":
-      return startPreviewBoardThread(snapshot, action, "implementation");
-    case "board.card.start_testing":
-      return startPreviewBoardThread(snapshot, action, "testing");
-    case "board.card.thread_completed":
-      return finishPreviewBoardThread(snapshot, action, "completed");
-    case "board.card.thread_failed":
-      return finishPreviewBoardThread(snapshot, action, "failed");
-    case "board.card.thread_stopped":
-      return finishPreviewBoardThread(snapshot, action, "stopped");
-    case "board.card.testing_verdict":
-      return applyPreviewTestingVerdict(snapshot, action);
-  }
-}
-
-function applyPreviewAutopilotTick(
-  snapshot: PreviewSnapshot,
-  action: Extract<PreviewBoardAction, { type: "board.autopilot.tick" }>,
-): PreviewSnapshot {
-  if (snapshot.board.settings.autopilotEnabled === false) {
-    return snapshot;
-  }
-  const testingCard = previewLaneCards(snapshot.board, "testing").find(
-    (card) => card.activeClaim === undefined,
-  );
-  if (testingCard !== undefined) {
-    return startPreviewBoardThread(
-      snapshot,
-      {
-        ...action,
-        type: "board.card.start_testing",
-        cardId: testingCard.id,
-        source: "autopilot",
-      },
-      "testing",
-    );
-  }
-  if (
-    previewLaneCards(snapshot.board, "wip").length >=
-    snapshot.board.settings.wipLimit
-  ) {
-    return snapshot;
-  }
-  const plannedCard = previewLaneCards(snapshot.board, "planned").find(
-    (card) => card.activeClaim === undefined,
-  );
-  return plannedCard === undefined
-    ? snapshot
-    : startPreviewBoardThread(
-        snapshot,
-        {
-          ...action,
-          type: "board.card.start_implementation",
-          cardId: plannedCard.id,
-          source: "autopilot",
-        },
-        "implementation",
-      );
-}
-
-function startPreviewBoardThread(
-  snapshot: PreviewSnapshot,
-  action:
-    | Extract<PreviewBoardAction, { type: "board.card.start_implementation" }>
-    | Extract<PreviewBoardAction, { type: "board.card.start_testing" }>,
-  kind: "implementation" | "testing",
-): PreviewSnapshot {
-  const card = snapshot.board.cards[action.cardId];
-  if (card === undefined || card.activeClaim !== undefined) {
-    return snapshot;
-  }
-  const sessionId = `${action.sessionId}:${card.id}:${kind}:${action.actionId}`;
-  const threadId = `thread-main:${sessionId}`;
-  const source = action.source === "autopilot" ? "autopilot" : "copilot";
-  return replacePreviewBoardCard(snapshot, {
-    ...card,
-    lane: kind === "implementation" ? "wip" : "testing",
-    order: nextPreviewLaneOrder(
-      snapshot.board,
-      kind === "implementation" ? "wip" : "testing",
-      card.id,
-    ),
-    activeClaim: {
-      threadId,
-      sessionId,
-      kind,
-      claimedAt: action.actionTs,
-      claimReason: source,
-    },
-    threads: [
-      ...card.threads,
-      {
-        threadId,
-        sessionId,
-        kind,
-        startedAt: action.actionTs,
-        status: "active",
-      },
-    ],
-    updatedAt: action.actionTs,
-    evidence: [
-      ...card.evidence,
-      previewBoardEvidence(
-        action,
-        "thread_started",
-        `${kind} thread started.`,
-        threadId,
-      ),
-    ],
-  });
-}
-
-function finishPreviewBoardThread(
-  snapshot: PreviewSnapshot,
-  action:
-    | Extract<PreviewBoardAction, { type: "board.card.thread_completed" }>
-    | Extract<PreviewBoardAction, { type: "board.card.thread_failed" }>
-    | Extract<PreviewBoardAction, { type: "board.card.thread_stopped" }>,
-  status: "completed" | "failed" | "stopped",
-): PreviewSnapshot {
-  const card = snapshot.board.cards[action.cardId];
-  if (card?.activeClaim === undefined) {
-    return snapshot;
-  }
-  const activeClaim = card.activeClaim;
-  const implementationCompleted =
-    status === "completed" && activeClaim.kind === "implementation";
-  const targetLane = implementationCompleted ? "testing" : "planned";
-  const outcome =
-    status === "completed"
-      ? "success"
-      : status === "failed"
-        ? "failure"
-        : "thread_stopped";
-  return replacePreviewBoardCard(snapshot, {
-    ...card,
-    lane: targetLane,
-    order: nextPreviewLaneOrder(snapshot.board, targetLane, card.id),
-    activeClaim: undefined,
-    threads: card.threads.map((thread) =>
-      thread.threadId === activeClaim.threadId
-        ? { ...thread, status, completedAt: action.actionTs }
-        : thread,
-    ),
-    updatedAt: action.actionTs,
-    evidence: [
-      ...card.evidence,
-      previewBoardEvidence(
-        action,
-        outcome,
-        action.summary ?? `Thread ${status}.`,
-        activeClaim.threadId,
-      ),
-    ],
-  });
-}
-
-function applyPreviewTestingVerdict(
-  snapshot: PreviewSnapshot,
-  action: Extract<PreviewBoardAction, { type: "board.card.testing_verdict" }>,
-): PreviewSnapshot {
-  const card = snapshot.board.cards[action.cardId];
-  if (card?.activeClaim?.kind !== "testing") {
-    return snapshot;
-  }
-  const activeClaim = card.activeClaim;
-  const passed = action.testingVerdict === "pass";
-  const targetLane = passed ? "done" : "planned";
-  return replacePreviewBoardCard(snapshot, {
-    ...card,
-    lane: targetLane,
-    order: nextPreviewLaneOrder(snapshot.board, targetLane, card.id),
-    activeClaim: undefined,
-    threads: card.threads.map((thread) =>
-      thread.threadId === activeClaim.threadId
-        ? {
-            ...thread,
-            status: passed ? "completed" : "failed",
-            completedAt: action.actionTs,
-          }
-        : thread,
-    ),
-    updatedAt: action.actionTs,
-    evidence: [
-      ...card.evidence,
-      previewBoardEvidence(
-        action,
-        passed ? "verdict_pass" : "verdict_fail",
-        action.summary ?? `Testing ${action.testingVerdict}.`,
-        activeClaim.threadId,
-      ),
-    ],
-  });
-}
-
-function replacePreviewBoard(
-  snapshot: PreviewSnapshot,
-  board: PreviewBoard,
-): PreviewSnapshot {
-  return {
-    ...snapshot,
-    board: { ...board, boardVersion: snapshot.board.boardVersion + 1 },
-  };
-}
-
-function replacePreviewBoardCard(
-  snapshot: PreviewSnapshot,
-  card: PreviewBoardCard,
-): PreviewSnapshot {
-  return replacePreviewBoard(snapshot, {
-    ...snapshot.board,
-    cards: { ...snapshot.board.cards, [card.id]: card },
-  });
-}
-
-function previewLaneCards(
-  board: PreviewBoard,
-  lane: PreviewBoardCard["lane"],
-): PreviewBoardCard[] {
-  return Object.values(board.cards)
-    .filter((card) => card.lane === lane)
-    .sort(
-      (left, right) =>
-        left.order - right.order || left.id.localeCompare(right.id),
-    );
-}
-
-function nextPreviewLaneOrder(
-  board: PreviewBoard,
-  lane: PreviewBoardCard["lane"],
-  excludeCardId?: string,
-): number {
-  return (
-    previewLaneCards(board, lane)
-      .filter((card) => card.id !== excludeCardId)
-      .reduce((highest, card) => Math.max(highest, card.order), 0) + 1
-  );
-}
-
-function previewBoardEvidence(
-  action: PreviewBoardAction,
-  outcome: PreviewBoardCard["evidence"][number]["outcome"],
-  summary: string,
-  threadId?: string,
-): PreviewBoardCard["evidence"][number] {
-  return {
-    id: `${action.actionId}:${outcome}`,
-    timestamp: action.actionTs,
-    source: action.source ?? "operator",
-    outcome,
-    summary,
-    ...(threadId !== undefined ? { threadId } : {}),
   };
 }

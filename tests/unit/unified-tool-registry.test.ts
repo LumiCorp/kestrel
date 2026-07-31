@@ -4,9 +4,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
+import { DEFAULT_CODE_MODE_ENABLED_CONFIG } from "../../src/code/contracts.js";
 import { composeKestrelOneProfile } from "../../src/profile/kestrelOnePolicy.js";
 import type { McpStatusSnapshot, ToolRunContext } from "../../src/index.js";
-import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import {
+  RunCancelledError,
+  RuntimeFailure,
+} from "../../src/runtime/RuntimeFailure.js";
 import { validateWorkspaceSkillPackage } from "../../src/skills/index.js";
 import type {
   InternetExtractOutput,
@@ -1508,6 +1512,51 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry hides code.execute when pr
   await assert.rejects(
     () => registry.call("code.execute", {}),
     /disabled for this profile/
+  );
+});
+
+contractTest("runtime.hermetic", "UnifiedToolRegistry carries cancellation into code.execute", async () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["code.execute"],
+    context: {
+      codeMode: DEFAULT_CODE_MODE_ENABLED_CONFIG,
+      codeExecutionService: {
+        async execute(_config, _request, options) {
+          if (options?.signal?.aborted === true) {
+            throw new Error("sandbox cancelled");
+          }
+          await new Promise<void>((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              "abort",
+              () => reject(new Error("sandbox cancelled")),
+              { once: true },
+            );
+          });
+          throw new Error("unreachable");
+        },
+      },
+    },
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  const controller = new AbortController();
+  const call = registry.call(
+    "code.execute",
+    {
+      language: "javascript",
+      code: "setInterval(() => {}, 1_000)",
+    },
+    { signal: controller.signal },
+  );
+
+  controller.abort();
+  await assert.rejects(
+    call,
+    (error: unknown) => error instanceof RunCancelledError,
   );
 });
 

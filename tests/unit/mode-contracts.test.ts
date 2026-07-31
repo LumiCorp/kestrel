@@ -196,8 +196,8 @@ contractTest("runtime.hermetic", "Plan allows only external mutations that expli
       interactionMode: "plan",
       toolClass: "external_side_effect",
       allowedInteractionModes: ["chat", "plan", "build"],
-      executionPolicy: { capabilityPolicy: { "project.task_queue.write": false } },
-      requiredCapabilities: ["project.task_queue.write"],
+      executionPolicy: { capabilityPolicy: { "mission_control.work_item.write": false } },
+      requiredCapabilities: ["mission_control.work_item.write"],
     }),
     false,
   );

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
-import { createEmptyProjectSnapshot } from "../../../src/project/state.js";
+import { createEmptyMissionControlProjectDocument } from "../../../src/missionControl/projectAuthority.js";
 import {
+  executeDesktopMissionControlAction,
+  getDesktopMissionControlProject,
   getDesktopOperatorRun,
   getDesktopOperatorThread,
-  getDesktopProjectSnapshot,
   listDesktopOperatorRuns,
-  runDesktopProjectAction,
 } from "../src/missionControl.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
@@ -19,123 +19,209 @@ const context: WebRunnerRequestContext = {
   },
 };
 
-contractTest("desktop.hermetic", "Desktop Mission Control reads authoritative project snapshots through the runner", async () => {
+contractTest("desktop.hermetic", "Desktop Mission Control reads the canonical project document by registered UUID", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
   const calls: unknown[] = [];
-  const snapshot = createEmptyProjectSnapshot();
+  const project = {
+    projectId,
+    schemaVersion: 1 as const,
+    revision: 0,
+    authorityEpoch: 1,
+    document: createEmptyMissionControlProjectDocument(projectId),
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  };
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command, requestContext) {
       calls.push({ command, requestContext });
       return {
-        id: "event-1",
-        type: "project.snapshot",
+        id: "event-project",
+        type: "mission_control.project",
         ts: "2026-07-10T12:00:00.000Z",
-        payload: { sessionId: "session-1", snapshot },
+        payload: { projectId, project: { ...project } },
       };
     },
   };
 
-  const response = await getDesktopProjectSnapshot({
+  const response = await getDesktopMissionControlProject({
     adapter,
-    sessionId: "session-1",
+    projectId,
     context,
   });
 
-  assert.deepEqual(response, { sessionId: "session-1", snapshot });
+  assert.deepEqual(response, { projectId, project });
   assert.deepEqual(calls, [{
-    command: { type: "project.snapshot.get", sessionId: "session-1" },
+    command: { type: "mission_control.project.get", projectId },
     requestContext: context,
   }]);
 });
 
-contractTest("desktop.hermetic", "Desktop Mission Control validates and forwards task actions", async () => {
-  const snapshot = createEmptyProjectSnapshot();
-  const calls: unknown[] = [];
-  const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
-    async sendControl(command, requestContext) {
-      calls.push({ command, requestContext });
-      return {
-        id: "event-2",
-        type: "project.snapshot",
-        ts: "2026-07-10T12:00:00.000Z",
-        payload: { sessionId: "session-1", snapshot },
-      };
-    },
-  };
-  const action = {
-    type: "task.create",
-    sessionId: "session-1",
-    actionId: "action-1",
-    actionTs: "2026-07-10T12:00:00.000Z",
-    title: "Verify Desktop Mission Control",
-    instructions: "Read and mutate the authoritative project snapshot.",
-  } as const;
-
-  await runDesktopProjectAction({ adapter, action, context });
-
-  assert.deepEqual(calls, [{
-    command: { type: "project.action", action },
-    requestContext: context,
-  }]);
-});
-
-contractTest("desktop.hermetic", "Desktop Mission Control validates and forwards board actions", async () => {
-  const snapshot = createEmptyProjectSnapshot();
-  const calls: unknown[] = [];
-  const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
-    async sendControl(command, requestContext) {
-      calls.push({ command, requestContext });
-      return {
-        id: "event-board",
-        type: "project.snapshot",
-        ts: "2026-07-10T12:00:00.000Z",
-        payload: { sessionId: "session-1", snapshot },
-      };
-    },
-  };
-  const action = {
-    type: "board.card.create",
-    sessionId: "session-1",
-    actionId: "action-board",
-    actionTs: "2026-07-10T12:00:00.000Z",
-    expectedBoardVersion: 1,
-    title: "Move Kestrel One",
-    prompt: "Promote Kestrel One to the canonical apps/web path.",
-    source: "operator",
-  } as const;
-
-  await runDesktopProjectAction({ adapter, action, context });
-
-  assert.deepEqual(calls, [{
-    command: { type: "project.action", action },
-    requestContext: context,
-  }]);
-});
-
-contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed renderer actions before runner use", async () => {
-  let called = false;
+contractTest("desktop.hermetic", "Desktop Mission Control rejects cross-project canonical responses", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const otherProjectId = "22222222-2222-4222-8222-222222222222";
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl() {
-      called = true;
-      throw new Error("must not be called");
+      return {
+        id: "event-project-mismatch",
+        type: "mission_control.project",
+        ts: "2026-07-10T12:00:00.000Z",
+        payload: {
+          projectId: otherProjectId,
+          project: {
+            projectId: otherProjectId,
+            schemaVersion: 1,
+            revision: 0,
+            authorityEpoch: 1,
+            document: createEmptyMissionControlProjectDocument(otherProjectId),
+            createdAt: "1970-01-01T00:00:00.000Z",
+            updatedAt: "1970-01-01T00:00:00.000Z",
+          },
+        },
+      };
     },
   };
 
   await assert.rejects(
-    () => runDesktopProjectAction({
-      adapter,
-      action: {
-        type: "task.approve",
-        sessionId: "session-1",
-      },
-      context,
-    }),
+    () => getDesktopMissionControlProject({ adapter, projectId, context }),
     (error: unknown) => {
-      assert.equal((error as { code?: string }).code, "desktop.invalid_project_action");
+      assert.equal(
+        (error as { code?: string }).code,
+        "desktop.mission_control_project_invalid_response",
+      );
       return true;
     },
   );
-  assert.equal(called, false);
 });
+
+contractTest(
+  "desktop.hermetic",
+  "Desktop sends project-scoped lifecycle actions with exact optimistic identities",
+  async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const calls: unknown[] = [];
+    const project = {
+      projectId,
+      schemaVersion: 1 as const,
+      revision: 7,
+      authorityEpoch: 1,
+      document: createEmptyMissionControlProjectDocument(projectId),
+      createdAt: "2026-07-31T12:00:00.000Z",
+      updatedAt: "2026-07-31T12:00:00.000Z",
+    };
+    const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
+      async sendControl(command, requestContext) {
+        calls.push({ command, requestContext });
+        return {
+          id: "event-action",
+          type: "mission_control.project",
+          ts: "2026-07-31T12:00:00.000Z",
+          payload: { projectId, project },
+        };
+      },
+    };
+
+    const response = await executeDesktopMissionControlAction({
+      adapter,
+      intent: {
+        type: "start",
+        projectId,
+        expectedRevision: 6,
+        itemId: "item-ready",
+        expectedItemVersion: 3,
+      },
+      registeredProjectIds: [projectId],
+      profileId: "desktop",
+      actionId: "desktop-action-1",
+      actionTs: "2026-07-31T12:00:00.000Z",
+      context,
+    });
+    assert.equal(response.projectId, projectId);
+    const sent = calls[0] as {
+      command: {
+        type: string;
+        action: Record<string, unknown>;
+      };
+      requestContext: WebRunnerRequestContext;
+    };
+    assert.equal(sent.command.type, "mission_control.action.execute");
+    assert.deepEqual(
+      {
+        projectId: sent.command.action.projectId,
+        actionId: sent.command.action.actionId,
+        actionTs: sent.command.action.actionTs,
+        expectedRevision: sent.command.action.expectedRevision,
+        itemId: sent.command.action.itemId,
+        expectedItemVersion: sent.command.action.expectedItemVersion,
+        type: sent.command.action.type,
+        initiatedBy: sent.command.action.initiatedBy,
+        profileId: sent.command.action.profileId,
+      },
+      {
+        projectId,
+        actionId: "desktop-action-1",
+        actionTs: "2026-07-31T12:00:00.000Z",
+        expectedRevision: 6,
+        itemId: "item-ready",
+        expectedItemVersion: 3,
+        type: "execution.start",
+        initiatedBy: "operator",
+        profileId: "desktop",
+      },
+    );
+    assert.match(String(sent.command.action.attemptId), /^[0-9a-f-]{36}$/u);
+    assert.match(String(sent.command.action.sessionId), /^[0-9a-f-]{36}$/u);
+    assert.equal(
+      sent.command.action.threadId,
+      sent.command.action.sessionId,
+    );
+    assert.deepEqual(sent.requestContext, context);
+
+    await assert.rejects(
+      executeDesktopMissionControlAction({
+        adapter,
+        intent: {
+          type: "start",
+          projectId,
+          expectedRevision: 7,
+          itemId: "item-ready",
+          expectedItemVersion: 3,
+        },
+        registeredProjectIds: [],
+        profileId: "desktop",
+        actionId: "desktop-action-unregistered",
+        actionTs: "2026-07-31T12:01:00.000Z",
+        context,
+      }),
+      (error: unknown) =>
+        (error as { code?: string }).code ===
+        "desktop.unregistered_mission_control_project",
+    );
+    assert.equal(calls.length, 1);
+
+    await assert.rejects(
+      executeDesktopMissionControlAction({
+        adapter,
+        intent: {
+          type: "configure_autopilot",
+          projectId,
+          expectedRevision: 7,
+          enabled: true,
+          wipLimit: 2,
+          confirmed: false,
+        },
+        registeredProjectIds: [projectId],
+        profileId: "desktop",
+        actionId: "desktop-action-unconfirmed",
+        actionTs: "2026-07-31T12:02:00.000Z",
+        context,
+      }),
+      (error: unknown) =>
+        (error as { code?: string }).code ===
+        "desktop.invalid_mission_control_action_intent",
+    );
+    assert.equal(calls.length, 1);
+  },
+);
 
 contractTest("desktop.hermetic", "Desktop Mission Control projects runtime thread inspection through the runner", async () => {
   const calls: unknown[] = [];

@@ -148,7 +148,7 @@
       "find": "if (projectId !== expectedProjectId) {",
       "replace": "if (false) {",
       "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=project state, receipts, and outbox", "tests/mission-control-project-authority.postgres.test.ts"],
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical project authority is active by default", "tests/mission-control-project-authority.postgres.test.ts"],
       "testFiles": ["tests/mission-control-project-authority.postgres.test.ts"]
     },
     {
@@ -158,8 +158,68 @@
       "find": "    return this.withTransaction(operation);",
       "replace": "    return operation(this.db);",
       "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=project state, receipts, and outbox", "tests/mission-control-project-authority.postgres.test.ts"],
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical project authority is active by default", "tests/mission-control-project-authority.postgres.test.ts"],
       "testFiles": ["tests/mission-control-project-authority.postgres.test.ts"]
+    },
+    {
+      "id": "mission-control-attempt-identity-bypass",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "find": "    run.runId !== runId ||",
+      "replace": "    false ||",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
+      "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-stale-event-bypass",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "find": "  return item.currentAttemptId !== attempt.id;",
+      "replace": "  return false;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
+      "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-premature-cancel-completion",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "find": "        status: \"cancelling\",",
+      "replace": "        status: \"cancelled\",",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
+      "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-review-candidate-bypass",
+      "contractId": "runtime.mission-control-review-acceptance",
+      "target": "src/missionControl/reviewAuthority.ts",
+      "find": "    resolved.change.candidateFingerprint !== action.candidate.candidateFingerprint",
+      "replace": "    false",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=candidate-bound review acceptance", "tests/mission-control-review-acceptance.postgres.test.ts"],
+      "testFiles": ["tests/mission-control-review-acceptance.postgres.test.ts"]
+    },
+    {
+      "id": "mission-control-review-bundle-bypass",
+      "contractId": "runtime.mission-control-review-acceptance",
+      "target": "src/missionControl/reviewAuthority.ts",
+      "find": "  if (item.currentReviewBundleId !== expectedBundleId) {",
+      "replace": "  if (false) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=candidate-bound review acceptance", "tests/mission-control-review-acceptance.postgres.test.ts"],
+      "testFiles": ["tests/mission-control-review-acceptance.postgres.test.ts"]
+    },
+    {
+      "id": "mission-control-acceptance-record-omission",
+      "contractId": "runtime.mission-control-review-acceptance",
+      "target": "src/missionControl/reviewAuthority.ts",
+      "find": "        reviewDecisions: [...(item.reviewDecisions ?? []), acceptance],",
+      "replace": "        reviewDecisions: item.reviewDecisions ?? [],",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=candidate-bound review acceptance", "tests/mission-control-review-acceptance.postgres.test.ts"],
+      "testFiles": ["tests/mission-control-review-acceptance.postgres.test.ts"]
     }
   ]
 }

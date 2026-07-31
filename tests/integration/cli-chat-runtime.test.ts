@@ -11,9 +11,6 @@ import type {
 } from "../../src/index.js";
 import { resolveRuntimeThreadedStepAgent } from "../../src/index.js";
 import { ProductTaskGraphStore } from "../../src/taskGraph/store.js";
-import { ProductProjectStateStore } from "../../src/project/store.js";
-import { createEmptyProjectSnapshot } from "../../src/project/state.js";
-import type { ProductProjectBoardAction } from "../../src/project/contracts.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import {
   KestrelChatRuntime,
@@ -29,21 +26,6 @@ const profile: TuiProfile = {
   agent: "reference-react",
   sessionPrefix: "ref",
 };
-
-let projectBoardActionCounter = 0;
-
-function projectBoardAction(
-  sessionId: string,
-  action: Record<string, unknown> & { type: ProductProjectBoardAction["type"] },
-): ProductProjectBoardAction {
-  projectBoardActionCounter += 1;
-  return {
-    ...action,
-    sessionId,
-    actionId: `runtime-board-action-${projectBoardActionCounter}`,
-    actionTs: `2026-05-18T12:00:${String(projectBoardActionCounter).padStart(2, "0")}.000Z`,
-  } as ProductProjectBoardAction;
-}
 
 function completedOutput(sessionId: string, runId: string): NormalizedOutput {
   return {
@@ -82,25 +64,6 @@ function sessionWithAssistantText(
     },
     updatedAt: new Date().toISOString(),
   };
-}
-
-async function waitForProjectCard(
-  projectStore: ProductProjectStateStore,
-  sessionId: string,
-  graph: ProductTaskGraph,
-  predicate: (snapshot: Awaited<ReturnType<ProductProjectStateStore["getSnapshot"]>>) => boolean,
-): Promise<Awaited<ReturnType<ProductProjectStateStore["getSnapshot"]>>> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const snapshot = await projectStore.getSnapshot({
-      sessionId,
-      graph,
-    });
-    if (predicate(snapshot)) {
-      return snapshot;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("Timed out waiting for project card state.");
 }
 
 contractTest("runtime.process", "KestrelChatRuntime rejects non-string turn messages at the runtime boundary", async () => {
@@ -278,126 +241,6 @@ contractTest("runtime.process", "KestrelChatRuntime releases execution authoriza
     /Synthetic preparation failure/u
   );
   assert.deepEqual(released, ["run-preparation-failure"]);
-});
-
-contractTest("runtime.process", "project autopilot tick runs planned card through implementation and testing full-auto threads", async () => {
-  const sessionStore = new InMemorySessionStore();
-  const taskGraphStore = new ProductTaskGraphStore(sessionStore);
-  const projectStore = new ProductProjectStateStore(sessionStore, {
-    async inspectReviewState() {
-      return createEmptyProjectSnapshot().review;
-    },
-    async applyAction() {
-      return;
-    },
-  } as never);
-  const projectSessionId = "session-project-autopilot";
-  await projectStore.saveSnapshot(projectSessionId, {
-    ...createEmptyProjectSnapshot(),
-    setup: {
-      ...createEmptyProjectSnapshot().setup,
-      workspaceRoot: "/tmp/project-autopilot",
-      repoRoot: "/tmp/project-autopilot",
-      repoLabel: "project-autopilot",
-    },
-  });
-  const graph = await taskGraphStore.getGraph({ sessionId: projectSessionId });
-
-  let snapshot = await projectStore.applyAction({
-    sessionId: projectSessionId,
-    graph,
-    action: projectBoardAction(projectSessionId, {
-      type: "board.card.create",
-      title: "Ship board flow",
-      prompt: "Implement the board flow.",
-      source: "tool",
-    }),
-  });
-  snapshot = await projectStore.applyAction({
-    sessionId: projectSessionId,
-    graph,
-    action: projectBoardAction(projectSessionId, {
-      type: "board.card.move",
-      cardId: "K-1",
-      targetLane: "planned",
-      source: "operator",
-    }),
-  });
-  snapshot = await projectStore.applyAction({
-    sessionId: projectSessionId,
-    graph,
-    action: projectBoardAction(projectSessionId, {
-      type: "board.autopilot.configure",
-      autopilotEnabled: true,
-      autopilotConfirmedAt: "2026-05-17T12:00:00.000Z",
-      wipLimit: 1,
-    }),
-  });
-  assert.equal(snapshot.board.cards["K-1"]?.lane, "planned");
-
-  const runEvents: RuntimeEvent[] = [];
-  const runtime = new KestrelChatRuntime(profile, {
-    create: (_profile, _onFinalize) => {
-      const kestrel = {
-        run: async (event: RuntimeEvent): Promise<NormalizedOutput> => {
-          runEvents.push(event);
-          return completedOutput(event.sessionId, `run-${runEvents.length}`);
-        },
-        getSession: async (sessionId: string) => {
-          const session = await sessionStore.getSession(sessionId);
-          return session === null
-            ? sessionWithAssistantText(sessionId, "The project card run completed.")
-            : sessionWithAssistantText(
-                sessionId,
-                "The project card run completed.",
-                (session.state.agent as Record<string, unknown> | undefined) ?? {},
-              );
-        },
-      } as unknown as Kestrel;
-
-      return {
-        kestrel,
-        taskGraphStore,
-        projectStore,
-        entryStepAgent: "example.step",
-        close: async () => {},
-        readFinalizedPayload: async (sessionId: string) =>
-          sessionId.includes(":testing:")
-            ? { testingVerdict: "pass", summary: "Focused validation passed." }
-            : undefined,
-      };
-    },
-  });
-
-  const result = await runtime.performProjectAction(
-    projectBoardAction(projectSessionId, { type: "board.autopilot.tick" }),
-  );
-
-  assert.equal(result.snapshot.board.cards["K-1"]?.lane, "wip");
-  assert.equal(result.snapshot.board.cards["K-1"]?.activeClaim?.kind, "implementation");
-  const completedSnapshot = await waitForProjectCard(
-    projectStore,
-    projectSessionId,
-    graph,
-    (nextSnapshot) => nextSnapshot.board.cards["K-1"]?.lane === "done",
-  );
-  assert.equal(completedSnapshot.board.cards["K-1"]?.activeClaim, undefined);
-  assert.deepEqual(runEvents.map((event) => event.type), [
-    "project.card.implementation",
-    "project.card.testing",
-  ]);
-  assert.equal(runEvents[0]?.sessionId.includes(":implementation:"), true);
-  assert.equal(runEvents[1]?.sessionId.includes(":testing:"), true);
-  assert.equal(runEvents[0]?.payload.interactionMode, "build");
-  assert.equal(runEvents[0]?.payload.actSubmode, "full_auto");
-  assert.equal((runEvents[0]?.payload.metadata as Record<string, unknown> | undefined)?.actSubmode, "full_auto");
-  assert.equal(runEvents[1]?.payload.interactionMode, "build");
-  assert.equal(runEvents[1]?.payload.actSubmode, "full_auto");
-  assert.equal((runEvents[1]?.payload.metadata as Record<string, unknown> | undefined)?.actSubmode, "full_auto");
-  assert.equal((runEvents[0]?.payload.workspace as Record<string, unknown>)?.workspaceRoot, "/tmp/project-autopilot");
-  assert.equal((runEvents[1]?.payload.workspace as Record<string, unknown>)?.workspaceRoot, "/tmp/project-autopilot");
-  assert.deepEqual((runEvents[0]?.payload.metadata as Record<string, unknown>)?.cardId, "K-1");
-  assert.deepEqual((runEvents[1]?.payload.metadata as Record<string, unknown>)?.cardThreadKind, "testing");
 });
 
 contractTest("runtime.process", "KestrelChatRuntime delegates direct runtime turns with step agent and operator affordance", async () => {
@@ -1720,6 +1563,147 @@ contractTest("runtime.process", "KestrelChatRuntime acknowledges an accepted rep
     assistantText: "Built it.",
   });
   assert.equal((await accepted.completion).output.runId, capturedRunId);
+  await runtime.close();
+});
+
+contractTest("runtime.process", "KestrelChatRuntime accepts retry with the reserved Mission Control run identity", async () => {
+  let threadListener:
+    | ((event: {
+        type: string;
+        threadId: string;
+        timestamp: string;
+        payload: Record<string, unknown>;
+      }) => void)
+    | undefined;
+  let resolveCompletion!: (result: {
+    thread: {
+      threadId: string;
+      sessionId: string;
+      title: string;
+      status: "COMPLETED";
+      createdAt: string;
+      updatedAt: string;
+    };
+    output: {
+      status: "COMPLETED";
+      runId: string;
+      sessionId: string;
+      quality: {
+        citationCoverage: number;
+        unresolvedClaims: number;
+        reworkRate: number;
+        thrashIndex: number;
+      };
+      errors: [];
+      telemetry: {
+        stepsExecuted: number;
+        toolCalls: number;
+        modelCalls: number;
+        durationMs: number;
+      };
+    };
+    assistantText: string;
+  }) => void;
+  const completion = new Promise<Parameters<typeof resolveCompletion>[0]>(
+    (resolve) => {
+      resolveCompletion = resolve;
+    },
+  );
+  const now = new Date().toISOString();
+  const thread = {
+    threadId: "thread-retry-accepted",
+    sessionId: "session-retry-accepted",
+    title: "Retry accepted",
+    status: "FAILED" as const,
+    createdAt: now,
+    updatedAt: now,
+  };
+  let capturedMissionControl: unknown;
+  const runtime = new KestrelChatRuntime(profile, {
+    create: () => ({
+      kestrel: {} as Kestrel,
+      threadRuntime: {
+        getThreadStatus: async () => ({ thread, openRequests: [] }),
+        subscribe: (_target: unknown, listener: typeof threadListener) => {
+          threadListener = listener;
+          return { unsubscribe() {} };
+        },
+        retryThread: (input: {
+          missionControl?: { runId?: string };
+        }) => {
+          capturedMissionControl = input.missionControl;
+          threadListener?.({
+            type: "thread.turn_submitted",
+            threadId: thread.threadId,
+            timestamp: now,
+            payload: { runId: input.missionControl?.runId },
+          });
+          return completion;
+        },
+        getOperatorThreadView: async () => ({
+          thread: { ...thread, status: "RUNNING" as const },
+          childThreads: [],
+        }),
+        listOperatorInbox: async () => ({
+          items: [],
+          summary: {
+            total: 0,
+            actionable: 0,
+            approvals: 0,
+            userInputs: 0,
+            checkpoints: 0,
+            childBlockers: 0,
+            stalled: 0,
+            assemblyProposals: 0,
+            compatibilityAlerts: 0,
+          },
+        }),
+      } as unknown as ThreadRuntime,
+      entryStepAgent: "example.step",
+      close: async () => {},
+    }),
+  });
+  const missionControl = {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    itemId: "work-retry",
+    attemptId: "attempt-retry",
+    commandId: "command-retry",
+    runId: "run-retry-reserved",
+  };
+
+  const accepted = await runtime.performAcceptedOperatorAction({
+    action: "retry",
+    threadId: thread.threadId,
+    message: "Retry exact work.",
+    missionControl,
+  });
+
+  assert.equal(accepted.accepted.disposition, "accepted");
+  assert.equal(accepted.accepted.runId, missionControl.runId);
+  assert.deepEqual(capturedMissionControl, missionControl);
+  resolveCompletion({
+    thread: { ...thread, status: "COMPLETED" },
+    output: {
+      status: "COMPLETED",
+      runId: missionControl.runId,
+      sessionId: thread.sessionId,
+      quality: {
+        citationCoverage: 1,
+        unresolvedClaims: 0,
+        reworkRate: 0,
+        thrashIndex: 0,
+      },
+      errors: [],
+      telemetry: {
+        stepsExecuted: 1,
+        toolCalls: 0,
+        modelCalls: 1,
+        durationMs: 100,
+      },
+    },
+    assistantText: "Retried.",
+  });
+  assert.equal((await accepted.completion).output.runId, missionControl.runId);
   await runtime.close();
 });
 

@@ -5,9 +5,7 @@ import {
 } from "../../src/mcp/hosted-contracts.js";
 import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
 import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
-import { parseTaskAction } from "../../src/missionControl/contracts.js";
 import { parseOperatorControlPolicyFields } from "../../src/orchestration/OperatorControlValidation.js";
-import { parseProductProjectBoardAction } from "../../src/project/contracts.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
 import { parseJobInputV1 } from "../job/contracts.js";
@@ -23,13 +21,14 @@ import type {
   OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
+  MissionControlActionExecuteCommandPayload,
+  MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
   ProfileListCommandPayload,
   ProjectActionCommandPayload,
   ProjectReviewActionCommandPayload,
   ProjectReviewGetCommandPayload,
   ProjectSnapshotGetCommandPayload,
-  ProjectSnapshotUpdateCommandPayload,
   RunCancelCommandPayload,
   RunnerCommand,
   RunnerPingCommandPayload,
@@ -442,11 +441,19 @@ export class CommandRouter {
         return;
       }
 
-      if (command.type === "project.snapshot.update") {
-        const payload = validateProjectSnapshotUpdatePayload(command.payload);
-        await this.host.projectSnapshotUpdate(
+      if (command.type === "mission_control.project.get") {
+        await this.host.missionControlProjectGet(
           command.id,
-          payload,
+          validateMissionControlProjectGetPayload(command.payload),
+          command.metadata
+        );
+        return;
+      }
+
+      if (command.type === "mission_control.action.execute") {
+        await this.host.missionControlActionExecute(
+          command.id,
+          validateMissionControlActionExecutePayload(command.payload),
           command.metadata
         );
         return;
@@ -1218,35 +1225,38 @@ function validateProjectSnapshotGetPayload(
   return { sessionId: record.sessionId };
 }
 
-function validateProjectSnapshotUpdatePayload(
-  value: unknown
-): ProjectSnapshotUpdateCommandPayload {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("project.snapshot.update payload must be an object");
+function validateMissionControlProjectGetPayload(
+  payload: unknown
+): MissionControlProjectGetCommandPayload {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("mission_control.project.get payload must be an object");
   }
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.sessionId !== "string" ||
-    record.sessionId.trim().length === 0
-  ) {
-    throw new Error(
-      "project.snapshot.update payload.sessionId must be a non-empty string"
-    );
-  }
-  if (
-    typeof record.snapshot !== "object" ||
-    record.snapshot === null ||
-    Array.isArray(record.snapshot)
-  ) {
-    throw new Error(
-      "project.snapshot.update payload.snapshot must be an object"
-    );
-  }
+  const record = payload as Record<string, unknown>;
   return {
-    sessionId: record.sessionId,
-    snapshot:
-      record.snapshot as ProjectSnapshotUpdateCommandPayload["snapshot"],
+    projectId: requireNonEmptyString(
+      record.projectId,
+      "mission_control.project.get payload.projectId"
+    ),
   };
+}
+
+function validateMissionControlActionExecutePayload(
+  payload: unknown
+): MissionControlActionExecuteCommandPayload {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("mission_control.action.execute payload must be an object");
+  }
+  const record = payload as Record<string, unknown>;
+  if (
+    typeof record.action !== "object" ||
+    record.action === null ||
+    Array.isArray(record.action)
+  ) {
+    throw new Error(
+      "mission_control.action.execute payload.action must be an object"
+    );
+  }
+  return { action: record.action as Record<string, unknown> };
 }
 
 function validateProjectActionPayload(
@@ -1271,42 +1281,9 @@ function validateProjectActionPayload(
     record.type !== "commit.create" &&
     record.type !== "git.push" &&
     record.type !== "pull_request.create" &&
-    record.type !== "pull_request.merge" &&
-    record.type !== "board.autopilot.configure" &&
-    record.type !== "board.autopilot.tick" &&
-    record.type !== "board.card.create" &&
-    record.type !== "board.card.update" &&
-    record.type !== "board.card.move" &&
-    record.type !== "board.card.manual_done" &&
-    record.type !== "board.card.delete" &&
-    record.type !== "board.card.start_implementation" &&
-    record.type !== "board.card.start_testing" &&
-    record.type !== "board.card.thread_completed" &&
-    record.type !== "board.card.thread_failed" &&
-    record.type !== "board.card.thread_stopped" &&
-    record.type !== "board.card.testing_verdict" &&
-    record.type !== "task.create" &&
-    record.type !== "task.propose" &&
-    record.type !== "task.approve" &&
-    record.type !== "task.update" &&
-    record.type !== "task.reorder" &&
-    record.type !== "task.claim" &&
-    record.type !== "task.mark_running" &&
-    record.type !== "task.needs_attention" &&
-    record.type !== "task.submit_review" &&
-    record.type !== "task.request_changes" &&
-    record.type !== "task.retry" &&
-    record.type !== "task.accept" &&
-    record.type !== "task.discard" &&
-    record.type !== "task.stop"
+    record.type !== "pull_request.merge"
   ) {
     throw new Error("project.action payload.type is invalid");
-  }
-  if (record.type.startsWith("task.")) {
-    return parseTaskAction(record);
-  }
-  if (record.type.startsWith("board.")) {
-    return parseProductProjectBoardAction(record);
   }
   return validateGitProjectActionPayload(record);
 }
@@ -1693,6 +1670,12 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
   if (turnRecord.projectContext !== undefined) {
     validateProjectContextPayload(turnRecord.projectContext, "run.start payload.turn.projectContext");
   }
+  if (turnRecord.missionControl !== undefined) {
+    validateMissionControlExecutionPayload(
+      turnRecord.missionControl,
+      "run.start payload.turn.missionControl",
+    );
+  }
   const normalizedTurn: RunStartCommandPayload["turn"] = {
     ...(turn as RunStartCommandPayload["turn"]),
     ...(mcpContext !== undefined ? { mcpContext } : {}),
@@ -1726,6 +1709,21 @@ function validateProjectContextPayload(value: unknown, label: string): void {
     throw new Error(`${label}.contextRevision must be a positive integer`);
   }
   requireNonEmptyString(projectContext.content, `${label}.content`);
+}
+
+function validateMissionControlExecutionPayload(
+  value: unknown,
+  label: string,
+): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object when present`);
+  }
+  const missionControl = value as Record<string, unknown>;
+  requireNonEmptyString(missionControl.projectId, `${label}.projectId`);
+  requireNonEmptyString(missionControl.itemId, `${label}.itemId`);
+  requireNonEmptyString(missionControl.attemptId, `${label}.attemptId`);
+  requireNonEmptyString(missionControl.commandId, `${label}.commandId`);
+  requireNonEmptyString(missionControl.runId, `${label}.runId`);
 }
 
 function validateJobRunPayload(value: unknown): JobRunCommandPayload {
@@ -2170,6 +2168,12 @@ function validateOperatorControlPayload(
   }
   if (record.completionMode !== undefined && record.completionMode !== "terminal" && record.completionMode !== "accepted") {
     throw new Error("operator.control payload.completionMode is invalid");
+  }
+  if (record.missionControl !== undefined) {
+    validateMissionControlExecutionPayload(
+      record.missionControl,
+      "operator.control payload.missionControl",
+    );
   }
   if (record.title !== undefined && typeof record.title !== "string") {
     throw new Error(

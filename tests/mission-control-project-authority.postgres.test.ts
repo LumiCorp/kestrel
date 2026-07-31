@@ -5,26 +5,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  MISSION_CONTROL_AUTHORITY_EPOCH,
   MissionControlActionIdentityConflictError,
-  MissionControlRevisionConflictError,
-  createEmptyMissionControlProjectDocument,
+  MissionControlProjectService,
+  parseMissionControlProjectDocument,
 } from "../src/missionControl/projectAuthority.js";
 import { createSessionStoreFromEnv } from "../src/store/createSessionStore.js";
 import { contractTest } from "./helpers/contract-test.js";
 
-const FINGERPRINT_A = "a".repeat(64);
-const FINGERPRINT_B = "b".repeat(64);
-const FINGERPRINT_C = "c".repeat(64);
-const FINGERPRINT_D = "d".repeat(64);
-
 contractTest(
   "runtime.mission-control-project-persistence",
-  "project state, receipts, and outbox commit atomically with project isolation",
+  "canonical project authority is active by default and commits receipts atomically",
   async (context) => {
     const databaseUrl =
       process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL?.trim();
     const temporaryRoot =
-      databaseUrl === undefined ? await mkdtemp(join(tmpdir(), "kestrel-mc-")) : undefined;
+      databaseUrl === undefined
+        ? await mkdtemp(join(tmpdir(), "kestrel-mc-"))
+        : undefined;
     const handle = createSessionStoreFromEnv(
       databaseUrl === undefined
         ? {
@@ -46,148 +44,113 @@ contractTest(
       }
     });
 
-    const projectA = randomUUID();
-    const projectB = randomUUID();
-    const projectC = randomUUID();
-    const projectD = randomUUID();
-    const store = handle.store;
+    const projectId = randomUUID();
+    const projects = new MissionControlProjectService(handle.store);
+    assert.equal(
+      (await projects.getProject(projectId)).authorityEpoch,
+      MISSION_CONTROL_AUTHORITY_EPOCH,
+    );
 
-    const first = await store.updateMissionControlProjectState({
-      projectId: projectA,
-      actionId: "project-a-action",
-      requestFingerprint: FINGERPRINT_A,
+    const action = {
+      type: "item.create" as const,
+      projectId,
+      actionId: "create-canonical-item",
+      actionTs: "2026-07-30T15:00:00.000Z",
       expectedRevision: 0,
-      apply: (current) => ({
-        document: {
-          ...current,
-          autopilot: {
-            enabled: false,
-            wipLimit: 2,
-          },
+      itemId: "canonical-item",
+      title: "Canonical work",
+      instructions: "Prove the single project-scoped authority.",
+      createdBy: "operator" as const,
+      completionContract: {
+        workType: "non_code" as const,
+        changeOutcome: "no_change" as const,
+        validation: {
+          mode: "not_applicable" as const,
+          reason: "Authority persistence proof.",
         },
-        effects: [{
-          effectId: "project-a-effect",
-          effectType: "mission-control.test",
-          payload: { projectId: projectA },
-        }],
-      }),
-    });
-    assert.equal(first.project.revision, 1);
-    assert.equal(first.effects.length, 1);
-    assert.equal(first.effects[0]?.projectId, projectA);
-
-    const replay = await store.updateMissionControlProjectState({
-      projectId: projectA,
-      actionId: "project-a-action",
-      requestFingerprint: FINGERPRINT_A,
-      expectedRevision: 0,
-      apply: () => {
-        throw new Error("Exact replay must return the receipt.");
+        requiredEvidence: [],
       },
-    });
-    assert.equal(replay.duplicate, true);
-    assert.deepEqual(replay.project, first.project);
-    assert.deepEqual(replay.effects, first.effects);
+      order: 1,
+    };
+    const created = await projects.execute(action);
+    assert.equal(created.project.authorityEpoch, MISSION_CONTROL_AUTHORITY_EPOCH);
+    assert.equal(created.project.revision, 1);
+    assert.equal(created.project.document.items["canonical-item"]?.phase, "ready");
+
+    const replayed = await projects.execute(action);
+    assert.equal(replayed.duplicate, true);
+    assert.equal(replayed.project.revision, 1);
+
     await assert.rejects(
-      store.updateMissionControlProjectState({
-        projectId: projectA,
-        actionId: "project-a-action",
-        requestFingerprint: FINGERPRINT_B,
-        expectedRevision: 1,
-        apply: (current) => ({ document: current, effects: [] }),
+      projects.execute({
+        ...action,
+        title: "Conflicting identity reuse",
       }),
       MissionControlActionIdentityConflictError,
     );
+    assert.equal(
+      (await handle.store.getMissionControlProjectState(projectId))?.document
+        .items["canonical-item"]?.title,
+      "Canonical work",
+    );
 
-    await store.updateMissionControlProjectState({
-      projectId: projectB,
-      actionId: "project-b-action",
-      requestFingerprint: FINGERPRINT_B,
-      expectedRevision: 0,
-      apply: (current) => ({
-        document: current,
-        effects: [{
-          effectId: "project-b-effect",
-          effectType: "mission-control.test",
-          payload: { projectId: projectB },
-        }],
+    assert.throws(
+      () =>
+        parseMissionControlProjectDocument(
+          {
+            ...created.project.document,
+            projectId: randomUUID(),
+          },
+          projectId,
+        ),
+      /project mismatch/u,
+    );
+
+    const withEffect = await handle.store.updateMissionControlProjectState({
+      projectId,
+      actionId: "effect-one",
+      requestFingerprint: "a".repeat(64),
+      expectedRevision: 1,
+      apply: (document) => ({
+        document: {
+          ...document,
+          autopilot: { ...document.autopilot, wipLimit: 4 },
+        },
+        effects: [
+          {
+            effectId: "shared-effect",
+            effectType: "proof.effect",
+            payload: { sequence: 1 },
+          },
+        ],
       }),
     });
-    assert.equal((await store.getMissionControlProjectState(projectA))?.revision, 1);
-    assert.equal((await store.getMissionControlProjectState(projectB))?.revision, 1);
-    assert.deepEqual(
-      (await store.listMissionControlOutbox(projectA)).map((entry) => entry.effectId),
-      ["project-a-effect"],
-    );
-    assert.deepEqual(
-      (await store.listMissionControlOutbox(projectB)).map((entry) => entry.effectId),
-      ["project-b-effect"],
-    );
+    assert.equal(withEffect.project.revision, 2);
 
     await assert.rejects(
-      store.updateMissionControlProjectState({
-        projectId: projectC,
-        actionId: "rollback-action",
-        requestFingerprint: FINGERPRINT_C,
-        expectedRevision: 0,
-        apply: () => {
-          throw new Error("rollback");
-        },
-      }),
-      /rollback/u,
-    );
-    assert.equal(await store.getMissionControlProjectState(projectC), null);
-    assert.deepEqual(await store.listMissionControlOutbox(projectC), []);
-
-    await assert.rejects(
-      store.updateMissionControlProjectState({
-        projectId: projectD,
-        actionId: "cross-project-action",
-        requestFingerprint: FINGERPRINT_D,
-        expectedRevision: 0,
-        apply: () => ({
-          document: createEmptyMissionControlProjectDocument(projectA),
-          effects: [{
-            effectId: "must-not-commit",
-            effectType: "mission-control.test",
-            payload: {},
-          }],
+      handle.store.updateMissionControlProjectState({
+        projectId,
+        actionId: "effect-collision",
+        requestFingerprint: "b".repeat(64),
+        expectedRevision: 2,
+        apply: (document) => ({
+          document: {
+            ...document,
+            autopilot: { ...document.autopilot, wipLimit: 5 },
+          },
+          effects: [
+            {
+              effectId: "shared-effect",
+              effectType: "proof.effect",
+              payload: { sequence: 2 },
+            },
+          ],
         }),
       }),
-      /document project mismatch/u,
     );
-    assert.equal(await store.getMissionControlProjectState(projectD), null);
-    assert.deepEqual(await store.listMissionControlOutbox(projectD), []);
-
-    const concurrentProject = randomUUID();
-    const attempts = await Promise.allSettled([
-      store.updateMissionControlProjectState({
-        projectId: concurrentProject,
-        actionId: "concurrent-a",
-        requestFingerprint: FINGERPRINT_A,
-        expectedRevision: 0,
-        apply: (current) => ({ document: current, effects: [] }),
-      }),
-      store.updateMissionControlProjectState({
-        projectId: concurrentProject,
-        actionId: "concurrent-b",
-        requestFingerprint: FINGERPRINT_B,
-        expectedRevision: 0,
-        apply: (current) => ({ document: current, effects: [] }),
-      }),
-    ]);
-    assert.equal(
-      attempts.filter((attempt) => attempt.status === "fulfilled").length,
-      1,
-    );
-    const rejected = attempts.find(
-      (attempt): attempt is PromiseRejectedResult => attempt.status === "rejected",
-    );
-    assert.ok(rejected);
-    assert.ok(rejected.reason instanceof MissionControlRevisionConflictError);
-    assert.equal(
-      (await store.getMissionControlProjectState(concurrentProject))?.revision,
-      1,
-    );
+    const afterRejectedEffect =
+      await handle.store.getMissionControlProjectState(projectId);
+    assert.equal(afterRejectedEffect?.revision, 2);
+    assert.equal(afterRejectedEffect?.document.autopilot.wipLimit, 4);
   },
 );

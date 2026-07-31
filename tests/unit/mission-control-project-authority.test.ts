@@ -255,7 +255,7 @@ contractTest(
 
 contractTest(
   "runtime.hermetic",
-  "dormant project authority does not mutate the legacy session product snapshot",
+  "active project authority never dual-writes a session project snapshot",
   async () => {
     const store = new InMemorySessionStore();
     const session = await store.ensureSession("legacy-session");
@@ -263,10 +263,10 @@ contractTest(
     await new MissionControlProjectService(store).execute(action({
       type: "item.create",
       projectId: PROJECT_A,
-      actionId: "dormant-create",
+      actionId: "canonical-create",
       expectedRevision: 0,
-      itemId: "dormant-item",
-      title: "Dormant authority",
+      itemId: "canonical-item",
+      title: "Canonical authority",
       instructions: "Do not dual write legacy state.",
       createdBy: "operator",
       order: 0,

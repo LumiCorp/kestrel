@@ -82,7 +82,14 @@ import {
   readProjectSnapshotFromRuntimeState,
 } from "../project/state.js";
 import type { ProductProjectSnapshot } from "../project/contracts.js";
+import type {
+  MissionControlLegacyProjectSource,
+  MissionControlMigrationSourceBinding,
+} from "../missionControl/migrationContracts.js";
+import { requireMissionControlMigrationFingerprint } from "../missionControl/migrationContracts.js";
+import { parseMissionControlLegacyProjectSnapshot } from "../missionControl/legacyContracts.js";
 import {
+  MISSION_CONTROL_AUTHORITY_EPOCH,
   MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
   assertMissionControlExpectedRevision,
   assertMissionControlReceiptFingerprint,
@@ -171,6 +178,36 @@ type MissionControlOutboxRow = Record<string, unknown> & {
   last_error: string | null;
   created_at: unknown;
 };
+
+type MissionControlMigrationBindingRow = Record<string, unknown> & {
+  source_id: string;
+  project_id: string;
+  source_fingerprint: string;
+  action_id: string;
+  bound_at: unknown;
+};
+
+function readMissionControlRunCorrelation(value: unknown) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  const projectId = readNonEmptyString(record.projectId);
+  const itemId = readNonEmptyString(record.itemId);
+  const attemptId = readNonEmptyString(record.attemptId);
+  const commandId = readNonEmptyString(record.commandId);
+  const runId = readNonEmptyString(record.runId);
+  if (
+    projectId === undefined ||
+    itemId === undefined ||
+    attemptId === undefined ||
+    commandId === undefined ||
+    runId === undefined
+  ) {
+    return;
+  }
+  return { projectId, itemId, attemptId, commandId, runId };
+}
 
 function mapProviderReasoningRow(row: Record<string, unknown>): ProviderReasoningEncryptedRecord {
   const kind = row.record_kind;
@@ -438,6 +475,81 @@ export class PostgresSessionStore implements SessionStore {
     return row === undefined ? null : this.mapMissionControlProjectRow(row);
   }
 
+  async listMissionControlLegacySources(): Promise<
+    MissionControlLegacyProjectSource[]
+  > {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<
+      Record<string, unknown> & {
+        session_id: string;
+        current_version: number | string;
+        current_state_json: Record<string, unknown> | null;
+        product_version: number | string | null;
+        project_snapshot_json: Record<string, unknown> | null;
+      }
+    >(
+      `SELECT sessions.session_id,
+              sessions.current_version,
+              sessions.current_state_json,
+              session_product_state.version AS product_version,
+              session_product_state.project_snapshot_json
+         FROM sessions
+         LEFT JOIN session_product_state
+           ON session_product_state.session_id = sessions.session_id
+        ORDER BY sessions.session_id ASC`,
+    );
+    const sources: MissionControlLegacyProjectSource[] = [];
+    for (const row of result.rows) {
+      const snapshot =
+        row.project_snapshot_json === null
+          ? parseMissionControlLegacyProjectSnapshot(
+              this.asRecord(
+                this.asRecord(row.current_state_json)?.product,
+              )?.projectSnapshot,
+            )
+          : parseMissionControlLegacyProjectSnapshot(row.project_snapshot_json);
+      const hasDedicated = row.project_snapshot_json !== null;
+      const state = this.asRecord(row.current_state_json) ?? {};
+      const product = this.asRecord(state.product) ?? {};
+      if (hasDedicated === false && product.projectSnapshot === undefined) {
+        continue;
+      }
+      const projectPath = snapshot.setup.workspaceRoot.trim();
+      sources.push({
+        sourceId: `session:${row.session_id}`,
+        kind: "session_snapshot",
+        sessionId: row.session_id,
+        sourceVersion: this.normalizeSafeInteger(
+          hasDedicated ? (row.product_version ?? 0) : row.current_version,
+          "Mission Control legacy source version",
+        ),
+        ...(projectPath.length === 0 ? {} : { projectPath }),
+        snapshot,
+      });
+    }
+    return sources;
+  }
+
+  async listMissionControlMigrationSourceBindings(): Promise<
+    MissionControlMigrationSourceBinding[]
+  > {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<MissionControlMigrationBindingRow>(
+      `SELECT source_id, project_id, source_fingerprint, action_id, bound_at
+         FROM mission_control_migration_source_bindings
+        ORDER BY source_id ASC`,
+    );
+    return result.rows.map((row) => ({
+      sourceId: row.source_id,
+      projectId: requireMissionControlProjectId(row.project_id),
+      sourceFingerprint: requireMissionControlMigrationFingerprint(
+        row.source_fingerprint,
+      ),
+      actionId: requireMissionControlActionId(row.action_id),
+      boundAt: normalizeTimestampString(row.bound_at),
+    }));
+  }
+
   async updateMissionControlProjectState(
     input: MissionControlProjectMutationInput,
   ): Promise<MissionControlProjectMutationResult> {
@@ -455,11 +567,12 @@ export class PostgresSessionStore implements SessionStore {
       await executor.query(
         `INSERT INTO mission_control_projects (
            project_id, schema_version, revision, authority_epoch, document_json
-         ) VALUES ($1, $2, 0, 0, $3::jsonb)
+         ) VALUES ($1, $2, 0, $3, $4::jsonb)
          ON CONFLICT (project_id) DO NOTHING`,
         [
           projectId,
           MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
+          MISSION_CONTROL_AUTHORITY_EPOCH,
           stringifySanitizedJson(empty),
         ],
       );
@@ -518,7 +631,10 @@ export class PostgresSessionStore implements SessionStore {
           WHERE project_id = $1
           RETURNING project_id, schema_version, revision, authority_epoch,
                     document_json, created_at, updated_at`,
-        [projectId, stringifySanitizedJson(document)],
+        [
+          projectId,
+          stringifySanitizedJson(document),
+        ],
       );
       const updatedRow = updatedResult.rows[0];
       if (updatedRow === undefined) {
@@ -596,6 +712,54 @@ export class PostgresSessionStore implements SessionStore {
       [projectId],
     );
     return result.rows.map((row) => this.mapMissionControlOutboxRow(row));
+  }
+
+  async markMissionControlOutboxDelivered(
+    projectIdValue: string,
+    effectIdValue: string,
+  ): Promise<void> {
+    await this.ensureSchemaV3();
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const effectId = requireMissionControlActionId(effectIdValue);
+    const result = await this.db.query(
+      `UPDATE mission_control_outbox
+          SET status = 'DELIVERED',
+              last_error = NULL,
+              delivered_at = NOW()
+        WHERE project_id = $1
+          AND effect_id = $2`,
+      [projectId, effectId],
+    );
+    if (result.rowCount !== 1) {
+      throw new Error(`Mission Control outbox effect not found: ${effectId}.`);
+    }
+  }
+
+  async recordMissionControlOutboxFailure(
+    projectIdValue: string,
+    effectIdValue: string,
+    errorValue: string,
+  ): Promise<void> {
+    await this.ensureSchemaV3();
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const effectId = requireMissionControlActionId(effectIdValue);
+    const error = errorValue.trim();
+    if (error.length === 0) {
+      throw new Error("Mission Control outbox failure must not be empty.");
+    }
+    const result = await this.db.query(
+      `UPDATE mission_control_outbox
+          SET status = 'PENDING',
+              attempt_count = attempt_count + 1,
+              last_error = $3,
+              delivered_at = NULL
+        WHERE project_id = $1
+          AND effect_id = $2`,
+      [projectId, effectId, error],
+    );
+    if (result.rowCount !== 1) {
+      throw new Error(`Mission Control outbox effect not found: ${effectId}.`);
+    }
   }
 
   async getSessionProductState(sessionId: string): Promise<SessionProductStateRecord | null> {
@@ -840,6 +1004,7 @@ export class PostgresSessionStore implements SessionStore {
       error_json: Record<string, unknown> | null;
       event_count: number | string;
       thread_id: string | null;
+      mission_control_json: unknown;
     }>(
       `WITH selected_runs AS (
          SELECT run_id, session_id, event_type, status, started_at, completed_at, error_json
@@ -861,7 +1026,16 @@ export class PostgresSessionStore implements SessionStore {
                    AND NULLIF(run_events.metadata_json ->> 'threadId', '') IS NOT NULL
                  ORDER BY run_events.occurred_at DESC, run_events.id DESC
                  LIMIT 1
-              ) AS thread_id
+              ) AS thread_id,
+              (
+                SELECT run_events.metadata_json -> 'missionControl'
+                  FROM run_events
+                 WHERE run_events.run_id = selected_runs.run_id
+                   AND run_events.event_type = 'run.started'
+                   AND run_events.metadata_json -> 'missionControl' IS NOT NULL
+                 ORDER BY run_events.occurred_at ASC, run_events.id ASC
+                 LIMIT 1
+              ) AS mission_control_json
          FROM selected_runs
         ORDER BY selected_runs.started_at DESC`,
       values,
@@ -870,6 +1044,13 @@ export class PostgresSessionStore implements SessionStore {
       run: this.mapRunRow(row),
       eventCount: Number(row.event_count),
       ...(row.thread_id !== null ? { threadId: row.thread_id } : {}),
+      ...(readMissionControlRunCorrelation(row.mission_control_json) === undefined
+        ? {}
+        : {
+            missionControl: readMissionControlRunCorrelation(
+              row.mission_control_json,
+            )!,
+          }),
     }));
   }
 

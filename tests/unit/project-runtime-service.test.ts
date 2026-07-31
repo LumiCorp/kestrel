@@ -1,236 +1,126 @@
 import assert from "node:assert/strict";
 
-import type { ProductProjectAction, ProductProjectSnapshot } from "../../src/project/contracts.js";
-import type { ProductTaskGraph } from "../../src/taskGraph/contracts.js";
 import {
+  createEmptyMissionControlProjectDocument,
   createEmptyProjectSnapshot,
-  createProductProjectActionToolAdapter,
   ProductProjectRuntimeService,
 } from "../../src/index.js";
-import { ProductProjectStateStore } from "../../src/project/store.js";
-import { applyProjectSnapshotAction } from "../../src/project/state.js";
-import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
-import type { RuntimeTurnResult } from "../../src/runtime/RuntimeTurn.js";
+import type { ProductTaskGraph } from "../../src/taskGraph/contracts.js";
 import { projectTaskProposeTool } from "../../tools/project/taskPropose.js";
 import { contractTest } from "../helpers/contract-test.js";
 
+const graph: ProductTaskGraph = {
+  version: 1,
+  rootTaskIds: [],
+  tasks: {},
+};
 
-contractTest("runtime.hermetic", "createProductProjectActionToolAdapter applies project action with current task graph", async () => {
-  const graph: ProductTaskGraph = {
-    version: 1,
-    rootTaskIds: ["task-main"],
-    tasks: {},
-  };
-  const snapshot: ProductProjectSnapshot = createEmptyProjectSnapshot();
-  let graphSessionId: string | undefined;
-  let applied:
-    | {
-        sessionId: string;
-        graph: ProductTaskGraph;
-        action: unknown;
-      }
-    | undefined;
-  const adapter = createProductProjectActionToolAdapter({
-    taskGraphStore: {
-      async getGraph(input) {
-        graphSessionId = input.sessionId;
-        return graph;
-      },
-    },
-    projectStore: {
-      async applyAction(input) {
-        applied = input;
-        return snapshot;
-      },
-    },
-  });
-
-  const action = {
-    type: "task.propose" as const,
-    actionId: "action-1",
-    actionTs: "2026-05-24T18:10:00.000Z",
-    sessionId: "session-project",
-    title: "Task",
-    instructions: "Ship the task",
-  };
-  const result = await adapter.apply(action);
-
-  assert.equal(graphSessionId, "session-project");
-  assert.deepEqual(applied, {
-    sessionId: "session-project",
-    graph,
-    action,
-  });
-  assert.deepEqual(result, {
-    sessionId: "session-project",
-    snapshot,
-  });
-});
-
-contractTest("runtime.hermetic", "task.propose handler creates proposed Mission Control tasks through the project action adapter", async () => {
-  const sessionStore = new InMemorySessionStore();
-  const projectStore = new ProductProjectStateStore(sessionStore, {
-    async inspectReviewState() {
-      return createEmptyProjectSnapshot().review;
-    },
-    async applyAction() {
-      return;
-    },
-  } as never);
-  const graph: ProductTaskGraph = {
-    version: 1,
-    rootTaskIds: [],
-    tasks: {},
-  };
-  const sessionId = "session-task-propose-tool";
-  await projectStore.saveSnapshot(sessionId, createEmptyProjectSnapshot());
-  const handler = projectTaskProposeTool.createHandler({
-    projectActions: createProductProjectActionToolAdapter({
+contractTest(
+  "runtime.hermetic",
+  "ProductProjectRuntimeService exposes supporting projection and Git actions only",
+  async () => {
+    const calls: string[] = [];
+    const service = new ProductProjectRuntimeService({
       taskGraphStore: {
         async getGraph(input) {
-          assert.equal(input.sessionId, sessionId);
+          calls.push(`graph:${input.sessionId}`);
           return graph;
         },
       },
-      projectStore,
-    }),
-  });
+      projectStore: {
+        async getSnapshot() {
+          calls.push("snapshot");
+          return createEmptyProjectSnapshot();
+        },
+        async applyAction(input: { action: { type: string } }) {
+          calls.push(input.action.type);
+          return createEmptyProjectSnapshot();
+        },
+      } as never,
+    });
 
-  const result = await handler({
-    sessionId,
-    title: "Fix auth callback",
-    instructions: "Repair the auth callback regression and verify login succeeds with a regression test.",
-    summary: "Proposed from the current conversation.",
-  });
+    await service.getProjectSnapshot({ sessionId: "session-1" });
+    await service.performProjectAction({
+      type: "branch.create",
+      sessionId: "session-1",
+      branchName: "feature/one-authority",
+    });
 
-  const snapshot = (result as { snapshot: Awaited<ReturnType<ProductProjectStateStore["getSnapshot"]>> }).snapshot;
-  const task = snapshot.taskQueue.tasks["T-1"];
-  assert.equal(task?.status, "proposed");
-  assert.equal(task?.createdBy, "agent");
-  assert.equal(task?.title, "Fix auth callback");
-  assert.equal(task?.instructions, "Repair the auth callback regression and verify login succeeds with a regression test.");
-  assert.equal(task?.evidence.at(-1)?.source, "agent");
-  assert.equal(task?.evidence.at(-1)?.summary, "Proposed from the current conversation.");
+    assert.deepEqual(calls, [
+      "graph:session-1",
+      "snapshot",
+      "graph:session-1",
+      "branch.create",
+    ]);
+  },
+);
 
-  const revisedResult = await handler({
-    sessionId,
-    taskId: "T-1",
-    title: "Fix Plan-mode auth callback",
-    instructions: "Repair the callback and preserve the proposal approval gate.",
-    order: 1,
-    summary: "Reconciled with the current session plan.",
-  });
-  const revisedSnapshot = (revisedResult as {
-    snapshot: Awaited<ReturnType<ProductProjectStateStore["getSnapshot"]>>;
-  }).snapshot;
-  assert.equal(revisedSnapshot.taskQueue.tasks["T-1"]?.title, "Fix Plan-mode auth callback");
-  assert.equal(revisedSnapshot.taskQueue.tasks["T-1"]?.status, "proposed");
-  assert.equal(revisedSnapshot.taskQueue.tasks["T-1"]?.evidence.at(-1)?.summary, "Reconciled with the current session plan.");
-
-  await assert.rejects(
-    () => handler({
-      sessionId,
-      title: "Invalid proposal order",
-      instructions: "Reject this input before it reaches the project store.",
-      order: 0,
-    }),
-    /order must be a positive integer/u,
-  );
-});
-
-contractTest("runtime.hermetic", "ProductProjectRuntimeService applies manual board moves before aborting assigned runs", async () => {
-  const graph: ProductTaskGraph = {
-    version: 1,
-    rootTaskIds: ["task-main"],
-    tasks: {},
-  };
-  const sessionId = "session-project-runtime-cancel";
-  let snapshot: ProductProjectSnapshot = createEmptyProjectSnapshot();
-  let abortFiredBeforeMoveApply = false;
-  let movingCard = false;
-  let abortControllerSignal: AbortSignal | undefined;
-  let abortObservedResolve: (() => void) | undefined;
-  const abortObserved = new Promise<void>((resolve) => {
-    abortObservedResolve = resolve;
-  });
-  const nextAction = (
-    action: Record<string, unknown> & { type: ProductProjectAction["type"] },
-  ): ProductProjectAction => ({
-    ...action,
-    sessionId,
-    actionId: `${action.type}:test`,
-    actionTs: "2026-05-24T18:10:00.000Z",
-  }) as ProductProjectAction;
-  const projectStore = {
-    async getSnapshot() {
-      return snapshot;
-    },
-    async applyAction(input: {
-      action: Parameters<typeof applyProjectSnapshotAction>[1];
-    }) {
-      if (input.action.type === "board.card.move") {
-        movingCard = true;
-        if (abortFiredBeforeMoveApply) {
-          throw new Error("assigned run aborted before board move applied");
+contractTest(
+  "runtime.hermetic",
+  "task.propose writes through trusted project-scoped Mission Control context",
+  async () => {
+    const projectId = "c10d2918-e0b6-48e4-bf3a-8dff7420b5a6";
+    let received:
+      | {
+          projectId: string;
+          title: string;
+          instructions: string;
+          order?: number | undefined;
         }
-      }
-      snapshot = applyProjectSnapshotAction(snapshot, input.action);
-      return snapshot;
-    },
-  } as unknown as ProductProjectStateStore;
-  const runtime = new ProductProjectRuntimeService({
-    taskGraphStore: {
-      async getGraph() {
-        return graph;
+      | undefined;
+    const handler = projectTaskProposeTool.createHandler({
+      runtime: { projectId, runId: "run-1", sessionId: "session-1" },
+      missionControlActions: {
+        async propose(input) {
+          received = input;
+          return {
+            projectId: input.projectId,
+            schemaVersion: 1,
+            revision: 1,
+            authorityEpoch: 1,
+            document: createEmptyMissionControlProjectDocument(input.projectId),
+            createdAt: "2026-07-30T12:00:00.000Z",
+            updatedAt: "2026-07-30T12:00:00.000Z",
+          };
+        },
       },
-    },
-    projectStore,
-    turnRunner: {
-      async runTurn(_input, options): Promise<RuntimeTurnResult> {
-        abortControllerSignal = options?.signal;
-        return await new Promise<RuntimeTurnResult>((_resolve, reject) => {
-          options?.signal?.addEventListener("abort", () => {
-            if (movingCard === false) {
-              abortFiredBeforeMoveApply = true;
-            }
-            abortObservedResolve?.();
-            reject(new Error("aborted"));
-          }, { once: true });
-        });
+    });
+
+    const result = await handler({
+      title: "Fix auth callback",
+      instructions: "Repair the callback and add a regression test.",
+      order: 2,
+    });
+
+    assert.deepEqual(received, {
+      projectId,
+      title: "Fix auth callback",
+      instructions: "Repair the callback and add a regression test.",
+      order: 2,
+    });
+    assert.equal(
+      (result as { projectId: string; revision: number }).projectId,
+      projectId,
+    );
+    assert.equal((result as { revision: number }).revision, 1);
+  },
+);
+
+contractTest(
+  "runtime.hermetic",
+  "task.propose rejects missing project authority",
+  async () => {
+    const handler = projectTaskProposeTool.createHandler({
+      missionControlActions: {
+        async propose() {
+          throw new Error("unexpected proposal");
+        },
       },
-    },
-  });
+    });
 
-  await runtime.performProjectAction(nextAction({
-    type: "board.card.create",
-    title: "Cancel race",
-    prompt: "Keep manual moves authoritative.",
-    source: "operator",
-  }));
-  await runtime.performProjectAction(nextAction({
-    type: "board.card.move",
-    cardId: "K-1",
-    targetLane: "planned",
-    source: "operator",
-  }));
-  const started = await runtime.performProjectAction(nextAction({
-    type: "board.card.start_implementation",
-    cardId: "K-1",
-    source: "operator",
-  }));
-  assert.equal(started.snapshot.board.cards["K-1"]?.lane, "wip");
-  assert.equal(abortControllerSignal?.aborted, false);
-
-  const moved = await runtime.performProjectAction(nextAction({
-    type: "board.card.move",
-    cardId: "K-1",
-    targetLane: "planned",
-    expectedBoardVersion: started.snapshot.board.boardVersion,
-    source: "operator",
-  }));
-
-  await abortObserved;
-  assert.equal(moved.snapshot.board.cards["K-1"]?.lane, "planned");
-  assert.equal(moved.snapshot.board.cards["K-1"]?.activeClaim, undefined);
-  assert.equal(abortFiredBeforeMoveApply, false);
-});
+    await assert.rejects(
+      handler({ title: "Task", instructions: "Do the task." }),
+      /active registered project context/,
+    );
+  },
+);

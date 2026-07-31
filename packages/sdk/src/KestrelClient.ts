@@ -16,7 +16,6 @@ import type {
   ProjectReviewActionCommandPayload,
   ProjectReviewGetCommandPayload,
   ProjectSnapshotGetCommandPayload,
-  ProjectSnapshotUpdateCommandPayload,
   RunnerCommandMetadata,
   RunnerCommandPayloadByType,
   RunnerCommandType,
@@ -533,14 +532,6 @@ export class KestrelClient {
     context: KestrelRequestContext,
   ): Promise<{ sessionId: string; snapshot: RunnerProjectSnapshot }> {
     const event = await this.sendCommand("project.snapshot.get", input, context);
-    return event.payload;
-  }
-
-  async updateProjectSnapshot(
-    input: ProjectSnapshotUpdateCommandPayload,
-    context: KestrelRequestContext,
-  ): Promise<{ sessionId: string; snapshot: RunnerProjectSnapshot }> {
-    const event = await this.sendCommand("project.snapshot.update", input, context);
     return event.payload;
   }
 

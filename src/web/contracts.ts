@@ -7,7 +7,6 @@ import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 
 import type {
   ProductProjectAction,
-  ProductProjectSnapshot,
   ProductReviewAction,
   ProductReviewTarget,
 } from "../project/contracts.js";
@@ -331,13 +330,16 @@ export type WebControlCommand =
   | { type: "workspace.git.inspect"; sessionId: string; threadId: string }
   | { type: "workspace.git.action"; sessionId: string; threadId: string; candidateFingerprint: string; expectedHeadSha?: string; action: WorkspaceGitAction }
   | {
-      type: "project.snapshot.get";
-      sessionId: string;
+      type: "mission_control.project.get";
+      projectId: string;
     }
   | {
-      type: "project.snapshot.update";
+      type: "mission_control.action.execute";
+      action: Record<string, unknown>;
+    }
+  | {
+      type: "project.snapshot.get";
       sessionId: string;
-      snapshot: ProductProjectSnapshot;
     }
   | {
       type: "project.action";

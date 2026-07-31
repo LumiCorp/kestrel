@@ -44,6 +44,14 @@ export interface RuntimeTurnProjectContext {
   content: string;
 }
 
+export interface RuntimeTurnMissionControlExecution {
+  projectId: string;
+  itemId: string;
+  attemptId: string;
+  commandId: string;
+  runId: string;
+}
+
 export interface RuntimeTurnInput {
   sessionId: string;
   runId?: string | undefined;
@@ -68,6 +76,7 @@ export interface RuntimeTurnInput {
   systemInstructions?: string[] | undefined;
   history?: RuntimeTurnHistoryLine[] | undefined;
   projectContext?: RuntimeTurnProjectContext | undefined;
+  missionControl?: RuntimeTurnMissionControlExecution | undefined;
   manualCompaction?: boolean | undefined;
   autoCompaction?:
     | {
@@ -378,6 +387,9 @@ function buildRuntimeTurnMetadata(input: {
       : {}),
     ...(input.input.projectContext !== undefined
       ? { projectContext: input.input.projectContext }
+      : {}),
+    ...(input.input.missionControl !== undefined
+      ? { missionControl: input.input.missionControl }
       : {}),
     ...(input.input.workspace !== undefined
       ? { workspace: input.input.workspace }

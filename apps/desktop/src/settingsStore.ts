@@ -1089,6 +1089,21 @@ function normalizeDesktopProjects(
   return normalized;
 }
 
+export function preserveDesktopProjectRegistrationIds(
+  currentProjects: readonly DesktopProjectRegistration[],
+  nextProjects: readonly DesktopProjectRegistration[],
+): DesktopProjectRegistration[] {
+  const currentByPath = new Map(
+    currentProjects.map((project) => [path.resolve(project.path), project]),
+  );
+  return nextProjects.map((project) => {
+    const current = currentByPath.get(path.resolve(project.path));
+    return current?.id === undefined
+      ? { ...project }
+      : { ...project, id: current.id };
+  });
+}
+
 function normalizeDesktopProjectTombstones(
   tombstones: DesktopSettings["projectTombstones"] | undefined,
 ): DesktopSettings["projectTombstones"] {

@@ -3395,6 +3395,124 @@ contractTest("runtime.process", "task graph commands emit graph snapshots throug
   await host.close();
 });
 
+contractTest(
+  ["runtime.process", "desktop.mission-control-boundary"],
+  "Mission Control project reads and actions preserve exact project identity while retired commands fail",
+  async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const authorityActions: unknown[] = [];
+  const project = (inputProjectId: string) => ({
+    projectId: inputProjectId,
+    schemaVersion: 1 as const,
+    revision: 0,
+    authorityEpoch: 1,
+    document: {
+      schemaVersion: 1 as const,
+      projectId: inputProjectId,
+      autopilot: { enabled: false, wipLimit: 1 },
+      items: {},
+      history: [],
+    },
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  });
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getMissionControlProject: async (input) => project(input.projectId),
+    executeMissionControlAction: async (input) => {
+      authorityActions.push(input.action);
+      return project(String(input.action.projectId));
+    },
+    getToolRuntimeStatus: async () => ({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      providers: {
+        mcp: {
+          healthy: true,
+          checkedAt: new Date().toISOString(),
+          servers: [],
+          tools: [],
+        },
+      },
+    }),
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(
+      JSON.parse(line) as { type: string; payload: Record<string, unknown> },
+    );
+  });
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-mission-control-prewarm",
+    type: "mcp.status",
+    payload: { profile },
+  }));
+  await tick();
+  events.length = 0;
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-mission-control-project",
+    type: "mission_control.project.get",
+    payload: { projectId },
+  }));
+  await tick();
+
+  const event = events.find(
+    (candidate) => candidate.type === "mission_control.project",
+  );
+  assert.equal(event?.payload.projectId, projectId);
+  assert.equal(
+    (event?.payload.project as { projectId?: string } | undefined)?.projectId,
+    projectId,
+  );
+  events.length = 0;
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-retired-mission-control-migration",
+    type: "mission_control.migration.execute",
+    payload: {},
+  }));
+  await tick();
+  assert.equal(events[0]?.type, "runner.error");
+  events.length = 0;
+  const authorityAction = {
+    type: "item.create",
+    projectId,
+    actionId: "canonical-item-action",
+    actionTs: "2026-07-31T12:01:00.000Z",
+    expectedRevision: 0,
+    itemId: "canonical-item",
+    title: "Canonical item",
+    instructions: "Exercise the project-scoped action boundary.",
+    createdBy: "operator",
+    order: 1,
+  };
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-mission-control-action",
+    type: "mission_control.action.execute",
+    payload: { action: authorityAction },
+  }));
+  await tick();
+  assert.deepEqual(authorityActions, [authorityAction]);
+  assert.equal(events[0]?.type, "mission_control.project");
+  assert.equal(events[0]?.payload.projectId, projectId);
+  assert.equal(
+    (events[0]?.payload.project as { authorityEpoch?: number } | undefined)
+      ?.authorityEpoch,
+    1,
+  );
+  rl.close();
+  await host.close();
+  },
+);
+
 contractTest("runtime.process", "CommandRouter enforces bounded operator.runs filters", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);

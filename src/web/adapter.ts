@@ -59,6 +59,7 @@ type WebControlTerminalEvent = Extract<
       | "workspace.review"
       | "workspace.validation"
       | "workspace.git"
+      | "mission_control.project"
       | "project.snapshot"
       | "project.review";
   }
@@ -944,24 +945,43 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
       if (command.type === "workspace.git.inspect") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId }, metadata); if (response.type !== "workspace.git") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_GIT_RESPONSE", `Unexpected workspace Git response '${response.type}'.`); return response; }
       if (command.type === "workspace.git.action") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, candidateFingerprint: command.candidateFingerprint, ...(command.expectedHeadSha ? { expectedHeadSha: command.expectedHeadSha } : {}), action: command.action }, metadata); if (response.type !== "workspace.git") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_GIT_RESPONSE", `Unexpected workspace Git response '${response.type}'.`); return response; }
 
-      if (command.type === "project.snapshot.get") {
-        const response = await sendCommand(activeClient, "project.snapshot.get", {
-          sessionId: command.sessionId,
-        }, metadata);
-        if (response.type !== "project.snapshot") {
+      if (command.type === "mission_control.project.get") {
+        const response = await sendCommand(
+          activeClient,
+          "mission_control.project.get",
+          { projectId: command.projectId },
+          metadata,
+        );
+        if (response.type !== "mission_control.project") {
           throw createRuntimeFailure(
-            "WEB_ADAPTER_UNEXPECTED_PROJECT_SNAPSHOT_RESPONSE",
-            `Unexpected project snapshot response '${response.type}'.`,
+            "WEB_ADAPTER_UNEXPECTED_MISSION_CONTROL_PROJECT_RESPONSE",
+            `Unexpected Mission Control project response '${response.type}'.`,
             { responseType: response.type },
           );
         }
         return response;
       }
 
-      if (command.type === "project.snapshot.update") {
-        const response = await sendCommand(activeClient, "project.snapshot.update", {
+      if (command.type === "mission_control.action.execute") {
+        const response = await sendCommand(
+          activeClient,
+          "mission_control.action.execute",
+          { action: command.action },
+          metadata,
+        );
+        if (response.type !== "mission_control.project") {
+          throw createRuntimeFailure(
+            "WEB_ADAPTER_UNEXPECTED_MISSION_CONTROL_PROJECT_RESPONSE",
+            `Unexpected Mission Control action response '${response.type}'.`,
+            { responseType: response.type },
+          );
+        }
+        return response;
+      }
+
+      if (command.type === "project.snapshot.get") {
+        const response = await sendCommand(activeClient, "project.snapshot.get", {
           sessionId: command.sessionId,
-          snapshot: command.snapshot,
         }, metadata);
         if (response.type !== "project.snapshot") {
           throw createRuntimeFailure(

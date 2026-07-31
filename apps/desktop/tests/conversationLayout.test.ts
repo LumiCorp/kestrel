@@ -386,14 +386,14 @@ contractTest("desktop.hermetic", "top-level workspace headers avoid decorative c
   const [settings, apps, mission, projects, diagnostics] = await Promise.all([
     readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8"),
     readFile(path.join(testDir, "..", "renderer", "src", "McpWorkspace.tsx"), "utf8"),
-    readFile(path.join(testDir, "..", "renderer", "src", "MissionControlWorkspace.tsx"), "utf8"),
+    readFile(path.join(testDir, "..", "renderer", "src", "UnifiedMissionControlWorkspace.tsx"), "utf8"),
     readFile(path.join(testDir, "..", "renderer", "src", "ProjectWorkspace.tsx"), "utf8"),
     readFile(path.join(testDir, "..", "renderer", "src", "DiagnosticsWorkspace.tsx"), "utf8"),
   ]);
 
   assert.doesNotMatch(settings, /Desktop authority/u);
   assert.doesNotMatch(apps, /<span className="surface-kicker">Capabilities<\/span>/u);
-  assert.doesNotMatch(mission, /Session operations/u);
+  assert.doesNotMatch(mission, /Session operations|Legacy authority/u);
   assert.doesNotMatch(projects, /\{props\.workspace\?\.kind === "managed" \? "Managed worktree" : "Project"\}/u);
   assert.doesNotMatch(diagnostics, /<span className="surface-kicker">Local Core<\/span>/u);
 });

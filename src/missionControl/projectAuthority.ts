@@ -1,8 +1,21 @@
 import { createHash } from "node:crypto";
 
 import type { MissionControlProjectRepository } from "../kestrel/contracts/store.js";
+import {
+  parseMissionControlMigrationState,
+  type MissionControlMigrationState,
+} from "./migrationContracts.js";
+import {
+  parseMissionControlCompletionContract,
+  parseMissionControlReviewBundle,
+  parseMissionControlReviewDecision,
+  type MissionControlCompletionContract,
+  type MissionControlReviewBundle,
+  type MissionControlReviewDecision,
+} from "./reviewContracts.js";
 
 export const MISSION_CONTROL_PROJECT_SCHEMA_VERSION = 1 as const;
+export const MISSION_CONTROL_AUTHORITY_EPOCH = 1 as const;
 
 const PROJECT_UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -18,24 +31,122 @@ export type MissionControlWorkPhase =
 
 export type MissionControlWorkCreator = "operator" | "agent";
 
+export type MissionControlAttemptStatus =
+  | "starting"
+  | "running"
+  | "waiting"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "orphaned";
+
+export type MissionControlAttentionReason =
+  | "start_rejected"
+  | "execution_failed"
+  | "operator_stopped"
+  | "runner_orphaned"
+  | "runtime_authority_changed";
+
+export interface MissionControlAttemptRun {
+  sessionId: string;
+  threadId: string;
+  runId: string;
+  commandId: string;
+  acceptedAt: string;
+}
+
+export interface MissionControlPendingRequest {
+  requestId: string;
+  threadId: string;
+  kind:
+    | "approval"
+    | "user_input"
+    | "delegation"
+    | "scheduler_wait"
+    | "compaction_checkpoint"
+    | "unknown";
+  eventType?: string | undefined;
+  enteredAt?: string | undefined;
+}
+
+export interface MissionControlExecutionAttempt {
+  id: string;
+  generation: number;
+  initiatedBy: "operator" | "autopilot";
+  status: MissionControlAttemptStatus;
+  version: number;
+  profileId: string;
+  requestedSessionId: string;
+  requestedThreadId: string;
+  dispatchCommandId: string;
+  dispatchRunId: string;
+  runs: MissionControlAttemptRun[];
+  currentRunId?: string | undefined;
+  pendingRequest?: MissionControlPendingRequest | undefined;
+  pendingResponse?: {
+    requestId: string;
+    commandId: string;
+    runId: string;
+  } | undefined;
+  terminalReason?: string | undefined;
+  terminalReasonCode?: string | undefined;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface MissionControlWorkItem {
   id: string;
   title: string;
   instructions: string;
   createdBy: MissionControlWorkCreator;
+  completionContract?: MissionControlCompletionContract | undefined;
   phase: MissionControlWorkPhase;
   order: number;
+  attempts: MissionControlExecutionAttempt[];
+  currentAttemptId?: string | undefined;
+  attentionReason?: MissionControlAttentionReason | undefined;
+  reviewBundles?: MissionControlReviewBundle[] | undefined;
+  currentReviewBundleId?: string | undefined;
+  reviewDecisions?: MissionControlReviewDecision[] | undefined;
   version: number;
   createdAt: string;
   updatedAt: string;
 }
 
+export type MissionControlHistoryActionType =
+  | MissionControlProjectAction["type"]
+  | "execution.start"
+  | "execution.accepted"
+  | "execution.start_rejected"
+  | "execution.waiting"
+  | "execution.reply"
+  | "execution.resumed"
+  | "execution.stop"
+  | "execution.stop_rejected"
+  | "execution.cancel_confirmed"
+  | "execution.failed"
+  | "execution.orphaned"
+  | "execution.completed"
+  | "execution.retry"
+  | "review.admit"
+  | "review.accept"
+  | "review.request_changes"
+  | "migration.stage"
+  | "migration.rebind"
+  | "migration.resolve"
+  | "migration.clear"
+  | "authority.activate"
+  | "authority.rollback";
+
 export interface MissionControlHistoryEntry {
   actionId: string;
-  actionType: MissionControlProjectAction["type"];
+  actionType: MissionControlHistoryActionType;
   revision: number;
   timestamp: string;
   itemId?: string | undefined;
+  attemptId?: string | undefined;
+  disposition?: "applied" | "stale" | "noop" | undefined;
 }
 
 export interface MissionControlProjectDocument {
@@ -48,6 +159,7 @@ export interface MissionControlProjectDocument {
   };
   items: Record<string, MissionControlWorkItem>;
   history: MissionControlHistoryEntry[];
+  migration?: MissionControlMigrationState | undefined;
 }
 
 export interface MissionControlProjectStateRecord {
@@ -116,6 +228,7 @@ export type MissionControlProjectAction =
       title: string;
       instructions: string;
       createdBy: MissionControlWorkCreator;
+      completionContract?: MissionControlCompletionContract | undefined;
       order: number;
     })
   | (MissionControlItemActionBase & {
@@ -131,6 +244,9 @@ export type MissionControlProjectAction =
     })
   | (MissionControlItemActionBase & {
       type: "item.discard";
+    })
+  | (MissionControlItemActionBase & {
+      type: "item.restore";
     })
   | (MissionControlActionBase & {
       type: "autopilot.configure";
@@ -205,7 +321,7 @@ export class MissionControlProjectService {
       projectId,
       schemaVersion: MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
       revision: 0,
-      authorityEpoch: 0,
+      authorityEpoch: MISSION_CONTROL_AUTHORITY_EPOCH,
       document: createEmptyMissionControlProjectDocument(projectId),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -266,6 +382,7 @@ export function parseMissionControlProjectAction(
         "title",
         "instructions",
         "createdBy",
+        "completionContract",
         "order",
       ]);
       return {
@@ -275,11 +392,19 @@ export function parseMissionControlProjectAction(
         title: requireBoundedString(record.title, "title", 512),
         instructions: requireBoundedString(record.instructions, "instructions", 32_000),
         createdBy: requireWorkCreator(record.createdBy),
+        ...(record.completionContract === undefined
+          ? {}
+          : {
+              completionContract: parseMissionControlCompletionContract(
+                record.completionContract,
+              ),
+            }),
         order: requireNonNegativeInteger(record.order, "order"),
       };
     case "item.approve":
     case "item.return_to_ready":
     case "item.discard":
+    case "item.restore":
       assertAllowedKeys(record, [
         "type",
         "projectId",
@@ -358,6 +483,7 @@ export function parseMissionControlProjectDocument(
     "autopilot",
     "items",
     "history",
+    "migration",
   ]);
   if (record.schemaVersion !== MISSION_CONTROL_PROJECT_SCHEMA_VERSION) {
     throw new Error(
@@ -380,7 +506,7 @@ export function parseMissionControlProjectDocument(
   const items = Object.fromEntries(
     Object.entries(itemsRecord).map(([itemId, item]) => [
       itemId,
-      parseWorkItem(item, itemId),
+      parseWorkItem(item, itemId, projectId),
     ]),
   );
   if (Array.isArray(record.history) === false) {
@@ -409,6 +535,9 @@ export function parseMissionControlProjectDocument(
     },
     items,
     history,
+    ...(record.migration === undefined
+      ? {}
+      : { migration: parseMissionControlMigrationState(record.migration) }),
   };
 }
 
@@ -435,7 +564,7 @@ export function parseMissionControlProjectStateRecord(
     projectId,
     schemaVersion: MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
     revision: requireNonNegativeInteger(record.revision, "revision"),
-    authorityEpoch: requireNonNegativeInteger(
+    authorityEpoch: requirePositiveInteger(
       record.authorityEpoch,
       "authorityEpoch",
     ),
@@ -486,8 +615,14 @@ export function reduceMissionControlProjectAction(
         title: action.title,
         instructions: action.instructions,
         createdBy: action.createdBy,
+        ...(action.completionContract === undefined
+          ? {}
+          : { completionContract: action.completionContract }),
         phase: action.createdBy === "agent" ? "proposed" : "ready",
         order: action.order,
+        attempts: [],
+        reviewBundles: [],
+        reviewDecisions: [],
         version: 1,
         createdAt: action.actionTs,
         updatedAt: action.actionTs,
@@ -580,6 +715,27 @@ export function reduceMissionControlProjectAction(
           replaceWorkItem(current, {
             ...item,
             phase: "discarded",
+            version: item.version + 1,
+            updatedAt: action.actionTs,
+          }),
+          action,
+          nextRevision,
+        ),
+        effects: [],
+      };
+    }
+    case "item.restore": {
+      const item = requireVersionedItem(current, action);
+      if (item.phase !== "discarded") {
+        throw new MissionControlTransitionError(
+          "Only discarded Mission Control work can be restored.",
+        );
+      }
+      return {
+        document: appendHistory(
+          replaceWorkItem(current, {
+            ...item,
+            phase: "ready",
             version: item.version + 1,
             updatedAt: action.actionTs,
           }),
@@ -732,15 +888,26 @@ function appendHistory(
   };
 }
 
-function parseWorkItem(value: unknown, itemKey: string): MissionControlWorkItem {
+function parseWorkItem(
+  value: unknown,
+  itemKey: string,
+  projectId: string,
+): MissionControlWorkItem {
   const record = requireRecord(value, `items.${itemKey}`);
   assertAllowedKeys(record, [
     "id",
     "title",
     "instructions",
     "createdBy",
+    "completionContract",
     "phase",
     "order",
+    "attempts",
+    "currentAttemptId",
+    "attentionReason",
+    "reviewBundles",
+    "currentReviewBundleId",
+    "reviewDecisions",
     "version",
     "createdAt",
     "updatedAt",
@@ -748,6 +915,110 @@ function parseWorkItem(value: unknown, itemKey: string): MissionControlWorkItem 
   const id = requireBoundedString(record.id, `items.${itemKey}.id`, 256);
   if (id !== itemKey) {
     throw new Error(`Mission Control item key mismatch: ${itemKey} != ${id}.`);
+  }
+  if (record.attempts !== undefined && Array.isArray(record.attempts) === false) {
+    throw new Error(`items.${itemKey}.attempts must be an array.`);
+  }
+  const attempts = (record.attempts ?? []).map((attempt, index) =>
+    parseExecutionAttempt(attempt, itemKey, index),
+  );
+  if (
+    record.reviewBundles !== undefined &&
+    Array.isArray(record.reviewBundles) === false
+  ) {
+    throw new Error(`items.${itemKey}.reviewBundles must be an array.`);
+  }
+  const reviewBundles = (record.reviewBundles ?? []).map((bundle, index) =>
+    parseMissionControlReviewBundle(
+      bundle,
+      `items.${itemKey}.reviewBundles.${index}`,
+    ),
+  );
+  if (
+    record.reviewDecisions !== undefined &&
+    Array.isArray(record.reviewDecisions) === false
+  ) {
+    throw new Error(`items.${itemKey}.reviewDecisions must be an array.`);
+  }
+  const reviewDecisions = (record.reviewDecisions ?? []).map((decision, index) =>
+    parseMissionControlReviewDecision(
+      decision,
+      `items.${itemKey}.reviewDecisions.${index}`,
+    ),
+  );
+  const currentAttemptId =
+    record.currentAttemptId === undefined
+      ? undefined
+      : requireBoundedString(
+          record.currentAttemptId,
+          `items.${itemKey}.currentAttemptId`,
+          256,
+        );
+  if (
+    currentAttemptId !== undefined &&
+    attempts.some((attempt) => attempt.id === currentAttemptId) === false
+  ) {
+    throw new Error(
+      `items.${itemKey}.currentAttemptId must identify a persisted attempt.`,
+    );
+  }
+  for (const bundle of reviewBundles) {
+    if (bundle.projectId !== projectId || bundle.itemId !== itemKey) {
+      throw new Error(
+        `items.${itemKey}.reviewBundles must remain project and item scoped.`,
+      );
+    }
+    const attempt = attempts.find((candidate) => candidate.id === bundle.attemptId);
+    const execution = bundle.evidence.find(
+      (evidence) => evidence.kind === "execution",
+    );
+    const run =
+      attempt === undefined || execution?.kind !== "execution"
+        ? undefined
+        : attempt.runs.find(
+            (candidate) =>
+              candidate.sessionId === execution.sessionId &&
+              candidate.threadId === execution.threadId &&
+              candidate.runId === execution.runId &&
+              candidate.commandId === execution.referenceId,
+          );
+    if (attempt === undefined || run === undefined) {
+      throw new Error(
+        `items.${itemKey}.reviewBundles must identify an exact persisted attempt run.`,
+      );
+    }
+  }
+  for (const decision of reviewDecisions) {
+    const bundle = reviewBundles.find(
+      (candidate) => candidate.id === decision.bundleId,
+    );
+    if (
+      decision.projectId !== projectId ||
+      decision.itemId !== itemKey ||
+      bundle === undefined ||
+      decision.attemptId !== bundle.attemptId ||
+      decision.candidateFingerprint !== bundle.candidate.candidateFingerprint
+    ) {
+      throw new Error(
+        `items.${itemKey}.reviewDecisions must identify an exact persisted Review bundle.`,
+      );
+    }
+  }
+  const currentReviewBundleId =
+    record.currentReviewBundleId === undefined
+      ? undefined
+      : requireBoundedString(
+          record.currentReviewBundleId,
+          `items.${itemKey}.currentReviewBundleId`,
+          80,
+        );
+  if (
+    currentReviewBundleId !== undefined &&
+    reviewBundles.some((bundle) => bundle.id === currentReviewBundleId) === false
+  ) {
+    throw new Error(
+      `items.${itemKey}.currentReviewBundleId must identify a persisted bundle.`,
+    );
   }
   return {
     id,
@@ -758,8 +1029,31 @@ function parseWorkItem(value: unknown, itemKey: string): MissionControlWorkItem 
       32_000,
     ),
     createdBy: requireWorkCreator(record.createdBy),
+    ...(record.completionContract === undefined
+      ? {}
+      : {
+          completionContract: parseMissionControlCompletionContract(
+            record.completionContract,
+            `items.${itemKey}.completionContract`,
+          ),
+        }),
     phase: requireWorkPhase(record.phase),
     order: requireNonNegativeInteger(record.order, `items.${itemKey}.order`),
+    attempts,
+    ...(currentAttemptId === undefined ? {} : { currentAttemptId }),
+    ...(record.attentionReason === undefined
+      ? {}
+      : {
+          attentionReason: requireAttentionReason(
+            record.attentionReason,
+            `items.${itemKey}.attentionReason`,
+          ),
+        }),
+    reviewBundles,
+    ...(currentReviewBundleId === undefined
+      ? {}
+      : { currentReviewBundleId }),
+    reviewDecisions,
     version: requirePositiveInteger(record.version, `items.${itemKey}.version`),
     createdAt: requireTimestamp(record.createdAt, `items.${itemKey}.createdAt`),
     updatedAt: requireTimestamp(record.updatedAt, `items.${itemKey}.updatedAt`),
@@ -777,25 +1071,18 @@ function parseHistoryEntry(
     "revision",
     "timestamp",
     "itemId",
+    "attemptId",
+    "disposition",
   ]);
   const actionType = requireString(record.actionType, `history.${index}.actionType`);
-  if (
-    actionType !== "item.create" &&
-    actionType !== "item.approve" &&
-    actionType !== "item.reorder" &&
-    actionType !== "item.return_to_ready" &&
-    actionType !== "item.discard" &&
-    actionType !== "autopilot.configure"
-  ) {
-    throw new Error(`Unsupported Mission Control history action: ${actionType}.`);
-  }
+  const parsedActionType = requireHistoryActionType(actionType);
   return {
     actionId: requireBoundedString(
       record.actionId,
       `history.${index}.actionId`,
       256,
     ),
-    actionType,
+    actionType: parsedActionType,
     revision: requirePositiveInteger(
       record.revision,
       `history.${index}.revision`,
@@ -813,6 +1100,199 @@ function parseHistoryEntry(
             256,
           ),
         }),
+    ...(record.attemptId === undefined
+      ? {}
+      : {
+          attemptId: requireBoundedString(
+            record.attemptId,
+            `history.${index}.attemptId`,
+            256,
+          ),
+        }),
+    ...(record.disposition === undefined
+      ? {}
+      : {
+          disposition: requireHistoryDisposition(
+            record.disposition,
+            `history.${index}.disposition`,
+          ),
+        }),
+  };
+}
+
+function parseExecutionAttempt(
+  value: unknown,
+  itemId: string,
+  index: number,
+): MissionControlExecutionAttempt {
+  const field = `items.${itemId}.attempts.${index}`;
+  const record = requireRecord(value, field);
+  assertAllowedKeys(record, [
+    "id",
+    "generation",
+    "initiatedBy",
+    "status",
+    "version",
+    "profileId",
+    "requestedSessionId",
+    "requestedThreadId",
+    "dispatchCommandId",
+    "dispatchRunId",
+    "runs",
+    "currentRunId",
+    "pendingRequest",
+    "pendingResponse",
+    "terminalReason",
+    "terminalReasonCode",
+    "createdAt",
+    "updatedAt",
+  ]);
+  if (Array.isArray(record.runs) === false) {
+    throw new Error(`${field}.runs must be an array.`);
+  }
+  const runs = record.runs.map((run, runIndex) =>
+    parseAttemptRun(run, `${field}.runs.${runIndex}`),
+  );
+  const currentRunId =
+    record.currentRunId === undefined
+      ? undefined
+      : requireBoundedString(record.currentRunId, `${field}.currentRunId`, 256);
+  if (
+    currentRunId !== undefined &&
+    runs.some((run) => run.runId === currentRunId) === false
+  ) {
+    throw new Error(`${field}.currentRunId must identify an accepted run.`);
+  }
+  return {
+    id: requireBoundedString(record.id, `${field}.id`, 256),
+    generation: requirePositiveInteger(record.generation, `${field}.generation`),
+    initiatedBy: requireAttemptInitiator(record.initiatedBy, `${field}.initiatedBy`),
+    status: requireAttemptStatus(record.status, `${field}.status`),
+    version: requirePositiveInteger(record.version, `${field}.version`),
+    profileId: requireBoundedString(record.profileId, `${field}.profileId`, 256),
+    requestedSessionId: requireBoundedString(
+      record.requestedSessionId,
+      `${field}.requestedSessionId`,
+      256,
+    ),
+    requestedThreadId: requireBoundedString(
+      record.requestedThreadId,
+      `${field}.requestedThreadId`,
+      256,
+    ),
+    dispatchCommandId: requireBoundedString(
+      record.dispatchCommandId,
+      `${field}.dispatchCommandId`,
+      256,
+    ),
+    dispatchRunId: requireBoundedString(
+      record.dispatchRunId,
+      `${field}.dispatchRunId`,
+      256,
+    ),
+    runs,
+    ...(currentRunId === undefined ? {} : { currentRunId }),
+    ...(record.pendingRequest === undefined
+      ? {}
+      : {
+          pendingRequest: parsePendingRequest(
+            record.pendingRequest,
+            `${field}.pendingRequest`,
+          ),
+        }),
+    ...(record.pendingResponse === undefined
+      ? {}
+      : {
+          pendingResponse: parsePendingResponse(
+            record.pendingResponse,
+            `${field}.pendingResponse`,
+          ),
+        }),
+    ...(record.terminalReason === undefined
+      ? {}
+      : {
+          terminalReason: requireBoundedString(
+            record.terminalReason,
+            `${field}.terminalReason`,
+            32_000,
+          ),
+        }),
+    ...(record.terminalReasonCode === undefined
+      ? {}
+      : {
+          terminalReasonCode: requireBoundedString(
+            record.terminalReasonCode,
+            `${field}.terminalReasonCode`,
+            256,
+          ),
+        }),
+    createdAt: requireTimestamp(record.createdAt, `${field}.createdAt`),
+    updatedAt: requireTimestamp(record.updatedAt, `${field}.updatedAt`),
+  };
+}
+
+function parseAttemptRun(
+  value: unknown,
+  field: string,
+): MissionControlAttemptRun {
+  const record = requireRecord(value, field);
+  assertAllowedKeys(record, [
+    "sessionId",
+    "threadId",
+    "runId",
+    "commandId",
+    "acceptedAt",
+  ]);
+  return {
+    sessionId: requireBoundedString(record.sessionId, `${field}.sessionId`, 256),
+    threadId: requireBoundedString(record.threadId, `${field}.threadId`, 256),
+    runId: requireBoundedString(record.runId, `${field}.runId`, 256),
+    commandId: requireBoundedString(record.commandId, `${field}.commandId`, 256),
+    acceptedAt: requireTimestamp(record.acceptedAt, `${field}.acceptedAt`),
+  };
+}
+
+function parsePendingRequest(
+  value: unknown,
+  field: string,
+): MissionControlPendingRequest {
+  const record = requireRecord(value, field);
+  assertAllowedKeys(record, [
+    "requestId",
+    "threadId",
+    "kind",
+    "eventType",
+    "enteredAt",
+  ]);
+  return {
+    requestId: requireBoundedString(record.requestId, `${field}.requestId`, 256),
+    threadId: requireBoundedString(record.threadId, `${field}.threadId`, 256),
+    kind: requirePendingRequestKind(record.kind, `${field}.kind`),
+    ...(record.eventType === undefined
+      ? {}
+      : {
+          eventType: requireBoundedString(
+            record.eventType,
+            `${field}.eventType`,
+            256,
+          ),
+        }),
+    ...(record.enteredAt === undefined
+      ? {}
+      : { enteredAt: requireTimestamp(record.enteredAt, `${field}.enteredAt`) }),
+  };
+}
+
+function parsePendingResponse(
+  value: unknown,
+  field: string,
+): NonNullable<MissionControlExecutionAttempt["pendingResponse"]> {
+  const record = requireRecord(value, field);
+  assertAllowedKeys(record, ["requestId", "commandId", "runId"]);
+  return {
+    requestId: requireBoundedString(record.requestId, `${field}.requestId`, 256),
+    commandId: requireBoundedString(record.commandId, `${field}.commandId`, 256),
+    runId: requireBoundedString(record.runId, `${field}.runId`, 256),
   };
 }
 
@@ -973,6 +1453,115 @@ function requireWorkPhase(value: unknown): MissionControlWorkPhase {
     value !== "discarded"
   ) {
     throw new Error("targetPhase must be a supported Mission Control phase.");
+  }
+  return value;
+}
+
+function requireAttemptInitiator(
+  value: unknown,
+  field: string,
+): MissionControlExecutionAttempt["initiatedBy"] {
+  if (value !== "operator" && value !== "autopilot") {
+    throw new Error(`${field} must be operator or autopilot.`);
+  }
+  return value;
+}
+
+function requireAttemptStatus(
+  value: unknown,
+  field: string,
+): MissionControlAttemptStatus {
+  if (
+    value !== "starting" &&
+    value !== "running" &&
+    value !== "waiting" &&
+    value !== "cancelling" &&
+    value !== "completed" &&
+    value !== "failed" &&
+    value !== "cancelled" &&
+    value !== "orphaned"
+  ) {
+    throw new Error(`${field} must be a supported attempt status.`);
+  }
+  return value;
+}
+
+function requireAttentionReason(
+  value: unknown,
+  field: string,
+): MissionControlAttentionReason {
+  if (
+    value !== "start_rejected" &&
+    value !== "execution_failed" &&
+    value !== "operator_stopped" &&
+    value !== "runner_orphaned" &&
+    value !== "runtime_authority_changed"
+  ) {
+    throw new Error(`${field} must be a supported attention reason.`);
+  }
+  return value;
+}
+
+function requirePendingRequestKind(
+  value: unknown,
+  field: string,
+): MissionControlPendingRequest["kind"] {
+  if (
+    value !== "approval" &&
+    value !== "user_input" &&
+    value !== "delegation" &&
+    value !== "scheduler_wait" &&
+    value !== "compaction_checkpoint" &&
+    value !== "unknown"
+  ) {
+    throw new Error(`${field} must be a supported pending request kind.`);
+  }
+  return value;
+}
+
+function requireHistoryActionType(value: string): MissionControlHistoryActionType {
+  if (
+    value !== "item.create" &&
+    value !== "item.approve" &&
+    value !== "item.reorder" &&
+    value !== "item.return_to_ready" &&
+    value !== "item.discard" &&
+    value !== "item.restore" &&
+    value !== "autopilot.configure" &&
+    value !== "execution.start" &&
+    value !== "execution.accepted" &&
+    value !== "execution.start_rejected" &&
+    value !== "execution.waiting" &&
+    value !== "execution.reply" &&
+    value !== "execution.resumed" &&
+    value !== "execution.stop" &&
+    value !== "execution.stop_rejected" &&
+    value !== "execution.cancel_confirmed" &&
+    value !== "execution.failed" &&
+    value !== "execution.orphaned" &&
+    value !== "execution.completed" &&
+    value !== "execution.retry" &&
+    value !== "review.admit" &&
+    value !== "review.accept" &&
+    value !== "review.request_changes" &&
+    value !== "migration.stage" &&
+    value !== "migration.rebind" &&
+    value !== "migration.resolve" &&
+    value !== "migration.clear" &&
+    value !== "authority.activate" &&
+    value !== "authority.rollback"
+  ) {
+    throw new Error(`Unsupported Mission Control history action: ${value}.`);
+  }
+  return value;
+}
+
+function requireHistoryDisposition(
+  value: unknown,
+  field: string,
+): NonNullable<MissionControlHistoryEntry["disposition"]> {
+  if (value !== "applied" && value !== "stale" && value !== "noop") {
+    throw new Error(`${field} must be applied, stale, or noop.`);
   }
   return value;
 }

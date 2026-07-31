@@ -30,9 +30,7 @@ import type {
   DesktopPackageManager,
   DesktopProjectLauncherDescriptor,
   DesktopProjectFilesChangedEvent,
-  DesktopProjectAction,
   DesktopProjectRegistration,
-  DesktopProjectSnapshotResponse,
   DesktopProviderModelCatalog,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
@@ -76,6 +74,8 @@ import type {
   DesktopWorkspaceFeedbackSubmitResult,
 } from "../../../src/desktopShell/contracts.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
+import type { MissionControlProjectStateRecord } from "../../../src/missionControl/projectAuthority.js";
+import type { MissionControlCompletionContract } from "../../../src/missionControl/reviewContracts.js";
 import type { DesktopEnvironmentStatusProjection } from "../../../src/localCore/desktopEnvironmentConnector.js";
 import type {
   KestrelOneAccountStatus,
@@ -172,9 +172,7 @@ export type {
   DesktopPackageManager,
   DesktopProjectLauncherDescriptor,
   DesktopProjectFilesChangedEvent,
-  DesktopProjectAction,
   DesktopProjectRegistration,
-  DesktopProjectSnapshotResponse,
   DesktopProviderModelCatalog,
   DesktopProviderReadiness,
   DesktopAppearanceTheme,
@@ -520,12 +518,12 @@ export interface DesktopBridge {
   onPreviewDiagnostic(
     listener: (diagnostic: DesktopPreviewDiagnostic) => void,
   ): () => void;
-  getProjectSnapshot(
-    sessionId: string,
-  ): Promise<DesktopProjectSnapshotResponse>;
-  runProjectAction(
-    action: DesktopProjectAction,
-  ): Promise<DesktopProjectSnapshotResponse>;
+  getMissionControlProject(
+    projectId: string,
+  ): Promise<DesktopMissionControlProjectResponse>;
+  executeMissionControlAction(
+    intent: DesktopMissionControlActionIntent,
+  ): Promise<DesktopMissionControlProjectResponse>;
   getOperatorThread(threadId: string): Promise<DesktopRuntimeThreadInspection>;
   inspectThreadAuthority(
     threadId: string,
@@ -730,3 +728,67 @@ export interface DesktopBridge {
   ): () => void;
   onCommand(listener: (command: DesktopShellCommand) => void): () => void;
 }
+
+export interface DesktopMissionControlProjectResponse {
+  projectId: string;
+  project: MissionControlProjectStateRecord;
+}
+
+interface DesktopMissionControlActionBase {
+  projectId: string;
+  expectedRevision: number;
+}
+
+interface DesktopMissionControlItemActionBase
+  extends DesktopMissionControlActionBase {
+  itemId: string;
+  expectedItemVersion: number;
+}
+
+interface DesktopMissionControlAttemptActionBase
+  extends DesktopMissionControlItemActionBase {
+  attemptId: string;
+  expectedAttemptVersion: number;
+}
+
+export type DesktopMissionControlActionIntent =
+  | (DesktopMissionControlActionBase & {
+      type: "create";
+      title: string;
+      instructions: string;
+      completionContract: MissionControlCompletionContract;
+    })
+  | (DesktopMissionControlItemActionBase & {
+      type:
+        | "approve"
+        | "return_to_ready"
+        | "discard"
+        | "restore"
+        | "start"
+        | "retry";
+    })
+  | (DesktopMissionControlAttemptActionBase & {
+      type: "reply";
+      requestId: string;
+      message: string;
+    })
+  | (DesktopMissionControlAttemptActionBase & {
+      type: "stop";
+      runId: string;
+      commandId: string;
+    })
+  | (DesktopMissionControlAttemptActionBase & {
+      type: "prepare_review";
+    })
+  | (DesktopMissionControlAttemptActionBase & {
+      type: "accept" | "request_changes";
+      candidateFingerprint: string;
+      bundleId: string;
+      reason?: string | undefined;
+    })
+  | (DesktopMissionControlActionBase & {
+      type: "configure_autopilot";
+      enabled: boolean;
+      wipLimit: number;
+      confirmed: boolean;
+    });

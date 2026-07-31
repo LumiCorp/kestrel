@@ -248,10 +248,19 @@ export class InMemorySessionStore implements SessionStore {
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
         .map((event) => asRecord(event.metadata)?.threadId)
         .find((value): value is string => typeof value === "string" && value.length > 0);
+      const missionControl = events
+        .filter((event) => event.type === "run.started")
+        .map((event) =>
+          readMissionControlRunCorrelation(
+            asRecord(event.metadata)?.missionControl,
+          ),
+        )
+        .find((value) => value !== undefined);
       return {
         run,
         eventCount: events.length,
         ...(threadId !== undefined ? { threadId } : {}),
+        ...(missionControl !== undefined ? { missionControl } : {}),
       };
     });
   }
@@ -1593,6 +1602,25 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function readMissionControlRunCorrelation(value: unknown) {
+  const record = asRecord(value);
+  const projectId = testString(record?.projectId);
+  const itemId = testString(record?.itemId);
+  const attemptId = testString(record?.attemptId);
+  const commandId = testString(record?.commandId);
+  const runId = testString(record?.runId);
+  if (
+    projectId === undefined ||
+    itemId === undefined ||
+    attemptId === undefined ||
+    commandId === undefined ||
+    runId === undefined
+  ) {
+    return;
+  }
+  return { projectId, itemId, attemptId, commandId, runId };
 }
 
 const testRecord = asRecord;

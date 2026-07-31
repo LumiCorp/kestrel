@@ -379,7 +379,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
       metadata: submittedMetadata,
       execution: buildTurnExecutionIdentity(input),
     });
-    const proposedRunId = randomUUID();
+    const proposedRunId = input.runtimeTurn?.runId ?? randomUUID();
     const eventId = randomUUID();
     const segmentKind = resolveTurnSegmentKind(input.metadata, input.resumeBlockedRun);
     const claimResult = await this.store.claimConversationTurnExecution({
@@ -426,6 +426,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
     activeThread = await this.requireThread(activeThread.threadId);
     this.emit("thread.turn_submitted", activeThread.threadId, {
       eventType: input.eventType,
+      runId: proposedRunId,
     });
     let result: SubmitTurnResult;
     try {

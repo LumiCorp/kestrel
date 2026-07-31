@@ -36,12 +36,19 @@ import {
 } from "../runtime/waitState.js";
 import { InMemoryOrchestrationStore } from "../orchestration/InMemoryOrchestrationStore.js";
 import type { ProductProjectSnapshot } from "../project/contracts.js";
+import type {
+  MissionControlLegacyProjectSource,
+  MissionControlMigrationSourceBinding,
+} from "../missionControl/migrationContracts.js";
+import { requireMissionControlMigrationFingerprint } from "../missionControl/migrationContracts.js";
+import { parseMissionControlLegacyProjectSnapshot } from "../missionControl/legacyContracts.js";
 import {
   normalizeProjectSnapshot,
   readProjectSnapshotFromRuntimeState,
 } from "../project/state.js";
 import {
   MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
+  MISSION_CONTROL_AUTHORITY_EPOCH,
   assertMissionControlExpectedRevision,
   assertMissionControlReceiptFingerprint,
   createEmptyMissionControlProjectDocument,
@@ -129,6 +136,10 @@ export class InMemorySessionStore implements SessionStore {
     Map<string, InMemoryMissionControlReceipt>
   >();
   private readonly missionControlOutbox: MissionControlOutboxRecord[] = [];
+  private readonly missionControlMigrationBindings = new Map<
+    string,
+    MissionControlMigrationSourceBinding
+  >();
   private readonly runs = new Map<string, InMemoryRun>();
   private readonly effects: InMemoryEffect[] = [];
   private readonly effectResults = new Map<string, EffectResult>();
@@ -171,6 +182,57 @@ export class InMemorySessionStore implements SessionStore {
     return project === undefined ? null : structuredClone(project);
   }
 
+  async listMissionControlLegacySources(): Promise<
+    MissionControlLegacyProjectSource[]
+  > {
+    const sessionIds = new Set([
+      ...this.sessions.keys(),
+      ...this.productStates.keys(),
+    ]);
+    const sources: MissionControlLegacyProjectSource[] = [];
+    for (const sessionId of [...sessionIds].sort()) {
+      const productState = this.productStates.get(sessionId);
+      const session = this.sessions.get(sessionId);
+      const product =
+        session !== undefined &&
+        typeof session.state.product === "object" &&
+        session.state.product !== null &&
+        Array.isArray(session.state.product) === false
+          ? (session.state.product as Record<string, unknown>)
+          : undefined;
+      if (productState === undefined && product?.projectSnapshot === undefined) {
+        continue;
+      }
+      const snapshot =
+        productState === undefined
+          ? parseMissionControlLegacyProjectSnapshot(
+              (session?.state.product as Record<string, unknown> | undefined)
+                ?.projectSnapshot,
+            )
+          : parseMissionControlLegacyProjectSnapshot(productState.projectSnapshot);
+      const projectPath = snapshot.setup.workspaceRoot.trim();
+      sources.push({
+        sourceId: `session:${sessionId}`,
+        kind: "session_snapshot",
+        sessionId,
+        sourceVersion: productState?.version ?? session?.version ?? 0,
+        ...(projectPath.length === 0 ? {} : { projectPath }),
+        snapshot,
+      });
+    }
+    return structuredClone(sources);
+  }
+
+  async listMissionControlMigrationSourceBindings(): Promise<
+    MissionControlMigrationSourceBinding[]
+  > {
+    return structuredClone(
+      [...this.missionControlMigrationBindings.values()].sort((left, right) =>
+        left.sourceId.localeCompare(right.sourceId)
+      ),
+    );
+  }
+
   async updateMissionControlProjectState(
     input: MissionControlProjectMutationInput,
   ): Promise<MissionControlProjectMutationResult> {
@@ -201,7 +263,7 @@ export class InMemorySessionStore implements SessionStore {
       projectId,
       schemaVersion: MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
       revision: 0,
-      authorityEpoch: 0,
+      authorityEpoch: MISSION_CONTROL_AUTHORITY_EPOCH,
       document: createEmptyMissionControlProjectDocument(projectId),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -219,6 +281,7 @@ export class InMemorySessionStore implements SessionStore {
     const project: MissionControlProjectStateRecord = {
       ...current,
       revision: current.revision + 1,
+      authorityEpoch: current.authorityEpoch,
       document,
       updatedAt: timestamp,
     };
@@ -254,7 +317,6 @@ export class InMemorySessionStore implements SessionStore {
     });
     this.missionControlReceipts.set(projectId, nextReceipts);
     this.missionControlOutbox.push(...structuredClone(effects));
-
     return {
       ...structuredClone(result),
       duplicate: false,
@@ -270,6 +332,44 @@ export class InMemorySessionStore implements SessionStore {
         .filter((entry) => entry.projectId === projectId)
         .sort((left, right) => left.id - right.id),
     );
+  }
+
+  async markMissionControlOutboxDelivered(
+    projectIdValue: string,
+    effectIdValue: string,
+  ): Promise<void> {
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const effectId = requireMissionControlActionId(effectIdValue);
+    const effect = this.missionControlOutbox.find(
+      (entry) => entry.projectId === projectId && entry.effectId === effectId,
+    );
+    if (effect === undefined) {
+      throw new Error(`Mission Control outbox effect not found: ${effectId}.`);
+    }
+    effect.status = "DELIVERED";
+    effect.lastError = undefined;
+  }
+
+  async recordMissionControlOutboxFailure(
+    projectIdValue: string,
+    effectIdValue: string,
+    errorValue: string,
+  ): Promise<void> {
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const effectId = requireMissionControlActionId(effectIdValue);
+    const error = errorValue.trim();
+    if (error.length === 0) {
+      throw new Error("Mission Control outbox failure must not be empty.");
+    }
+    const effect = this.missionControlOutbox.find(
+      (entry) => entry.projectId === projectId && entry.effectId === effectId,
+    );
+    if (effect === undefined) {
+      throw new Error(`Mission Control outbox effect not found: ${effectId}.`);
+    }
+    effect.status = "PENDING";
+    effect.attemptCount += 1;
+    effect.lastError = error;
   }
 
   async getSessionProductState(sessionId: string): Promise<SessionProductStateRecord | null> {
@@ -383,10 +483,17 @@ export class InMemorySessionStore implements SessionStore {
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
         .map((event) => asRecord(event.metadata)?.threadId)
         .find((value): value is string => typeof value === "string" && value.length > 0);
+      const missionControl = events
+        .filter((event) => event.type === "run.started")
+        .map((event) => readMissionControlRunCorrelation(
+          asRecord(event.metadata)?.missionControl,
+        ))
+        .find((value) => value !== undefined);
       return {
         run,
         eventCount: events.length,
         ...(threadId !== undefined ? { threadId } : {}),
+        ...(missionControl !== undefined ? { missionControl } : {}),
       };
     });
   }
@@ -1808,6 +1915,25 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function readMissionControlRunCorrelation(value: unknown) {
+  const record = asRecord(value);
+  const projectId = asString(record?.projectId);
+  const itemId = asString(record?.itemId);
+  const attemptId = asString(record?.attemptId);
+  const commandId = asString(record?.commandId);
+  const runId = asString(record?.runId);
+  if (
+    projectId === undefined ||
+    itemId === undefined ||
+    attemptId === undefined ||
+    commandId === undefined ||
+    runId === undefined
+  ) {
+    return;
+  }
+  return { projectId, itemId, attemptId, commandId, runId };
 }
 
 function asString(value: unknown): string | undefined {
