@@ -41,7 +41,7 @@
       "id": "mission-control-action-replay-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "3c942a95d8f32bf1278f31b3e008119de76f12137b770fb17c5f44fcee010209",
+      "sourceSha256": "5227474e5a592000179d581f326fd24dcc58fc9b12710571c18c9a2f73da6497",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
@@ -65,7 +65,7 @@
       "id": "mission-control-drag-lifecycle-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "3c942a95d8f32bf1278f31b3e008119de76f12137b770fb17c5f44fcee010209",
+      "sourceSha256": "5227474e5a592000179d581f326fd24dcc58fc9b12710571c18c9a2f73da6497",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
@@ -77,7 +77,7 @@
       "id": "mission-control-item-version-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "3c942a95d8f32bf1278f31b3e008119de76f12137b770fb17c5f44fcee010209",
+      "sourceSha256": "5227474e5a592000179d581f326fd24dcc58fc9b12710571c18c9a2f73da6497",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
@@ -89,7 +89,7 @@
       "id": "mission-control-partial-transaction-commit",
       "contractId": "runtime.mission-control-project-persistence",
       "target": "src/store/PostgresSessionStore.ts",
-      "sourceSha256": "a78b8b68a1bca01dd7954df35367192c3453abb9a2ef1b2cb12d8a7da747362a",
+      "sourceSha256": "577cef9d731296ce4d0e47c3ef50d64ca01789ab595bc2f7b46c59170ca47794",
       "testFiles": [
         "tests/mission-control-project-authority.postgres.test.ts"
       ],
@@ -113,7 +113,7 @@
       "id": "mission-control-project-isolation-bypass",
       "contractId": "runtime.mission-control-project-persistence",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "3c942a95d8f32bf1278f31b3e008119de76f12137b770fb17c5f44fcee010209",
+      "sourceSha256": "5227474e5a592000179d581f326fd24dcc58fc9b12710571c18c9a2f73da6497",
       "testFiles": [
         "tests/mission-control-project-authority.postgres.test.ts"
       ],
