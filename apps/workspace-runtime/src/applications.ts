@@ -74,7 +74,7 @@ export class WorkspaceApplicationRegistry {
   }
 
   async register(value: unknown) {
-    const input = parseRegistration(value, this.workspaceRoot);
+    const input = await parseRegistration(value, this.workspaceRoot);
     const now = new Date().toISOString();
     const application: WorkspaceApplication = {
       id: randomUUID(),
@@ -107,7 +107,7 @@ export class WorkspaceApplicationRegistry {
       "a"
     );
     const child = spawn("/bin/sh", ["-lc", application.command], {
-      cwd: resolveWorkspacePath(
+      cwd: await resolveWorkspacePath(
         this.workspaceRoot,
         application.workingDirectory
       ),
@@ -179,7 +179,7 @@ export class WorkspaceApplicationRegistry {
   }
 }
 
-export function parseRegistration(value: unknown, workspaceRoot: string) {
+export async function parseRegistration(value: unknown, workspaceRoot: string) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new WorkspaceRequestError(400, "APPLICATION_INPUT_INVALID");
   }
@@ -202,7 +202,7 @@ export function parseRegistration(value: unknown, workspaceRoot: string) {
   }
   const workingDirectory =
     typeof input.workingDirectory === "string" ? input.workingDirectory : "";
-  resolveWorkspacePath(workspaceRoot, workingDirectory);
+  await resolveWorkspacePath(workspaceRoot, workingDirectory);
   return {
     name: input.name.trim(),
     command: input.command.trim(),
