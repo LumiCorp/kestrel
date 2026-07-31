@@ -129,9 +129,12 @@ export class RunLifecycleController {
     } else {
       await this.options.deps.store.startRun(input.runId, input.event);
     }
+    const runtimeMetadata = asRecord(input.event.payload.metadata);
+    const missionControl = asRecord(runtimeMetadata?.missionControl);
     await this.options.appendRunEvent(input.runId, input.event.sessionId, "run.started", "INFO", {
       eventType: input.event.type,
       stepAgentOverride: input.event.stepAgent,
+      ...(missionControl !== undefined ? { missionControl } : {}),
     });
     const legacyModeMigration = asRecord(input.event.payload.legacyModeMigration);
     if (legacyModeMigration?.migrated === true) {
