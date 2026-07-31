@@ -190,6 +190,36 @@
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
       "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-review-candidate-bypass",
+      "contractId": "runtime.mission-control-review-acceptance",
+      "target": "src/missionControl/reviewAuthority.ts",
+      "find": "    resolved.change.candidateFingerprint !== action.candidate.candidateFingerprint",
+      "replace": "    false",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=candidate-bound review acceptance", "tests/mission-control-review-acceptance.postgres.test.ts"],
+      "testFiles": ["tests/mission-control-review-acceptance.postgres.test.ts"]
+    },
+    {
+      "id": "mission-control-review-bundle-bypass",
+      "contractId": "runtime.mission-control-review-acceptance",
+      "target": "src/missionControl/reviewAuthority.ts",
+      "find": "  if (item.currentReviewBundleId !== expectedBundleId) {",
+      "replace": "  if (false) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=candidate-bound review acceptance", "tests/mission-control-review-acceptance.postgres.test.ts"],
+      "testFiles": ["tests/mission-control-review-acceptance.postgres.test.ts"]
+    },
+    {
+      "id": "mission-control-acceptance-record-omission",
+      "contractId": "runtime.mission-control-review-acceptance",
+      "target": "src/missionControl/reviewAuthority.ts",
+      "find": "        reviewDecisions: [...(item.reviewDecisions ?? []), acceptance],",
+      "replace": "        reviewDecisions: item.reviewDecisions ?? [],",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=candidate-bound review acceptance", "tests/mission-control-review-acceptance.postgres.test.ts"],
+      "testFiles": ["tests/mission-control-review-acceptance.postgres.test.ts"]
     }
   ]
 }
