@@ -1,4 +1,5 @@
 import path from "node:path";
+import { realpath } from "node:fs/promises";
 import {
   getFlyEnvironmentExecutionTarget,
   verifyEnvironmentExecutionTicket,
@@ -38,7 +39,7 @@ export function authorizeWorkspaceRequest(input: {
   return ticket;
 }
 
-export function resolveWorkspacePath(root: string, requested: string) {
+export async function resolveWorkspacePath(root: string, requested: string): Promise<string> {
   if (requested.includes("\0")) {
     throw new WorkspaceRequestError(400, "WORKSPACE_PATH_INVALID");
   }
@@ -48,12 +49,46 @@ export function resolveWorkspacePath(root: string, requested: string) {
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new WorkspaceRequestError(403, "WORKSPACE_PATH_FORBIDDEN");
   }
-  return absolute;
+  const canonicalRoot = await realpath(absoluteRoot);
+  const nearest = await findNearestExistingAncestor(absolute);
+  assertWithinWorkspace(canonicalRoot, nearest.realPath);
+  const unresolvedSuffix = path.relative(nearest.path, absolute);
+  const canonicalTarget = path.resolve(nearest.realPath, unresolvedSuffix);
+  assertWithinWorkspace(canonicalRoot, canonicalTarget);
+  return canonicalTarget;
 }
 
 export class WorkspaceRequestError extends Error {
   constructor(readonly status: number, readonly code: string) {
     super(code);
     this.name = "WorkspaceRequestError";
+  }
+}
+
+async function findNearestExistingAncestor(
+  candidate: string,
+): Promise<{ path: string; realPath: string }> {
+  let current = path.resolve(candidate);
+  while (true) {
+    try {
+      return { path: current, realPath: await realpath(current) };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      throw new WorkspaceRequestError(403, "WORKSPACE_PATH_FORBIDDEN");
+    }
+    current = parent;
+  }
+}
+
+function assertWithinWorkspace(root: string, candidate: string): void {
+  const relative = path.relative(root, candidate);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new WorkspaceRequestError(403, "WORKSPACE_PATH_FORBIDDEN");
   }
 }
