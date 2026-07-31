@@ -260,3 +260,27 @@ contractTest(
     );
   },
 );
+
+contractTest(
+  "runtime.hermetic",
+  "desktop public build commands prepare shared workspace artifacts",
+  () => {
+    const desktopPackage = JSON.parse(
+      readFileSync(
+        new URL("../../apps/desktop/package.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { scripts?: Record<string, string> };
+
+    assert.equal(
+      desktopPackage.scripts?.["prepare:workspace"],
+      "pnpm -w run build:shared",
+    );
+    for (const scriptName of ["dev", "build", "typecheck"]) {
+      assert.match(
+        desktopPackage.scripts?.[scriptName] ?? "",
+        /^pnpm run prepare:workspace && /u,
+      );
+    }
+  },
+);
