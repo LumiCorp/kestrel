@@ -177,10 +177,6 @@ export class ContinuationCoordinator {
     if (readActiveWaitState(reactState)?.kind === "region_merge") {
       return input.session;
     }
-    const waitReason = readContinuationWaitReason(reactState);
-    if (continuationState !== undefined && isContinuationWaitReason(waitReason)) {
-      return input.session;
-    }
     const nextReactState = this.buildFreshTurnReactState(
       reactState,
       continuationState !== undefined,

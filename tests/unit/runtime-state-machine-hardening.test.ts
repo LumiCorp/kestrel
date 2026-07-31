@@ -3474,6 +3474,76 @@ contractTest("runtime.process", "MAX_MODEL_CALLS_EXCEEDED becomes a continuation
   assert.equal(continuation.modelCallsConsumed, 1);
 });
 
+contractTest("runtime.process", "fresh user message resets exhausted model-call continuation state", async () => {
+  const store = new InMemorySessionStore();
+  const kestrel = createRuntime(store, { maxModelCallsPerRun: 1 });
+  let modelBackedSteps = 0;
+
+  kestrel.registerStep("loop.model", async (ctx, io) => {
+    await io.useModel({ model: "mock", input: { prompt: "step once" } });
+    modelBackedSteps += 1;
+    if (ctx.event.payload.message === "fresh task") {
+      return {
+        status: "COMPLETED",
+        statePatch: {
+          agent: {
+            ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+            finalOutput: {
+              message: "fresh task completed",
+            },
+          },
+        },
+      };
+    }
+    return {
+      status: "RUNNING",
+      nextStepAgent: "loop.model",
+      statePatch: {
+        agent: {
+          ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+          observations: [{ summary: "Completed one model-backed step." }],
+          capabilityEvidence: {},
+          exec: {},
+        },
+      },
+    };
+  });
+
+  const exhausted = await kestrel.run({
+    id: "evt-model-cont-fresh-1",
+    type: "user.message",
+    sessionId: "model-continuation-fresh-session",
+    payload: {
+      message: "exhaust this task",
+    },
+    stepAgent: "loop.model",
+  });
+
+  assert.equal(exhausted.status, "WAITING");
+  assert.equal(
+    (exhausted.waitFor?.metadata as Record<string, unknown> | undefined)?.reason,
+    "max_model_calls_continuation",
+  );
+  assert.equal(modelBackedSteps, 1);
+
+  const fresh = await kestrel.run({
+    id: "evt-model-cont-fresh-2",
+    type: "user.message",
+    sessionId: "model-continuation-fresh-session",
+    payload: {
+      message: "fresh task",
+    },
+  });
+
+  assert.equal(fresh.status, "COMPLETED");
+  assert.equal(fresh.errors.length, 0);
+  assert.equal(modelBackedSteps, 2);
+  const session = await store.getSession("model-continuation-fresh-session");
+  const react = (session?.state.agent ?? {}) as Record<string, unknown>;
+  assert.equal(react.continuation, undefined);
+  assert.equal(((react.finalOutput ?? {}) as Record<string, unknown>).message, "fresh task completed");
+});
+
 contractTest("runtime.process", "model-call continuation approval preserves cumulative model-call accounting", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store, {
