@@ -165,6 +165,21 @@ export async function enqueueKnowledgeDocumentRun(runId: string) {
   await boss.send(KNOWLEDGE_DOCUMENT_QUEUE, { runId });
 }
 
+function environmentOperationJobOptions(
+  operationId: string,
+  retryLimit = ENVIRONMENT_OPERATION_RETRY_LIMIT,
+) {
+  return {
+    id: operationId,
+    retryLimit,
+    retryDelay: ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS,
+    retryBackoff: true,
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+    singletonKey: operationId,
+  } as const;
+}
+
 export async function enqueueEnvironmentOperation(
   operationId: string,
   options: {
@@ -176,15 +191,7 @@ export async function enqueueEnvironmentOperation(
   const jobId = await boss.send(
     ENVIRONMENT_OPERATION_QUEUE,
     { operationId },
-    {
-      id: operationId,
-      retryLimit: options.retryLimit ?? ENVIRONMENT_OPERATION_RETRY_LIMIT,
-      retryDelay: ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS,
-      retryBackoff: true,
-      expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
-      heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
-      singletonKey: operationId,
-    },
+    environmentOperationJobOptions(operationId, options.retryLimit),
   );
   if (jobId) return;
   const existingJobs = await boss.findJobs<{ operationId?: unknown }>(
@@ -196,6 +203,15 @@ export async function enqueueEnvironmentOperation(
   if (options.retryTerminal && existingJob?.state === "failed") {
     await boss.retry(ENVIRONMENT_OPERATION_QUEUE, operationId);
     return;
+  }
+  if (options.retryTerminal && existingJob) {
+    await boss.deleteJob(ENVIRONMENT_OPERATION_QUEUE, operationId);
+    const replacementJobId = await boss.send(
+      ENVIRONMENT_OPERATION_QUEUE,
+      { operationId },
+      environmentOperationJobOptions(operationId, options.retryLimit),
+    );
+    if (replacementJobId) return;
   }
   throw new Error("The Environment operation queue rejected the job.");
 }
