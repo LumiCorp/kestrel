@@ -1,6 +1,6 @@
 {
   "version": "cli_contract_matrix_v1",
-  "generatedAt": "2026-07-28T00:46:55.364Z",
+  "generatedAt": "2026-07-31T07:21:51.121Z",
   "executables": [
     {
       "name": "kestrel",
@@ -184,8 +184,9 @@
       "workspace.validation.run",
       "workspace.validation.cancel",
       "workspace.validation.submit",
+      "mission_control.project.get",
+      "mission_control.action.execute",
       "project.snapshot.get",
-      "project.snapshot.update",
       "project.action",
       "project.review.get",
       "project.review.action",
@@ -234,6 +235,7 @@
       "workspace.feedback",
       "workspace.review",
       "workspace.validation",
+      "mission_control.project",
       "project.snapshot",
       "project.review",
       "mcp.status",

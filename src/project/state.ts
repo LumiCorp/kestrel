@@ -3,8 +3,6 @@ import { randomUUID } from "node:crypto";
 import type { ProductTaskGraph } from "../taskGraph/contracts.js";
 import type {
   ProductActivityItem,
-  ProductProjectAction,
-  ProductProjectBoardAction,
   ProductProjectPolicyState,
   ProductProjectSetupState,
   ProductProjectSnapshot,
@@ -12,16 +10,6 @@ import type {
   ProductWorkspaceCheckpointSummary,
 } from "./contracts.js";
 import { DEFAULT_WEB_PROFILE_ID } from "../web/profile.js";
-import {
-  applyProjectBoardAction,
-  createEmptyProjectBoard,
-  normalizeProjectBoard,
-} from "./board.js";
-import {
-  applyTaskQueueAction,
-  createEmptyTaskQueue,
-  normalizeTaskQueue,
-} from "../missionControl/queue.js";
 
 export function createEmptyProjectSetupState(): ProductProjectSetupState {
   return {
@@ -69,8 +57,6 @@ export function createEmptyProjectSnapshot(graphVersion: ProductTaskGraph["versi
     graphVersion,
     setup: createEmptyProjectSetupState(),
     policy: createEmptyProjectPolicyState(),
-    board: createEmptyProjectBoard(),
-    taskQueue: createEmptyTaskQueue(),
     review: createEmptyReviewSnapshot(),
     workspaceCheckpoints: createEmptyWorkspaceCheckpointSummary(),
     activity: [],
@@ -84,8 +70,6 @@ export function normalizeProjectSnapshot(value: unknown, graphVersion: ProductTa
   const record = value as Record<string, unknown>;
   const setup = normalizeProjectSetup(record.setup);
   const policy = normalizeProjectPolicy(record.policy);
-  const board = normalizeProjectBoard(record.board);
-  const taskQueue = normalizeTaskQueue(record.taskQueue);
   const review = normalizeReviewSnapshot(record.review);
   const activity = Array.isArray(record.activity)
     ? record.activity.map(normalizeActivityItem).filter((item): item is ProductActivityItem => item !== undefined)
@@ -95,8 +79,6 @@ export function normalizeProjectSnapshot(value: unknown, graphVersion: ProductTa
     graphVersion,
     setup,
     policy,
-    board,
-    taskQueue,
     review,
     workspaceCheckpoints: normalizeWorkspaceCheckpointSummary(record.workspaceCheckpoints),
     activity,
@@ -143,25 +125,6 @@ export function appendPolicyDecision(
   };
 }
 
-export function applyProjectSnapshotAction(
-  snapshot: ProductProjectSnapshot,
-  action: ProductProjectAction,
-): ProductProjectSnapshot {
-  if (isProjectTaskAction(action)) {
-    return {
-      ...snapshot,
-      taskQueue: applyTaskQueueAction(snapshot.taskQueue, action),
-    };
-  }
-  if (isProjectBoardAction(action)) {
-    return {
-      ...snapshot,
-      board: applyProjectBoardAction(snapshot.board, action),
-    };
-  }
-  return snapshot;
-}
-
 function normalizeProjectSetup(value: unknown): ProductProjectSetupState {
   const record = asRecord(value) ?? {};
   return {
@@ -204,14 +167,6 @@ function normalizeProjectPolicy(value: unknown): ProductProjectPolicyState {
           .filter((item): item is ProductProjectPolicyState["recentDecisions"][number] => item !== undefined)
       : [],
   };
-}
-
-function isProjectBoardAction(action: ProductProjectAction): action is ProductProjectBoardAction {
-  return action.type.startsWith("board.");
-}
-
-function isProjectTaskAction(action: ProductProjectAction): action is Extract<ProductProjectAction, { type: `task.${string}` }> {
-  return action.type.startsWith("task.");
 }
 
 function normalizeReviewSnapshot(value: unknown): ProductReviewSnapshot {

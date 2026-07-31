@@ -75,7 +75,6 @@ export function buildRuntimeContextFragment(input: {
   activeProcessEvidence?: string[] | undefined;
   recentFilesystemEvidence?: string[] | undefined;
   recentToolResultEvidence?: string[] | undefined;
-  projectTaskQueueContext?: string | undefined;
   recoveryContext?: unknown;
   visibleTodos?: VisibleTodoState | undefined;
   workspaceFreshness?: WorkspaceFreshnessSummary | undefined;
@@ -146,7 +145,6 @@ export function buildRuntimeContextSections(input: Parameters<typeof buildRuntim
     activeProcessEvidence: input.activeProcessEvidence,
     recentFilesystemEvidence: input.recentFilesystemEvidence,
     recentToolResultEvidence: input.recentToolResultEvidence,
-    projectTaskQueueContext: input.projectTaskQueueContext,
   });
   if (evidence !== undefined) {
     sections.push({ id: "evidence", origin: "runtime-evidence", content: evidence });
@@ -352,7 +350,6 @@ function renderEvidence(input: {
   activeProcessEvidence?: string[] | undefined;
   recentFilesystemEvidence?: string[] | undefined;
   recentToolResultEvidence?: string[] | undefined;
-  projectTaskQueueContext?: string | undefined;
 }): string | undefined {
   const lines = ["Evidence:"];
   if (input.activeProcessEvidence !== undefined && input.activeProcessEvidence.length > 0) {
@@ -374,9 +371,6 @@ function renderEvidence(input: {
       ...input.recentToolResultEvidence.map((item) => `- ${item}`),
       "Treat the latest observed result as authoritative for the completed action. Use these results before repeating or replacing an action.",
     );
-  }
-  if (input.projectTaskQueueContext !== undefined && input.projectTaskQueueContext.trim().length > 0) {
-    lines.push(input.projectTaskQueueContext.trim());
   }
   return lines.length > 1 ? lines.join("\n") : undefined;
 }

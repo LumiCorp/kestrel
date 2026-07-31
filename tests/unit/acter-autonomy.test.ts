@@ -1883,7 +1883,7 @@ contractTest("runtime.hermetic", "exec.dispatch reports capability-blocked tools
         name: "task.propose",
         freshnessClass: "volatile" as const,
         capabilityClasses: ["runtime.project.task_queue"],
-        approvalCapabilities: ["project.task_queue.write"],
+        approvalCapabilities: ["mission_control.work_item.write"],
         executionClass: "external_side_effect" as const,
       },
     ],
@@ -1934,7 +1934,7 @@ contractTest("runtime.hermetic", "exec.dispatch reports capability-blocked tools
             },
             capabilityPolicy: {
               "shell.exec": true,
-              "project.task_queue.write": false,
+              "mission_control.work_item.write": false,
             },
           },
         },
@@ -1947,9 +1947,12 @@ contractTest("runtime.hermetic", "exec.dispatch reports capability-blocked tools
   assert.equal(transition.waitFor?.eventType, "user.reply");
   const metadata = (transition.waitFor?.metadata ?? {}) as Record<string, unknown>;
   assert.equal(metadata.reasonCode, "capability_policy_blocked");
-  assert.equal(metadata.blockedCapability, "project.task_queue.write");
+  assert.equal(metadata.blockedCapability, "mission_control.work_item.write");
   assert.equal(metadata.toolName, "task.propose");
-  assert.match(String(metadata.prompt ?? ""), /blocks capability 'project\.task_queue\.write'/u);
+  assert.match(
+    String(metadata.prompt ?? ""),
+    /blocks capability 'mission_control\.work_item\.write'/u,
+  );
 });
 
 contractTest("runtime.hermetic", "exec.dispatch reuses cached tool outcomes instead of repeating the same call", async () => {

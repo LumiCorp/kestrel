@@ -49,11 +49,7 @@ import {
 import { DiffWorkspace } from "./DiffWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
 import { McpWorkspace } from "./McpWorkspace";
-import { MissionControlWorkspace } from "./MissionControlWorkspace";
-import {
-  isUnifiedMissionControlProjectEnabled,
-  UnifiedMissionControlWorkspace,
-} from "./UnifiedMissionControlWorkspace";
+import { UnifiedMissionControlWorkspace } from "./UnifiedMissionControlWorkspace";
 import {
   extractDesktopTerminalOutcome,
   getDesktopOutcomeHandoff,
@@ -173,8 +169,6 @@ export function DesktopApp() {
   const [inspectorWidth, setInspectorWidth] = useState(() => readDesktopSidebarWidth());
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
-  const [missionControlRevision, setMissionControlRevision] = useState(0);
-  const [missionControlRunId, setMissionControlRunId] = useState<string>();
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>();
   const [timelineHasNewActivity, setTimelineHasNewActivity] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
@@ -406,7 +400,6 @@ export function DesktopApp() {
         || event.type === "run.failed"
         || event.type === "run.cancelled"
       ) {
-        setMissionControlRevision((value) => value + 1);
         if (rendererThread !== undefined && event.type !== "task.updated") {
           setActiveRuns((current) => {
             const next = { ...current };
@@ -534,7 +527,7 @@ export function DesktopApp() {
     void refreshThreadAuthority(activeThread).catch((cause) => {
       setThreadFailure(activeThread.id, "Thread status unavailable", errorMessage(cause));
     });
-  }, [activeThread?.id, missionControlRevision]);
+  }, [activeThread?.id]);
 
   useEffect(() => {
     if (
@@ -1182,7 +1175,6 @@ export function DesktopApp() {
   }
 
   function openWorkSurface(nextSurface: DesktopSurface): void {
-    setMissionControlRunId(undefined);
     setSurface(nextSurface);
     closeWorkNavigator();
   }
@@ -1198,7 +1190,7 @@ export function DesktopApp() {
   }
 
   function inspectOutcomeRun(runId: string): void {
-    setMissionControlRunId(runId);
+    void runId;
     setSurface("mission-control");
   }
 
@@ -1266,11 +1258,6 @@ export function DesktopApp() {
       : undefined;
   const conversationProjectLabel = threadProject?.label
     ?? (threadProjectPath === undefined ? "No project" : "Unavailable project");
-  const unifiedMissionControlEnabled =
-    isUnifiedMissionControlProjectEnabled(
-      threadProject?.id,
-      window.location.search,
-    );
   const showInspector = surface === "chat" && inspectorOpen;
   return (
     <div className="desktop-app">
@@ -1790,7 +1777,7 @@ export function DesktopApp() {
                 onError={(error) => setSurfaceError("projects", error)}
               />
             ) : surface === "mission-control" ? (
-              unifiedMissionControlEnabled && threadProject?.id !== undefined ? (
+              threadProject?.id !== undefined ? (
                 <UnifiedMissionControlWorkspace
                   project={{ ...threadProject, id: threadProject.id }}
                   onReturnToConversation={() => setSurface("chat")}
@@ -1799,13 +1786,12 @@ export function DesktopApp() {
                   onError={(error) => setSurfaceError("mission-control", error)}
                 />
               ) : (
-                <MissionControlWorkspace
-                  sessionId={activeThread.sessionId}
-                  project={threadProject}
-                  refreshVersion={missionControlRevision}
-                  initialRunId={missionControlRunId}
-                  onError={(error) => setSurfaceError("mission-control", error)}
-                />
+                <main className="surface-pane unified-mission-control" id="app-main">
+                  <section className="unified-mission-empty">
+                    <h1>Mission Control</h1>
+                    <p>Reconnect this conversation to a registered project to view project work.</p>
+                  </section>
+                </main>
               )
             ) : surface === "diff" ? (
               <DiffWorkspace

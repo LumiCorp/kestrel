@@ -1,7 +1,5 @@
 import type { RunnerEvent } from "../../cli/protocol/contracts.js";
 import type { RunnerAssistantTextHistoryDataV2, RunnerWaitingPromptHistoryDataV2 } from "@kestrel-agents/protocol";
-import type { TaskAction } from "../missionControl/contracts.js";
-import type { ProductProjectBoardAction, ProductProjectSnapshot } from "../project/contracts.js";
 export type DesktopRuntimeHealthState = "healthy" | "degraded" | "blocked";
 export type DesktopDatabaseState = "starting" | "healthy" | "degraded" | "blocked";
 export type { SupportBundle as DesktopSupportBundle } from "../diagnostics/supportBundle.js";
@@ -17,7 +15,7 @@ export declare const DESKTOP_UI_STATE_VERSION: "desktop-ui-state-v1";
 export declare const DESKTOP_UI_STATE_SOURCE: "legacy-local-storage";
 export declare const DESKTOP_UI_STATE_RENDERER_SOURCE: "vite-renderer";
 export declare const DESKTOP_UI_STATE_MAX_BYTES: number;
-export declare const DESKTOP_LEGACY_UI_STORAGE_KEYS: readonly ["kchat:web:composer-drafts:v1", "kchat:web:prompt-history:v1", "kestrel:desktop-interaction-state:v1", "kchat:web:theme-mode", "kchat:web:task-graph:v1", "kchat:web:threads:v2", "kchat:web:active-thread:v1", "kestrel:desktop-workspace:v5", "kestrel:desktop-workspace:v4", "kestrel:desktop-workspace:v3", "kestrel:desktop-workspace:v2", "kestrel.desktop.rail.v2", "kestrel.missionControl.taskQueue"];
+export declare const DESKTOP_LEGACY_UI_STORAGE_KEYS: readonly ["kchat:web:composer-drafts:v1", "kchat:web:prompt-history:v1", "kestrel:desktop-interaction-state:v1", "kchat:web:theme-mode", "kchat:web:task-graph:v1", "kchat:web:threads:v2", "kchat:web:active-thread:v1", "kestrel:desktop-workspace:v5", "kestrel:desktop-workspace:v4", "kestrel:desktop-workspace:v3", "kestrel:desktop-workspace:v2", "kestrel.desktop.rail.v2"];
 export type DesktopLegacyUiStorageKey = typeof DESKTOP_LEGACY_UI_STORAGE_KEYS[number];
 export type DesktopLegacyUiStateEntries = Partial<Record<DesktopLegacyUiStorageKey, string>>;
 export interface DesktopUiStateV1 {
@@ -114,11 +112,6 @@ export interface DesktopRunCancelRequest {
     sessionId: string;
     runId?: string | undefined;
     commandId?: string | undefined;
-}
-export type DesktopProjectAction = TaskAction | ProductProjectBoardAction;
-export interface DesktopProjectSnapshotResponse {
-    sessionId: string;
-    snapshot: ProductProjectSnapshot;
 }
 export type DesktopRuntimeThreadStatus = "IDLE" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
 export interface DesktopRuntimeThreadSummary {

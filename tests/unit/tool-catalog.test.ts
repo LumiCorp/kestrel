@@ -304,26 +304,26 @@ contractTest("runtime.hermetic", "project board tools are no longer model-visibl
   assert.throws(() => defaultToolCatalog.createHandlers(["project.card.update"], {}), /Unknown tool/u);
 });
 
-contractTest("runtime.hermetic", "mission control task proposal tool is the model-visible project follow-up tool", async () => {
+contractTest("runtime.hermetic", "mission control work-item proposal is bound to trusted project context", async () => {
   const [tool] = defaultToolCatalog.toModelTools(["task.propose"]);
   const [manifest] = defaultToolCatalog.toCapabilityManifest(["task.propose"]);
 
   assert.equal(tool?.name, "task.propose");
-  assert.match(tool?.description ?? "", /Propose a Mission Control task/u);
-  assert.deepEqual(tool?.inputSchema.required, ["sessionId", "title", "instructions"]);
+  assert.match(
+    tool?.description ?? "",
+    /Propose a project-scoped Mission Control work item/u,
+  );
+  assert.deepEqual(tool?.inputSchema.required, ["title", "instructions"]);
   assert.equal(manifest?.executionClass, "external_side_effect");
-  assert.deepEqual(manifest?.capabilityClasses, ["runtime.project.task_queue"]);
-  assert.deepEqual(manifest?.approvalCapabilities, ["project.task_queue.write"]);
+  assert.deepEqual(manifest?.capabilityClasses, [
+    "runtime.mission_control.work_item",
+  ]);
+  assert.deepEqual(manifest?.approvalCapabilities, ["mission_control.work_item.write"]);
   assert.deepEqual(manifest?.allowedInteractionModes, ["chat", "plan", "build"]);
   assert.deepEqual(Object.keys(tool?.inputSchema.properties ?? {}), [
-    "sessionId",
-    "taskId",
     "title",
     "instructions",
-    "acceptanceCriteria",
-    "priority",
     "order",
-    "summary",
   ]);
 });
 

@@ -3397,18 +3397,17 @@ contractTest("runtime.process", "task graph commands emit graph snapshots throug
 
 contractTest(
   ["runtime.process", "desktop.mission-control-boundary"],
-  "Mission Control project reads, migration, and action commands preserve exact project identity",
+  "Mission Control project reads and actions preserve exact project identity while retired commands fail",
   async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const projectId = "11111111-1111-4111-8111-111111111111";
-  const migrationActions: unknown[] = [];
   const authorityActions: unknown[] = [];
   const project = (inputProjectId: string) => ({
     projectId: inputProjectId,
     schemaVersion: 1 as const,
     revision: 0,
-    authorityEpoch: 0,
+    authorityEpoch: 1,
     document: {
       schemaVersion: 1 as const,
       projectId: inputProjectId,
@@ -3424,16 +3423,9 @@ contractTest(
       throw new Error("not used");
     },
     getMissionControlProject: async (input) => project(input.projectId),
-    executeMissionControlMigration: async (input) => {
-      migrationActions.push(input.action);
-      return project(String(input.action.projectId));
-    },
     executeMissionControlAction: async (input) => {
       authorityActions.push(input.action);
-      return {
-        ...project(String(input.action.projectId)),
-        authorityEpoch: 1,
-      };
+      return project(String(input.action.projectId));
     },
     getToolRuntimeStatus: async () => ({
       healthy: true,
@@ -3482,34 +3474,25 @@ contractTest(
     projectId,
   );
   events.length = 0;
-  const migrationAction = {
-    type: "migration.stage",
-    projectId,
-    actionId: "migration-action",
-    actionTs: "2026-07-31T12:00:00.000Z",
-    expectedRevision: 0,
-    registrations: [{
-      projectId,
-      path: "/workspace/kestrel",
-      previousPaths: [],
-    }],
-  };
   await router.acceptLine(JSON.stringify({
-    id: "cmd-mission-control-migration",
+    id: "cmd-retired-mission-control-migration",
     type: "mission_control.migration.execute",
-    payload: { action: migrationAction },
+    payload: {},
   }));
   await tick();
-  assert.deepEqual(migrationActions, [migrationAction]);
-  assert.equal(events[0]?.type, "mission_control.project");
-  assert.equal(events[0]?.payload.projectId, projectId);
+  assert.equal(events[0]?.type, "runner.error");
   events.length = 0;
   const authorityAction = {
-    type: "authority.activate",
+    type: "item.create",
     projectId,
-    actionId: "authority-action",
+    actionId: "canonical-item-action",
     actionTs: "2026-07-31T12:01:00.000Z",
-    expectedRevision: 1,
+    expectedRevision: 0,
+    itemId: "canonical-item",
+    title: "Canonical item",
+    instructions: "Exercise the project-scoped action boundary.",
+    createdBy: "operator",
+    order: 1,
   };
   await router.acceptLine(JSON.stringify({
     id: "cmd-mission-control-action",

@@ -5,11 +5,11 @@
       "id": "cross-tenant-authorization-acceptance",
       "contractId": "security.cross-tenant-authorization",
       "target": "cli/runner/RunnerHost.ts",
-      "sourceSha256": "6155c12a36276fc2ceea8755c5714bfa4ee9c37de828b6a565d79a3b8f8f6837",
+      "sourceSha256": "0f4f88679498481f57069647fcb66e0c56301f5d35fd9c12f88a1837d537e6b4",
       "testFiles": [
         "tests/integration/runner-protocol.test.ts"
       ],
-      "testsSha256": "c1d2ea928c07e59a3bf544f71e02e22cf13441ec3d87d75c05399845fb111062",
+      "testsSha256": "b309da657b87bc3a96071d33492ba0013e3e5b50fe369def32720c1889e17ed1",
       "command": "node --import tsx --test --test-name-pattern=binds a gateway-managed credential tests/integration/runner-protocol.test.ts",
       "result": "killed"
     },
@@ -53,11 +53,11 @@
       "id": "mission-control-action-replay-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "7a9cfb99c5a282d38becd2b318ef4d2e6d16a02afb56f9ce7fb1bb8a89165836",
+      "sourceSha256": "ad20b735e8498dae68ff9b8370a49b695d64a949b12a146b6ec594d897d409b4",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
-      "testsSha256": "1d868d926926c212801ff498445cefa70555f2ecc5828498613a30c8d786b018",
+      "testsSha256": "b4b54df2d394a5b997d33a765f21448ab87dddc44a177a8d6010d6df1c0d202c",
       "command": "node --import tsx --test --test-name-pattern=canonical project work-item lifecycle tests/unit/mission-control-project-authority.test.ts",
       "result": "killed"
     },
@@ -77,11 +77,11 @@
       "id": "mission-control-drag-lifecycle-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "7a9cfb99c5a282d38becd2b318ef4d2e6d16a02afb56f9ce7fb1bb8a89165836",
+      "sourceSha256": "ad20b735e8498dae68ff9b8370a49b695d64a949b12a146b6ec594d897d409b4",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
-      "testsSha256": "1d868d926926c212801ff498445cefa70555f2ecc5828498613a30c8d786b018",
+      "testsSha256": "b4b54df2d394a5b997d33a765f21448ab87dddc44a177a8d6010d6df1c0d202c",
       "command": "node --import tsx --test --test-name-pattern=canonical project work-item lifecycle tests/unit/mission-control-project-authority.test.ts",
       "result": "killed"
     },
@@ -89,48 +89,24 @@
       "id": "mission-control-item-version-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "7a9cfb99c5a282d38becd2b318ef4d2e6d16a02afb56f9ce7fb1bb8a89165836",
+      "sourceSha256": "ad20b735e8498dae68ff9b8370a49b695d64a949b12a146b6ec594d897d409b4",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
-      "testsSha256": "1d868d926926c212801ff498445cefa70555f2ecc5828498613a30c8d786b018",
+      "testsSha256": "b4b54df2d394a5b997d33a765f21448ab87dddc44a177a8d6010d6df1c0d202c",
       "command": "node --import tsx --test --test-name-pattern=canonical project work-item lifecycle tests/unit/mission-control-project-authority.test.ts",
-      "result": "killed"
-    },
-    {
-      "id": "mission-control-migration-conflict-auto-resolution",
-      "contractId": "runtime.mission-control-project-persistence",
-      "target": "src/missionControl/migrationAuthority.ts",
-      "sourceSha256": "6f310a9f3c7ea8b0bad3df7d0a86e10876ee216cdb749f00a2932fca5f11e279",
-      "testFiles": [
-        "tests/mission-control-project-authority.postgres.test.ts"
-      ],
-      "testsSha256": "234882f42b39b795250f3f4a93bca4408d3d42b4d31e060bf9d10c8f17fcd991",
-      "command": "node --import tsx --test --test-name-pattern=staged migration is deterministic tests/mission-control-project-authority.postgres.test.ts",
-      "result": "killed"
-    },
-    {
-      "id": "mission-control-migration-source-drift-bypass",
-      "contractId": "runtime.mission-control-project-persistence",
-      "target": "src/missionControl/migrationAuthority.ts",
-      "sourceSha256": "6f310a9f3c7ea8b0bad3df7d0a86e10876ee216cdb749f00a2932fca5f11e279",
-      "testFiles": [
-        "tests/mission-control-project-authority.postgres.test.ts"
-      ],
-      "testsSha256": "234882f42b39b795250f3f4a93bca4408d3d42b4d31e060bf9d10c8f17fcd991",
-      "command": "node --import tsx --test --test-name-pattern=staged migration is deterministic tests/mission-control-project-authority.postgres.test.ts",
       "result": "killed"
     },
     {
       "id": "mission-control-partial-transaction-commit",
       "contractId": "runtime.mission-control-project-persistence",
       "target": "src/store/PostgresSessionStore.ts",
-      "sourceSha256": "2b70703ce9ee8f105055e115c9e28916c974339e23c9155ff603b76718b5dcb1",
+      "sourceSha256": "a346e2620ba52da487c65a131e8f1df1baea88f4869642cbee44e51f10b46421",
       "testFiles": [
         "tests/mission-control-project-authority.postgres.test.ts"
       ],
-      "testsSha256": "234882f42b39b795250f3f4a93bca4408d3d42b4d31e060bf9d10c8f17fcd991",
-      "command": "node --import tsx --test --test-name-pattern=project state, receipts, and outbox tests/mission-control-project-authority.postgres.test.ts",
+      "testsSha256": "086c5a90ff8c9e9947cc8dbc61957dc9d9f861a8b57a636feb4e60ad08ccd33b",
+      "command": "node --import tsx --test --test-name-pattern=canonical project authority is active by default tests/mission-control-project-authority.postgres.test.ts",
       "result": "killed"
     },
     {
@@ -149,12 +125,12 @@
       "id": "mission-control-project-isolation-bypass",
       "contractId": "runtime.mission-control-project-persistence",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "7a9cfb99c5a282d38becd2b318ef4d2e6d16a02afb56f9ce7fb1bb8a89165836",
+      "sourceSha256": "ad20b735e8498dae68ff9b8370a49b695d64a949b12a146b6ec594d897d409b4",
       "testFiles": [
         "tests/mission-control-project-authority.postgres.test.ts"
       ],
-      "testsSha256": "234882f42b39b795250f3f4a93bca4408d3d42b4d31e060bf9d10c8f17fcd991",
-      "command": "node --import tsx --test --test-name-pattern=project state, receipts, and outbox tests/mission-control-project-authority.postgres.test.ts",
+      "testsSha256": "086c5a90ff8c9e9947cc8dbc61957dc9d9f861a8b57a636feb4e60ad08ccd33b",
+      "command": "node --import tsx --test --test-name-pattern=canonical project authority is active by default tests/mission-control-project-authority.postgres.test.ts",
       "result": "killed"
     },
     {

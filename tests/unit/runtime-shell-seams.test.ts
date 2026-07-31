@@ -130,11 +130,14 @@ contractTest("runtime.hermetic", "KestrelChatRuntime delegates task graph projec
   assert.match(taskGraphProjectionSource, /getOperatorThreadView/u);
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime delegates project tool actions to source helpers", async () => {
+contractTest("runtime.hermetic", "KestrelChatRuntime binds proposals directly to canonical project authority", async () => {
   const runtimeSource = await readFile(RUNTIME_SOURCE, "utf8");
   const defaultRuntimeBody = sectionBetween(runtimeSource, "function createDefaultRuntime(", "\nexport function resolveDevShellServiceForProfile(");
 
-  assert.match(defaultRuntimeBody, /createProductProjectActionToolAdapter/u);
+  assert.match(defaultRuntimeBody, /new MissionControlProjectService/u);
+  assert.match(defaultRuntimeBody, /missionControlActions/u);
+  assert.match(defaultRuntimeBody, /missionControlProjectService\.execute/u);
+  assert.doesNotMatch(defaultRuntimeBody, /createProductProjectActionToolAdapter/u);
   assert.doesNotMatch(defaultRuntimeBody, /projectStore\.applyAction/u);
 });
 

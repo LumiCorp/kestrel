@@ -69,10 +69,8 @@ export const RUNNER_COMMAND_TYPES = [
   "workspace.git.inspect",
   "workspace.git.action",
   "mission_control.project.get",
-  "mission_control.migration.execute",
   "mission_control.action.execute",
   "project.snapshot.get",
-  "project.snapshot.update",
   "project.action",
   "project.review.get",
   "project.review.action",
@@ -995,21 +993,12 @@ export interface MissionControlProjectGetCommandPayload {
   projectId: string;
 }
 
-export interface MissionControlMigrationExecuteCommandPayload {
-  action: Record<string, unknown>;
-}
-
 export interface MissionControlActionExecuteCommandPayload {
   action: Record<string, unknown>;
 }
 
 export interface ProjectSnapshotGetCommandPayload {
   sessionId: string;
-}
-
-export interface ProjectSnapshotUpdateCommandPayload {
-  sessionId: string;
-  snapshot: RunnerProjectSnapshot;
 }
 
 export type ProjectActionCommandPayload = RunnerProjectAction;
@@ -1086,10 +1075,8 @@ export interface RunnerCommandPayloadByType {
   "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
   "workspace.git.action": WorkspaceGitActionCommandPayload;
   "mission_control.project.get": MissionControlProjectGetCommandPayload;
-  "mission_control.migration.execute": MissionControlMigrationExecuteCommandPayload;
   "mission_control.action.execute": MissionControlActionExecuteCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
-  "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
   "project.review.get": ProjectReviewGetCommandPayload;
   "project.review.action": ProjectReviewActionCommandPayload;
@@ -1666,10 +1653,8 @@ export interface RunnerResponseByCommandType {
   "workspace.git.inspect": RunnerEventEnvelope<"workspace.git">;
   "workspace.git.action": RunnerEventEnvelope<"workspace.git">;
   "mission_control.project.get": RunnerEventEnvelope<"mission_control.project">;
-  "mission_control.migration.execute": RunnerEventEnvelope<"mission_control.project">;
   "mission_control.action.execute": RunnerEventEnvelope<"mission_control.project">;
   "project.snapshot.get": RunnerEventEnvelope<"project.snapshot">;
-  "project.snapshot.update": RunnerEventEnvelope<"project.snapshot">;
   "project.action": RunnerEventEnvelope<"project.snapshot">;
   "project.review.get": RunnerEventEnvelope<"project.review">;
   "project.review.action": RunnerEventEnvelope<"project.review">;
@@ -1732,10 +1717,8 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "workspace.git.inspect": ["workspace.git"],
   "workspace.git.action": ["workspace.git"],
   "mission_control.project.get": ["mission_control.project"],
-  "mission_control.migration.execute": ["mission_control.project"],
   "mission_control.action.execute": ["mission_control.project"],
   "project.snapshot.get": ["project.snapshot"],
-  "project.snapshot.update": ["project.snapshot"],
   "project.action": ["project.snapshot"],
   "project.review.get": ["project.review"],
   "project.review.action": ["project.review"],
@@ -2023,7 +2006,6 @@ function parseRunnerCommandPayloadV2(
     case "mission_control.project.get":
       requireNonEmptyString(payload.projectId, `${label}.projectId`);
       break;
-    case "mission_control.migration.execute":
     case "mission_control.action.execute":
       rejectUnknownFields(payload, label, ["action"]);
       if (
@@ -2314,10 +2296,6 @@ function parseRunnerCommandPayloadV2(
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); break;
     case "workspace.git.action":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); requireNonEmptyString(payload.candidateFingerprint, `${label}.candidateFingerprint`); validateOptionalNonEmptyString(payload.expectedHeadSha, `${label}.expectedHeadSha`); requireRecord(payload.action, `${label}.action`); break;
-    case "project.snapshot.update":
-      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
-      requireRecord(payload.snapshot, `${label}.snapshot`);
-      break;
     case "project.action":
       return parseRunnerProjectAction(payload);
     case "project.review.get":

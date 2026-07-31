@@ -111,7 +111,6 @@ contractTest("runtime.hermetic", "Kestrel agent context builder records determin
       "activeProcessEvidence",
       "recentFilesystemEvidence",
       "recentToolResultEvidence",
-      "projectTaskQueue",
       "recovery",
       "visibleTodos",
       "workspaceFreshness",

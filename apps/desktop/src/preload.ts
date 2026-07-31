@@ -12,10 +12,8 @@ import type {
   DesktopAppConnectionSession,
   DesktopStandardAppConnectionInput,
   DesktopPackageManager,
-  DesktopProjectAction,
   DesktopProjectFilesChangedEvent,
   DesktopMissionControlProjectResponse,
-  DesktopProjectSnapshotResponse,
   DesktopRendererSettingsUpdate,
   DesktopRunCancelRequest,
   DesktopRunCancellationResult,
@@ -422,19 +420,8 @@ const desktopBridge: DesktopBridge = {
   ): Promise<DesktopMissionControlProjectResponse> {
     return ipcRenderer.invoke("desktop:get-mission-control-project", projectId);
   },
-  executeMissionControlMigration(intent) {
-    return ipcRenderer.invoke("desktop:execute-mission-control-migration", intent);
-  },
   executeMissionControlAction(intent) {
     return ipcRenderer.invoke("desktop:execute-mission-control-action", intent);
-  },
-  getProjectSnapshot(sessionId): Promise<DesktopProjectSnapshotResponse> {
-    return ipcRenderer.invoke("desktop:get-project-snapshot", sessionId);
-  },
-  runProjectAction(
-    action: DesktopProjectAction,
-  ): Promise<DesktopProjectSnapshotResponse> {
-    return ipcRenderer.invoke("desktop:run-project-action", action);
   },
   getOperatorThread(threadId) {
     return ipcRenderer.invoke("desktop:get-operator-thread", threadId);

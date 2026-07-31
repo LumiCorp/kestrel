@@ -202,27 +202,21 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "workspace.git.inspect": { sessionId: "session-1", threadId: "thread-1" },
   "workspace.git.action": { sessionId: "session-1", threadId: "thread-1", candidateFingerprint: `sha256:${"a".repeat(64)}`, action: { kind: "fetch", remote: "origin" } },
   "mission_control.project.get": { projectId: "11111111-1111-4111-8111-111111111111" },
-  "mission_control.migration.execute": {
-    action: {
-      type: "migration.stage",
-      projectId: "11111111-1111-4111-8111-111111111111",
-      actionId: "action-1",
-      actionTs: "2026-07-31T00:00:00.000Z",
-      expectedRevision: 0,
-      registrations: [],
-    },
-  },
   "mission_control.action.execute": {
     action: {
-      type: "authority.activate",
+      type: "item.create",
       projectId: "11111111-1111-4111-8111-111111111111",
-      actionId: "activate-1",
+      actionId: "create-1",
       actionTs: "2026-07-30T00:00:00.000Z",
-      expectedRevision: 1,
+      expectedRevision: 0,
+      itemId: "item-1",
+      title: "Canonical work",
+      instructions: "Exercise the project-scoped authority.",
+      createdBy: "operator",
+      order: 1,
     },
   },
   "project.snapshot.get": { sessionId: "session-1" },
-  "project.snapshot.update": { sessionId: "session-1", snapshot: {} },
   "project.action": {
     type: "branch.create",
     sessionId: "session-1",
@@ -597,27 +591,7 @@ contractTest("packages.hermetic", "canonical command parser rejects unknown and 
   }
 });
 
-contractTest("packages.hermetic", "canonical project actions reject malformed provided optional fields", () => {
-  const proposalRevision = parseRunnerCommandV2({
-    id: "command-task-proposal-revision",
-    type: "project.action",
-    payload: {
-      type: "task.propose",
-      sessionId: "session-1",
-      actionId: "action-proposal-revision",
-      actionTs: "2026-07-13T12:00:00.000Z",
-      taskId: "T-2",
-      title: "Revise the proposal",
-      instructions: "Preserve the human approval boundary.",
-      order: 1,
-    },
-  });
-  assert.equal(proposalRevision.type, "project.action");
-  if (proposalRevision.type === "project.action" && proposalRevision.payload.type === "task.propose") {
-    assert.equal(proposalRevision.payload.taskId, "T-2");
-    assert.equal(proposalRevision.payload.order, 1);
-  }
-
+contractTest("packages.hermetic", "canonical project actions reject retired lifecycle authorities and malformed Git fields", () => {
   assert.throws(
     () => parseRunnerCommandV2({
       id: "command-git-push-invalid-branch",
@@ -628,57 +602,19 @@ contractTest("packages.hermetic", "canonical project actions reject malformed pr
         branchName: 42,
       },
     }),
-    /branchName must be a string/u,
+    /optional field must be a string/u,
   );
 
-  assert.throws(
-    () => parseRunnerCommandV2({
-      id: "command-task-create-invalid-priority",
-      type: "project.action",
-      payload: {
-        type: "task.create",
-        sessionId: "session-1",
-        actionId: "action-1",
-        actionTs: "2026-07-13T12:00:00.000Z",
-        title: "Implement the contract",
-        instructions: "Keep the parser canonical.",
-        priority: "critical",
-      },
-    }),
-    /priority must be one of low, medium, high, urgent/u,
-  );
-  assert.throws(
-    () => parseRunnerCommandV2({
-      id: "command-task-propose-invalid-order",
-      type: "project.action",
-      payload: {
-        type: "task.propose",
-        sessionId: "session-1",
-        actionId: "action-invalid-order",
-        actionTs: "2026-07-13T12:00:00.000Z",
-        title: "Invalid proposal order",
-        instructions: "Reject non-positive proposal order.",
-        order: 0,
-      },
-    }),
-    /order must be a positive integer/u,
-  );
-
-  assert.throws(
-    () => parseRunnerCommandV2({
-      id: "command-task-claim-invalid-agent",
-      type: "project.action",
-      payload: {
-        type: "task.claim",
-        sessionId: "session-1",
-        actionId: "action-2",
-        actionTs: "2026-07-13T12:00:00.000Z",
-        taskId: "task-1",
-        assignedAgentId: false,
-      },
-    }),
-    /assignedAgentId must be a string/u,
-  );
+  for (const type of ["task.create", "task.propose", "board.card.create"]) {
+    assert.throws(
+      () => parseRunnerCommandV2({
+        id: `command-retired-${type}`,
+        type: "project.action",
+        payload: { type, sessionId: "session-1" },
+      }),
+      /project\.action payload\.type is invalid/u,
+    );
+  }
 
   for (const pullRequestNumber of [0, -1, 1.5]) {
     assert.throws(

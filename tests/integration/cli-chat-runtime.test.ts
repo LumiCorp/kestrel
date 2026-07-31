@@ -11,9 +11,6 @@ import type {
 } from "../../src/index.js";
 import { resolveRuntimeThreadedStepAgent } from "../../src/index.js";
 import { ProductTaskGraphStore } from "../../src/taskGraph/store.js";
-import { ProductProjectStateStore } from "../../src/project/store.js";
-import { createEmptyProjectSnapshot } from "../../src/project/state.js";
-import type { ProductProjectBoardAction } from "../../src/project/contracts.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import {
   KestrelChatRuntime,
@@ -29,21 +26,6 @@ const profile: TuiProfile = {
   agent: "reference-react",
   sessionPrefix: "ref",
 };
-
-let projectBoardActionCounter = 0;
-
-function projectBoardAction(
-  sessionId: string,
-  action: Record<string, unknown> & { type: ProductProjectBoardAction["type"] },
-): ProductProjectBoardAction {
-  projectBoardActionCounter += 1;
-  return {
-    ...action,
-    sessionId,
-    actionId: `runtime-board-action-${projectBoardActionCounter}`,
-    actionTs: `2026-05-18T12:00:${String(projectBoardActionCounter).padStart(2, "0")}.000Z`,
-  } as ProductProjectBoardAction;
-}
 
 function completedOutput(sessionId: string, runId: string): NormalizedOutput {
   return {
@@ -82,25 +64,6 @@ function sessionWithAssistantText(
     },
     updatedAt: new Date().toISOString(),
   };
-}
-
-async function waitForProjectCard(
-  projectStore: ProductProjectStateStore,
-  sessionId: string,
-  graph: ProductTaskGraph,
-  predicate: (snapshot: Awaited<ReturnType<ProductProjectStateStore["getSnapshot"]>>) => boolean,
-): Promise<Awaited<ReturnType<ProductProjectStateStore["getSnapshot"]>>> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const snapshot = await projectStore.getSnapshot({
-      sessionId,
-      graph,
-    });
-    if (predicate(snapshot)) {
-      return snapshot;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("Timed out waiting for project card state.");
 }
 
 contractTest("runtime.process", "KestrelChatRuntime rejects non-string turn messages at the runtime boundary", async () => {
@@ -278,126 +241,6 @@ contractTest("runtime.process", "KestrelChatRuntime releases execution authoriza
     /Synthetic preparation failure/u
   );
   assert.deepEqual(released, ["run-preparation-failure"]);
-});
-
-contractTest("runtime.process", "project autopilot tick runs planned card through implementation and testing full-auto threads", async () => {
-  const sessionStore = new InMemorySessionStore();
-  const taskGraphStore = new ProductTaskGraphStore(sessionStore);
-  const projectStore = new ProductProjectStateStore(sessionStore, {
-    async inspectReviewState() {
-      return createEmptyProjectSnapshot().review;
-    },
-    async applyAction() {
-      return;
-    },
-  } as never);
-  const projectSessionId = "session-project-autopilot";
-  await projectStore.saveSnapshot(projectSessionId, {
-    ...createEmptyProjectSnapshot(),
-    setup: {
-      ...createEmptyProjectSnapshot().setup,
-      workspaceRoot: "/tmp/project-autopilot",
-      repoRoot: "/tmp/project-autopilot",
-      repoLabel: "project-autopilot",
-    },
-  });
-  const graph = await taskGraphStore.getGraph({ sessionId: projectSessionId });
-
-  let snapshot = await projectStore.applyAction({
-    sessionId: projectSessionId,
-    graph,
-    action: projectBoardAction(projectSessionId, {
-      type: "board.card.create",
-      title: "Ship board flow",
-      prompt: "Implement the board flow.",
-      source: "tool",
-    }),
-  });
-  snapshot = await projectStore.applyAction({
-    sessionId: projectSessionId,
-    graph,
-    action: projectBoardAction(projectSessionId, {
-      type: "board.card.move",
-      cardId: "K-1",
-      targetLane: "planned",
-      source: "operator",
-    }),
-  });
-  snapshot = await projectStore.applyAction({
-    sessionId: projectSessionId,
-    graph,
-    action: projectBoardAction(projectSessionId, {
-      type: "board.autopilot.configure",
-      autopilotEnabled: true,
-      autopilotConfirmedAt: "2026-05-17T12:00:00.000Z",
-      wipLimit: 1,
-    }),
-  });
-  assert.equal(snapshot.board.cards["K-1"]?.lane, "planned");
-
-  const runEvents: RuntimeEvent[] = [];
-  const runtime = new KestrelChatRuntime(profile, {
-    create: (_profile, _onFinalize) => {
-      const kestrel = {
-        run: async (event: RuntimeEvent): Promise<NormalizedOutput> => {
-          runEvents.push(event);
-          return completedOutput(event.sessionId, `run-${runEvents.length}`);
-        },
-        getSession: async (sessionId: string) => {
-          const session = await sessionStore.getSession(sessionId);
-          return session === null
-            ? sessionWithAssistantText(sessionId, "The project card run completed.")
-            : sessionWithAssistantText(
-                sessionId,
-                "The project card run completed.",
-                (session.state.agent as Record<string, unknown> | undefined) ?? {},
-              );
-        },
-      } as unknown as Kestrel;
-
-      return {
-        kestrel,
-        taskGraphStore,
-        projectStore,
-        entryStepAgent: "example.step",
-        close: async () => {},
-        readFinalizedPayload: async (sessionId: string) =>
-          sessionId.includes(":testing:")
-            ? { testingVerdict: "pass", summary: "Focused validation passed." }
-            : undefined,
-      };
-    },
-  });
-
-  const result = await runtime.performProjectAction(
-    projectBoardAction(projectSessionId, { type: "board.autopilot.tick" }),
-  );
-
-  assert.equal(result.snapshot.board.cards["K-1"]?.lane, "wip");
-  assert.equal(result.snapshot.board.cards["K-1"]?.activeClaim?.kind, "implementation");
-  const completedSnapshot = await waitForProjectCard(
-    projectStore,
-    projectSessionId,
-    graph,
-    (nextSnapshot) => nextSnapshot.board.cards["K-1"]?.lane === "done",
-  );
-  assert.equal(completedSnapshot.board.cards["K-1"]?.activeClaim, undefined);
-  assert.deepEqual(runEvents.map((event) => event.type), [
-    "project.card.implementation",
-    "project.card.testing",
-  ]);
-  assert.equal(runEvents[0]?.sessionId.includes(":implementation:"), true);
-  assert.equal(runEvents[1]?.sessionId.includes(":testing:"), true);
-  assert.equal(runEvents[0]?.payload.interactionMode, "build");
-  assert.equal(runEvents[0]?.payload.actSubmode, "full_auto");
-  assert.equal((runEvents[0]?.payload.metadata as Record<string, unknown> | undefined)?.actSubmode, "full_auto");
-  assert.equal(runEvents[1]?.payload.interactionMode, "build");
-  assert.equal(runEvents[1]?.payload.actSubmode, "full_auto");
-  assert.equal((runEvents[1]?.payload.metadata as Record<string, unknown> | undefined)?.actSubmode, "full_auto");
-  assert.equal((runEvents[0]?.payload.workspace as Record<string, unknown>)?.workspaceRoot, "/tmp/project-autopilot");
-  assert.equal((runEvents[1]?.payload.workspace as Record<string, unknown>)?.workspaceRoot, "/tmp/project-autopilot");
-  assert.deepEqual((runEvents[0]?.payload.metadata as Record<string, unknown>)?.cardId, "K-1");
-  assert.deepEqual((runEvents[1]?.payload.metadata as Record<string, unknown>)?.cardThreadKind, "testing");
 });
 
 contractTest("runtime.process", "KestrelChatRuntime delegates direct runtime turns with step agent and operator affordance", async () => {

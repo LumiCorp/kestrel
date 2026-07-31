@@ -1397,6 +1397,15 @@ function resolveRuntimeToolRunContext(
   const payloadRecord = asRecord(payload);
   const orchestration = asRecord(payloadRecord?.orchestration);
   const metadata = asRecord(payloadRecord?.metadata);
+  const projectContext =
+    asRecord(payloadRecord?.projectContext) ??
+    asRecord(metadata?.projectContext);
+  const missionControl =
+    asRecord(payloadRecord?.missionControl) ??
+    asRecord(metadata?.missionControl);
+  const projectId =
+    asNonEmptyString(projectContext?.projectId) ??
+    asNonEmptyString(missionControl?.projectId);
   const threadId =
     asNonEmptyString(orchestration?.threadId) ??
     asNonEmptyString(metadata?.threadId);
@@ -1418,6 +1427,7 @@ function resolveRuntimeToolRunContext(
   return {
     runId,
     sessionId,
+    ...(projectId !== undefined ? { projectId } : {}),
     ...(approvalId !== undefined ? { approvalId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
     ...(activeTaskId !== undefined ? { activeTaskId } : {}),

@@ -3,7 +3,7 @@ id: cli-contract-matrix
 domain: cli
 status: active
 owner: kestrel-cli
-last_verified_at: 2026-07-28
+last_verified_at: 2026-07-31
 depends_on:
   - ./kchat.md
   - ./kchat-protocol.md
@@ -122,8 +122,9 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 - `workspace.validation.run`
 - `workspace.validation.cancel`
 - `workspace.validation.submit`
+- `mission_control.project.get`
+- `mission_control.action.execute`
 - `project.snapshot.get`
-- `project.snapshot.update`
 - `project.action`
 - `project.review.get`
 - `project.review.action`
@@ -173,6 +174,7 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 - `workspace.feedback`
 - `workspace.review`
 - `workspace.validation`
+- `mission_control.project`
 - `project.snapshot`
 - `project.review`
 - `mcp.status`

@@ -6,8 +6,7 @@ export type ApprovalCapabilityClass =
   | "workspace.read"
   | "workspace.write"
   | "shell.exec"
-  | "project.board.write"
-  | "project.task_queue.write"
+  | "mission_control.work_item.write"
   | "network.call"
   | "code.execute"
   | "mcp.invoke"
@@ -40,8 +39,7 @@ export const APPROVAL_CAPABILITY_CLASSES: ApprovalCapabilityClass[] = [
   "workspace.read",
   "workspace.write",
   "shell.exec",
-  "project.board.write",
-  "project.task_queue.write",
+  "mission_control.work_item.write",
   "network.call",
   "code.execute",
   "mcp.invoke",

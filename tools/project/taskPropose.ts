@@ -1,13 +1,9 @@
-import { randomUUID } from "node:crypto";
-
-import type { TaskPriority } from "../../src/missionControl/contracts.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolModule } from "../contracts.js";
 import {
   createToolInputError,
   parseObjectInput,
   readNumber,
-  readString,
   requireStringField,
 } from "../helpers.js";
 
@@ -16,15 +12,10 @@ const TOOL_NAME = "task.propose";
 export const projectTaskProposeTool: SharedToolModule = {
   definition: {
     name: TOOL_NAME,
-    description: "Propose a Mission Control task or revise an existing agent-authored proposal for durable implementation, validation, cleanup, or follow-up work. Proposed tasks require human approval before agents can claim or run them.",
+    description: "Propose a project-scoped Mission Control work item for durable implementation, validation, cleanup, or follow-up work. The active project is bound by the trusted runtime context, and proposed work requires operator approval before execution.",
     inputSchema: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
-        taskId: {
-          type: "string",
-          description: "Optional existing agent-authored proposed task id to revise instead of creating a new task.",
-        },
         title: {
           type: "string",
           description: "Short imperative task title, for example 'Add regression test for login timeout'.",
@@ -33,26 +24,13 @@ export const projectTaskProposeTool: SharedToolModule = {
           type: "string",
           description: "Self-contained task instructions with acceptance or validation expectations.",
         },
-        acceptanceCriteria: {
-          type: "string",
-          description: "Optional concrete acceptance criteria for human review.",
-        },
-        priority: {
-          type: "string",
-          enum: ["low", "medium", "high", "urgent"],
-          description: "Optional task priority.",
-        },
         order: {
           type: "integer",
           minimum: 1,
-          description: "Optional positive one-based queue position for this proposal.",
-        },
-        summary: {
-          type: "string",
-          description: "Brief reason this task was proposed from the current conversation.",
+          description: "Optional positive one-based position within the Proposed phase.",
         },
       },
-      required: ["sessionId", "title", "instructions"],
+      required: ["title", "instructions"],
       additionalProperties: false,
     },
     capability: {
@@ -61,23 +39,23 @@ export const projectTaskProposeTool: SharedToolModule = {
       costClass: "free",
       executionClass: "external_side_effect",
       allowedInteractionModes: ["chat", "plan", "build"],
-      capabilityClasses: ["runtime.project.task_queue"],
-      approvalCapabilities: ["project.task_queue.write"],
+      capabilityClasses: ["runtime.mission_control.work_item"],
+      approvalCapabilities: ["mission_control.work_item.write"],
     },
     presentation: {
       displayName: "Propose Task",
       aliases: ["propose task", "add task", "new task"],
-      keywords: ["project", "task", "queue", "mission", "follow-up"],
+      keywords: ["project", "task", "mission", "follow-up"],
       provider: "kestrel",
       toolFamily: "project",
     },
   },
   createHandler(context) {
     return async (input: unknown) => {
-      if (context.projectActions === undefined) {
+      if (context.missionControlActions === undefined) {
         throw createRuntimeFailure(
           "TOOL_CONTEXT_INVALID",
-          `${TOOL_NAME} requires tool context.projectActions.`,
+          `${TOOL_NAME} requires tool context.missionControlActions.`,
           {
             subsystem: "tooling",
             toolName: TOOL_NAME,
@@ -86,28 +64,26 @@ export const projectTaskProposeTool: SharedToolModule = {
           },
         );
       }
-      const body = parseObjectInput(TOOL_NAME, input);
-      const taskId = readString(body, "taskId");
-      if (taskId !== undefined && taskId.trim().length === 0) {
-        throw createToolInputError(TOOL_NAME, "task.propose taskId must be a non-empty string.", {
-          field: "taskId",
-        });
+      const projectId = context.runtime?.projectId;
+      if (projectId === undefined) {
+        throw createRuntimeFailure(
+          "MISSION_CONTROL_PROJECT_CONTEXT_REQUIRED",
+          `${TOOL_NAME} requires an active registered project context.`,
+          {
+            subsystem: "tooling",
+            toolName: TOOL_NAME,
+            classification: "input",
+            recoverable: true,
+          },
+        );
       }
+      const body = parseObjectInput(TOOL_NAME, input);
       const order = readPositiveOrder(body);
-      return context.projectActions.apply({
-        type: "task.propose",
-        actionId: randomUUID(),
-        actionTs: new Date().toISOString(),
-        sessionId: requireStringField(TOOL_NAME, body, "sessionId"),
-        ...(taskId !== undefined ? { taskId: taskId.trim() } : {}),
+      return context.missionControlActions.propose({
+        projectId,
         title: requireStringField(TOOL_NAME, body, "title"),
         instructions: requireStringField(TOOL_NAME, body, "instructions"),
-        ...(readString(body, "acceptanceCriteria") !== undefined
-          ? { acceptanceCriteria: readString(body, "acceptanceCriteria") }
-          : {}),
-        ...(readTaskPriority(body.priority) !== undefined ? { priority: readTaskPriority(body.priority) } : {}),
         ...(order !== undefined ? { order } : {}),
-        ...(readString(body, "summary") !== undefined ? { summary: readString(body, "summary") } : {}),
       });
     };
   },
@@ -125,10 +101,4 @@ function readPositiveOrder(body: Record<string, unknown>): number | undefined {
     });
   }
   return order;
-}
-
-function readTaskPriority(value: unknown): TaskPriority | undefined {
-  return value === "low" || value === "medium" || value === "high" || value === "urgent"
-    ? value
-    : undefined;
 }

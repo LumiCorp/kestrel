@@ -1,4 +1,4 @@
-import type { ProductProjectSnapshot } from "../project/contracts.js";
+import type { MissionControlLegacyProjectSnapshot } from "./legacyContracts.js";
 
 export type MissionControlMigrationStatus =
   | "staged_empty"
@@ -20,7 +20,7 @@ export interface MissionControlLegacyProjectSource {
   sessionId: string;
   sourceVersion: number;
   projectPath?: string | undefined;
-  snapshot: ProductProjectSnapshot;
+  snapshot: MissionControlLegacyProjectSnapshot;
 }
 
 export interface MissionControlMigrationSourceBinding {

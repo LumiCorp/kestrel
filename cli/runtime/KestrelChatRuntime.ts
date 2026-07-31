@@ -20,7 +20,6 @@ import {
   type NormalizedOutput,
   type RunEvent,
   ProductTaskGraphStore,
-  createProductProjectActionToolAdapter,
   ProductProjectRuntimeService,
   requireProductProjectRuntimeService,
   ProductProjectStateStore,
@@ -64,12 +63,9 @@ import {
   WorkspaceSkillInstaller,
   assertRequiredKestrelOneTools,
   KESTREL_ONE_POLICY_ID,
-  MissionControlMigrationService,
   MissionControlProjectService,
-  MissionControlAuthorityService,
   MissionControlExecutionRuntime,
   MissionControlReviewService,
-  isMissionControlProjectActive,
   parseMissionControlExecutionAction,
   parseMissionControlProjectAction,
   parseMissionControlReviewAction,
@@ -181,7 +177,6 @@ export type RunTurnResult = RuntimeTurnResult & {
 interface RuntimeBootstrap {
   kestrel: Kestrel;
   missionControlStore?: SessionStore | undefined;
-  missionControlMigrationService?: MissionControlMigrationService | undefined;
   missionControlProjectService?: MissionControlProjectService | undefined;
   threadRuntime?: ThreadRuntime | undefined;
   taskGraphStore?: ProductTaskGraphStore | undefined;
@@ -286,14 +281,8 @@ export class KestrelChatRuntime {
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined;
   private readonly kestrel: Kestrel;
-  private readonly missionControlMigrationService:
-    | MissionControlMigrationService
-    | undefined;
   private readonly missionControlProjectService:
     | MissionControlProjectService
-    | undefined;
-  private readonly missionControlAuthorityService:
-    | MissionControlAuthorityService
     | undefined;
   private readonly missionControlExecutionRuntime:
     | MissionControlExecutionRuntime
@@ -368,8 +357,6 @@ export class KestrelChatRuntime {
 
     this.kestrel = bootstrap.kestrel;
     this.missionControlProfileId = profile.id;
-    this.missionControlMigrationService =
-      bootstrap.missionControlMigrationService;
     this.missionControlProjectService = bootstrap.missionControlProjectService;
     this.threadRuntime = bootstrap.threadRuntime;
     this.taskGraphStore = bootstrap.taskGraphStore;
@@ -380,10 +367,6 @@ export class KestrelChatRuntime {
         ? new ProductProjectRuntimeService({
             taskGraphStore: bootstrap.taskGraphStore,
             projectStore: bootstrap.projectStore,
-            turnRunner: {
-              runTurn: (turn, runOptions) =>
-                this.runTurn(turn as RunTurnInput, runOptions),
-            },
           })
         : undefined;
     this.workspaceCheckpointService = bootstrap.workspaceCheckpointService;
@@ -484,10 +467,6 @@ export class KestrelChatRuntime {
       },
     });
     const missionControlStore = bootstrap.missionControlStore;
-    this.missionControlAuthorityService =
-      missionControlStore === undefined
-        ? undefined
-        : new MissionControlAuthorityService(missionControlStore);
     if (missionControlStore === undefined) {
       this.missionControlExecutionRuntime = undefined;
       this.missionControlReviewService = undefined;
@@ -849,10 +828,7 @@ export class KestrelChatRuntime {
     let project = await this.missionControlProjectService.getProject(
       input.projectId,
     );
-    if (
-      isMissionControlProjectActive(project.authorityEpoch) &&
-      this.missionControlExecutionRuntime !== undefined
-    ) {
+    if (this.missionControlExecutionRuntime !== undefined) {
       await this.missionControlExecutionRuntime.reconcile(project.projectId);
       await this.driveMissionControlAutopilot(project.projectId);
       project = await this.missionControlProjectService.getProject(
@@ -860,21 +836,6 @@ export class KestrelChatRuntime {
       );
     }
     return project;
-  }
-
-  async executeMissionControlMigration(input: {
-    action: Record<string, unknown>;
-  }): Promise<MissionControlProjectStateRecord> {
-    if (this.missionControlMigrationService === undefined) {
-      throw createRuntimeFailure(
-        "MISSION_CONTROL_MIGRATION_UNAVAILABLE",
-        "Mission Control migration authority is unavailable.",
-      );
-    }
-    const mutation = await this.missionControlMigrationService.execute(
-      input.action,
-    );
-    return mutation.project;
   }
 
   async executeMissionControlAction(input: {
@@ -887,26 +848,6 @@ export class KestrelChatRuntime {
         "MISSION_CONTROL_ACTION_INVALID",
         "Mission Control action type is required.",
       );
-    }
-    if (type === "authority.activate" || type === "authority.rollback") {
-      if (this.missionControlAuthorityService === undefined) {
-        throw createRuntimeFailure(
-          "MISSION_CONTROL_AUTHORITY_UNAVAILABLE",
-          "Mission Control authority activation is unavailable.",
-        );
-      }
-      const mutation = await this.missionControlAuthorityService.execute(
-        input.action,
-      );
-      if (
-        type === "authority.activate" &&
-        this.missionControlExecutionRuntime !== undefined
-      ) {
-        await this.missionControlExecutionRuntime.reconcile(
-          mutation.project.projectId,
-        );
-      }
-      return mutation.project;
     }
     const projectId = requireMissionControlProjectId(input.action.projectId);
     await this.requireActiveMissionControlProject(projectId);
@@ -949,29 +890,6 @@ export class KestrelChatRuntime {
     return (
       await this.missionControlProjectService!.getProject(project.projectId)
     );
-  }
-
-  async updateProjectSnapshot(input: {
-    sessionId: string;
-    snapshot: ProductProjectSnapshot;
-  }) {
-    if (this.projectRuntimeService !== undefined) {
-      return this.projectRuntimeService.updateProjectSnapshot(input);
-    }
-    if (this.projectStore === undefined) {
-      return {
-        sessionId: input.sessionId,
-        snapshot: input.snapshot,
-      };
-    }
-    const snapshot = await this.projectStore.saveSnapshot(
-      input.sessionId,
-      input.snapshot,
-    );
-    return {
-      sessionId: input.sessionId,
-      snapshot,
-    };
   }
 
   async performProjectAction(input: ProductProjectAction) {
@@ -2717,13 +2635,6 @@ export class KestrelChatRuntime {
     const project = await this.missionControlProjectService.getProject(
       projectId,
     );
-    if (isMissionControlProjectActive(project.authorityEpoch) === false) {
-      throw createRuntimeFailure(
-        "MISSION_CONTROL_PROJECT_NOT_ACTIVE",
-        "Mission Control commands remain read-only until project migration is activated.",
-        { projectId },
-      );
-    }
     return project;
   }
 
@@ -2741,7 +2652,6 @@ export class KestrelChatRuntime {
         projectId,
       );
       if (
-        isMissionControlProjectActive(project.authorityEpoch) === false ||
         project.document.autopilot.enabled === false ||
         Object.values(project.document.items).some(
           (item) => item.phase === "needs_attention",
@@ -3252,7 +3162,6 @@ function createRuntimeWithStore(
   const taskGraphStore = new ProductTaskGraphStore(store);
   const projectStore = new ProductProjectStateStore(store);
   const missionControlProjectService = new MissionControlProjectService(store);
-  const missionControlMigrationService = new MissionControlMigrationService(store);
   const workspaceCheckpointService = new WorkspaceCheckpointService(store);
   const userTerminalService = enableUserTerminals
     ? new UserTerminalService({
@@ -3340,10 +3249,32 @@ function createRuntimeWithStore(
     ...(managedTaskWorktreeService !== undefined
       ? { managedTaskWorktreeService }
       : {}),
-    projectActions: createProductProjectActionToolAdapter({
-      taskGraphStore,
-      projectStore,
-    }),
+    missionControlActions: {
+      propose: async (input) => {
+        const project = await missionControlProjectService.getProject(
+          input.projectId,
+        );
+        const order =
+          input.order ??
+          Object.values(project.document.items).filter(
+            (item) => item.phase === "proposed",
+          ).length + 1;
+        return (
+          await missionControlProjectService.execute({
+            type: "item.create",
+            projectId: input.projectId,
+            actionId: randomUUID(),
+            actionTs: new Date().toISOString(),
+            expectedRevision: project.revision,
+            itemId: randomUUID(),
+            title: input.title,
+            instructions: input.instructions,
+            createdBy: "agent",
+            order,
+          })
+        ).project;
+      },
+    },
     delegationService: undefined,
     dialogService: undefined,
   };
@@ -3524,7 +3455,6 @@ function createRuntimeWithStore(
   return {
     kestrel,
     missionControlStore: store,
-    missionControlMigrationService,
     missionControlProjectService,
     threadRuntime,
     taskGraphStore,

@@ -24,10 +24,7 @@ import type {
   InteractionMode,
   ToolExecutionClass,
 } from "../src/mode/contracts.js";
-import type {
-  ProductProjectAction,
-  ProductProjectSnapshot,
-} from "../src/project/contracts.js";
+import type { MissionControlProjectStateRecord } from "../src/missionControl/projectAuthority.js";
 import type { ManagedTaskWorktreeService } from "../src/workspace/ManagedTaskWorktreeService.js";
 import type { TavilyInternetProvider } from "./internet/contracts.js";
 import type { ToolProviderConfigurationResolver } from "./providers/runtimeConfiguration.js";
@@ -107,6 +104,7 @@ export interface DelegationTaskSpawnRequest {
 export interface RuntimeToolRunContext {
   runId: string;
   sessionId: string;
+  projectId?: string | undefined;
   approvalId?: string | undefined;
   threadId?: string | undefined;
   activeTaskId?: string | undefined;
@@ -212,12 +210,14 @@ export interface SharedToolContext {
       }
     | undefined;
   managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
-  projectActions?:
+  missionControlActions?:
     | {
-        apply(action: ProductProjectAction): Promise<{
-          sessionId: string;
-          snapshot: ProductProjectSnapshot;
-        }>;
+        propose(input: {
+          projectId: string;
+          title: string;
+          instructions: string;
+          order?: number | undefined;
+        }): Promise<MissionControlProjectStateRecord>;
       }
     | undefined;
   toolConsole?: ToolConsoleSink | undefined;

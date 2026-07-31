@@ -4,12 +4,7 @@ import type {
   RunnerWaitingPromptHistoryDataV2,
 } from "@kestrel-agents/protocol";
 import { KESTREL_STANDARD_APP_MANIFESTS } from "@kestrel-agents/protocol";
-import type { TaskAction } from "../missionControl/contracts.js";
 import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
-import type {
-  ProductProjectBoardAction,
-  ProductProjectSnapshot,
-} from "../project/contracts.js";
 import type {
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointRecord,
@@ -170,7 +165,6 @@ export const DESKTOP_LEGACY_UI_STORAGE_KEYS = [
   "kestrel:desktop-workspace:v3",
   "kestrel:desktop-workspace:v2",
   "kestrel.desktop.rail.v2",
-  "kestrel.missionControl.taskQueue",
 ] as const;
 
 export type DesktopLegacyUiStorageKey =
@@ -446,13 +440,6 @@ export type DesktopWorkspaceGitSnapshot = WorkspaceGitSnapshot;
 export interface DesktopWorkspaceFeedbackSubmitResult {
   snapshot: WorkspaceFeedbackSnapshot;
   submissionRunId?: string | undefined;
-}
-
-export type DesktopProjectAction = TaskAction | ProductProjectBoardAction;
-
-export interface DesktopProjectSnapshotResponse {
-  sessionId: string;
-  snapshot: ProductProjectSnapshot;
 }
 
 export type DesktopRuntimeThreadStatus =
