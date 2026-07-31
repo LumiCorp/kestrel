@@ -91,6 +91,7 @@ interface PtyPayload {
     fromCursor?: boolean | undefined;
   }>;
   timeoutSeconds: number;
+  emitStatusEvents?: boolean | undefined;
 }
 
 interface CommandResult {
@@ -98,6 +99,7 @@ interface CommandResult {
   stdout: string;
   stderr: string;
   durationMs: number;
+  readinessObserved: boolean;
 }
 
 interface PtyDriverHandle {
@@ -110,6 +112,7 @@ interface PromptRunReport {
   status: SmokeStatus;
   runtimeStatus: SmokeStatus;
   artifactStatus: ArtifactStatus;
+  tuiStatus: SmokeStatus;
   durationMs: number;
   promptPath: string;
   runDir: string;
@@ -122,6 +125,7 @@ interface PromptRunReport {
   diagnosticsPath: string;
   reportPath: string;
   exitCode: number;
+  readinessObserved: boolean;
   terminalObservation?: DurableTerminalObservation | undefined;
   terminalObservationError?: string | undefined;
   badMatches: string[];
@@ -159,6 +163,7 @@ const DEFAULT_TIMEOUT_SECONDS = 420;
 const DEFAULT_KEEP_RUNS = 10;
 const DEFAULT_PROFILE = "reference";
 const DEFAULT_MODE: PromptMode = "build";
+const PTY_STATUS_PREFIX = "__KESTREL_PTY_STATUS__";
 
 const PREFERRED_DOT_ENV_KEYS = [
   "OPENROUTER_API_KEY",
@@ -433,6 +438,7 @@ async function runPrompt(prompt: PromptCase, options: CliPromptSmokeOptions): Pr
       stdout: "",
       stderr: `PTY driver failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
       durationMs: 0,
+      readinessObserved: false,
     };
   } finally {
     currentAbortReportWriter = undefined;
@@ -454,9 +460,12 @@ async function runPrompt(prompt: PromptCase, options: CliPromptSmokeOptions): Pr
     terminalStatus: terminalObservation?.status,
     assertionsConfigured: prompt.assertions.length > 0,
     assertionsPassed: assertionResults.every((assertion) => assertion.passed),
+    ptyExitCode: result.exitCode,
+    readinessObserved: result.readinessObserved,
   });
   const runtimeStatus: SmokeStatus = outcome.runtimeStatus;
   const artifactStatus: ArtifactStatus = outcome.artifactStatus;
+  const tuiStatus: SmokeStatus = outcome.tuiStatus;
   const diagnostics = buildDiagnostics({
     result,
     terminalObservation,
@@ -474,6 +483,7 @@ async function runPrompt(prompt: PromptCase, options: CliPromptSmokeOptions): Pr
     status,
     runtimeStatus,
     artifactStatus,
+    tuiStatus,
     durationMs: result.durationMs,
     promptPath: prompt.filePath,
     runDir: paths.runDir,
@@ -486,6 +496,7 @@ async function runPrompt(prompt: PromptCase, options: CliPromptSmokeOptions): Pr
     diagnosticsPath: paths.diagnosticsPath,
     reportPath: paths.reportPath,
     exitCode: result.exitCode,
+    readinessObserved: result.readinessObserved,
     terminalObservation,
     terminalObservationError,
     badMatches,
@@ -538,6 +549,7 @@ async function writeAbortedPromptReport(input: {
     status: "failed",
     runtimeStatus: "failed",
     artifactStatus,
+    tuiStatus: "failed",
     durationMs: 0,
     promptPath: input.prompt.filePath,
     runDir: input.paths.runDir,
@@ -550,6 +562,7 @@ async function writeAbortedPromptReport(input: {
     diagnosticsPath: input.paths.diagnosticsPath,
     reportPath: input.paths.reportPath,
     exitCode: input.signal === "SIGINT" ? 130 : 143,
+    readinessObserved: false,
     badMatches,
     assertionResults,
     createdFiles,
@@ -600,6 +613,7 @@ function buildPtyPayload(input: {
       KESTREL_ENABLE_MANAGED_WORKTREES: "false",
       KESTREL_MANAGED_WORKTREE_ISOLATION: "session",
       NPM_CONFIG_WORKSPACE_DIR: input.workspacePath,
+      TSX_TSCONFIG_PATH: path.resolve(process.cwd(), "tsconfig.json"),
       FORCE_COLOR: "0",
       TERM: "xterm-256color",
     },
@@ -613,6 +627,7 @@ function buildPtyPayload(input: {
     ],
     abortPatterns: [],
     timeoutSeconds: input.options.timeoutSeconds + 30,
+    emitStatusEvents: true,
   };
 }
 
@@ -685,8 +700,9 @@ function startPtyDriver(payload: PtyPayload, timeoutSeconds: number): PtyDriverH
       resolve({
         exitCode: 124,
         stdout,
-        stderr: `${stderr}\nTimed out after ${timeoutSeconds} seconds.`,
+        stderr: `${parsePtyDriverStderr(stderr).stderr}\nTimed out after ${timeoutSeconds} seconds.`,
         durationMs: Date.now() - startedAt,
+        readinessObserved: parsePtyDriverStderr(stderr).readinessObserved,
       });
     }, timeoutSeconds * 1000);
 
@@ -707,11 +723,13 @@ function startPtyDriver(payload: PtyPayload, timeoutSeconds: number): PtyDriverH
       settled = true;
       activePtyDriver = activePtyDriver === child ? undefined : activePtyDriver;
       clearTimeout(timeout);
+      const parsedStderr = parsePtyDriverStderr(stderr);
       resolve({
         exitCode: code ?? 1,
         stdout,
-        stderr,
+        stderr: parsedStderr.stderr,
         durationMs: Date.now() - startedAt,
+        readinessObserved: parsedStderr.readinessObserved,
       });
     });
   });
@@ -726,6 +744,35 @@ function startPtyDriver(payload: PtyPayload, timeoutSeconds: number): PtyDriverH
       child.stdin.write(`${JSON.stringify({ type: "terminate" })}\n`, "utf8");
       child.stdin.end();
     },
+  };
+}
+
+function parsePtyDriverStderr(stderr: string): {
+  stderr: string;
+  readinessObserved: boolean;
+} {
+  let readinessObserved = false;
+  const retainedLines: string[] = [];
+  for (const line of stderr.split("\n")) {
+    if (!line.startsWith(PTY_STATUS_PREFIX)) {
+      retainedLines.push(line);
+      continue;
+    }
+    try {
+      const event = JSON.parse(line.slice(PTY_STATUS_PREFIX.length)) as {
+        type?: unknown;
+        stepIndex?: unknown;
+      };
+      if (event.type === "step_matched" && event.stepIndex === 0) {
+        readinessObserved = true;
+      }
+    } catch {
+      retainedLines.push(line);
+    }
+  }
+  return {
+    stderr: retainedLines.join("\n"),
+    readinessObserved,
   };
 }
 
@@ -791,6 +838,9 @@ function buildDiagnostics(input: {
   const diagnostics: string[] = [];
   if (input.result.exitCode !== 0) {
     diagnostics.push(`PTY driver exited with code ${input.result.exitCode}.`);
+  }
+  if (!input.result.readinessObserved) {
+    diagnostics.push("TUI readiness was not observed.");
   }
   if (input.terminalObservation === undefined) {
     diagnostics.push(
