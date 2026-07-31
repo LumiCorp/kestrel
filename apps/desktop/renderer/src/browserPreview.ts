@@ -10,6 +10,7 @@ import type {
   DesktopMcpServerMutationInput,
   DesktopPathTargetInput,
   DesktopMissionControlProjectResponse,
+  DesktopMissionControlMigrationIntent,
   DesktopProjectAction,
   DesktopProjectSnapshotResponse,
   DesktopRendererSettings,
@@ -731,6 +732,11 @@ export function ensureBrowserPreviewBridge(): void {
       projectId: string,
     ): Promise<DesktopMissionControlProjectResponse> {
       return createPreviewMissionControlProject(projectId);
+    },
+    async executeMissionControlMigration(
+      intent: DesktopMissionControlMigrationIntent,
+    ): Promise<DesktopMissionControlProjectResponse> {
+      return createPreviewMissionControlProject(intent.projectId);
     },
     async getProjectSnapshot(
       sessionId: string,
@@ -1612,6 +1618,16 @@ function createPreviewMissionControlProject(
           attemptId: "preview-attempt",
           disposition: "applied",
         }],
+        migration: {
+          version: 1,
+          status: "staged",
+          registeredPath: "/workspace/kestrel",
+          sources: [],
+          candidates: [],
+          rebinds: [],
+          stagedAt: now,
+          updatedAt: now,
+        },
       },
       createdAt: now,
       updatedAt: now,

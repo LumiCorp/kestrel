@@ -10,9 +10,11 @@ import {
 import React, { useEffect, useMemo, useState } from "react";
 
 import type {
+  DesktopMissionControlMigrationIntent,
   DesktopMissionControlProjectResponse,
   DesktopProjectRegistration,
 } from "../../src/contracts";
+import type { MissionControlMigrationState } from "../../../../src/missionControl/migrationContracts";
 import type {
   MissionControlExecutionAttempt,
   MissionControlHistoryEntry,
@@ -68,6 +70,7 @@ export function UnifiedMissionControlWorkspace({
     useState<DesktopMissionControlProjectResponse>();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [migrating, setMigrating] = useState(false);
   const [commandError, setCommandError] = useState<string>();
   const [reloadKey, setReloadKey] = useState(0);
   const [view, setView] = useState<MissionControlView>("list");
@@ -87,9 +90,17 @@ export function UnifiedMissionControlWorkspace({
     if (response === undefined) setLoading(true);
     else setRefreshing(true);
     void window.kestrelDesktop.getMissionControlProject(project.id)
-      .then((next) => {
+      .then(async (next) => {
+        const authoritative =
+          next.project.document.migration === undefined
+            ? await window.kestrelDesktop.executeMissionControlMigration({
+                type: "stage",
+                projectId: project.id,
+                expectedRevision: next.project.revision,
+              })
+            : next;
         if (disposed) return;
-        setResponse(next);
+        setResponse(authoritative);
         setCommandError(undefined);
         onError(undefined);
       })
@@ -123,6 +134,31 @@ export function UnifiedMissionControlWorkspace({
   );
   const selectedItem =
     allItems.find((item) => item.id === selectedItemId);
+  const migration = response?.project.document.migration;
+
+  const executeMigration = async (
+    buildIntent: (
+      projectId: string,
+      expectedRevision: number,
+    ) => DesktopMissionControlMigrationIntent,
+  ) => {
+    if (response === undefined) return;
+    setMigrating(true);
+    try {
+      const next = await window.kestrelDesktop.executeMissionControlMigration(
+        buildIntent(project.id, response.project.revision),
+      );
+      setResponse(next);
+      setCommandError(undefined);
+      onError(undefined);
+    } catch (error) {
+      const message = errorMessage(error);
+      setCommandError(message);
+      onError(message);
+    } finally {
+      setMigrating(false);
+    }
+  };
 
   useEffect(() => {
     if (selectedItemId !== undefined) return;
@@ -208,6 +244,34 @@ export function UnifiedMissionControlWorkspace({
         {refreshing ? <span>Reconnecting to project authority…</span> : null}
       </section>
 
+      {migration !== undefined ? (
+        <MissionControlMigrationPanel
+          migration={migration}
+          disabled={migrating}
+          onClear={() =>
+            executeMigration((projectId, expectedRevision) => ({
+              type: "clear",
+              projectId,
+              expectedRevision,
+            }))}
+          onRebind={(sourceId, sourceFingerprint) =>
+            executeMigration((projectId, expectedRevision) => ({
+              type: "rebind",
+              projectId,
+              expectedRevision,
+              sourceId,
+              sourceFingerprint,
+            }))}
+          onResolve={(candidateId) =>
+            executeMigration((projectId, expectedRevision) => ({
+              type: "resolve",
+              projectId,
+              expectedRevision,
+              resolution: { type: "source", candidateId },
+            }))}
+        />
+      ) : null}
+
       {commandError !== undefined ? (
         <div className="unified-mission-error" role="alert">
           <AlertTriangle size={15} />
@@ -273,6 +337,97 @@ export function UnifiedMissionControlWorkspace({
       )}
     </main>
   );
+}
+
+function MissionControlMigrationPanel({
+  migration,
+  disabled,
+  onClear,
+  onRebind,
+  onResolve,
+}: {
+  migration: MissionControlMigrationState;
+  disabled: boolean;
+  onClear: () => void;
+  onRebind: (sourceId: string, sourceFingerprint: string) => void;
+  onResolve: (candidateId: string) => void;
+}) {
+  const unresolvedSources = migration.sources.filter(
+    (source) =>
+      source.linkStatus !== "linked" && source.linkStatus !== "rebound",
+  );
+  return (
+    <section className="unified-mission-migration" aria-label="Mission Control migration">
+      <div>
+        <strong>Migration: {migrationLabel(migration.status)}</strong>
+        <span>
+          Legacy session Mission Control remains the sole write authority until
+          cutover.
+        </span>
+        <small>
+          {migration.sources.length} source
+          {migration.sources.length === 1 ? "" : "s"} ·{" "}
+          {migration.candidates.length} candidate
+          {migration.candidates.length === 1 ? "" : "s"}
+        </small>
+      </div>
+      {unresolvedSources.map((source) => (
+        <div className="unified-mission-migration-source" key={source.sourceId}>
+          <code>{source.sourceId}</code>
+          <span>{source.linkStatus.replaceAll("_", " ")}</span>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onRebind(source.sourceId, source.sourceFingerprint)}
+          >
+            Rebind to this project
+          </button>
+        </div>
+      ))}
+      {migration.status === "needs_resolution"
+        ? migration.candidates.map((candidate) => (
+            <div
+              className="unified-mission-migration-source"
+              key={candidate.id}
+            >
+              <code>{candidate.sourceIds.join(", ")}</code>
+              {candidate.valid ? (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onResolve(candidate.id)}
+                >
+                  Use this complete source
+                </button>
+              ) : (
+                <span>{candidate.conflicts.join(", ")}</span>
+              )}
+            </div>
+          ))
+        : null}
+      {migration.status === "staged_empty" ? (
+        <span>No compatible legacy work exists for this project.</span>
+      ) : null}
+      <button type="button" disabled={disabled} onClick={onClear}>
+        Clear staged migration
+      </button>
+    </section>
+  );
+}
+
+function migrationLabel(status: MissionControlMigrationState["status"]): string {
+  switch (status) {
+    case "staged_empty":
+      return "empty";
+    case "needs_rebind":
+      return "project identity required";
+    case "needs_resolution":
+      return "source selection required";
+    case "staged":
+      return "staged";
+    case "resolved":
+      return "resolved";
+  }
 }
 
 function MissionControlList({

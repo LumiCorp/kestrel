@@ -202,6 +202,16 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "workspace.git.inspect": { sessionId: "session-1", threadId: "thread-1" },
   "workspace.git.action": { sessionId: "session-1", threadId: "thread-1", candidateFingerprint: `sha256:${"a".repeat(64)}`, action: { kind: "fetch", remote: "origin" } },
   "mission_control.project.get": { projectId: "11111111-1111-4111-8111-111111111111" },
+  "mission_control.migration.execute": {
+    action: {
+      type: "migration.stage",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      actionId: "action-1",
+      actionTs: "2026-07-31T00:00:00.000Z",
+      expectedRevision: 0,
+      registrations: [],
+    },
+  },
   "project.snapshot.get": { sessionId: "session-1" },
   "project.snapshot.update": { sessionId: "session-1", snapshot: {} },
   "project.action": {

@@ -64,6 +64,7 @@ import {
   WorkspaceSkillInstaller,
   assertRequiredKestrelOneTools,
   KESTREL_ONE_POLICY_ID,
+  MissionControlMigrationService,
   MissionControlProjectService,
   type MissionControlProjectStateRecord,
 } from "../../src/index.js";
@@ -166,6 +167,7 @@ export type RunTurnResult = RuntimeTurnResult & {
 
 interface RuntimeBootstrap {
   kestrel: Kestrel;
+  missionControlMigrationService?: MissionControlMigrationService | undefined;
   missionControlProjectService?: MissionControlProjectService | undefined;
   threadRuntime?: ThreadRuntime | undefined;
   taskGraphStore?: ProductTaskGraphStore | undefined;
@@ -270,6 +272,9 @@ export class KestrelChatRuntime {
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined;
   private readonly kestrel: Kestrel;
+  private readonly missionControlMigrationService:
+    | MissionControlMigrationService
+    | undefined;
   private readonly missionControlProjectService:
     | MissionControlProjectService
     | undefined;
@@ -338,6 +343,8 @@ export class KestrelChatRuntime {
     );
 
     this.kestrel = bootstrap.kestrel;
+    this.missionControlMigrationService =
+      bootstrap.missionControlMigrationService;
     this.missionControlProjectService = bootstrap.missionControlProjectService;
     this.threadRuntime = bootstrap.threadRuntime;
     this.taskGraphStore = bootstrap.taskGraphStore;
@@ -768,6 +775,21 @@ export class KestrelChatRuntime {
       );
     }
     return this.missionControlProjectService.getProject(input.projectId);
+  }
+
+  async executeMissionControlMigration(input: {
+    action: Record<string, unknown>;
+  }): Promise<MissionControlProjectStateRecord> {
+    if (this.missionControlMigrationService === undefined) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_MIGRATION_UNAVAILABLE",
+        "Mission Control migration authority is unavailable.",
+      );
+    }
+    const mutation = await this.missionControlMigrationService.execute(
+      input.action,
+    );
+    return mutation.project;
   }
 
   async updateProjectSnapshot(input: {
@@ -2759,6 +2781,7 @@ function createRuntimeWithStore(
   const taskGraphStore = new ProductTaskGraphStore(store);
   const projectStore = new ProductProjectStateStore(store);
   const missionControlProjectService = new MissionControlProjectService(store);
+  const missionControlMigrationService = new MissionControlMigrationService(store);
   const workspaceCheckpointService = new WorkspaceCheckpointService(store);
   const userTerminalService = enableUserTerminals
     ? new UserTerminalService({
@@ -3029,6 +3052,7 @@ function createRuntimeWithStore(
 
   return {
     kestrel,
+    missionControlMigrationService,
     missionControlProjectService,
     threadRuntime,
     taskGraphStore,
