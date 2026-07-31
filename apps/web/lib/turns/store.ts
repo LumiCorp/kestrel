@@ -936,21 +936,207 @@ export async function claimDurableThreadTurn(turnId: string) {
   });
 }
 
+export type DurableAssistantOutcomeMessage = {
+  id: string;
+  parts: unknown;
+  model: string;
+  inputTokens?: number | undefined;
+  cachedInputTokens?: number | undefined;
+  outputTokens?: number | undefined;
+  reasoningTokens?: number | undefined;
+  durationMs?: number | undefined;
+  source: ThreadTurnSource;
+  projectContextRevisionId: string | null;
+};
+
+export type DurableReplayChunk = {
+  type: string;
+  [key: string]: unknown;
+};
+
+async function appendDurableReplayChunks(
+  tx: TurnTransaction,
+  turnId: string,
+  chunks: readonly DurableReplayChunk[],
+) {
+  for (const chunk of chunks) {
+    await appendTurnEvent(tx, {
+      turnId,
+      type: "ui.message",
+      data: chunk,
+    });
+  }
+}
+
+async function persistDurableAssistantMessages(
+  tx: TurnTransaction,
+  input: {
+    turn: DbThreadTurn;
+    messages: DurableAssistantOutcomeMessage[];
+    now: Date;
+    bindMcpInteractions: boolean;
+  },
+) {
+  const mcpInteractions = await tx.query.threadInteractions.findMany({
+    where: and(
+      eq(schema.threadInteractions.turnId, input.turn.id),
+      eq(schema.threadInteractions.source, "mcp"),
+    ),
+    orderBy: (table, { asc }) => [asc(table.createdAt)],
+  });
+  const messages = input.messages
+    .flatMap(splitDialogPresentationMessages)
+    .map((message) => ({
+      ...message,
+      parts:
+        message.dialog === undefined
+          ? appendInteractionPresentationParts(
+              message.parts,
+              mcpInteractions.map((interaction) => ({
+                requestId: interaction.requestId,
+                kind: interaction.kind,
+                eventType: interaction.eventType,
+                prompt: interaction.prompt,
+                requestEnvelope: interaction.requestEnvelope,
+                source: "mcp" as const,
+                status: interaction.status,
+              })),
+            )
+          : message.parts,
+    }));
+  const turnMessages = messages.filter(
+    (message) => message.dialog === undefined,
+  );
+  const dialogs = [
+    ...new Map(
+      messages.flatMap((message) =>
+        message.dialog === undefined
+          ? []
+          : [[message.dialog.dialogId, message.dialog] as const],
+      ),
+    ).values(),
+  ];
+  if (dialogs.length > 0) {
+    await tx
+      .insert(schema.threadDialogs)
+      .values(
+        dialogs.map((dialog) => ({
+          id: dialog.dialogId,
+          threadId: input.turn.threadId,
+          runtimeChildThreadId: dialog.childSessionId,
+          name: dialog.name,
+          status: dialog.status,
+          createdAt: dialog.createdAt,
+          updatedAt: input.now,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: schema.threadDialogs.id,
+        set: {
+          name: sql`excluded.name`,
+          status: sql`excluded.status`,
+          updatedAt: input.now,
+        },
+      });
+  }
+  if (messages.length > 0) {
+    await tx
+      .insert(schema.threadMessages)
+      .values(
+        messages.map((message) => ({
+          id: message.id,
+          threadId: input.turn.threadId,
+          turnId: message.dialog === undefined ? input.turn.id : null,
+          role: "assistant" as const,
+          authorUserId: null,
+          projectContextRevisionId: message.projectContextRevisionId,
+          parts: message.parts,
+          searchText: extractSearchText(message.parts),
+          model: message.model,
+          inputTokens: message.inputTokens ?? null,
+          cachedInputTokens: message.cachedInputTokens ?? null,
+          outputTokens: message.outputTokens ?? null,
+          reasoningTokens: message.reasoningTokens ?? null,
+          durationMs: message.durationMs ?? null,
+          source: message.source,
+          ...(message.dialog !== undefined
+            ? {
+                dialogId: message.dialog.dialogId,
+                dialogMessageId: message.dialog.messageId,
+                dialogName: message.dialog.name,
+                dialogSender: message.dialog.sender,
+              }
+            : {}),
+          createdAt: message.dialog?.createdAt ?? input.now,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: schema.threadMessages.id,
+        set: {
+          parts: sql`excluded.parts`,
+          searchText: sql`excluded.search_text`,
+          model: sql`excluded.model`,
+          inputTokens: sql`excluded.input_tokens`,
+          cachedInputTokens: sql`excluded.cached_input_tokens`,
+          outputTokens: sql`excluded.output_tokens`,
+          reasoningTokens: sql`excluded.reasoning_tokens`,
+          durationMs: sql`excluded.duration_ms`,
+          turnId: sql`excluded.turn_id`,
+        },
+      });
+    await tx
+      .update(schema.threadTurns)
+      .set({
+        outputMessageId: turnMessages.at(-1)?.id ?? null,
+        updatedAt: input.now,
+      })
+      .where(eq(schema.threadTurns.id, input.turn.id));
+  }
+  await tx
+    .update(schema.threads)
+    .set({ updatedAt: input.now })
+    .where(eq(schema.threads.id, input.turn.threadId));
+
+  const assistantMessageId = turnMessages.at(-1)?.id ?? null;
+  if (
+    input.bindMcpInteractions &&
+    assistantMessageId &&
+    mcpInteractions.length > 0
+  ) {
+    await tx
+      .update(schema.threadInteractions)
+      .set({ assistantMessageId, updatedAt: input.now })
+      .where(
+        and(
+          eq(schema.threadInteractions.turnId, input.turn.id),
+          eq(schema.threadInteractions.source, "mcp"),
+        ),
+      );
+  }
+  return assistantMessageId;
+}
+
+async function meterDurableAssistantMessages(
+  messages: DurableAssistantOutcomeMessage[],
+) {
+  await meterPersistedModelMessages(messages.map((message) => message.id)).catch(
+    (error) => {
+      console.error(
+        "Model usage metering will retry from the durable message ledger.",
+        {
+          message:
+            error instanceof Error ? error.message : "Unknown error",
+        },
+      );
+    },
+  );
+}
+
 export async function persistDurableAssistantOutcome(input: {
   turnId: string;
-  messages: Array<{
-    id: string;
-    parts: unknown;
-    model: string;
-    inputTokens?: number | undefined;
-    cachedInputTokens?: number | undefined;
-    outputTokens?: number | undefined;
-    reasoningTokens?: number | undefined;
-    durationMs?: number | undefined;
-    source: ThreadTurnSource;
-    projectContextRevisionId: string | null;
-  }>;
+  messages: DurableAssistantOutcomeMessage[];
   interaction: KestrelInteractionPresentation | null;
+  replayChunks?: readonly DurableReplayChunk[];
 }) {
   const result = await knowledgeDb.transaction(async (tx) => {
     const [turn] = await tx
@@ -963,139 +1149,15 @@ export async function persistDurableAssistantOutcome(input: {
       throw new DurableTurnError("TURN_NOT_FOUND", "Turn not found.");
     }
     const now = new Date();
-    const mcpInteractions = await tx.query.threadInteractions.findMany({
-      where: and(
-        eq(schema.threadInteractions.turnId, turn.id),
-        eq(schema.threadInteractions.source, "mcp"),
-      ),
-      orderBy: (table, { asc }) => [asc(table.createdAt)],
+    const assistantMessageId = await persistDurableAssistantMessages(tx, {
+      turn,
+      messages: input.messages,
+      now,
+      bindMcpInteractions: !input.interaction,
     });
-    const messages = input.messages
-      .flatMap(splitDialogPresentationMessages)
-      .map((message) => ({
-        ...message,
-        parts:
-          message.dialog === undefined
-            ? appendInteractionPresentationParts(
-                message.parts,
-                mcpInteractions.map((interaction) => ({
-                  requestId: interaction.requestId,
-                  kind: interaction.kind,
-                  eventType: interaction.eventType,
-                  prompt: interaction.prompt,
-                  requestEnvelope: interaction.requestEnvelope,
-                  source: "mcp" as const,
-                  status: interaction.status,
-                })),
-              )
-            : message.parts,
-      }));
-    const turnMessages = messages.filter(
-      (message) => message.dialog === undefined,
-    );
-    const dialogs = [
-      ...new Map(
-        messages.flatMap((message) =>
-          message.dialog === undefined
-            ? []
-            : [[message.dialog.dialogId, message.dialog] as const],
-        ),
-      ).values(),
-    ];
-    if (dialogs.length > 0) {
-      await tx
-        .insert(schema.threadDialogs)
-        .values(
-          dialogs.map((dialog) => ({
-            id: dialog.dialogId,
-            threadId: turn.threadId,
-            runtimeChildThreadId: dialog.childSessionId,
-            name: dialog.name,
-            status: dialog.status,
-            createdAt: dialog.createdAt,
-            updatedAt: now,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: schema.threadDialogs.id,
-          set: {
-            name: sql`excluded.name`,
-            status: sql`excluded.status`,
-            updatedAt: now,
-          },
-        });
-    }
-    if (messages.length > 0) {
-      await tx
-        .insert(schema.threadMessages)
-        .values(
-          messages.map((message) => ({
-            id: message.id,
-            threadId: turn.threadId,
-            turnId: message.dialog === undefined ? turn.id : null,
-            role: "assistant" as const,
-            authorUserId: null,
-            projectContextRevisionId: message.projectContextRevisionId,
-            parts: message.parts,
-            searchText: extractSearchText(message.parts),
-            model: message.model,
-            inputTokens: message.inputTokens ?? null,
-            cachedInputTokens: message.cachedInputTokens ?? null,
-            outputTokens: message.outputTokens ?? null,
-            reasoningTokens: message.reasoningTokens ?? null,
-            durationMs: message.durationMs ?? null,
-            source: message.source,
-            ...(message.dialog !== undefined
-              ? {
-                  dialogId: message.dialog.dialogId,
-                  dialogMessageId: message.dialog.messageId,
-                  dialogName: message.dialog.name,
-                  dialogSender: message.dialog.sender,
-                }
-              : {}),
-            createdAt: message.dialog?.createdAt ?? now,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: schema.threadMessages.id,
-          set: {
-            parts: sql`excluded.parts`,
-            searchText: sql`excluded.search_text`,
-            model: sql`excluded.model`,
-            inputTokens: sql`excluded.input_tokens`,
-            cachedInputTokens: sql`excluded.cached_input_tokens`,
-            outputTokens: sql`excluded.output_tokens`,
-            reasoningTokens: sql`excluded.reasoning_tokens`,
-            durationMs: sql`excluded.duration_ms`,
-            turnId: sql`excluded.turn_id`,
-          },
-        });
-      await tx
-        .update(schema.threadTurns)
-        .set({
-          outputMessageId: turnMessages.at(-1)?.id ?? null,
-          updatedAt: now,
-        })
-        .where(eq(schema.threadTurns.id, turn.id));
-    }
-    await tx
-      .update(schema.threads)
-      .set({ updatedAt: now })
-      .where(eq(schema.threads.id, turn.threadId));
 
     if (!input.interaction) {
-      const assistantMessageId = turnMessages.at(-1)?.id;
-      if (assistantMessageId && mcpInteractions.length > 0) {
-        await tx
-          .update(schema.threadInteractions)
-          .set({ assistantMessageId, updatedAt: now })
-          .where(
-            and(
-              eq(schema.threadInteractions.turnId, turn.id),
-              eq(schema.threadInteractions.source, "mcp"),
-            ),
-          );
-      }
+      await appendDurableReplayChunks(tx, turn.id, input.replayChunks ?? []);
       return { turn, interaction: null };
     }
     if (turn.status !== "running") {
@@ -1104,7 +1166,6 @@ export async function persistDurableAssistantOutcome(input: {
         "Only a running turn can publish a pending interaction.",
       );
     }
-    const assistantMessageId = turnMessages.at(-1)?.id;
     if (!assistantMessageId) {
       throw new DurableTurnError(
         "TURN_CONFLICT",
@@ -1201,6 +1262,7 @@ export async function persistDurableAssistantOutcome(input: {
         updatedAt: now,
       })
       .where(eq(schema.threadTurnQueueState.threadId, turn.threadId));
+    await appendDurableReplayChunks(tx, turn.id, input.replayChunks ?? []);
     await appendTurnEvent(tx, {
       turnId: turn.id,
       type: "interaction.required",
@@ -1250,13 +1312,7 @@ export async function persistDurableAssistantOutcome(input: {
     }
     return { turn: waiting ?? turn, interaction: interaction ?? null };
   });
-  await meterPersistedModelMessages(
-    input.messages.map((message) => message.id)
-  ).catch((error) => {
-    console.error("Model usage metering will retry from the durable message ledger.", {
-      message: error instanceof Error ? error.message : "Unknown error",
-    });
-  });
+  await meterDurableAssistantMessages(input.messages);
   return result;
 }
 
@@ -1733,8 +1789,11 @@ export async function completeDurableThreadTurn(input: {
   status: ThreadTurnTerminalStatus;
   failureCode?: string | null;
   failureMessage?: string | null;
+  messages?: DurableAssistantOutcomeMessage[];
+  replayChunks?: readonly DurableReplayChunk[];
 }) {
-  return knowledgeDb.transaction(async (tx) => {
+  let persistedMessages = false;
+  const result = await knowledgeDb.transaction(async (tx) => {
     const [candidate] = await tx
       .select()
       .from(schema.threadTurns)
@@ -1767,6 +1826,15 @@ export async function completeDurableThreadTurn(input: {
     assertThreadTurnTransition(turn.status, input.status);
     const outcome = terminalQueueOutcome(input.status);
     const now = new Date();
+    if (input.messages && input.messages.length > 0) {
+      await persistDurableAssistantMessages(tx, {
+        turn,
+        messages: input.messages,
+        now,
+        bindMcpInteractions: true,
+      });
+      persistedMessages = true;
+    }
     const [terminal] = await tx
       .update(schema.threadTurns)
       .set({
@@ -1779,6 +1847,7 @@ export async function completeDurableThreadTurn(input: {
       .where(eq(schema.threadTurns.id, turn.id))
       .returning();
     await terminalizeTurnEnvironmentExecution(tx, turn, input.status, now);
+    await appendDurableReplayChunks(tx, turn.id, input.replayChunks ?? []);
     await appendTurnEvent(tx, {
       turnId: turn.id,
       type: `turn.${input.status}`,
@@ -1846,6 +1915,10 @@ export async function completeDurableThreadTurn(input: {
       .where(eq(schema.threadTurnQueueState.threadId, turn.threadId));
     return { turn: terminal ?? turn, nextTurnId: next?.id ?? null };
   });
+  if (persistedMessages && input.messages) {
+    await meterDurableAssistantMessages(input.messages);
+  }
+  return result;
 }
 
 export async function listDurableTurnEvents(input: {
@@ -1886,6 +1959,35 @@ export async function getDurableTurnReplayBoundary(turnId: string) {
     .orderBy(desc(schema.threadTurnEvents.sequence))
     .limit(1);
   return event?.sequence ?? 0;
+}
+
+export async function getDurableTurnOpenReplayScaffold(turnId: string) {
+  const events = await knowledgeDb
+    .select({ data: schema.threadTurnEvents.data })
+    .from(schema.threadTurnEvents)
+    .where(
+      and(
+        eq(schema.threadTurnEvents.turnId, turnId),
+        eq(schema.threadTurnEvents.type, "ui.message"),
+        sql`${schema.threadTurnEvents.data}->>'type' IN ('start', 'text-start', 'finish')`,
+      ),
+    )
+    .orderBy(asc(schema.threadTurnEvents.sequence));
+  let assistantMessageId: string | null = null;
+  let textPartId: string | null = null;
+  for (const event of events) {
+    if (!(event.data && typeof event.data === "object")) continue;
+    const chunk = event.data as Record<string, unknown>;
+    if (chunk.type === "finish") {
+      assistantMessageId = null;
+      textPartId = null;
+    } else if (chunk.type === "start" && typeof chunk.messageId === "string") {
+      assistantMessageId = chunk.messageId;
+    } else if (chunk.type === "text-start" && typeof chunk.id === "string") {
+      textPartId = chunk.id;
+    }
+  }
+  return { assistantMessageId, textPartId };
 }
 
 export async function appendDurableTurnEvent(input: {

@@ -95,6 +95,26 @@ contractTest(
 
 contractTest(
   "web.hermetic",
+  "a late worker lease signal cannot override a completed runtime outcome",
+  async () => {
+    const runtimeSource = await readFile(
+      new URL("./process-runtime.ts", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(
+      runtimeSource,
+      /const completionStatus = terminalTurnStatus\(terminal\.status\)/u,
+    );
+    assert.doesNotMatch(
+      runtimeSource,
+      /const completionStatus = workerInterrupted/u,
+    );
+  },
+);
+
+contractTest(
+  "web.hermetic",
   "runtime execution binding is part of execution creation",
   async () => {
     const routeSource = await readFile(

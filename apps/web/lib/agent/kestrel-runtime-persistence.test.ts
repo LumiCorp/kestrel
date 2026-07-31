@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import {
   appendKestrelUiChunkIfDurable,
+  buildKestrelFailureReplayChunks,
   isLiveOnlyKestrelUiChunk,
   prepareKestrelRuntimeMessagesForPersistence,
+  readKestrelReplayScaffoldChunk,
+  readTerminalKestrelUiChunk,
 } from "@/lib/agent/kestrel-runtime-persistence";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
@@ -154,6 +157,95 @@ contractTest(
       true,
     );
     assert.deepEqual(written, [retry]);
+  },
+);
+
+contractTest(
+  "web.hermetic",
+  "terminal response chunks are staged while nonterminal progress remains durable",
+  () => {
+    const terminalChunks = [
+      {
+        type: "data-kestrel-status",
+        data: { status: "completed" },
+      },
+      { type: "text-delta", id: "text-1", delta: "Final answer." },
+      { type: "text-end", id: "text-1" },
+      {
+        type: "message-metadata",
+        messageMetadata: { kestrelTerminalStatus: "completed" },
+      },
+      { type: "data-chat-title", data: { title: "Final title" } },
+      { type: "data-interaction-mode", data: { mode: "build" } },
+      { type: "finish", finishReason: "stop" },
+    ];
+    for (const chunk of terminalChunks) {
+      assert.deepEqual(readTerminalKestrelUiChunk(chunk), chunk);
+    }
+    assert.equal(
+      readTerminalKestrelUiChunk({
+        type: "data-kestrel-progress",
+        data: { persist: true },
+      }),
+      null,
+    );
+    assert.equal(
+      readTerminalKestrelUiChunk({ type: "start", messageId: "assistant-1" }),
+      null,
+    );
+    assert.throws(
+      () => readTerminalKestrelUiChunk({ type: "finish" }),
+      /finish reason is invalid/u,
+    );
+  },
+);
+
+contractTest(
+  "web.hermetic",
+  "failure replay replaces terminal output on the existing stream scaffold",
+  () => {
+    assert.deepEqual(
+      readKestrelReplayScaffoldChunk({
+        type: "start",
+        messageId: "assistant-1",
+      }),
+      { assistantMessageId: "assistant-1" },
+    );
+    assert.deepEqual(
+      readKestrelReplayScaffoldChunk({ type: "text-start", id: "text-1" }),
+      { textPartId: "text-1" },
+    );
+    const chunks = buildKestrelFailureReplayChunks({
+      assistantMessageId: "assistant-1",
+      textPartId: "text-1",
+      turnId: "turn-1",
+      status: "failed",
+      text: "The turn was interrupted.",
+      errorMessage: "Worker lost.",
+      includeStart: false,
+      includeTextStart: false,
+    });
+    assert.deepEqual(
+      chunks.map((chunk) => chunk.type),
+      [
+        "data-kestrel-status",
+        "text-delta",
+        "text-end",
+        "message-metadata",
+        "finish",
+      ],
+    );
+    assert.equal(
+      chunks.some(
+        (chunk) =>
+          chunk.type === "text-delta" && chunk.delta === "Final answer.",
+      ),
+      false,
+    );
+    assert.deepEqual(chunks.at(-1), {
+      type: "finish",
+      finishReason: "stop",
+    });
   },
 );
 
