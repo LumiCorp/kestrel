@@ -3,6 +3,12 @@ import type {
   ProductProjectSnapshot,
 } from "../../project/contracts.js";
 import type {
+  MissionControlOutboxRecord,
+  MissionControlProjectMutationInput,
+  MissionControlProjectMutationResult,
+  MissionControlProjectStateRecord,
+} from "../../missionControl/projectAuthority.js";
+import type {
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointKind,
   WorkspaceCheckpointRole,
@@ -135,10 +141,19 @@ export interface PersistedRunRecord {
   error?: RuntimeError | undefined;
 }
 
+export interface PersistedMissionControlRunCorrelation {
+  projectId: string;
+  itemId: string;
+  attemptId: string;
+  commandId: string;
+  runId: string;
+}
+
 export interface PersistedRunSummaryRecord {
   run: PersistedRunRecord;
   eventCount: number;
   threadId?: string | undefined;
+  missionControl?: PersistedMissionControlRunCorrelation | undefined;
 }
 
 export interface PersistedRunStateRecord {
@@ -362,6 +377,27 @@ export interface SessionRepository {
     reason?: string | undefined;
   }): Promise<SessionRecord>;
   appendLegacyArchive(archive: LegacySessionArchive): Promise<void>;
+}
+
+export interface MissionControlProjectRepository {
+  getMissionControlProjectState(
+    projectId: string,
+  ): Promise<MissionControlProjectStateRecord | null>;
+  updateMissionControlProjectState(
+    input: MissionControlProjectMutationInput,
+  ): Promise<MissionControlProjectMutationResult>;
+  listMissionControlOutbox(
+    projectId: string,
+  ): Promise<MissionControlOutboxRecord[]>;
+  markMissionControlOutboxDelivered?(
+    projectId: string,
+    effectId: string,
+  ): Promise<void>;
+  recordMissionControlOutboxFailure?(
+    projectId: string,
+    effectId: string,
+    error: string,
+  ): Promise<void>;
 }
 
 export interface RunRepository {
@@ -598,6 +634,7 @@ export interface ReplayStore
 
 export interface SessionStore
   extends RuntimeStore,
+    MissionControlProjectRepository,
     ThreadStore,
     AssemblyStore {
   recoverOrphanedActiveRun?(

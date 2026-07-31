@@ -9,18 +9,24 @@ import {
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("services.hermetic", "application registration accepts private sandbox ports and bounded paths", () => {
-  assert.deepEqual(
-    parseRegistration(
-      { name: "Preview", command: "pnpm dev", workingDirectory: "app", port: 3000 },
-      "/workspace"
-    ),
-    { name: "Preview", command: "pnpm dev", workingDirectory: "app", port: 3000 }
-  );
+contractTest("services.hermetic", "application registration accepts private sandbox ports and bounded paths", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-app-registration-"));
+  try {
+    await mkdir(path.join(root, "app"));
+    assert.deepEqual(
+      await parseRegistration(
+        { name: "Preview", command: "pnpm dev", workingDirectory: "app", port: 3000 },
+        root
+      ),
+      { name: "Preview", command: "pnpm dev", workingDirectory: "app", port: 3000 }
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
-contractTest("services.hermetic", "application registration reserves Workspace service ports", () => {
-  assert.throws(() =>
+contractTest("services.hermetic", "application registration reserves Workspace service ports", async () => {
+  await assert.rejects(
     parseRegistration({ name: "Bad", command: "serve", port: 43_104 }, "/workspace")
   );
 });

@@ -6,18 +6,22 @@ import {
   validateBuiltInToolInputContract,
 } from "../../tools/runtime/builtInToolInputContracts.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
-import { sanitizeToolInputForSchema } from "../../tools/runtime/normalizeToolInput.js";
+import { normalizeTrustedToolActionInput } from "../../tools/runtime/normalizeToolInput.js";
 import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "strict built-in tool schemas strip unexpected top-level keys in the audit pass", () => {
+contractTest("runtime.hermetic", "trusted compatibility normalization strips unexpected top-level keys", () => {
   const strictTools = defaultToolCatalog.list().filter((tool) =>
     tool.inputSchema.type === "object" && tool.inputSchema.additionalProperties === false,
   );
 
   for (const tool of strictTools) {
-    const sanitized = sanitizeToolInputForSchema(tool.inputSchema, {
-      unexpected: true,
+    const sanitized = normalizeTrustedToolActionInput({
+      name: tool.name,
+      schema: tool.inputSchema,
+      value: {
+        unexpected: true,
+      },
     });
     assert.equal(
       Object.hasOwn(sanitized as Record<string, unknown>, "unexpected"),

@@ -1693,6 +1693,12 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
   if (turnRecord.projectContext !== undefined) {
     validateProjectContextPayload(turnRecord.projectContext, "run.start payload.turn.projectContext");
   }
+  if (turnRecord.missionControl !== undefined) {
+    validateMissionControlExecutionPayload(
+      turnRecord.missionControl,
+      "run.start payload.turn.missionControl",
+    );
+  }
   const normalizedTurn: RunStartCommandPayload["turn"] = {
     ...(turn as RunStartCommandPayload["turn"]),
     ...(mcpContext !== undefined ? { mcpContext } : {}),
@@ -1726,6 +1732,21 @@ function validateProjectContextPayload(value: unknown, label: string): void {
     throw new Error(`${label}.contextRevision must be a positive integer`);
   }
   requireNonEmptyString(projectContext.content, `${label}.content`);
+}
+
+function validateMissionControlExecutionPayload(
+  value: unknown,
+  label: string,
+): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object when present`);
+  }
+  const missionControl = value as Record<string, unknown>;
+  requireNonEmptyString(missionControl.projectId, `${label}.projectId`);
+  requireNonEmptyString(missionControl.itemId, `${label}.itemId`);
+  requireNonEmptyString(missionControl.attemptId, `${label}.attemptId`);
+  requireNonEmptyString(missionControl.commandId, `${label}.commandId`);
+  requireNonEmptyString(missionControl.runId, `${label}.runId`);
 }
 
 function validateJobRunPayload(value: unknown): JobRunCommandPayload {
@@ -2168,6 +2189,12 @@ function validateOperatorControlPayload(
   }
   if (record.completionMode !== undefined && record.completionMode !== "terminal" && record.completionMode !== "accepted") {
     throw new Error("operator.control payload.completionMode is invalid");
+  }
+  if (record.missionControl !== undefined) {
+    validateMissionControlExecutionPayload(
+      record.missionControl,
+      "operator.control payload.missionControl",
+    );
   }
   if (record.title !== undefined && typeof record.title !== "string") {
     throw new Error(
