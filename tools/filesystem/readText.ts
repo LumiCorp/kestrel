@@ -25,7 +25,11 @@ export const fsReadTextTool: SharedToolModule = {
         path: { type: "string" },
         offsetBytes: { type: "number", minimum: 0 },
         maxBytes: { type: "number", minimum: 1, maximum: MAX_FILE_PAGE_BYTES },
-        expectedRevision: { type: "string", minLength: 1 },
+        expectedRevision: {
+          type: "string",
+          minLength: 1,
+          description: "For continuation pages only, copy the exact revision returned by the first fs.read_text page. Do not use placeholders such as \"latest\".",
+        },
       },
       required: ["path"],
       additionalProperties: false,

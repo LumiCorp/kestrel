@@ -41,7 +41,11 @@ export const fsApplyPatchTool: SharedToolModule = {
             additionalProperties: false,
             properties: {
               path: { type: "string", minLength: 1 },
-              revision: { type: "string", minLength: 1 },
+              revision: {
+                type: "string",
+                minLength: 1,
+                description: "Exact revision returned by fs.read_text for this path. Do not use placeholders such as \"latest\".",
+              },
             },
             required: ["path", "revision"],
           },

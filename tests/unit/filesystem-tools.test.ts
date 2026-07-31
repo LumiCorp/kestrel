@@ -38,6 +38,22 @@ interface FsTestHandlers {
 
 const execFileAsync = promisify(execFile);
 
+contractTest("runtime.hermetic", "filesystem mutation schemas require exact read revisions instead of placeholders", () => {
+  const definitions = defaultToolCatalog.list();
+  const editText = definitions.find((definition) => definition.name === "fs.edit_text");
+  const readText = definitions.find((definition) => definition.name === "fs.read_text");
+  const editProperties = editText?.inputSchema.properties as
+    | Record<string, { description?: string }>
+    | undefined;
+  const readProperties = readText?.inputSchema.properties as
+    | Record<string, { description?: string }>
+    | undefined;
+
+  assert.match(editText?.description ?? "", /copy its exact revision value/u);
+  assert.match(editProperties?.expectedRevision?.description ?? "", /Do not use placeholders such as "latest"/u);
+  assert.match(readProperties?.expectedRevision?.description ?? "", /Do not use placeholders such as "latest"/u);
+});
+
 contractTest("runtime.process", "filesystem tools allow workspace-relative and temp-root paths and reject escapes", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(path.join(policyRoots.workspaceRoot, "notes.txt"), "workspace data", "utf8");
