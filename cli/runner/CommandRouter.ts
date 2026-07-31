@@ -23,6 +23,7 @@ import type {
   OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
+  MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
   ProfileListCommandPayload,
   ProjectActionCommandPayload,
@@ -437,6 +438,15 @@ export class CommandRouter {
         await this.host.projectSnapshotGet(
           command.id,
           payload,
+          command.metadata
+        );
+        return;
+      }
+
+      if (command.type === "mission_control.project.get") {
+        await this.host.missionControlProjectGet(
+          command.id,
+          validateMissionControlProjectGetPayload(command.payload),
           command.metadata
         );
         return;
@@ -1216,6 +1226,21 @@ function validateProjectSnapshotGetPayload(
     );
   }
   return { sessionId: record.sessionId };
+}
+
+function validateMissionControlProjectGetPayload(
+  payload: unknown
+): MissionControlProjectGetCommandPayload {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("mission_control.project.get payload must be an object");
+  }
+  const record = payload as Record<string, unknown>;
+  return {
+    projectId: requireNonEmptyString(
+      record.projectId,
+      "mission_control.project.get payload.projectId"
+    ),
+  };
 }
 
 function validateProjectSnapshotUpdatePayload(

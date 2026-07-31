@@ -76,6 +76,7 @@ import type {
   DesktopWorkspaceFeedbackSubmitResult,
 } from "../../../src/desktopShell/contracts.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
+import type { MissionControlProjectStateRecord } from "../../../src/missionControl/projectAuthority.js";
 import type { DesktopEnvironmentStatusProjection } from "../../../src/localCore/desktopEnvironmentConnector.js";
 import type {
   KestrelOneAccountStatus,
@@ -520,6 +521,9 @@ export interface DesktopBridge {
   onPreviewDiagnostic(
     listener: (diagnostic: DesktopPreviewDiagnostic) => void,
   ): () => void;
+  getMissionControlProject(
+    projectId: string,
+  ): Promise<DesktopMissionControlProjectResponse>;
   getProjectSnapshot(
     sessionId: string,
   ): Promise<DesktopProjectSnapshotResponse>;
@@ -729,4 +733,9 @@ export interface DesktopBridge {
     listener: (runs: DesktopManagedProjectRun[]) => void,
   ): () => void;
   onCommand(listener: (command: DesktopShellCommand) => void): () => void;
+}
+
+export interface DesktopMissionControlProjectResponse {
+  projectId: string;
+  project: MissionControlProjectStateRecord;
 }

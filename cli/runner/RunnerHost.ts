@@ -38,6 +38,7 @@ import type {
   WorkspaceReviewSnapshot,
   WorkspaceValidationSnapshot,
   WorkspaceGitSnapshot,
+  MissionControlProjectStateRecord,
 } from "../../src/index.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
@@ -62,6 +63,7 @@ import type {
   OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
+  MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
   ProfileListCommandPayload,
   ProjectActionCommandPayload,
@@ -444,6 +446,11 @@ export interface RunnerRuntime {
     | ((
         input: ProjectSnapshotGetCommandPayload
       ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
+    | undefined;
+  getMissionControlProject?:
+    | ((
+        input: MissionControlProjectGetCommandPayload
+      ) => Promise<MissionControlProjectStateRecord>)
     | undefined;
   updateProjectSnapshot?:
     | ((
@@ -1844,6 +1851,32 @@ export class RunnerHost {
       {
         code: "RUNNER_RUNTIME_ERROR",
         message: "Project snapshot is unavailable.",
+      },
+      { commandId }
+    );
+  }
+
+  async missionControlProjectGet(
+    commandId: string,
+    payload: MissionControlProjectGetCommandPayload,
+    metadata?: RunnerCommandMetadata
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.getMissionControlProject === "function") {
+        const project = await runtime.getMissionControlProject(payload);
+        this.writer.emit(
+          "mission_control.project",
+          { projectId: project.projectId, project: { ...project } },
+          { commandId }
+        );
+        return;
+      }
+    }
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Mission Control project authority is unavailable.",
       },
       { commandId }
     );

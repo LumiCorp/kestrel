@@ -64,6 +64,8 @@ import {
   WorkspaceSkillInstaller,
   assertRequiredKestrelOneTools,
   KESTREL_ONE_POLICY_ID,
+  MissionControlProjectService,
+  type MissionControlProjectStateRecord,
 } from "../../src/index.js";
 import type {
   OperatorCompactionState,
@@ -164,6 +166,7 @@ export type RunTurnResult = RuntimeTurnResult & {
 
 interface RuntimeBootstrap {
   kestrel: Kestrel;
+  missionControlProjectService?: MissionControlProjectService | undefined;
   threadRuntime?: ThreadRuntime | undefined;
   taskGraphStore?: ProductTaskGraphStore | undefined;
   projectStore?: ProductProjectStateStore | undefined;
@@ -267,6 +270,9 @@ export class KestrelChatRuntime {
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined;
   private readonly kestrel: Kestrel;
+  private readonly missionControlProjectService:
+    | MissionControlProjectService
+    | undefined;
   private readonly threadRuntime: ThreadRuntime | undefined;
   private readonly taskGraphStore: ProductTaskGraphStore | undefined;
   private readonly projectStore: ProductProjectStateStore | undefined;
@@ -332,6 +338,7 @@ export class KestrelChatRuntime {
     );
 
     this.kestrel = bootstrap.kestrel;
+    this.missionControlProjectService = bootstrap.missionControlProjectService;
     this.threadRuntime = bootstrap.threadRuntime;
     this.taskGraphStore = bootstrap.taskGraphStore;
     this.projectStore = bootstrap.projectStore;
@@ -749,6 +756,18 @@ export class KestrelChatRuntime {
         ...(graph !== undefined ? { graph } : {}),
       }),
     };
+  }
+
+  async getMissionControlProject(input: {
+    projectId: string;
+  }): Promise<MissionControlProjectStateRecord> {
+    if (this.missionControlProjectService === undefined) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_PROJECT_UNAVAILABLE",
+        "Mission Control project authority is unavailable.",
+      );
+    }
+    return this.missionControlProjectService.getProject(input.projectId);
   }
 
   async updateProjectSnapshot(input: {
@@ -2739,6 +2758,7 @@ function createRuntimeWithStore(
   const googleWorkspaceService = environment?.googleWorkspaceService;
   const taskGraphStore = new ProductTaskGraphStore(store);
   const projectStore = new ProductProjectStateStore(store);
+  const missionControlProjectService = new MissionControlProjectService(store);
   const workspaceCheckpointService = new WorkspaceCheckpointService(store);
   const userTerminalService = enableUserTerminals
     ? new UserTerminalService({
@@ -3009,6 +3029,7 @@ function createRuntimeWithStore(
 
   return {
     kestrel,
+    missionControlProjectService,
     threadRuntime,
     taskGraphStore,
     projectStore,

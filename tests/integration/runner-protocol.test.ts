@@ -3395,6 +3395,79 @@ contractTest("runtime.process", "task graph commands emit graph snapshots throug
   await host.close();
 });
 
+contractTest("runtime.process", "Mission Control project reads preserve the exact registered UUID through the runner", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    getMissionControlProject: async (input) => ({
+      projectId: input.projectId,
+      schemaVersion: 1,
+      revision: 0,
+      authorityEpoch: 0,
+      document: {
+        schemaVersion: 1,
+        projectId: input.projectId,
+        autopilot: { enabled: false, wipLimit: 1 },
+        items: {},
+        history: [],
+      },
+      createdAt: "1970-01-01T00:00:00.000Z",
+      updatedAt: "1970-01-01T00:00:00.000Z",
+    }),
+    getToolRuntimeStatus: async () => ({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      providers: {
+        mcp: {
+          healthy: true,
+          checkedAt: new Date().toISOString(),
+          servers: [],
+          tools: [],
+        },
+      },
+    }),
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(
+      JSON.parse(line) as { type: string; payload: Record<string, unknown> },
+    );
+  });
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-mission-control-prewarm",
+    type: "mcp.status",
+    payload: { profile },
+  }));
+  await tick();
+  events.length = 0;
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-mission-control-project",
+    type: "mission_control.project.get",
+    payload: { projectId },
+  }));
+  await tick();
+
+  const event = events.find(
+    (candidate) => candidate.type === "mission_control.project",
+  );
+  assert.equal(event?.payload.projectId, projectId);
+  assert.equal(
+    (event?.payload.project as { projectId?: string } | undefined)?.projectId,
+    projectId,
+  );
+  rl.close();
+  await host.close();
+});
+
 contractTest("runtime.process", "CommandRouter enforces bounded operator.runs filters", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
