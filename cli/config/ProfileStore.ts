@@ -1860,6 +1860,8 @@ function parseCodeModeSandbox(
     typeof input.memoryMb === "number" ? input.memoryMb : undefined;
   const cpuShares =
     typeof input.cpuShares === "number" ? input.cpuShares : undefined;
+  const pidsLimit =
+    typeof input.pidsLimit === "number" ? input.pidsLimit : undefined;
   const networkDefault = input.networkDefault;
   if (
     networkDefault !== undefined &&
@@ -1888,6 +1890,7 @@ function parseCodeModeSandbox(
     timeoutMs === undefined &&
     memoryMb === undefined &&
     cpuShares === undefined &&
+    pidsLimit === undefined &&
     networkDefault === undefined &&
     allowDependencyInstall === undefined &&
     maxOutputBytes === undefined &&
@@ -1902,6 +1905,7 @@ function parseCodeModeSandbox(
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(memoryMb !== undefined ? { memoryMb } : {}),
     ...(cpuShares !== undefined ? { cpuShares } : {}),
+    ...(pidsLimit !== undefined ? { pidsLimit } : {}),
     ...(networkDefault !== undefined ? { networkDefault } : {}),
     ...(allowDependencyInstall !== undefined ? { allowDependencyInstall } : {}),
     ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),

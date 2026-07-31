@@ -184,6 +184,7 @@ export interface DialogServicePort {
 }
 
 export interface SharedToolContext {
+  signal?: AbortSignal | undefined;
   store?: SessionStore | undefined;
   onFinalize?: ((payload: unknown) => unknown | Promise<unknown>) | undefined;
   fetchImpl?: typeof fetch | undefined;
