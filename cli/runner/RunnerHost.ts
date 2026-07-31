@@ -63,7 +63,6 @@ import type {
   OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
-  MissionControlMigrationExecuteCommandPayload,
   MissionControlActionExecuteCommandPayload,
   MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
@@ -72,7 +71,6 @@ import type {
   ProjectReviewActionCommandPayload,
   ProjectReviewGetCommandPayload,
   ProjectSnapshotGetCommandPayload,
-  ProjectSnapshotUpdateCommandPayload,
   RunCancelCommandPayload,
   RunnerCommandMetadata,
   RunnerPingCommandPayload,
@@ -454,20 +452,10 @@ export interface RunnerRuntime {
         input: MissionControlProjectGetCommandPayload
       ) => Promise<MissionControlProjectStateRecord>)
     | undefined;
-  executeMissionControlMigration?:
-    | ((
-        input: MissionControlMigrationExecuteCommandPayload
-      ) => Promise<MissionControlProjectStateRecord>)
-    | undefined;
   executeMissionControlAction?:
     | ((
         input: MissionControlActionExecuteCommandPayload
       ) => Promise<MissionControlProjectStateRecord>)
-    | undefined;
-  updateProjectSnapshot?:
-    | ((
-        input: ProjectSnapshotUpdateCommandPayload
-      ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
     | undefined;
   performProjectAction?:
     | ((
@@ -1894,32 +1882,6 @@ export class RunnerHost {
     );
   }
 
-  async missionControlMigrationExecute(
-    commandId: string,
-    payload: MissionControlMigrationExecuteCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
-    for (const runtime of this.selectRuntimes(metadata)) {
-      if (typeof runtime.executeMissionControlMigration === "function") {
-        const project = await runtime.executeMissionControlMigration(payload);
-        this.writer.emit(
-          "mission_control.project",
-          { projectId: project.projectId, project: { ...project } },
-          { commandId }
-        );
-        return;
-      }
-    }
-    this.writer.emit(
-      "runner.error",
-      {
-        code: "RUNNER_RUNTIME_ERROR",
-        message: "Mission Control migration authority is unavailable.",
-      },
-      { commandId }
-    );
-  }
-
   async missionControlActionExecute(
     commandId: string,
     payload: MissionControlActionExecuteCommandPayload,
@@ -2512,31 +2474,6 @@ export class RunnerHost {
     this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace Git ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
   }
 
-  async projectSnapshotUpdate(
-    commandId: string,
-    payload: ProjectSnapshotUpdateCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
-    for (const runtime of this.selectRuntimes(metadata)) {
-      if (typeof runtime.updateProjectSnapshot === "function") {
-        const snapshot = await runtime.updateProjectSnapshot(payload);
-        this.writer.emit("project.snapshot", snapshot, {
-          commandId,
-          sessionId: snapshot.sessionId,
-        });
-        return;
-      }
-    }
-    this.writer.emit(
-      "runner.error",
-      {
-        code: "RUNNER_RUNTIME_ERROR",
-        message: "Project snapshot is unavailable.",
-      },
-      { commandId }
-    );
-  }
-
   async projectAction(
     commandId: string,
     payload: ProjectActionCommandPayload,
@@ -2544,41 +2481,11 @@ export class RunnerHost {
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.performProjectAction === "function") {
-        try {
-          const snapshot = await runtime.performProjectAction(payload);
-          this.writer.emit("project.snapshot", snapshot, {
-            commandId,
-            sessionId: snapshot.sessionId,
-          });
-        } catch (error) {
-          if (isProjectBoardConflictError(error)) {
-            this.writer.emit(
-              "runner.error",
-              {
-                code:
-                  (error as Error & { code?: string }).code ??
-                  "PROJECT_BOARD_CONFLICT",
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Project board conflict.",
-                details: {
-                  sessionId: payload.sessionId,
-                  ...("expectedBoardVersion" in payload &&
-                  typeof payload.expectedBoardVersion === "number"
-                    ? { expectedBoardVersion: payload.expectedBoardVersion }
-                    : {}),
-                },
-              },
-              {
-                commandId,
-                sessionId: payload.sessionId,
-              }
-            );
-            return;
-          }
-          throw error;
-        }
+        const snapshot = await runtime.performProjectAction(payload);
+        this.writer.emit("project.snapshot", snapshot, {
+          commandId,
+          sessionId: snapshot.sessionId,
+        });
         return;
       }
     }
@@ -3314,20 +3221,6 @@ function isSessionVersionConflictError(error: unknown): error is Error {
     error instanceof Error &&
     typeof (error as Error & { code?: unknown }).code === "string" &&
     (error as Error & { code: string }).code === "SESSION_VERSION_CONFLICT"
-  );
-}
-
-function isProjectBoardConflictError(error: unknown): error is Error {
-  if (
-    !(error instanceof Error) ||
-    typeof (error as Error & { code?: unknown }).code !== "string"
-  ) {
-    return false;
-  }
-  const code = (error as Error & { code: string }).code;
-  return (
-    code === "SESSION_VERSION_CONFLICT" ||
-    code === "PROJECT_BOARD_VERSION_CONFLICT"
   );
 }
 

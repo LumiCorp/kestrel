@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
 import type { MissionControlProjectRepository } from "../kestrel/contracts/store.js";
-import type { ProductProjectSnapshot } from "../project/contracts.js";
 import {
   parseMissionControlMigrationState,
   type MissionControlMigrationState,
@@ -16,6 +15,7 @@ import {
 } from "./reviewContracts.js";
 
 export const MISSION_CONTROL_PROJECT_SCHEMA_VERSION = 1 as const;
+export const MISSION_CONTROL_AUTHORITY_EPOCH = 1 as const;
 
 const PROJECT_UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -203,30 +203,6 @@ export interface MissionControlProjectMutationInput {
   actionId: string;
   requestFingerprint: string;
   expectedRevision: number;
-  migrationSourceClaim?: {
-    sourceId: string;
-    sourceFingerprint: string;
-    boundAt: string;
-  } | undefined;
-  releaseMigrationSourceClaims?: string[] | undefined;
-  authorityTransition?:
-    | {
-        type: "activate";
-        sourceClaims: Array<{
-          sourceId: string;
-          sourceFingerprint: string;
-        }>;
-        transitionedAt: string;
-      }
-    | {
-        type: "rollback";
-        exports: Array<{
-          sourceId: string;
-          snapshot: ProductProjectSnapshot;
-        }>;
-        transitionedAt: string;
-      }
-    | undefined;
   apply: (current: MissionControlProjectDocument) => {
     document: MissionControlProjectDocument;
     effects: MissionControlOutboxIntent[];
@@ -345,7 +321,7 @@ export class MissionControlProjectService {
       projectId,
       schemaVersion: MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
       revision: 0,
-      authorityEpoch: 0,
+      authorityEpoch: MISSION_CONTROL_AUTHORITY_EPOCH,
       document: createEmptyMissionControlProjectDocument(projectId),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -588,7 +564,7 @@ export function parseMissionControlProjectStateRecord(
     projectId,
     schemaVersion: MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
     revision: requireNonNegativeInteger(record.revision, "revision"),
-    authorityEpoch: requireNonNegativeInteger(
+    authorityEpoch: requirePositiveInteger(
       record.authorityEpoch,
       "authorityEpoch",
     ),

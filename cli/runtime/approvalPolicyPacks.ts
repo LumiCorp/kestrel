@@ -14,7 +14,7 @@ const CAPABILITY_CLASSES: ApprovalCapabilityClass[] = [
   "workspace.read",
   "workspace.write",
   "shell.exec",
-  "project.board.write",
+  "mission_control.work_item.write",
   "network.call",
   "code.execute",
   "mcp.invoke",

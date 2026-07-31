@@ -282,10 +282,6 @@ export interface MissionControlProjectGetCommandPayload {
   projectId: string;
 }
 
-export interface MissionControlMigrationExecuteCommandPayload {
-  action: Record<string, unknown>;
-}
-
 export interface MissionControlActionExecuteCommandPayload {
   action: Record<string, unknown>;
 }
@@ -451,11 +447,6 @@ export interface WorkspaceValidationSubmitCommandPayload { sessionId: string; th
 export interface WorkspaceGitInspectCommandPayload { sessionId: string; threadId: string }
 export interface WorkspaceGitActionCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; expectedHeadSha?: string | undefined; action: WorkspaceGitAction }
 
-export interface ProjectSnapshotUpdateCommandPayload {
-  sessionId: string;
-  snapshot: ProductProjectSnapshot;
-}
-
 export type ProjectActionCommandPayload = ProductProjectAction;
 
 export interface ProjectReviewGetCommandPayload {
@@ -526,10 +517,8 @@ export interface RunnerCommandPayloadByType {
   "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
   "workspace.git.action": WorkspaceGitActionCommandPayload;
   "mission_control.project.get": MissionControlProjectGetCommandPayload;
-  "mission_control.migration.execute": MissionControlMigrationExecuteCommandPayload;
   "mission_control.action.execute": MissionControlActionExecuteCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
-  "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
   "project.review.get": ProjectReviewGetCommandPayload;
   "project.review.action": ProjectReviewActionCommandPayload;

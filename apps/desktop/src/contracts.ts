@@ -30,9 +30,7 @@ import type {
   DesktopPackageManager,
   DesktopProjectLauncherDescriptor,
   DesktopProjectFilesChangedEvent,
-  DesktopProjectAction,
   DesktopProjectRegistration,
-  DesktopProjectSnapshotResponse,
   DesktopProviderModelCatalog,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
@@ -174,9 +172,7 @@ export type {
   DesktopPackageManager,
   DesktopProjectLauncherDescriptor,
   DesktopProjectFilesChangedEvent,
-  DesktopProjectAction,
   DesktopProjectRegistration,
-  DesktopProjectSnapshotResponse,
   DesktopProviderModelCatalog,
   DesktopProviderReadiness,
   DesktopAppearanceTheme,
@@ -525,18 +521,9 @@ export interface DesktopBridge {
   getMissionControlProject(
     projectId: string,
   ): Promise<DesktopMissionControlProjectResponse>;
-  executeMissionControlMigration(
-    intent: DesktopMissionControlMigrationIntent,
-  ): Promise<DesktopMissionControlProjectResponse>;
   executeMissionControlAction(
     intent: DesktopMissionControlActionIntent,
   ): Promise<DesktopMissionControlProjectResponse>;
-  getProjectSnapshot(
-    sessionId: string,
-  ): Promise<DesktopProjectSnapshotResponse>;
-  runProjectAction(
-    action: DesktopProjectAction,
-  ): Promise<DesktopProjectSnapshotResponse>;
   getOperatorThread(threadId: string): Promise<DesktopRuntimeThreadInspection>;
   inspectThreadAuthority(
     threadId: string,
@@ -747,33 +734,6 @@ export interface DesktopMissionControlProjectResponse {
   project: MissionControlProjectStateRecord;
 }
 
-export type DesktopMissionControlMigrationIntent =
-  | {
-      type: "stage";
-      projectId: string;
-      expectedRevision: number;
-    }
-  | {
-      type: "rebind";
-      projectId: string;
-      expectedRevision: number;
-      sourceId: string;
-      sourceFingerprint: string;
-    }
-  | {
-      type: "resolve";
-      projectId: string;
-      expectedRevision: number;
-      resolution:
-        | { type: "source"; candidateId: string }
-        | { type: "merged"; document: unknown };
-    }
-  | {
-      type: "clear";
-      projectId: string;
-      expectedRevision: number;
-    };
-
 interface DesktopMissionControlActionBase {
   projectId: string;
   expectedRevision: number;
@@ -792,12 +752,6 @@ interface DesktopMissionControlAttemptActionBase
 }
 
 export type DesktopMissionControlActionIntent =
-  | (DesktopMissionControlActionBase & {
-      type: "activate";
-    })
-  | (DesktopMissionControlActionBase & {
-      type: "rollback";
-    })
   | (DesktopMissionControlActionBase & {
       type: "create";
       title: string;

@@ -383,7 +383,7 @@ function projectTaskQueueCapabilityManifest() {
       name: "task.propose",
       description: "Propose a Mission Control task",
       capabilityClasses: ["runtime.project.task_queue"],
-      approvalCapabilities: ["project.task_queue.write"],
+      approvalCapabilities: ["mission_control.work_item.write"],
       executionClass: "external_side_effect" as const,
       allowedInteractionModes: ["chat", "plan", "build"] as Array<"chat" | "plan" | "build">,
     },
@@ -396,7 +396,7 @@ function taskQueueWriteAllowedPolicy() {
       external_side_effect: true,
     },
     capabilityPolicy: {
-      "project.task_queue.write": true,
+      "mission_control.work_item.write": true,
     },
   };
 }
@@ -3487,7 +3487,7 @@ contractTest("runtime.hermetic", "legacy oversized-source planning does not spen
   assert.doesNotMatch(sourcePrompt, /Legacy long active task/u);
 });
 
-contractTest("runtime.hermetic", "agent loop exposes mission control context and accepts proactive task proposal", async () => {
+contractTest("runtime.hermetic", "agent loop keeps canonical task proposal model-visible without session-scoped context", async () => {
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   const executionPolicy = taskQueueWriteAllowedPolicy();
@@ -3532,10 +3532,15 @@ contractTest("runtime.hermetic", "agent loop exposes mission control context and
   assert.ok(capturedRequest);
   assert.equal(capturedRequest.tools?.some((tool) => tool.name === "task_propose"), true);
   const renderedMessages = JSON.stringify(capturedRequest.messages);
-  assert.match(renderedMessages, /Mission Control task queue/u);
-  assert.match(renderedMessages, /sessionId: project-session-1/u);
-  assert.match(renderedMessages, /task\.propose/u);
-  assert.match(renderedMessages, /avoid duplicates/u);
+  assert.doesNotMatch(renderedMessages, /Mission Control task queue/u);
+  assert.doesNotMatch(renderedMessages, /sessionId: project-session-1/u);
+  assert.equal(
+    Object.hasOwn(
+      capturedRequest.input as Record<string, unknown>,
+      "projectTaskQueueContext",
+    ),
+    false,
+  );
 
   const agent = transition.statePatch?.agent as Record<string, unknown>;
   assert.equal(transition.status, "RUNNING");
@@ -3765,7 +3770,7 @@ contractTest("runtime.hermetic", "agent loop requires PLAN.md before Plan-mode t
   assert.equal(planCorrection.forbiddenActionUntilPlanExists, "task.propose");
 });
 
-contractTest("runtime.hermetic", "agent loop supplies existing matching tasks so duplicate proposal can be skipped", async () => {
+contractTest("runtime.hermetic", "agent loop does not expose session-scoped Mission Control items", async () => {
   let capturedRequest: ModelRequest | undefined;
   const ctx = context();
   const executionPolicy = taskQueueWriteAllowedPolicy();
@@ -3823,9 +3828,15 @@ contractTest("runtime.hermetic", "agent loop supplies existing matching tasks so
 
   assert.ok(capturedRequest);
   const renderedMessages = JSON.stringify(capturedRequest.messages);
-  assert.match(renderedMessages, /T-7 \[order 1\] Add auth regression tests/u);
-  assert.match(renderedMessages, /Captured from prior conversation/u);
-  assert.match(renderedMessages, /avoid duplicates/u);
+  assert.doesNotMatch(renderedMessages, /T-7 \[order 1\] Add auth regression tests/u);
+  assert.doesNotMatch(renderedMessages, /Captured from prior conversation/u);
+  assert.equal(
+    Object.hasOwn(
+      capturedRequest.input as Record<string, unknown>,
+      "projectTaskQueueContext",
+    ),
+    false,
+  );
 
   const agent = transition.statePatch?.agent as Record<string, unknown>;
   const commandBatch = agent.commandBatch as Record<string, unknown>;
@@ -5957,7 +5968,7 @@ contractTest("runtime.hermetic", "agent loop rejects capability-blocked tools wi
       },
       capabilityPolicy: {
         "shell.exec": true,
-        "project.task_queue.write": false,
+        "mission_control.work_item.write": false,
       },
     },
   };
@@ -5970,7 +5981,7 @@ contractTest("runtime.hermetic", "agent loop rejects capability-blocked tools wi
       },
       capabilityPolicy: {
         "shell.exec": true,
-        "project.task_queue.write": false,
+        "mission_control.work_item.write": false,
       },
     },
   };
@@ -5982,7 +5993,7 @@ contractTest("runtime.hermetic", "agent loop rejects capability-blocked tools wi
         name: "task.propose",
         description: "Propose a Mission Control task",
         capabilityClasses: ["runtime.project.task_queue"],
-        approvalCapabilities: ["project.task_queue.write"],
+        approvalCapabilities: ["mission_control.work_item.write"],
         executionClass: "external_side_effect",
       },
     ],

@@ -97,7 +97,9 @@ The runtime model is broader than “prompt in, text out.” The control plane a
 - `operator.inbox` and `operator.thread` for reading operator state
 - `operator.control` for steering or retrying work already underway
 - `task.graph.get` and `task.graph.update` for durable task structure
-- `project.snapshot.get`, `project.snapshot.update`, and `project.action` for higher-level project state
+- `mission_control.project.get` and `mission_control.action.execute` for the one project-scoped work-item lifecycle
+- `project.snapshot.get` for the read-only workspace, policy, review, and activity projection
+- `project.action` for explicit project Git operations
 
 Those capabilities matter because Kestrel is meant to support inspection and control after a run has started, not only request initiation. The runtime model is therefore closer to "durable work plus control and evidence" than to "messages in, text out."
 

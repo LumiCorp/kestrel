@@ -6,47 +6,9 @@ const MAX_RECENT_FILESYSTEM_PREVIEW_CHARS = 1200;
 const MAX_RECENT_TOOL_RESULT_EVIDENCE_ITEMS = 3;
 const MAX_ACTIVE_PROCESS_EVIDENCE_ITEMS = 2;
 const MAX_TOOL_RESULT_FIELD_PREVIEW_CHARS = 360;
-const MAX_PROJECT_QUEUE_TASKS_PER_STATUS = 8;
-const PROJECT_TASK_STATUSES = ["proposed", "queued", "running", "needs_attention", "ready_for_review"] as const;
-
 interface ActiveProcessEvidenceItem {
   sessionId: string;
   text: string;
-}
-
-export function buildProjectTaskQueueContext(projectSnapshot: unknown): string | undefined {
-  const snapshot = asRecord(projectSnapshot);
-  const taskQueue = asRecord(snapshot?.taskQueue);
-  const tasks = asRecord(taskQueue?.tasks);
-  if (snapshot === undefined || taskQueue === undefined || tasks === undefined) {
-    return ;
-  }
-  const lines = [
-    "Mission Control task queue:",
-    `- sessionId: ${asString(snapshot.sessionId) ?? "(current project thread)"}`,
-    "- Use task.propose for agent-created follow-up work. Proposed tasks require human approval before execution.",
-    "- To revise an existing agent-created proposed task, call task.propose with its taskId. Include order to move it to a positive one-based queue position.",
-    "- User-created queued tasks are approved work. Claim only queued tasks, attach evidence, and submit completed output for review.",
-    "- Before proposing tasks, compare against existing ids/titles/instructions below and avoid duplicates.",
-  ];
-  for (const status of PROJECT_TASK_STATUSES) {
-    const matchingTasks = Object.values(tasks)
-      .map(asRecord)
-      .filter((task): task is Record<string, unknown> => task !== undefined && asString(task.status) === status)
-      .sort(compareProjectQueueTasks);
-    const statusTasks = status === "proposed"
-      ? matchingTasks
-      : matchingTasks.slice(0, MAX_PROJECT_QUEUE_TASKS_PER_STATUS);
-    lines.push(`${status}: ${statusTasks.length === 0 ? "(empty)" : ""}`);
-    for (const task of statusTasks) {
-      const evidence = asRecord(asArray(task.evidence).at(-1));
-      const assignedAgent = asString(task.assignedAgentId);
-      lines.push(
-        `- ${asString(task.id) ?? "unknown"} [order ${readInteger(task.order) ?? "?"}] ${clampEvidencePreview(asString(task.title) ?? "Untitled", 160)} :: ${clampEvidencePreview(asString(task.instructions) ?? "", 280)}${assignedAgent !== undefined ? ` [agent ${assignedAgent}]` : ""}${evidence !== undefined ? ` [latest ${asString(evidence.source) ?? "evidence"}: ${clampEvidencePreview(asString(evidence.summary) ?? "", 180)}]` : ""}`,
-      );
-    }
-  }
-  return lines.join("\n");
 }
 
 export function buildRecentFilesystemEvidence(reactState: Record<string, unknown>): string[] | undefined {
@@ -123,21 +85,6 @@ export function buildActiveProcessEvidence(
     }
   }
   return evidence.length > 0 ? evidence : undefined;
-}
-
-function compareProjectQueueTasks(left: Record<string, unknown>, right: Record<string, unknown>): number {
-  const leftOrder = readInteger(left.order) ?? 0;
-  const rightOrder = readInteger(right.order) ?? 0;
-  if (leftOrder !== rightOrder) {
-    return leftOrder - rightOrder;
-  }
-  return (asString(left.id) ?? "").localeCompare(asString(right.id) ?? "");
-}
-
-function readInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? Math.trunc(value)
-    : undefined;
 }
 
 function collectFilesystemResultRecords(value: unknown): Record<string, unknown>[] {

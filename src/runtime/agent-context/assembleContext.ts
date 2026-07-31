@@ -23,7 +23,6 @@ import {
 } from "./benchmarkContext.js";
 import {
   buildActiveProcessEvidence,
-  buildProjectTaskQueueContext,
   buildRecentFilesystemEvidence,
   buildRecentToolResultEvidence,
 } from "./evidenceContext.js";
@@ -198,7 +197,6 @@ export function buildKestrelAgentContext(
     transcript,
     omitRunningExecCommand: activeProcessEvidence !== undefined,
   });
-  const projectTaskQueueContext = buildProjectTaskQueueContext(input.projectSnapshot);
   const recoveryContext = buildRecoveryContext(input.reactState);
   const runtimeTaskInstruction = transcriptHasUserMessage(transcript, activeTaskGoal)
     ? taskInstruction !== activeTaskGoal ? taskInstruction : undefined
@@ -216,7 +214,6 @@ export function buildKestrelAgentContext(
     ...(activeProcessEvidence !== undefined ? { activeProcessEvidence } : {}),
     ...(recentFilesystemEvidence !== undefined ? { recentFilesystemEvidence } : {}),
     ...(recentToolResultEvidence !== undefined ? { recentToolResultEvidence } : {}),
-    ...(projectTaskQueueContext !== undefined ? { projectTaskQueueContext } : {}),
     ...(recoveryContext !== undefined ? { recoveryContext } : {}),
     ...(visibleTodos !== undefined ? { visibleTodos } : {}),
     workspaceFreshness,
@@ -237,7 +234,6 @@ export function buildKestrelAgentContext(
     ...(activeProcessEvidence !== undefined ? { activeProcessEvidence } : {}),
     ...(recentFilesystemEvidence !== undefined ? { recentFilesystemEvidence } : {}),
     ...(recentToolResultEvidence !== undefined ? { recentToolResultEvidence } : {}),
-    ...(projectTaskQueueContext !== undefined ? { projectTaskQueueContext } : {}),
     ...(recoveryContext !== undefined ? { recoveryContext } : {}),
     ...(visibleTodos !== undefined ? { visibleTodos } : {}),
     workspaceFreshness,
@@ -262,7 +258,6 @@ export function buildKestrelAgentContext(
     ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
     ...(input.promptVariant !== undefined ? { promptVariant: input.promptVariant } : {}),
     ...(visibleTodos !== undefined ? { visibleTodos } : {}),
-    ...(projectTaskQueueContext !== undefined ? { projectTaskQueueContext } : {}),
     ...(recoveryContext !== undefined ? { recoveryContext } : {}),
     transcript: normalizeModelTranscript(transcript),
   };
@@ -332,7 +327,6 @@ export function buildKestrelAgentContext(
         { id: "activeProcessEvidence", origin: "runtime-state", rendered: activeProcessEvidence !== undefined },
         { id: "recentFilesystemEvidence", origin: "runtime-state", rendered: recentFilesystemEvidence !== undefined },
         { id: "recentToolResultEvidence", origin: "model-transcript", rendered: recentToolResultEvidence !== undefined },
-        { id: "projectTaskQueue", origin: "project-snapshot", rendered: projectTaskQueueContext !== undefined },
         { id: "recovery", origin: "runtime-state", rendered: recoveryContext !== undefined },
         { id: "visibleTodos", origin: "runtime-state", rendered: visibleTodos !== undefined },
         {

@@ -2412,11 +2412,8 @@ function readExecutionPolicy(
         ...(typeof capabilityPolicyRaw["shell.exec"] === "boolean"
           ? { "shell.exec": capabilityPolicyRaw["shell.exec"] }
           : {}),
-        ...(typeof capabilityPolicyRaw["project.board.write"] === "boolean"
-          ? { "project.board.write": capabilityPolicyRaw["project.board.write"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["project.task_queue.write"] === "boolean"
-          ? { "project.task_queue.write": capabilityPolicyRaw["project.task_queue.write"] }
+        ...(typeof capabilityPolicyRaw["mission_control.work_item.write"] === "boolean"
+          ? { "mission_control.work_item.write": capabilityPolicyRaw["mission_control.work_item.write"] }
           : {}),
         ...(typeof capabilityPolicyRaw["network.call"] === "boolean"
           ? { "network.call": capabilityPolicyRaw["network.call"] }

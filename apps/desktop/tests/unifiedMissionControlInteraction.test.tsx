@@ -8,7 +8,6 @@ import type {
   DesktopMissionControlProjectResponse,
 } from "../src/contracts.js";
 import {
-  isUnifiedMissionControlProjectEnabled,
   UnifiedMissionControlWorkspace,
 } from "../renderer/src/UnifiedMissionControlWorkspace.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
@@ -17,11 +16,6 @@ const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
 function installDom(
   getMissionControlProject: DesktopBridge["getMissionControlProject"],
-  executeMissionControlMigration: DesktopBridge["executeMissionControlMigration"] =
-    async (intent) => {
-      const response = await getMissionControlProject(intent.projectId);
-      return response;
-    },
   executeMissionControlAction: DesktopBridge["executeMissionControlAction"] =
     async (intent) => {
       const response = await getMissionControlProject(intent.projectId);
@@ -48,7 +42,6 @@ function installDom(
   Object.assign(browser, {
     kestrelDesktop: {
       getMissionControlProject,
-      executeMissionControlMigration,
       executeMissionControlAction,
     } as DesktopBridge,
   });
@@ -74,7 +67,7 @@ function projectResponse(): DesktopMissionControlProjectResponse {
       projectId: PROJECT_ID,
       schemaVersion: 1,
       revision: 8,
-      authorityEpoch: 0,
+      authorityEpoch: 1,
       document: {
         schemaVersion: 1,
         projectId: PROJECT_ID,
@@ -166,39 +159,11 @@ function projectResponse(): DesktopMissionControlProjectResponse {
           attemptId: "attempt-2",
           disposition: "applied",
         }],
-        migration: {
-          version: 1,
-          status: "staged",
-          registeredPath: "/project",
-          sources: [],
-          candidates: [],
-          rebinds: [],
-          stagedAt: "2026-07-10T09:00:00.000Z",
-          updatedAt: "2026-07-10T09:00:00.000Z",
-        },
       },
       createdAt: "2026-07-10T09:00:00.000Z",
       updatedAt: "2026-07-10T11:00:00.000Z",
     },
   };
-}
-
-function migrationResponse(
-  revision: number,
-  migration: NonNullable<
-    DesktopMissionControlProjectResponse["project"]["document"]["migration"]
-  > | undefined,
-): DesktopMissionControlProjectResponse {
-  const response = projectResponse();
-  response.project.revision = revision;
-  response.project.document.items = {};
-  response.project.document.history = [];
-  if (migration === undefined) {
-    delete response.project.document.migration;
-  } else {
-    response.project.document.migration = migration;
-  }
-  return response;
 }
 
 contractTest(
@@ -228,7 +193,7 @@ contractTest(
       );
     });
 
-    assert.match(container.textContent ?? "", /Legacy authority · read-only/u);
+    assert.match(container.textContent ?? "", /Project authority · epoch 1/u);
     assert.match(container.textContent ?? "", /Prepare release notes/u);
     assert.match(container.textContent ?? "", /Verify Desktop package/u);
     assert.doesNotMatch(container.textContent ?? "", /Discarded experiment/u);
@@ -318,21 +283,17 @@ contractTest(
 
 contractTest(
   "desktop.mission-control-operator-flow",
-  "unified Mission Control activates once and routes explicit operator commands through project authority",
+  "unified Mission Control routes explicit operator commands through active project authority",
   async () => {
     const inactive = projectResponse();
     const intents: unknown[] = [];
     let current = inactive;
     const { root, container } = installDom(
       async () => current,
-      async () => current,
       async (intent) => {
         intents.push(intent);
         const next = structuredClone(current);
         next.project.revision += 1;
-        if (intent.type === "activate") {
-          next.project.authorityEpoch = 1;
-        }
         if (intent.type === "configure_autopilot") {
           next.project.document.autopilot = {
             enabled: intent.enabled,
@@ -359,26 +320,20 @@ contractTest(
       );
     });
 
-    await act(async () => button(container, "Activate Mission Control").click());
-    assert.deepEqual(intents[0], {
-      type: "activate",
-      projectId: PROJECT_ID,
-      expectedRevision: 8,
-    });
-    assert.match(container.textContent ?? "", /Canonical authority · epoch 1/u);
+    assert.match(container.textContent ?? "", /Project authority · epoch 1/u);
     assert.equal(button(container, "Start").disabled, false);
 
     await act(async () => button(container, "Enable Autopilot").click());
-    assert.equal(intents.length, 1);
+    assert.equal(intents.length, 0);
     assert.match(
       container.textContent ?? "",
       /Autopilot will start eligible Ready work through the same Start path/u,
     );
     await act(async () => button(container, "Confirm enable Autopilot").click());
-    assert.deepEqual(intents[1], {
+    assert.deepEqual(intents[0], {
       type: "configure_autopilot",
       projectId: PROJECT_ID,
-      expectedRevision: 9,
+      expectedRevision: 8,
       enabled: true,
       wipLimit: 2,
       confirmed: true,
@@ -386,20 +341,20 @@ contractTest(
     assert.match(container.textContent ?? "", /Autopilot on/u);
 
     await act(async () => button(container, "Start").click());
-    assert.deepEqual(intents[2], {
+    assert.deepEqual(intents[1], {
       type: "start",
       projectId: PROJECT_ID,
-      expectedRevision: 10,
+      expectedRevision: 9,
       itemId: "item-ready",
       expectedItemVersion: 1,
     });
 
     await act(async () => button(container, "Verify Desktop package").click());
     await act(async () => button(container, "Stop").click());
-    assert.deepEqual(intents[3], {
+    assert.deepEqual(intents[2], {
       type: "stop",
       projectId: PROJECT_ID,
-      expectedRevision: 11,
+      expectedRevision: 10,
       itemId: "item-active",
       expectedItemVersion: 3,
       attemptId: "attempt-2",
@@ -408,198 +363,5 @@ contractTest(
       commandId: "command-active",
     });
     await act(async () => root.unmount());
-  },
-);
-
-contractTest(
-  "desktop.mission-control-operator-flow",
-  "unified Mission Control stages an explicit empty migration on first project read",
-  async () => {
-    const initial = migrationResponse(0, undefined);
-    const staged = migrationResponse(1, {
-      version: 1,
-      status: "staged_empty",
-      registeredPath: "/project",
-      sources: [],
-      candidates: [],
-      rebinds: [],
-      stagedAt: "2026-07-31T12:00:00.000Z",
-      updatedAt: "2026-07-31T12:00:00.000Z",
-    });
-    const intents: unknown[] = [];
-    const { root, container } = installDom(
-      async () => initial,
-      async (intent) => {
-        intents.push(intent);
-        return staged;
-      },
-    );
-
-    await act(async () => {
-      root.render(
-        <UnifiedMissionControlWorkspace
-          project={{ id: PROJECT_ID, path: "/project", label: "Kestrel" }}
-          onReturnToConversation={() => {}}
-          onOpenConversation={() => {}}
-          onStartConversation={() => {}}
-          onError={() => {}}
-        />,
-      );
-    });
-
-    assert.deepEqual(intents, [{
-      type: "stage",
-      projectId: PROJECT_ID,
-      expectedRevision: 0,
-    }]);
-    assert.match(container.textContent ?? "", /Migration: empty/u);
-    assert.match(
-      container.textContent ?? "",
-      /Legacy session Mission Control remains the sole write authority/u,
-    );
-    assert.match(
-      container.textContent ?? "",
-      /No compatible legacy work exists/u,
-    );
-    await act(async () => root.unmount());
-  },
-);
-
-contractTest(
-  "desktop.mission-control-operator-flow",
-  "unified Mission Control blocks ambiguous sources until explicit rebind and selection",
-  async () => {
-    const fingerprint = "a".repeat(64);
-    const firstCandidate = "b".repeat(64);
-    const secondCandidate = "c".repeat(64);
-    const needsRebind = migrationResponse(2, {
-      version: 1,
-      status: "needs_rebind",
-      registeredPath: "/project",
-      sources: [{
-        sourceId: "session:legacy",
-        kind: "session_snapshot",
-        sessionId: "legacy",
-        sourceVersion: 3,
-        sourceFingerprint: fingerprint,
-        projectPath: "/moved-project",
-        linkStatus: "moved",
-      }],
-      candidates: [],
-      rebinds: [],
-      stagedAt: "2026-07-31T12:00:00.000Z",
-      updatedAt: "2026-07-31T12:00:00.000Z",
-    });
-    const needsResolution = migrationResponse(3, {
-      ...needsRebind.project.document.migration!,
-      status: "needs_resolution",
-      sources: [{
-        ...needsRebind.project.document.migration!.sources[0]!,
-        linkStatus: "rebound",
-        candidateId: firstCandidate,
-      }],
-      candidates: [
-        {
-          id: firstCandidate,
-          canonicalFingerprint: "d".repeat(64),
-          sourceIds: ["session:legacy"],
-          valid: true,
-          conflicts: [],
-        },
-        {
-          id: secondCandidate,
-          canonicalFingerprint: "e".repeat(64),
-          sourceIds: ["session:other"],
-          valid: true,
-          conflicts: [],
-        },
-      ],
-      rebinds: [{
-        sourceId: "session:legacy",
-        sourceFingerprint: fingerprint,
-        projectId: PROJECT_ID,
-        actionId: "rebind-action",
-        reboundAt: "2026-07-31T12:01:00.000Z",
-      }],
-      updatedAt: "2026-07-31T12:01:00.000Z",
-    });
-    const resolved = migrationResponse(4, {
-      ...needsResolution.project.document.migration!,
-      status: "resolved",
-      resolution: {
-        type: "source",
-        candidateId: firstCandidate,
-        sourceFingerprints: { "session:legacy": fingerprint },
-        actionId: "resolve-action",
-        resolvedAt: "2026-07-31T12:02:00.000Z",
-      },
-      updatedAt: "2026-07-31T12:02:00.000Z",
-    });
-    const intents: unknown[] = [];
-    const { root, container } = installDom(
-      async () => needsRebind,
-      async (intent) => {
-        intents.push(intent);
-        return intent.type === "rebind" ? needsResolution : resolved;
-      },
-    );
-
-    await act(async () => {
-      root.render(
-        <UnifiedMissionControlWorkspace
-          project={{ id: PROJECT_ID, path: "/project", label: "Kestrel" }}
-          onReturnToConversation={() => {}}
-          onOpenConversation={() => {}}
-          onStartConversation={() => {}}
-          onError={() => {}}
-        />,
-      );
-    });
-    assert.match(container.textContent ?? "", /project identity required/u);
-    await act(async () => button(container, "Rebind to this project").click());
-    assert.deepEqual(intents[0], {
-      type: "rebind",
-      projectId: PROJECT_ID,
-      expectedRevision: 2,
-      sourceId: "session:legacy",
-      sourceFingerprint: fingerprint,
-    });
-    assert.match(container.textContent ?? "", /source selection required/u);
-    await act(async () =>
-      button(container, "Use this complete source").click()
-    );
-    assert.deepEqual(intents[1], {
-      type: "resolve",
-      projectId: PROJECT_ID,
-      expectedRevision: 3,
-      resolution: { type: "source", candidateId: firstCandidate },
-    });
-    assert.match(container.textContent ?? "", /Migration: resolved/u);
-    await act(async () => root.unmount());
-  },
-);
-
-contractTest(
-  "desktop.mission-control-operator-flow",
-  "unified Mission Control preview gate requires the exact registered project UUID",
-  () => {
-    assert.equal(
-      isUnifiedMissionControlProjectEnabled(
-        PROJECT_ID,
-        `?mission-control-project=${PROJECT_ID}`,
-      ),
-      true,
-    );
-    assert.equal(
-      isUnifiedMissionControlProjectEnabled(
-        PROJECT_ID,
-        "?mission-control-project=22222222-2222-4222-8222-222222222222",
-      ),
-      false,
-    );
-    assert.equal(
-      isUnifiedMissionControlProjectEnabled(undefined, ""),
-      false,
-    );
   },
 );

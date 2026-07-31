@@ -148,7 +148,7 @@
       "find": "if (projectId !== expectedProjectId) {",
       "replace": "if (false) {",
       "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=project state, receipts, and outbox", "tests/mission-control-project-authority.postgres.test.ts"],
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical project authority is active by default", "tests/mission-control-project-authority.postgres.test.ts"],
       "testFiles": ["tests/mission-control-project-authority.postgres.test.ts"]
     },
     {
@@ -158,27 +158,7 @@
       "find": "    return this.withTransaction(operation);",
       "replace": "    return operation(this.db);",
       "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=project state, receipts, and outbox", "tests/mission-control-project-authority.postgres.test.ts"],
-      "testFiles": ["tests/mission-control-project-authority.postgres.test.ts"]
-    },
-    {
-      "id": "mission-control-migration-conflict-auto-resolution",
-      "contractId": "runtime.mission-control-project-persistence",
-      "target": "src/missionControl/migrationAuthority.ts",
-      "find": "    candidates.length === 1 && candidates[0]?.valid === true",
-      "replace": "    candidates.length > 0 && candidates[0]?.valid === true",
-      "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=staged migration is deterministic", "tests/mission-control-project-authority.postgres.test.ts"],
-      "testFiles": ["tests/mission-control-project-authority.postgres.test.ts"]
-    },
-    {
-      "id": "mission-control-migration-source-drift-bypass",
-      "contractId": "runtime.mission-control-project-persistence",
-      "target": "src/missionControl/migrationAuthority.ts",
-      "find": "    expected.some((value, index) => value !== actual[index])",
-      "replace": "    false",
-      "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=staged migration is deterministic", "tests/mission-control-project-authority.postgres.test.ts"],
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical project authority is active by default", "tests/mission-control-project-authority.postgres.test.ts"],
       "testFiles": ["tests/mission-control-project-authority.postgres.test.ts"]
     },
     {

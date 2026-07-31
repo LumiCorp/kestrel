@@ -193,13 +193,10 @@ import type { WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
 import {
   executeDesktopMissionControlAction,
-  executeDesktopMissionControlMigration,
   getDesktopMissionControlProject,
-  getDesktopProjectSnapshot,
   getDesktopOperatorRun,
   getDesktopOperatorThread,
   listDesktopOperatorRuns,
-  runDesktopProjectAction,
   runDesktopOperatorControl,
 } from "./missionControl.js";
 import {
@@ -3069,29 +3066,6 @@ function registerIpcHandlers(
       }),
   );
   ipcMain.handle(
-    "desktop:execute-mission-control-migration",
-    async (_event, intent: unknown) =>
-      executeDesktopMissionControlMigration({
-        adapter: requireDesktopRunnerAdapter(runnerTransport),
-        intent,
-        registrations: desktopSettings.projects
-          .filter(
-            (project): project is DesktopProjectRegistration & { id: string } =>
-              project.id !== undefined,
-          )
-          .map((project) => ({
-            projectId: project.id,
-            path: path.resolve(project.path),
-            previousPaths: desktopSettings.projectTombstones
-              .filter((tombstone) => tombstone.id === project.id)
-              .map((tombstone) => path.resolve(tombstone.path)),
-          })),
-        actionId: randomUUID(),
-        actionTs: new Date().toISOString(),
-        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-      }),
-  );
-  ipcMain.handle(
     "desktop:execute-mission-control-action",
     async (_event, intent: unknown) =>
       executeDesktopMissionControlAction({
@@ -3103,24 +3077,6 @@ function registerIpcHandlers(
         profileId: defaultDesktopRunnerProfileId ?? "reference",
         actionId: randomUUID(),
         actionTs: new Date().toISOString(),
-        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-      }),
-  );
-  ipcMain.handle(
-    "desktop:get-project-snapshot",
-    async (_event, sessionId: unknown) =>
-      getDesktopProjectSnapshot({
-        adapter: requireDesktopRunnerAdapter(runnerTransport),
-        sessionId,
-        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
-      }),
-  );
-  ipcMain.handle(
-    "desktop:run-project-action",
-    async (_event, action: unknown) =>
-      runDesktopProjectAction({
-        adapter: requireDesktopRunnerAdapter(runnerTransport),
-        action,
         context: DESKTOP_RUNNER_REQUEST_CONTEXT,
       }),
   );

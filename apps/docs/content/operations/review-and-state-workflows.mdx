@@ -1,6 +1,6 @@
 ---
 title: Review and state workflows
-summary: Inspect and update task graph, project snapshot, project action, and project review state from the browser or the SDK when a run becomes larger than a transcript.
+summary: Inspect task graph and project projections, mutate project Git state, and apply project review actions from the browser or SDK when a run becomes larger than a transcript.
 section: operate
 audience: integrators
 status: stable
@@ -17,10 +17,11 @@ This is the missing middle layer between “an agent replied” and “an operat
 - `task.graph.get`
 - `task.graph.update`
 - `project.snapshot.get`
-- `project.snapshot.update`
 - `project.action`
 - `project.review.get`
 - `project.review.action`
+- `mission_control.project.get`
+- `mission_control.action.execute`
 
 Use them when a conversation and memory record are no longer enough to show the current plan, project status, or review decision.
 
@@ -29,8 +30,9 @@ Use them when a conversation and memory record are no longer enough to show the 
 | Record | Use it for | Do not use it for |
 | --- | --- | --- |
 | task graph | durable structured task state tied to threads and sessions | general project metadata |
-| project snapshot | higher-level project state that should outlive one thread | thread-local operator actions |
-| project action | intentional project-level mutations | low-level task editing |
+| Mission Control project | the project-scoped work-item lifecycle, attempts, evidence, and acceptance | session-scoped task or board state |
+| project snapshot | read-only workspace, policy, review, and activity projection | work-item lifecycle authority |
+| project action | explicit project Git mutations | task or work-item lifecycle editing |
 | project review | code/file review workflows tied to the active session | broad project state storage |
 
 ## Browser workflow through `/api/kchat/control`
@@ -168,26 +170,11 @@ await client.updateTaskGraph(
   context,
 );
 
-await client.updateProjectSnapshot(
-  {
-    sessionId: "reference-session-001",
-    snapshot: {
-      branch: "docs/search-hardening",
-      focus: "review-state and search behavior",
-      nextMilestone: "ship the docs example pass",
-    },
-  },
-  context,
-);
-
 await client.runProjectAction(
   {
+    type: "branch.create",
     sessionId: "reference-session-001",
-    action: {
-      type: "project.status.set",
-      value: "needs-review",
-      reason: "Operator requested tighter parser review before merge.",
-    },
+    branchName: "docs/search-hardening",
   },
   context,
 );
