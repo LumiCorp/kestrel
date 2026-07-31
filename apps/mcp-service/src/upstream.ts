@@ -157,13 +157,6 @@ export async function connectRemoteMcpClient(input: {
 }): Promise<{ client: Client; close: () => Promise<void> }> {
   const { server } = input;
   const endpoint = new URL(server.remoteUrl);
-  if (
-    !server.egressAllowlist.some(
-      (entry) => safeOrigin(entry) === endpoint.origin
-    )
-  ) {
-    throw new Error("Remote MCP endpoint is not in its egress allowlist.");
-  }
   const headers = await resolveRemoteCredentialHeaders(input, server);
   const pinned = await (input.createPinnedFetch ?? createPinnedMcpFetch)({
     endpoint,
@@ -267,14 +260,6 @@ async function refreshOAuthCredentialIfNeeded(input: {
     throw new Error("MCP OAuth credential requires reauthorization.");
   }
   const tokenEndpoint = new URL(input.payload.tokenEndpoint);
-  if (
-    !input.server.egressAllowlist.some(
-      (entry) => safeOrigin(entry) === tokenEndpoint.origin
-    )
-  ) {
-    await store.markRefreshRequired(credentialId);
-    throw new Error("MCP OAuth token endpoint is not allowlisted.");
-  }
   const form = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: input.payload.refreshToken,
@@ -361,12 +346,4 @@ async function refreshOAuthCredentialIfNeeded(input: {
 
 function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function safeOrigin(value: string): string | undefined {
-  try {
-    return new URL(value).origin;
-  } catch {
-    return;
-  }
 }

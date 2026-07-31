@@ -91,7 +91,7 @@ export function McpEnvironmentPanel({
   const [remoteUrl, setRemoteUrl] = useState("");
   const [imageReference, setImageReference] = useState("");
   const [launchArguments, setLaunchArguments] = useState("");
-  const [egressOrigins, setEgressOrigins] = useState("");
+  const [networkAccess, setNetworkAccess] = useState<"full" | "none">("full");
   const [credentialId, setCredentialId] = useState("");
   const [credentialName, setCredentialName] = useState("");
   const [secretHeaders, setSecretHeaders] = useState(
@@ -280,12 +280,7 @@ export function McpEnvironmentPanel({
               sourceType: "remote",
               transport: "streamable_http",
               remoteUrl,
-              egressAllowlist: [
-                ...new Set([
-                  new URL(remoteUrl).origin,
-                  ...splitLines(egressOrigins),
-                ]),
-              ],
+              networkAccess: "full",
             }
           : {
               ...common,
@@ -294,7 +289,7 @@ export function McpEnvironmentPanel({
               transport: "stdio",
               imageReference,
               digest: imageReference.split("@").at(-1),
-              egressAllowlist: splitLines(egressOrigins),
+              networkAccess,
             };
       const response = await fetch(
         `/api/organization/environments/${environmentId}/mcp/servers`,
@@ -316,7 +311,7 @@ export function McpEnvironmentPanel({
       setRemoteUrl("");
       setImageReference("");
       setLaunchArguments("");
-      setEgressOrigins("");
+      setNetworkAccess("full");
       toast.success(
         "Custom App added. Check its capabilities before enabling access."
       );
@@ -682,22 +677,26 @@ export function McpEnvironmentPanel({
               value={launchArguments}
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor={`mcp-egress-${environmentId}`}>
-              Allowed HTTPS origins (one per line)
-            </Label>
-            <Textarea
-              id={`mcp-egress-${environmentId}`}
-              onChange={(event) => setEgressOrigins(event.target.value)}
-              placeholder="https://api.example.com"
-              rows={3}
-              value={egressOrigins}
-            />
-            <p className="text-muted-foreground text-xs">
-              Private container Apps remain on an internal network and can reach
-              only these origins through the isolated egress broker.
-            </p>
-          </div>
+          {sourceType === "oci" ? (
+            <div className="space-y-2">
+              <Label htmlFor={`mcp-network-${environmentId}`}>Network access</Label>
+              <select
+                className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+                id={`mcp-network-${environmentId}`}
+                onChange={(event) =>
+                  setNetworkAccess(event.target.value as "full" | "none")
+                }
+                value={networkAccess}
+              >
+                <option value="full">Full network</option>
+                <option value="none">No network</option>
+              </select>
+              <p className="text-muted-foreground text-xs">
+                Full network is the default. Choose no network only for an MCP
+                server that is designed to run offline.
+              </p>
+            </div>
+          ) : null}
           <Button
             disabled={
               busyAction !== null ||

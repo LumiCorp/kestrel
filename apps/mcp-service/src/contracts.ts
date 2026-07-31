@@ -35,7 +35,6 @@ type AuthorizedMcpServerBase = {
   name: string;
   transport: "streamable_http" | "stdio";
   launchArguments: string[];
-  egressAllowlist: string[];
   resources: {
     cpuMillicores: number;
     memoryMib: number;
@@ -56,11 +55,13 @@ export type AuthorizedMcpServer = AuthorizedMcpServerBase &
         sourceType: "remote";
         transport: "streamable_http";
         remoteUrl: string;
+        networkAccess: "full";
       }
     | {
         sourceType: "oci";
         imageReference: string;
         digest: string;
+        networkAccess: "full" | "none";
       }
   );
 

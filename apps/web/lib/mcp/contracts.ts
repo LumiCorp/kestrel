@@ -8,6 +8,9 @@ export const MCP_RUN_GRANT_TTL_SECONDS = 300;
 export const mcpApprovalModeSchema = z.enum(["auto", "ask", "deny"]);
 export type McpApprovalMode = z.infer<typeof mcpApprovalModeSchema>;
 
+export const mcpNetworkAccessSchema = z.enum(["full", "none"]);
+export type McpNetworkAccess = z.infer<typeof mcpNetworkAccessSchema>;
+
 export const mcpCapabilityKindSchema = z.enum([
   "tool",
   "resource",
@@ -47,7 +50,7 @@ const serverIdentitySchema = z.object({
     .regex(/^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$/u),
   auth: authSchema,
   launchArguments: z.array(z.string().max(4096)).max(64).default([]),
-  egressAllowlist: z.array(z.string().url()).max(128).default([]),
+  networkAccess: mcpNetworkAccessSchema.default("full"),
   resources: resourceLimitsSchema.default({
     cpuMillicores: 500,
     memoryMib: 512,
@@ -62,9 +65,8 @@ const remoteServerSchema = serverIdentitySchema
     remoteUrl: z.string().url(),
   })
   .superRefine((value, context) => {
-    let endpoint: URL;
     try {
-      endpoint = assertPublicHttpsEndpoint(value.remoteUrl);
+      assertPublicHttpsEndpoint(value.remoteUrl);
     } catch (error) {
       context.addIssue({
         code: "custom",
@@ -74,14 +76,11 @@ const remoteServerSchema = serverIdentitySchema
       });
       return;
     }
-    const allowedOrigins = new Set(
-      value.egressAllowlist.map((entry) => normalizeEgressOrigin(entry))
-    );
-    if (!allowedOrigins.has(endpoint.origin)) {
+    if (value.networkAccess !== "full") {
       context.addIssue({
         code: "custom",
-        path: ["egressAllowlist"],
-        message: "Remote MCP endpoint origin must be explicitly allowlisted.",
+        path: ["networkAccess"],
+        message: "Remote MCP servers require full network access.",
       });
     }
   });
@@ -107,20 +106,6 @@ const ociServerSchema = serverIdentitySchema
         path: ["auth"],
         message: "OCI stdio MCP servers do not accept remote credentials.",
       });
-    }
-    for (const [index, entry] of value.egressAllowlist.entries()) {
-      try {
-        assertPublicHttpsEndpoint(entry);
-      } catch (error) {
-        context.addIssue({
-          code: "custom",
-          path: ["egressAllowlist", index],
-          message:
-            error instanceof Error
-              ? error.message
-              : "Invalid OCI MCP egress origin.",
-        });
-      }
     }
   });
 
@@ -254,10 +239,6 @@ export function assertPublicHttpsEndpoint(value: string): URL {
     throw new Error("Remote MCP endpoint must resolve to a public network.");
   }
   return endpoint;
-}
-
-function normalizeEgressOrigin(value: string): string {
-  return assertPublicHttpsEndpoint(value).origin;
 }
 
 function stricterApprovalMode(

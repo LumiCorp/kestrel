@@ -26,6 +26,13 @@ const interactionDeadlineMigration = fs.readFileSync(
   ),
   "utf8"
 );
+const networkAccessMigration = fs.readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "migrations/0055_mcp_network_access.sql"
+  ),
+  "utf8"
+);
 
 contractTest("web.hermetic", "hosted MCP credentials are Environment-owned and encrypted-only", () => {
   assert.match(migration, /CREATE TABLE "mcp_credentials"/u);
@@ -50,6 +57,15 @@ contractTest("web.hermetic", "hosted MCP servers support remote HTTP and digest-
   assert.match(migration, /oci_image_reference" LIKE '%@sha256:%'/u);
   assert.match(migration, /egress_allowlist" jsonb DEFAULT '\[\]'::jsonb/u);
   assert.match(migration, /mcp_servers_resource_limits_check/u);
+});
+
+contractTest("web.hermetic", "MCP network access has only full and none modes and defaults to full", () => {
+  assert.match(networkAccessMigration, /network_access" text DEFAULT 'full' NOT NULL/u);
+  assert.match(networkAccessMigration, /CHECK \("network_access" IN \('full', 'none'\)\)/u);
+  assert.match(
+    networkAccessMigration,
+    /mcp_servers_remote_network_access_check[\s\S]*CHECK \("source_type" <> 'remote' OR "network_access" = 'full'\)/u
+  );
 });
 
 contractTest("web.hermetic", "capability discovery is reviewable and defaults every new capability to disabled", () => {

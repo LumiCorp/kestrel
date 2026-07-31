@@ -63,10 +63,7 @@ contractTest("services.hermetic", "expired OAuth credentials refresh inside the 
     transport: "streamable_http",
     remoteUrl: "https://mcp.example.com/mcp",
     launchArguments: [],
-    egressAllowlist: [
-      "https://mcp.example.com",
-      "https://auth.example.com",
-    ],
+    networkAccess: "full",
     resources: { cpuMillicores: 500, memoryMib: 512, pidsLimit: 128 },
     credential: {
       id: identity.credentialId,
@@ -168,7 +165,7 @@ contractTest("services.hermetic", "rejected OAuth refresh cancels its body befor
     transport: "streamable_http",
     remoteUrl: "https://mcp.example.com/mcp",
     launchArguments: [],
-    egressAllowlist: ["https://mcp.example.com", "https://auth.example.com"],
+    networkAccess: "full",
     resources: { cpuMillicores: 500, memoryMib: 512, pidsLimit: 128 },
     credential: { id: "credential-1", kind: "oauth", encryptedPayload },
   };

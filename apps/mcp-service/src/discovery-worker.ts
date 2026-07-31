@@ -184,7 +184,7 @@ export class McpDiscoveryWorker {
         name: string;
         slug: string;
         launch_arguments: unknown;
-        egress_allowlist: unknown;
+        network_access: "full" | "none";
         cpu_millicores: number;
         memory_mib: number;
         pids_limit: number;
@@ -211,7 +211,7 @@ export class McpDiscoveryWorker {
                 server.oci_image_reference,
                 server.oci_digest,
                 server.launch_arguments,
-                server.egress_allowlist,
+                server.network_access,
                 server.cpu_millicores,
                 server.memory_mib,
                 server.pids_limit,
@@ -787,7 +787,7 @@ function parseDiscoveryServer(row: {
   oci_image_reference: string | null;
   oci_digest: string | null;
   launch_arguments: unknown;
-  egress_allowlist: unknown;
+  network_access: "full" | "none";
   cpu_millicores: number;
   memory_mib: number;
   pids_limit: number;
@@ -802,7 +802,6 @@ function parseDiscoveryServer(row: {
     slug: row.slug,
     providerKey: row.provider_key,
     launchArguments: parseStringArray(row.launch_arguments),
-    egressAllowlist: parseStringArray(row.egress_allowlist),
     resources: {
       cpuMillicores: row.cpu_millicores,
       memoryMib: row.memory_mib,
@@ -811,7 +810,11 @@ function parseDiscoveryServer(row: {
     credential: parseDiscoveryCredential(row),
   };
   if (row.source_type === "remote") {
-    if (row.transport !== "streamable_http" || !row.remote_url) {
+    if (
+      row.transport !== "streamable_http" ||
+      !row.remote_url ||
+      row.network_access !== "full"
+    ) {
       throw new Error("Stored remote MCP discovery server is invalid.");
     }
     return {
@@ -819,6 +822,7 @@ function parseDiscoveryServer(row: {
       sourceType: "remote",
       transport: "streamable_http",
       remoteUrl: row.remote_url,
+      networkAccess: "full",
     };
   }
   if (
@@ -833,5 +837,6 @@ function parseDiscoveryServer(row: {
     transport: "stdio",
     imageReference: row.oci_image_reference,
     digest: row.oci_digest,
+    networkAccess: row.network_access,
   };
 }

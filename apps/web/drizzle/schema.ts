@@ -3478,10 +3478,9 @@ export const mcpServers = pgTable(
       .$type<string[]>()
       .notNull()
       .default([]),
-    egressAllowlist: jsonb("egress_allowlist")
-      .$type<string[]>()
+    networkAccess: text("network_access", { enum: ["full", "none"] })
       .notNull()
-      .default([]),
+      .default("full"),
     cpuMillicores: integer("cpu_millicores").notNull().default(500),
     memoryMib: integer("memory_mib").notNull().default(512),
     pidsLimit: integer("pids_limit").notNull().default(128),
@@ -3535,6 +3534,10 @@ export const mcpServers = pgTable(
         or
         (${table.authMode} <> 'none' and ${table.credentialId} is not null)
       )`,
+    ),
+    check(
+      "mcp_servers_remote_network_access_check",
+      sql`${table.sourceType} <> 'remote' or ${table.networkAccess} = 'full'`,
     ),
     check(
       "mcp_servers_resource_limits_check",

@@ -144,14 +144,6 @@ async function connectOfficialRemoteCredential(input: {
   grantedScopes?: string[];
   oauthTokenEndpoint?: string;
 }) {
-  const egressAllowlist = [
-    ...new Set([
-      new URL(input.app.remoteUrl).origin,
-      ...(input.oauthTokenEndpoint
-        ? [new URL(input.oauthTokenEndpoint).origin]
-        : []),
-    ]),
-  ];
   const existingConnection = await knowledgeDb.query.appConnections.findFirst({
     where: (table, { and: all, eq: equals }) =>
       all(
@@ -188,7 +180,7 @@ async function connectOfficialRemoteCredential(input: {
           sourceType: "remote",
           transport: "streamable_http",
           remoteUrl: input.app.remoteUrl,
-          egressAllowlist,
+          networkAccess: "full",
           status: "draft",
           failureCode: null,
           failureMessage: null,
@@ -234,7 +226,7 @@ async function connectOfficialRemoteCredential(input: {
           remoteUrl: input.app.remoteUrl,
           auth: { mode: input.authMode, credentialId: input.credentialId },
           launchArguments: [],
-          egressAllowlist,
+          networkAccess: "full",
           resources: {
             cpuMillicores: 500,
             memoryMib: 512,

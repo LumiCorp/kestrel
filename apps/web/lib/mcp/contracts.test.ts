@@ -16,15 +16,15 @@ const BASE_SERVER = {
   resources: { cpuMillicores: 500, memoryMib: 512, pidsLimit: 128 },
 };
 
-contractTest("web.hermetic", "remote MCP requires HTTPS, public addressing, and explicit egress", () => {
+contractTest("web.hermetic", "remote MCP requires HTTPS, public addressing, and full network access", () => {
   const valid = createMcpServerInputSchema.parse({
     ...BASE_SERVER,
     sourceType: "remote",
     transport: "streamable_http",
     remoteUrl: "https://mcp.example.com/mcp",
-    egressAllowlist: ["https://mcp.example.com"],
   });
   assert.equal(valid.sourceType, "remote");
+  assert.equal(valid.networkAccess, "full");
 
   for (const remoteUrl of [
     "http://mcp.example.com/mcp",
@@ -39,7 +39,6 @@ contractTest("web.hermetic", "remote MCP requires HTTPS, public addressing, and 
         sourceType: "remote",
         transport: "streamable_http",
         remoteUrl,
-        egressAllowlist: [remoteUrl],
       }).success,
       false,
       remoteUrl
@@ -51,7 +50,7 @@ contractTest("web.hermetic", "remote MCP requires HTTPS, public addressing, and 
       sourceType: "remote",
       transport: "streamable_http",
       remoteUrl: "https://mcp.example.com/mcp",
-      egressAllowlist: [],
+      networkAccess: "none",
     }).success,
     false
   );
@@ -65,9 +64,20 @@ contractTest("web.hermetic", "OCI MCP installation requires a matching digest-pi
     transport: "stdio",
     imageReference: `ghcr.io/kestrel/example@${digest}`,
     digest,
-    egressAllowlist: [],
   });
   assert.equal(valid.sourceType, "oci");
+  assert.equal(valid.networkAccess, "full");
+  assert.equal(
+    createMcpServerInputSchema.parse({
+      ...BASE_SERVER,
+      sourceType: "oci",
+      transport: "stdio",
+      imageReference: `ghcr.io/kestrel/example@${digest}`,
+      digest,
+      networkAccess: "none",
+    }).networkAccess,
+    "none"
+  );
   assert.equal(
     createMcpServerInputSchema.safeParse({
       ...BASE_SERVER,

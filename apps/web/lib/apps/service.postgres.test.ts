@@ -1301,7 +1301,7 @@ contractTest(
         remoteUrl: "https://mcp.example.test/rpc",
         auth: { mode: "none" },
         launchArguments: [],
-        egressAllowlist: ["https://mcp.example.test"],
+        networkAccess: "full",
         resources: {
           cpuMillicores: 500,
           memoryMib: 512,
@@ -1309,6 +1309,14 @@ contractTest(
         },
       },
     });
+    await assert.rejects(
+      sql`
+        UPDATE "mcp_servers"
+        SET "network_access" = 'none'
+        WHERE "id" = ${customServer.id}
+      `,
+      /mcp_servers_remote_network_access_check|violates check constraint/u,
+    );
     await sql`
       INSERT INTO "tool_capabilities" (
         "provider_key", "key", "runtime_name", "display_name", "description",
