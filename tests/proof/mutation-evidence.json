@@ -218,6 +218,18 @@
       "result": "killed"
     },
     {
+      "id": "terminal-message-projection-omission",
+      "contractId": "runtime.terminal-message-delivery",
+      "target": "apps/desktop/renderer/src/state.ts",
+      "sourceSha256": "65f5cf82067e25f9094f15180d87cfd709978f3bb30bc0b3cff9c5ab234edfaf",
+      "testFiles": [
+        "apps/desktop/tests/rendererState.test.ts"
+      ],
+      "testsSha256": "370bb908e641fa61ed53a566c8a4c9e5f25fb8bef9a3c9921c9a81e0cd96864c",
+      "command": "pnpm --dir apps/desktop exec node --import tsx --test --test-name-pattern=projects terminal messages after pending users tests/rendererState.test.ts",
+      "result": "killed"
+    },
+    {
       "id": "turn-idempotency-bypass",
       "contractId": "web.idempotency",
       "target": "apps/web/lib/turns/store.ts",
