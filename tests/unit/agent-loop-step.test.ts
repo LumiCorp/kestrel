@@ -93,6 +93,39 @@ const SEARCH_TEXT_TOOL: ModelToolSpec = {
   },
 };
 
+const INTERNET_EXTRACT_TOOL: ModelToolSpec = {
+  name: "internet.extract",
+  description: "Extract a public URL.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      url: { type: "string" },
+    },
+    required: ["url"],
+  },
+};
+
+function exhaustedLowYieldExtractionSummary() {
+  return {
+    objectiveKey: "review cleveland magazine article coverage",
+    searchFallbackUsed: false,
+    clusters: [
+      {
+        key: "review cleveland magazine article coverage:clevelandmagazine.com/articles",
+        sourceCluster: "clevelandmagazine.com/articles",
+        attempts: 3,
+        lowYieldAttempts: 3,
+        consecutiveLowYield: 3,
+        lastToolName: "internet.extract",
+        lastQuality: "low",
+        lastIssues: ["truncated_content"],
+        searchFallbackUsed: false,
+      },
+    ],
+  };
+}
+
 function successfulFileMutationEvidence() {
   return [
     {
@@ -1722,6 +1755,436 @@ contractTest("runtime.hermetic", "agent loop sends native tool specs for tool-ca
   assert.deepEqual(capturedRequest.providerOptions?.anthropic, {
     toolChoice: "required",
     parallelToolCalls: true,
+  });
+});
+
+contractTest("runtime.hermetic", "ready all-done Build turns expose only goal_satisfied finalization", async () => {
+  let capturedRequest: ModelRequest | undefined;
+  const buildContext = context();
+  buildContext.event.payload = {
+    message: "Finish the checked implementation.",
+    interactionMode: "build",
+  };
+  buildContext.session.state = {
+    runtime: { schemaVersion: 1 },
+    evidenceLedger: [successfulReadInputTexEvidence()],
+    agent: {
+      interactionMode: "build",
+      commandBatch: {
+        status: "processed",
+      },
+      visibleTodos: {
+        objective: "Finish the checked implementation.",
+        items: [
+          {
+            id: "verify-result",
+            text: "Verify the final result",
+            status: "done",
+          },
+        ],
+      },
+    },
+  };
+
+  const transition = await buildStep()(buildContext, {
+    useModel: async (request) => {
+      capturedRequest = request;
+      return modelResponse({
+        reason: "All explicit work is done and current.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "Done.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.deepEqual(capturedRequest?.tools?.map((tool) => tool.name), ["kestrel_finalize"]);
+  assert.doesNotMatch(JSON.stringify(capturedRequest?.tools), /out_of_scope/u);
+  assert.equal(capturedRequest?.providerOptions?.openrouter?.parallelToolCalls, false);
+  assert.equal(capturedRequest?.providerOptions?.openai?.parallelToolCalls, false);
+  assert.equal(capturedRequest?.providerOptions?.anthropic?.parallelToolCalls, false);
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  assert.equal(
+    (transition.statePatch?.agent as Record<string, unknown>).nextAction !== undefined,
+    true,
+  );
+});
+
+contractTest("runtime.hermetic", "closeout contract retries remain finalize-only", async () => {
+  const requests: ModelRequest[] = [];
+  const buildContext = context();
+  buildContext.event.payload = {
+    message: "Finish the checked implementation.",
+    interactionMode: "build",
+  };
+  buildContext.session.state = {
+    runtime: { schemaVersion: 1 },
+    evidenceLedger: [successfulReadInputTexEvidence()],
+    agent: {
+      interactionMode: "build",
+      visibleTodos: {
+        objective: "Finish the checked implementation.",
+        items: [
+          {
+            id: "verify-result",
+            text: "Verify the final result",
+            status: "done",
+          },
+        ],
+      },
+    },
+  };
+
+  const transition = await buildStep()(buildContext, {
+    useModel: async (request) => {
+      requests.push(request);
+      if (requests.length === 1) {
+        return modelResponse({
+          reason: "Malformed closeout narrates internal workflow.",
+          nextAction: {
+            kind: "finalize",
+            status: "goal_satisfied",
+            message: "The next move is to answer the question directly in chat.",
+          },
+        });
+      }
+      return modelResponse({
+        reason: "Repair the malformed closeout.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "Done.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(requests.length, 2);
+  for (const request of requests) {
+    assert.deepEqual(request.tools?.map((tool) => tool.name), ["kestrel_finalize"]);
+    assert.equal(request.providerOptions?.openai?.parallelToolCalls, false);
+  }
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  assert.equal(
+    (transition.statePatch?.agent as Record<string, unknown>).nextAction !== undefined,
+    true,
+  );
+});
+
+contractTest("runtime.hermetic", "non-ready Build states retain the normal action surface", async () => {
+  const doneTodos = {
+    objective: "Finish the checked implementation.",
+    items: [
+      {
+        id: "verify-result",
+        text: "Verify the final result",
+        status: "done",
+      },
+    ],
+  };
+  const unresolvedEvidence = [
+    successfulShellChangedFilesEvidence(["report.json"], "ev-write-report", 1),
+    {
+      id: "ev-validation-failed",
+      version: "v1",
+      createdAt: "2026-06-15T00:00:02.000Z",
+      stepIndex: 2,
+      source: "tool",
+      kind: "process_result",
+      status: "failed",
+      summary: "Validation failed.",
+      target: { type: "tool", value: "dev.shell.run" },
+      facts: {
+        toolName: "dev.shell.run",
+        command: "pnpm test",
+        exitCode: 1,
+      },
+    },
+  ];
+  const variants: Array<{
+    name: string;
+    evidenceLedger?: unknown[];
+    agent: Record<string, unknown>;
+  }> = [
+    {
+      name: "absent checklist",
+      evidenceLedger: [successfulReadInputTexEvidence()],
+      agent: {},
+    },
+    {
+      name: "open checklist",
+      evidenceLedger: [successfulReadInputTexEvidence()],
+      agent: {
+        visibleTodos: {
+          ...doneTodos,
+          items: [{ ...doneTodos.items[0], status: "pending" }],
+        },
+      },
+    },
+    {
+      name: "blocked checklist",
+      evidenceLedger: [successfulReadInputTexEvidence()],
+      agent: {
+        visibleTodos: {
+          ...doneTodos,
+          items: [{ ...doneTodos.items[0], status: "blocked" }],
+        },
+      },
+    },
+    {
+      name: "missing execution evidence",
+      agent: { visibleTodos: doneTodos },
+    },
+    {
+      name: "missing required capability evidence",
+      evidenceLedger: [successfulReadInputTexEvidence()],
+      agent: {
+        visibleTodos: doneTodos,
+        toolIntent: {
+          version: "v3",
+          execution: {
+            objective: "Finish the checked implementation.",
+            candidateTools: ["fs.read_text"],
+          },
+          metadata: {
+            verificationIntent: {
+              requested: true,
+              kinds: ["browser"],
+            },
+          },
+          confidence: 0.95,
+        },
+      },
+    },
+    {
+      name: "stale validation",
+      evidenceLedger: [
+        successfulShellChangedFilesEvidence(["report.json"], "ev-write-report", 1),
+      ],
+      agent: { visibleTodos: doneTodos },
+    },
+    {
+      name: "unresolved validation",
+      evidenceLedger: unresolvedEvidence,
+      agent: { visibleTodos: doneTodos },
+    },
+    {
+      name: "live process",
+      evidenceLedger: [successfulReadInputTexEvidence()],
+      agent: {
+        visibleTodos: doneTodos,
+        exec: {
+          devShell: {
+            processes: [
+              {
+                processId: "proc-live",
+                status: "RUNNING",
+                live: true,
+              },
+            ],
+          },
+        },
+      },
+    },
+    {
+      name: "live process without status",
+      evidenceLedger: [successfulReadInputTexEvidence()],
+      agent: {
+        visibleTodos: doneTodos,
+        exec: {
+          devShell: {
+            processes: [
+              {
+                processId: "proc-live-without-status",
+                live: true,
+              },
+            ],
+          },
+        },
+      },
+    },
+    {
+      name: "live process from verification fallback",
+      evidenceLedger: [successfulReadInputTexEvidence()],
+      agent: {
+        visibleTodos: doneTodos,
+        postToolVerification: {
+          devShell: {
+            activeProcessId: "proc-live-fallback",
+            activeProcessPresent: true,
+            status: "RUNNING",
+          },
+        },
+      },
+    },
+    {
+      name: "pending execution boundary",
+      evidenceLedger: [successfulReadInputTexEvidence()],
+      agent: {
+        visibleTodos: doneTodos,
+        commandBatch: {
+          status: "ready",
+          commands: [
+            {
+              kind: "tool",
+              name: "fs.read_text",
+              input: { path: "README.md" },
+            },
+          ],
+        },
+      },
+    },
+  ];
+
+  for (const variant of variants) {
+    let capturedRequest: ModelRequest | undefined;
+    const buildContext = context();
+    buildContext.event.payload = {
+      message: "Continue the implementation.",
+      interactionMode: "build",
+    };
+    buildContext.session.state = {
+      runtime: { schemaVersion: 1 },
+      ...(variant.evidenceLedger !== undefined
+        ? { evidenceLedger: variant.evidenceLedger }
+        : {}),
+      agent: {
+        interactionMode: "build",
+        ...variant.agent,
+      },
+    };
+
+    await buildStep()(buildContext, {
+      useModel: async (request) => {
+        capturedRequest = request;
+        return modelResponse({
+          reason: `Continue for ${variant.name}.`,
+          nextAction: {
+            kind: "tool",
+            name: "fs.read_text",
+            input: { path: "README.md" },
+          },
+        });
+      },
+    } satisfies StepIO);
+
+    assert.equal(
+      capturedRequest?.tools?.some((tool) => tool.name === "fs_read_text"),
+      true,
+      variant.name,
+    );
+  }
+});
+
+contractTest("runtime.hermetic", "low-yield policy retry can recover through a different source cluster", async () => {
+  let requestCount = 0;
+  const buildContext = context();
+  buildContext.event.payload = {
+    message: "Review Cleveland magazine article coverage.",
+    interactionMode: "build",
+  };
+  buildContext.session.state.agent = {
+    interactionMode: "build",
+    visibleTodos: {
+      objective: "Review Cleveland magazine article coverage.",
+      items: [
+        {
+          id: "collect-sources",
+          text: "Collect useful sources",
+          status: "in_progress",
+        },
+      ],
+    },
+    postToolVerification: {
+      webExtractionRetrySummary: exhaustedLowYieldExtractionSummary(),
+    },
+  };
+
+  const transition = await buildStep({
+    tools: [INTERNET_EXTRACT_TOOL],
+    capabilityManifest: [
+      {
+        name: "internet.extract",
+        description: "Extract a public URL.",
+        capabilityClasses: ["internet.read"],
+        executionClass: "read_only",
+      },
+    ],
+  })(buildContext, {
+    useModel: async () => {
+      requestCount += 1;
+      return modelResponse({
+        reason: requestCount === 1
+          ? "Try another URL from the same stalled cluster."
+          : "Use a different source cluster.",
+        nextAction: {
+          kind: "tool",
+          name: "internet.extract",
+          input: {
+            url: requestCount === 1
+              ? "https://www.clevelandmagazine.com/articles/story-4"
+              : "https://www.clevelandmagazine.com/features/story-4",
+          },
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  const nextAction = (transition.statePatch?.agent as Record<string, unknown>)
+    .nextAction as Record<string, unknown>;
+  assert.equal(requestCount, 2);
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  assert.deepEqual(nextAction.input, {
+    url: "https://www.clevelandmagazine.com/features/story-4",
+  });
+});
+
+contractTest("runtime.hermetic", "fresh user turns do not inherit an exhausted low-yield source budget", async () => {
+  const buildContext = context();
+  buildContext.event.payload = {
+    message: "Start a fresh review of this article.",
+    interactionMode: "build",
+  };
+  buildContext.session.state.agent = {
+    interactionMode: "build",
+    postToolVerification: {
+      webExtractionRetrySummary: exhaustedLowYieldExtractionSummary(),
+    },
+  };
+
+  const transition = await buildStep({
+    tools: [INTERNET_EXTRACT_TOOL],
+    capabilityManifest: [
+      {
+        name: "internet.extract",
+        description: "Extract a public URL.",
+        capabilityClasses: ["internet.read"],
+        executionClass: "read_only",
+      },
+    ],
+  })(buildContext, {
+    useModel: async () => modelResponse({
+      reason: "Extract the source for the new task.",
+      nextAction: {
+        kind: "tool",
+        name: "internet.extract",
+        input: {
+          url: "https://www.clevelandmagazine.com/articles/story-1",
+        },
+      },
+    }),
+  } satisfies StepIO);
+
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  assert.deepEqual(agent.nextAction, {
+    kind: "tool",
+    name: "internet.extract",
+    input: {
+      url: "https://www.clevelandmagazine.com/articles/story-1",
+    },
   });
 });
 

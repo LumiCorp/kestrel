@@ -199,7 +199,7 @@ export function analyzeVisibleTodoFinalizeReadiness(input: {
   const residualIds = new Set(residualGap.residualTodoIds);
   const residualOpenItems = openItems.filter((item) =>
     item.status === "blocked" &&
-      (residualIds.size === 0 || residualIds.has(item.id))
+      residualIds.has(item.id)
   );
   if (residualOpenItems.length !== openItems.length) {
     return {

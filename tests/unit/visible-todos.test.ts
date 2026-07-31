@@ -109,6 +109,33 @@ contractTest("runtime.hermetic", "visible todo finalize readiness treats documen
   assert.equal(todos?.items[1]?.note, "Browser E2E was not directly exercised.");
 });
 
+contractTest("runtime.hermetic", "visible todo finalize readiness requires explicit residual todo ids", () => {
+  const todos = normalizeVisibleTodoState({
+    objective: "Deploy the app",
+    items: [
+      { id: "build", text: "Run build", status: "done" },
+      {
+        id: "production-credential",
+        text: "Obtain production API credential from user",
+        status: "blocked",
+        note: "The user has not supplied the credential.",
+      },
+    ],
+  });
+  const residualGap = normalizeVisibleTodoResidualGapData({
+    openGap: "Production deployment is blocked on a user-provided credential.",
+  });
+
+  const analysis = analyzeVisibleTodoFinalizeReadiness({
+    todos,
+    ...(residualGap !== undefined ? { residualGap } : {}),
+  });
+
+  assert.equal(analysis.complete, false);
+  assert.equal(analysis.residualOpenItems.length, 0);
+  assert.equal(analysis.blockingOpenItems[0]?.id, "production-credential");
+});
+
 contractTest("runtime.hermetic", "visible todo finalize readiness keeps actionable work blocking", () => {
   const todos = normalizeVisibleTodoState({
     objective: "Build the app",

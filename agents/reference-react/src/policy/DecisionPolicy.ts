@@ -10,7 +10,63 @@ import type {
   WorkspaceFreshnessEvidenceRef,
   WorkspaceFreshnessSummary,
 } from "../../../../src/runtime/workspaceFreshness.js";
+import {
+  analyzeVisibleTodosCompletion,
+  type VisibleTodoState,
+} from "../../../../src/runtime/visibleTodos.js";
 import { readKeepRunningSessionIds } from "../finalizationPolicy.js";
+
+export interface GoalSatisfiedCloseoutReadiness {
+  ready: boolean;
+  explicitAllDoneChecklist: boolean;
+  missingCapabilityEvidence: string[];
+  hasExecutionEvidence: boolean;
+  workspaceFreshness: WorkspaceFreshnessSummary;
+  activeExecCommandSessions: WorkspaceFreshnessEvidenceRef[];
+  hasPendingExecutionBoundary: boolean;
+}
+
+export function assessGoalSatisfiedCloseoutReadiness(input: {
+  interactionMode?: InteractionMode | undefined;
+  visibleTodos?: VisibleTodoState | undefined;
+  requiredCapabilities: string[];
+  observedCapabilities: string[];
+  hasExecutionEvidence: boolean;
+  workspaceFreshness: WorkspaceFreshnessSummary;
+  activeExecCommandSessions: WorkspaceFreshnessEvidenceRef[];
+  hasPendingExecutionBoundary?: boolean | undefined;
+}): GoalSatisfiedCloseoutReadiness {
+  const observedCapabilities = new Set(
+    input.observedCapabilities.map((capability) => normalizeCapabilityToken(capability)),
+  );
+  const missingCapabilityEvidence = input.requiredCapabilities.filter(
+    (capability) => observedCapabilities.has(normalizeCapabilityToken(capability)) === false,
+  );
+  const explicitAllDoneChecklist =
+    input.visibleTodos !== undefined &&
+    input.visibleTodos.items.length > 0 &&
+    analyzeVisibleTodosCompletion(input.visibleTodos).openItems.length === 0;
+  const hasPendingExecutionBoundary = input.hasPendingExecutionBoundary === true;
+  const workspaceValidationReady =
+    input.workspaceFreshness.status === "not_applicable" ||
+    input.workspaceFreshness.status === "fresh";
+  return {
+    ready:
+      input.interactionMode === "build" &&
+      explicitAllDoneChecklist &&
+      missingCapabilityEvidence.length === 0 &&
+      input.hasExecutionEvidence &&
+      workspaceValidationReady &&
+      input.activeExecCommandSessions.length === 0 &&
+      hasPendingExecutionBoundary === false,
+    explicitAllDoneChecklist,
+    missingCapabilityEvidence,
+    hasExecutionEvidence: input.hasExecutionEvidence,
+    workspaceFreshness: input.workspaceFreshness,
+    activeExecCommandSessions: input.activeExecCommandSessions,
+    hasPendingExecutionBoundary,
+  };
+}
 
 export interface DecisionPolicyContext {
   phase: "deliberator";
@@ -24,6 +80,7 @@ export interface DecisionPolicyContext {
   capabilityManifest: ToolCapabilityManifestItem[];
   executionIntent?: DecisionContextExecutionIntent | undefined;
   interactionMode?: InteractionMode | undefined;
+  goalSatisfiedCloseoutReadiness?: GoalSatisfiedCloseoutReadiness | undefined;
 }
 
 export function validateDecisionPolicy(context: DecisionPolicyContext): string[] {
@@ -99,7 +156,11 @@ function validateBuildModeGoalSatisfiedEvidence(context: DecisionPolicyContext):
     return;
   }
 
-  const activeSessions = context.activeExecCommandSessions ?? [];
+  const readiness = context.goalSatisfiedCloseoutReadiness;
+  const activeSessions =
+    readiness?.activeExecCommandSessions ??
+    context.activeExecCommandSessions ??
+    [];
   const keepRunningSessionIds = readKeepRunningSessionIds(context.action);
   const keepRunningSessionIdSet = new Set(keepRunningSessionIds);
   const undeclaredActiveSessions = activeSessions.filter(
@@ -123,7 +184,7 @@ function validateBuildModeGoalSatisfiedEvidence(context: DecisionPolicyContext):
     );
   }
 
-  const freshness = context.workspaceFreshness;
+  const freshness = readiness?.workspaceFreshness ?? context.workspaceFreshness;
   if (freshness?.status === "stale") {
     throw decisionPolicyError(
       "Build mode cannot finalize goal_satisfied because the latest workspace mutation has no later current-state validation evidence.",
@@ -153,7 +214,11 @@ function validateBuildModeGoalSatisfiedEvidence(context: DecisionPolicyContext):
     );
   }
 
-  if (context.hasExecutionEvidence === true || context.observedCapabilities.length > 0) {
+  if (
+    readiness?.hasExecutionEvidence === true ||
+    context.hasExecutionEvidence === true ||
+    context.observedCapabilities.length > 0
+  ) {
     return;
   }
 

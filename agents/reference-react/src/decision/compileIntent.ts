@@ -29,7 +29,16 @@ import {
   type DecisionIngestCategory,
 } from "./DecisionCompileError.js";
 import {
+  RECOVERY_LOW_YIELD_CLUSTER_THRESHOLD,
+} from "../../../../src/runtime/recoveryVerdict.js";
+import {
+  normalizeSourceCluster,
+  normalizeWebExtractionRetrySummary,
+} from "../../../../src/runtime/webExtraction.js";
+import {
+  assessGoalSatisfiedCloseoutReadiness as assessPolicyGoalSatisfiedCloseoutReadiness,
   computeMissingRequiredCapabilities,
+  type GoalSatisfiedCloseoutReadiness,
   validateDecisionPolicy,
 } from "../policy/DecisionPolicy.js";
 import { stableObjectHash, sortValue } from "../context/textUtils.js";
@@ -103,6 +112,44 @@ export interface CompileAgentActionInput {
   activePlan?: RuntimePlanState | undefined;
 }
 
+export interface GoalSatisfiedCloseoutReadinessInput {
+  interactionMode?: InteractionMode | undefined;
+  observedCapabilities: string[];
+  compiledIntent?: CompiledIntent | undefined;
+  executionIntent?: DecisionContextExecutionIntent | undefined;
+  intentMetadata?: DecisionContextIntentMetadata | undefined;
+  toolIntent?: DecisionContextToolIntent | undefined;
+  postToolVerification?: Record<string, unknown> | undefined;
+  lastActionResult?: unknown;
+  devShellProcesses?: Record<string, unknown>[] | undefined;
+  evidenceContext?: EvidenceLedgerContext | undefined;
+  evidenceLedger?: Array<EvidenceLedgerEntry | object> | undefined;
+  visibleTodos?: VisibleTodoState | undefined;
+  hasPendingExecutionBoundary?: boolean | undefined;
+}
+
+export function evaluateGoalSatisfiedCloseoutReadiness(
+  input: GoalSatisfiedCloseoutReadinessInput,
+): GoalSatisfiedCloseoutReadiness {
+  const canonicalIntent = resolveCanonicalIntentContext(input);
+  const requiredCapabilities = requiredCapabilitiesForCanonicalIntent(canonicalIntent)
+    .filter(isModelFacingToolCapability);
+  const evidenceLedger = input.evidenceLedger ?? [];
+  return assessPolicyGoalSatisfiedCloseoutReadiness({
+    interactionMode: input.interactionMode,
+    visibleTodos: normalizeVisibleTodoState(input.visibleTodos),
+    requiredCapabilities,
+    observedCapabilities: input.observedCapabilities,
+    hasExecutionEvidence: hasBuildModeExecutionEvidence(input),
+    workspaceFreshness: deriveWorkspaceFreshness(evidenceLedger),
+    activeExecCommandSessions: mergeActiveExecCommandSessions(
+      deriveActiveExecCommandSessions(evidenceLedger),
+      input.devShellProcesses,
+    ),
+    hasPendingExecutionBoundary: input.hasPendingExecutionBoundary,
+  });
+}
+
 export interface CompiledDecision {
   phase: DecisionPhase;
   plan: DecisionPlan;
@@ -159,6 +206,15 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
     deriveActiveExecCommandSessions(input.evidenceLedger),
     input.devShellProcesses,
   );
+  const goalSatisfiedCloseoutReadiness = assessPolicyGoalSatisfiedCloseoutReadiness({
+    interactionMode: input.interactionMode,
+    visibleTodos,
+    requiredCapabilities: canonicalRequiredCapabilities.filter(isModelFacingToolCapability),
+    observedCapabilities: input.observedCapabilities,
+    hasExecutionEvidence: hasBuildModeExecutionEvidence(input),
+    workspaceFreshness,
+    activeExecCommandSessions,
+  });
   const hasOpenVisibleTodos = visibleTodos !== undefined &&
     analyzeVisibleTodosCompletion(visibleTodos).openItems.some((item) =>
       item.status === "pending" || item.status === "in_progress"
@@ -183,6 +239,7 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
   );
   validatePublicInternetUrlToolContract(action);
   validateSingleLoopAction(action);
+  validateLowYieldSourceClusterAdmission(action, input.postToolVerification);
   const repetitionSignals = withCompiledActionRepetitionSignals(
     input.repetitionSignals,
     action,
@@ -243,6 +300,7 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
     capabilityManifest: input.capabilityManifest,
     ...(compatibilityExecutionIntent !== undefined ? { executionIntent: compatibilityExecutionIntent } : {}),
     ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+    goalSatisfiedCloseoutReadiness,
   });
 
   const boundAction = action;
@@ -333,7 +391,14 @@ function deriveRequiredCapabilitiesFromReactAction(
   ));
 }
 
-function hasBuildModeExecutionEvidence(input: CompileAgentActionInput): boolean {
+function hasBuildModeExecutionEvidence(input: Pick<
+  CompileAgentActionInput,
+  | "observedCapabilities"
+  | "evidenceContext"
+  | "evidenceLedger"
+  | "postToolVerification"
+  | "lastActionResult"
+>): boolean {
   if (input.observedCapabilities.length > 0) {
     return true;
   }
@@ -360,6 +425,68 @@ function hasBuildModeExecutionEvidence(input: CompileAgentActionInput): boolean 
   return false;
 }
 
+function validateLowYieldSourceClusterAdmission(
+  action: ReactAction,
+  postToolVerification: Record<string, unknown> | undefined,
+): void {
+  const retrySummary = normalizeWebExtractionRetrySummary(
+    postToolVerification?.webExtractionRetrySummary,
+  );
+  if (retrySummary === undefined) {
+    return;
+  }
+
+  const exhaustedThreshold = RECOVERY_LOW_YIELD_CLUSTER_THRESHOLD + 1;
+  for (const item of collectToolActionItems(action)) {
+    if (item.name !== "internet.extract") {
+      continue;
+    }
+    const input = asRecord(item.input);
+    const urls = [
+      ...(asString(input?.url) !== undefined ? [asString(input?.url)!] : []),
+      ...asArray(input?.urls)
+        .map((value) => asString(value))
+        .filter((value): value is string => value !== undefined),
+    ];
+    const sourceClusters = [...new Set(
+      urls
+        .map((url) => normalizeSourceCluster(url))
+        .filter((sourceCluster): sourceCluster is string => sourceCluster !== undefined),
+    )];
+    for (const sourceCluster of sourceClusters) {
+      const clusterKey = `${retrySummary.objectiveKey}:${sourceCluster}`;
+      const cluster = retrySummary.clusters.find(
+        (entry) =>
+          entry.key === clusterKey &&
+          entry.sourceCluster === sourceCluster,
+      );
+      if ((cluster?.consecutiveLowYield ?? 0) < exhaustedThreshold) {
+        continue;
+      }
+      throw new DecisionCompileError(
+        "DECISION_POLICY_FAILED",
+        `Further extraction from source cluster '${sourceCluster}' is blocked after the allowed low-yield recovery attempt.`,
+        "policy",
+        {
+          reason: "low_yield_source_cluster_exhausted",
+          objectiveKey: retrySummary.objectiveKey,
+          sourceCluster,
+          observedStreak: cluster?.consecutiveLowYield ?? 0,
+          stallThreshold: RECOVERY_LOW_YIELD_CLUSTER_THRESHOLD,
+          recoveryAttemptsAllowed: 1,
+          allowedRecoveryChoices: [
+            "choose_different_source_cluster",
+            "use_targeted_search",
+            "qualified_partial_closeout",
+          ],
+          requiredCorrection:
+            "Choose a different source cluster, use targeted search, or close out with a qualified partial result.",
+        },
+      );
+    }
+  }
+}
+
 function mergeActiveExecCommandSessions(
   evidenceSessions: ReturnType<typeof deriveActiveExecCommandSessions>,
   runtimeProcesses: Record<string, unknown>[] | undefined,
@@ -370,7 +497,7 @@ function mergeActiveExecCommandSessions(
   for (const process of runtimeProcesses ?? []) {
     const processId = asString(process.processId) ?? asString(process.sessionId);
     const status = asString(process.status)?.trim().toUpperCase();
-    if (processId === undefined || status !== "RUNNING") {
+    if (processId === undefined || (status !== "RUNNING" && process.live !== true)) {
       continue;
     }
     byProcessId.set(processId, {
