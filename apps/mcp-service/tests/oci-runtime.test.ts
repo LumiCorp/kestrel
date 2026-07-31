@@ -14,12 +14,12 @@ const server: Extract<AuthorizedMcpServer, { sourceType: "oci" }> = {
   imageReference: `ghcr.io/kestrel/filesystem@${digest}`,
   digest,
   launchArguments: ["--stdio"],
-  egressAllowlist: [],
+  networkAccess: "full",
   resources: { cpuMillicores: 250, memoryMib: 384, pidsLimit: 64 },
   credential: undefined,
 };
 
-contractTest("services.hermetic", "OCI MCP command is per-run, read-only, resource-limited, and default-deny", () => {
+contractTest("services.hermetic", "OCI MCP command is per-run, read-only, resource-limited, and defaults to full network", () => {
   const command = buildOciDockerRunCommand({
     grantId: "grant-1",
     server,
@@ -32,7 +32,7 @@ contractTest("services.hermetic", "OCI MCP command is per-run, read-only, resour
     "--rm",
     "--interactive",
   ]);
-  assert.deepEqual(option(command.args, "--network"), ["none"]);
+  assert.deepEqual(option(command.args, "--network"), ["bridge"]);
   assert.equal(command.args.includes("--read-only"), true);
   assert.deepEqual(option(command.args, "--cap-drop"), ["ALL"]);
   assert.deepEqual(option(command.args, "--security-opt"), [
@@ -48,16 +48,7 @@ contractTest("services.hermetic", "OCI MCP command is per-run, read-only, resour
   assert.equal(command.args.at(-1), "--stdio");
 });
 
-contractTest("services.hermetic", "OCI MCP requires a broker lease for egress and rejects mutable images", () => {
-  assert.throws(
-    () =>
-      buildOciDockerRunCommand({
-        grantId: "grant-1",
-        server: { ...server, egressAllowlist: ["https://api.example.com"] },
-        workspacePath: "/workspace",
-      }),
-    /requires an isolated egress broker lease/u
-  );
+contractTest("services.hermetic", "OCI MCP rejects mutable images", () => {
   assert.throws(
     () =>
       buildOciDockerRunCommand({
@@ -72,22 +63,13 @@ contractTest("services.hermetic", "OCI MCP requires a broker lease for egress an
   );
 });
 
-contractTest("services.hermetic", "OCI MCP with egress can reach only its broker on an internal network", () => {
+contractTest("services.hermetic", "OCI MCP can be explicitly isolated from the network", () => {
   const command = buildOciDockerRunCommand({
     grantId: "grant-1",
-    server: { ...server, egressAllowlist: ["https://api.example.com"] },
+    server: { ...server, networkAccess: "none" },
     workspacePath: "/workspace",
-    networkName: "kestrel-mcp-net-grant-1",
-    proxyUrl: "http://kestrel-egress-broker:8080",
   });
-  assert.deepEqual(option(command.args, "--network"), [
-    "kestrel-mcp-net-grant-1",
-  ]);
-  assert.equal(
-    command.args.includes("HTTPS_PROXY=http://kestrel-egress-broker:8080"),
-    true
-  );
-  assert.equal(command.args.includes("--network=bridge"), false);
+  assert.deepEqual(option(command.args, "--network"), ["none"]);
 });
 
 function option(args: string[], name: string): string[] {

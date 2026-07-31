@@ -386,6 +386,13 @@
       "when": 1785081600000,
       "tag": "0054_desktop_environments",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1785513600000,
+      "tag": "0055_mcp_network_access",
+      "breakpoints": true
     }
   ]
 }

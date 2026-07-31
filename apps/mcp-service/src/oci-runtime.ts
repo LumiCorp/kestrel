@@ -8,7 +8,6 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { AuthorizedMcpGrant, AuthorizedMcpServer } from "./contracts.js";
 import { createMcpHostClient } from "./host-capabilities.js";
 import type { McpInteractionCoordinator } from "./interaction-coordinator.js";
-import { startOciEgressBroker } from "./oci-egress-runtime.js";
 
 const DIGEST_PINNED_IMAGE = /@sha256:[0-9a-f]{64}$/u;
 
@@ -76,18 +75,7 @@ async function connectOciAtWorkspace(input: {
   roots?: Array<{ uri: string; name: string }> | undefined;
   interactions?: Parameters<typeof createMcpHostClient>[0]["interactions"];
 }): Promise<{ client: Client; close: () => Promise<void> }> {
-  const egress = await startOciEgressBroker({
-    grantId: input.grantId,
-    server: input.server,
-    runtimeCommand: input.runtimeCommand,
-    brokerImage: process.env.KESTREL_MCP_EGRESS_BROKER_IMAGE,
-  });
-  const command = buildOciDockerRunCommand({
-    ...input,
-    ...(egress
-      ? { networkName: egress.networkName, proxyUrl: egress.proxyUrl }
-      : {}),
-  });
+  const command = buildOciDockerRunCommand(input);
   const transport = new StdioClientTransport({
     command: command.command,
     args: command.args,
@@ -108,17 +96,11 @@ async function connectOciAtWorkspace(input: {
     roots: input.roots,
     interactions: input.interactions,
   });
-  try {
-    await client.connect(transport);
-  } catch (error) {
-    await egress?.close().catch(() => {});
-    throw error;
-  }
+  await client.connect(transport);
   return {
     client,
     close: async () => {
       await client.close().catch(() => {});
-      await egress?.close().catch(() => {});
     },
   };
 }
@@ -128,8 +110,6 @@ export function buildOciDockerRunCommand(input: {
   server: Extract<AuthorizedMcpServer, { sourceType: "oci" }>;
   workspacePath: string;
   runtimeCommand?: string | undefined;
-  networkName?: string | undefined;
-  proxyUrl?: string | undefined;
 }): { command: string; args: string[] } {
   const { server } = input;
   if (!DIGEST_PINNED_IMAGE.test(server.imageReference)) {
@@ -140,14 +120,6 @@ export function buildOciDockerRunCommand(input: {
   }
   if (server.credential) {
     throw new Error("OCI stdio MCP servers cannot receive remote credentials.");
-  }
-  if (
-    server.egressAllowlist.length > 0 &&
-    !(input.networkName && input.proxyUrl)
-  ) {
-    throw new Error(
-      "OCI MCP egress requires an isolated egress broker lease."
-    );
   }
   const containerName = `kestrel-mcp-${sanitizeName(input.grantId)}-${sanitizeName(server.id)}`.slice(
     0,
@@ -162,21 +134,7 @@ export function buildOciDockerRunCommand(input: {
       "--name",
       containerName,
       "--network",
-      input.networkName ?? "none",
-      ...(input.proxyUrl
-        ? [
-            "--env",
-            `HTTPS_PROXY=${input.proxyUrl}`,
-            "--env",
-            `https_proxy=${input.proxyUrl}`,
-            "--env",
-            `HTTP_PROXY=${input.proxyUrl}`,
-            "--env",
-            `http_proxy=${input.proxyUrl}`,
-            "--env",
-            "NO_PROXY=localhost,127.0.0.1",
-          ]
-        : []),
+      server.networkAccess === "none" ? "none" : "bridge",
       "--read-only",
       "--cap-drop",
       "ALL",

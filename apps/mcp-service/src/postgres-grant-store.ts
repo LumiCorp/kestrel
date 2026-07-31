@@ -33,7 +33,7 @@ type ServerRow = {
   oci_image_reference: string | null;
   oci_digest: string | null;
   launch_arguments: unknown;
-  egress_allowlist: unknown;
+  network_access: "full" | "none";
   cpu_millicores: number;
   memory_mib: number;
   pids_limit: number;
@@ -147,7 +147,7 @@ export class PostgresMcpGrantStore implements McpGrantStore {
                 server.oci_image_reference,
                 server.oci_digest,
                 server.launch_arguments,
-                server.egress_allowlist,
+                server.network_access,
                 server.cpu_millicores,
                 server.memory_mib,
                 server.pids_limit,
@@ -215,7 +215,6 @@ function parseServer(row: ServerRow): AuthorizedMcpGrant["servers"][number] {
     name: row.name,
     transport: row.transport,
     launchArguments: parseStringArray(row.launch_arguments, "launch arguments"),
-    egressAllowlist: parseStringArray(row.egress_allowlist, "egress allowlist"),
     resources: {
       cpuMillicores: requirePositiveInteger(row.cpu_millicores, "CPU limit"),
       memoryMib: requirePositiveInteger(row.memory_mib, "memory limit"),
@@ -224,7 +223,13 @@ function parseServer(row: ServerRow): AuthorizedMcpGrant["servers"][number] {
     credential,
   };
   if (row.source_type === "remote") {
-    if (!(row.transport === "streamable_http" && row.remote_url)) {
+    if (
+      !(
+        row.transport === "streamable_http" &&
+        row.remote_url &&
+        row.network_access === "full"
+      )
+    ) {
       throw new Error("Authorized remote MCP server is invalid.");
     }
     return {
@@ -232,6 +237,7 @@ function parseServer(row: ServerRow): AuthorizedMcpGrant["servers"][number] {
       sourceType: "remote",
       transport: "streamable_http",
       remoteUrl: row.remote_url,
+      networkAccess: "full",
     };
   }
   if (!(row.oci_image_reference && row.oci_digest)) {
@@ -242,6 +248,7 @@ function parseServer(row: ServerRow): AuthorizedMcpGrant["servers"][number] {
     sourceType: "oci",
     imageReference: row.oci_image_reference,
     digest: row.oci_digest,
+    networkAccess: row.network_access,
   };
 }
 

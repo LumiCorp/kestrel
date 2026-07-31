@@ -22,9 +22,6 @@ service.
   header are accepted after ticket authorization.
 - `KESTREL_MCP_WORKSPACE_ROOT`: canonical parent directory containing one
   directory per Environment workspace identifier.
-- `KESTREL_MCP_EGRESS_BROKER_IMAGE`: digest-pinned reference to this service
-  image. The OCI launcher overrides its command to run the bundled CONNECT
-  broker.
 
 `GET /health` reports database reachability, active session count, and
 discovery worker status. It never returns credentials, request bodies, or MCP
@@ -42,9 +39,8 @@ contract.
 Each run starts the MCP server with a read-only root filesystem, dropped
 capabilities, no-new-privileges, a non-root user, bounded CPU, memory and PIDs,
 and the Project workspace mounted read-only. Network access defaults to
-`none`. When an Environment administrator supplies HTTPS origins, an isolated
-per-run internal network and digest-pinned CONNECT broker enforce the exact
-allowlist with DNS pinning and private-address rejection.
+`full`. An Environment administrator can explicitly select `none` for an MCP
+server designed to run offline.
 
 When the service itself is containerized, the deployment must supply a
 constrained Docker API endpoint and the workspace mount. Mounting an

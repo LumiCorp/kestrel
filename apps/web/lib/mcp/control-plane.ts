@@ -384,14 +384,6 @@ export async function installEnvironmentMcpServer(input: {
       throw new Error("MCP OAuth credential is bound to another resource.");
     }
   }
-  const egressAllowlist = [
-    ...new Set([
-      ...input.server.egressAllowlist,
-      ...(credentialPayload?.kind === "oauth" && credentialPayload.tokenEndpoint
-        ? [new URL(credentialPayload.tokenEndpoint).origin]
-        : []),
-    ]),
-  ];
   const now = new Date();
   const created = await knowledgeDb.transaction(async (transaction) => {
     await transaction.insert(schema.toolProviders).values({
@@ -485,7 +477,7 @@ export async function installEnvironmentMcpServer(input: {
           input.server.sourceType === "oci" ? input.server.digest : null,
         authMode: input.server.auth.mode,
         launchArguments: input.server.launchArguments,
-        egressAllowlist,
+        networkAccess: input.server.networkAccess,
         cpuMillicores: input.server.resources.cpuMillicores,
         memoryMib: input.server.resources.memoryMib,
         pidsLimit: input.server.resources.pidsLimit,

@@ -198,7 +198,7 @@ function makeGrant(approvalMode: "auto" | "ask"): AuthorizedMcpGrant {
         transport: "streamable_http",
         remoteUrl: "https://mcp.example.com/mcp",
         launchArguments: [],
-        egressAllowlist: ["https://mcp.example.com"],
+        networkAccess: "full",
         resources: { cpuMillicores: 500, memoryMib: 512, pidsLimit: 128 },
         credential: undefined,
       },

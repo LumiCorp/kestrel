@@ -1,49 +1,43 @@
 import assert from "node:assert/strict";
-import { normalizeHttpsOrigin } from "../src/egress-broker.js";
-import { buildOciEgressBrokerCommands } from "../src/oci-egress-runtime.js";
+
+import type { AuthorizedMcpServer } from "../src/contracts.js";
+import { buildOciDockerRunCommand } from "../src/oci-runtime.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
 
+const digest = `sha256:${"a".repeat(64)}`;
+const server: Extract<AuthorizedMcpServer, { sourceType: "oci" }> = {
+  id: "server-network",
+  name: "Network MCP",
+  sourceType: "oci",
+  transport: "stdio",
+  imageReference: `ghcr.io/kestrel/network@${digest}`,
+  digest,
+  launchArguments: [],
+  networkAccess: "full",
+  resources: { cpuMillicores: 250, memoryMib: 256, pidsLimit: 64 },
+  credential: undefined,
+};
 
-contractTest("services.hermetic", "OCI egress broker topology isolates the MCP container network", () => {
-  const digest = `sha256:${"b".repeat(64)}`;
-  const commands = buildOciEgressBrokerCommands({
-    networkName: "kestrel-mcp-net-run",
-    brokerName: "kestrel-mcp-egress-run",
-    brokerImage: `ghcr.io/kestrel/mcp-service@${digest}`,
-    allowlist: ["https://api.example.com"],
+contractTest("services.hermetic", "OCI MCP networking is full or none without proxy policy", () => {
+  const full = buildOciDockerRunCommand({
+    grantId: "grant-full",
+    server,
+    workspacePath: "/workspace",
   });
-  assert.deepEqual(commands.start[0], [
-    "network",
-    "create",
-    "--internal",
-    "kestrel-mcp-net-run",
-  ]);
-  assert.deepEqual(commands.start[2], [
-    "network",
-    "connect",
-    "bridge",
-    "kestrel-mcp-egress-run",
-  ]);
-  assert.equal(commands.start[1]?.includes("--read-only"), true);
-  assert.equal(commands.start[1]?.includes("--no-healthcheck"), true);
-  assert.equal(commands.start[1]?.includes("--cap-drop"), true);
-  assert.equal(
-    commands.start[1]?.includes(
-      'KESTREL_MCP_EGRESS_ALLOWLIST=["https://api.example.com"]'
-    ),
-    true
-  );
-  assert.equal(commands.start[1]?.includes("PORT=8080"), true);
+  const none = buildOciDockerRunCommand({
+    grantId: "grant-none",
+    server: { ...server, networkAccess: "none" },
+    workspacePath: "/workspace",
+  });
+
+  assert.deepEqual(option(full.args, "--network"), ["bridge"]);
+  assert.deepEqual(option(none.args, "--network"), ["none"]);
+  assert.equal(full.args.some((argument) => /proxy/iu.test(argument)), false);
+  assert.equal(none.args.some((argument) => /proxy/iu.test(argument)), false);
 });
 
-contractTest("services.hermetic", "OCI egress allowlists accept only credential-free HTTPS origins", () => {
-  assert.equal(
-    normalizeHttpsOrigin("https://api.example.com/v1"),
-    "https://api.example.com"
-  );
-  assert.throws(() => normalizeHttpsOrigin("http://api.example.com"), /HTTPS/u);
-  assert.throws(
-    () => normalizeHttpsOrigin("https://token@api.example.com"),
-    /HTTPS/u
-  );
-});
+function option(args: string[], name: string): string[] {
+  const index = args.indexOf(name);
+  assert.notEqual(index, -1, `missing ${name}`);
+  return [args[index + 1] ?? ""];
+}
