@@ -18,7 +18,10 @@ if (files.length === 0) throw new Error("No PostgreSQL contracts were discovered
 const runtimeFiles = execFileSync("git", ["ls-files", "-z", "tests/**/*.postgres.test.ts"], { encoding: "utf8" })
   .split("\0")
   .filter(Boolean)
-  .concat("tests/mission-control-project-authority.postgres.test.ts")
+  .concat(
+    "tests/mission-control-project-authority.postgres.test.ts",
+    "tests/mission-control-review-acceptance.postgres.test.ts",
+  )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort();
 
@@ -99,7 +102,10 @@ function runGroup(group: (typeof groups)[number]): Promise<void> {
 function runRuntimeGroup(): Promise<void> {
   if (
     JSON.stringify(runtimeFiles) !==
-    JSON.stringify(["tests/mission-control-project-authority.postgres.test.ts"])
+    JSON.stringify([
+      "tests/mission-control-project-authority.postgres.test.ts",
+      "tests/mission-control-review-acceptance.postgres.test.ts",
+    ])
   ) {
     throw new Error(
       `Runtime PostgreSQL contract assignment drifted.\nDiscovered: ${runtimeFiles.join(", ")}`,

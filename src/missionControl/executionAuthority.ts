@@ -795,7 +795,7 @@ export function reduceMissionControlExecutionAction(
         },
         [],
         undefined,
-        "review",
+        "active",
       );
     }
   }

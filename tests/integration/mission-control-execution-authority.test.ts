@@ -338,6 +338,24 @@ contractTest(
       "stale",
     );
 
+    const authoritativeRetryRun = attempt?.runs.find(
+      (run) => run.runId === attempt?.currentRunId,
+    );
+    assert.ok(authoritativeRetryRun);
+    runner.emitTerminal(
+      authoritativeRetryRun.commandId,
+      authoritativeRetryRun.runId,
+      "run.completed",
+    );
+    await runtime.reconcile(PROJECT_ID);
+    project = await projects.getProject(PROJECT_ID);
+    assert.equal(currentAttempt(project)?.status, "completed");
+    assert.equal(
+      project.document.items["work-1"]?.phase,
+      "active",
+      "successful execution remains Active until candidate-bound evidence is admitted",
+    );
+
     runtime.close();
   },
 );

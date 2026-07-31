@@ -38,10 +38,22 @@
       "result": "killed"
     },
     {
+      "id": "mission-control-acceptance-record-omission",
+      "contractId": "runtime.mission-control-review-acceptance",
+      "target": "src/missionControl/reviewAuthority.ts",
+      "sourceSha256": "a33431aa6b74a15c8992cdf63f3495a3d5497f769f29cc23eb7c04d7a05bbac3",
+      "testFiles": [
+        "tests/mission-control-review-acceptance.postgres.test.ts"
+      ],
+      "testsSha256": "0d17a49bb1a888f3fcb0b46fa4270d33f632a02b9d897d3e55738a8bdae6c89c",
+      "command": "node --import tsx --test --test-name-pattern=candidate-bound review acceptance tests/mission-control-review-acceptance.postgres.test.ts",
+      "result": "killed"
+    },
+    {
       "id": "mission-control-action-replay-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "5227474e5a592000179d581f326fd24dcc58fc9b12710571c18c9a2f73da6497",
+      "sourceSha256": "f55b8d462c6c9215a8c163f1356afd6413b4dfd291b80718503faff6ee122f71",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
@@ -53,11 +65,11 @@
       "id": "mission-control-attempt-identity-bypass",
       "contractId": "runtime.mission-control-execution-authority",
       "target": "src/missionControl/executionAuthority.ts",
-      "sourceSha256": "eee7cf331e363b8ebda814c7c2f455b08040a721cad6c3c34570f5d7d6c64ee5",
+      "sourceSha256": "9fcf2183504d1762d5842544234f45835fdaebc7ab208e86cc0a1d738dff21cb",
       "testFiles": [
         "tests/integration/mission-control-execution-authority.test.ts"
       ],
-      "testsSha256": "8b996c63d9814a31f4ece7f9eb156069d20042aa02f239bf2f32f86a5ab8c313",
+      "testsSha256": "b535c68a8c51c0ea131cccc74b0be9d470262586a8bdf1b5541b592bd9f8b40d",
       "command": "node --import tsx --test --test-name-pattern=canonical attempts control exact runner execution tests/integration/mission-control-execution-authority.test.ts",
       "result": "killed"
     },
@@ -65,7 +77,7 @@
       "id": "mission-control-drag-lifecycle-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "5227474e5a592000179d581f326fd24dcc58fc9b12710571c18c9a2f73da6497",
+      "sourceSha256": "f55b8d462c6c9215a8c163f1356afd6413b4dfd291b80718503faff6ee122f71",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
@@ -77,7 +89,7 @@
       "id": "mission-control-item-version-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "5227474e5a592000179d581f326fd24dcc58fc9b12710571c18c9a2f73da6497",
+      "sourceSha256": "f55b8d462c6c9215a8c163f1356afd6413b4dfd291b80718503faff6ee122f71",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
@@ -101,11 +113,11 @@
       "id": "mission-control-premature-cancel-completion",
       "contractId": "runtime.mission-control-execution-authority",
       "target": "src/missionControl/executionAuthority.ts",
-      "sourceSha256": "eee7cf331e363b8ebda814c7c2f455b08040a721cad6c3c34570f5d7d6c64ee5",
+      "sourceSha256": "9fcf2183504d1762d5842544234f45835fdaebc7ab208e86cc0a1d738dff21cb",
       "testFiles": [
         "tests/integration/mission-control-execution-authority.test.ts"
       ],
-      "testsSha256": "8b996c63d9814a31f4ece7f9eb156069d20042aa02f239bf2f32f86a5ab8c313",
+      "testsSha256": "b535c68a8c51c0ea131cccc74b0be9d470262586a8bdf1b5541b592bd9f8b40d",
       "command": "node --import tsx --test --test-name-pattern=canonical attempts control exact runner execution tests/integration/mission-control-execution-authority.test.ts",
       "result": "killed"
     },
@@ -113,7 +125,7 @@
       "id": "mission-control-project-isolation-bypass",
       "contractId": "runtime.mission-control-project-persistence",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "5227474e5a592000179d581f326fd24dcc58fc9b12710571c18c9a2f73da6497",
+      "sourceSha256": "f55b8d462c6c9215a8c163f1356afd6413b4dfd291b80718503faff6ee122f71",
       "testFiles": [
         "tests/mission-control-project-authority.postgres.test.ts"
       ],
@@ -122,14 +134,38 @@
       "result": "killed"
     },
     {
+      "id": "mission-control-review-bundle-bypass",
+      "contractId": "runtime.mission-control-review-acceptance",
+      "target": "src/missionControl/reviewAuthority.ts",
+      "sourceSha256": "a33431aa6b74a15c8992cdf63f3495a3d5497f769f29cc23eb7c04d7a05bbac3",
+      "testFiles": [
+        "tests/mission-control-review-acceptance.postgres.test.ts"
+      ],
+      "testsSha256": "0d17a49bb1a888f3fcb0b46fa4270d33f632a02b9d897d3e55738a8bdae6c89c",
+      "command": "node --import tsx --test --test-name-pattern=candidate-bound review acceptance tests/mission-control-review-acceptance.postgres.test.ts",
+      "result": "killed"
+    },
+    {
+      "id": "mission-control-review-candidate-bypass",
+      "contractId": "runtime.mission-control-review-acceptance",
+      "target": "src/missionControl/reviewAuthority.ts",
+      "sourceSha256": "a33431aa6b74a15c8992cdf63f3495a3d5497f769f29cc23eb7c04d7a05bbac3",
+      "testFiles": [
+        "tests/mission-control-review-acceptance.postgres.test.ts"
+      ],
+      "testsSha256": "0d17a49bb1a888f3fcb0b46fa4270d33f632a02b9d897d3e55738a8bdae6c89c",
+      "command": "node --import tsx --test --test-name-pattern=candidate-bound review acceptance tests/mission-control-review-acceptance.postgres.test.ts",
+      "result": "killed"
+    },
+    {
       "id": "mission-control-stale-event-bypass",
       "contractId": "runtime.mission-control-execution-authority",
       "target": "src/missionControl/executionAuthority.ts",
-      "sourceSha256": "eee7cf331e363b8ebda814c7c2f455b08040a721cad6c3c34570f5d7d6c64ee5",
+      "sourceSha256": "9fcf2183504d1762d5842544234f45835fdaebc7ab208e86cc0a1d738dff21cb",
       "testFiles": [
         "tests/integration/mission-control-execution-authority.test.ts"
       ],
-      "testsSha256": "8b996c63d9814a31f4ece7f9eb156069d20042aa02f239bf2f32f86a5ab8c313",
+      "testsSha256": "b535c68a8c51c0ea131cccc74b0be9d470262586a8bdf1b5541b592bd9f8b40d",
       "command": "node --import tsx --test --test-name-pattern=canonical attempts control exact runner execution tests/integration/mission-control-execution-authority.test.ts",
       "result": "killed"
     },

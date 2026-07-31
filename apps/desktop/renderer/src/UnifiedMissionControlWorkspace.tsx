@@ -403,6 +403,17 @@ function MissionControlInspector({
     (candidate) => candidate.id !== item.currentAttemptId,
   );
   const itemHistory = history.filter((entry) => entry.itemId === item.id);
+  const currentBundle = item.currentReviewBundleId === undefined
+    ? undefined
+    : item.reviewBundles?.find(
+        (bundle) => bundle.id === item.currentReviewBundleId,
+      );
+  const latestAcceptance = [...(item.reviewDecisions ?? [])]
+    .reverse()
+    .find((decision) => decision.decision === "accepted");
+  const validationEvidence = currentBundle?.evidence.filter(
+    (entry) => entry.kind === "validation",
+  ) ?? [];
   const conversationIds = unique(
     item.attempts.map((candidate) => candidate.requestedSessionId),
   );
@@ -412,7 +423,22 @@ function MissionControlInspector({
   ]));
   const runIds = unique(item.attempts.flatMap((candidate) =>
     candidate.runs.map((run) => run.runId),
+  ).concat(
+    currentBundle?.evidence.flatMap((entry) =>
+      "runId" in entry && entry.runId !== undefined ? [entry.runId] : []
+    ) ?? [],
   ));
+  const reviewIds = currentBundle?.evidence
+    .filter((entry) => entry.kind === "automated_review")
+    .map((entry) => entry.referenceId) ?? [];
+  const artifactIds = currentBundle?.evidence
+    .filter(
+      (entry) =>
+        entry.kind === "artifact" ||
+        entry.kind === "checkpoint" ||
+        entry.kind === "preview",
+    )
+    .map((entry) => entry.referenceId) ?? [];
 
   return (
     <aside className="unified-mission-inspector" aria-label="Work item inspector">
@@ -465,10 +491,34 @@ function MissionControlInspector({
       <section>
         <h3>Completion</h3>
         <dl>
-          <div><dt>Implementation stage</dt><dd>Not recorded</dd></div>
-          <div><dt>Validation stage</dt><dd>Not recorded</dd></div>
-          <div><dt>Frozen evidence</dt><dd>None</dd></div>
-          <div><dt>Acceptance decision</dt><dd>None</dd></div>
+          <div>
+            <dt>Implementation stage</dt>
+            <dd>{attempt?.status === "completed" ? "Completed" : "Not completed"}</dd>
+          </div>
+          <div>
+            <dt>Validation stage</dt>
+            <dd>
+              {validationEvidence.length === 0
+                ? "Not recorded"
+                : unique(validationEvidence.map((entry) => entry.outcome)).join(", ")}
+            </dd>
+          </div>
+          <div>
+            <dt>Frozen evidence</dt>
+            <dd>{currentBundle === undefined ? "None" : <code>{currentBundle.id}</code>}</dd>
+          </div>
+          <div>
+            <dt>Acceptance decision</dt>
+            <dd>
+              {latestAcceptance === undefined
+                ? "None"
+                : (
+                    <span>
+                      Accepted by <code>{latestAcceptance.operatorId}</code>
+                    </span>
+                  )}
+            </dd>
+          </div>
         </dl>
       </section>
 
@@ -495,8 +545,8 @@ function MissionControlInspector({
           <LinkValues label="Threads" values={threadIds} />
           <LinkValues label="Runs" values={runIds} />
           <LinkValues label="Worktrees" values={[]} />
-          <LinkValues label="Reviews" values={[]} />
-          <LinkValues label="Artifacts" values={[]} />
+          <LinkValues label="Reviews" values={reviewIds} />
+          <LinkValues label="Artifacts" values={artifactIds} />
         </dl>
       </section>
 
