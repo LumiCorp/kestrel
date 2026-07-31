@@ -36,6 +36,41 @@ contractTest("runtime.hermetic", "web extraction retry summary shares consecutiv
   assert.equal(second?.clusters[0]?.lastToolName, "internet.extract");
 });
 
+contractTest("runtime.hermetic", "web extraction retry summary records every returned source cluster", () => {
+  let summary;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    summary = updateWebExtractionRetrySummary({
+      prior: summary,
+      objective: "Compare the primary and secondary sources",
+      toolName: "internet.extract",
+      output: {
+        results: [
+          {
+            url: `https://fresh-${attempt}.example/articles/result`,
+            quality: "high",
+            truncated: false,
+            contentIssues: [],
+          },
+          {
+            url: `https://stalled.example/archive/result-${attempt}`,
+            quality: "low",
+            truncated: true,
+            contentIssues: ["truncated_content"],
+          },
+        ],
+      },
+    });
+  }
+
+  const stalledCluster = summary?.clusters.find(
+    (cluster) => cluster.sourceCluster === "stalled.example/archive",
+  );
+  assert.equal(stalledCluster?.attempts, 3);
+  assert.equal(stalledCluster?.lowYieldAttempts, 3);
+  assert.equal(stalledCluster?.consecutiveLowYield, 3);
+  assert.equal(stalledCluster?.lastUrl, "https://stalled.example/archive/result-2");
+});
+
 contractTest("runtime.hermetic", "unrelated internet.search does not consume the fallback for a low-yield source cluster", () => {
   const prior = {
     objectiveKey: "compare our poem to poems about evil trees on the web",

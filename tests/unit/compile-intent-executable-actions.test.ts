@@ -87,6 +87,49 @@ const execCommandTool = {
   },
 };
 
+function lowYieldExtractionSummary(consecutiveLowYield: number) {
+  return {
+    objectiveKey: "review cleveland magazine article coverage",
+    searchFallbackUsed: false,
+    clusters: [
+      {
+        key: "review cleveland magazine article coverage:clevelandmagazine.com/articles",
+        sourceCluster: "clevelandmagazine.com/articles",
+        attempts: consecutiveLowYield,
+        lowYieldAttempts: consecutiveLowYield,
+        consecutiveLowYield,
+        lastToolName: "internet.extract",
+        lastQuality: consecutiveLowYield === 0 ? "high" : "low",
+        lastIssues: consecutiveLowYield === 0 ? [] : ["truncated_content"],
+        searchFallbackUsed: false,
+      },
+    ],
+  };
+}
+
+function compileExtractionAt(url: string, consecutiveLowYield: number) {
+  return compileAgentAction({
+    phase: "deliberator",
+    action: {
+      kind: "tool",
+      name: "internet.extract",
+      input: { url },
+    },
+    observedCapabilities: [],
+    capabilityManifest: [
+      {
+        name: "internet.extract",
+        description: "Extract public URLs.",
+        capabilityClasses: ["internet.read"],
+      },
+    ],
+    availableTools: [internetExtractTool],
+    postToolVerification: {
+      webExtractionRetrySummary: lowYieldExtractionSummary(consecutiveLowYield),
+    },
+  });
+}
+
 contractTest("runtime.hermetic", "internal decision context exposes existing exact-repeat evidence honestly", () => {
   const input = {
     path: "newsletter.html",
@@ -149,6 +192,108 @@ contractTest("runtime.hermetic", "internal decision context exposes existing exa
     actionNovelty: false,
     expectedEvidenceDelta: "low",
   });
+});
+
+contractTest("runtime.hermetic", "low-yield admission allows the single third same-cluster recovery extraction", () => {
+  const compiled = compileExtractionAt(
+    "https://www.clevelandmagazine.com/articles/story-3",
+    2,
+  );
+
+  assert.equal(compiled.action.kind, "tool");
+  assert.equal(compiled.action.name, "internet.extract");
+});
+
+contractTest("runtime.hermetic", "low-yield admission blocks a fourth same-cluster extraction across URL changes", () => {
+  assert.throws(
+    () =>
+      compileExtractionAt(
+        "https://www.clevelandmagazine.com/articles/a-different-story",
+        3,
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof DecisionCompileError);
+      assert.equal(error.code, "DECISION_POLICY_FAILED");
+      assert.equal(error.diagnostics?.reason, "low_yield_source_cluster_exhausted");
+      assert.equal(error.diagnostics?.sourceCluster, "clevelandmagazine.com/articles");
+      assert.equal(error.diagnostics?.observedStreak, 3);
+      assert.deepEqual(error.diagnostics?.allowedRecoveryChoices, [
+        "choose_different_source_cluster",
+        "use_targeted_search",
+        "qualified_partial_closeout",
+      ]);
+      return true;
+    },
+  );
+});
+
+contractTest("runtime.hermetic", "low-yield admission leaves different clusters and reset streaks available", () => {
+  const differentCluster = compileExtractionAt(
+    "https://www.clevelandmagazine.com/features/story-4",
+    3,
+  );
+  const resetCluster = compileExtractionAt(
+    "https://www.clevelandmagazine.com/articles/story-after-success",
+    0,
+  );
+  const nonExtraction = compileAgentAction({
+    phase: "deliberator",
+    action: {
+      kind: "tool",
+      name: "fs.read_text",
+      input: { path: "README.md" },
+    },
+    observedCapabilities: [],
+    capabilityManifest: [
+      {
+        name: "fs.read_text",
+        description: "Read a text file.",
+        capabilityClasses: ["filesystem.read"],
+      },
+    ],
+    availableTools: [readTextTool],
+    postToolVerification: {
+      webExtractionRetrySummary: lowYieldExtractionSummary(3),
+    },
+  });
+  const sourceFetch = compileAgentAction({
+    phase: "deliberator",
+    action: {
+      kind: "tool",
+      name: "source.fetch",
+      input: { url: "https://www.clevelandmagazine.com/articles/story-5" },
+    },
+    observedCapabilities: [],
+    capabilityManifest: [
+      {
+        name: "source.fetch",
+        description: "Fetch a selected source.",
+        capabilityClasses: ["internet.read"],
+      },
+    ],
+    availableTools: [
+      {
+        name: "source.fetch",
+        description: "Fetch a selected source.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { url: { type: "string" } },
+          required: ["url"],
+        },
+      },
+    ],
+    postToolVerification: {
+      webExtractionRetrySummary: lowYieldExtractionSummary(3),
+    },
+  });
+
+  assert.equal(differentCluster.action.kind, "tool");
+  assert.equal(resetCluster.action.kind, "tool");
+  assert.equal(nonExtraction.action.kind, "tool");
+  assert.equal(nonExtraction.action.name, "fs.read_text");
+  assert.equal(sourceFetch.action.kind, "tool");
+  assert.equal(sourceFetch.action.name, "source.fetch");
 });
 
 type LegacyCompileIntentFixtureInput = Omit<CompileAgentActionInput, "action"> & {

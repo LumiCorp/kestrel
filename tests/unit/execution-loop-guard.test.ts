@@ -2708,7 +2708,7 @@ contractTest("runtime.hermetic", "ExecutionEngine ignores legacy loop history en
   assert.equal(output.errors.length, 0);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine trips LOOP_GUARD_TRIGGERED on repeated low-yield web extraction for the same hashed input", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine retains the generic exact-action guard for repeated identical extraction", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2784,7 +2784,7 @@ contractTest("runtime.hermetic", "ExecutionEngine trips LOOP_GUARD_TRIGGERED on 
   assert.equal(output.telemetry.stepsExecuted < 20, true);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine does not trip low-yield web extraction guard when the cluster repeats with different hashed inputs", async () => {
+contractTest("runtime.hermetic", "ExecutionEngine leaves varied extraction inputs to decision-policy admission", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,

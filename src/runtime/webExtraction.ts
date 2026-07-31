@@ -42,42 +42,52 @@ export function readWebExtractionDiagnostics(
   toolName: string | undefined,
   output: unknown,
 ): WebExtractionDiagnostics | undefined {
+  return readWebExtractionDiagnosticsList(toolName, output)[0];
+}
+
+function readWebExtractionDiagnosticsList(
+  toolName: string | undefined,
+  output: unknown,
+): WebExtractionDiagnostics[] {
   if (toolName !== "internet.extract") {
-    return ;
+    return [];
   }
   const record = asRecord(output);
   if (record === undefined) {
-    return ;
+    return [];
   }
 
-  const firstResult = asRecord(asArray(record.results)[0]);
-  const payload = firstResult ?? record;
-  const url = asString(payload.url);
-  const quality = readQuality(payload.quality);
-  const truncated = payload.truncated === true;
-  const selectorCoverage = readSelectorCoverage(payload.selectorCoverage);
-  const contentIssues = readContentIssues(payload.contentIssues);
-  const lowYield =
-    quality === "low" ||
-    truncated ||
-    selectorCoverage === "none" ||
-    contentIssues.includes("boilerplate_heavy") ||
-    contentIssues.includes("low_text_density") ||
-    contentIssues.includes("selector_unresolved") ||
-    contentIssues.includes("empty_content");
+  const resultRecords = asArray(record.results)
+    .map((result) => asRecord(result))
+    .filter((result): result is Record<string, unknown> => result !== undefined);
+  const payloads = resultRecords.length > 0 ? resultRecords : [record];
+  return payloads.map((payload) => {
+    const url = asString(payload.url);
+    const sourceCluster = normalizeSourceCluster(url);
+    const quality = readQuality(payload.quality);
+    const truncated = payload.truncated === true;
+    const selectorCoverage = readSelectorCoverage(payload.selectorCoverage);
+    const contentIssues = readContentIssues(payload.contentIssues);
+    const lowYield =
+      quality === "low" ||
+      truncated ||
+      selectorCoverage === "none" ||
+      contentIssues.includes("boilerplate_heavy") ||
+      contentIssues.includes("low_text_density") ||
+      contentIssues.includes("selector_unresolved") ||
+      contentIssues.includes("empty_content");
 
-  return {
-    toolName,
-    ...(url !== undefined ? { url } : {}),
-    ...(normalizeSourceCluster(url) !== undefined
-      ? { sourceCluster: normalizeSourceCluster(url) }
-      : {}),
-    quality,
-    truncated,
-    ...(selectorCoverage !== undefined ? { selectorCoverage } : {}),
-    contentIssues,
-    lowYield,
-  };
+    return {
+      toolName,
+      ...(url !== undefined ? { url } : {}),
+      ...(sourceCluster !== undefined ? { sourceCluster } : {}),
+      quality,
+      truncated,
+      ...(selectorCoverage !== undefined ? { selectorCoverage } : {}),
+      contentIssues,
+      lowYield,
+    };
+  });
 }
 
 export function normalizeWebExtractionRetrySummary(
@@ -145,36 +155,46 @@ export function updateWebExtractionRetrySummary(input: {
     };
   }
 
-  const diagnostics = readWebExtractionDiagnostics(input.toolName, input.output);
-  if (diagnostics === undefined || diagnostics.sourceCluster === undefined) {
+  const diagnostics = readWebExtractionDiagnosticsList(input.toolName, input.output);
+  const clusterDiagnostics = diagnostics.filter(
+    (
+      diagnostic,
+    ): diagnostic is WebExtractionDiagnostics & { sourceCluster: string } =>
+      diagnostic.sourceCluster !== undefined,
+  );
+  if (clusterDiagnostics.length === 0) {
     return prior.objectiveKey === objectiveKey ? prior : { ...prior, objectiveKey };
   }
 
-  const key = `${objectiveKey}:${diagnostics.sourceCluster}`;
   const clusters = [...prior.clusters];
-  const existingIndex = clusters.findIndex((entry) => entry.key === key);
-  const existing = existingIndex === -1 ? undefined : clusters[existingIndex];
-  const nextEntry: WebExtractionRetryClusterSummary = {
-    key,
-    sourceCluster: diagnostics.sourceCluster,
-    attempts: (existing?.attempts ?? 0) + 1,
-    lowYieldAttempts: (existing?.lowYieldAttempts ?? 0) + (diagnostics.lowYield ? 1 : 0),
-    consecutiveLowYield: diagnostics.lowYield ? (existing?.consecutiveLowYield ?? 0) + 1 : 0,
-    ...(diagnostics.toolName.length > 0 ? { lastToolName: diagnostics.toolName } : {}),
-    lastQuality: diagnostics.quality,
-    lastIssues: diagnostics.contentIssues,
-    ...(diagnostics.url !== undefined ? { lastUrl: diagnostics.url } : {}),
-    searchFallbackUsed: diagnostics.lowYield ? existing?.searchFallbackUsed === true : false,
-  };
-  if (existingIndex === -1) {
-    clusters.unshift(nextEntry);
-  } else {
-    clusters.splice(existingIndex, 1, nextEntry);
+  for (const diagnostic of clusterDiagnostics) {
+    const key = `${objectiveKey}:${diagnostic.sourceCluster}`;
+    const existingIndex = clusters.findIndex((entry) => entry.key === key);
+    const existing = existingIndex === -1 ? undefined : clusters[existingIndex];
+    const nextEntry: WebExtractionRetryClusterSummary = {
+      key,
+      sourceCluster: diagnostic.sourceCluster,
+      attempts: (existing?.attempts ?? 0) + 1,
+      lowYieldAttempts: (existing?.lowYieldAttempts ?? 0) + (diagnostic.lowYield ? 1 : 0),
+      consecutiveLowYield: diagnostic.lowYield
+        ? (existing?.consecutiveLowYield ?? 0) + 1
+        : 0,
+      ...(diagnostic.toolName.length > 0 ? { lastToolName: diagnostic.toolName } : {}),
+      lastQuality: diagnostic.quality,
+      lastIssues: diagnostic.contentIssues,
+      ...(diagnostic.url !== undefined ? { lastUrl: diagnostic.url } : {}),
+      searchFallbackUsed: diagnostic.lowYield ? existing?.searchFallbackUsed === true : false,
+    };
+    if (existingIndex === -1) {
+      clusters.unshift(nextEntry);
+    } else {
+      clusters.splice(existingIndex, 1, nextEntry);
+    }
   }
 
   return {
     objectiveKey,
-    latest: diagnostics,
+    latest: diagnostics[0],
     searchFallbackUsed: clusters.some((cluster) => cluster.searchFallbackUsed),
     clusters: clusters.slice(0, 8),
   };

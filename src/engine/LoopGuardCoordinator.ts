@@ -5,7 +5,6 @@ import type { PersistedArtifact, SessionRecord } from "../kestrel/contracts/stor
 
 import { isFilesystemInspectionToolName } from "../../agents/reference-react/src/filesystemInspection.js";
 import { isModeBlockedWait } from "../runtime/blockedWaitModeReply.js";
-import { isLowYieldSourceClusterStalled } from "../runtime/recoveryVerdict.js";
 import { asRuntimeError } from "../runtime/RuntimeFailure.js";
 import { isMutationCapableToolName } from "../runtime/mutationTools.js";
 import { clearRuntimeWaitState, readActiveWaitState, type RuntimeWaitMatcher } from "../runtime/waitState.js";
@@ -14,7 +13,6 @@ import {
   normalizeVisibleTodoResidualGapData,
   normalizeVisibleTodoState,
 } from "../runtime/visibleTodos.js";
-import { normalizeSourceCluster, normalizeWebExtractionRetrySummary } from "../runtime/webExtraction.js";
 import {
   classifyRetrievalRedundancy,
   isRetrievalToolName,
@@ -37,8 +35,6 @@ interface RetrievalLoopHistoryEntry {
 type ToolCycleMarker = {
   toolName: string;
   inputHash: string;
-  sourceCluster?: string | undefined;
-  lowYield: boolean;
 };
 
 interface ResearchStallSummary {
@@ -191,7 +187,7 @@ export class LoopGuardCoordinator {
     );
     const pendingExecutionHash = stableHash(readPendingExecutionSnapshot(reactPatch));
     const cycleKind = readCycleKind(input.stepName);
-    const toolCycleMarker = readToolCycleMarker(reactPatch, loopGuardNextAction);
+    const toolCycleMarker = readToolCycleMarker(loopGuardNextAction);
     const retrievalCycleMarker = readRetrievalCycleMarker(priorReact, reactPatch);
     const attemptedActionDiagnostics = buildLoopGuardAttemptDiagnostics({
       stepName: input.stepName,
@@ -214,8 +210,8 @@ export class LoopGuardCoordinator {
         cycleKind,
         toolActionName: toolCycleMarker?.toolName ?? "",
         toolActionInputHash: toolCycleMarker?.inputHash ?? "",
-        toolActionSourceCluster: toolCycleMarker?.sourceCluster ?? "",
-        toolActionLowYield: toolCycleMarker?.lowYield === true,
+        toolActionSourceCluster: "",
+        toolActionLowYield: false,
         ...(retrievalCycleMarker !== undefined
           ? {
               retrievalToolName: retrievalCycleMarker.toolName,
@@ -378,28 +374,6 @@ export class LoopGuardCoordinator {
             ...attemptedActionDiagnostics,
           },
         );
-      }
-      if (toolCycleMarker.lowYield === true && toolCycleMarker.sourceCluster !== undefined) {
-        const repeatedLowYieldSourceCycles = nextHistory.filter(
-          (entry) =>
-            entry.cycleKind === "reasoning" &&
-            entry.toolActionLowYield === true &&
-            entry.toolActionSourceCluster === toolCycleMarker.sourceCluster &&
-            entry.toolActionInputHash === toolCycleMarker.inputHash,
-        ).length;
-        if (repeatedLowYieldSourceCycles >= 3) {
-          throw new GuardrailViolationError(
-            "LOOP_GUARD_TRIGGERED",
-            `Loop guard triggered for step '${input.stepName}' after repeated low-yield web extraction cycles for '${toolCycleMarker.sourceCluster}'.`,
-            {
-              guardType: "REPEATED_LOW_YIELD_WEB_EXTRACTION",
-              toolName: toolCycleMarker.toolName,
-              sourceCluster: toolCycleMarker.sourceCluster,
-              repeats: repeatedLowYieldSourceCycles,
-              ...attemptedActionDiagnostics,
-            },
-          );
-        }
       }
     }
 
@@ -2072,39 +2046,14 @@ function buildActionSignature(value: unknown): string {
   });
 }
 
-function readToolCycleMarker(
-  reactState: Record<string, unknown>,
-  value: unknown,
-): ToolCycleMarker | undefined {
+function readToolCycleMarker(value: unknown): ToolCycleMarker | undefined {
   const action = asRecord(value);
   if (action === undefined || action.kind !== "tool" || typeof action.name !== "string") {
     return ;
   }
-  if (action.name !== "internet.extract") {
-    return {
-      toolName: action.name,
-      inputHash: stableHash(sortValue(action.input)),
-      lowYield: false,
-    };
-  }
-  const actionInput = asRecord(action.input);
-  const sourceUrl =
-    typeof actionInput?.url === "string"
-      ? String(actionInput.url)
-      : Array.isArray(actionInput?.urls) && typeof actionInput.urls[0] === "string"
-        ? String(actionInput.urls[0])
-        : undefined;
-  const sourceCluster = normalizeSourceCluster(sourceUrl);
-  const retrySummary = normalizeWebExtractionRetrySummary(
-    asRecord(asRecord(reactState.postToolVerification)?.webExtractionRetrySummary),
-  );
-  const lowYield =
-    sourceCluster !== undefined && isLowYieldSourceClusterStalled(retrySummary, sourceCluster);
   return {
     toolName: action.name,
     inputHash: stableHash(sortValue(action.input)),
-    ...(sourceCluster !== undefined ? { sourceCluster } : {}),
-    lowYield,
   };
 }
 

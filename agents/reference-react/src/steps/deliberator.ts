@@ -33,6 +33,7 @@ import {
   compileAgentAction,
   compileIntentState,
   buildToolIntentContextFromCompiledIntent,
+  evaluateGoalSatisfiedCloseoutReadiness,
   mapDecisionCompileError,
   type CompiledDecision,
   type DecisionPhase,
@@ -405,13 +406,14 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       ...(runtimeEconomics.policy !== undefined ? { policy: runtimeEconomics.policy } : {}),
       phase: "agent.loop",
     });
+    const activeDevShellProcesses = buildDevShellToolFilterProcesses(
+      decisionContext.devShellProcesses,
+      asRecord(reactState.postToolVerification),
+    );
     const initialFilteredTools = filterDeliberatorToolsForContext(
       economicsScopedDeliberatorTools.tools,
       {
-        devShellProcesses: buildDevShellToolFilterProcesses(
-          decisionContext.devShellProcesses,
-          asRecord(reactState.postToolVerification),
-        ),
+        devShellProcesses: activeDevShellProcesses,
         postToolVerification: asRecord(reactState.postToolVerification),
         managedEntrypoints: decisionContext.managedEntrypoints,
         artifactTarget: readManagedEntrypointToolFilterArtifactTarget(decisionContext),
@@ -449,33 +451,58 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       stepIndex: ctx.stepIndex,
       ...(tokenCounter !== undefined ? { tokenCounter } : {}),
     });
-    const initialParallelToolCalls = shouldEnableParallelToolCalls({
-      tools: initialFilteredTools.tools,
-      capabilityManifest,
-      modeResolution,
-      executionPolicy,
-    });
     const observedCapabilities =
       extractObservedCapabilitiesFromFeedback(reactState);
+    const canonicalIntentContext = readCanonicalIntentContextFromState(
+      reactState,
+      capabilityManifest,
+    );
+    const closeoutReadiness = evaluateGoalSatisfiedCloseoutReadiness({
+      interactionMode: modeResolution.interactionMode,
+      observedCapabilities,
+      ...canonicalIntentContext,
+      postToolVerification: asRecord(reactState.postToolVerification),
+      lastActionResult: reactState.lastActionResult,
+      devShellProcesses: activeDevShellProcesses,
+      evidenceContext: decisionContext.evidenceContext,
+      evidenceLedger: decisionContext.evidenceLedger,
+      visibleTodos: decisionContext.visibleTodos,
+      hasPendingExecutionBoundary: hasPendingExecutionBoundary(reactState),
+    });
+    const closeoutOnly = closeoutReadiness.ready;
+    const projectedDeliberatorTools = closeoutOnly ? [] : initialFilteredTools.tools;
+    const initialParallelToolCalls = closeoutOnly
+      ? false
+      : shouldEnableParallelToolCalls({
+          tools: projectedDeliberatorTools,
+          capabilityManifest,
+          modeResolution,
+          executionPolicy,
+        });
     const availableModeControlToolNames = controlToolNamesForInteractionMode({
       interactionMode: modeResolution.interactionMode,
       eventType: ctx.event.type,
       eventPayload,
       executableWorkspaceToolsAvailable,
     });
-    const modeScopedControlToolNames = closeoutAttemptActive
-      ? availableModeControlToolNames.filter((name) => CLOSEOUT_CONTROL_TOOL_NAMES.has(name))
-      : availableModeControlToolNames;
-    const finalizeStatuses = finalizeStatusesForInteractionMode({
-      interactionMode: modeResolution.interactionMode,
-      executableWorkspaceToolsAvailable,
-    });
-    const cannotSatisfyReasonCodes =
-      cannotSatisfyReasonCodesForInteractionMode({
+    const modeScopedControlToolNames = closeoutOnly
+      ? ["kestrel.finalize"] as const
+      : closeoutAttemptActive
+        ? availableModeControlToolNames.filter((name) => CLOSEOUT_CONTROL_TOOL_NAMES.has(name))
+        : availableModeControlToolNames;
+    const finalizeStatuses = closeoutOnly
+      ? ["goal_satisfied"] as const
+      : finalizeStatusesForInteractionMode({
+          interactionMode: modeResolution.interactionMode,
+          executableWorkspaceToolsAvailable,
+        });
+    const cannotSatisfyReasonCodes = closeoutOnly
+      ? undefined
+      : cannotSatisfyReasonCodesForInteractionMode({
         interactionMode: modeResolution.interactionMode,
       });
     const initialActionTools = buildModelToolAliasRegistry(
-      initialFilteredTools.tools,
+      projectedDeliberatorTools,
       {
         controlToolNames: modeScopedControlToolNames,
         finalizeStatuses,
@@ -517,7 +544,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       contextRequest.modelInput,
       contextRequest.messages,
       contextRequest.metadata,
-      initialFilteredTools.tools,
+      projectedDeliberatorTools,
       "required",
       initialParallelToolCalls,
       modeScopedControlToolNames,
@@ -530,7 +557,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         stepIndex: ctx.stepIndex,
         reactState: activeReactState,
         response,
-        actionToolCount: buildModelToolAliasRegistry(initialFilteredTools.tools, {
+        actionToolCount: buildModelToolAliasRegistry(projectedDeliberatorTools, {
           controlToolNames: modeScopedControlToolNames,
           finalizeStatuses,
           cannotSatisfyReasonCodes,
@@ -548,7 +575,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       stepIndex: ctx.stepIndex,
       runId: ctx.runId,
       interactionMode: modeResolution.interactionMode,
-      deliberatorTools: economicsScopedDeliberatorTools.tools,
+      deliberatorTools: closeoutOnly ? [] : economicsScopedDeliberatorTools.tools,
       capabilityManifest,
       decisionContext,
       observedCapabilities,
@@ -577,7 +604,11 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         policyRetriesUsed += 1;
       }
       attemptNumber += 1;
-      const retryTools = attempt.prepared?.filteredTools ?? initialFilteredTools;
+      const retryTools = attempt.prepared?.filteredTools ?? (
+        closeoutOnly
+          ? { ...initialFilteredTools, tools: [] }
+          : initialFilteredTools
+      );
       const retryContext = buildThinkerRetryContext({
         attempt: attemptNumber,
         maxAttempts: 4,
@@ -624,12 +655,14 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         retryRequest.metadata,
         retryTools.tools,
         "required",
-        assistantProgressRepairToolName === undefined && shouldEnableParallelToolCalls({
-          tools: retryTools.tools,
-          capabilityManifest,
-          modeResolution,
-          executionPolicy,
-        }),
+        closeoutOnly === false &&
+          assistantProgressRepairToolName === undefined &&
+          shouldEnableParallelToolCalls({
+            tools: retryTools.tools,
+            capabilityManifest,
+            modeResolution,
+            executionPolicy,
+          }),
         modeScopedControlToolNames,
         finalizeStatuses,
         cannotSatisfyReasonCodes,
@@ -654,7 +687,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         stepIndex: ctx.stepIndex,
         runId: ctx.runId,
         interactionMode: modeResolution.interactionMode,
-        deliberatorTools: economicsScopedDeliberatorTools.tools,
+        deliberatorTools: closeoutOnly ? [] : economicsScopedDeliberatorTools.tools,
         capabilityManifest,
         decisionContext,
         observedCapabilities,
@@ -2180,6 +2213,22 @@ function buildDevShellToolFilterProcesses(
       ...(asString(devShell?.status) !== undefined ? { status: asString(devShell?.status) } : {}),
     },
   ];
+}
+
+function hasPendingExecutionBoundary(reactState: Record<string, unknown>): boolean {
+  const exec = asRecord(reactState.exec);
+  const commandBatch = asRecord(reactState.commandBatch);
+  return (
+    readActiveWaitState(reactState) !== undefined ||
+    (commandBatch !== undefined && asString(commandBatch.status) !== "processed") ||
+    asRecord(exec?.pendingAction) !== undefined ||
+    asRecord(exec?.pendingToolCall) !== undefined ||
+    asRecord(exec?.pendingToolBatch) !== undefined ||
+    asRecord(exec?.pendingBatch) !== undefined ||
+    asRecord(exec?.pendingApproval) !== undefined ||
+    asString(exec?.pendingEffectKey) !== undefined ||
+    asString(exec?.pendingEffectType) !== undefined
+  );
 }
 
 function readManagedEntrypointToolFilterArtifactTarget(
@@ -4396,6 +4445,20 @@ function buildThinkerRequiredCorrection(
       },
     };
   }
+  if (asString(details?.reason) === "low_yield_source_cluster_exhausted") {
+    return {
+      lowYieldSourceClusterExhausted: {
+        action: "choose_allowed_recovery",
+        objectiveKey: asString(details?.objectiveKey),
+        sourceCluster: asString(details?.sourceCluster),
+        observedStreak: details?.observedStreak,
+        allowedRecoveryChoices: asArray(details?.allowedRecoveryChoices),
+        correction:
+          asString(details?.requiredCorrection) ??
+          "Choose a different source cluster, use targeted search, or close out with a qualified partial result.",
+      },
+    };
+  }
   if (
     failure.code === "DECISION_SCHEMA_FAILED" &&
     (asString(details?.path) === "nextAction.type" || asString(details?.path) === "nextAction.kind") &&
@@ -4623,6 +4686,7 @@ function readThinkerPolicyRetryDirective(error: {
     reason === "interactive_editor_exec_rejected" ||
     reason === "interactive_interpreter_exec_rejected" ||
     reason === "user_visible_text_not_operator_facing" ||
+    reason === "low_yield_source_cluster_exhausted" ||
     reason === "dev_shell_unknown_process_id" ||
     reason === "dev_shell_inactive_process_target" ||
     reason === "command_role_work_item_mismatch"
