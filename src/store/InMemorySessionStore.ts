@@ -272,6 +272,44 @@ export class InMemorySessionStore implements SessionStore {
     );
   }
 
+  async markMissionControlOutboxDelivered(
+    projectIdValue: string,
+    effectIdValue: string,
+  ): Promise<void> {
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const effectId = requireMissionControlActionId(effectIdValue);
+    const effect = this.missionControlOutbox.find(
+      (entry) => entry.projectId === projectId && entry.effectId === effectId,
+    );
+    if (effect === undefined) {
+      throw new Error(`Mission Control outbox effect not found: ${effectId}.`);
+    }
+    effect.status = "DELIVERED";
+    effect.lastError = undefined;
+  }
+
+  async recordMissionControlOutboxFailure(
+    projectIdValue: string,
+    effectIdValue: string,
+    errorValue: string,
+  ): Promise<void> {
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const effectId = requireMissionControlActionId(effectIdValue);
+    const error = errorValue.trim();
+    if (error.length === 0) {
+      throw new Error("Mission Control outbox failure must not be empty.");
+    }
+    const effect = this.missionControlOutbox.find(
+      (entry) => entry.projectId === projectId && entry.effectId === effectId,
+    );
+    if (effect === undefined) {
+      throw new Error(`Mission Control outbox effect not found: ${effectId}.`);
+    }
+    effect.status = "PENDING";
+    effect.attemptCount += 1;
+    effect.lastError = error;
+  }
+
   async getSessionProductState(sessionId: string): Promise<SessionProductStateRecord | null> {
     const state = this.productStates.get(sessionId);
     return state === undefined ? null : this.mapProductState(state);
@@ -383,10 +421,17 @@ export class InMemorySessionStore implements SessionStore {
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
         .map((event) => asRecord(event.metadata)?.threadId)
         .find((value): value is string => typeof value === "string" && value.length > 0);
+      const missionControl = events
+        .filter((event) => event.type === "run.started")
+        .map((event) => readMissionControlRunCorrelation(
+          asRecord(event.metadata)?.missionControl,
+        ))
+        .find((value) => value !== undefined);
       return {
         run,
         eventCount: events.length,
         ...(threadId !== undefined ? { threadId } : {}),
+        ...(missionControl !== undefined ? { missionControl } : {}),
       };
     });
   }
@@ -1808,6 +1853,25 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function readMissionControlRunCorrelation(value: unknown) {
+  const record = asRecord(value);
+  const projectId = asString(record?.projectId);
+  const itemId = asString(record?.itemId);
+  const attemptId = asString(record?.attemptId);
+  const commandId = asString(record?.commandId);
+  const runId = asString(record?.runId);
+  if (
+    projectId === undefined ||
+    itemId === undefined ||
+    attemptId === undefined ||
+    commandId === undefined ||
+    runId === undefined
+  ) {
+    return;
+  }
+  return { projectId, itemId, attemptId, commandId, runId };
 }
 
 function asString(value: unknown): string | undefined {

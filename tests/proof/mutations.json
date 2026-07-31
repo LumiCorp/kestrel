@@ -160,6 +160,36 @@
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=project state, receipts, and outbox", "tests/mission-control-project-authority.postgres.test.ts"],
       "testFiles": ["tests/mission-control-project-authority.postgres.test.ts"]
+    },
+    {
+      "id": "mission-control-attempt-identity-bypass",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "find": "    run.runId !== runId ||",
+      "replace": "    false ||",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
+      "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-stale-event-bypass",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "find": "  return item.currentAttemptId !== attempt.id;",
+      "replace": "  return false;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
+      "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-premature-cancel-completion",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "find": "        status: \"cancelling\",",
+      "replace": "        status: \"cancelled\",",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
+      "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
     }
   ]
 }

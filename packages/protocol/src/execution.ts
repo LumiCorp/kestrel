@@ -389,6 +389,14 @@ export interface RunnerProjectContext {
   content: string;
 }
 
+export interface RunnerMissionControlExecution {
+  projectId: string;
+  itemId: string;
+  attemptId: string;
+  commandId: string;
+  runId: string;
+}
+
 export interface RunnerMcpContext {
   gatewayUrl: string;
   grantId: string;
@@ -445,6 +453,7 @@ export interface RunnerTurnInput {
   systemInstructions?: string[] | undefined;
   history?: RunnerHistoryEntry[] | undefined;
   projectContext?: RunnerProjectContext | undefined;
+  missionControl?: RunnerMissionControlExecution | undefined;
   manualCompaction?: boolean | undefined;
   autoCompaction?: RunnerAutoCompaction | undefined;
   workspace?: Record<string, unknown> | undefined;
@@ -785,6 +794,7 @@ export interface OperatorControlCommandPayload {
   allowApprovalInheritance?: boolean | undefined;
   allowToolClasses?: RunnerToolExecutionClass[] | undefined;
   allowCapabilities?: string[] | undefined;
+  missionControl?: RunnerMissionControlExecution | undefined;
 }
 
 export interface TaskGraphGetCommandPayload {
@@ -2056,6 +2066,10 @@ function parseRunnerCommandPayloadV2(
         "external_side_effect",
       ]);
       validateOptionalStringArray(payload.allowCapabilities, `${label}.allowCapabilities`);
+      validateOptionalMissionControlExecution(
+        payload.missionControl,
+        `${label}.missionControl`,
+      );
       break;
     case "task.graph.get":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
@@ -2627,6 +2641,10 @@ function validateRunTurn(value: unknown, label: string): void {
   );
   validateOptionalHistory(turn.history, `${label}.history`);
   validateOptionalRecord(turn.projectContext, `${label}.projectContext`);
+  validateOptionalMissionControlExecution(
+    turn.missionControl,
+    `${label}.missionControl`,
+  );
   validateOptionalBoolean(turn.manualCompaction, `${label}.manualCompaction`);
   validateOptionalAutoCompaction(turn.autoCompaction, `${label}.autoCompaction`);
   validateOptionalRecord(turn.workspace, `${label}.workspace`);
@@ -3289,6 +3307,28 @@ function validateOptionalRecord(value: unknown, label: string): void {
   if (value !== undefined) {
     requireRecord(value, label);
   }
+}
+
+function validateOptionalMissionControlExecution(
+  value: unknown,
+  label: string,
+): void {
+  if (value === undefined) {
+    return;
+  }
+  const record = requireRecord(value, label);
+  rejectUnknownFields(record, label, [
+    "projectId",
+    "itemId",
+    "attemptId",
+    "commandId",
+    "runId",
+  ]);
+  requireNonEmptyString(record.projectId, `${label}.projectId`);
+  requireNonEmptyString(record.itemId, `${label}.itemId`);
+  requireNonEmptyString(record.attemptId, `${label}.attemptId`);
+  requireNonEmptyString(record.commandId, `${label}.commandId`);
+  requireNonEmptyString(record.runId, `${label}.runId`);
 }
 
 function validateOptionalEnumRecord<const T extends string>(

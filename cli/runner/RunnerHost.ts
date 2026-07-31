@@ -268,7 +268,7 @@ export interface RunnerRuntime {
     | undefined;
   performAcceptedOperatorAction?:
     | ((input: OperatorControlCommandPayload & {
-        action: "approve" | "reject" | "reply";
+        action: "approve" | "reject" | "reply" | "retry";
         issuedBy?: string | undefined;
         signal?: AbortSignal | undefined;
       }) => Promise<{
@@ -688,6 +688,7 @@ export class RunnerHost {
         {
           commandId,
           sessionId: turn.sessionId,
+          threadId: turn.sessionId,
           ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
         }
       );
@@ -759,6 +760,7 @@ export class RunnerHost {
           {
             commandId,
             sessionId: turn.sessionId,
+            threadId: turn.sessionId,
             ...(concurrent.runId !== undefined ? { runId: concurrent.runId } : {}),
           },
         );
@@ -809,6 +811,7 @@ export class RunnerHost {
       {
         commandId,
         sessionId: turn.sessionId,
+        threadId: turn.sessionId,
         ...(requestedRunId !== undefined ? { runId: requestedRunId } : {}),
       }
     );
@@ -1532,8 +1535,9 @@ export class RunnerHost {
     this.writer.emit(
       "runner.error",
       {
-        code: "RUNNER_RUNTIME_ERROR",
+        code: "OPERATOR_RUN_NOT_FOUND",
         message: `Run '${payload.runId}' was not found.`,
+        details: { runId: payload.runId },
       },
       { commandId, runId: payload.runId }
     );
@@ -1585,12 +1589,17 @@ export class RunnerHost {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (payload.completionMode === "accepted") {
         if (
-          (payload.action !== "approve" && payload.action !== "reject" && payload.action !== "reply")
+          (
+            payload.action !== "approve" &&
+            payload.action !== "reject" &&
+            payload.action !== "reply" &&
+            payload.action !== "retry"
+          )
           || typeof runtime.performAcceptedOperatorAction !== "function"
         ) {
           this.writer.emit("runner.error", {
             code: "RUNNER_RUNTIME_ERROR",
-            message: "Accepted operator control is available only for approval and reply actions.",
+            message: "Accepted operator control is available only for approval, reply, and retry actions.",
           }, { commandId, threadId: payload.threadId });
           return;
         }

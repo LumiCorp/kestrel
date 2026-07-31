@@ -172,6 +172,28 @@ type MissionControlOutboxRow = Record<string, unknown> & {
   created_at: unknown;
 };
 
+function readMissionControlRunCorrelation(value: unknown) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  const projectId = readNonEmptyString(record.projectId);
+  const itemId = readNonEmptyString(record.itemId);
+  const attemptId = readNonEmptyString(record.attemptId);
+  const commandId = readNonEmptyString(record.commandId);
+  const runId = readNonEmptyString(record.runId);
+  if (
+    projectId === undefined ||
+    itemId === undefined ||
+    attemptId === undefined ||
+    commandId === undefined ||
+    runId === undefined
+  ) {
+    return;
+  }
+  return { projectId, itemId, attemptId, commandId, runId };
+}
+
 function mapProviderReasoningRow(row: Record<string, unknown>): ProviderReasoningEncryptedRecord {
   const kind = row.record_kind;
   if (kind !== "continuation" && kind !== "retained_visible") {
@@ -598,6 +620,54 @@ export class PostgresSessionStore implements SessionStore {
     return result.rows.map((row) => this.mapMissionControlOutboxRow(row));
   }
 
+  async markMissionControlOutboxDelivered(
+    projectIdValue: string,
+    effectIdValue: string,
+  ): Promise<void> {
+    await this.ensureSchemaV3();
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const effectId = requireMissionControlActionId(effectIdValue);
+    const result = await this.db.query(
+      `UPDATE mission_control_outbox
+          SET status = 'DELIVERED',
+              last_error = NULL,
+              delivered_at = NOW()
+        WHERE project_id = $1
+          AND effect_id = $2`,
+      [projectId, effectId],
+    );
+    if (result.rowCount !== 1) {
+      throw new Error(`Mission Control outbox effect not found: ${effectId}.`);
+    }
+  }
+
+  async recordMissionControlOutboxFailure(
+    projectIdValue: string,
+    effectIdValue: string,
+    errorValue: string,
+  ): Promise<void> {
+    await this.ensureSchemaV3();
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const effectId = requireMissionControlActionId(effectIdValue);
+    const error = errorValue.trim();
+    if (error.length === 0) {
+      throw new Error("Mission Control outbox failure must not be empty.");
+    }
+    const result = await this.db.query(
+      `UPDATE mission_control_outbox
+          SET status = 'PENDING',
+              attempt_count = attempt_count + 1,
+              last_error = $3,
+              delivered_at = NULL
+        WHERE project_id = $1
+          AND effect_id = $2`,
+      [projectId, effectId, error],
+    );
+    if (result.rowCount !== 1) {
+      throw new Error(`Mission Control outbox effect not found: ${effectId}.`);
+    }
+  }
+
   async getSessionProductState(sessionId: string): Promise<SessionProductStateRecord | null> {
     await this.ensureSchemaV3();
     const result = await this.db.query<SessionProductStateRow>(
@@ -840,6 +910,7 @@ export class PostgresSessionStore implements SessionStore {
       error_json: Record<string, unknown> | null;
       event_count: number | string;
       thread_id: string | null;
+      mission_control_json: unknown;
     }>(
       `WITH selected_runs AS (
          SELECT run_id, session_id, event_type, status, started_at, completed_at, error_json
@@ -861,7 +932,16 @@ export class PostgresSessionStore implements SessionStore {
                    AND NULLIF(run_events.metadata_json ->> 'threadId', '') IS NOT NULL
                  ORDER BY run_events.occurred_at DESC, run_events.id DESC
                  LIMIT 1
-              ) AS thread_id
+              ) AS thread_id,
+              (
+                SELECT run_events.metadata_json -> 'missionControl'
+                  FROM run_events
+                 WHERE run_events.run_id = selected_runs.run_id
+                   AND run_events.event_type = 'run.started'
+                   AND run_events.metadata_json -> 'missionControl' IS NOT NULL
+                 ORDER BY run_events.occurred_at ASC, run_events.id ASC
+                 LIMIT 1
+              ) AS mission_control_json
          FROM selected_runs
         ORDER BY selected_runs.started_at DESC`,
       values,
@@ -870,6 +950,13 @@ export class PostgresSessionStore implements SessionStore {
       run: this.mapRunRow(row),
       eventCount: Number(row.event_count),
       ...(row.thread_id !== null ? { threadId: row.thread_id } : {}),
+      ...(readMissionControlRunCorrelation(row.mission_control_json) === undefined
+        ? {}
+        : {
+            missionControl: readMissionControlRunCorrelation(
+              row.mission_control_json,
+            )!,
+          }),
     }));
   }
 

@@ -816,6 +816,62 @@ contractTest("packages.hermetic", "canonical turn parsing validates structured a
   );
 });
 
+contractTest("packages.hermetic", "canonical execution commands preserve exact Mission Control correlation", () => {
+  const missionControl = {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    itemId: "work-1",
+    attemptId: "attempt-1",
+    commandId: "command-1",
+    runId: "run-1",
+  };
+  const started = parseRunnerCommandV2({
+    id: "command-mission-control-start",
+    type: "run.start",
+    payload: {
+      profileId: "reference",
+      turn: { ...turn, missionControl },
+    },
+  });
+  assert.equal(started.type, "run.start");
+  if (started.type === "run.start") {
+    assert.deepEqual(started.payload.turn.missionControl, missionControl);
+  }
+  const continued = parseRunnerCommandV2({
+    id: "command-mission-control-retry",
+    type: "operator.control",
+    payload: {
+      action: "retry",
+      threadId: "thread-1",
+      completionMode: "accepted",
+      missionControl,
+    },
+  });
+  assert.equal(continued.type, "operator.control");
+  if (continued.type === "operator.control") {
+    assert.deepEqual(continued.payload.missionControl, missionControl);
+  }
+
+  assert.throws(
+    () =>
+      parseRunnerCommandV2({
+        id: "command-invalid-mission-control",
+        type: "run.start",
+        payload: {
+          profileId: "reference",
+          turn: {
+            ...turn,
+            missionControl: {
+              ...missionControl,
+              runId: "",
+              inferredRunId: "latest",
+            },
+          },
+        },
+      }),
+    /missionControl\.inferredRunId is not supported/u,
+  );
+});
+
 contractTest("packages.hermetic", "canonical turn parsing validates workspace skill catalogs", () => {
   const workspaceSkills = [{
     installationId: "skill-1",

@@ -465,6 +465,14 @@ export interface OperatorRunTimelineEntry {
   stepIndex?: number | undefined;
 }
 
+export interface OperatorMissionControlRunCorrelation {
+  projectId: string;
+  itemId: string;
+  attemptId: string;
+  commandId: string;
+  runId: string;
+}
+
 export interface OperatorRunView {
   version: typeof OPERATOR_RUN_VIEW_VERSION;
   run: {
@@ -480,6 +488,7 @@ export interface OperatorRunView {
     } | undefined;
   };
   threadId?: string | undefined;
+  missionControl?: OperatorMissionControlRunCorrelation | undefined;
   summary: {
     eventCount: number;
     firstEventAt?: string | undefined;
@@ -542,6 +551,7 @@ export interface OperatorRunIndexEntry {
     } | undefined;
   };
   threadId?: string | undefined;
+  missionControl?: OperatorMissionControlRunCorrelation | undefined;
   summary: {
     eventCount: number;
     truncated: boolean;
@@ -709,6 +719,7 @@ export interface SteerThreadResult {
 export interface RetryThreadInput {
   threadId: string;
   reason?: string | undefined;
+  missionControl?: RuntimeTurnInput["missionControl"] | undefined;
 }
 
 export interface FocusThreadInput {

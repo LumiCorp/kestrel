@@ -317,7 +317,16 @@ contractTest("runtime.hermetic", "ThreadRuntime exposes bounded operator run ins
     type: "run.started",
     level: "INFO",
     timestamp: "2026-07-10T12:00:00.000Z",
-    metadata: { threadId: thread.threadId },
+    metadata: {
+      threadId: thread.threadId,
+      missionControl: {
+        projectId: "11111111-1111-4111-8111-111111111111",
+        itemId: "work-inspection",
+        attemptId: "attempt-inspection",
+        commandId: "command-inspection",
+        runId: "run-inspection",
+      },
+    },
   });
   await sessionStore.appendRunEvent({
     runId: "run-inspection",
@@ -348,6 +357,13 @@ contractTest("runtime.hermetic", "ThreadRuntime exposes bounded operator run ins
   assert.equal(view?.version, "operator-run-v1");
   assert.equal(view?.run.runId, "run-inspection");
   assert.equal(view?.threadId, thread.threadId);
+  assert.deepEqual(view?.missionControl, {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    itemId: "work-inspection",
+    attemptId: "attempt-inspection",
+    commandId: "command-inspection",
+    runId: "run-inspection",
+  });
   assert.equal(view?.summary.eventCount, 3);
   assert.equal(view?.summary.truncated, false);
   assert.equal(view?.diagnosis.latestReasoning?.message.includes("packaged Desktop"), true);
@@ -369,6 +385,7 @@ contractTest("runtime.hermetic", "ThreadRuntime exposes bounded operator run ins
   assert.equal(index.hasMore, false);
   assert.equal(index.runs[0]?.run.runId, "run-inspection");
   assert.equal(index.runs[0]?.threadId, thread.threadId);
+  assert.deepEqual(index.runs[0]?.missionControl, view?.missionControl);
   assert.equal(index.runs[0]?.summary.eventCount, 3);
   assert.deepEqual(index.sessions[0]?.statusCounts, {
     RUNNING: 1,
@@ -2833,9 +2850,25 @@ contractTest("runtime.hermetic", "ThreadRuntime retryThread allows retry for fai
   const retried = await runtime.retryThread({
     threadId: "thread-retry",
     reason: "retry after operator review",
+    missionControl: {
+      projectId: "11111111-1111-4111-8111-111111111111",
+      itemId: "work-retry",
+      attemptId: "attempt-retry",
+      commandId: "command-retry",
+      runId: "run-retry-reserved",
+    },
   });
   assert.equal(retried.output.status, "COMPLETED");
+  assert.equal(retried.output.runId, "run-retry-reserved");
   assert.equal(executor.inputs[1]?.eventType, "operator.retry");
+  assert.equal(executor.inputs[1]?.runtimeTurn?.runId, "run-retry-reserved");
+  assert.deepEqual(executor.inputs[1]?.runtimeTurn?.missionControl, {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    itemId: "work-retry",
+    attemptId: "attempt-retry",
+    commandId: "command-retry",
+    runId: "run-retry-reserved",
+  });
 
   await runtime.startThread({
     threadId: "thread-idle",
