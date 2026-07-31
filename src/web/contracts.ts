@@ -331,6 +331,18 @@ export type WebControlCommand =
   | { type: "workspace.git.inspect"; sessionId: string; threadId: string }
   | { type: "workspace.git.action"; sessionId: string; threadId: string; candidateFingerprint: string; expectedHeadSha?: string; action: WorkspaceGitAction }
   | {
+      type: "mission_control.project.get";
+      projectId: string;
+    }
+  | {
+      type: "mission_control.migration.execute";
+      action: Record<string, unknown>;
+    }
+  | {
+      type: "mission_control.action.execute";
+      action: Record<string, unknown>;
+    }
+  | {
       type: "project.snapshot.get";
       sessionId: string;
     }

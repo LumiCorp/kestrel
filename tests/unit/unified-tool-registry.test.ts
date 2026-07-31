@@ -4,9 +4,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
+import { DEFAULT_CODE_MODE_ENABLED_CONFIG } from "../../src/code/contracts.js";
 import { composeKestrelOneProfile } from "../../src/profile/kestrelOnePolicy.js";
 import type { McpStatusSnapshot, ToolRunContext } from "../../src/index.js";
-import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import {
+  RunCancelledError,
+  RuntimeFailure,
+} from "../../src/runtime/RuntimeFailure.js";
 import { validateWorkspaceSkillPackage } from "../../src/skills/index.js";
 import type {
   InternetExtractOutput,
@@ -728,7 +732,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry fails closed when a sessio
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry strips unadvertised internet.news domain filters before provider calls", async () => {
+contractTest("runtime.hermetic", "UnifiedToolRegistry rejects unadvertised internet.news domain filters before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.news"],
@@ -742,21 +746,22 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry strips unadvertised intern
   });
   await registry.refresh();
 
-  await registry.call("internet.news", {
-    query:
-      "Georgia Florida wildfires current updates homes evacuations damage May 2026",
-    domainDeny: ["opinion", "video"],
-  });
-  assert.deepEqual(internetProvider.newsCalls, [
-    {
+  await assertToolInputInvalid(
+    () => registry.call("internet.news", {
       query:
         "Georgia Florida wildfires current updates homes evacuations damage May 2026",
-      limit: 8,
+      domainDeny: ["opinion", "video"],
+    }),
+    {
+      field: "domainDeny",
+      expected: "no unknown fields",
+      invalidValues: [["opinion", "video"]],
     },
-  ]);
+  );
+  assert.deepEqual(internetProvider.newsCalls, []);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry strips unadvertised internet.search domain filters before provider calls", async () => {
+contractTest("runtime.hermetic", "UnifiedToolRegistry rejects the first unadvertised internet.search field before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search"],
@@ -770,17 +775,19 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry strips unadvertised intern
   });
   await registry.refresh();
 
-  await registry.call("internet.search", {
-    query: "Ada Lovelace",
-    domainAllow: ["wikipedia.org"],
-    domainDeny: ["news"],
-  });
-  assert.deepEqual(internetProvider.searchCalls, [
-    {
+  await assertToolInputInvalid(
+    () => registry.call("internet.search", {
       query: "Ada Lovelace",
-      limit: 8,
+      domainAllow: ["wikipedia.org"],
+      domainDeny: ["news"],
+    }),
+    {
+      field: "domainAllow",
+      expected: "no unknown fields",
+      invalidValues: [["wikipedia.org"]],
     },
-  ]);
+  );
+  assert.deepEqual(internetProvider.searchCalls, []);
 });
 
 contractTest("runtime.hermetic", "UnifiedToolRegistry rejects invalid internet.search_advanced domains before provider calls", async () => {
@@ -1348,6 +1355,76 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry preserves MCP schema failu
   assert.equal(mcp.calls.length, 0);
 });
 
+contractTest("runtime.hermetic", "UnifiedToolRegistry reports the first nested unsupported MCP field", async () => {
+  const mcp = new MockMcpProvider({
+    healthy: true,
+    checkedAt: new Date().toISOString(),
+    servers: [],
+    tools: [
+      {
+        serverId: "remote",
+        toolName: "nested",
+        namespacedToolName: "mcp.remote.nested",
+        description: "Remote nested input",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["request"],
+          properties: {
+            request: {
+              type: "object",
+              additionalProperties: false,
+              required: ["count"],
+              properties: {
+                count: { type: "number" },
+              },
+            },
+          },
+        },
+        presentation: {
+          displayName: "Remote nested input",
+          aliases: ["remote nested"],
+          keywords: ["nested"],
+          provider: "remote",
+          toolFamily: "mcp_nested",
+          capabilityClasses: ["nested"],
+        },
+      },
+    ],
+  });
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["mcp.remote.nested"],
+    mcpManager: mcp,
+  });
+  await registry.refresh();
+
+  await assert.rejects(
+    () =>
+      registry.validateInput("mcp.remote.nested", {
+        request: {
+          count: 1,
+          unexpected: true,
+        },
+      }),
+    (error: unknown) => {
+      assert.equal(error instanceof RuntimeFailure, true);
+      const failure = error as RuntimeFailure;
+      assert.equal(failure.code, "TOOL_INPUT_SCHEMA_FAILED");
+      assert.deepEqual(failure.details?.validationErrors, [
+        {
+          field: "request.unexpected",
+          instancePath: "/request",
+          schemaPath: "#/properties/request/additionalProperties",
+          keyword: "additionalProperties",
+          message: "must NOT have additional properties",
+        },
+      ]);
+      return true;
+    },
+  );
+  assert.equal(mcp.calls.length, 0);
+});
+
 contractTest("runtime.hermetic", "UnifiedToolRegistry preRun does not fail on unhealthy optional MCP servers", async () => {
   const mcp = new MockMcpProvider({
     healthy: false,
@@ -1435,6 +1512,51 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry hides code.execute when pr
   await assert.rejects(
     () => registry.call("code.execute", {}),
     /disabled for this profile/
+  );
+});
+
+contractTest("runtime.hermetic", "UnifiedToolRegistry carries cancellation into code.execute", async () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["code.execute"],
+    context: {
+      codeMode: DEFAULT_CODE_MODE_ENABLED_CONFIG,
+      codeExecutionService: {
+        async execute(_config, _request, options) {
+          if (options?.signal?.aborted === true) {
+            throw new Error("sandbox cancelled");
+          }
+          await new Promise<void>((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              "abort",
+              () => reject(new Error("sandbox cancelled")),
+              { once: true },
+            );
+          });
+          throw new Error("unreachable");
+        },
+      },
+    },
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  const controller = new AbortController();
+  const call = registry.call(
+    "code.execute",
+    {
+      language: "javascript",
+      code: "setInterval(() => {}, 1_000)",
+    },
+    { signal: controller.signal },
+  );
+
+  controller.abort();
+  await assert.rejects(
+    call,
+    (error: unknown) => error instanceof RunCancelledError,
   );
 });
 
@@ -2022,7 +2144,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry exposes allowlisted repo.t
   assert.match(result.modelContext.text, /TRACE_TOKEN/u);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry strips unsupported fields for strict schemas before validation", async () => {
+contractTest("runtime.hermetic", "UnifiedToolRegistry rejects unsupported fields before normalization", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["free.time.current"],
     mcpManager: new MockMcpProvider({
@@ -2035,17 +2157,20 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry strips unsupported fields 
 
   await registry.refresh();
 
-  const normalized = await registry.validateInput("free.time.current", {
-    timezone: "Etc/UTC",
-    unexpected: true,
-  });
-
-  assert.deepEqual(normalized, {
-    timezone: "Etc/UTC",
-  });
+  await assertToolInputInvalid(
+    () => registry.validateInput("free.time.current", {
+      timezone: "Etc/UTC",
+      unexpected: true,
+    }),
+    {
+      field: "unexpected",
+      expected: "no unknown fields",
+      invalidValues: [true],
+    },
+  );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry validates internet.research after canonicalizing topic aliases", async () => {
+contractTest("runtime.hermetic", "UnifiedToolRegistry validates internet.research after canonicalizing advertised query input", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.research"],
     mcpManager: new MockMcpProvider({
@@ -2060,10 +2185,6 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry validates internet.researc
 
   const normalized = await registry.validateInput("internet.research", {
     query: "Cults of Cincinnati, OH",
-    maxSources: "6",
-    includeNews: "false",
-    includeImages: "true",
-    region: "global",
   });
 
   assert.deepEqual(normalized, {
@@ -2089,7 +2210,6 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry validates evidence.extract
     content: "Deterministic validation reduced approval rework by 18 percent.",
     source: "benchmark-1",
     limit: "2",
-    unexpected: true,
   });
 
   assert.deepEqual(normalized, {
@@ -2241,7 +2361,9 @@ contractTest("runtime.hermetic", "Kestrel-One profile exposes only model-visible
 
 contractTest("runtime.hermetic", "every canonical Kestrel One environment exposes dialogs without legacy delegation tools", async () => {
   for (const environmentPresetId of [
+    "cli_safe_local",
     "cli_dev_local",
+    "desktop_safe_local",
     "desktop_dev_local",
     "workspace_hosted",
   ] as const) {

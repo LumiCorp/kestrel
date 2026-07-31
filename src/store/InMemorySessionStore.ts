@@ -36,6 +36,12 @@ import {
 } from "../runtime/waitState.js";
 import { InMemoryOrchestrationStore } from "../orchestration/InMemoryOrchestrationStore.js";
 import type { ProductProjectSnapshot } from "../project/contracts.js";
+import type {
+  MissionControlLegacyProjectSource,
+  MissionControlMigrationSourceBinding,
+} from "../missionControl/migrationContracts.js";
+import { fingerprintLegacySource } from "../missionControl/migrationAuthority.js";
+import { requireMissionControlMigrationFingerprint } from "../missionControl/migrationContracts.js";
 import {
   normalizeProjectSnapshot,
   readProjectSnapshotFromRuntimeState,
@@ -129,6 +135,19 @@ export class InMemorySessionStore implements SessionStore {
     Map<string, InMemoryMissionControlReceipt>
   >();
   private readonly missionControlOutbox: MissionControlOutboxRecord[] = [];
+  private readonly missionControlMigrationBindings = new Map<
+    string,
+    MissionControlMigrationSourceBinding
+  >();
+  private readonly missionControlLegacySourceLocks = new Map<
+    string,
+    {
+      projectId: string;
+      authorityEpoch: number;
+      sourceFingerprint: string;
+      frozenAt: string;
+    }
+  >();
   private readonly runs = new Map<string, InMemoryRun>();
   private readonly effects: InMemoryEffect[] = [];
   private readonly effectResults = new Map<string, EffectResult>();
@@ -171,6 +190,54 @@ export class InMemorySessionStore implements SessionStore {
     return project === undefined ? null : structuredClone(project);
   }
 
+  async listMissionControlLegacySources(): Promise<
+    MissionControlLegacyProjectSource[]
+  > {
+    const sessionIds = new Set([
+      ...this.sessions.keys(),
+      ...this.productStates.keys(),
+    ]);
+    const sources: MissionControlLegacyProjectSource[] = [];
+    for (const sessionId of [...sessionIds].sort()) {
+      const productState = this.productStates.get(sessionId);
+      const session = this.sessions.get(sessionId);
+      const product =
+        session !== undefined &&
+        typeof session.state.product === "object" &&
+        session.state.product !== null &&
+        Array.isArray(session.state.product) === false
+          ? (session.state.product as Record<string, unknown>)
+          : undefined;
+      if (productState === undefined && product?.projectSnapshot === undefined) {
+        continue;
+      }
+      const snapshot =
+        productState === undefined
+          ? readProjectSnapshotFromRuntimeState(session?.state ?? {})
+          : normalizeProjectSnapshot(productState.projectSnapshot);
+      const projectPath = snapshot.setup.workspaceRoot.trim();
+      sources.push({
+        sourceId: `session:${sessionId}`,
+        kind: "session_snapshot",
+        sessionId,
+        sourceVersion: productState?.version ?? session?.version ?? 0,
+        ...(projectPath.length === 0 ? {} : { projectPath }),
+        snapshot,
+      });
+    }
+    return structuredClone(sources);
+  }
+
+  async listMissionControlMigrationSourceBindings(): Promise<
+    MissionControlMigrationSourceBinding[]
+  > {
+    return structuredClone(
+      [...this.missionControlMigrationBindings.values()].sort((left, right) =>
+        left.sourceId.localeCompare(right.sourceId)
+      ),
+    );
+  }
+
   async updateMissionControlProjectState(
     input: MissionControlProjectMutationInput,
   ): Promise<MissionControlProjectMutationResult> {
@@ -211,6 +278,87 @@ export class InMemorySessionStore implements SessionStore {
       expectedRevision,
     );
 
+    let migrationSourceClaim:
+      | MissionControlMigrationSourceBinding
+      | undefined;
+    if (input.migrationSourceClaim !== undefined) {
+      const sourceId = requireMissionControlActionId(
+        input.migrationSourceClaim.sourceId,
+      );
+      const sourceFingerprint = requireMissionControlMigrationFingerprint(
+        input.migrationSourceClaim.sourceFingerprint,
+      );
+      const priorBinding = this.missionControlMigrationBindings.get(sourceId);
+      if (
+        priorBinding !== undefined &&
+        (priorBinding.projectId !== projectId ||
+          priorBinding.sourceFingerprint !== sourceFingerprint)
+      ) {
+        throw new Error(
+          `Mission Control legacy source ${sourceId} is bound to another project or source version.`,
+        );
+      }
+      migrationSourceClaim = priorBinding ?? {
+        sourceId,
+        projectId,
+        sourceFingerprint,
+        actionId,
+        boundAt: input.migrationSourceClaim.boundAt,
+      };
+    }
+    const releases = (input.releaseMigrationSourceClaims ?? []).map(
+      (sourceId) => requireMissionControlActionId(sourceId),
+    );
+    if (new Set(releases).size !== releases.length) {
+      throw new Error("Mission Control migration source releases must be unique.");
+    }
+    const authorityTransition = input.authorityTransition;
+    if (authorityTransition?.type === "activate") {
+      if (current.authorityEpoch !== 0) {
+        throw new Error(`Mission Control project ${projectId} is already active.`);
+      }
+      const sources = await this.listMissionControlLegacySources();
+      for (const claim of authorityTransition.sourceClaims) {
+        const sourceId = requireMissionControlActionId(claim.sourceId);
+        const sourceFingerprint = requireMissionControlMigrationFingerprint(
+          claim.sourceFingerprint,
+        );
+        const source = sources.find((candidate) => candidate.sourceId === sourceId);
+        const binding = this.missionControlMigrationBindings.get(sourceId);
+        if (
+          source === undefined ||
+          fingerprintLegacySource(source) !== sourceFingerprint ||
+          (binding !== undefined && binding.projectId !== projectId)
+        ) {
+          throw new Error(
+            `Mission Control legacy source ${sourceId} changed or is not bound to project ${projectId}.`,
+          );
+        }
+        const lock = this.missionControlLegacySourceLocks.get(sourceId);
+        if (lock !== undefined && lock.projectId !== projectId) {
+          throw new Error(
+            `Mission Control legacy source ${sourceId} is frozen by another project.`,
+          );
+        }
+      }
+    }
+    if (authorityTransition?.type === "rollback") {
+      if (current.authorityEpoch === 0) {
+        throw new Error(`Mission Control project ${projectId} is not active.`);
+      }
+      for (const entry of authorityTransition.exports) {
+        const sourceId = requireMissionControlActionId(entry.sourceId);
+        const lock = this.missionControlLegacySourceLocks.get(sourceId);
+        if (
+          lock?.projectId !== projectId ||
+          lock.authorityEpoch !== current.authorityEpoch
+        ) {
+          throw new Error(
+            `Mission Control legacy source ${sourceId} is not frozen by the active authority epoch.`,
+          );
+        }
+      }
+    }
     const transition = input.apply(structuredClone(current.document));
     const document = parseMissionControlProjectDocument(
       transition.document,
@@ -219,6 +367,12 @@ export class InMemorySessionStore implements SessionStore {
     const project: MissionControlProjectStateRecord = {
       ...current,
       revision: current.revision + 1,
+      authorityEpoch:
+        authorityTransition?.type === "activate"
+          ? current.authorityEpoch + 1
+          : authorityTransition?.type === "rollback"
+            ? 0
+            : current.authorityEpoch,
       document,
       updatedAt: timestamp,
     };
@@ -254,6 +408,43 @@ export class InMemorySessionStore implements SessionStore {
     });
     this.missionControlReceipts.set(projectId, nextReceipts);
     this.missionControlOutbox.push(...structuredClone(effects));
+    if (migrationSourceClaim !== undefined) {
+      this.missionControlMigrationBindings.set(
+        migrationSourceClaim.sourceId,
+        structuredClone(migrationSourceClaim),
+      );
+    }
+    for (const sourceId of releases) {
+      const binding = this.missionControlMigrationBindings.get(sourceId);
+      if (binding?.projectId === projectId) {
+        this.missionControlMigrationBindings.delete(sourceId);
+      }
+    }
+    if (authorityTransition?.type === "activate") {
+      for (const claim of authorityTransition.sourceClaims) {
+        this.missionControlLegacySourceLocks.set(claim.sourceId, {
+          projectId,
+          authorityEpoch: project.authorityEpoch,
+          sourceFingerprint: claim.sourceFingerprint,
+          frozenAt: authorityTransition.transitionedAt,
+        });
+      }
+    }
+    if (authorityTransition?.type === "rollback") {
+      for (const entry of authorityTransition.exports) {
+        const sessionId = requireLegacySessionSourceId(entry.sourceId);
+        const session = await this.ensureSession(sessionId);
+        this.persistProductSnapshot(
+          session,
+          normalizeProjectSnapshot(
+            entry.snapshot,
+            entry.snapshot.graphVersion,
+          ),
+          this.productStates.get(sessionId),
+        );
+        this.missionControlLegacySourceLocks.delete(entry.sourceId);
+      }
+    }
 
     return {
       ...structuredClone(result),
@@ -321,6 +512,7 @@ export class InMemorySessionStore implements SessionStore {
     reason?: string | undefined;
     apply: (snapshot: ProductProjectSnapshot) => ProductProjectSnapshot | Promise<ProductProjectSnapshot>;
   }): Promise<SessionProductStateRecord> {
+    this.assertLegacyMissionControlSourceWritable(input.sessionId);
     const session = await this.ensureSession(input.sessionId);
     const current = this.productStates.get(input.sessionId);
     const graphVersion = input.graphVersion ?? 1;
@@ -339,6 +531,7 @@ export class InMemorySessionStore implements SessionStore {
     sessionId: string;
     snapshot: ProductProjectSnapshot;
   }): Promise<SessionProductStateRecord> {
+    this.assertLegacyMissionControlSourceWritable(input.sessionId);
     const session = await this.ensureSession(input.sessionId);
     const current = this.productStates.get(input.sessionId);
     return this.persistProductSnapshot(
@@ -1824,6 +2017,22 @@ export class InMemorySessionStore implements SessionStore {
     return this.mapProductState(next);
   }
 
+  private assertLegacyMissionControlSourceWritable(sessionId: string): void {
+    const sourceId = `session:${sessionId}`;
+    const lock = this.missionControlLegacySourceLocks.get(sourceId);
+    if (lock !== undefined) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_LEGACY_SOURCE_FROZEN",
+        `Legacy Mission Control source ${sourceId} is frozen by canonical project ${lock.projectId}.`,
+        {
+          sessionId,
+          projectId: lock.projectId,
+          authorityEpoch: lock.authorityEpoch,
+        },
+      );
+    }
+  }
+
   private mapProductState(state: InMemoryProductState): SessionProductStateRecord {
     return {
       sessionId: state.sessionId,
@@ -1847,6 +2056,16 @@ export class InMemorySessionStore implements SessionStore {
       ...(run.error !== undefined ? { error: run.error } : {}),
     };
   }
+}
+
+function requireLegacySessionSourceId(sourceId: string): string {
+  const prefix = "session:";
+  if (sourceId.startsWith(prefix) === false || sourceId.length === prefix.length) {
+    throw new Error(
+      `Mission Control legacy source ${sourceId} is not a session snapshot.`,
+    );
+  }
+  return sourceId.slice(prefix.length);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

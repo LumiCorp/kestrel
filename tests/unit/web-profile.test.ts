@@ -17,14 +17,14 @@ contractTest("runtime.hermetic", "web demo profile resolves to the balanced web 
   assert.equal(profile.toolAllowlist?.includes("code.execute"), false);
 });
 
-contractTest("runtime.hermetic", "desktop demo profile resolves to the desktop local-dev preset", () => {
+contractTest("runtime.hermetic", "desktop demo profile resolves to the isolated desktop preset", () => {
   const profile = createWebDemoProfile("desktop");
 
   assert.equal(profile.shellKind, "desktop");
-  assert.equal(profile.presetId, "desktop_dev_local");
+  assert.equal(profile.presetId, "desktop_safe_local");
   assert.equal(profile.capabilityPacks?.includes("filesystem"), true);
-  assert.equal(profile.capabilityPacks?.includes("dev_shell"), true);
-  assert.equal(profile.capabilityPacks?.includes("sandbox_code"), false);
-  assert.equal(profile.toolAllowlist?.includes("code.execute"), false);
-  assert.equal(profile.toolAllowlist?.includes("dev.shell.run"), true);
+  assert.equal(profile.capabilityPacks?.includes("dev_shell"), false);
+  assert.equal(profile.capabilityPacks?.includes("sandbox_code"), true);
+  assert.equal(profile.toolAllowlist?.includes("code.execute"), true);
+  assert.equal(profile.toolAllowlist?.includes("dev.shell.run"), false);
 });

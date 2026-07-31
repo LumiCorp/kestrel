@@ -1,7 +1,7 @@
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -156,6 +156,7 @@ import {
 import {
   createDefaultDesktopSettings,
   normalizeDesktopSettings,
+  preserveDesktopProjectRegistrationIds,
 } from "./settingsStore.js";
 import {
   createCoreOwnedDesktopDatabaseController,
@@ -191,6 +192,9 @@ import { WorkspaceSkillManager } from "../../../src/skills/WorkspaceSkillStore.j
 import type { WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
 import {
+  executeDesktopMissionControlAction,
+  executeDesktopMissionControlMigration,
+  getDesktopMissionControlProject,
   getDesktopProjectSnapshot,
   getDesktopOperatorRun,
   getDesktopOperatorThread,
@@ -250,7 +254,10 @@ declare global {
     | undefined;
   var __kestrelDesktopProfileOverride:
     | {
-        presetId?: "desktop_dev_local" | undefined;
+        presetId?:
+          | "desktop_safe_local"
+          | "desktop_dev_local"
+          | undefined;
         capabilityPacks?:
           | Array<
               | "balanced"
@@ -1908,7 +1915,10 @@ function registerIpcHandlers(
           details: error instanceof Error ? error.message : String(error),
         });
       }
-      const nextProjects = update.projects ?? desktopSettings.projects;
+      const nextProjects = preserveDesktopProjectRegistrationIds(
+        desktopSettings.projects,
+        update.projects ?? desktopSettings.projects,
+      );
       const preparedProjects =
         await prepareDesktopSettingsProjectRegistrations(nextProjects);
       const nextProjectPaths = new Set(
@@ -3048,6 +3058,53 @@ function registerIpcHandlers(
         async (client) => await client.restartDesktopProjectRun(runId),
       );
     },
+  );
+  ipcMain.handle(
+    "desktop:get-mission-control-project",
+    async (_event, projectId: unknown) =>
+      getDesktopMissionControlProject({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        projectId,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:execute-mission-control-migration",
+    async (_event, intent: unknown) =>
+      executeDesktopMissionControlMigration({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        intent,
+        registrations: desktopSettings.projects
+          .filter(
+            (project): project is DesktopProjectRegistration & { id: string } =>
+              project.id !== undefined,
+          )
+          .map((project) => ({
+            projectId: project.id,
+            path: path.resolve(project.path),
+            previousPaths: desktopSettings.projectTombstones
+              .filter((tombstone) => tombstone.id === project.id)
+              .map((tombstone) => path.resolve(tombstone.path)),
+          })),
+        actionId: randomUUID(),
+        actionTs: new Date().toISOString(),
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:execute-mission-control-action",
+    async (_event, intent: unknown) =>
+      executeDesktopMissionControlAction({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        intent,
+        registeredProjectIds: desktopSettings.projects.flatMap((project) =>
+          project.id === undefined ? [] : [project.id],
+        ),
+        profileId: defaultDesktopRunnerProfileId ?? "reference",
+        actionId: randomUUID(),
+        actionTs: new Date().toISOString(),
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
   );
   ipcMain.handle(
     "desktop:get-project-snapshot",

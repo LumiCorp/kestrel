@@ -108,7 +108,10 @@ contractTest(
 );
 
 contractTest(
-  "runtime.mission-control-execution-authority",
+  [
+    "runtime.mission-control-execution-authority",
+    "desktop.mission-control-boundary",
+  ],
   "canonical attempts control exact runner execution and recover without duplicate dispatch",
   async () => {
     const store = new InMemorySessionStore();
@@ -336,6 +339,24 @@ contractTest(
     assert.equal(
       project.document.history.at(-1)?.disposition,
       "stale",
+    );
+
+    const authoritativeRetryRun = attempt?.runs.find(
+      (run) => run.runId === attempt?.currentRunId,
+    );
+    assert.ok(authoritativeRetryRun);
+    runner.emitTerminal(
+      authoritativeRetryRun.commandId,
+      authoritativeRetryRun.runId,
+      "run.completed",
+    );
+    await runtime.reconcile(PROJECT_ID);
+    project = await projects.getProject(PROJECT_ID);
+    assert.equal(currentAttempt(project)?.status, "completed");
+    assert.equal(
+      project.document.items["work-1"]?.phase,
+      "active",
+      "successful execution remains Active until candidate-bound evidence is admitted",
     );
 
     runtime.close();

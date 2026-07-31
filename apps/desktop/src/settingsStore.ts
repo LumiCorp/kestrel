@@ -15,6 +15,7 @@ import {
   type ResolvedModelPolicy,
   resolveProfileWithModelPolicy,
 } from "../../../src/profile/modelPolicy.js";
+import { isLegacyGeneratedDesktopSelection } from "../../../src/profile/runtimeProfile.js";
 import {
   composeKestrelOneProfile,
   KESTREL_ONE_POLICY_ID,
@@ -158,10 +159,9 @@ type DesktopSettingsFileV10 = DesktopSettingsFileBase & {
 
 const LEGACY_SETUP_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
 const LEGACY_PROVIDER_SELECTION_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
-const DESKTOP_PRESET_CAPABILITY_PACKS: DesktopCapabilityPackId[] = [
+const DESKTOP_SAFE_CAPABILITY_PACKS: DesktopCapabilityPackId[] = [
   "balanced",
   "filesystem",
-  "dev_shell",
   "desktop_host",
   "sandbox_code",
 ];
@@ -170,7 +170,7 @@ function normalizeDesktopCapabilityPacks(
   capabilityPacks: readonly DesktopCapabilityPackId[] | undefined,
 ): DesktopCapabilityPackId[] {
   const next = new Set<DesktopCapabilityPackId>();
-  const source = capabilityPacks ?? DESKTOP_PRESET_CAPABILITY_PACKS;
+  const source = capabilityPacks ?? DESKTOP_SAFE_CAPABILITY_PACKS;
   for (const pack of source) {
     if (
       pack === "balanced" ||
@@ -183,7 +183,7 @@ function normalizeDesktopCapabilityPacks(
     }
   }
   next.add("desktop_host");
-  return next.size > 0 ? [...next] : [...DESKTOP_PRESET_CAPABILITY_PACKS];
+  return next.size > 0 ? [...next] : [...DESKTOP_SAFE_CAPABILITY_PACKS];
 }
 
 export function createDefaultDesktopSettings(
@@ -192,8 +192,8 @@ export function createDefaultDesktopSettings(
   return {
     selectedProvider: "openrouter",
     databaseMode: "default",
-    presetId: "desktop_dev_local",
-    capabilityPacks: [...DESKTOP_PRESET_CAPABILITY_PACKS],
+    presetId: "desktop_safe_local",
+    capabilityPacks: [...DESKTOP_SAFE_CAPABILITY_PACKS],
     projects: [],
     projectTombstones: [],
     mcpServers: [],
@@ -404,11 +404,23 @@ export function normalizeDesktopSettings(
       ? settings.appearanceTheme
       : "system";
 
+  const requestedCapabilityPacks =
+    isLegacyGeneratedDesktopSelection({
+      presetId: settings?.presetId,
+      capabilityPacks: settings?.capabilityPacks,
+    })
+      ? DESKTOP_SAFE_CAPABILITY_PACKS
+      : settings?.capabilityPacks;
+  const capabilityPacks = normalizeDesktopCapabilityPacks(
+    requestedCapabilityPacks,
+  );
   return {
     selectedProvider,
     databaseMode,
-    presetId: "desktop_dev_local",
-    capabilityPacks: normalizeDesktopCapabilityPacks(settings?.capabilityPacks),
+    presetId: capabilityPacks.includes("dev_shell")
+      ? "desktop_dev_local"
+      : "desktop_safe_local",
+    capabilityPacks,
     projectTombstones: normalizeDesktopProjectTombstones(
       settings?.projectTombstones,
     ),
@@ -472,7 +484,7 @@ export function buildDesktopRunnerProfile(
 ) {
   const profile = resolveProfileWithModelPolicy(
     composeKestrelOneProfile({
-      environmentPresetId: "desktop_dev_local",
+      environmentPresetId: settings?.presetId ?? "desktop_safe_local",
     }).profile,
     modelPolicy,
   );
@@ -781,7 +793,10 @@ export async function readDesktopSettings(
         ? parsed.appearanceTheme
         : undefined;
     const presetId =
-      parsed.presetId === "desktop_dev_local" ? parsed.presetId : undefined;
+      parsed.presetId === "desktop_safe_local" ||
+      parsed.presetId === "desktop_dev_local"
+        ? parsed.presetId
+        : undefined;
     const capabilityPacks =
       Array.isArray(parsed.capabilityPacks) &&
       parsed.capabilityPacks.every(
@@ -1072,6 +1087,21 @@ function normalizeDesktopProjects(
     });
   }
   return normalized;
+}
+
+export function preserveDesktopProjectRegistrationIds(
+  currentProjects: readonly DesktopProjectRegistration[],
+  nextProjects: readonly DesktopProjectRegistration[],
+): DesktopProjectRegistration[] {
+  const currentByPath = new Map(
+    currentProjects.map((project) => [path.resolve(project.path), project]),
+  );
+  return nextProjects.map((project) => {
+    const current = currentByPath.get(path.resolve(project.path));
+    return current?.id === undefined
+      ? { ...project }
+      : { ...project, id: current.id };
+  });
 }
 
 function normalizeDesktopProjectTombstones(

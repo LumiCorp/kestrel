@@ -23,6 +23,9 @@ import type {
   OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
+  MissionControlMigrationExecuteCommandPayload,
+  MissionControlActionExecuteCommandPayload,
+  MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
   ProfileListCommandPayload,
   ProjectActionCommandPayload,
@@ -437,6 +440,33 @@ export class CommandRouter {
         await this.host.projectSnapshotGet(
           command.id,
           payload,
+          command.metadata
+        );
+        return;
+      }
+
+      if (command.type === "mission_control.project.get") {
+        await this.host.missionControlProjectGet(
+          command.id,
+          validateMissionControlProjectGetPayload(command.payload),
+          command.metadata
+        );
+        return;
+      }
+
+      if (command.type === "mission_control.migration.execute") {
+        await this.host.missionControlMigrationExecute(
+          command.id,
+          validateMissionControlMigrationExecutePayload(command.payload),
+          command.metadata
+        );
+        return;
+      }
+
+      if (command.type === "mission_control.action.execute") {
+        await this.host.missionControlActionExecute(
+          command.id,
+          validateMissionControlActionExecutePayload(command.payload),
           command.metadata
         );
         return;
@@ -1218,6 +1248,59 @@ function validateProjectSnapshotGetPayload(
   return { sessionId: record.sessionId };
 }
 
+function validateMissionControlProjectGetPayload(
+  payload: unknown
+): MissionControlProjectGetCommandPayload {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("mission_control.project.get payload must be an object");
+  }
+  const record = payload as Record<string, unknown>;
+  return {
+    projectId: requireNonEmptyString(
+      record.projectId,
+      "mission_control.project.get payload.projectId"
+    ),
+  };
+}
+
+function validateMissionControlMigrationExecutePayload(
+  payload: unknown
+): MissionControlMigrationExecuteCommandPayload {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("mission_control.migration.execute payload must be an object");
+  }
+  const record = payload as Record<string, unknown>;
+  if (
+    typeof record.action !== "object" ||
+    record.action === null ||
+    Array.isArray(record.action)
+  ) {
+    throw new Error(
+      "mission_control.migration.execute payload.action must be an object"
+    );
+  }
+  return { action: record.action as Record<string, unknown> };
+}
+
+function validateMissionControlActionExecutePayload(
+  payload: unknown
+): MissionControlActionExecuteCommandPayload {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("mission_control.action.execute payload must be an object");
+  }
+  const record = payload as Record<string, unknown>;
+  if (
+    typeof record.action !== "object" ||
+    record.action === null ||
+    Array.isArray(record.action)
+  ) {
+    throw new Error(
+      "mission_control.action.execute payload.action must be an object"
+    );
+  }
+  return { action: record.action as Record<string, unknown> };
+}
+
 function validateProjectSnapshotUpdatePayload(
   value: unknown
 ): ProjectSnapshotUpdateCommandPayload {
@@ -1925,12 +2008,14 @@ function validateExecutionProfileResolvePayload(
   }
   const record = value as Record<string, unknown>;
   if (
+    record.environmentPresetId !== "cli_safe_local" &&
     record.environmentPresetId !== "cli_dev_local" &&
+    record.environmentPresetId !== "desktop_safe_local" &&
     record.environmentPresetId !== "desktop_dev_local" &&
     record.environmentPresetId !== "workspace_hosted"
   ) {
     throw new Error(
-      "execution-profile.resolve payload.environmentPresetId must be cli_dev_local, desktop_dev_local, or workspace_hosted",
+      "execution-profile.resolve payload.environmentPresetId must be cli_safe_local, cli_dev_local, desktop_safe_local, desktop_dev_local, or workspace_hosted",
     );
   }
   if (

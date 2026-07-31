@@ -14,6 +14,7 @@ import type {
   DesktopPackageManager,
   DesktopProjectAction,
   DesktopProjectFilesChangedEvent,
+  DesktopMissionControlProjectResponse,
   DesktopProjectSnapshotResponse,
   DesktopRendererSettingsUpdate,
   DesktopRunCancelRequest,
@@ -415,6 +416,17 @@ const desktopBridge: DesktopBridge = {
     ipcRenderer.on("desktop:preview-diagnostic", handler);
     return () =>
       ipcRenderer.removeListener("desktop:preview-diagnostic", handler);
+  },
+  getMissionControlProject(
+    projectId,
+  ): Promise<DesktopMissionControlProjectResponse> {
+    return ipcRenderer.invoke("desktop:get-mission-control-project", projectId);
+  },
+  executeMissionControlMigration(intent) {
+    return ipcRenderer.invoke("desktop:execute-mission-control-migration", intent);
+  },
+  executeMissionControlAction(intent) {
+    return ipcRenderer.invoke("desktop:execute-mission-control-action", intent);
   },
   getProjectSnapshot(sessionId): Promise<DesktopProjectSnapshotResponse> {
     return ipcRenderer.invoke("desktop:get-project-snapshot", sessionId);

@@ -1,6 +1,19 @@
 import { createHash } from "node:crypto";
 
 import type { MissionControlProjectRepository } from "../kestrel/contracts/store.js";
+import type { ProductProjectSnapshot } from "../project/contracts.js";
+import {
+  parseMissionControlMigrationState,
+  type MissionControlMigrationState,
+} from "./migrationContracts.js";
+import {
+  parseMissionControlCompletionContract,
+  parseMissionControlReviewBundle,
+  parseMissionControlReviewDecision,
+  type MissionControlCompletionContract,
+  type MissionControlReviewBundle,
+  type MissionControlReviewDecision,
+} from "./reviewContracts.js";
 
 export const MISSION_CONTROL_PROJECT_SCHEMA_VERSION = 1 as const;
 
@@ -87,11 +100,15 @@ export interface MissionControlWorkItem {
   title: string;
   instructions: string;
   createdBy: MissionControlWorkCreator;
+  completionContract?: MissionControlCompletionContract | undefined;
   phase: MissionControlWorkPhase;
   order: number;
   attempts: MissionControlExecutionAttempt[];
   currentAttemptId?: string | undefined;
   attentionReason?: MissionControlAttentionReason | undefined;
+  reviewBundles?: MissionControlReviewBundle[] | undefined;
+  currentReviewBundleId?: string | undefined;
+  reviewDecisions?: MissionControlReviewDecision[] | undefined;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -111,7 +128,16 @@ export type MissionControlHistoryActionType =
   | "execution.failed"
   | "execution.orphaned"
   | "execution.completed"
-  | "execution.retry";
+  | "execution.retry"
+  | "review.admit"
+  | "review.accept"
+  | "review.request_changes"
+  | "migration.stage"
+  | "migration.rebind"
+  | "migration.resolve"
+  | "migration.clear"
+  | "authority.activate"
+  | "authority.rollback";
 
 export interface MissionControlHistoryEntry {
   actionId: string;
@@ -133,6 +159,7 @@ export interface MissionControlProjectDocument {
   };
   items: Record<string, MissionControlWorkItem>;
   history: MissionControlHistoryEntry[];
+  migration?: MissionControlMigrationState | undefined;
 }
 
 export interface MissionControlProjectStateRecord {
@@ -176,6 +203,30 @@ export interface MissionControlProjectMutationInput {
   actionId: string;
   requestFingerprint: string;
   expectedRevision: number;
+  migrationSourceClaim?: {
+    sourceId: string;
+    sourceFingerprint: string;
+    boundAt: string;
+  } | undefined;
+  releaseMigrationSourceClaims?: string[] | undefined;
+  authorityTransition?:
+    | {
+        type: "activate";
+        sourceClaims: Array<{
+          sourceId: string;
+          sourceFingerprint: string;
+        }>;
+        transitionedAt: string;
+      }
+    | {
+        type: "rollback";
+        exports: Array<{
+          sourceId: string;
+          snapshot: ProductProjectSnapshot;
+        }>;
+        transitionedAt: string;
+      }
+    | undefined;
   apply: (current: MissionControlProjectDocument) => {
     document: MissionControlProjectDocument;
     effects: MissionControlOutboxIntent[];
@@ -201,6 +252,7 @@ export type MissionControlProjectAction =
       title: string;
       instructions: string;
       createdBy: MissionControlWorkCreator;
+      completionContract?: MissionControlCompletionContract | undefined;
       order: number;
     })
   | (MissionControlItemActionBase & {
@@ -216,6 +268,9 @@ export type MissionControlProjectAction =
     })
   | (MissionControlItemActionBase & {
       type: "item.discard";
+    })
+  | (MissionControlItemActionBase & {
+      type: "item.restore";
     })
   | (MissionControlActionBase & {
       type: "autopilot.configure";
@@ -351,6 +406,7 @@ export function parseMissionControlProjectAction(
         "title",
         "instructions",
         "createdBy",
+        "completionContract",
         "order",
       ]);
       return {
@@ -360,11 +416,19 @@ export function parseMissionControlProjectAction(
         title: requireBoundedString(record.title, "title", 512),
         instructions: requireBoundedString(record.instructions, "instructions", 32_000),
         createdBy: requireWorkCreator(record.createdBy),
+        ...(record.completionContract === undefined
+          ? {}
+          : {
+              completionContract: parseMissionControlCompletionContract(
+                record.completionContract,
+              ),
+            }),
         order: requireNonNegativeInteger(record.order, "order"),
       };
     case "item.approve":
     case "item.return_to_ready":
     case "item.discard":
+    case "item.restore":
       assertAllowedKeys(record, [
         "type",
         "projectId",
@@ -443,6 +507,7 @@ export function parseMissionControlProjectDocument(
     "autopilot",
     "items",
     "history",
+    "migration",
   ]);
   if (record.schemaVersion !== MISSION_CONTROL_PROJECT_SCHEMA_VERSION) {
     throw new Error(
@@ -465,7 +530,7 @@ export function parseMissionControlProjectDocument(
   const items = Object.fromEntries(
     Object.entries(itemsRecord).map(([itemId, item]) => [
       itemId,
-      parseWorkItem(item, itemId),
+      parseWorkItem(item, itemId, projectId),
     ]),
   );
   if (Array.isArray(record.history) === false) {
@@ -494,6 +559,9 @@ export function parseMissionControlProjectDocument(
     },
     items,
     history,
+    ...(record.migration === undefined
+      ? {}
+      : { migration: parseMissionControlMigrationState(record.migration) }),
   };
 }
 
@@ -571,9 +639,14 @@ export function reduceMissionControlProjectAction(
         title: action.title,
         instructions: action.instructions,
         createdBy: action.createdBy,
+        ...(action.completionContract === undefined
+          ? {}
+          : { completionContract: action.completionContract }),
         phase: action.createdBy === "agent" ? "proposed" : "ready",
         order: action.order,
         attempts: [],
+        reviewBundles: [],
+        reviewDecisions: [],
         version: 1,
         createdAt: action.actionTs,
         updatedAt: action.actionTs,
@@ -666,6 +739,27 @@ export function reduceMissionControlProjectAction(
           replaceWorkItem(current, {
             ...item,
             phase: "discarded",
+            version: item.version + 1,
+            updatedAt: action.actionTs,
+          }),
+          action,
+          nextRevision,
+        ),
+        effects: [],
+      };
+    }
+    case "item.restore": {
+      const item = requireVersionedItem(current, action);
+      if (item.phase !== "discarded") {
+        throw new MissionControlTransitionError(
+          "Only discarded Mission Control work can be restored.",
+        );
+      }
+      return {
+        document: appendHistory(
+          replaceWorkItem(current, {
+            ...item,
+            phase: "ready",
             version: item.version + 1,
             updatedAt: action.actionTs,
           }),
@@ -818,18 +912,26 @@ function appendHistory(
   };
 }
 
-function parseWorkItem(value: unknown, itemKey: string): MissionControlWorkItem {
+function parseWorkItem(
+  value: unknown,
+  itemKey: string,
+  projectId: string,
+): MissionControlWorkItem {
   const record = requireRecord(value, `items.${itemKey}`);
   assertAllowedKeys(record, [
     "id",
     "title",
     "instructions",
     "createdBy",
+    "completionContract",
     "phase",
     "order",
     "attempts",
     "currentAttemptId",
     "attentionReason",
+    "reviewBundles",
+    "currentReviewBundleId",
+    "reviewDecisions",
     "version",
     "createdAt",
     "updatedAt",
@@ -843,6 +945,30 @@ function parseWorkItem(value: unknown, itemKey: string): MissionControlWorkItem 
   }
   const attempts = (record.attempts ?? []).map((attempt, index) =>
     parseExecutionAttempt(attempt, itemKey, index),
+  );
+  if (
+    record.reviewBundles !== undefined &&
+    Array.isArray(record.reviewBundles) === false
+  ) {
+    throw new Error(`items.${itemKey}.reviewBundles must be an array.`);
+  }
+  const reviewBundles = (record.reviewBundles ?? []).map((bundle, index) =>
+    parseMissionControlReviewBundle(
+      bundle,
+      `items.${itemKey}.reviewBundles.${index}`,
+    ),
+  );
+  if (
+    record.reviewDecisions !== undefined &&
+    Array.isArray(record.reviewDecisions) === false
+  ) {
+    throw new Error(`items.${itemKey}.reviewDecisions must be an array.`);
+  }
+  const reviewDecisions = (record.reviewDecisions ?? []).map((decision, index) =>
+    parseMissionControlReviewDecision(
+      decision,
+      `items.${itemKey}.reviewDecisions.${index}`,
+    ),
   );
   const currentAttemptId =
     record.currentAttemptId === undefined
@@ -860,6 +986,64 @@ function parseWorkItem(value: unknown, itemKey: string): MissionControlWorkItem 
       `items.${itemKey}.currentAttemptId must identify a persisted attempt.`,
     );
   }
+  for (const bundle of reviewBundles) {
+    if (bundle.projectId !== projectId || bundle.itemId !== itemKey) {
+      throw new Error(
+        `items.${itemKey}.reviewBundles must remain project and item scoped.`,
+      );
+    }
+    const attempt = attempts.find((candidate) => candidate.id === bundle.attemptId);
+    const execution = bundle.evidence.find(
+      (evidence) => evidence.kind === "execution",
+    );
+    const run =
+      attempt === undefined || execution?.kind !== "execution"
+        ? undefined
+        : attempt.runs.find(
+            (candidate) =>
+              candidate.sessionId === execution.sessionId &&
+              candidate.threadId === execution.threadId &&
+              candidate.runId === execution.runId &&
+              candidate.commandId === execution.referenceId,
+          );
+    if (attempt === undefined || run === undefined) {
+      throw new Error(
+        `items.${itemKey}.reviewBundles must identify an exact persisted attempt run.`,
+      );
+    }
+  }
+  for (const decision of reviewDecisions) {
+    const bundle = reviewBundles.find(
+      (candidate) => candidate.id === decision.bundleId,
+    );
+    if (
+      decision.projectId !== projectId ||
+      decision.itemId !== itemKey ||
+      bundle === undefined ||
+      decision.attemptId !== bundle.attemptId ||
+      decision.candidateFingerprint !== bundle.candidate.candidateFingerprint
+    ) {
+      throw new Error(
+        `items.${itemKey}.reviewDecisions must identify an exact persisted Review bundle.`,
+      );
+    }
+  }
+  const currentReviewBundleId =
+    record.currentReviewBundleId === undefined
+      ? undefined
+      : requireBoundedString(
+          record.currentReviewBundleId,
+          `items.${itemKey}.currentReviewBundleId`,
+          80,
+        );
+  if (
+    currentReviewBundleId !== undefined &&
+    reviewBundles.some((bundle) => bundle.id === currentReviewBundleId) === false
+  ) {
+    throw new Error(
+      `items.${itemKey}.currentReviewBundleId must identify a persisted bundle.`,
+    );
+  }
   return {
     id,
     title: requireBoundedString(record.title, `items.${itemKey}.title`, 512),
@@ -869,6 +1053,14 @@ function parseWorkItem(value: unknown, itemKey: string): MissionControlWorkItem 
       32_000,
     ),
     createdBy: requireWorkCreator(record.createdBy),
+    ...(record.completionContract === undefined
+      ? {}
+      : {
+          completionContract: parseMissionControlCompletionContract(
+            record.completionContract,
+            `items.${itemKey}.completionContract`,
+          ),
+        }),
     phase: requireWorkPhase(record.phase),
     order: requireNonNegativeInteger(record.order, `items.${itemKey}.order`),
     attempts,
@@ -881,6 +1073,11 @@ function parseWorkItem(value: unknown, itemKey: string): MissionControlWorkItem 
             `items.${itemKey}.attentionReason`,
           ),
         }),
+    reviewBundles,
+    ...(currentReviewBundleId === undefined
+      ? {}
+      : { currentReviewBundleId }),
+    reviewDecisions,
     version: requirePositiveInteger(record.version, `items.${itemKey}.version`),
     createdAt: requireTimestamp(record.createdAt, `items.${itemKey}.createdAt`),
     updatedAt: requireTimestamp(record.updatedAt, `items.${itemKey}.updatedAt`),
@@ -1353,6 +1550,7 @@ function requireHistoryActionType(value: string): MissionControlHistoryActionTyp
     value !== "item.reorder" &&
     value !== "item.return_to_ready" &&
     value !== "item.discard" &&
+    value !== "item.restore" &&
     value !== "autopilot.configure" &&
     value !== "execution.start" &&
     value !== "execution.accepted" &&
@@ -1366,7 +1564,16 @@ function requireHistoryActionType(value: string): MissionControlHistoryActionTyp
     value !== "execution.failed" &&
     value !== "execution.orphaned" &&
     value !== "execution.completed" &&
-    value !== "execution.retry"
+    value !== "execution.retry" &&
+    value !== "review.admit" &&
+    value !== "review.accept" &&
+    value !== "review.request_changes" &&
+    value !== "migration.stage" &&
+    value !== "migration.rebind" &&
+    value !== "migration.resolve" &&
+    value !== "migration.clear" &&
+    value !== "authority.activate" &&
+    value !== "authority.rollback"
   ) {
     throw new Error(`Unsupported Mission Control history action: ${value}.`);
   }

@@ -2,6 +2,25 @@ import { resolve, sep } from "node:path";
 import { normalizeDevShellExecCommand } from "../../src/devshell/normalizeCommand.js";
 import { asNonEmptyRecord } from "../helpers.js";
 
+const TOOL_INPUT_COMPATIBILITY_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "evidence.extract": ["content", "source", "limit"],
+  "fs.list": ["filePath", "targetPath"],
+  "fs.read_text": ["filePath", "targetPath"],
+  "fs.verify_json": ["filePath", "targetPath"],
+  "fs.search_text": ["filePath", "targetPath", "pattern"],
+  "repo.trace": ["filePath", "targetPath"],
+  "fs.write_text": ["filePath", "targetPath", "text"],
+  "fs.replace_text": ["filePath", "targetPath"],
+  "fs.mkdir": ["filePath", "targetPath"],
+  "fs.delete": ["filePath", "targetPath"],
+  "fs.copy": ["from", "to"],
+  "fs.move": ["from", "to"],
+};
+
+export function getToolInputCompatibilityAliases(name: string): readonly string[] {
+  return TOOL_INPUT_COMPATIBILITY_ALIASES[name] ?? [];
+}
+
 export function normalizeToolActionInput(
   name: string,
   input: Record<string, unknown>,
@@ -719,6 +738,18 @@ export function sanitizeToolInputForSchema(
   input: unknown,
 ): unknown {
   return sanitizeSchemaValue(schema, input);
+}
+
+export function normalizeTrustedToolActionInput(input: {
+  name: string;
+  value: Record<string, unknown>;
+  schema: Record<string, unknown>;
+  workspaceRoot?: string | undefined;
+}): unknown {
+  return sanitizeToolInputForSchema(
+    input.schema,
+    normalizeToolActionInput(input.name, input.value, input.workspaceRoot),
+  );
 }
 
 function normalizeCodeExecuteFiles(value: unknown): unknown[] | undefined {

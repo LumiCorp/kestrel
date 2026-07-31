@@ -68,6 +68,9 @@ export const RUNNER_COMMAND_TYPES = [
   "workspace.validation.submit",
   "workspace.git.inspect",
   "workspace.git.action",
+  "mission_control.project.get",
+  "mission_control.migration.execute",
+  "mission_control.action.execute",
   "project.snapshot.get",
   "project.snapshot.update",
   "project.action",
@@ -174,6 +177,7 @@ export const RUNNER_EVENT_TYPES = [
   "workspace.review",
   "workspace.validation",
   "workspace.git",
+  "mission_control.project",
   "project.snapshot",
   "project.review",
   "mcp.status",
@@ -673,7 +677,12 @@ export interface ProfileGetCommandPayload {
 }
 
 export interface ExecutionProfileResolveCommandPayload {
-  environmentPresetId: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+  environmentPresetId:
+    | "cli_safe_local"
+    | "cli_dev_local"
+    | "desktop_safe_local"
+    | "desktop_dev_local"
+    | "workspace_hosted";
   managedConfiguration?: Record<string, unknown> | undefined;
   authoringProfileId?: string | undefined;
 }
@@ -982,6 +991,18 @@ export interface WorkspaceValidationSubmitCommandPayload { sessionId: string; th
 export interface WorkspaceGitInspectCommandPayload { sessionId: string; threadId: string }
 export interface WorkspaceGitActionCommandPayload { sessionId: string; threadId: string; candidateFingerprint: string; expectedHeadSha?: string | undefined; action: Record<string, unknown> }
 
+export interface MissionControlProjectGetCommandPayload {
+  projectId: string;
+}
+
+export interface MissionControlMigrationExecuteCommandPayload {
+  action: Record<string, unknown>;
+}
+
+export interface MissionControlActionExecuteCommandPayload {
+  action: Record<string, unknown>;
+}
+
 export interface ProjectSnapshotGetCommandPayload {
   sessionId: string;
 }
@@ -1064,6 +1085,9 @@ export interface RunnerCommandPayloadByType {
   "workspace.validation.submit": WorkspaceValidationSubmitCommandPayload;
   "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
   "workspace.git.action": WorkspaceGitActionCommandPayload;
+  "mission_control.project.get": MissionControlProjectGetCommandPayload;
+  "mission_control.migration.execute": MissionControlMigrationExecuteCommandPayload;
+  "mission_control.action.execute": MissionControlActionExecuteCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
@@ -1104,7 +1128,12 @@ export interface ExecutionProfileResolvedEventPayload {
     version: number;
   };
   environmentPreset: {
-    id: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+    id:
+      | "cli_safe_local"
+      | "cli_dev_local"
+      | "desktop_safe_local"
+      | "desktop_dev_local"
+      | "workspace_hosted";
     version: number;
   };
   resolvedProfile: RunnerProfile;
@@ -1484,6 +1513,11 @@ export interface WorkspaceReviewEventPayload { sessionId: string; threadId: stri
 export interface WorkspaceValidationEventPayload { sessionId: string; threadId: string; operation: "inspect" | "run" | "cancel" | "submit"; snapshot: Record<string, unknown>; runId?: string | undefined }
 export interface WorkspaceGitEventPayload { sessionId: string; threadId: string; operation: "inspect" | "action"; snapshot: Record<string, unknown> }
 
+export interface MissionControlProjectEventPayload {
+  projectId: string;
+  project: Record<string, unknown>;
+}
+
 export interface ProjectSnapshotEventPayload {
   sessionId: string;
   snapshot: RunnerProjectSnapshot;
@@ -1545,6 +1579,7 @@ export interface RunnerEventPayloadByType {
   "workspace.review": WorkspaceReviewEventPayload;
   "workspace.validation": WorkspaceValidationEventPayload;
   "workspace.git": WorkspaceGitEventPayload;
+  "mission_control.project": MissionControlProjectEventPayload;
   "project.snapshot": ProjectSnapshotEventPayload;
   "project.review": ProjectReviewEventPayload;
   "mcp.status": McpStatusEventPayload;
@@ -1630,6 +1665,9 @@ export interface RunnerResponseByCommandType {
   "workspace.validation.submit": RunnerEventEnvelope<"workspace.validation">;
   "workspace.git.inspect": RunnerEventEnvelope<"workspace.git">;
   "workspace.git.action": RunnerEventEnvelope<"workspace.git">;
+  "mission_control.project.get": RunnerEventEnvelope<"mission_control.project">;
+  "mission_control.migration.execute": RunnerEventEnvelope<"mission_control.project">;
+  "mission_control.action.execute": RunnerEventEnvelope<"mission_control.project">;
   "project.snapshot.get": RunnerEventEnvelope<"project.snapshot">;
   "project.snapshot.update": RunnerEventEnvelope<"project.snapshot">;
   "project.action": RunnerEventEnvelope<"project.snapshot">;
@@ -1693,6 +1731,9 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "workspace.validation.submit": ["workspace.validation"],
   "workspace.git.inspect": ["workspace.git"],
   "workspace.git.action": ["workspace.git"],
+  "mission_control.project.get": ["mission_control.project"],
+  "mission_control.migration.execute": ["mission_control.project"],
+  "mission_control.action.execute": ["mission_control.project"],
   "project.snapshot.get": ["project.snapshot"],
   "project.snapshot.update": ["project.snapshot"],
   "project.action": ["project.snapshot"],
@@ -1933,7 +1974,9 @@ function parseRunnerCommandPayloadV2(
       break;
     case "execution-profile.resolve":
       validateEnum(payload.environmentPresetId, `${label}.environmentPresetId`, [
+        "cli_safe_local",
         "cli_dev_local",
+        "desktop_safe_local",
         "desktop_dev_local",
         "workspace_hosted",
       ]);
@@ -1976,6 +2019,22 @@ function parseRunnerCommandPayloadV2(
     case "workspace.promotion.list":
     case "project.snapshot.get":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      break;
+    case "mission_control.project.get":
+      requireNonEmptyString(payload.projectId, `${label}.projectId`);
+      break;
+    case "mission_control.migration.execute":
+    case "mission_control.action.execute":
+      rejectUnknownFields(payload, label, ["action"]);
+      if (
+        typeof payload.action !== "object" ||
+        payload.action === null ||
+        Array.isArray(payload.action)
+      ) {
+        throw new RunnerProtocolContractError(
+          `${label}.action must be an object`,
+        );
+      }
       break;
     case "operator.inbox":
       validateOptionalNonEmptyString(payload.sessionId, `${label}.sessionId`);
@@ -2589,6 +2648,10 @@ function parseRunnerEventPayloadV2(
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); validateEnum(payload.operation, `${label}.operation`, ["inspect", "run", "cancel", "submit"]); requireRecord(payload.snapshot, `${label}.snapshot`); validateOptionalNonEmptyString(payload.runId, `${label}.runId`); break;
     case "workspace.git":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`); requireNonEmptyString(payload.threadId, `${label}.threadId`); validateEnum(payload.operation, `${label}.operation`, ["inspect", "action"]); requireRecord(payload.snapshot, `${label}.snapshot`); break;
+    case "mission_control.project":
+      requireNonEmptyString(payload.projectId, `${label}.projectId`);
+      requireRecord(payload.project, `${label}.project`);
+      break;
     case "project.snapshot":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       requireRecord(payload.snapshot, `${label}.snapshot`);
@@ -3621,7 +3684,9 @@ function validateProfileResolutionProvenance(value: unknown, label: string): voi
 function validateEnvironmentPresetProvenance(value: unknown, label: string): void {
   const record = requireRecord(value, label);
   validateEnum(record.id, `${label}.id`, [
+    "cli_safe_local",
     "cli_dev_local",
+    "desktop_safe_local",
     "desktop_dev_local",
     "workspace_hosted",
   ]);

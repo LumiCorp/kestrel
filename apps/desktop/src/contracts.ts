@@ -76,6 +76,8 @@ import type {
   DesktopWorkspaceFeedbackSubmitResult,
 } from "../../../src/desktopShell/contracts.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
+import type { MissionControlProjectStateRecord } from "../../../src/missionControl/projectAuthority.js";
+import type { MissionControlCompletionContract } from "../../../src/missionControl/reviewContracts.js";
 import type { DesktopEnvironmentStatusProjection } from "../../../src/localCore/desktopEnvironmentConnector.js";
 import type {
   KestrelOneAccountStatus,
@@ -520,6 +522,15 @@ export interface DesktopBridge {
   onPreviewDiagnostic(
     listener: (diagnostic: DesktopPreviewDiagnostic) => void,
   ): () => void;
+  getMissionControlProject(
+    projectId: string,
+  ): Promise<DesktopMissionControlProjectResponse>;
+  executeMissionControlMigration(
+    intent: DesktopMissionControlMigrationIntent,
+  ): Promise<DesktopMissionControlProjectResponse>;
+  executeMissionControlAction(
+    intent: DesktopMissionControlActionIntent,
+  ): Promise<DesktopMissionControlProjectResponse>;
   getProjectSnapshot(
     sessionId: string,
   ): Promise<DesktopProjectSnapshotResponse>;
@@ -730,3 +741,100 @@ export interface DesktopBridge {
   ): () => void;
   onCommand(listener: (command: DesktopShellCommand) => void): () => void;
 }
+
+export interface DesktopMissionControlProjectResponse {
+  projectId: string;
+  project: MissionControlProjectStateRecord;
+}
+
+export type DesktopMissionControlMigrationIntent =
+  | {
+      type: "stage";
+      projectId: string;
+      expectedRevision: number;
+    }
+  | {
+      type: "rebind";
+      projectId: string;
+      expectedRevision: number;
+      sourceId: string;
+      sourceFingerprint: string;
+    }
+  | {
+      type: "resolve";
+      projectId: string;
+      expectedRevision: number;
+      resolution:
+        | { type: "source"; candidateId: string }
+        | { type: "merged"; document: unknown };
+    }
+  | {
+      type: "clear";
+      projectId: string;
+      expectedRevision: number;
+    };
+
+interface DesktopMissionControlActionBase {
+  projectId: string;
+  expectedRevision: number;
+}
+
+interface DesktopMissionControlItemActionBase
+  extends DesktopMissionControlActionBase {
+  itemId: string;
+  expectedItemVersion: number;
+}
+
+interface DesktopMissionControlAttemptActionBase
+  extends DesktopMissionControlItemActionBase {
+  attemptId: string;
+  expectedAttemptVersion: number;
+}
+
+export type DesktopMissionControlActionIntent =
+  | (DesktopMissionControlActionBase & {
+      type: "activate";
+    })
+  | (DesktopMissionControlActionBase & {
+      type: "rollback";
+    })
+  | (DesktopMissionControlActionBase & {
+      type: "create";
+      title: string;
+      instructions: string;
+      completionContract: MissionControlCompletionContract;
+    })
+  | (DesktopMissionControlItemActionBase & {
+      type:
+        | "approve"
+        | "return_to_ready"
+        | "discard"
+        | "restore"
+        | "start"
+        | "retry";
+    })
+  | (DesktopMissionControlAttemptActionBase & {
+      type: "reply";
+      requestId: string;
+      message: string;
+    })
+  | (DesktopMissionControlAttemptActionBase & {
+      type: "stop";
+      runId: string;
+      commandId: string;
+    })
+  | (DesktopMissionControlAttemptActionBase & {
+      type: "prepare_review";
+    })
+  | (DesktopMissionControlAttemptActionBase & {
+      type: "accept" | "request_changes";
+      candidateFingerprint: string;
+      bundleId: string;
+      reason?: string | undefined;
+    })
+  | (DesktopMissionControlActionBase & {
+      type: "configure_autopilot";
+      enabled: boolean;
+      wipLimit: number;
+      confirmed: boolean;
+    });

@@ -14,9 +14,29 @@ import {
   hasConfiguredDesktopProviderCredential,
   readDesktopSettings,
   normalizeDesktopSettings,
+  preserveDesktopProjectRegistrationIds,
   writeDesktopSettings,
 } from "../src/settingsStore.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
+
+contractTest(
+  "desktop.hermetic",
+  "renderer project settings preserve the registered UUID by exact path",
+  () => {
+    const existingId = "11111111-1111-4111-8111-111111111111";
+    const projects = preserveDesktopProjectRegistrationIds(
+      [{ id: existingId, path: "/workspace/kestrel", label: "Old label" }],
+      [
+        { path: "/workspace/kestrel", label: "Kestrel" },
+        { path: "/workspace/new", label: "New project" },
+      ],
+    );
+
+    assert.equal(projects[0]?.id, existingId);
+    assert.equal(projects[0]?.label, "Kestrel");
+    assert.equal(projects[1]?.id, undefined);
+  },
+);
 
 contractTest(
   "desktop.hermetic",
@@ -59,6 +79,9 @@ contractTest(
     );
 
     assert.deepEqual(settings, createDefaultDesktopSettings());
+    assert.equal(settings.presetId, "desktop_safe_local");
+    assert.equal(settings.capabilityPacks.includes("dev_shell"), false);
+    assert.equal(settings.capabilityPacks.includes("sandbox_code"), true);
     assert.equal(settings.providerSelectionCompletedAt, undefined);
   },
 );
@@ -153,13 +176,52 @@ contractTest(
     const restored = await readDesktopSettings(settingsPath);
 
     assert.equal(restored.selectedProvider, "openrouter");
-    assert.equal(restored.presetId, "desktop_dev_local");
+    assert.equal(restored.presetId, "desktop_safe_local");
     assert.equal(restored.capabilityPacks.includes("filesystem"), true);
     assert.deepEqual(restored.projects, []);
     assert.equal(restored.openrouterApiKey, "legacy-key");
     assert.equal(restored.advancedWorkspaceEnabled, true);
     assert.equal(typeof restored.providerSelectionCompletedAt, "string");
     assert.equal(typeof restored.setupCompletedAt, "string");
+  },
+);
+
+contractTest(
+  "desktop.hermetic",
+  "readDesktopSettings removes dev shell only from the untouched legacy default capability sequence",
+  async () => {
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-desktop-settings-safe-migration-"),
+    );
+    const settingsPath = path.join(tempDir, "desktop-settings.json");
+    await writeFile(
+      settingsPath,
+      `${JSON.stringify({
+        version: 10,
+        selectedProvider: "openrouter",
+        databaseMode: "default",
+        presetId: "desktop_dev_local",
+        capabilityPacks: [
+          "balanced",
+          "filesystem",
+          "dev_shell",
+          "desktop_host",
+          "sandbox_code",
+        ],
+        projects: [],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const restored = await readDesktopSettings(settingsPath);
+
+    assert.equal(restored.presetId, "desktop_safe_local");
+    assert.deepEqual(restored.capabilityPacks, [
+      "balanced",
+      "filesystem",
+      "desktop_host",
+      "sandbox_code",
+    ]);
   },
 );
 
@@ -291,6 +353,7 @@ contractTest(
     assert.equal(saved.selectedProvider, "openai");
     assert.equal(saved.databaseMode, "default");
     assert.equal(saved.presetId, "desktop_dev_local");
+    assert.equal(restored.presetId, "desktop_dev_local");
     assert.deepEqual(saved.capabilityPacks, [
       "balanced",
       "filesystem",

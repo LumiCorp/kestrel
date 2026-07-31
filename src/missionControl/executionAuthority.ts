@@ -429,6 +429,7 @@ export function reduceMissionControlExecutionAction(
           runId: attempt.dispatchRunId,
           message: buildExecutionMessage(item),
           projectRevision: revision,
+          workspaceRoot: current.migration?.registeredPath,
         },
       }]);
     }
@@ -795,7 +796,7 @@ export function reduceMissionControlExecutionAction(
         },
         [],
         undefined,
-        "review",
+        "active",
       );
     }
   }

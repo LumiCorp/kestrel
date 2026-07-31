@@ -69,7 +69,7 @@ export class CodeModeController {
         [
           `code-mode enabled=${policy.enabled ? "true" : "false"} approval=${policy.approvalMode}`,
           `languages=${policy.languages.join(",")}`,
-          `sandbox executor=${policy.sandbox.executor} timeoutMs=${policy.sandbox.timeoutMs} memoryMb=${policy.sandbox.memoryMb} cpuShares=${policy.sandbox.cpuShares}`,
+          `sandbox executor=${policy.sandbox.executor} timeoutMs=${policy.sandbox.timeoutMs} memoryMb=${policy.sandbox.memoryMb} cpuShares=${policy.sandbox.cpuShares} pidsLimit=${policy.sandbox.pidsLimit ?? "default"}`,
           `sandbox networkDefault=${policy.sandbox.networkDefault} allowDependencyInstall=${policy.sandbox.allowDependencyInstall ? "true" : "false"} maxOutputBytes=${policy.sandbox.maxOutputBytes} maxArtifacts=${policy.sandbox.maxArtifacts} maxArtifactBytes=${policy.sandbox.maxArtifactBytes}`,
           `retention persistSummary=${policy.retention.persistSummary ? "true" : "false"} persistArtifacts=${policy.retention.persistArtifacts ? "true" : "false"}`,
         ].join("\n"),

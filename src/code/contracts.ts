@@ -40,6 +40,7 @@ export interface AppliedCodeExecutionPolicy {
   timeoutMs: number;
   memoryMb: number;
   cpuShares: number;
+  pidsLimit: number;
   network: CodeNetworkMode;
   allowDependencyInstall: boolean;
   maxOutputBytes: number;
@@ -64,6 +65,7 @@ export interface CodeModeSandboxConfig {
   timeoutMs: number;
   memoryMb: number;
   cpuShares: number;
+  pidsLimit?: number | undefined;
   networkDefault: CodeNetworkMode;
   allowDependencyInstall: boolean;
   maxOutputBytes: number;
@@ -89,6 +91,7 @@ export const DEFAULT_CODE_MODE_SANDBOX: CodeModeSandboxConfig = {
   timeoutMs: 20_000,
   memoryMb: 256,
   cpuShares: 256,
+  pidsLimit: 64,
   networkDefault: "off",
   allowDependencyInstall: false,
   maxOutputBytes: 32_000,
@@ -117,6 +120,7 @@ export const DEFAULT_CODE_MODE_ENABLED_CONFIG: CodeModeProfileConfig = {
 export interface SandboxExecutionInput {
   request: CodeExecutionRequest;
   policy: AppliedCodeExecutionPolicy;
+  signal?: AbortSignal | undefined;
 }
 
 export interface SandboxExecutionOutput {
@@ -133,5 +137,9 @@ export interface SandboxExecutor {
 }
 
 export interface CodeExecutionServicePort {
-  execute(config: CodeModeProfileConfig, request: CodeExecutionRequest): Promise<CodeExecutionResult>;
+  execute(
+    config: CodeModeProfileConfig,
+    request: CodeExecutionRequest,
+    options?: { signal?: AbortSignal | undefined },
+  ): Promise<CodeExecutionResult>;
 }

@@ -443,7 +443,7 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/v1/tree") {
       requireCapability(ticket.capabilities, "workspace.files.read");
-      const directory = resolveWorkspacePath(config.workspaceRoot, url.searchParams.get("path") ?? "");
+      const directory = await resolveWorkspacePath(config.workspaceRoot, url.searchParams.get("path") ?? "");
       writeJson(response, 200, { entries: await listDirectory(directory, config.workspaceRoot) });
       return;
     }
@@ -453,7 +453,7 @@ const server = createServer(async (request, response) => {
       if (!isRecord(body) || typeof body.command !== "string" || !body.command.trim()) {
         throw new WorkspaceRequestError(400, "TERMINAL_COMMAND_INVALID");
       }
-      const cwd = resolveWorkspacePath(
+      const cwd = await resolveWorkspacePath(
         config.workspaceRoot,
         typeof body.cwd === "string" ? body.cwd : ""
       );
@@ -466,7 +466,7 @@ const server = createServer(async (request, response) => {
     ) {
       requireCapability(ticket.capabilities, "workspace.terminal.exec");
       const body = parseJson(await readBody(request, 100_000));
-      const cwd = resolveWorkspacePath(
+      const cwd = await resolveWorkspacePath(
         config.workspaceRoot,
         isRecord(body) && typeof body.cwd === "string" ? body.cwd : ""
       );

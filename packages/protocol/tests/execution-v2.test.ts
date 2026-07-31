@@ -201,6 +201,26 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "workspace.validation.submit": { sessionId: "session-1", threadId: "thread-1", resultIds: ["result-1"] },
   "workspace.git.inspect": { sessionId: "session-1", threadId: "thread-1" },
   "workspace.git.action": { sessionId: "session-1", threadId: "thread-1", candidateFingerprint: `sha256:${"a".repeat(64)}`, action: { kind: "fetch", remote: "origin" } },
+  "mission_control.project.get": { projectId: "11111111-1111-4111-8111-111111111111" },
+  "mission_control.migration.execute": {
+    action: {
+      type: "migration.stage",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      actionId: "action-1",
+      actionTs: "2026-07-31T00:00:00.000Z",
+      expectedRevision: 0,
+      registrations: [],
+    },
+  },
+  "mission_control.action.execute": {
+    action: {
+      type: "authority.activate",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      actionId: "activate-1",
+      actionTs: "2026-07-30T00:00:00.000Z",
+      expectedRevision: 1,
+    },
+  },
   "project.snapshot.get": { sessionId: "session-1" },
   "project.snapshot.update": { sessionId: "session-1", snapshot: {} },
   "project.action": {
@@ -313,6 +333,10 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "workspace.review": { sessionId: "session-1", threadId: "thread-1", operation: "list", snapshot: {} },
   "workspace.validation": { sessionId: "session-1", threadId: "thread-1", operation: "inspect", snapshot: {} },
   "workspace.git": { sessionId: "session-1", threadId: "thread-1", operation: "inspect", snapshot: {} },
+  "mission_control.project": {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    project: {},
+  },
   "project.snapshot": { sessionId: "session-1", snapshot: {} },
   "project.review": { sessionId: "session-1", detail: {} },
   "mcp.status": { status: {} },
@@ -422,6 +446,23 @@ contractTest("packages.hermetic", "canonical command parser accepts every regist
     });
     assert.equal(parsed.type, type);
     assert.equal(parsed.id, `command:${type}`);
+  }
+});
+
+contractTest("packages.hermetic", "canonical execution profile contracts accept isolated local presets", () => {
+  for (const environmentPresetId of [
+    "cli_safe_local",
+    "desktop_safe_local",
+  ] as const) {
+    const parsed = parseRunnerCommandV2({
+      id: `command:${environmentPresetId}`,
+      type: "execution-profile.resolve",
+      payload: { environmentPresetId },
+    });
+    assert.equal(
+      parsed.payload.environmentPresetId,
+      environmentPresetId,
+    );
   }
 });
 
