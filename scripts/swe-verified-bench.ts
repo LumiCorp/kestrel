@@ -12,6 +12,8 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ProfileStore } from "../cli/config/ProfileStore.js";
+import type { TuiProfile } from "../cli/contracts.js";
 import {
   assertBenchmarkTurnMode,
   benchmarkGuardrails,
@@ -36,6 +38,8 @@ import {
   readHarnessEfficiencyEconomicsFromReplayBundle,
   reconcileHarnessEfficiencyRuntimeTelemetry,
 } from "../src/economics/index.js";
+import { LOCAL_CORE_STATE_EPOCH } from "../src/localCore/constants.js";
+import { ModelPolicyStore } from "../src/profile/modelPolicy.js";
 
 type CommandMode = "preflight" | "validate-profile" | "run" | "evaluate" | "list";
 
@@ -141,6 +145,12 @@ const SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT = "/testbed";
 const SWE_VERIFIED_CONTAINER_ATTEMPT_DIR = "/kestrel-attempt";
 const SWE_VERIFIED_CONTAINER_BASELINE_REPO = "/kestrel-baseline";
 const SWE_VERIFIED_CONTAINER_DEV_SHELL_DIR = "/tmp/kestrel-dev-shell";
+const SWE_VERIFIED_CONTAINER_KESTREL_HOME = path.posix.join(
+  SWE_VERIFIED_CONTAINER_ATTEMPT_DIR,
+  "kestrel-home",
+  "state",
+  LOCAL_CORE_STATE_EPOCH,
+);
 const SWE_VERIFIED_RUNNER_SOURCE_DIR_NAME = "kestrel-src";
 const SWE_VERIFIED_RUNNER_IMAGE_DIR_NAME = "runner-image";
 const SWE_VERIFIED_MODEL_PATCH_FILE = "model.patch";
@@ -321,6 +331,10 @@ export function buildSweVerifiedAttemptPaths(input: {
   };
 }
 
+function resolveSweVerifiedAttemptKestrelHome(attemptDir: string): string {
+  return path.join(attemptDir, "kestrel-home", "state", LOCAL_CORE_STATE_EPOCH);
+}
+
 export function sanitizeSweVerifiedInstance(row: Record<string, unknown>): SweVerifiedInstance {
   const instance = {
     instance_id: readRequiredString(row, "instance_id"),
@@ -354,54 +368,29 @@ export function buildSweVerifiedJobInput(input: {
   workspaceRoot: string;
   modelName: string;
   runtimeModelName?: string | undefined;
-  profile?: Record<string, unknown> | undefined;
+  profile?: TuiProfile | Record<string, unknown> | undefined;
   sessionId?: string | undefined;
 }): Record<string, unknown> {
   const problemStatement = sanitizeSweVerifiedIssueText(input.instance.problem_statement);
   const hintsText = input.instance.hints_text === undefined
     ? undefined
     : sanitizeSweVerifiedIssueText(input.instance.hints_text, { stripLongPytestTraces: true });
+  const profile = buildSweVerifiedProfile({
+    ...(input.runtimeModelName !== undefined ? { runtimeModelName: input.runtimeModelName } : {}),
+    ...(input.profile !== undefined ? { profile: input.profile } : {}),
+  });
   return {
     version: "job_input_v1",
     approvalPolicyPackId: "dev",
-    profile: input.profile ?? {
-      id: "swe-verified",
-      label: "SWE Verified",
-      agent: "reference-react",
-      sessionPrefix: "swe-verified",
-      ...benchmarkProfileMode(),
-      ...(input.runtimeModelName !== undefined
-        ? {
-            modelProvider: "openrouter",
-            model: input.runtimeModelName,
-            agentStageConfig: {
-              modelByStage: {
-                "agent.loop": input.runtimeModelName,
-              },
-            },
-          }
-        : {}),
-      devShell: {
-        enabled: true,
-        envMode: "inherit",
-      },
-      guardrails: benchmarkGuardrails(),
-      toolAllowlist: [
-        "FinalizeAnswer",
-        "effect_result_lookup",
-        "artifact.read",
-        "fs.read_text",
-        "repo.trace",
-        "fs.create_text",
-        "fs.edit_text",
-        "fs.apply_patch",
-        "exec_command",
-      ],
-    },
+    profileId: profile.id,
     turn: {
       sessionId: input.sessionId ?? `swe-verified-${input.instance.instance_id}`,
       eventType: "job.run",
-      message: `Resolve SWE-bench Verified instance ${input.instance.instance_id} in this checked-out repository.`,
+      message: [
+        `Resolve SWE-bench Verified instance ${input.instance.instance_id} in this checked-out repository.`,
+        "Implement and validate the required repository change.",
+        "Do not finalize until git diff contains the non-empty patch you intend to submit.",
+      ].join("\n"),
       stepAgent: "agent.loop",
       ...benchmarkTurnMode(),
       metadata: {
@@ -433,6 +422,58 @@ export function buildSweVerifiedJobInput(input: {
   };
 }
 
+export function buildSweVerifiedProfile(input: {
+  runtimeModelName?: string | undefined;
+  profile?: TuiProfile | Record<string, unknown> | undefined;
+}): TuiProfile {
+  const profile = input.profile === undefined
+    ? {
+      id: "swe-verified",
+      label: "SWE Verified",
+      agent: "reference-react",
+      sessionPrefix: "swe-verified",
+      shellKind: "cli",
+      presetId: "cli_dev_local",
+      capabilityPacks: ["filesystem", "dev_shell"],
+      ...benchmarkProfileMode(),
+      ...(input.runtimeModelName !== undefined
+        ? {
+            modelProvider: "openrouter",
+            model: input.runtimeModelName,
+            agentStageConfig: {
+              modelByStage: {
+                "agent.loop": input.runtimeModelName,
+              },
+            },
+          }
+        : {}),
+      devShell: {
+        enabled: true,
+        envMode: "inherit",
+      },
+      guardrails: benchmarkGuardrails(),
+      toolAllowlist: [
+        "FinalizeAnswer",
+        "effect_result_lookup",
+        "artifact.read",
+        "fs.read_text",
+        "repo.trace",
+        "fs.create_text",
+        "fs.edit_text",
+        "fs.apply_patch",
+        "exec_command",
+      ],
+    }
+    : {
+      ...structuredClone(input.profile),
+      shellKind: input.profile.shellKind ?? "cli",
+      presetId: input.profile.presetId ?? "cli_dev_local",
+      capabilityPacks: input.profile.capabilityPacks ?? ["filesystem", "dev_shell"],
+    };
+  assertSweVerifiedProfileContract(profile as unknown as Record<string, unknown>);
+  return structuredClone(profile) as unknown as TuiProfile;
+}
+
 export function assertSweVerifiedJobInputContract(jobInput: Record<string, unknown>): void {
   const turn = asRecord(jobInput.turn);
   if (turn === undefined) {
@@ -441,17 +482,42 @@ export function assertSweVerifiedJobInputContract(jobInput: Record<string, unkno
 
   assertBenchmarkTurnMode(turn, "SWE Verified job turn");
 
-  const profile = asRecord(jobInput.profile);
-  if (profile === undefined) {
-    throw new Error("SWE Verified job input must include an embedded profile.");
+  if (jobInput.profile !== undefined) {
+    throw new Error("SWE Verified job input must reference a persisted profileId, not an embedded profile.");
   }
-
-  assertSweVerifiedProfileContract(profile);
+  readRequiredString(jobInput, "profileId");
 }
 
 export function assertSweVerifiedProfileContract(profile: Record<string, unknown>): void {
+  readRequiredString(profile, "id");
   if (profile.agent !== "reference-react") {
     throw new Error("SWE Verified job profile must use the reference-react agent.");
+  }
+
+  if (profile.shellKind !== "cli" || profile.presetId !== "cli_dev_local") {
+    throw new Error("SWE Verified job profile must use the cli_dev_local developer preset.");
+  }
+
+  if (!Array.isArray(profile.capabilityPacks)) {
+    throw new Error("SWE Verified job profile must include canonical capabilityPacks.");
+  }
+  const capabilityPacks = profile.capabilityPacks.filter(
+    (pack): pack is string => typeof pack === "string",
+  );
+  const supportedCapabilityPacks = new Set([
+    "balanced",
+    "filesystem",
+    "dev_shell",
+    "desktop_host",
+    "sandbox_code",
+  ]);
+  if (
+    capabilityPacks.length !== profile.capabilityPacks.length
+    || capabilityPacks.some((pack) => supportedCapabilityPacks.has(pack) === false)
+    || capabilityPacks.includes("filesystem") === false
+    || capabilityPacks.includes("dev_shell") === false
+  ) {
+    throw new Error("SWE Verified job profile must enable filesystem and dev_shell capability packs.");
   }
 
   if (profile.defaultInteractionMode !== "build") {
@@ -480,6 +546,9 @@ export function assertSweVerifiedProfileContract(profile: Record<string, unknown
   }
 
   const toolAllowlist = profile.toolAllowlist.filter((toolName): toolName is string => typeof toolName === "string");
+  if (toolAllowlist.length !== profile.toolAllowlist.length) {
+    throw new Error("SWE Verified job profile toolAllowlist must contain only tool names.");
+  }
   for (const toolName of SWE_VERIFIED_REQUIRED_PROFILE_TOOLS) {
     if (toolAllowlist.includes(toolName) === false) {
       throw new Error(`SWE Verified job profile is missing required tool: ${toolName}`);
@@ -495,9 +564,35 @@ export function assertSweVerifiedProfileContract(profile: Record<string, unknown
   }
 }
 
+async function persistSweVerifiedProfile(input: {
+  kestrelHome: string;
+  profile: TuiProfile;
+  runtimeModelName: string;
+}): Promise<void> {
+  await new ProfileStore(input.kestrelHome, {
+    managedEnvironmentPresetId: "cli_dev_local",
+  }).save([input.profile]);
+  const profileModelByStage = input.profile.agentStageConfig?.modelByStage ?? {};
+  const modelByStage = Object.fromEntries(
+    Object.entries(profileModelByStage).filter(([stageId]) => stageId !== "agent.loop"),
+  );
+  new ModelPolicyStore(input.kestrelHome).write({
+    version: 1,
+    provider: "openrouter",
+    model: input.runtimeModelName,
+    modelByStage,
+    ...(input.profile.modelTimeoutMs !== undefined
+      ? { modelTimeoutMs: input.profile.modelTimeoutMs }
+      : {}),
+    modelCapabilities: {
+      visionInputEnabled: input.profile.modelCapabilities?.visionInputEnabled ?? false,
+    },
+  });
+}
+
 export function resolveSweVerifiedModelSelection(env: NodeJS.ProcessEnv): {
   modelName: string;
-  runtimeModelName?: string | undefined;
+  runtimeModelName: string;
 } {
   const issues = benchmarkProviderIssues(env);
   if (issues.length > 0) {
@@ -562,7 +657,7 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
       if (profile === undefined) {
         throw new Error("SWE Verified profile validation requires KESTREL_BENCHMARK_PROFILE_FILE and KESTREL_BENCHMARK_PROFILE_ID.");
       }
-      assertSweVerifiedProfileContract(profile);
+      buildSweVerifiedProfile({ profile });
       deps.stdout.write("[bench:swe] profile validation passed.\n");
       return 0;
     } catch (error) {
@@ -657,25 +752,35 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     deps.stderr.write(`[bench:swe] ${warning}\n`);
   }
   const benchmarkEnv = benchmarkProviderEnv(deps.env);
-  const benchmarkProfile = loadBenchmarkProfileOverride(deps.env);
-  const profileModel = typeof benchmarkProfile?.model === "string" && benchmarkProfile.model.trim().length > 0
-    ? benchmarkProfile.model.trim()
+  const benchmarkProfileOverride = loadBenchmarkProfileOverride(deps.env);
+  const profileModel = typeof benchmarkProfileOverride?.model === "string" && benchmarkProfileOverride.model.trim().length > 0
+    ? benchmarkProfileOverride.model.trim()
     : undefined;
   const modelName = profileModel ?? modelSelection.modelName;
   const runtimeModelName = profileModel ?? modelSelection.runtimeModelName;
-  const jobInput = buildSweVerifiedJobInput({
-    instance,
-    dataset: options.dataset,
-    workspaceRoot: SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT,
-    modelName,
-    runtimeModelName,
-    ...(benchmarkEnv.KESTREL_BENCHMARK_ATTEMPT_ID !== undefined
-      ? { sessionId: benchmarkEnv.KESTREL_BENCHMARK_ATTEMPT_ID }
-      : {}),
-    ...(benchmarkProfile !== undefined ? { profile: benchmarkProfile } : {}),
-  });
+  let jobInput: Record<string, unknown>;
   try {
+    const benchmarkProfile = buildSweVerifiedProfile({
+      runtimeModelName,
+      ...(benchmarkProfileOverride !== undefined ? { profile: benchmarkProfileOverride } : {}),
+    });
+    jobInput = buildSweVerifiedJobInput({
+      instance,
+      dataset: options.dataset,
+      workspaceRoot: SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT,
+      modelName,
+      runtimeModelName,
+      ...(benchmarkEnv.KESTREL_BENCHMARK_ATTEMPT_ID !== undefined
+        ? { sessionId: benchmarkEnv.KESTREL_BENCHMARK_ATTEMPT_ID }
+        : {}),
+      profile: benchmarkProfile,
+    });
     assertSweVerifiedJobInputContract(jobInput);
+    await persistSweVerifiedProfile({
+      kestrelHome: resolveSweVerifiedAttemptKestrelHome(attemptPaths.attemptDir),
+      profile: benchmarkProfile,
+      runtimeModelName,
+    });
   } catch (error) {
     deps.stderr.write(`[bench:swe] ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
@@ -902,7 +1007,8 @@ export async function runSweVerifiedBench(argv: string[], deps: RuntimeDeps): Pr
     cwd: deps.cwd,
     env: {
       ...benchmarkEnv,
-      KESTREL_HOME: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, "kestrel-home"),
+      KESTREL_HOME: SWE_VERIFIED_CONTAINER_KESTREL_HOME,
+      KESTREL_CORE_HOME: SWE_VERIFIED_CONTAINER_KESTREL_HOME,
       KESTREL_STORE_DRIVER: "sqlite",
       KESTREL_SQLITE_PATH: path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, "runtime.db"),
     },
@@ -1145,7 +1251,7 @@ function createSweVerifiedRunnerBuildContext(input: {
       "WORKDIR /opt/kestrel",
       `COPY ${SWE_VERIFIED_RUNNER_SOURCE_DIR_NAME}/ ./`,
       "RUN pnpm install --frozen-lockfile --ignore-workspace",
-      "RUN pnpm --filter @kestrel-agents/protocol run build:self",
+      "RUN pnpm --filter '@kestrel-agents/kestrel^...' run build:self",
       `WORKDIR ${SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT}`,
       "",
     ].join("\n"),
@@ -1274,7 +1380,8 @@ function writeSweVerifiedContainerRunScript(input: {
     [
       "#!/usr/bin/env bash",
       "set +e",
-      `export KESTREL_HOME=${shellQuote(path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, "kestrel-home"))}`,
+      `export KESTREL_HOME=${shellQuote(SWE_VERIFIED_CONTAINER_KESTREL_HOME)}`,
+      "export KESTREL_CORE_HOME=\"$KESTREL_HOME\"",
       `export KESTREL_STORE_DRIVER=sqlite`,
       `export KESTREL_SQLITE_PATH=${shellQuote(path.join(SWE_VERIFIED_CONTAINER_ATTEMPT_DIR, "runtime.db"))}`,
       `cd ${SWE_VERIFIED_CONTAINER_WORKSPACE_ROOT}`,
@@ -1369,6 +1476,7 @@ function buildSweVerifiedDockerRunArgs(input: {
     "SHLVL",
     "_",
     "KESTREL_HOME",
+    "KESTREL_CORE_HOME",
     "KESTREL_STORE_DRIVER",
     "KESTREL_SQLITE_PATH",
     "KESTREL_DISABLE_DOTENV",
@@ -1396,7 +1504,9 @@ function buildSweVerifiedDockerRunArgs(input: {
     "-e",
     "KESTREL_DISABLE_DOTENV=1",
     "-e",
-    `KESTREL_HOME=${SWE_VERIFIED_CONTAINER_ATTEMPT_DIR}/kestrel-home`,
+    `KESTREL_HOME=${SWE_VERIFIED_CONTAINER_KESTREL_HOME}`,
+    "-e",
+    `KESTREL_CORE_HOME=${SWE_VERIFIED_CONTAINER_KESTREL_HOME}`,
     "-e",
     "KESTREL_STORE_DRIVER=sqlite",
     "-e",
@@ -1404,9 +1514,9 @@ function buildSweVerifiedDockerRunArgs(input: {
     "-e",
     `KESTREL_DEV_SHELL_SOCKET_PATH=${SWE_VERIFIED_CONTAINER_DEV_SHELL_DIR}/supervisor.sock`,
     "-e",
-    `KESTREL_DEV_SHELL_LOG_PATH=${SWE_VERIFIED_CONTAINER_ATTEMPT_DIR}/kestrel-home/dev-shell/service.log`,
+    `KESTREL_DEV_SHELL_LOG_PATH=${SWE_VERIFIED_CONTAINER_KESTREL_HOME}/dev-shell/service.log`,
     "-e",
-    `KESTREL_DEV_SHELL_STATUS_PATH=${SWE_VERIFIED_CONTAINER_ATTEMPT_DIR}/kestrel-home/dev-shell/bootstrap-status.json`,
+    `KESTREL_DEV_SHELL_STATUS_PATH=${SWE_VERIFIED_CONTAINER_KESTREL_HOME}/dev-shell/bootstrap-status.json`,
     "-e",
     "KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS=30000",
     "-e",

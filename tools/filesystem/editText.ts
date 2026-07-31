@@ -28,12 +28,16 @@ interface TextEdit {
 export const fsEditTextTool: SharedToolModule = {
   definition: {
     name: "fs.edit_text",
-    description: "Apply exact literal edits to one existing UTF-8 file at a required revision. Each match must be unique unless all is explicitly true.",
+    description: "Apply exact literal edits to one existing UTF-8 file. First call fs.read_text, then copy its exact revision value into expectedRevision; placeholders such as \"latest\" are invalid. Each match must be unique unless all is explicitly true.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string" },
-        expectedRevision: { type: "string", minLength: 1 },
+        expectedRevision: {
+          type: "string",
+          minLength: 1,
+          description: "Exact revision returned by the latest fs.read_text call for this path. Do not use placeholders such as \"latest\".",
+        },
         edits: {
           type: "array",
           minItems: 1,

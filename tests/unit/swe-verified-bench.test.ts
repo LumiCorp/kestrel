@@ -3,13 +3,17 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { ProfileStore } from "../../cli/config/ProfileStore.js";
 import { parseHarnessEfficiencyLedgerV2, parseHarnessEfficiencyResultV2 } from "../../src/economics/index.js";
+import { LOCAL_CORE_STATE_EPOCH } from "../../src/localCore/constants.js";
 
 import {
   assertSweVerifiedJobInputContract,
+  assertSweVerifiedProfileContract,
   buildSweVerifiedAttemptPaths,
   buildSweVerifiedEvaluationArgs,
   buildSweVerifiedJobInput,
+  buildSweVerifiedProfile,
   formatSweVerifiedAttemptId,
   parseSweVerifiedBenchArgs,
   resolveSweVerifiedModelSelection,
@@ -280,13 +284,23 @@ contractTest("runtime.hermetic", "swe verified bench strips oracle fields before
     modelName: "kestrel",
     sessionId: "efficiency-attempt-123",
   });
+  const profile = buildSweVerifiedProfile({});
   assert.equal((jobInput as { turn: { sessionId: string } }).turn.sessionId, "efficiency-attempt-123");
+  assert.match(
+    (jobInput as { turn: { message: string } }).turn.message,
+    /Do not finalize until git diff contains the non-empty patch you intend to submit\./u,
+  );
   assert.equal((jobInput as { storeDriver?: unknown }).storeDriver, undefined);
-  assert.deepEqual((jobInput as { profile: Record<string, unknown> }).profile, {
+  assert.equal((jobInput as { profileId?: unknown }).profileId, "swe-verified");
+  assert.equal((jobInput as { profile?: unknown }).profile, undefined);
+  assert.deepEqual(profile, {
     id: "swe-verified",
     label: "SWE Verified",
     agent: "reference-react",
     sessionPrefix: "swe-verified",
+    shellKind: "cli",
+    presetId: "cli_dev_local",
+    capabilityPacks: ["filesystem", "dev_shell"],
     defaultInteractionMode: "build",
     defaultActSubmode: "full_auto",
     devShell: {
@@ -314,7 +328,14 @@ contractTest("runtime.hermetic", "swe verified bench strips oracle fields before
   assert.deepEqual((jobInput as { turn: Record<string, unknown> }).turn.interactionMode, "build");
   assert.deepEqual((jobInput as { turn: Record<string, unknown> }).turn.actSubmode, "full_auto");
   const turn = (jobInput as { turn: Record<string, unknown> }).turn;
-  assert.equal(turn.message, "Resolve SWE-bench Verified instance astropy__astropy-12907 in this checked-out repository.");
+  assert.equal(
+    turn.message,
+    [
+      "Resolve SWE-bench Verified instance astropy__astropy-12907 in this checked-out repository.",
+      "Implement and validate the required repository change.",
+      "Do not finalize until git diff contains the non-empty patch you intend to submit.",
+    ].join("\n"),
+  );
   const metadata = turn.metadata as Record<string, unknown>;
   const benchmark = metadata.benchmark as Record<string, unknown>;
   assert.deepEqual(benchmark.context, {
@@ -325,12 +346,13 @@ contractTest("runtime.hermetic", "swe verified bench strips oracle fields before
     workspaceRoot: "/testbed",
   });
   const serialized = JSON.stringify(jobInput);
+  const serializedProfile = JSON.stringify(profile);
   assert.match(serialized, /Fix separability/u);
   assert.match(serialized, /custom\/SWE-bench_Verified/u);
   assert.doesNotMatch(serialized, /You are running inside the SWE-bench testbed at \/testbed/u);
   assert.doesNotMatch(serialized, /Use dev\.shell\.run for focused validation/u);
-  assert.doesNotMatch(serialized, /"dev\.shell\.run"/u);
-  assert.match(serialized, /"exec_command"/u);
+  assert.doesNotMatch(serializedProfile, /"dev\.shell\.run"/u);
+  assert.match(serializedProfile, /"exec_command"/u);
   assert.doesNotMatch(serialized, /Treat issue hints and proposed causes as hypotheses/u);
   assert.doesNotMatch(serialized, /preserve the observed emitted semantics/u);
   assert.doesNotMatch(serialized, /Validate the exact emitted value or behavior at risk/u);
@@ -349,19 +371,9 @@ contractTest("runtime.hermetic", "swe verified bench strips oracle fields before
 });
 
 contractTest("runtime.hermetic", "swe verified bench configures explicit runtime model for reference-react agent loop", () => {
-  const jobInput = buildSweVerifiedJobInput({
-    instance: {
-      instance_id: "astropy__astropy-12907",
-      repo: "astropy/astropy",
-      base_commit: "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
-      problem_statement: "Fix separability.",
-    },
-    dataset: "custom/SWE-bench_Verified",
-    workspaceRoot: "/tmp/workspace",
-    modelName: "minimax/minimax-m3",
+  const profile = buildSweVerifiedProfile({
     runtimeModelName: "minimax/minimax-m3",
   });
-  const profile = (jobInput as { profile: Record<string, unknown> }).profile;
 
   assert.equal(profile.modelProvider, "openrouter");
   assert.equal(profile.model, "minimax/minimax-m3");
@@ -370,7 +382,51 @@ contractTest("runtime.hermetic", "swe verified bench configures explicit runtime
       "agent.loop": "minimax/minimax-m3",
     },
   });
-  assertSweVerifiedJobInputContract(jobInput);
+  assertSweVerifiedProfileContract(profile as unknown as Record<string, unknown>);
+});
+
+contractTest("runtime.hermetic", "swe verified bench canonicalizes legacy profile overrides for developer execution", () => {
+  const profile = buildSweVerifiedProfile({
+    profile: {
+      id: "candidate",
+      label: "Candidate",
+      agent: "reference-react",
+      sessionPrefix: "candidate",
+      defaultInteractionMode: "build",
+      defaultActSubmode: "full_auto",
+      devShell: { enabled: true },
+      guardrails: {
+        maxStepsPerRun: 2500,
+        maxToolCallsPerRun: 1000,
+        maxModelCallsPerRun: 500,
+        maxStepVisits: 750,
+      },
+      toolAllowlist: [
+        "FinalizeAnswer",
+        "effect_result_lookup",
+        "artifact.read",
+        "fs.read_text",
+        "repo.trace",
+        "fs.create_text",
+        "fs.edit_text",
+        "fs.apply_patch",
+        "exec_command",
+      ],
+    },
+  });
+
+  assert.equal(profile.shellKind, "cli");
+  assert.equal(profile.presetId, "cli_dev_local");
+  assert.deepEqual(profile.capabilityPacks, ["filesystem", "dev_shell"]);
+  assert.throws(
+    () => buildSweVerifiedProfile({
+      profile: {
+        ...profile,
+        presetId: "cli_safe_local",
+      },
+    }),
+    /must use the cli_dev_local developer preset/u,
+  );
 });
 
 contractTest("runtime.hermetic", "swe verified issue text removes HTML comments system details and long pytest traces", () => {
@@ -453,65 +509,38 @@ contractTest("runtime.hermetic", "swe verified bench rejects non-build turn mode
 });
 
 contractTest("runtime.hermetic", "swe verified bench rejects shell allowlists without enabled dev shell", () => {
-  const jobInput = buildSweVerifiedJobInput({
-    instance: {
-      instance_id: "astropy__astropy-12907",
-      repo: "astropy/astropy",
-      base_commit: "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
-      problem_statement: "Fix separability.",
-    },
-    dataset: "custom/SWE-bench_Verified",
-    workspaceRoot: "/tmp/workspace",
-    modelName: "kestrel",
-  });
-  const profile = (jobInput as { profile: Record<string, unknown> }).profile;
+  const profile = buildSweVerifiedProfile({}) as unknown as Record<string, unknown>;
   const profileWithoutDevShell = { ...profile };
   delete profileWithoutDevShell.devShell;
 
   assert.throws(
-    () => assertSweVerifiedJobInputContract({ ...jobInput, profile: profileWithoutDevShell }),
+    () => assertSweVerifiedProfileContract(profileWithoutDevShell),
     /must enable devShell/u,
   );
   assert.throws(
-    () => assertSweVerifiedJobInputContract({ ...jobInput, profile: { ...profile, devShell: { enabled: false } } }),
+    () => assertSweVerifiedProfileContract({ ...profile, devShell: { enabled: false } }),
     /must enable devShell/u,
   );
 });
 
 contractTest("runtime.hermetic", "swe verified bench rejects model labels that do not configure the agent loop", () => {
-  const jobInput = buildSweVerifiedJobInput({
-    instance: {
-      instance_id: "astropy__astropy-12907",
-      repo: "astropy/astropy",
-      base_commit: "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
-      problem_statement: "Fix separability.",
-    },
-    dataset: "custom/SWE-bench_Verified",
-    workspaceRoot: "/tmp/workspace",
-    modelName: "minimax/minimax-m3",
+  const profile = buildSweVerifiedProfile({
     runtimeModelName: "minimax/minimax-m3",
-  });
-  const profile = (jobInput as { profile: Record<string, unknown> }).profile;
+  }) as unknown as Record<string, unknown>;
 
   assert.throws(
-    () => assertSweVerifiedJobInputContract({
-      ...jobInput,
-      profile: {
-        ...profile,
-        agentStageConfig: undefined,
-      },
+    () => assertSweVerifiedProfileContract({
+      ...profile,
+      agentStageConfig: undefined,
     }),
     /must match agentStageConfig\.modelByStage/u,
   );
   assert.throws(
-    () => assertSweVerifiedJobInputContract({
-      ...jobInput,
-      profile: {
-        ...profile,
-        agentStageConfig: {
-          modelByStage: {
-            "agent.loop": "openai/gpt-5.4-mini",
-          },
+    () => assertSweVerifiedProfileContract({
+      ...profile,
+      agentStageConfig: {
+        modelByStage: {
+          "agent.loop": "openai/gpt-5.4-mini",
         },
       },
     }),
@@ -618,19 +647,168 @@ contractTest("runtime.hermetic", "swe verified bench dry-runs one local instance
     );
     const jobInput = readFileSync(jobInputPath, "utf8");
     const parsedJobInput = JSON.parse(jobInput) as {
-      profile: {
-        modelProvider?: string;
-        model?: string;
-        agentStageConfig?: { modelByStage?: Record<string, string> };
-      };
+      profile?: unknown;
+      profileId?: string;
       turn: { metadata: { workspace: { workspaceRoot: string } } };
     };
+    const kestrelHome = path.join(
+      path.dirname(jobInputPath),
+      "kestrel-home",
+      "state",
+      LOCAL_CORE_STATE_EPOCH,
+    );
+    const profilesFile = JSON.parse(
+      readFileSync(path.join(kestrelHome, "profiles.json"), "utf8"),
+    ) as {
+      version?: number;
+      profiles?: Array<{
+        id?: string;
+        presetId?: string;
+        capabilityPacks?: string[];
+        devShell?: { enabled?: boolean };
+        toolAllowlist?: string[];
+      }>;
+    };
+    const modelPolicy = JSON.parse(
+      readFileSync(path.join(kestrelHome, "model-policy.json"), "utf8"),
+    ) as { provider?: string; model?: string; modelByStage?: Record<string, string> };
     assert.match(jobInput, /Fix separability/u);
-    assert.equal(parsedJobInput.profile.modelProvider, "openrouter");
-    assert.equal(parsedJobInput.profile.model, "minimax/minimax-m3");
-    assert.equal(parsedJobInput.profile.agentStageConfig?.modelByStage?.["agent.loop"], "minimax/minimax-m3");
+    assert.equal(parsedJobInput.profile, undefined);
+    assert.equal(parsedJobInput.profileId, "swe-verified");
+    assert.equal(profilesFile.version, 7);
+    assert.equal(profilesFile.profiles?.[0]?.id, "swe-verified");
+    assert.equal(profilesFile.profiles?.[0]?.presetId, "cli_dev_local");
+    assert.deepEqual(profilesFile.profiles?.[0]?.capabilityPacks, ["filesystem", "dev_shell"]);
+    assert.equal(profilesFile.profiles?.[0]?.devShell?.enabled, true);
+    assert.equal(profilesFile.profiles?.[0]?.toolAllowlist?.includes("free.weather.current"), false);
+    assert.equal(profilesFile.profiles?.[0]?.toolAllowlist?.includes("internet.search"), false);
+    assert.equal(modelPolicy.provider, "openrouter");
+    assert.equal(modelPolicy.model, "minimax/minimax-m3");
     assert.equal(parsedJobInput.turn.metadata.workspace.workspaceRoot, "/testbed");
     assert.doesNotMatch(jobInput, /oracle/u);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+contractTest("runtime.hermetic", "swe verified bench preserves custom profile execution and model policy through persistence", async () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-custom-profile-"));
+  try {
+    const instancesJsonl = path.join(tmp, "instances.jsonl");
+    writeFileSync(
+      instancesJsonl,
+      JSON.stringify({
+        instance_id: "astropy__astropy-12907",
+        repo: "astropy/astropy",
+        base_commit: "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
+        problem_statement: "Fix separability.",
+      }) + "\n",
+      "utf8",
+    );
+    const profileFile = path.join(tmp, "profiles.json");
+    writeFileSync(
+      profileFile,
+      JSON.stringify({
+        profiles: [{
+          id: "candidate",
+          label: "Candidate",
+          agent: "reference-react",
+          sessionPrefix: "candidate",
+          defaultInteractionMode: "build",
+          defaultActSubmode: "full_auto",
+          modelProvider: "openrouter",
+          model: "openai/gpt-5.4-mini",
+          agentStageConfig: {
+            modelByStage: {
+              "agent.loop": "openai/gpt-5.4-mini",
+              "agent.maintenance": "openai/gpt-5.4",
+              "delegation.child": "openai/gpt-5.4-nano",
+            },
+          },
+          modelTimeoutMs: 123_456,
+          devShell: { enabled: true, envMode: "inherit" },
+          guardrails: {
+            maxStepsPerRun: 2500,
+            maxToolCallsPerRun: 1000,
+            maxModelCallsPerRun: 500,
+            maxStepVisits: 750,
+          },
+          toolAllowlist: [
+            "FinalizeAnswer",
+            "effect_result_lookup",
+            "artifact.read",
+            "fs.read_text",
+            "repo.trace",
+            "fs.create_text",
+            "fs.edit_text",
+            "fs.apply_patch",
+            "exec_command",
+          ],
+        }],
+      }),
+      "utf8",
+    );
+
+    const code = await runSweVerifiedBench(
+      [
+        "run",
+        "--instance-id",
+        "astropy__astropy-12907",
+        "--instances-jsonl",
+        instancesJsonl,
+        "--dry-run",
+      ],
+      {
+        spawn: (() => passedSpawn("")) as never,
+        env: {
+          HOME: tmp,
+          KESTREL_SWE_PYTHON: "/existing/venv/bin/python",
+          KESTREL_BENCHMARK_PROFILE_FILE: profileFile,
+          KESTREL_BENCHMARK_PROFILE_ID: "candidate",
+          OPENROUTER_API_KEY: "sk-test",
+          OPENROUTER_MODEL: "z-ai/glm-5.2",
+        },
+        cwd: tmp,
+        now: () => new Date(Date.UTC(2026, 5, 2, 12, 34, 56, 789)),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    assert.equal(code, 0);
+    const attemptDir = path.join(
+      tmp,
+      "runs",
+      "swe-verified",
+      "kestrel-swe-astropy__astropy-12907",
+      "attempts",
+      "20260602T123456789Z",
+    );
+    const jobInput = JSON.parse(
+      readFileSync(path.join(attemptDir, "job-input.json"), "utf8"),
+    ) as { profileId?: string };
+    const kestrelHome = path.join(
+      attemptDir,
+      "kestrel-home",
+      "state",
+      LOCAL_CORE_STATE_EPOCH,
+    );
+    const persistedProfile = (await new ProfileStore(kestrelHome, {
+      managedEnvironmentPresetId: "cli_dev_local",
+    }).load()).find((profile) => profile.id === "candidate");
+
+    assert.equal(jobInput.profileId, "candidate");
+    assert.equal(persistedProfile?.presetId, "cli_dev_local");
+    assert.deepEqual(persistedProfile?.capabilityPacks, ["filesystem", "dev_shell"]);
+    assert.equal(persistedProfile?.devShell?.enabled, true);
+    assert.equal(persistedProfile?.toolAllowlist?.includes("free.weather.current"), false);
+    assert.equal(persistedProfile?.toolAllowlist?.includes("internet.search"), false);
+    assert.deepEqual(persistedProfile?.agentStageConfig?.modelByStage, {
+      "agent.loop": "openai/gpt-5.4-mini",
+      "agent.maintenance": "openai/gpt-5.4",
+      "delegation.child": "openai/gpt-5.4-nano",
+    });
+    assert.equal(persistedProfile?.modelTimeoutMs, 123_456);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -829,10 +1007,11 @@ contractTest("runtime.hermetic", "swe verified bench creates attempt-local artif
     assert.ok(dockerRun.args.includes("SHELL=/bin/bash"));
     assert.ok(dockerRun.args.includes("DATABASE_URL=postgres://kestrel:kestrel@host.docker.internal:55432/kestrel"));
     assert.ok(dockerRun.args.includes("KESTREL_DISABLE_DOTENV=1"));
-    assert.ok(dockerRun.args.includes("KESTREL_HOME=/kestrel-attempt/kestrel-home"));
+    assert.ok(dockerRun.args.includes("KESTREL_HOME=/kestrel-attempt/kestrel-home/state/0.6"));
+    assert.ok(dockerRun.args.includes("KESTREL_CORE_HOME=/kestrel-attempt/kestrel-home/state/0.6"));
     assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_SOCKET_PATH=/tmp/kestrel-dev-shell/supervisor.sock"));
-    assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_LOG_PATH=/kestrel-attempt/kestrel-home/dev-shell/service.log"));
-    assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_STATUS_PATH=/kestrel-attempt/kestrel-home/dev-shell/bootstrap-status.json"));
+    assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_LOG_PATH=/kestrel-attempt/kestrel-home/state/0.6/dev-shell/service.log"));
+    assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_STATUS_PATH=/kestrel-attempt/kestrel-home/state/0.6/dev-shell/bootstrap-status.json"));
     assert.ok(dockerRun.args.includes("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS=30000"));
     assert.equal(
       dockerRun.args.some((arg, index) => arg === "-e" && dockerRun.args[index + 1] === "-e"),
@@ -854,8 +1033,13 @@ contractTest("runtime.hermetic", "swe verified bench creates attempt-local artif
     );
     const runScript = readFileSync(path.join(attemptRoot, "run-kestrel.sh"), "utf8");
     const runnerDockerfile = readFileSync(path.join(attemptRoot, "runner-image", "Dockerfile"), "utf8");
-    assert.match(runnerDockerfile, /RUN pnpm --filter @kestrel-agents\/protocol run build:self/u);
+    assert.match(
+      runnerDockerfile,
+      /RUN pnpm --filter '@kestrel-agents\/kestrel\^\.\.\.' run build:self/u,
+    );
     assert.doesNotMatch(runScript, /--store/u);
+    assert.match(runScript, /export KESTREL_HOME=\/kestrel-attempt\/kestrel-home\/state\/0\.6/u);
+    assert.match(runScript, /export KESTREL_CORE_HOME="\$KESTREL_HOME"/u);
     assert.match(runScript, /kestrel_status=\$\?/u);
     assert.match(runScript, /runtime bundle --run-id "\$run_id" --out \/kestrel-attempt\/runtime-replay-bundle\.json/u);
     assert.match(runScript, /cd \/opt\/kestrel\nnode --import tsx/u);
