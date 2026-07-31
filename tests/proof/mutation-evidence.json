@@ -29,11 +29,11 @@
       "id": "local-core-authority-lock-theft",
       "contractId": "local-core.authority-lock",
       "target": "src/localCore/api.ts",
-      "sourceSha256": "32da52ce58a614bc7017ae811f16bfbb5b9995608278fd00decf5fbcbdb2af08",
+      "sourceSha256": "07b86880394916e144227142924b49f329e370830ffbba843b6cd93b912812f7",
       "testFiles": [
         "tests/unit/local-core-api.test.ts"
       ],
-      "testsSha256": "4bcf820ed7621920fb7c4858fa22d1f91e230a8da0887392a0a846e01f90d2ad",
+      "testsSha256": "d69a8ed2f0492e9cdf31b0d3a9aa9869674efb1f2c3d6d763c84ab42942e2bb4",
       "command": "node --import tsx --test --test-name-pattern=does not steal or unlink tests/unit/local-core-api.test.ts",
       "result": "killed"
     },
