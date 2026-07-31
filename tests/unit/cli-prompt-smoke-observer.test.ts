@@ -74,16 +74,66 @@ contractTest("runtime.hermetic", "artifact success cannot override a failed or m
     terminalStatus: "failed",
     assertionsConfigured: true,
     assertionsPassed: true,
+    ptyExitCode: 0,
+    readinessObserved: true,
   }), {
     runtimeStatus: "failed",
     artifactStatus: "passed",
+    tuiStatus: "passed",
     status: "failed",
   });
   assert.deepEqual(derivePromptSmokeOutcome({
     assertionsConfigured: true,
+    ptyExitCode: 0,
+    readinessObserved: true,
   }), {
     runtimeStatus: "failed",
     artifactStatus: "not_checked",
+    tuiStatus: "passed",
+    status: "failed",
+  });
+});
+
+contractTest("runtime.hermetic", "prompt smoke requires completed runtime, accepted artifacts, and a healthy ready TUI", () => {
+  assert.deepEqual(derivePromptSmokeOutcome({
+    terminalStatus: "completed",
+    assertionsConfigured: true,
+    assertionsPassed: true,
+    ptyExitCode: 0,
+    readinessObserved: true,
+  }), {
+    runtimeStatus: "passed",
+    artifactStatus: "passed",
+    tuiStatus: "passed",
+    status: "passed",
+  });
+});
+
+contractTest("runtime.hermetic", "nonzero PTY exit preserves runtime and artifact evidence but fails the smoke", () => {
+  assert.deepEqual(derivePromptSmokeOutcome({
+    terminalStatus: "completed",
+    assertionsConfigured: true,
+    assertionsPassed: true,
+    ptyExitCode: 1,
+    readinessObserved: true,
+  }), {
+    runtimeStatus: "passed",
+    artifactStatus: "passed",
+    tuiStatus: "failed",
+    status: "failed",
+  });
+});
+
+contractTest("runtime.hermetic", "missing TUI readiness fails the smoke even after a clean PTY exit", () => {
+  assert.deepEqual(derivePromptSmokeOutcome({
+    terminalStatus: "completed",
+    assertionsConfigured: false,
+    ptyExitCode: 0,
+    readinessObserved: false,
+  }), {
+    runtimeStatus: "passed",
+    artifactStatus: "not_checked",
+    tuiStatus: "failed",
     status: "failed",
   });
 });

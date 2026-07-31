@@ -24,6 +24,7 @@ export interface DurableTerminalObservation {
 export interface PromptSmokeOutcome {
   runtimeStatus: "passed" | "failed";
   artifactStatus: "passed" | "failed" | "not_checked";
+  tuiStatus: "passed" | "failed";
   status: "passed" | "failed";
 }
 
@@ -31,6 +32,8 @@ export function derivePromptSmokeOutcome(input: {
   terminalStatus?: DurableTerminalStatus | undefined;
   assertionsConfigured: boolean;
   assertionsPassed?: boolean | undefined;
+  ptyExitCode: number;
+  readinessObserved: boolean;
 }): PromptSmokeOutcome {
   const runtimeStatus = input.terminalStatus === "completed" ? "passed" : "failed";
   const artifactStatus = input.terminalStatus === undefined || input.assertionsConfigured === false
@@ -38,10 +41,18 @@ export function derivePromptSmokeOutcome(input: {
     : input.assertionsPassed === true
       ? "passed"
       : "failed";
+  const tuiStatus =
+    input.ptyExitCode === 0 && input.readinessObserved ? "passed" : "failed";
   return {
     runtimeStatus,
     artifactStatus,
-    status: runtimeStatus === "passed" && artifactStatus !== "failed" ? "passed" : "failed",
+    tuiStatus,
+    status:
+      runtimeStatus === "passed" &&
+      artifactStatus !== "failed" &&
+      tuiStatus === "passed"
+        ? "passed"
+        : "failed",
   };
 }
 
