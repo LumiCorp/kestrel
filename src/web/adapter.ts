@@ -59,6 +59,7 @@ type WebControlTerminalEvent = Extract<
       | "workspace.review"
       | "workspace.validation"
       | "workspace.git"
+      | "mission_control.project"
       | "project.snapshot"
       | "project.review";
   }
@@ -943,6 +944,23 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
       if (command.type === "workspace.validation.submit") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, resultIds: command.resultIds }, metadata); if (response.type !== "workspace.validation") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_VALIDATION_RESPONSE", `Unexpected workspace validation response '${response.type}'.`); return response; }
       if (command.type === "workspace.git.inspect") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId }, metadata); if (response.type !== "workspace.git") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_GIT_RESPONSE", `Unexpected workspace Git response '${response.type}'.`); return response; }
       if (command.type === "workspace.git.action") { const response = await sendCommand(activeClient, command.type, { sessionId: command.sessionId, threadId: command.threadId, candidateFingerprint: command.candidateFingerprint, ...(command.expectedHeadSha ? { expectedHeadSha: command.expectedHeadSha } : {}), action: command.action }, metadata); if (response.type !== "workspace.git") throw createRuntimeFailure("WEB_ADAPTER_UNEXPECTED_WORKSPACE_GIT_RESPONSE", `Unexpected workspace Git response '${response.type}'.`); return response; }
+
+      if (command.type === "mission_control.project.get") {
+        const response = await sendCommand(
+          activeClient,
+          "mission_control.project.get",
+          { projectId: command.projectId },
+          metadata,
+        );
+        if (response.type !== "mission_control.project") {
+          throw createRuntimeFailure(
+            "WEB_ADAPTER_UNEXPECTED_MISSION_CONTROL_PROJECT_RESPONSE",
+            `Unexpected Mission Control project response '${response.type}'.`,
+            { responseType: response.type },
+          );
+        }
+        return response;
+      }
 
       if (command.type === "project.snapshot.get") {
         const response = await sendCommand(activeClient, "project.snapshot.get", {

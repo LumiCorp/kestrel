@@ -156,6 +156,7 @@ import {
 import {
   createDefaultDesktopSettings,
   normalizeDesktopSettings,
+  preserveDesktopProjectRegistrationIds,
 } from "./settingsStore.js";
 import {
   createCoreOwnedDesktopDatabaseController,
@@ -191,6 +192,7 @@ import { WorkspaceSkillManager } from "../../../src/skills/WorkspaceSkillStore.j
 import type { WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
 import {
+  getDesktopMissionControlProject,
   getDesktopProjectSnapshot,
   getDesktopOperatorRun,
   getDesktopOperatorThread,
@@ -1911,7 +1913,10 @@ function registerIpcHandlers(
           details: error instanceof Error ? error.message : String(error),
         });
       }
-      const nextProjects = update.projects ?? desktopSettings.projects;
+      const nextProjects = preserveDesktopProjectRegistrationIds(
+        desktopSettings.projects,
+        update.projects ?? desktopSettings.projects,
+      );
       const preparedProjects =
         await prepareDesktopSettingsProjectRegistrations(nextProjects);
       const nextProjectPaths = new Set(
@@ -3051,6 +3056,15 @@ function registerIpcHandlers(
         async (client) => await client.restartDesktopProjectRun(runId),
       );
     },
+  );
+  ipcMain.handle(
+    "desktop:get-mission-control-project",
+    async (_event, projectId: unknown) =>
+      getDesktopMissionControlProject({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        projectId,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
   );
   ipcMain.handle(
     "desktop:get-project-snapshot",

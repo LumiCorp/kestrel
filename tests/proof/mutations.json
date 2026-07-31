@@ -105,11 +105,91 @@
       "id": "local-core-authority-lock-theft",
       "contractId": "local-core.authority-lock",
       "target": "src/localCore/api.ts",
-      "find": "status.lock.lock.ownerPid === process.pid\n    && status.lock.lock.authorityId === authorityId",
-      "replace": "true\n    && true",
+      "find": "status.lock.lock.ownerPid === process.pid &&\n    status.lock.lock.authorityId === authorityId",
+      "replace": "true &&\n    true",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=does not steal or unlink", "tests/unit/local-core-api.test.ts"],
       "testFiles": ["tests/unit/local-core-api.test.ts"]
+    },
+    {
+      "id": "mission-control-drag-lifecycle-bypass",
+      "contractId": "runtime.mission-control-lifecycle",
+      "target": "src/missionControl/projectAuthority.ts",
+      "find": "if (action.targetPhase !== item.phase) {",
+      "replace": "if (false) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical project work-item lifecycle", "tests/unit/mission-control-project-authority.test.ts"],
+      "testFiles": ["tests/unit/mission-control-project-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-item-version-bypass",
+      "contractId": "runtime.mission-control-lifecycle",
+      "target": "src/missionControl/projectAuthority.ts",
+      "find": "if (action.expectedItemVersion !== item.version) {",
+      "replace": "if (false) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical project work-item lifecycle", "tests/unit/mission-control-project-authority.test.ts"],
+      "testFiles": ["tests/unit/mission-control-project-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-action-replay-bypass",
+      "contractId": "runtime.mission-control-lifecycle",
+      "target": "src/missionControl/projectAuthority.ts",
+      "find": "if (actualFingerprint !== expectedFingerprint) {",
+      "replace": "if (false) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical project work-item lifecycle", "tests/unit/mission-control-project-authority.test.ts"],
+      "testFiles": ["tests/unit/mission-control-project-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-project-isolation-bypass",
+      "contractId": "runtime.mission-control-project-persistence",
+      "target": "src/missionControl/projectAuthority.ts",
+      "find": "if (projectId !== expectedProjectId) {",
+      "replace": "if (false) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=project state, receipts, and outbox", "tests/mission-control-project-authority.postgres.test.ts"],
+      "testFiles": ["tests/mission-control-project-authority.postgres.test.ts"]
+    },
+    {
+      "id": "mission-control-partial-transaction-commit",
+      "contractId": "runtime.mission-control-project-persistence",
+      "target": "src/store/PostgresSessionStore.ts",
+      "find": "    return this.withTransaction(operation);",
+      "replace": "    return operation(this.db);",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=project state, receipts, and outbox", "tests/mission-control-project-authority.postgres.test.ts"],
+      "testFiles": ["tests/mission-control-project-authority.postgres.test.ts"]
+    },
+    {
+      "id": "mission-control-attempt-identity-bypass",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "find": "    run.runId !== runId ||",
+      "replace": "    false ||",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
+      "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-stale-event-bypass",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "find": "  return item.currentAttemptId !== attempt.id;",
+      "replace": "  return false;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
+      "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
+    },
+    {
+      "id": "mission-control-premature-cancel-completion",
+      "contractId": "runtime.mission-control-execution-authority",
+      "target": "src/missionControl/executionAuthority.ts",
+      "find": "        status: \"cancelling\",",
+      "replace": "        status: \"cancelled\",",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical attempts control exact runner execution", "tests/integration/mission-control-execution-authority.test.ts"],
+      "testFiles": ["tests/integration/mission-control-execution-authority.test.ts"]
     }
   ]
 }

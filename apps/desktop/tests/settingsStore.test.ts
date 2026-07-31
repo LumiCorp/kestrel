@@ -14,9 +14,29 @@ import {
   hasConfiguredDesktopProviderCredential,
   readDesktopSettings,
   normalizeDesktopSettings,
+  preserveDesktopProjectRegistrationIds,
   writeDesktopSettings,
 } from "../src/settingsStore.js";
 import { contractTest } from "../../../tests/helpers/contract-test.js";
+
+contractTest(
+  "desktop.hermetic",
+  "renderer project settings preserve the registered UUID by exact path",
+  () => {
+    const existingId = "11111111-1111-4111-8111-111111111111";
+    const projects = preserveDesktopProjectRegistrationIds(
+      [{ id: existingId, path: "/workspace/kestrel", label: "Old label" }],
+      [
+        { path: "/workspace/kestrel", label: "Kestrel" },
+        { path: "/workspace/new", label: "New project" },
+      ],
+    );
+
+    assert.equal(projects[0]?.id, existingId);
+    assert.equal(projects[0]?.label, "Kestrel");
+    assert.equal(projects[1]?.id, undefined);
+  },
+);
 
 contractTest(
   "desktop.hermetic",

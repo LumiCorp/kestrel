@@ -15,6 +15,13 @@ const files = execFileSync("git", ["ls-files", "-z", "apps/web/**/*.postgres.tes
 
 if (files.length === 0) throw new Error("No PostgreSQL contracts were discovered.");
 
+const runtimeFiles = execFileSync("git", ["ls-files", "-z", "tests/**/*.postgres.test.ts"], { encoding: "utf8" })
+  .split("\0")
+  .filter(Boolean)
+  .concat("tests/mission-control-project-authority.postgres.test.ts")
+  .filter((file, index, all) => all.indexOf(file) === index)
+  .sort();
+
 const groups = [
   {
     name: "Apps",
@@ -57,7 +64,10 @@ if (JSON.stringify(assigned) !== JSON.stringify(files)) {
   throw new Error(`PostgreSQL contract assignment drifted.\nDiscovered: ${files.join(", ")}\nAssigned: ${assigned.join(", ")}`);
 }
 
-await Promise.all(groups.map(runGroup));
+await Promise.all([
+  ...groups.map(runGroup),
+  runRuntimeGroup(),
+]);
 
 function runGroup(group: (typeof groups)[number]): Promise<void> {
   process.stdout.write(`[postgres] ${group.name}: ${group.files.join(", ")}\n`);
@@ -82,6 +92,44 @@ function runGroup(group: (typeof groups)[number]): Promise<void> {
     child.once("exit", (code, signal) => {
       if (code === 0) resolve();
       else reject(new Error(`${group.name} PostgreSQL contracts failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`));
+    });
+  });
+}
+
+function runRuntimeGroup(): Promise<void> {
+  if (
+    JSON.stringify(runtimeFiles) !==
+    JSON.stringify(["tests/mission-control-project-authority.postgres.test.ts"])
+  ) {
+    throw new Error(
+      `Runtime PostgreSQL contract assignment drifted.\nDiscovered: ${runtimeFiles.join(", ")}`,
+    );
+  }
+  process.stdout.write(`[postgres] Runtime: ${runtimeFiles.join(", ")}\n`);
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      "--import", "tsx",
+      "--test",
+      "--test-concurrency=1",
+      "--test-reporter=spec",
+      ...runtimeFiles,
+    ], {
+      env: {
+        ...process.env,
+        KESTREL_PRODUCT_RUNNER_DATABASE_URL: required(
+          "KESTREL_PRODUCT_RUNNER_DATABASE_URL",
+        ),
+      },
+      stdio: "inherit",
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(
+        new Error(
+          `Runtime PostgreSQL contracts failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`,
+        ),
+      );
     });
   });
 }
