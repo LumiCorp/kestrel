@@ -5,11 +5,11 @@
       "id": "cross-tenant-authorization-acceptance",
       "contractId": "security.cross-tenant-authorization",
       "target": "cli/runner/RunnerHost.ts",
-      "sourceSha256": "2e9db69628c1b26fe23c7e599f3cf124e1551c0175a0b5302fbd5a81e217c172",
+      "sourceSha256": "6155c12a36276fc2ceea8755c5714bfa4ee9c37de828b6a565d79a3b8f8f6837",
       "testFiles": [
         "tests/integration/runner-protocol.test.ts"
       ],
-      "testsSha256": "2c5f5904545d354384c04b0e07d606c5b9562d21c877d0f1882328ceaba77851",
+      "testsSha256": "c1d2ea928c07e59a3bf544f71e02e22cf13441ec3d87d75c05399845fb111062",
       "command": "node --import tsx --test --test-name-pattern=binds a gateway-managed credential tests/integration/runner-protocol.test.ts",
       "result": "killed"
     },
@@ -17,11 +17,11 @@
       "id": "interaction-request-identity-bypass",
       "contractId": "web.interaction-request-identity",
       "target": "apps/web/lib/turns/store.ts",
-      "sourceSha256": "b266d1d86849fdee5878be9e3356f03304fba674634a0264d2e2fa7812146858",
+      "sourceSha256": "9026d5972a876c4f0c5619e94f61955e2c0dde8663622d33fe62c1e4a615898d",
       "testFiles": [
         "apps/web/lib/turns/store.postgres.test.ts"
       ],
-      "testsSha256": "e8ff23cfa5955779921b523f3aa19c7cf88ff3a208864fa5e8b2112d3dcbe2ed",
+      "testsSha256": "32ebc1925c57814492c79edeff671c229a1f57e9391e8563426ebd697228977c",
       "command": "pnpm --dir apps/web exec node --conditions=react-server --import tsx --test --test-name-pattern=durable turns converge lib/turns/store.postgres.test.ts",
       "result": "killed"
     },
@@ -33,7 +33,7 @@
       "testFiles": [
         "tests/unit/local-core-api.test.ts"
       ],
-      "testsSha256": "d69a8ed2f0492e9cdf31b0d3a9aa9869674efb1f2c3d6d763c84ab42942e2bb4",
+      "testsSha256": "5d631912484010ef5fca05011731c483927c26f4b0b4e875a9b44af68f469651",
       "command": "node --import tsx --test --test-name-pattern=does not steal or unlink tests/unit/local-core-api.test.ts",
       "result": "killed"
     },
@@ -53,7 +53,7 @@
       "id": "mission-control-action-replay-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "a6d982b68f323e59940cea85578b3a77b62e7fa51ef543828415c475b348bf42",
+      "sourceSha256": "7a9cfb99c5a282d38becd2b318ef4d2e6d16a02afb56f9ce7fb1bb8a89165836",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
@@ -65,11 +65,11 @@
       "id": "mission-control-attempt-identity-bypass",
       "contractId": "runtime.mission-control-execution-authority",
       "target": "src/missionControl/executionAuthority.ts",
-      "sourceSha256": "9fcf2183504d1762d5842544234f45835fdaebc7ab208e86cc0a1d738dff21cb",
+      "sourceSha256": "262fa03db94a281db1236b9a0092bad3ddfdc7c310ef2d3c3e22ca06a94be6ca",
       "testFiles": [
         "tests/integration/mission-control-execution-authority.test.ts"
       ],
-      "testsSha256": "b535c68a8c51c0ea131cccc74b0be9d470262586a8bdf1b5541b592bd9f8b40d",
+      "testsSha256": "836893d364b962c7f37cf4f383315a199365092fcc1cbb9490689b4aec87394a",
       "command": "node --import tsx --test --test-name-pattern=canonical attempts control exact runner execution tests/integration/mission-control-execution-authority.test.ts",
       "result": "killed"
     },
@@ -77,7 +77,7 @@
       "id": "mission-control-drag-lifecycle-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "a6d982b68f323e59940cea85578b3a77b62e7fa51ef543828415c475b348bf42",
+      "sourceSha256": "7a9cfb99c5a282d38becd2b318ef4d2e6d16a02afb56f9ce7fb1bb8a89165836",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
@@ -89,7 +89,7 @@
       "id": "mission-control-item-version-bypass",
       "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "a6d982b68f323e59940cea85578b3a77b62e7fa51ef543828415c475b348bf42",
+      "sourceSha256": "7a9cfb99c5a282d38becd2b318ef4d2e6d16a02afb56f9ce7fb1bb8a89165836",
       "testFiles": [
         "tests/unit/mission-control-project-authority.test.ts"
       ],
@@ -105,7 +105,7 @@
       "testFiles": [
         "tests/mission-control-project-authority.postgres.test.ts"
       ],
-      "testsSha256": "e44eac4b595d2c8f2c4b5c49e801fdcb9b73ac80158f6f7d5c911622197f8a62",
+      "testsSha256": "234882f42b39b795250f3f4a93bca4408d3d42b4d31e060bf9d10c8f17fcd991",
       "command": "node --import tsx --test --test-name-pattern=staged migration is deterministic tests/mission-control-project-authority.postgres.test.ts",
       "result": "killed"
     },
@@ -117,7 +117,7 @@
       "testFiles": [
         "tests/mission-control-project-authority.postgres.test.ts"
       ],
-      "testsSha256": "e44eac4b595d2c8f2c4b5c49e801fdcb9b73ac80158f6f7d5c911622197f8a62",
+      "testsSha256": "234882f42b39b795250f3f4a93bca4408d3d42b4d31e060bf9d10c8f17fcd991",
       "command": "node --import tsx --test --test-name-pattern=staged migration is deterministic tests/mission-control-project-authority.postgres.test.ts",
       "result": "killed"
     },
@@ -125,11 +125,11 @@
       "id": "mission-control-partial-transaction-commit",
       "contractId": "runtime.mission-control-project-persistence",
       "target": "src/store/PostgresSessionStore.ts",
-      "sourceSha256": "15d42f97290bc12e7fe13a2cbfa7cd412a6511402a6a5e53d2e6607a99d256e8",
+      "sourceSha256": "2b70703ce9ee8f105055e115c9e28916c974339e23c9155ff603b76718b5dcb1",
       "testFiles": [
         "tests/mission-control-project-authority.postgres.test.ts"
       ],
-      "testsSha256": "e44eac4b595d2c8f2c4b5c49e801fdcb9b73ac80158f6f7d5c911622197f8a62",
+      "testsSha256": "234882f42b39b795250f3f4a93bca4408d3d42b4d31e060bf9d10c8f17fcd991",
       "command": "node --import tsx --test --test-name-pattern=project state, receipts, and outbox tests/mission-control-project-authority.postgres.test.ts",
       "result": "killed"
     },
@@ -137,11 +137,11 @@
       "id": "mission-control-premature-cancel-completion",
       "contractId": "runtime.mission-control-execution-authority",
       "target": "src/missionControl/executionAuthority.ts",
-      "sourceSha256": "9fcf2183504d1762d5842544234f45835fdaebc7ab208e86cc0a1d738dff21cb",
+      "sourceSha256": "262fa03db94a281db1236b9a0092bad3ddfdc7c310ef2d3c3e22ca06a94be6ca",
       "testFiles": [
         "tests/integration/mission-control-execution-authority.test.ts"
       ],
-      "testsSha256": "b535c68a8c51c0ea131cccc74b0be9d470262586a8bdf1b5541b592bd9f8b40d",
+      "testsSha256": "836893d364b962c7f37cf4f383315a199365092fcc1cbb9490689b4aec87394a",
       "command": "node --import tsx --test --test-name-pattern=canonical attempts control exact runner execution tests/integration/mission-control-execution-authority.test.ts",
       "result": "killed"
     },
@@ -149,11 +149,11 @@
       "id": "mission-control-project-isolation-bypass",
       "contractId": "runtime.mission-control-project-persistence",
       "target": "src/missionControl/projectAuthority.ts",
-      "sourceSha256": "a6d982b68f323e59940cea85578b3a77b62e7fa51ef543828415c475b348bf42",
+      "sourceSha256": "7a9cfb99c5a282d38becd2b318ef4d2e6d16a02afb56f9ce7fb1bb8a89165836",
       "testFiles": [
         "tests/mission-control-project-authority.postgres.test.ts"
       ],
-      "testsSha256": "e44eac4b595d2c8f2c4b5c49e801fdcb9b73ac80158f6f7d5c911622197f8a62",
+      "testsSha256": "234882f42b39b795250f3f4a93bca4408d3d42b4d31e060bf9d10c8f17fcd991",
       "command": "node --import tsx --test --test-name-pattern=project state, receipts, and outbox tests/mission-control-project-authority.postgres.test.ts",
       "result": "killed"
     },
@@ -185,11 +185,11 @@
       "id": "mission-control-stale-event-bypass",
       "contractId": "runtime.mission-control-execution-authority",
       "target": "src/missionControl/executionAuthority.ts",
-      "sourceSha256": "9fcf2183504d1762d5842544234f45835fdaebc7ab208e86cc0a1d738dff21cb",
+      "sourceSha256": "262fa03db94a281db1236b9a0092bad3ddfdc7c310ef2d3c3e22ca06a94be6ca",
       "testFiles": [
         "tests/integration/mission-control-execution-authority.test.ts"
       ],
-      "testsSha256": "b535c68a8c51c0ea131cccc74b0be9d470262586a8bdf1b5541b592bd9f8b40d",
+      "testsSha256": "836893d364b962c7f37cf4f383315a199365092fcc1cbb9490689b4aec87394a",
       "command": "node --import tsx --test --test-name-pattern=canonical attempts control exact runner execution tests/integration/mission-control-execution-authority.test.ts",
       "result": "killed"
     },
@@ -209,11 +209,11 @@
       "id": "source-write-guard-fail-open",
       "contractId": "runtime.source-write-guard",
       "target": "src/devshell/DevShellSupervisor.ts",
-      "sourceSha256": "0629528ddb6ed2bcf03ef9e47c29158cebe8ca258fdbee5a8d17bfaa72fe4a42",
+      "sourceSha256": "9db9e377ef9346f415950601c5b5089c3306a9762bcb48fb5ae69e12502a8f0c",
       "testFiles": [
         "tests/unit/dev-shell-supervisor.test.ts"
       ],
-      "testsSha256": "a5bf549cfddd2d22f1408de0ba981a50e2e17fe097a208ac5abccc840ea754da",
+      "testsSha256": "5c302e64af6e98f2b6db9cd5ad5beb7ba3030c553ed741625c8aba1369803e5c",
       "command": "node --import tsx --test --test-name-pattern=source-write guard fails tests/unit/dev-shell-supervisor.test.ts",
       "result": "killed"
     },
@@ -221,11 +221,11 @@
       "id": "source-write-guard-internal-state-inclusion",
       "contractId": "runtime.source-write-guard",
       "target": "src/devshell/DevShellSupervisor.ts",
-      "sourceSha256": "0629528ddb6ed2bcf03ef9e47c29158cebe8ca258fdbee5a8d17bfaa72fe4a42",
+      "sourceSha256": "9db9e377ef9346f415950601c5b5089c3306a9762bcb48fb5ae69e12502a8f0c",
       "testFiles": [
         "tests/unit/dev-shell-supervisor.test.ts"
       ],
-      "testsSha256": "a5bf549cfddd2d22f1408de0ba981a50e2e17fe097a208ac5abccc840ea754da",
+      "testsSha256": "5c302e64af6e98f2b6db9cd5ad5beb7ba3030c553ed741625c8aba1369803e5c",
       "command": "node --import tsx --test --test-name-pattern=excludes Kestrel internal state tests/unit/dev-shell-supervisor.test.ts",
       "result": "killed"
     },
@@ -237,7 +237,7 @@
       "testFiles": [
         "packages/sdk/tests/local-client.test.ts"
       ],
-      "testsSha256": "6300bdfbd885b9bb5cdeb885a82957fc7a43cb69788cf9dd466554952278aa45",
+      "testsSha256": "aeb85ae85f28dd5175fcd3e18849a979c9746289f987710d0b24395694538b3f",
       "command": "pnpm --dir packages/sdk exec node --import tsx --test --test-timeout=5000 --test-name-pattern=ends before a terminal event tests/local-client.test.ts",
       "result": "killed"
     },
@@ -245,7 +245,7 @@
       "id": "turn-idempotency-bypass",
       "contractId": "web.idempotency",
       "target": "apps/web/lib/turns/store.ts",
-      "sourceSha256": "b266d1d86849fdee5878be9e3356f03304fba674634a0264d2e2fa7812146858",
+      "sourceSha256": "9026d5972a876c4f0c5619e94f61955e2c0dde8663622d33fe62c1e4a615898d",
       "testFiles": [
         "apps/web/lib/turns/mobile-store.postgres.test.ts"
       ],
@@ -257,7 +257,7 @@
       "id": "turn-partial-transaction-commit",
       "contractId": "web.turn-transaction",
       "target": "apps/web/lib/turns/store.ts",
-      "sourceSha256": "b266d1d86849fdee5878be9e3356f03304fba674634a0264d2e2fa7812146858",
+      "sourceSha256": "9026d5972a876c4f0c5619e94f61955e2c0dde8663622d33fe62c1e4a615898d",
       "testFiles": [
         "apps/web/lib/turns/mobile-store.postgres.test.ts"
       ],
@@ -269,7 +269,7 @@
       "id": "turn-retry-lineage-loss",
       "contractId": "web.turn-retry-lineage",
       "target": "apps/web/lib/turns/store.ts",
-      "sourceSha256": "b266d1d86849fdee5878be9e3356f03304fba674634a0264d2e2fa7812146858",
+      "sourceSha256": "9026d5972a876c4f0c5619e94f61955e2c0dde8663622d33fe62c1e4a615898d",
       "testFiles": [
         "apps/web/lib/turns/mobile-store.postgres.test.ts"
       ],
@@ -285,7 +285,7 @@
       "testFiles": [
         "apps/web/lib/turns/store.postgres.test.ts"
       ],
-      "testsSha256": "e8ff23cfa5955779921b523f3aa19c7cf88ff3a208864fa5e8b2112d3dcbe2ed",
+      "testsSha256": "32ebc1925c57814492c79edeff671c229a1f57e9391e8563426ebd697228977c",
       "command": "pnpm --dir apps/web exec node --conditions=react-server --import tsx --test --test-name-pattern=durable turns converge lib/turns/store.postgres.test.ts",
       "result": "killed"
     }

@@ -339,6 +339,10 @@ export type WebControlCommand =
       action: Record<string, unknown>;
     }
   | {
+      type: "mission_control.action.execute";
+      action: Record<string, unknown>;
+    }
+  | {
       type: "project.snapshot.get";
       sessionId: string;
     }

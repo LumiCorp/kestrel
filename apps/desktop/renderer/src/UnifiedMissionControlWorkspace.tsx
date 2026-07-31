@@ -10,6 +10,7 @@ import {
 import React, { useEffect, useMemo, useState } from "react";
 
 import type {
+  DesktopMissionControlActionIntent,
   DesktopMissionControlMigrationIntent,
   DesktopMissionControlProjectResponse,
   DesktopProjectRegistration,
@@ -23,6 +24,12 @@ import type {
 } from "../../../../src/missionControl/projectAuthority";
 
 type MissionControlView = "list" | "kanban";
+type MissionControlInspectorIntent =
+  DesktopMissionControlActionIntent extends infer T
+    ? T extends DesktopMissionControlActionIntent
+      ? Omit<T, "projectId" | "expectedRevision">
+      : never
+    : never;
 
 const PHASES: ReadonlyArray<{
   phase: Exclude<MissionControlWorkPhase, "discarded">;
@@ -71,6 +78,7 @@ export function UnifiedMissionControlWorkspace({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [migrating, setMigrating] = useState(false);
+  const [commanding, setCommanding] = useState(false);
   const [commandError, setCommandError] = useState<string>();
   const [reloadKey, setReloadKey] = useState(0);
   const [view, setView] = useState<MissionControlView>("list");
@@ -135,6 +143,10 @@ export function UnifiedMissionControlWorkspace({
   const selectedItem =
     allItems.find((item) => item.id === selectedItemId);
   const migration = response?.project.document.migration;
+  const autopilotStatus = missionControlAutopilotStatus(
+    response,
+    allItems,
+  );
 
   const executeMigration = async (
     buildIntent: (
@@ -157,6 +169,30 @@ export function UnifiedMissionControlWorkspace({
       onError(message);
     } finally {
       setMigrating(false);
+    }
+  };
+
+  const executeAction = async (
+    buildIntent: (
+      projectId: string,
+      expectedRevision: number,
+    ) => DesktopMissionControlActionIntent,
+  ) => {
+    if (response === undefined) return;
+    setCommanding(true);
+    try {
+      const next = await window.kestrelDesktop.executeMissionControlAction(
+        buildIntent(project.id, response.project.revision),
+      );
+      setResponse(next);
+      setCommandError(undefined);
+      onError(undefined);
+    } catch (error) {
+      const message = errorMessage(error);
+      setCommandError(message);
+      onError(message);
+    } finally {
+      setCommanding(false);
     }
   };
 
@@ -183,7 +219,11 @@ export function UnifiedMissionControlWorkspace({
           <p>{project.label}</p>
         </div>
         <div className="unified-mission-authority">
-          <span>Read-only preview</span>
+          <span>
+            {response?.project.authorityEpoch === 0
+              ? "Legacy authority · read-only"
+              : `Canonical authority · epoch ${response?.project.authorityEpoch}`}
+          </span>
           <code>{project.id}</code>
         </div>
         <button
@@ -241,10 +281,46 @@ export function UnifiedMissionControlWorkspace({
           {response?.project.document.autopilot.wipLimit ?? 1}
         </span>
         <span>{visibleItems.length} visible items</span>
+        <span>{autopilotStatus}</span>
         {refreshing ? <span>Reconnecting to project authority…</span> : null}
       </section>
 
-      {migration !== undefined ? (
+      <MissionControlAutopilotControl
+        enabled={response?.project.document.autopilot.enabled === true}
+        wipLimit={response?.project.document.autopilot.wipLimit ?? 1}
+        disabled={
+          commanding ||
+          response === undefined ||
+          response.project.authorityEpoch === 0
+        }
+        onConfigure={(enabled, wipLimit, confirmed) =>
+          executeAction((projectId, expectedRevision) => ({
+            type: "configure_autopilot",
+            projectId,
+            expectedRevision,
+            enabled,
+            wipLimit,
+            confirmed,
+          }))}
+      />
+      <MissionControlCreateControl
+        disabled={
+          commanding ||
+          response === undefined ||
+          response.project.authorityEpoch === 0
+        }
+        onCreate={(title, instructions, completionContract) =>
+          executeAction((projectId, expectedRevision) => ({
+            type: "create",
+            projectId,
+            expectedRevision,
+            title,
+            instructions,
+            completionContract,
+          }))}
+      />
+
+      {migration !== undefined && response?.project.authorityEpoch === 0 ? (
         <MissionControlMigrationPanel
           migration={migration}
           disabled={migrating}
@@ -269,7 +345,33 @@ export function UnifiedMissionControlWorkspace({
               expectedRevision,
               resolution: { type: "source", candidateId },
             }))}
+          onActivate={() =>
+            executeAction((projectId, expectedRevision) => ({
+              type: "activate",
+              projectId,
+              expectedRevision,
+            }))}
         />
+      ) : null}
+      {response !== undefined && response.project.authorityEpoch > 0 ? (
+        <section className="unified-mission-migration">
+          <div>
+            <strong>Canonical Mission Control is active</strong>
+            <span>Legacy project rows are frozen. Commands use project UUID authority.</span>
+          </div>
+          <button
+            type="button"
+            disabled={commanding || activeItemCount(allItems) > 0}
+            onClick={() =>
+              executeAction((projectId, expectedRevision) => ({
+                type: "rollback",
+                projectId,
+                expectedRevision,
+              }))}
+          >
+            Roll back project authority
+          </button>
+        </section>
       ) : null}
 
       {commandError !== undefined ? (
@@ -298,7 +400,11 @@ export function UnifiedMissionControlWorkspace({
         <div className="mission-empty">
           <List size={22} />
           <strong>No work items in this project</strong>
-          <span>Canonical project authority is connected and read-only.</span>
+          <span>
+            {response?.project.authorityEpoch === 0
+              ? "Resolve and activate migration to create project work."
+              : "Canonical project authority is ready for new work."}
+          </span>
         </div>
       ) : visibleItems.length === 0 ? (
         <div className="mission-empty">
@@ -332,6 +438,13 @@ export function UnifiedMissionControlWorkspace({
             projectPath={project.path}
             onOpenConversation={onOpenConversation}
             onStartConversation={onStartConversation}
+            disabled={commanding || response?.project.authorityEpoch === 0}
+            onAction={(intent) =>
+              executeAction((projectId, expectedRevision) => ({
+                ...intent,
+                projectId,
+                expectedRevision,
+              }) as DesktopMissionControlActionIntent)}
           />
         </div>
       )}
@@ -345,12 +458,14 @@ function MissionControlMigrationPanel({
   onClear,
   onRebind,
   onResolve,
+  onActivate,
 }: {
   migration: MissionControlMigrationState;
   disabled: boolean;
   onClear: () => void;
   onRebind: (sourceId: string, sourceFingerprint: string) => void;
   onResolve: (candidateId: string) => void;
+  onActivate: () => void;
 }) {
   const unresolvedSources = migration.sources.filter(
     (source) =>
@@ -408,8 +523,209 @@ function MissionControlMigrationPanel({
       {migration.status === "staged_empty" ? (
         <span>No compatible legacy work exists for this project.</span>
       ) : null}
+      {migration.status === "staged_empty" ||
+      migration.status === "staged" ||
+      migration.status === "resolved" ? (
+        <button type="button" disabled={disabled} onClick={onActivate}>
+          Activate Mission Control
+        </button>
+      ) : null}
       <button type="button" disabled={disabled} onClick={onClear}>
         Clear staged migration
+      </button>
+    </section>
+  );
+}
+
+function MissionControlAutopilotControl({
+  enabled,
+  wipLimit,
+  disabled,
+  onConfigure,
+}: {
+  enabled: boolean;
+  wipLimit: number;
+  disabled: boolean;
+  onConfigure: (
+    enabled: boolean,
+    wipLimit: number,
+    confirmed: boolean,
+  ) => void;
+}) {
+  const [draftLimit, setDraftLimit] = useState(wipLimit);
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => setDraftLimit(wipLimit), [wipLimit]);
+  return (
+    <section
+      className="unified-mission-toolbar"
+      aria-label="Mission Control Autopilot"
+    >
+      <strong>Project Autopilot</strong>
+      <span>{enabled ? "On" : "Off"} · starts Ready work in explicit order</span>
+      <label>
+        WIP limit
+        <input
+          type="number"
+          min={1}
+          max={64}
+          value={draftLimit}
+          disabled={disabled}
+          onChange={(event) =>
+            setDraftLimit(
+              Math.max(1, Math.min(64, Number(event.target.value) || 1)),
+            )}
+        />
+      </label>
+      {confirming ? (
+        <>
+          <span>Autopilot will start eligible Ready work through the same Start path.</span>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              setConfirming(false);
+              onConfigure(true, draftLimit, true);
+            }}
+          >
+            Confirm enable Autopilot
+          </button>
+          <button type="button" onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              if (enabled) onConfigure(false, draftLimit, false);
+              else setConfirming(true);
+            }}
+          >
+            {enabled ? "Disable Autopilot" : "Enable Autopilot"}
+          </button>
+          <button
+            type="button"
+            disabled={disabled || draftLimit === wipLimit}
+            onClick={() => onConfigure(enabled, draftLimit, enabled)}
+          >
+            Save WIP limit
+          </button>
+        </>
+      )}
+    </section>
+  );
+}
+
+function MissionControlCreateControl({
+  disabled,
+  onCreate,
+}: {
+  disabled: boolean;
+  onCreate: (
+    title: string,
+    instructions: string,
+    completionContract:
+      Extract<
+        DesktopMissionControlActionIntent,
+        { type: "create" }
+      >["completionContract"],
+  ) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [title, setTitle] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [workType, setWorkType] = useState<"code" | "non_code">("code");
+  const [validationActions, setValidationActions] = useState("");
+  if (expanded === false) {
+    return (
+      <section className="unified-mission-toolbar">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setExpanded(true)}
+        >
+          Create work item
+        </button>
+      </section>
+    );
+  }
+  const actionIds = validationActions
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return (
+    <section className="unified-mission-toolbar" aria-label="Create work item">
+      <label>
+        Title
+        <input value={title} onChange={(event) => setTitle(event.target.value)} />
+      </label>
+      <label>
+        Instructions
+        <input
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
+        />
+      </label>
+      <label>
+        Work contract
+        <select
+          value={workType}
+          onChange={(event) =>
+            setWorkType(event.target.value === "non_code" ? "non_code" : "code")}
+        >
+          <option value="code">Code changes</option>
+          <option value="non_code">Non-code, no workspace change</option>
+        </select>
+      </label>
+      {workType === "code" ? (
+        <label>
+          Required validation action IDs
+          <input
+            value={validationActions}
+            onChange={(event) => setValidationActions(event.target.value)}
+          />
+        </label>
+      ) : null}
+      <button
+        type="button"
+        disabled={
+          disabled ||
+          title.trim().length === 0 ||
+          instructions.trim().length === 0 ||
+          (workType === "code" && actionIds.length === 0)
+        }
+        onClick={() => {
+          onCreate(
+            title.trim(),
+            instructions.trim(),
+            workType === "code"
+              ? {
+                  workType: "code",
+                  changeOutcome: "changes",
+                  validation: { mode: "required", actionIds },
+                  requiredEvidence: [],
+                }
+              : {
+                  workType: "non_code",
+                  changeOutcome: "no_change",
+                  validation: {
+                    mode: "not_applicable",
+                    reason: "Operator declared a non-code work item.",
+                  },
+                  requiredEvidence: [],
+                },
+          );
+          setExpanded(false);
+          setTitle("");
+          setInstructions("");
+        }}
+      >
+        Add Ready work
+      </button>
+      <button type="button" onClick={() => setExpanded(false)}>
+        Cancel
       </button>
     </section>
   );
@@ -428,6 +744,39 @@ function migrationLabel(status: MissionControlMigrationState["status"]): string 
     case "resolved":
       return "resolved";
   }
+}
+
+function missionControlAutopilotStatus(
+  response: DesktopMissionControlProjectResponse | undefined,
+  items: MissionControlWorkItem[],
+): string {
+  if (response === undefined) return "Autopilot authority is loading.";
+  if (response.project.authorityEpoch === 0) {
+    return "Autopilot is blocked until migration activation.";
+  }
+  if (response.project.document.autopilot.enabled === false) {
+    return "Autopilot is off by operator policy.";
+  }
+  if (
+    items.some(
+      (item) => currentAttempt(item)?.status === "cancelling",
+    )
+  ) {
+    return "Autopilot is blocked while cancellation is confirmed.";
+  }
+  if (items.some((item) => item.phase === "needs_attention")) {
+    return "Autopilot is blocked by Needs attention work.";
+  }
+  if (
+    activeItemCount(items) >=
+    response.project.document.autopilot.wipLimit
+  ) {
+    return "Autopilot is blocked at the project WIP limit.";
+  }
+  if (items.some((item) => item.phase === "ready") === false) {
+    return "Autopilot is idle because no Ready work exists.";
+  }
+  return "Autopilot can start Ready work in explicit order.";
 }
 
 function MissionControlList({
@@ -539,13 +888,18 @@ function MissionControlInspector({
   projectPath,
   onOpenConversation,
   onStartConversation,
+  disabled,
+  onAction,
 }: {
   history: MissionControlHistoryEntry[];
   item: MissionControlWorkItem | undefined;
   projectPath: string;
   onOpenConversation: (sessionId: string) => void;
   onStartConversation: (projectPath: string) => void;
+  disabled: boolean;
+  onAction: (intent: MissionControlInspectorIntent) => void;
 }) {
+  const [reply, setReply] = useState("");
   if (item === undefined) {
     return (
       <aside className="unified-mission-inspector">
@@ -603,6 +957,217 @@ function MissionControlInspector({
         <h2>{item.title}</h2>
         <p>{item.instructions}</p>
       </header>
+
+      <section>
+        <h3>Actions</h3>
+        <div className="mission-view-tabs" aria-label="Work item actions">
+          {item.phase === "proposed" ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                onAction({
+                  type: "approve",
+                  itemId: item.id,
+                  expectedItemVersion: item.version,
+                })}
+            >
+              Approve
+            </button>
+          ) : null}
+          {item.phase === "ready" ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                onAction({
+                  type: "start",
+                  itemId: item.id,
+                  expectedItemVersion: item.version,
+                })}
+            >
+              Start
+            </button>
+          ) : null}
+          {attempt !== undefined &&
+          (attempt.status === "running" || attempt.status === "waiting") &&
+          attempt.currentRunId !== undefined ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                const run = attempt.runs.find(
+                  (candidate) => candidate.runId === attempt.currentRunId,
+                );
+                if (run === undefined) return;
+                onAction({
+                  type: "stop",
+                  itemId: item.id,
+                  expectedItemVersion: item.version,
+                  attemptId: attempt.id,
+                  expectedAttemptVersion: attempt.version,
+                  runId: run.runId,
+                  commandId: run.commandId,
+                });
+              }}
+            >
+              Stop
+            </button>
+          ) : null}
+          {item.phase === "needs_attention" ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                onAction({
+                  type: "return_to_ready",
+                  itemId: item.id,
+                  expectedItemVersion: item.version,
+                })}
+            >
+              Return to Ready
+            </button>
+          ) : null}
+          {item.phase === "needs_attention" &&
+          attempt !== undefined &&
+          (attempt.status === "failed" ||
+            attempt.status === "orphaned" ||
+            attempt.status === "cancelled") ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                onAction({
+                  type: "retry",
+                  itemId: item.id,
+                  expectedItemVersion: item.version,
+                })}
+            >
+              Retry as new attempt
+            </button>
+          ) : null}
+          {item.phase === "active" && attempt?.status === "completed" ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                onAction({
+                  type: "prepare_review",
+                  itemId: item.id,
+                  expectedItemVersion: item.version,
+                  attemptId: attempt.id,
+                  expectedAttemptVersion: attempt.version,
+                })}
+            >
+              Prepare Review
+            </button>
+          ) : null}
+          {item.phase === "review" &&
+          attempt !== undefined &&
+          currentBundle !== undefined ? (
+            <>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() =>
+                  onAction({
+                    type: "accept",
+                    itemId: item.id,
+                    expectedItemVersion: item.version,
+                    attemptId: attempt.id,
+                    expectedAttemptVersion: attempt.version,
+                    candidateFingerprint:
+                      currentBundle.candidate.candidateFingerprint,
+                    bundleId: currentBundle.id,
+                  })}
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() =>
+                  onAction({
+                    type: "request_changes",
+                    itemId: item.id,
+                    expectedItemVersion: item.version,
+                    attemptId: attempt.id,
+                    expectedAttemptVersion: attempt.version,
+                    candidateFingerprint:
+                      currentBundle.candidate.candidateFingerprint,
+                    bundleId: currentBundle.id,
+                    reason: "Operator requested changes from Mission Control.",
+                  })}
+              >
+                Request changes
+              </button>
+            </>
+          ) : null}
+          {(item.phase === "proposed" ||
+            item.phase === "ready" ||
+            item.phase === "needs_attention") ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                onAction({
+                  type: "discard",
+                  itemId: item.id,
+                  expectedItemVersion: item.version,
+                })}
+            >
+              Discard
+            </button>
+          ) : null}
+          {item.phase === "discarded" ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                onAction({
+                  type: "restore",
+                  itemId: item.id,
+                  expectedItemVersion: item.version,
+                })}
+            >
+              Restore to Ready
+            </button>
+          ) : null}
+        </div>
+        {attempt?.status === "waiting" &&
+        attempt.pendingRequest !== undefined ? (
+          <div>
+            <label>
+              Reply to {attempt.pendingRequest.kind.replaceAll("_", " ")}
+              <input
+                value={reply}
+                onChange={(event) => setReply(event.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              disabled={disabled || reply.trim().length === 0}
+              onClick={() => {
+                onAction({
+                  type: "reply",
+                  itemId: item.id,
+                  expectedItemVersion: item.version,
+                  attemptId: attempt.id,
+                  expectedAttemptVersion: attempt.version,
+                  requestId: attempt.pendingRequest!.requestId,
+                  message: reply.trim(),
+                });
+                setReply("");
+              }}
+            >
+              Send exact reply
+            </button>
+          </div>
+        ) : null}
+        {attempt?.status === "cancelling" ? (
+          <p>Cancellation requested. Waiting for runner confirmation…</p>
+        ) : null}
+      </section>
 
       <section>
         <h3>Conversation</h3>

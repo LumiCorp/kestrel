@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { MissionControlProjectRepository } from "../kestrel/contracts/store.js";
+import type { ProductProjectSnapshot } from "../project/contracts.js";
 import {
   parseMissionControlMigrationState,
   type MissionControlMigrationState,
@@ -134,7 +135,9 @@ export type MissionControlHistoryActionType =
   | "migration.stage"
   | "migration.rebind"
   | "migration.resolve"
-  | "migration.clear";
+  | "migration.clear"
+  | "authority.activate"
+  | "authority.rollback";
 
 export interface MissionControlHistoryEntry {
   actionId: string;
@@ -206,6 +209,24 @@ export interface MissionControlProjectMutationInput {
     boundAt: string;
   } | undefined;
   releaseMigrationSourceClaims?: string[] | undefined;
+  authorityTransition?:
+    | {
+        type: "activate";
+        sourceClaims: Array<{
+          sourceId: string;
+          sourceFingerprint: string;
+        }>;
+        transitionedAt: string;
+      }
+    | {
+        type: "rollback";
+        exports: Array<{
+          sourceId: string;
+          snapshot: ProductProjectSnapshot;
+        }>;
+        transitionedAt: string;
+      }
+    | undefined;
   apply: (current: MissionControlProjectDocument) => {
     document: MissionControlProjectDocument;
     effects: MissionControlOutboxIntent[];
@@ -247,6 +268,9 @@ export type MissionControlProjectAction =
     })
   | (MissionControlItemActionBase & {
       type: "item.discard";
+    })
+  | (MissionControlItemActionBase & {
+      type: "item.restore";
     })
   | (MissionControlActionBase & {
       type: "autopilot.configure";
@@ -404,6 +428,7 @@ export function parseMissionControlProjectAction(
     case "item.approve":
     case "item.return_to_ready":
     case "item.discard":
+    case "item.restore":
       assertAllowedKeys(record, [
         "type",
         "projectId",
@@ -714,6 +739,27 @@ export function reduceMissionControlProjectAction(
           replaceWorkItem(current, {
             ...item,
             phase: "discarded",
+            version: item.version + 1,
+            updatedAt: action.actionTs,
+          }),
+          action,
+          nextRevision,
+        ),
+        effects: [],
+      };
+    }
+    case "item.restore": {
+      const item = requireVersionedItem(current, action);
+      if (item.phase !== "discarded") {
+        throw new MissionControlTransitionError(
+          "Only discarded Mission Control work can be restored.",
+        );
+      }
+      return {
+        document: appendHistory(
+          replaceWorkItem(current, {
+            ...item,
+            phase: "ready",
             version: item.version + 1,
             updatedAt: action.actionTs,
           }),
@@ -1504,6 +1550,7 @@ function requireHistoryActionType(value: string): MissionControlHistoryActionTyp
     value !== "item.reorder" &&
     value !== "item.return_to_ready" &&
     value !== "item.discard" &&
+    value !== "item.restore" &&
     value !== "autopilot.configure" &&
     value !== "execution.start" &&
     value !== "execution.accepted" &&
@@ -1524,7 +1571,9 @@ function requireHistoryActionType(value: string): MissionControlHistoryActionTyp
     value !== "migration.stage" &&
     value !== "migration.rebind" &&
     value !== "migration.resolve" &&
-    value !== "migration.clear"
+    value !== "migration.clear" &&
+    value !== "authority.activate" &&
+    value !== "authority.rollback"
   ) {
     throw new Error(`Unsupported Mission Control history action: ${value}.`);
   }

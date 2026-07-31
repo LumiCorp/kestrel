@@ -8,6 +8,7 @@ import type {
   DesktopLegacyUiStateEntries,
   DesktopManagedProjectRun,
   DesktopMcpServerMutationInput,
+  DesktopMissionControlActionIntent,
   DesktopPathTargetInput,
   DesktopMissionControlProjectResponse,
   DesktopMissionControlMigrationIntent,
@@ -735,6 +736,11 @@ export function ensureBrowserPreviewBridge(): void {
     },
     async executeMissionControlMigration(
       intent: DesktopMissionControlMigrationIntent,
+    ): Promise<DesktopMissionControlProjectResponse> {
+      return createPreviewMissionControlProject(intent.projectId);
+    },
+    async executeMissionControlAction(
+      intent: DesktopMissionControlActionIntent,
     ): Promise<DesktopMissionControlProjectResponse> {
       return createPreviewMissionControlProject(intent.projectId);
     },

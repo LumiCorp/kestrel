@@ -192,6 +192,7 @@ import { WorkspaceSkillManager } from "../../../src/skills/WorkspaceSkillStore.j
 import type { WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
 import {
+  executeDesktopMissionControlAction,
   executeDesktopMissionControlMigration,
   getDesktopMissionControlProject,
   getDesktopProjectSnapshot,
@@ -3085,6 +3086,21 @@ function registerIpcHandlers(
               .filter((tombstone) => tombstone.id === project.id)
               .map((tombstone) => path.resolve(tombstone.path)),
           })),
+        actionId: randomUUID(),
+        actionTs: new Date().toISOString(),
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:execute-mission-control-action",
+    async (_event, intent: unknown) =>
+      executeDesktopMissionControlAction({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        intent,
+        registeredProjectIds: desktopSettings.projects.flatMap((project) =>
+          project.id === undefined ? [] : [project.id],
+        ),
+        profileId: defaultDesktopRunnerProfileId ?? "reference",
         actionId: randomUUID(),
         actionTs: new Date().toISOString(),
         context: DESKTOP_RUNNER_REQUEST_CONTEXT,

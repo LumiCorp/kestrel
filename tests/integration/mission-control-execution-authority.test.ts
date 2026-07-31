@@ -108,7 +108,10 @@ contractTest(
 );
 
 contractTest(
-  "runtime.mission-control-execution-authority",
+  [
+    "runtime.mission-control-execution-authority",
+    "desktop.mission-control-boundary",
+  ],
   "canonical attempts control exact runner execution and recover without duplicate dispatch",
   async () => {
     const store = new InMemorySessionStore();

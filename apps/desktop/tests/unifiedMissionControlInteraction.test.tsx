@@ -22,6 +22,11 @@ function installDom(
       const response = await getMissionControlProject(intent.projectId);
       return response;
     },
+  executeMissionControlAction: DesktopBridge["executeMissionControlAction"] =
+    async (intent) => {
+      const response = await getMissionControlProject(intent.projectId);
+      return response;
+    },
 ): { root: Root; container: HTMLDivElement } {
   const browser = new Window({ url: "http://localhost/" });
   Object.assign(globalThis, {
@@ -44,6 +49,7 @@ function installDom(
     kestrelDesktop: {
       getMissionControlProject,
       executeMissionControlMigration,
+      executeMissionControlAction,
     } as DesktopBridge,
   });
   const container = browser.document.createElement("div") as unknown as HTMLDivElement;
@@ -222,7 +228,7 @@ contractTest(
       );
     });
 
-    assert.match(container.textContent ?? "", /Read-only preview/u);
+    assert.match(container.textContent ?? "", /Legacy authority · read-only/u);
     assert.match(container.textContent ?? "", /Prepare release notes/u);
     assert.match(container.textContent ?? "", /Verify Desktop package/u);
     assert.doesNotMatch(container.textContent ?? "", /Discarded experiment/u);
@@ -306,6 +312,101 @@ contractTest(
     assert.match(container.textContent ?? "", /last authoritative project state/u);
     assert.match(container.textContent ?? "", /Verify Desktop package/u);
     assert.equal(errors.at(-1), "Runner disconnected.");
+    await act(async () => root.unmount());
+  },
+);
+
+contractTest(
+  "desktop.mission-control-operator-flow",
+  "unified Mission Control activates once and routes explicit operator commands through project authority",
+  async () => {
+    const inactive = projectResponse();
+    const intents: unknown[] = [];
+    let current = inactive;
+    const { root, container } = installDom(
+      async () => current,
+      async () => current,
+      async (intent) => {
+        intents.push(intent);
+        const next = structuredClone(current);
+        next.project.revision += 1;
+        if (intent.type === "activate") {
+          next.project.authorityEpoch = 1;
+        }
+        if (intent.type === "configure_autopilot") {
+          next.project.document.autopilot = {
+            enabled: intent.enabled,
+            wipLimit: intent.wipLimit,
+            ...(intent.enabled
+              ? { confirmedAt: "2026-07-31T12:00:00.000Z" }
+              : {}),
+          };
+        }
+        current = next;
+        return current;
+      },
+    );
+
+    await act(async () => {
+      root.render(
+        <UnifiedMissionControlWorkspace
+          project={{ id: PROJECT_ID, path: "/project", label: "Kestrel" }}
+          onReturnToConversation={() => {}}
+          onOpenConversation={() => {}}
+          onStartConversation={() => {}}
+          onError={() => {}}
+        />,
+      );
+    });
+
+    await act(async () => button(container, "Activate Mission Control").click());
+    assert.deepEqual(intents[0], {
+      type: "activate",
+      projectId: PROJECT_ID,
+      expectedRevision: 8,
+    });
+    assert.match(container.textContent ?? "", /Canonical authority · epoch 1/u);
+    assert.equal(button(container, "Start").disabled, false);
+
+    await act(async () => button(container, "Enable Autopilot").click());
+    assert.equal(intents.length, 1);
+    assert.match(
+      container.textContent ?? "",
+      /Autopilot will start eligible Ready work through the same Start path/u,
+    );
+    await act(async () => button(container, "Confirm enable Autopilot").click());
+    assert.deepEqual(intents[1], {
+      type: "configure_autopilot",
+      projectId: PROJECT_ID,
+      expectedRevision: 9,
+      enabled: true,
+      wipLimit: 2,
+      confirmed: true,
+    });
+    assert.match(container.textContent ?? "", /Autopilot on/u);
+
+    await act(async () => button(container, "Start").click());
+    assert.deepEqual(intents[2], {
+      type: "start",
+      projectId: PROJECT_ID,
+      expectedRevision: 10,
+      itemId: "item-ready",
+      expectedItemVersion: 1,
+    });
+
+    await act(async () => button(container, "Verify Desktop package").click());
+    await act(async () => button(container, "Stop").click());
+    assert.deepEqual(intents[3], {
+      type: "stop",
+      projectId: PROJECT_ID,
+      expectedRevision: 11,
+      itemId: "item-active",
+      expectedItemVersion: 3,
+      attemptId: "attempt-2",
+      expectedAttemptVersion: 2,
+      runId: "run-active",
+      commandId: "command-active",
+    });
     await act(async () => root.unmount());
   },
 );

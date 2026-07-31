@@ -212,6 +212,15 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
       registrations: [],
     },
   },
+  "mission_control.action.execute": {
+    action: {
+      type: "authority.activate",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      actionId: "activate-1",
+      actionTs: "2026-07-30T00:00:00.000Z",
+      expectedRevision: 1,
+    },
+  },
   "project.snapshot.get": { sessionId: "session-1" },
   "project.snapshot.update": { sessionId: "session-1", snapshot: {} },
   "project.action": {

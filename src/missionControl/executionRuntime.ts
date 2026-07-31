@@ -200,6 +200,7 @@ export class MissionControlExecutionRuntime {
     const threadId = text(payload.threadId, "threadId");
     const runId = text(payload.runId, "runId");
     const message = text(payload.message, "message");
+    const workspaceRoot = optionalText(payload.workspaceRoot);
     const projectRevision = positiveInteger(
       payload.projectRevision,
       "projectRevision",
@@ -235,6 +236,16 @@ export class MissionControlExecutionRuntime {
                 commandId: effect.effectId,
                 runId,
               },
+              ...(workspaceRoot === undefined
+                ? {}
+                : {
+                    workspace: {
+                      workspaceId: `mission-control:${effect.projectId}`,
+                      workspaceRoot,
+                      appRoot: ".",
+                      commands: {},
+                    },
+                  }),
             },
           },
           this.options.commandMetadata,
