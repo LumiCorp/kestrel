@@ -38,6 +38,7 @@ import type {
   WorkspaceReviewSnapshot,
   WorkspaceValidationSnapshot,
   WorkspaceGitSnapshot,
+  MissionControlProjectStateRecord,
 } from "../../src/index.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
@@ -62,6 +63,7 @@ import type {
   OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
+  MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
   ProfileListCommandPayload,
   ProjectActionCommandPayload,
@@ -268,7 +270,7 @@ export interface RunnerRuntime {
     | undefined;
   performAcceptedOperatorAction?:
     | ((input: OperatorControlCommandPayload & {
-        action: "approve" | "reject" | "reply";
+        action: "approve" | "reject" | "reply" | "retry";
         issuedBy?: string | undefined;
         signal?: AbortSignal | undefined;
       }) => Promise<{
@@ -444,6 +446,11 @@ export interface RunnerRuntime {
     | ((
         input: ProjectSnapshotGetCommandPayload
       ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
+    | undefined;
+  getMissionControlProject?:
+    | ((
+        input: MissionControlProjectGetCommandPayload
+      ) => Promise<MissionControlProjectStateRecord>)
     | undefined;
   updateProjectSnapshot?:
     | ((
@@ -688,6 +695,7 @@ export class RunnerHost {
         {
           commandId,
           sessionId: turn.sessionId,
+          threadId: turn.sessionId,
           ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
         }
       );
@@ -759,6 +767,7 @@ export class RunnerHost {
           {
             commandId,
             sessionId: turn.sessionId,
+            threadId: turn.sessionId,
             ...(concurrent.runId !== undefined ? { runId: concurrent.runId } : {}),
           },
         );
@@ -809,6 +818,7 @@ export class RunnerHost {
       {
         commandId,
         sessionId: turn.sessionId,
+        threadId: turn.sessionId,
         ...(requestedRunId !== undefined ? { runId: requestedRunId } : {}),
       }
     );
@@ -1532,8 +1542,9 @@ export class RunnerHost {
     this.writer.emit(
       "runner.error",
       {
-        code: "RUNNER_RUNTIME_ERROR",
+        code: "OPERATOR_RUN_NOT_FOUND",
         message: `Run '${payload.runId}' was not found.`,
+        details: { runId: payload.runId },
       },
       { commandId, runId: payload.runId }
     );
@@ -1585,12 +1596,17 @@ export class RunnerHost {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (payload.completionMode === "accepted") {
         if (
-          (payload.action !== "approve" && payload.action !== "reject" && payload.action !== "reply")
+          (
+            payload.action !== "approve" &&
+            payload.action !== "reject" &&
+            payload.action !== "reply" &&
+            payload.action !== "retry"
+          )
           || typeof runtime.performAcceptedOperatorAction !== "function"
         ) {
           this.writer.emit("runner.error", {
             code: "RUNNER_RUNTIME_ERROR",
-            message: "Accepted operator control is available only for approval and reply actions.",
+            message: "Accepted operator control is available only for approval, reply, and retry actions.",
           }, { commandId, threadId: payload.threadId });
           return;
         }
@@ -1835,6 +1851,32 @@ export class RunnerHost {
       {
         code: "RUNNER_RUNTIME_ERROR",
         message: "Project snapshot is unavailable.",
+      },
+      { commandId }
+    );
+  }
+
+  async missionControlProjectGet(
+    commandId: string,
+    payload: MissionControlProjectGetCommandPayload,
+    metadata?: RunnerCommandMetadata
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.getMissionControlProject === "function") {
+        const project = await runtime.getMissionControlProject(payload);
+        this.writer.emit(
+          "mission_control.project",
+          { projectId: project.projectId, project: { ...project } },
+          { commandId }
+        );
+        return;
+      }
+    }
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Mission Control project authority is unavailable.",
       },
       { commandId }
     );

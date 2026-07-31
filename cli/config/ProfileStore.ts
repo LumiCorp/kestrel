@@ -41,8 +41,7 @@ import {
 import { resolveRuntimeProfileSelection } from "../../src/profile/runtimeProfile.js";
 import type {
   KestrelOneManagedProfileOverlay,
-  ProfilesFileV5,
-  ProfilesFileV6,
+  ProfilesFileV7,
   ToolQueueProfileConfig,
   TuiProfile,
 } from "../contracts.js";
@@ -137,18 +136,25 @@ const LEGACY_PROFILE_ALIASES: Readonly<Record<string, string>> = {
   [LEGACY_KESTREL_ONE_POLICY_ID]: KESTREL_ONE_POLICY_ID,
 };
 
-type ManagedProfileOverlays = ProfilesFileV6["managedProfileOverlays"];
+const LOCAL_ISOLATION_MIGRATION_NOTICE =
+  "Generated local profiles now use isolated execution. Select the cli_dev_local developer preset to restore host-shell access.";
+
+type ManagedProfileOverlays = ProfilesFileV7["managedProfileOverlays"];
 
 interface ParsedProfilesResult {
   profiles: TuiProfile[];
   managedProfileOverlays?: ManagedProfileOverlays | undefined;
-  sourceVersion: 2 | 3 | 4 | 5 | 6;
+  sourceVersion: 2 | 3 | 4 | 5 | 6 | 7;
   migrated: boolean;
   notices: string[];
 }
 
 export interface ProfileStoreOptions {
-  managedEnvironmentPresetId?: "cli_dev_local" | "workspace_hosted" | undefined;
+  managedEnvironmentPresetId?:
+    | "cli_safe_local"
+    | "cli_dev_local"
+    | "workspace_hosted"
+    | undefined;
 }
 
 export class ProfileStore {
@@ -156,6 +162,7 @@ export class ProfileStore {
   private readonly filePath: string;
   private readonly modelPolicyStore: ModelPolicyStore;
   private readonly managedEnvironmentPresetId:
+    | "cli_safe_local"
     | "cli_dev_local"
     | "workspace_hosted";
   private lastLoadNotices: string[] = [];
@@ -172,7 +179,7 @@ export class ProfileStore {
       options.managedEnvironmentPresetId ??
       (process.env.KESTREL_PROFILE_ENVIRONMENT === "workspace_hosted"
         ? "workspace_hosted"
-        : "cli_dev_local");
+        : "cli_safe_local");
   }
 
   async load(): Promise<TuiProfile[]> {
@@ -241,6 +248,13 @@ export class ProfileStore {
     const persistedManagedProfile = parsed.profiles.find(
       (profile) => isKestrelManagedProfileId(profile.id),
     );
+    if (
+      parsed.sourceVersion < 7 &&
+      persistedManagedProfile !== undefined &&
+      persistedManagedProfile.presetId !== "workspace_hosted"
+    ) {
+      addLocalIsolationMigrationNotice(this.lastLoadNotices);
+    }
     const managedOverlay =
       parsed.managedProfileOverlays?.[
         managedOverlayKey(this.managedEnvironmentPresetId)
@@ -251,18 +265,23 @@ export class ProfileStore {
     const hydrated = parsed.profiles
       .filter((profile) => isKestrelManagedProfileId(profile.id) === false)
       .map((profile) => {
-      const normalized = applyProfileDefaults(
-        applyManagedProfileInvariants(profile),
-      );
-      if (
-        profile.agent === "reference-react" &&
-        profile.modeSystemV2Enabled !== true
-      ) {
-        this.lastLoadNotices.push(
-          `Migrated profile '${profile.id}' to mode-system v2 for the reference harness.`,
+        const migratedProfile = migrateGeneratedLocalProfile(
+          profile,
+          parsed.sourceVersion,
+          this.lastLoadNotices,
         );
-      }
-      return normalized;
+        const normalized = applyProfileDefaults(
+          applyManagedProfileInvariants(migratedProfile),
+        );
+        if (
+          profile.agent === "reference-react" &&
+          profile.modeSystemV2Enabled !== true
+        ) {
+          this.lastLoadNotices.push(
+            `Migrated profile '${profile.id}' to mode-system v2 for the reference harness.`,
+          );
+        }
+        return normalized;
       });
     const managedProfile = createManagedKestrelOneProfile(
       this.managedEnvironmentPresetId,
@@ -286,8 +305,12 @@ export class ProfileStore {
       ) !==
         JSON.stringify(extractKestrelOneManagedOverlay(managedProfile))
     ) {
-      if (parsed.sourceVersion === 4 || parsed.sourceVersion === 5) {
-        await this.writePreVersion6Backup(raw, parsed.sourceVersion);
+      if (
+        parsed.sourceVersion === 4 ||
+        parsed.sourceVersion === 5 ||
+        parsed.sourceVersion === 6
+      ) {
+        await this.writePreVersion7Backup(raw, parsed.sourceVersion);
       }
       await this.save(profiles, parsed.managedProfileOverlays);
     }
@@ -329,13 +352,11 @@ export class ProfileStore {
           }
         : {}),
     };
-    const payload: ProfilesFileV6 = {
-      version: 6,
+    const payload: ProfilesFileV7 = {
+      version: 7,
       profiles: profiles
         .filter((profile) => isKestrelManagedProfileId(profile.id) === false)
-        .map((profile) =>
-        sanitizeProfileForPersistence(profile),
-      ),
+        .map((profile) => sanitizeProfileForPersistence(profile)),
       managedProfileOverlays,
     };
 
@@ -398,9 +419,9 @@ export class ProfileStore {
     }
   }
 
-  private async writePreVersion6Backup(
+  private async writePreVersion7Backup(
     raw: string,
-    version: 4 | 5,
+    version: 4 | 5 | 6,
   ): Promise<void> {
     try {
       await writeFile(`${this.filePath}.v${version}.bak`, raw, {
@@ -460,10 +481,11 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
     version !== 3 &&
     version !== 4 &&
     version !== 5 &&
-    version !== 6
+    version !== 6 &&
+    version !== 7
   ) {
     throw new ProfileSchemaVersionError(
-      "profiles.json version must be 2, 3, 4, 5, or 6",
+      "profiles.json version must be 2, 3, 4, 5, 6, or 7",
     );
   }
 
@@ -476,8 +498,12 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
     validateProfile(profile, version, notices),
   );
   const managedProfileOverlays =
-    version === 5 || version === 6
-      ? parseKestrelOneManagedOverlays(root.managedProfileOverlays, notices)
+    version === 5 || version === 6 || version === 7
+      ? parseKestrelOneManagedOverlays(
+          root.managedProfileOverlays,
+          notices,
+          version,
+        )
       : undefined;
   if (version === 2) {
     return {
@@ -497,9 +523,85 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
       ? { managedProfileOverlays }
       : {}),
     sourceVersion: version,
-    migrated: version !== 6,
+    migrated: version !== 7,
     notices,
   };
+}
+
+function migrateGeneratedLocalProfile(
+  profile: TuiProfile,
+  sourceVersion: ParsedProfilesResult["sourceVersion"],
+  notices: string[],
+): TuiProfile {
+  if (sourceVersion >= 7) {
+    return profile;
+  }
+  if (isGeneratedReferenceProfile(profile)) {
+    addLocalIsolationMigrationNotice(notices);
+    return {
+      ...profile,
+      shellKind: "cli",
+      presetId: "cli_safe_local",
+      capabilityPacks: ["balanced", "filesystem", "sandbox_code"],
+    };
+  }
+  if (profile.presetId !== undefined) {
+    return profile;
+  }
+  const shellKind = profile.shellKind ?? "cli";
+  if (shellKind === "web") {
+    return profile;
+  }
+  return {
+    ...profile,
+    shellKind,
+    presetId:
+      shellKind === "desktop" ? "desktop_dev_local" : "cli_dev_local",
+    ...(profile.capabilityPacks === undefined
+      ? {
+          capabilityPacks:
+            shellKind === "desktop"
+              ? ["balanced", "filesystem", "dev_shell", "desktop_host"]
+              : ["balanced", "filesystem", "dev_shell"],
+        }
+      : {}),
+  };
+}
+
+function isGeneratedReferenceProfile(profile: TuiProfile): boolean {
+  if (
+    profile.id !== "reference" &&
+    profile.id !== "reference-openai" &&
+    profile.id !== "reference-anthropic"
+  ) {
+    return false;
+  }
+  if (
+    profile.shellKind !== undefined &&
+    profile.shellKind !== "cli"
+  ) {
+    return false;
+  }
+  if (
+    profile.presetId !== undefined &&
+    profile.presetId !== "cli_dev_local"
+  ) {
+    return false;
+  }
+  if (profile.capabilityPacks === undefined) {
+    return true;
+  }
+  const packs = new Set(profile.capabilityPacks);
+  return packs.size === 3 &&
+    packs.has("balanced") &&
+    packs.has("filesystem") &&
+    packs.has("dev_shell");
+}
+
+function addLocalIsolationMigrationNotice(notices: string[]): void {
+  if (notices.includes(LOCAL_ISOLATION_MIGRATION_NOTICE) === false) {
+    notices.push(LOCAL_ISOLATION_MIGRATION_NOTICE);
+  }
 }
 
 function applyManagedProfileInvariants(profile: TuiProfile): TuiProfile {
@@ -509,7 +611,9 @@ function applyManagedProfileInvariants(profile: TuiProfile): TuiProfile {
   return createManagedKestrelOneProfile(
     profile.presetId === "workspace_hosted"
       ? "workspace_hosted"
-      : "cli_dev_local",
+      : profile.presetId === "cli_dev_local"
+        ? "cli_dev_local"
+        : "cli_safe_local",
     extractKestrelOneManagedOverlay(profile),
   );
 }
@@ -518,7 +622,7 @@ class ProfileSchemaVersionError extends Error {}
 
 function validateProfile(
   value: unknown,
-  version: 2 | 3 | 4 | 5 | 6,
+  version: 2 | 3 | 4 | 5 | 6 | 7,
   notices: string[],
 ): TuiProfile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -541,8 +645,10 @@ function validateProfile(
       ? item.shellKind
       : undefined;
   const presetId =
+    item.presetId === "cli_safe_local" ||
     item.presetId === "cli_dev_local" ||
     item.presetId === "web_balanced" ||
+    item.presetId === "desktop_safe_local" ||
     item.presetId === "desktop_dev_local" ||
     item.presetId === "workspace_hosted"
       ? item.presetId
@@ -724,7 +830,10 @@ function profilesChanged(before: TuiProfile[], after: TuiProfile[]): boolean {
 }
 
 function createManagedKestrelOneProfile(
-  environmentPresetId: "cli_dev_local" | "workspace_hosted",
+  environmentPresetId:
+    | "cli_safe_local"
+    | "cli_dev_local"
+    | "workspace_hosted",
   overlay: KestrelOneManagedProfileOverlay = {},
 ): TuiProfile {
   const composedOverlay: KestrelOneProfileOverlay = {
@@ -764,7 +873,9 @@ function extractKestrelOneManagedOverlay(
   const environmentPresetId =
     profile.presetId === "workspace_hosted"
       ? "workspace_hosted"
-      : "cli_dev_local";
+      : profile.presetId === "cli_dev_local"
+        ? "cli_dev_local"
+        : "cli_safe_local";
   const baseline = composeKestrelOneProfile({
     environmentPresetId,
     resolvedProfileId: KESTREL_ONE_POLICY_ID,
@@ -816,6 +927,7 @@ function extractKestrelOneManagedOverlay(
 function parseKestrelOneManagedOverlays(
   value: unknown,
   notices: string[],
+  sourceVersion: 5 | 6 | 7,
 ): ManagedProfileOverlays | undefined {
   if (value === undefined) return;
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -824,6 +936,7 @@ function parseKestrelOneManagedOverlays(
   const overlays = value as Record<string, unknown>;
   const unsupportedKey = Object.keys(overlays).find(
     (key) =>
+      key !== "kestrel@cli_safe_local" &&
       key !== "kestrel@cli_dev_local" &&
       key !== "kestrel@workspace_hosted" &&
       key !== "kestrel-one@cli_dev_local" &&
@@ -834,14 +947,35 @@ function parseKestrelOneManagedOverlays(
       `profiles.json managedProfileOverlays contains unsupported key '${unsupportedKey}'`,
     );
   }
-  const parsed: ProfilesFileV6["managedProfileOverlays"] = {};
-  for (const [key, legacyKey] of [
-    ["kestrel@cli_dev_local", "kestrel-one@cli_dev_local"],
-    ["kestrel@workspace_hosted", "kestrel-one@workspace_hosted"],
-  ] as const) {
-    const raw = overlays[key] ?? overlays[legacyKey];
-    if (raw === undefined) continue;
-    parsed[key] = parseKestrelOneManagedOverlayValue(raw, notices);
+  const parsed: ProfilesFileV7["managedProfileOverlays"] = {};
+  const legacyLocalRaw =
+    overlays["kestrel@cli_dev_local"] ??
+    overlays["kestrel-one@cli_dev_local"];
+  if (sourceVersion === 7) {
+    for (const key of [
+      "kestrel@cli_safe_local",
+      "kestrel@cli_dev_local",
+    ] as const) {
+      if (overlays[key] !== undefined) {
+        parsed[key] = parseKestrelOneManagedOverlayValue(
+          overlays[key],
+          notices,
+        );
+      }
+    }
+  } else if (legacyLocalRaw !== undefined) {
+    parsed["kestrel@cli_safe_local"] =
+      parseKestrelOneManagedOverlayValue(legacyLocalRaw, notices);
+  }
+  const hostedRaw =
+    overlays["kestrel@workspace_hosted"] ??
+    overlays["kestrel-one@workspace_hosted"];
+  if (hostedRaw !== undefined) {
+    parsed["kestrel@workspace_hosted"] =
+      parseKestrelOneManagedOverlayValue(hostedRaw, notices);
+  }
+  if (sourceVersion < 7 && legacyLocalRaw !== undefined) {
+    addLocalIsolationMigrationNotice(notices);
   }
   return parsed;
 }
@@ -1115,8 +1249,12 @@ function parseKestrelOneAppApprovalModes(
 }
 
 function managedOverlayKey(
-  environmentPresetId: "cli_dev_local" | "workspace_hosted",
+  environmentPresetId:
+    | "cli_safe_local"
+    | "cli_dev_local"
+    | "workspace_hosted",
 ):
+  | "kestrel@cli_safe_local"
   | "kestrel@cli_dev_local"
   | "kestrel@workspace_hosted" {
   return `kestrel@${environmentPresetId}`;

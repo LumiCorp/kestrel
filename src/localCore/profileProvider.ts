@@ -59,7 +59,7 @@ export function resolveLocalCoreDesktopProfile(
   options: LocalCoreProfileProviderOptions = {},
 ): TuiProfile {
   const baseProfile = composeKestrelOneProfile({
-    environmentPresetId: "desktop_dev_local",
+    environmentPresetId: "desktop_safe_local",
     resolvedProfileId: LOCAL_CORE_DESKTOP_PROFILE_ID,
   }).profile;
   return resolveProfileWithModelPolicy(
@@ -86,7 +86,9 @@ export async function resolveLocalCoreExecutionProfile(
   }
   let profile: TuiProfile;
   let environmentPresetId:
+    | "desktop_safe_local"
     | "desktop_dev_local"
+    | "cli_safe_local"
     | "cli_dev_local"
     | "web_balanced";
   if (request.client === "desktop") {
@@ -95,7 +97,10 @@ export async function resolveLocalCoreExecutionProfile(
       fallbackModelPolicy: runtimeConfiguration.modelPolicy,
       selection: request.selection,
     }).profile;
-    environmentPresetId = "desktop_dev_local";
+    environmentPresetId =
+      profile.presetId === "desktop_dev_local"
+        ? "desktop_dev_local"
+        : "desktop_safe_local";
   } else {
     if (
       request.profileId === LOCAL_CORE_DESKTOP_PROFILE_ID ||
@@ -106,7 +111,7 @@ export async function resolveLocalCoreExecutionProfile(
       );
     }
     const store = new ProfileStore(homePath, {
-      managedEnvironmentPresetId: "cli_dev_local",
+      managedEnvironmentPresetId: "cli_safe_local",
     });
     const configuredProfiles = resolveLocalCoreConfiguredProfiles(
       await store.load(),
@@ -121,7 +126,10 @@ export async function resolveLocalCoreExecutionProfile(
         ? resolveReferenceWebProfile(selected)
         : selected.id === KESTREL_ONE_POLICY_ID
           ? composeKestrelOneProfile({
-              environmentPresetId: "cli_dev_local",
+              environmentPresetId:
+                selected.presetId === "cli_dev_local"
+                  ? "cli_dev_local"
+                  : "cli_safe_local",
               overlay: {
                 label: selected.label,
                 modelProvider: selected.modelProvider,
@@ -144,7 +152,9 @@ export async function resolveLocalCoreExecutionProfile(
     environmentPresetId =
       request.client === "reference_web"
         ? "web_balanced"
-        : "cli_dev_local";
+        : profile.presetId === "cli_dev_local"
+          ? "cli_dev_local"
+          : "cli_safe_local";
   }
   const provenance = buildExecutionProfileRevisionProvenance(
     request,
@@ -168,7 +178,9 @@ function buildExecutionProfileRevisionProvenance(
   request: LocalCoreExecutionProfileResolveRequest,
   profile: TuiProfile,
   environmentPresetId:
+    | "desktop_safe_local"
     | "desktop_dev_local"
+    | "cli_safe_local"
     | "cli_dev_local"
     | "web_balanced",
 ): ExecutionProfileRevisionProvenance {
@@ -303,7 +315,9 @@ export function createLocalCoreProfileProvider(
         managedEnvironmentPresetId:
           payload.environmentPresetId === "workspace_hosted"
             ? "workspace_hosted"
-            : "cli_dev_local",
+            : payload.environmentPresetId === "cli_dev_local"
+              ? "cli_dev_local"
+              : "cli_safe_local",
       });
       let profile: TuiProfile;
       if (payload.authoringProfileId !== undefined) {

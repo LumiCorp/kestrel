@@ -64,6 +64,8 @@ import {
   WorkspaceSkillInstaller,
   assertRequiredKestrelOneTools,
   KESTREL_ONE_POLICY_ID,
+  MissionControlProjectService,
+  type MissionControlProjectStateRecord,
 } from "../../src/index.js";
 import type {
   OperatorCompactionState,
@@ -164,6 +166,7 @@ export type RunTurnResult = RuntimeTurnResult & {
 
 interface RuntimeBootstrap {
   kestrel: Kestrel;
+  missionControlProjectService?: MissionControlProjectService | undefined;
   threadRuntime?: ThreadRuntime | undefined;
   taskGraphStore?: ProductTaskGraphStore | undefined;
   projectStore?: ProductProjectStateStore | undefined;
@@ -267,6 +270,9 @@ export class KestrelChatRuntime {
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined;
   private readonly kestrel: Kestrel;
+  private readonly missionControlProjectService:
+    | MissionControlProjectService
+    | undefined;
   private readonly threadRuntime: ThreadRuntime | undefined;
   private readonly taskGraphStore: ProductTaskGraphStore | undefined;
   private readonly projectStore: ProductProjectStateStore | undefined;
@@ -332,6 +338,7 @@ export class KestrelChatRuntime {
     );
 
     this.kestrel = bootstrap.kestrel;
+    this.missionControlProjectService = bootstrap.missionControlProjectService;
     this.threadRuntime = bootstrap.threadRuntime;
     this.taskGraphStore = bootstrap.taskGraphStore;
     this.projectStore = bootstrap.projectStore;
@@ -749,6 +756,18 @@ export class KestrelChatRuntime {
         ...(graph !== undefined ? { graph } : {}),
       }),
     };
+  }
+
+  async getMissionControlProject(input: {
+    projectId: string;
+  }): Promise<MissionControlProjectStateRecord> {
+    if (this.missionControlProjectService === undefined) {
+      throw createRuntimeFailure(
+        "MISSION_CONTROL_PROJECT_UNAVAILABLE",
+        "Mission Control project authority is unavailable.",
+      );
+    }
+    return this.missionControlProjectService.getProject(input.projectId);
   }
 
   async updateProjectSnapshot(input: {
@@ -1976,6 +1995,7 @@ export class KestrelChatRuntime {
     allowApprovalInheritance?: boolean | undefined;
     allowToolClasses?: ToolExecutionClass[] | undefined;
     allowCapabilities?: string[] | undefined;
+    missionControl?: RuntimeTurnInput["missionControl"] | undefined;
     issuedBy?: string | undefined;
     completionMode?: "terminal" | "accepted" | undefined;
   }): Promise<{
@@ -2055,6 +2075,9 @@ export class KestrelChatRuntime {
       result = await threadRuntime.retryThread({
         threadId: input.threadId,
         reason: input.message,
+        ...(input.missionControl !== undefined
+          ? { missionControl: input.missionControl }
+          : {}),
       });
     } else if (input.action === "continue_waiting") {
       await threadRuntime.continueWaiting({ threadId: input.threadId });
@@ -2296,7 +2319,7 @@ export class KestrelChatRuntime {
   }
 
   async performAcceptedOperatorAction(input: {
-    action: "approve" | "reject" | "reply";
+    action: "approve" | "reject" | "reply" | "retry";
     threadId: string;
     requestId?: string | undefined;
     message?: string | undefined;
@@ -2305,6 +2328,7 @@ export class KestrelChatRuntime {
     actSubmode?: "strict" | "safe" | "full_auto" | undefined;
     allowToolClasses?: ToolExecutionClass[] | undefined;
     allowCapabilities?: string[] | undefined;
+    missionControl?: RuntimeTurnInput["missionControl"] | undefined;
     issuedBy?: string | undefined;
     signal?: AbortSignal | undefined;
   }): Promise<{
@@ -2330,6 +2354,78 @@ export class KestrelChatRuntime {
         "Thread runtime is not configured.",
       );
     }
+    if (input.action === "retry") {
+      const status = await threadRuntime.getThreadStatus(input.threadId);
+      if (status === null) {
+        throw createRuntimeFailure(
+          "OPERATOR_THREAD_NOT_FOUND",
+          `Thread '${input.threadId}' was not found.`,
+          { threadId: input.threadId },
+        );
+      }
+      let acceptedRunId: string | undefined;
+      let resolveSubmitted!: () => void;
+      const submitted = new Promise<void>((resolve) => {
+        resolveSubmitted = resolve;
+      });
+      const subscription = threadRuntime.subscribe(
+        { threadId: input.threadId },
+        (event) => {
+          if (event.type === "thread.turn_submitted") {
+            const runId = event.payload.runId;
+            if (typeof runId === "string" && runId.trim().length > 0) {
+              acceptedRunId = runId;
+            }
+            resolveSubmitted();
+          }
+        },
+      );
+      const completion = threadRuntime.retryThread({
+        threadId: input.threadId,
+        reason: input.message,
+        ...(input.missionControl !== undefined
+          ? { missionControl: input.missionControl }
+          : {}),
+      });
+      try {
+        const outcome = await Promise.race([
+          submitted.then(() => ({ disposition: "accepted" as const })),
+          completion.then((result) => ({
+            disposition: "completed" as const,
+            result,
+          })),
+        ]);
+        const view = await threadRuntime.getOperatorThreadView(input.threadId);
+        const sessionId = view?.thread.sessionId ?? status.thread.sessionId;
+        const runId =
+          outcome.disposition === "completed"
+            ? outcome.result.output.runId
+            : acceptedRunId;
+        if (runId === undefined) {
+          throw createRuntimeFailure(
+            "OPERATOR_RETRY_ACCEPTANCE_IDENTITY_MISSING",
+            "Accepted retry did not expose its authoritative run identity.",
+            { threadId: input.threadId },
+          );
+        }
+        return {
+          accepted: {
+            sessionId,
+            threadId: input.threadId,
+            disposition: outcome.disposition,
+            runId,
+            ...(outcome.disposition === "completed"
+              ? { result: outcome.result }
+              : {}),
+            ...(view !== null ? { view } : {}),
+            inbox: await threadRuntime.listOperatorInbox({ sessionId }),
+          },
+          completion,
+        };
+      } finally {
+        subscription.unsubscribe();
+      }
+    }
     const status = await threadRuntime.getThreadStatus(input.threadId);
     const requestId = input.requestId ?? status?.openRequests[0]?.requestId;
     const request = status?.openRequests.find(
@@ -2347,7 +2443,7 @@ export class KestrelChatRuntime {
     }
     const message =
       input.message ?? (input.action === "reject" ? "Rejected." : "Approved.");
-    const runId = randomUUID();
+    const runId = input.missionControl?.runId ?? randomUUID();
 
     let resolveSubmitted!: () => void;
     const submitted = new Promise<void>((resolve) => {
@@ -2388,6 +2484,9 @@ export class KestrelChatRuntime {
         runId,
         message,
         eventType: request.eventType,
+        ...(input.missionControl !== undefined
+          ? { missionControl: input.missionControl }
+          : {}),
       },
     });
 
@@ -2659,6 +2758,7 @@ function createRuntimeWithStore(
   const googleWorkspaceService = environment?.googleWorkspaceService;
   const taskGraphStore = new ProductTaskGraphStore(store);
   const projectStore = new ProductProjectStateStore(store);
+  const missionControlProjectService = new MissionControlProjectService(store);
   const workspaceCheckpointService = new WorkspaceCheckpointService(store);
   const userTerminalService = enableUserTerminals
     ? new UserTerminalService({
@@ -2929,6 +3029,7 @@ function createRuntimeWithStore(
 
   return {
     kestrel,
+    missionControlProjectService,
     threadRuntime,
     taskGraphStore,
     projectStore,

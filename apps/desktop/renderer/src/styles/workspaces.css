@@ -312,3 +312,393 @@
     grid-template-rows: minmax(190px, 0.72fr) minmax(280px, 1.28fr);
   }
 }
+
+.unified-mission-control {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.unified-mission-header {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.unified-mission-authority {
+  display: grid;
+  max-width: 260px;
+  justify-items: end;
+  gap: 2px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.unified-mission-authority code {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+.unified-mission-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-pane-subtle);
+}
+
+.unified-mission-toolbar .mission-view-tabs {
+  border-bottom: 0;
+}
+
+.show-discarded-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--space-3);
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.unified-mission-status {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 34px;
+  align-items: center;
+  gap: 16px;
+  padding: 0 var(--space-3);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.unified-mission-error {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px var(--space-3);
+  border-bottom: var(--border-width) solid var(--status-failed);
+  background: color-mix(in srgb, var(--status-failed) 10%, var(--bg-pane));
+  color: var(--text-primary);
+  font-size: 10px;
+}
+
+.unified-mission-error p {
+  margin: 2px 0 0;
+  color: var(--text-tertiary);
+}
+
+.unified-mission-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 34%);
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.unified-mission-index {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-pane);
+}
+
+.unified-mission-list {
+  display: grid;
+  min-width: 620px;
+}
+
+.unified-mission-list-header,
+.unified-mission-list > button {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) 130px 120px;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.unified-mission-list-header {
+  min-height: 32px;
+  background: var(--bg-pane-subtle);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.unified-mission-list > button {
+  cursor: pointer;
+}
+
+.unified-mission-list > button:hover,
+.unified-mission-list > button.selected {
+  background: var(--bg-active);
+}
+
+.unified-mission-list > button > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.unified-mission-list small,
+.unified-mission-kanban small,
+.unified-mission-inspector small {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+}
+
+.unified-mission-kanban {
+  display: grid;
+  min-width: 1040px;
+  min-height: 100%;
+  grid-template-columns: repeat(6, minmax(160px, 1fr));
+  align-items: start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.unified-mission-kanban > section {
+  overflow: hidden;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-pane-subtle);
+}
+
+.unified-mission-kanban > section > header {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 9px;
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.unified-mission-kanban > section > div {
+  display: grid;
+  gap: 7px;
+  padding: 7px;
+}
+
+.unified-mission-kanban button {
+  display: grid;
+  gap: 6px;
+  min-height: 78px;
+  padding: 9px;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-pane);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.unified-mission-kanban button:hover,
+.unified-mission-kanban button.selected,
+.unified-mission-discarded button.selected {
+  border-color: var(--accent);
+  background: var(--bg-active);
+}
+
+.unified-mission-discarded {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-2);
+  border-top: var(--border-width) solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.unified-mission-discarded button {
+  padding: 5px 8px;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-pane);
+  color: var(--text-primary);
+}
+
+.unified-mission-inspector {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-left: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-pane-subtle);
+}
+
+.unified-mission-inspector > header,
+.unified-mission-inspector > section {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+}
+
+.unified-mission-inspector h2,
+.unified-mission-inspector h3,
+.unified-mission-inspector p {
+  margin: 0;
+}
+
+.unified-mission-inspector h2 {
+  font-size: 16px;
+}
+
+.unified-mission-inspector h3 {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.unified-mission-inspector header > p {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.unified-mission-inspector dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.unified-mission-inspector dl > div {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+}
+
+.unified-mission-inspector dt,
+.inspector-empty {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.unified-mission-inspector dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 10px;
+}
+
+.unified-mission-inspector dd code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mission-link-values {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 6px;
+  align-items: center;
+}
+
+.mission-link-values code {
+  grid-column: 2;
+}
+
+.mission-link-values svg {
+  grid-row: 1;
+}
+
+.unified-mission-inspector ul,
+.unified-mission-inspector ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.unified-mission-inspector li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: 10px;
+}
+
+.unified-mission-inspector li > span {
+  display: grid;
+  min-width: 0;
+}
+
+.mission-conversation-handoff {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: var(--border-width) solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mission-phase-badge,
+.mission-attempt-badge {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 19px;
+  align-items: center;
+  padding: 0 6px;
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-pane);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  text-transform: capitalize;
+}
+
+.phase-needs_attention,
+.attempt-failed,
+.attempt-orphaned {
+  color: var(--status-waiting);
+}
+
+.phase-active,
+.attempt-starting,
+.attempt-running,
+.attempt-waiting,
+.attempt-cancelling {
+  border-color: var(--accent);
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+.phase-done,
+.attempt-completed {
+  color: var(--status-running);
+}
+
+@media (max-width: 980px) {
+  .unified-mission-body {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 40%);
+  }
+}

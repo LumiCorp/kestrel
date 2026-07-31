@@ -153,7 +153,12 @@ export interface ProfileGetCommandPayload {
 }
 
 export interface ExecutionProfileResolveCommandPayload {
-  environmentPresetId: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+  environmentPresetId:
+    | "cli_safe_local"
+    | "cli_dev_local"
+    | "desktop_safe_local"
+    | "desktop_dev_local"
+    | "workspace_hosted";
   managedConfiguration?: Record<string, unknown> | undefined;
   authoringProfileId?: string | undefined;
 }
@@ -271,6 +276,10 @@ export interface TaskGraphUpdateCommandPayload {
   graph: ProductTaskGraph;
   threadId?: string | undefined;
   expectedVersion?: number | undefined;
+}
+
+export interface MissionControlProjectGetCommandPayload {
+  projectId: string;
 }
 
 export interface ProjectSnapshotGetCommandPayload {
@@ -508,6 +517,7 @@ export interface RunnerCommandPayloadByType {
   "workspace.validation.submit": WorkspaceValidationSubmitCommandPayload;
   "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
   "workspace.git.action": WorkspaceGitActionCommandPayload;
+  "mission_control.project.get": MissionControlProjectGetCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
@@ -767,7 +777,12 @@ export interface ExecutionProfileResolvedEventPayload {
     version: number;
   };
   environmentPreset: {
-    id: "cli_dev_local" | "desktop_dev_local" | "workspace_hosted";
+    id:
+      | "cli_safe_local"
+      | "cli_dev_local"
+      | "desktop_safe_local"
+      | "desktop_dev_local"
+      | "workspace_hosted";
     version: number;
   };
   resolvedProfile: TuiProfile;
@@ -845,6 +860,11 @@ export interface WorkspaceReviewEventPayload { sessionId: string; threadId: stri
 export interface WorkspaceValidationEventPayload { sessionId: string; threadId: string; operation: "inspect" | "run" | "cancel" | "submit"; snapshot: WorkspaceValidationSnapshot; runId?: string | undefined }
 export interface WorkspaceGitEventPayload { sessionId: string; threadId: string; operation: "inspect" | "action"; snapshot: WorkspaceGitSnapshot }
 
+export interface MissionControlProjectEventPayload {
+  projectId: string;
+  project: Record<string, unknown>;
+}
+
 export interface ProjectSnapshotEventPayload {
   sessionId: string;
   snapshot: ProductProjectSnapshot;
@@ -906,6 +926,7 @@ export interface RunnerEventPayloadByType {
   "workspace.review": WorkspaceReviewEventPayload;
   "workspace.validation": WorkspaceValidationEventPayload;
   "workspace.git": WorkspaceGitEventPayload;
+  "mission_control.project": MissionControlProjectEventPayload;
   "project.snapshot": ProjectSnapshotEventPayload;
   "project.review": ProjectReviewEventPayload;
   "mcp.status": McpStatusEventPayload;

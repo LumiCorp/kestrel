@@ -252,7 +252,12 @@ export class OperatorControlPlane {
       limit: limit + 1,
     });
     const hasMore = listedRuns.length > limit;
-    const runs = listedRuns.slice(0, limit).map(({ run, eventCount, threadId }) => {
+    const runs = listedRuns.slice(0, limit).map(({
+      run,
+      eventCount,
+      threadId,
+      missionControl,
+    }) => {
       const actionable = run.status === "WAITING" || run.status === "FAILED";
       return {
         run: {
@@ -272,6 +277,7 @@ export class OperatorControlPlane {
             : {}),
         },
         ...(threadId !== undefined ? { threadId } : {}),
+        ...(missionControl !== undefined ? { missionControl } : {}),
         summary: {
           eventCount,
           truncated: false,
@@ -316,6 +322,10 @@ export class OperatorControlPlane {
     const models = uniqueStrings(replay.modelProvenance.calls.map((call) => call.model));
     const threadId = replay.summary.threadId ?? replay.lineage.focusThread?.threadId;
     const runtimePlan = projectRuntimePlan(doctor.runtimePlan ?? replay.runtimePlan);
+    const missionControl = replay.events
+      .filter((event) => event.type === "run.started")
+      .map((event) => readMissionControlRunCorrelation(event.metadata?.missionControl))
+      .find((value) => value !== undefined);
     return {
       version: OPERATOR_RUN_VIEW_VERSION,
       run: {
@@ -330,6 +340,7 @@ export class OperatorControlPlane {
           : {}),
       },
       ...(threadId !== undefined ? { threadId } : {}),
+      ...(missionControl !== undefined ? { missionControl } : {}),
       summary: {
         eventCount: replay.summary.eventCount,
         ...(replay.summary.firstEventAt !== undefined ? { firstEventAt: replay.summary.firstEventAt } : {}),
@@ -480,7 +491,23 @@ export class OperatorControlPlane {
       eventType: "operator.retry",
       metadata: {
         retryRequestedBy: "operator",
+        ...(input.missionControl !== undefined
+          ? { missionControl: input.missionControl }
+          : {}),
       },
+      ...(input.missionControl === undefined
+        ? {}
+        : {
+            runtimeTurn: {
+              sessionId: status.thread.sessionId,
+              runId: input.missionControl.runId,
+              message:
+                input.reason ??
+                "Retry the most recent failed or stalled thread work.",
+              eventType: "operator.retry",
+              missionControl: input.missionControl,
+            },
+          }),
     });
   }
 
@@ -1906,6 +1933,28 @@ function buildOperatorSessionIndex(
   return [...sessions.values()].sort(
     (left, right) => right.latestStartedAt.localeCompare(left.latestStartedAt),
   );
+}
+
+function readMissionControlRunCorrelation(value: unknown) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  const projectId = asString(record.projectId);
+  const itemId = asString(record.itemId);
+  const attemptId = asString(record.attemptId);
+  const commandId = asString(record.commandId);
+  const runId = asString(record.runId);
+  if (
+    projectId === undefined ||
+    itemId === undefined ||
+    attemptId === undefined ||
+    commandId === undefined ||
+    runId === undefined
+  ) {
+    return;
+  }
+  return { projectId, itemId, attemptId, commandId, runId };
 }
 
 function projectRuntimePlan(

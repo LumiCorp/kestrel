@@ -11,17 +11,29 @@ import {
 import { contractTest } from "../helpers/contract-test.js";
 
 contractTest("runtime.hermetic", "canonical Kestrel policy composes parity across product environments", () => {
-  const cli = composeKestrelOneProfile({
+  const cliSafe = composeKestrelOneProfile({
+    environmentPresetId: "cli_safe_local",
+  });
+  const cliDev = composeKestrelOneProfile({
     environmentPresetId: "cli_dev_local",
   });
-  const desktop = composeKestrelOneProfile({
+  const desktopSafe = composeKestrelOneProfile({
+    environmentPresetId: "desktop_safe_local",
+  });
+  const desktopDev = composeKestrelOneProfile({
     environmentPresetId: "desktop_dev_local",
   });
   const hosted = composeKestrelOneProfile({
     environmentPresetId: "workspace_hosted",
   });
 
-  for (const composed of [cli, desktop, hosted]) {
+  for (const composed of [
+    cliSafe,
+    cliDev,
+    desktopSafe,
+    desktopDev,
+    hosted,
+  ]) {
     assert.equal(composed.profile.agentProfileId, "kestrel");
     assert.equal(composed.provenance.policyId, "kestrel");
     assert.equal(composed.provenance.policyVersion, 2);
@@ -52,20 +64,26 @@ contractTest("runtime.hermetic", "canonical Kestrel policy composes parity acros
       [...KESTREL_ONE_DIALOG_TOOL_NAMES],
     );
   }
+  assert.equal(cliSafe.profile.devShell?.enabled, false);
+  assert.equal(cliSafe.profile.codeMode?.enabled, true);
+  assert.equal(desktopSafe.profile.devShell?.enabled, false);
+  assert.equal(desktopSafe.profile.codeMode?.enabled, true);
+  assert.equal(cliDev.profile.devShell?.enabled, true);
+  assert.equal(desktopDev.profile.devShell?.enabled, true);
 
-  assert.equal(cli.profile.toolAllowlist?.includes("desktop.host.open"), false);
+  assert.equal(cliSafe.profile.toolAllowlist?.includes("desktop.host.open"), false);
   assert.equal(
-    cli.profile.toolAllowlist?.includes(
+    cliSafe.profile.toolAllowlist?.includes(
       "kestrel_one.search_knowledge_documents",
     ),
     false,
   );
   assert.equal(
-    desktop.profile.toolAllowlist?.includes("desktop.host.open"),
+    desktopSafe.profile.toolAllowlist?.includes("desktop.host.open"),
     true,
   );
   assert.equal(
-    desktop.profile.toolAllowlist?.includes(
+    desktopSafe.profile.toolAllowlist?.includes(
       "kestrel_one.search_knowledge_documents",
     ),
     false,

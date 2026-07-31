@@ -47,8 +47,8 @@ import {
 } from "../toolResult.js";
 import { validateBuiltInToolInputContract } from "./builtInToolInputContracts.js";
 import {
+  getToolInputCompatibilityAliases,
   normalizeToolActionInput,
-  sanitizeToolInputForSchema,
 } from "./normalizeToolInput.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
@@ -509,6 +509,36 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       );
     }
 
+    const schema = this.resolveInputSchema(name, options.runContext);
+    const validator = this.getValidator(name, schema);
+    validator(input);
+    const unsupportedFieldErrors = (validator.errors ?? [])
+      .filter((error) => isUnsupportedFieldError(name, error))
+      .slice(0, 1);
+    if (unsupportedFieldErrors.length > 0) {
+      if (this.builtInToolSpecs.has(name)) {
+        throw createBuiltInSchemaValidationError(
+          name,
+          input,
+          unsupportedFieldErrors,
+        );
+      }
+      throw new RuntimeFailure(
+        "TOOL_INPUT_SCHEMA_FAILED",
+        `Tool '${name}' input contains unsupported fields.`,
+        {
+          toolName: name,
+          validationErrors: unsupportedFieldErrors.map((error) => ({
+            field: readAjvErrorField(error),
+            instancePath: error.instancePath,
+            schemaPath: error.schemaPath,
+            keyword: error.keyword,
+            message: error.message,
+          })),
+        },
+      );
+    }
+
     const recordInput = asRecord(input);
     const activeContext = scopedContext.builtInContext;
     const normalizedInput =
@@ -519,20 +549,15 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             activeContext.fileSystem?.workspaceRoot,
           )
         : input;
-    const schema = this.resolveInputSchema(name, options.runContext);
-    const schemaSanitizedInput = MODEL_VISIBLE_RUNTIME_TOOL_NAMES.has(name)
-      ? normalizedInput
-      : sanitizeToolInputForSchema(schema, normalizedInput);
     if (this.builtInToolSpecs.has(name)) {
-      validateBuiltInToolInputContract(name, schemaSanitizedInput);
+      validateBuiltInToolInputContract(name, normalizedInput);
     }
-    const validator = this.getValidator(name, schema);
-    const valid = validator(schemaSanitizedInput);
+    const valid = validator(normalizedInput);
     if (valid !== true) {
       if (this.builtInToolSpecs.has(name)) {
         throw createBuiltInSchemaValidationError(
           name,
-          schemaSanitizedInput,
+          normalizedInput,
           validator.errors ?? [],
         );
       }
@@ -551,7 +576,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       );
     }
 
-    return schemaSanitizedInput;
+    return normalizedInput;
   }
 
   async call(
@@ -1068,6 +1093,19 @@ function createBuiltInSchemaValidationError(
   );
 }
 
+function isUnsupportedFieldError(toolName: string, error: ErrorObject): boolean {
+  if (
+    error.keyword !== "additionalProperties" ||
+    typeof error.params.additionalProperty !== "string"
+  ) {
+    return false;
+  }
+  return error.instancePath !== "" ||
+    getToolInputCompatibilityAliases(toolName).includes(
+      error.params.additionalProperty,
+    ) === false;
+}
+
 function readAjvErrorField(error: ErrorObject): string {
   if (
     error.keyword === "required" &&
@@ -1079,7 +1117,10 @@ function readAjvErrorField(error: ErrorObject): string {
     error.keyword === "additionalProperties" &&
     typeof error.params.additionalProperty === "string"
   ) {
-    return error.params.additionalProperty;
+    const parent = jsonPointerToField(error.instancePath);
+    return parent === "input"
+      ? error.params.additionalProperty
+      : `${parent}.${error.params.additionalProperty}`;
   }
   return jsonPointerToField(error.instancePath);
 }
@@ -1126,7 +1167,10 @@ function readAjvErrorInvalidValues(
     error.keyword === "additionalProperties" &&
     typeof error.params.additionalProperty === "string"
   ) {
-    const value = readFieldValue(input, error.params.additionalProperty);
+    const value = readValueAtJsonPointer(
+      input,
+      `${error.instancePath}/${encodeJsonPointerSegment(error.params.additionalProperty)}`,
+    );
     return value === undefined ? [] : [value];
   }
   const value = readValueAtJsonPointer(input, error.instancePath);
@@ -1138,6 +1182,10 @@ function jsonPointerToField(pointer: string): string {
     return "input";
   }
   return pointer.slice(1).split("/").map(decodeJsonPointerSegment).join(".");
+}
+
+function encodeJsonPointerSegment(value: string): string {
+  return value.replaceAll("~", "~0").replaceAll("/", "~1");
 }
 
 function readValueAtJsonPointer(input: unknown, pointer: string): unknown {
@@ -1164,14 +1212,6 @@ function readValueAtJsonPointer(input: unknown, pointer: string): unknown {
     current = (current as Record<string, unknown>)[segment];
   }
   return current;
-}
-
-function readFieldValue(input: unknown, field: string): unknown {
-  return typeof input === "object" &&
-    input !== null &&
-    Array.isArray(input) === false
-    ? (input as Record<string, unknown>)[field]
-    : undefined;
 }
 
 function decodeJsonPointerSegment(segment: string): string {

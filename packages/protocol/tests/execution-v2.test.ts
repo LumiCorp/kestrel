@@ -201,6 +201,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "workspace.validation.submit": { sessionId: "session-1", threadId: "thread-1", resultIds: ["result-1"] },
   "workspace.git.inspect": { sessionId: "session-1", threadId: "thread-1" },
   "workspace.git.action": { sessionId: "session-1", threadId: "thread-1", candidateFingerprint: `sha256:${"a".repeat(64)}`, action: { kind: "fetch", remote: "origin" } },
+  "mission_control.project.get": { projectId: "11111111-1111-4111-8111-111111111111" },
   "project.snapshot.get": { sessionId: "session-1" },
   "project.snapshot.update": { sessionId: "session-1", snapshot: {} },
   "project.action": {
@@ -313,6 +314,10 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "workspace.review": { sessionId: "session-1", threadId: "thread-1", operation: "list", snapshot: {} },
   "workspace.validation": { sessionId: "session-1", threadId: "thread-1", operation: "inspect", snapshot: {} },
   "workspace.git": { sessionId: "session-1", threadId: "thread-1", operation: "inspect", snapshot: {} },
+  "mission_control.project": {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    project: {},
+  },
   "project.snapshot": { sessionId: "session-1", snapshot: {} },
   "project.review": { sessionId: "session-1", detail: {} },
   "mcp.status": { status: {} },
@@ -422,6 +427,23 @@ contractTest("packages.hermetic", "canonical command parser accepts every regist
     });
     assert.equal(parsed.type, type);
     assert.equal(parsed.id, `command:${type}`);
+  }
+});
+
+contractTest("packages.hermetic", "canonical execution profile contracts accept isolated local presets", () => {
+  for (const environmentPresetId of [
+    "cli_safe_local",
+    "desktop_safe_local",
+  ] as const) {
+    const parsed = parseRunnerCommandV2({
+      id: `command:${environmentPresetId}`,
+      type: "execution-profile.resolve",
+      payload: { environmentPresetId },
+    });
+    assert.equal(
+      parsed.payload.environmentPresetId,
+      environmentPresetId,
+    );
   }
 });
 
@@ -813,6 +835,62 @@ contractTest("packages.hermetic", "canonical turn parsing validates structured a
       },
     }),
     /autoCompaction\.state must be one of/u,
+  );
+});
+
+contractTest("packages.hermetic", "canonical execution commands preserve exact Mission Control correlation", () => {
+  const missionControl = {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    itemId: "work-1",
+    attemptId: "attempt-1",
+    commandId: "command-1",
+    runId: "run-1",
+  };
+  const started = parseRunnerCommandV2({
+    id: "command-mission-control-start",
+    type: "run.start",
+    payload: {
+      profileId: "reference",
+      turn: { ...turn, missionControl },
+    },
+  });
+  assert.equal(started.type, "run.start");
+  if (started.type === "run.start") {
+    assert.deepEqual(started.payload.turn.missionControl, missionControl);
+  }
+  const continued = parseRunnerCommandV2({
+    id: "command-mission-control-retry",
+    type: "operator.control",
+    payload: {
+      action: "retry",
+      threadId: "thread-1",
+      completionMode: "accepted",
+      missionControl,
+    },
+  });
+  assert.equal(continued.type, "operator.control");
+  if (continued.type === "operator.control") {
+    assert.deepEqual(continued.payload.missionControl, missionControl);
+  }
+
+  assert.throws(
+    () =>
+      parseRunnerCommandV2({
+        id: "command-invalid-mission-control",
+        type: "run.start",
+        payload: {
+          profileId: "reference",
+          turn: {
+            ...turn,
+            missionControl: {
+              ...missionControl,
+              runId: "",
+              inferredRunId: "latest",
+            },
+          },
+        },
+      }),
+    /missionControl\.inferredRunId is not supported/u,
   );
 });
 
