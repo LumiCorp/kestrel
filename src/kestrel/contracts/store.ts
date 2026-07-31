@@ -3,6 +3,12 @@ import type {
   ProductProjectSnapshot,
 } from "../../project/contracts.js";
 import type {
+  MissionControlOutboxRecord,
+  MissionControlProjectMutationInput,
+  MissionControlProjectMutationResult,
+  MissionControlProjectStateRecord,
+} from "../../missionControl/projectAuthority.js";
+import type {
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointKind,
   WorkspaceCheckpointRole,
@@ -364,6 +370,18 @@ export interface SessionRepository {
   appendLegacyArchive(archive: LegacySessionArchive): Promise<void>;
 }
 
+export interface MissionControlProjectRepository {
+  getMissionControlProjectState(
+    projectId: string,
+  ): Promise<MissionControlProjectStateRecord | null>;
+  updateMissionControlProjectState(
+    input: MissionControlProjectMutationInput,
+  ): Promise<MissionControlProjectMutationResult>;
+  listMissionControlOutbox(
+    projectId: string,
+  ): Promise<MissionControlOutboxRecord[]>;
+}
+
 export interface RunRepository {
   getRun(runId: string): Promise<PersistedRunRecord | null>;
   getRunState(runId: string): Promise<PersistedRunStateRecord | null>;
@@ -598,6 +616,7 @@ export interface ReplayStore
 
 export interface SessionStore
   extends RuntimeStore,
+    MissionControlProjectRepository,
     ThreadStore,
     AssemblyStore {
   recoverOrphanedActiveRun?(

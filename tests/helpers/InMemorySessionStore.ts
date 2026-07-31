@@ -41,6 +41,13 @@ import {
   buildCanonicalWaitingFor,
   readActiveWaitState,
 } from "../../src/runtime/waitState.js";
+import { InMemorySessionStore as MissionControlStore } from "../../src/store/InMemorySessionStore.js";
+import type {
+  MissionControlOutboxRecord,
+  MissionControlProjectMutationInput,
+  MissionControlProjectMutationResult,
+  MissionControlProjectStateRecord,
+} from "../../src/missionControl/projectAuthority.js";
 
 interface InMemorySession {
   sessionId: string;
@@ -87,6 +94,7 @@ interface InMemoryRegionWorkItem extends RegionWorkItem {
 }
 
 export class InMemorySessionStore implements SessionStore {
+  private readonly missionControlStore = new MissionControlStore();
   private readonly orchestrationStore = new InMemoryOrchestrationStore();
   private readonly sessions = new Map<string, InMemorySession>();
   private readonly runs = new Map<string, InMemoryRun>();
@@ -107,6 +115,24 @@ export class InMemorySessionStore implements SessionStore {
   private regionWorkItemIdCounter = 1;
 
   readonly operationLog: string[] = [];
+
+  getMissionControlProjectState(
+    projectId: string,
+  ): Promise<MissionControlProjectStateRecord | null> {
+    return this.missionControlStore.getMissionControlProjectState(projectId);
+  }
+
+  updateMissionControlProjectState(
+    input: MissionControlProjectMutationInput,
+  ): Promise<MissionControlProjectMutationResult> {
+    return this.missionControlStore.updateMissionControlProjectState(input);
+  }
+
+  listMissionControlOutbox(
+    projectId: string,
+  ): Promise<MissionControlOutboxRecord[]> {
+    return this.missionControlStore.listMissionControlOutbox(projectId);
+  }
 
   getSessionVersionRecordsForTest(sessionId: string): InMemorySessionVersion[] {
     return this.sessionVersions

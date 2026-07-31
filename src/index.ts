@@ -74,6 +74,7 @@ export * from "./project/RuntimeService.js";
 export * from "./project/workspace.js";
 export * from "./missionControl/contracts.js";
 export * from "./missionControl/queue.js";
+export * from "./missionControl/projectAuthority.js";
 export * from "./profile/modelPolicy.js";
 export * from "./profile/modelCatalog.js";
 export * from "./profile/modelCatalogDiscovery.js";
