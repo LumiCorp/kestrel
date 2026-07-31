@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { PgBoss } from "pg-boss";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
 import { contractTest } from "../../../../tests/helpers/contract-test.js";
@@ -427,6 +428,49 @@ contractTest(
       shouldDispatch: false,
       replayAfterSequence: resolved.replayAfterSequence,
     });
+    const [committedResumeWindow] = await sql<
+      Array<{
+        interactionStatus: string;
+        queueState: string;
+        resumedAt: Date | null;
+        turnStatus: string;
+      }>
+    >`
+      SELECT
+        interaction."status" AS "interactionStatus",
+        queue_state."state" AS "queueState",
+        interaction."resumed_at" AS "resumedAt",
+        turn."status" AS "turnStatus"
+      FROM "thread_interactions" interaction
+      JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
+      JOIN "thread_turn_queue_state" queue_state
+        ON queue_state."thread_id" = turn."thread_id"
+      WHERE interaction."request_id" = ${requestId}
+    `;
+    assert.deepEqual(committedResumeWindow, {
+      interactionStatus: "resolved",
+      queueState: "running",
+      resumedAt: null,
+      turnStatus: "waiting_for_input",
+    });
+
+    // Simulate process death after the resolution transaction commits but
+    // before the route enqueues the resumed worker job.
+    await queue.reconcileDurableThreadTurnQueue();
+    await queue.reconcileDurableThreadTurnQueue();
+    const [reconciledResumeJobs] = await sql<Array<{ count: number }>>`
+      SELECT count(*)::int AS "count"
+      FROM "pgboss"."job"
+      WHERE
+        "name" = ${queue.DURABLE_THREAD_TURN_QUEUE}
+        AND "data" ->> 'turnId' = ${waiting.turn.id}
+        AND "state" IN ('created', 'retry', 'active')
+    `;
+    assert.equal(
+      reconciledResumeJobs?.count,
+      1,
+      "reconciliation must restore exactly one resumed delivery after the resolution/enqueue crash window",
+    );
     await store.appendDurableTurnEvent({
       turnId: waiting.turn.id,
       type: "ui.message",
@@ -813,5 +857,234 @@ contractTest(
       true,
       "persistent retry progress must enter thread_turn_events",
     );
+  },
+);
+
+contractTest(
+  "web.worker-claim-recovery",
+  "ambiguous and missing dispatch preserve durable queue authority",
+  async (context) => {
+    assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.POSTGRES_URL = databaseUrl;
+
+    const [{ resetDbRuntimeForTests }, store, queue] = await Promise.all([
+      import("@/lib/db/runtime"),
+      import("./store"),
+      import("./queue"),
+    ]);
+    const sql = postgres(databaseUrl, { max: 2 });
+    const suffix = crypto.randomUUID();
+    const organizationId = `dispatch-recovery-org-${suffix}`;
+    const userId = `dispatch-recovery-user-${suffix}`;
+    const environmentId = `dispatch-recovery-environment-${suffix}`;
+    const initialThreadId = `dispatch-recovery-initial-${suffix}`;
+    const successorThreadId = `dispatch-recovery-successor-${suffix}`;
+    const missingThreadId = `dispatch-recovery-missing-${suffix}`;
+    const now = new Date();
+    const originalSend = PgBoss.prototype.send;
+    const jobTurnIds: string[] = [];
+
+    context.after(async () => {
+      PgBoss.prototype.send = originalSend;
+      await queue.stopDurableThreadTurnWorker();
+      if (jobTurnIds.length > 0) {
+        await sql`
+          DELETE FROM "pgboss"."job"
+          WHERE "data" ->> 'turnId' IN ${sql(jobTurnIds)}
+        `;
+      }
+      await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await resetDbRuntimeForTests();
+      await sql.end({ timeout: 0 });
+    });
+
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "user" (
+          "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+        ) VALUES (
+          ${userId}, 'Dispatch Recovery User', ${`${userId}@example.test`},
+          true, ${now}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+        VALUES (
+          ${organizationId}, 'Dispatch Recovery Org',
+          ${`dispatch-recovery-org-${suffix}`}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "environments" (
+          "id", "organization_id", "created_by_user_id", "name", "slug",
+          "region", "status", "is_default"
+        ) VALUES (
+          ${environmentId}, ${organizationId}, ${userId}, 'Default', 'default',
+          'iad', 'ready', true
+        )
+      `;
+      await transaction`
+        INSERT INTO "threads" (
+          "id", "title", "created_by_user_id", "organization_id", "origin"
+        ) VALUES
+          (
+            ${initialThreadId}, 'Ambiguous Initial Dispatch', ${userId},
+            ${organizationId}, 'mobile'
+          ),
+          (
+            ${successorThreadId}, 'Ambiguous Successor Dispatch', ${userId},
+            ${organizationId}, 'mobile'
+          ),
+          (
+            ${missingThreadId}, 'Missing Dispatch', ${userId},
+            ${organizationId}, 'mobile'
+          )
+      `;
+    });
+
+    const createTurn = (threadId: string, label: string) =>
+      store.createDurableThreadTurn({
+        threadId,
+        organizationId,
+        authorUserId: userId,
+        messageId: `dispatch-recovery-message-${label}-${suffix}`,
+        messageParts: [{ type: "text", text: label }],
+        idempotencyKey: `dispatch-recovery-idempotency-${label}-${suffix}`,
+        requestedEnvironmentId: environmentId,
+        source: "mobile",
+      });
+    const readSnapshot = async (turnId: string) => {
+      const [snapshot] = await sql<
+        Array<{
+          activeTurnId: string | null;
+          failureCode: string | null;
+          jobs: number;
+          pauseReason: string | null;
+          queueState: string;
+          status: string;
+        }>
+      >`
+        SELECT
+          turn."status",
+          turn."failure_code" AS "failureCode",
+          queue."active_turn_id" AS "activeTurnId",
+          queue."state" AS "queueState",
+          queue."pause_reason" AS "pauseReason",
+          (
+            SELECT count(*)::int
+            FROM "pgboss"."job" job
+            WHERE
+              job."name" = ${queue.DURABLE_THREAD_TURN_QUEUE}
+              AND job."data" ->> 'turnId' = ${turnId}
+              AND job."state" IN ('created', 'retry', 'active')
+          ) AS "jobs"
+        FROM "thread_turns" turn
+        INNER JOIN "thread_turn_queue_state" queue
+          ON queue."thread_id" = turn."thread_id"
+        WHERE turn."id" = ${turnId}
+      `;
+      return snapshot;
+    };
+    const claimOnce = async (turnId: string) => {
+      const claims = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          store.claimDurableThreadTurn(turnId),
+        ),
+      );
+      assert.equal(claims.filter(Boolean).length, 1);
+    };
+    const throwAfterCommittedSend = (targetTurnId: string, message: string) => {
+      PgBoss.prototype.send = (async function (
+        this: PgBoss,
+        ...args: unknown[]
+      ) {
+        const jobId = await Reflect.apply(originalSend, this, args);
+        const data = args[1];
+        if (
+          data &&
+          typeof data === "object" &&
+          "turnId" in data &&
+          data.turnId === targetTurnId
+        ) {
+          throw new Error(message);
+        }
+        return jobId;
+      }) as typeof PgBoss.prototype.send;
+    };
+
+    const initial = await createTurn(initialThreadId, "initial");
+    jobTurnIds.push(initial.turn.id);
+    throwAfterCommittedSend(initial.turn.id, "ambiguous initial dispatch");
+    await queue.enqueueDurableThreadTurn(initial.turn.id);
+    PgBoss.prototype.send = originalSend;
+    assert.deepEqual(await readSnapshot(initial.turn.id), {
+      activeTurnId: initial.turn.id,
+      failureCode: null,
+      jobs: 1,
+      pauseReason: null,
+      queueState: "running",
+      status: "queued",
+    });
+    await claimOnce(initial.turn.id);
+
+    const current = await createTurn(successorThreadId, "current");
+    const successor = await createTurn(successorThreadId, "successor");
+    jobTurnIds.push(successor.turn.id);
+    assert.ok(await store.claimDurableThreadTurn(current.turn.id));
+    const completed = await store.completeDurableThreadTurn({
+      turnId: current.turn.id,
+      status: "completed",
+    });
+    assert.equal(completed.nextTurnId, successor.turn.id);
+    throwAfterCommittedSend(successor.turn.id, "ambiguous successor dispatch");
+    await queue.enqueueDurableThreadTurn(successor.turn.id);
+    PgBoss.prototype.send = originalSend;
+    assert.deepEqual(await readSnapshot(successor.turn.id), {
+      activeTurnId: successor.turn.id,
+      failureCode: null,
+      jobs: 1,
+      pauseReason: null,
+      queueState: "running",
+      status: "queued",
+    });
+    await claimOnce(successor.turn.id);
+
+    const missing = await createTurn(missingThreadId, "missing");
+    jobTurnIds.push(missing.turn.id);
+    PgBoss.prototype.send = (async (
+      _name: string,
+      data: { turnId?: unknown },
+    ) => {
+      if (data?.turnId === missing.turn.id) {
+        throw new Error("dispatch failed before commit");
+      }
+      return null;
+    }) as typeof PgBoss.prototype.send;
+    await assert.rejects(
+      queue.enqueueDurableThreadTurn(missing.turn.id),
+      /dispatch failed before commit/u,
+    );
+    PgBoss.prototype.send = originalSend;
+    assert.deepEqual(await readSnapshot(missing.turn.id), {
+      activeTurnId: missing.turn.id,
+      failureCode: null,
+      jobs: 0,
+      pauseReason: null,
+      queueState: "running",
+      status: "queued",
+    });
+    await queue.reconcileDurableThreadTurnQueue();
+    await queue.reconcileDurableThreadTurnQueue();
+    assert.deepEqual(await readSnapshot(missing.turn.id), {
+      activeTurnId: missing.turn.id,
+      failureCode: null,
+      jobs: 1,
+      pauseReason: null,
+      queueState: "running",
+      status: "queued",
+    });
+    await claimOnce(missing.turn.id);
   },
 );
