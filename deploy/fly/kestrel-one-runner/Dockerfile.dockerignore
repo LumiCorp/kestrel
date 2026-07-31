@@ -26,7 +26,4 @@ output
 outputs
 runs
 tests/*
-!tests/helpers/
-tests/helpers/*
-!tests/helpers/contract-test.ts
 tmp

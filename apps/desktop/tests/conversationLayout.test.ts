@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const stylesPath = path.join(testDir, "..", "renderer", "src", "styles.css");
@@ -28,7 +28,7 @@ async function readDesktopStyles(filePath = stylesPath, seen = new Set<string>()
   return [...imported, source].join("\n");
 }
 
-contractTest("desktop.hermetic", "conversation timeline and composer share the conversation width", async () => {
+test("conversation timeline and composer share the conversation width", async () => {
   const source = await readDesktopStyles();
 
   assert.match(source, /--conversation-content-width:\s*640px;/u);
@@ -39,7 +39,7 @@ contractTest("desktop.hermetic", "conversation timeline and composer share the c
   assert.match(source, /\.composer\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),/su);
 });
 
-contractTest("desktop.hermetic", "conversation work is a semantic timeline with collapsed operational detail", async () => {
+test("conversation work is a semantic timeline with collapsed operational detail", async () => {
   const [app, timeline] = await Promise.all([
     readFile(appPath, "utf8"),
     readFile(timelinePath, "utf8"),
@@ -53,7 +53,7 @@ contractTest("desktop.hermetic", "conversation work is a semantic timeline with 
   assert.match(timeline, /aria-live="polite"/u);
 });
 
-contractTest("desktop.hermetic", "context sidebar joins the full-width work canvas without an empty resizer column", async () => {
+test("context sidebar joins the full-width work canvas without an empty resizer column", async () => {
   const [styles, sidebar] = await Promise.all([
     readDesktopStyles(),
     readFile(contextSidebarPath, "utf8"),
@@ -70,7 +70,7 @@ contractTest("desktop.hermetic", "context sidebar joins the full-width work canv
   assert.match(sidebar, /className="sidebar-resize-handle"/u);
 });
 
-contractTest("desktop.hermetic", "background attachment hydration waits for healthy Core and stays non-blocking", async () => {
+test("background attachment hydration waits for healthy Core and stays non-blocking", async () => {
   const app = await readFile(appPath, "utf8");
 
   assert.match(app, /runtimeHealth\?\.state !== "healthy"/u);
@@ -82,7 +82,7 @@ contractTest("desktop.hermetic", "background attachment hydration waits for heal
   );
 });
 
-contractTest("desktop.hermetic", "startup hydrates inactive thread authority sequentially", async () => {
+test("startup hydrates inactive thread authority sequentially", async () => {
   const app = await readFile(appPath, "utf8");
 
   assert.match(app, /for \(const thread of rendererState\.threads\)/u);
@@ -94,7 +94,7 @@ contractTest("desktop.hermetic", "startup hydrates inactive thread authority seq
   );
 });
 
-contractTest("desktop.hermetic", "composer controls are grouped by context and action", async () => {
+test("composer controls are grouped by context and action", async () => {
   const [styles, app] = await Promise.all([
     readDesktopStyles(),
     readFile(appPath, "utf8"),
@@ -106,7 +106,7 @@ contractTest("desktop.hermetic", "composer controls are grouped by context and a
   assert.match(app, /className="composer-actions-left"[\s\S]*className="composer-actions-right"/u);
 });
 
-contractTest("desktop.hermetic", "composer keeps mode and model semantics without redundant visible chrome", async () => {
+test("composer keeps mode and model semantics without redundant visible chrome", async () => {
   const [styles, app] = await Promise.all([
     readDesktopStyles(),
     readFile(appPath, "utf8"),
@@ -121,7 +121,7 @@ contractTest("desktop.hermetic", "composer keeps mode and model semantics withou
   assert.doesNotMatch(styles, /\.composer-mode-label/u);
 });
 
-contractTest("desktop.hermetic", "composer uses compact idle geometry and expands through presentation state", async () => {
+test("composer uses compact idle geometry and expands through presentation state", async () => {
   const [styles, app] = await Promise.all([
     readDesktopStyles(),
     readFile(appPath, "utf8"),
@@ -139,7 +139,7 @@ contractTest("desktop.hermetic", "composer uses compact idle geometry and expand
   assert.match(app, /className=\{`composer \$\{composerFocused \|\| activeThread\.draft\.trim\(\)\.length > 0/u);
 });
 
-contractTest("desktop.hermetic", "composer keeps one outer border and borderless internal controls", async () => {
+test("composer keeps one outer border and borderless internal controls", async () => {
   const styles = await readDesktopStyles();
   const expandedActions = /\.composer:focus-within \.composer-actions,\s*\.composer\.composer-expanded \.composer-actions\s*\{([^}]*)\}/su.exec(styles)?.[1];
 
@@ -160,7 +160,7 @@ contractTest("desktop.hermetic", "composer keeps one outer border and borderless
   assert.doesNotMatch(expandedActions, /border-top:/u);
 });
 
-contractTest("desktop.hermetic", "browser preview keeps new bridge members from crashing workspace navigation", async () => {
+test("browser preview keeps new bridge members from crashing workspace navigation", async () => {
   const preview = await readFile(browserPreviewPath, "utf8");
 
   assert.match(preview, /onCommand\(\)\s*\{\s*return \(\) => \{\};\s*\}/su);
@@ -172,7 +172,7 @@ contractTest("desktop.hermetic", "browser preview keeps new bridge members from 
   assert.match(preview, /is unavailable in the browser preview/u);
 });
 
-contractTest("desktop.hermetic", "renderer failures show a recoverable surface instead of a blank window", async () => {
+test("renderer failures show a recoverable surface instead of a blank window", async () => {
   const [entry, boundary] = await Promise.all([
     readFile(rendererEntryPath, "utf8"),
     readFile(rendererBoundaryPath, "utf8"),
@@ -185,14 +185,14 @@ contractTest("desktop.hermetic", "renderer failures show a recoverable surface i
   assert.match(boundary, /window\.location\.reload\(\)/u);
 });
 
-contractTest("desktop.hermetic", "active runs suppress stale stalled-attention cards", async () => {
+test("active runs suppress stale stalled-attention cards", async () => {
   const app = await readFile(appPath, "utf8");
 
   assert.match(app, /item\.kind !== "stalled_thread_attention" \|\| activeRun === undefined/u);
   assert.match(app, /operatorActionCardItems\.map\(\(item\) => \(/u);
 });
 
-contractTest("desktop.hermetic", "user-input requests are composer-owned without a duplicate timeline card", async () => {
+test("user-input requests are composer-owned without a duplicate timeline card", async () => {
   const app = await readFile(appPath, "utf8");
 
   assert.match(app, /inboxItems:\s*operatorInboxItems/u);
@@ -206,7 +206,7 @@ contractTest("desktop.hermetic", "user-input requests are composer-owned without
   assert.doesNotMatch(app, /Kestrel needs your input/u);
 });
 
-contractTest("desktop.hermetic", "find work drawer groups conversations and keeps row selection separate from actions", async () => {
+test("find work drawer groups conversations and keeps row selection separate from actions", async () => {
   const [app, explorer] = await Promise.all([readFile(appPath, "utf8"), readFile(explorerPath, "utf8")]);
   assert.match(app, /conversation-rail work-navigator/u);
   assert.match(app, /Find work \(Command-K\)/u);
@@ -226,7 +226,7 @@ contractTest("desktop.hermetic", "find work drawer groups conversations and keep
   assert.match(explorer, /aria-label="Search conversations"/u);
 });
 
-contractTest("desktop.hermetic", "conversation search uses one focus border on its outer shell", async () => {
+test("conversation search uses one focus border on its outer shell", async () => {
   const styles = await readDesktopStyles();
 
   assert.match(
@@ -239,7 +239,7 @@ contractTest("desktop.hermetic", "conversation search uses one focus border on i
   );
 });
 
-contractTest("desktop.hermetic", "settings keep compact checks and wrap navigation at narrow widths", async () => {
+test("settings keep compact checks and wrap navigation at narrow widths", async () => {
   const app = await readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8");
   const styles = await readDesktopStyles();
 
@@ -277,7 +277,7 @@ contractTest("desktop.hermetic", "settings keep compact checks and wrap navigati
   );
 });
 
-contractTest("desktop.hermetic", "settings navigation mounts one bounded category page at a time", async () => {
+test("settings navigation mounts one bounded category page at a time", async () => {
   const app = await readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8");
   const styles = await readDesktopStyles();
 
@@ -296,7 +296,7 @@ contractTest("desktop.hermetic", "settings navigation mounts one bounded categor
   );
 });
 
-contractTest("desktop.hermetic", "standard workspace headers and project grids share shell geometry", async () => {
+test("standard workspace headers and project grids share shell geometry", async () => {
   const styles = await readDesktopStyles();
 
   assert.match(styles, /--surface-header-height:\s*44px;/u);
@@ -310,7 +310,7 @@ contractTest("desktop.hermetic", "standard workspace headers and project grids s
   );
 });
 
-contractTest("desktop.hermetic", "find work keeps low-value inspection pages out of the everyday navigation", async () => {
+test("find work keeps low-value inspection pages out of the everyday navigation", async () => {
   const app = await readFile(appPath, "utf8");
 
   assert.doesNotMatch(app, /openWorkSurface\("diff"\)/u);
@@ -318,7 +318,7 @@ contractTest("desktop.hermetic", "find work keeps low-value inspection pages out
   assert.doesNotMatch(app, /openWorkSurface\("validation"\)/u);
 });
 
-contractTest("desktop.hermetic", "conversation menus and rename dialog expose keyboard and focus behavior", async () => {
+test("conversation menus and rename dialog expose keyboard and focus behavior", async () => {
   const explorer = await readFile(explorerPath, "utf8");
   assert.match(explorer, /aria-haspopup="menu"/u);
   assert.match(explorer, /event\.key === "Escape"/u);
@@ -328,7 +328,7 @@ contractTest("desktop.hermetic", "conversation menus and rename dialog expose ke
   assert.match(explorer, /onSubmit=/u);
 });
 
-contractTest("desktop.hermetic", "archived conversations are read-only and thread-scoped surfaces are disabled", async () => {
+test("archived conversations are read-only and thread-scoped surfaces are disabled", async () => {
   const app = await readFile(appPath, "utf8");
   assert.match(app, /const archivedThreadSelected = activeThread\.archivedAt !== undefined/u);
   assert.match(app, /className="timeline-entry timeline-entry-archived"/u);
@@ -338,7 +338,7 @@ contractTest("desktop.hermetic", "archived conversations are read-only and threa
   assert.match(app, /if \(activeThread\?\.archivedAt !== undefined\) setSurface\("chat"\)/u);
 });
 
-contractTest("desktop.hermetic", "conversation header keeps project context in the project switcher without sidebar reassignment", async () => {
+test("conversation header keeps project context in the project switcher without sidebar reassignment", async () => {
   const [app, sidebar] = await Promise.all([readFile(appPath, "utf8"), readFile(contextSidebarPath, "utf8")]);
   assert.match(app, /className="project-switcher"[\s\S]*\{conversationProjectLabel\}/u);
   assert.doesNotMatch(app, /<small>\{conversationProjectLabel\}<\/small>/u);
@@ -347,7 +347,7 @@ contractTest("desktop.hermetic", "conversation header keeps project context in t
   assert.doesNotMatch(app, /activeProjectPath/u);
 });
 
-contractTest("desktop.hermetic", "composer selects configured models while Apps remain globally settings-owned", async () => {
+test("composer selects configured models while Apps remain globally settings-owned", async () => {
   const [app, state, settings, sidebar, main] = await Promise.all([
     readFile(appPath, "utf8"),
     readFile(path.join(testDir, "..", "renderer", "src", "state.ts"), "utf8"),
@@ -368,7 +368,7 @@ contractTest("desktop.hermetic", "composer selects configured models while Apps 
   assert.match(main, /selection: globalExecutionSelection/u);
 });
 
-contractTest("desktop.hermetic", "details persist while Find Work remains a calm, temporary drawer", async () => {
+test("details persist while Find Work remains a calm, temporary drawer", async () => {
   const [app, styles] = await Promise.all([readFile(appPath, "utf8"), readDesktopStyles()]);
 
   assert.match(app, /readDesktopSidebarState\(INSPECTOR_STATE_KEY, false\)/u);
@@ -382,7 +382,7 @@ contractTest("desktop.hermetic", "details persist while Find Work remains a calm
   assert.match(app, /storedWidth === null \? 288 : clampInspectorWidth\(Number\(storedWidth\)\)/u);
 });
 
-contractTest("desktop.hermetic", "top-level workspace headers avoid decorative category kickers", async () => {
+test("top-level workspace headers avoid decorative category kickers", async () => {
   const [settings, apps, mission, projects, diagnostics] = await Promise.all([
     readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8"),
     readFile(path.join(testDir, "..", "renderer", "src", "McpWorkspace.tsx"), "utf8"),
@@ -398,7 +398,7 @@ contractTest("desktop.hermetic", "top-level workspace headers avoid decorative c
   assert.doesNotMatch(diagnostics, /<span className="surface-kicker">Local Core<\/span>/u);
 });
 
-contractTest("desktop.hermetic", "archive blocking covers runs, waits, and actionable operator requests", async () => {
+test("archive blocking covers runs, waits, and actionable operator requests", async () => {
   const app = await readFile(appPath, "utf8");
   assert.match(app, /getRendererThreadArchiveBlockReason\(thread/u);
   assert.match(app, /await refreshThreadAuthority\(thread\)/u);

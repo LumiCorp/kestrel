@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type {
   KestrelOneAgent,
@@ -14,7 +15,6 @@ import {
 import type { Session } from "@/lib/auth-types";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneAgentResponsePersistMeta } from "@/lib/agent/kestrel-runtime-core";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const session = {
@@ -25,7 +25,7 @@ const session = {
   },
 } as Session;
 
-contractTest("web.hermetic", "createKestrelOneRequestContext maps session and organization into runner context", () => {
+test("createKestrelOneRequestContext maps session and organization into runner context", () => {
   const context = createKestrelOneRequestContext({
     session,
     organizationId: "org_123",
@@ -46,8 +46,7 @@ contractTest("web.hermetic", "createKestrelOneRequestContext maps session and or
   });
 });
 
-contractTest(
-  "web.hermetic",
+test(
   "live provider reasoning never enters outbound runner history",
   async () => {
     let capturedInput: KestrelOneAgentTurnInput | undefined;
@@ -132,7 +131,7 @@ contractTest(
   },
 );
 
-contractTest("web.hermetic", "createKestrelOneAgentResponse streams completed runner output and persists assistant text", async () => {
+test("createKestrelOneAgentResponse streams completed runner output and persists assistant text", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   let capturedContext: KestrelOneRequestContext | undefined;
   let persistedText = "";
@@ -239,7 +238,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse streams completed ru
   assert.equal(persistedMeta?.selectedInteractionMode, null);
 });
 
-contractTest("web.hermetic", "runtime-owned mode switches are exposed to server persistence", async () => {
+test("runtime-owned mode switches are exposed to server persistence", async () => {
   let persistedMode: string | null | undefined;
   const response = createKestrelOneAgentResponseFromAgent({
     request: new Request("http://example.test/api/chats/chat_mode_switch", { method: "POST" }),
@@ -274,7 +273,7 @@ contractTest("web.hermetic", "runtime-owned mode switches are exposed to server 
   assert.match(body, /data-interaction-mode/u);
 });
 
-contractTest("web.hermetic", "createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn", async () => {
+test("createKestrelOneAgentResponse preserves Build mode while resuming a blocked turn", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   const agent = fakeAgent({
     terminal: completedTerminal("Implementation resumed", {
@@ -320,7 +319,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse preserves Build mode
   assert.equal(capturedInput?.eventType, "user.reply");
 });
 
-contractTest("web.hermetic", "createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text", async () => {
+test("createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text", async () => {
   let persistedText = "";
   let persistedTerminalStatus = "";
   const response = createKestrelOneAgentResponseFromAgent({
@@ -389,7 +388,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse persists a completed
   assert.equal(persistedTerminalStatus, "waiting");
 });
 
-contractTest("web.hermetic", "createKestrelOneAgentResponse isolates transient title failures from the agent stream", async () => {
+test("createKestrelOneAgentResponse isolates transient title failures from the agent stream", async () => {
   let persistedTitle: string | null | undefined;
   const warnings: unknown[][] = [];
   const originalWarn = console.warn;
@@ -445,7 +444,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse isolates transient t
   }
 });
 
-contractTest("web.hermetic", "createKestrelOneAgentResponse preserves typed progress with final assistant text", async () => {
+test("createKestrelOneAgentResponse preserves typed progress with final assistant text", async () => {
   let persistedText = "";
   let persistedParts: ChatMessage["parts"] = [];
   const terminal = completedTerminal("Final answer", {
@@ -504,7 +503,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse preserves typed prog
   );
 });
 
-contractTest("web.hermetic", "createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field", async () => {
+test("createKestrelOneAgentResponse binds Project context to runner capabilities and the first-class turn field", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   const agent = fakeAgent({
     terminal: completedTerminal("Project answer", {
@@ -565,7 +564,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse binds Project contex
   });
 });
 
-contractTest("web.hermetic", "createKestrelOneAgentResponse surfaces failed runner output", async () => {
+test("createKestrelOneAgentResponse surfaces failed runner output", async () => {
   let persistedText = "";
   let persistedMeta:
     | {
@@ -628,7 +627,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse surfaces failed runn
   assert.equal(persistedMeta?.terminalStatus, "failed");
 });
 
-contractTest("web.hermetic", "createKestrelOneAgentResponse surfaces cancelled runner output once", async () => {
+test("createKestrelOneAgentResponse surfaces cancelled runner output once", async () => {
   let persistedText = "";
   const response = createKestrelOneAgentResponseFromAgent({
     request: new Request("http://example.test/api/chats/chat_123", {
@@ -666,7 +665,7 @@ contractTest("web.hermetic", "createKestrelOneAgentResponse surfaces cancelled r
   assert.equal(persistedText, "");
 });
 
-contractTest("web.hermetic", "createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives", async () => {
+test("createKestrelOneAgentResponse shows runner error fallback when no terminal text arrives", async () => {
   const terminal = completedTerminal(null, {
     message: "must not be displayed",
   });

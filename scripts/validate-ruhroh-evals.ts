@@ -358,10 +358,10 @@ async function validateReplacementTestEvidence(
     if (
       ts.isCallExpression(node) &&
       ts.isIdentifier(node.expression) &&
-      node.expression.text === "contractTest" &&
-      node.arguments[1] !== undefined &&
-      (ts.isStringLiteral(node.arguments[1]) || ts.isNoSubstitutionTemplateLiteral(node.arguments[1])) &&
-      node.arguments[1].text === evidence.testName
+      node.expression.text === "test" &&
+      node.arguments[0] !== undefined &&
+      (ts.isStringLiteral(node.arguments[0]) || ts.isNoSubstitutionTemplateLiteral(node.arguments[0])) &&
+      node.arguments[0].text === evidence.testName
     ) {
       found = true;
       return;

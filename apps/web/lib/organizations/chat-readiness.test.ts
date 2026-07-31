@@ -1,7 +1,7 @@
+import test from "node:test";
 import "../../scripts/register-server-only.mjs";
 
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   deriveOrganizationChatReadiness,
   type OrganizationChatReadinessInput,
@@ -47,7 +47,7 @@ function readyInput(
   };
 }
 
-contractTest("web.hermetic", "organization readiness uses the fixed next-step order", () => {
+test("organization readiness uses the fixed next-step order", () => {
   const missingEverything = deriveOrganizationChatReadiness(
     readyInput({ model: null, fly: null, environment: null })
   );
@@ -66,7 +66,7 @@ contractTest("web.hermetic", "organization readiness uses the fixed next-step or
   );
 });
 
-contractTest("web.hermetic", "model readiness requires a default model credential", () => {
+test("model readiness requires a default model credential", () => {
   const noCredential = deriveOrganizationChatReadiness(
     readyInput({
       model: { ...readyInput().model!, hasRequiredCredential: false },
@@ -76,7 +76,7 @@ contractTest("web.hermetic", "model readiness requires a default model credentia
   assert.equal(noCredential.ready, false);
 });
 
-contractTest("web.hermetic", "Fly readiness distinguishes untested and degraded credentials", () => {
+test("Fly readiness distinguishes untested and degraded credentials", () => {
   const missingCredential = deriveOrganizationChatReadiness(
     readyInput({
       fly: {
@@ -96,7 +96,7 @@ contractTest("web.hermetic", "Fly readiness distinguishes untested and degraded 
   assert.equal(degraded.workspaceCompute.status, "degraded");
 });
 
-contractTest("web.hermetic", "execution readiness reports rollout and terminal environment states", () => {
+test("execution readiness reports rollout and terminal environment states", () => {
   const deploymentDisabled = deriveOrganizationChatReadiness(
     readyInput({
       rollout: {
@@ -151,14 +151,14 @@ contractTest("web.hermetic", "execution readiness reports rollout and terminal e
   assert.equal(retrying.nextStep, "environment_execution");
 });
 
-contractTest("web.hermetic", "fully configured team organizations are ready", () => {
+test("fully configured team organizations are ready", () => {
   const readiness = deriveOrganizationChatReadiness(readyInput());
   assert.equal(readiness.applicable, true);
   assert.equal(readiness.ready, true);
   assert.equal(readiness.nextStep, null);
 });
 
-contractTest("web.hermetic", "personal organizations remain outside onboarding", () => {
+test("personal organizations remain outside onboarding", () => {
   const readiness = deriveOrganizationChatReadiness(
     readyInput({ personal: true, model: null, fly: null, environment: null })
   );

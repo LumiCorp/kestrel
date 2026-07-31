@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { buildMcpMutationInput, safeMcpEndpointDisplay } from "../renderer/src/McpWorkspace.js";
 import { filterRuntimeRunIndexEntries } from "../renderer/src/RuntimeRunsWorkspace.js";
 import type { DesktopRuntimeRunIndexEntry } from "../src/contracts.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("desktop.hermetic", "MCP endpoint display strips credentials, query parameters, and fragments", () => {
+test("MCP endpoint display strips credentials, query parameters, and fragments", () => {
   assert.equal(
     safeMcpEndpointDisplay(
       "https://user:secret@example.test/mcp?token=sensitive#private"
@@ -14,14 +14,14 @@ contractTest("desktop.hermetic", "MCP endpoint display strips credentials, query
   );
 });
 
-contractTest("desktop.hermetic", "MCP endpoint display does not echo malformed endpoint input", () => {
+test("MCP endpoint display does not echo malformed endpoint input", () => {
   assert.equal(
     safeMcpEndpointDisplay("token=sensitive"),
     "Configured endpoint"
   );
 });
 
-contractTest("desktop.hermetic", "MCP runtime mutations preserve credential references without leaking renderer-only status", () => {
+test("MCP runtime mutations preserve credential references without leaking renderer-only status", () => {
   const input = buildMcpMutationInput({
     id: "company",
     name: "Company tools",
@@ -50,7 +50,7 @@ contractTest("desktop.hermetic", "MCP runtime mutations preserve credential refe
   assert.equal(input.enabled, false);
 });
 
-contractTest("desktop.hermetic", "runtime run index search covers run, session, thread, and diagnosis fields", () => {
+test("runtime run index search covers run, session, thread, and diagnosis fields", () => {
   const runs: DesktopRuntimeRunIndexEntry[] = [{
     run: {
       runId: "run-public-cutover",

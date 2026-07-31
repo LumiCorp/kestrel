@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { HarnessEconomicsPolicyV1 } from "../../src/economics/contracts.js";
 import { InMemoryOrchestrationStore } from "../../src/orchestration/InMemoryOrchestrationStore.js";
 import { PostgresOrchestrationStore } from "../../src/orchestration/PostgresOrchestrationStore.js";
 import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "context policy store preserves economics policy by immutable id", async () => {
+test("context policy store preserves economics policy by immutable id", async () => {
   const store = new InMemoryOrchestrationStore();
   const base = contextPolicy(economicsPolicy(64));
   await store.upsertContextPolicyDefinition(base);
@@ -27,7 +27,7 @@ contractTest("runtime.hermetic", "context policy store preserves economics polic
   );
 });
 
-contractTest("runtime.hermetic", "postgres context policy writes and reads the explicit economics column", async () => {
+test("postgres context policy writes and reads the explicit economics column", async () => {
   const policy = economicsPolicy(64);
   const sql = new ScriptedSqlExecutor([
     {
@@ -59,7 +59,7 @@ contractTest("runtime.hermetic", "postgres context policy writes and reads the e
   sql.assertExhausted();
 });
 
-contractTest("runtime.hermetic", "postgres context policy rejects an immutable policy conflict", async () => {
+test("postgres context policy rejects an immutable policy conflict", async () => {
   const policy = economicsPolicy(64);
   const sql = new ScriptedSqlExecutor([
     {

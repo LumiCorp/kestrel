@@ -1,19 +1,19 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   digestCanonicalJson,
   planMcpCapabilitySnapshot,
 } from "./capability-snapshot";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "capability snapshot digests are independent of object key order", () => {
+test("capability snapshot digests are independent of object key order", () => {
   assert.equal(
     digestCanonicalJson({ b: 2, a: { d: 4, c: 3 } }),
     digestCanonicalJson({ a: { c: 3, d: 4 }, b: 2 })
   );
 });
 
-contractTest("web.hermetic", "new and changed MCP capabilities default disabled and deny", () => {
+test("new and changed MCP capabilities default disabled and deny", () => {
   const plan = planMcpCapabilitySnapshot({
     protocolVersion: "2025-11-25",
     discovered: [
@@ -73,7 +73,7 @@ contractTest("web.hermetic", "new and changed MCP capabilities default disabled 
   );
 });
 
-contractTest("web.hermetic", "exactly unchanged capabilities retain reviewed Environment policy", () => {
+test("exactly unchanged capabilities retain reviewed Environment policy", () => {
   const definition = { inputSchema: { type: "object" } };
   const plan = planMcpCapabilitySnapshot({
     protocolVersion: "2025-11-25",
@@ -110,7 +110,7 @@ contractTest("web.hermetic", "exactly unchanged capabilities retain reviewed Env
   });
 });
 
-contractTest("web.hermetic", "tool projection is mandatory only for tools", () => {
+test("tool projection is mandatory only for tools", () => {
   assert.throws(
     () =>
       planMcpCapabilitySnapshot({

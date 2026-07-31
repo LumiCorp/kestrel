@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   isInlineRenderableMediaType,
   isKnowledgeDocumentMediaTypeSupported,
   normalizeMediaType,
 } from "./shared";
-import { contractTest } from "../../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "normalizeMediaType recognizes the expanded document matrix", () => {
+test("normalizeMediaType recognizes the expanded document matrix", () => {
   assert.equal(normalizeMediaType("", "notes.yaml"), "application/yaml");
   assert.equal(normalizeMediaType("", "index.html"), "text/html");
   assert.equal(
@@ -20,7 +20,7 @@ contractTest("web.hermetic", "normalizeMediaType recognizes the expanded documen
   );
 });
 
-contractTest("web.hermetic", "knowledge document support and inline rendering match the intended formats", () => {
+test("knowledge document support and inline rendering match the intended formats", () => {
   assert.equal(
     isKnowledgeDocumentMediaTypeSupported("application/yaml", "notes.yaml"),
     true

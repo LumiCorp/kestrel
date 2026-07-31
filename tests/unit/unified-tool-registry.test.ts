@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir as fsMkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -24,7 +25,6 @@ import {
   UnifiedToolRegistry,
 } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { isAgentToolResult } from "../../tools/toolResult.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 class MockMcpProvider implements McpToolProvider {
@@ -273,7 +273,7 @@ async function assertToolInputInvalid(
   assert.deepEqual(details?.invalidValues, expected.invalidValues);
 }
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry includes allowlisted MCP tools in model specs and capability manifest", async () => {
+test("UnifiedToolRegistry includes allowlisted MCP tools in model specs and capability manifest", async () => {
   const mcp = new MockMcpProvider({
     healthy: true,
     checkedAt: new Date().toISOString(),
@@ -341,7 +341,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry includes allowlisted MCP t
   assert.equal(mcp.calls.length, 1);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry blocks non-allowlisted MCP tools", async () => {
+test("UnifiedToolRegistry blocks non-allowlisted MCP tools", async () => {
   const mcp = new MockMcpProvider({
     healthy: true,
     checkedAt: new Date().toISOString(),
@@ -377,7 +377,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry blocks non-allowlisted MCP
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry hides MCP tools without explicit presentation metadata", async () => {
+test("UnifiedToolRegistry hides MCP tools without explicit presentation metadata", async () => {
   const mcp = new MockMcpProvider({
     healthy: true,
     checkedAt: new Date().toISOString(),
@@ -411,7 +411,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry hides MCP tools without ex
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry exposes Playwright MCP tools only through explicit metadata", async () => {
+test("UnifiedToolRegistry exposes Playwright MCP tools only through explicit metadata", async () => {
   const mcp = new MockMcpProvider({
     healthy: true,
     checkedAt: new Date().toISOString(),
@@ -480,7 +480,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry exposes Playwright MCP too
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry exposes tool-runtime lifecycle hooks", async () => {
+test("UnifiedToolRegistry exposes tool-runtime lifecycle hooks", async () => {
   const mcp = new MockMcpProvider({
     healthy: true,
     checkedAt: new Date().toISOString(),
@@ -519,7 +519,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry exposes tool-runtime lifec
   assert.equal(mcp.refreshCalls, 2);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry does not advertise internet domain filters to the model", async () => {
+test("UnifiedToolRegistry does not advertise internet domain filters to the model", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.news", "internet.search"],
     mcpManager: new MockMcpProvider({
@@ -547,7 +547,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry does not advertise interne
   }
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry turns Project App ask policy into a runtime approval gate", () => {
+test("UnifiedToolRegistry turns Project App ask policy into a runtime approval gate", () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search", "internet.crawl"],
     context: {
@@ -573,7 +573,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry turns Project App ask poli
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry routes a direct Environment App through scoped execution authorization", async () => {
+test("UnifiedToolRegistry routes a direct Environment App through scoped execution authorization", async () => {
   let requestUrl = "";
   let authorization = "";
   const registry = new UnifiedToolRegistry({
@@ -628,7 +628,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry routes a direct Environmen
 
 // Regression guard: production has two real IDs here. Keeping them different
 // is intentional; making them equal recreates the test gap that hid the bug.
-contractTest("runtime.hermetic", "UnifiedToolRegistry preserves execution authorization when the engine assigns a different run id", async () => {
+test("UnifiedToolRegistry preserves execution authorization when the engine assigns a different run id", async () => {
   let authorization = "";
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.usage"],
@@ -680,7 +680,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry preserves execution author
 
 // Regression guard: the session bridge is valid only for one active ticket.
 // Never weaken this to pick the first or most recent authorization.
-contractTest("runtime.hermetic", "UnifiedToolRegistry fails closed when a session has overlapping execution authorizations", async () => {
+test("UnifiedToolRegistry fails closed when a session has overlapping execution authorizations", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.usage"],
     context: {
@@ -732,7 +732,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry fails closed when a sessio
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects unadvertised internet.news domain filters before provider calls", async () => {
+test("UnifiedToolRegistry rejects unadvertised internet.news domain filters before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.news"],
@@ -761,7 +761,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects unadvertised inter
   assert.deepEqual(internetProvider.newsCalls, []);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects the first unadvertised internet.search field before provider calls", async () => {
+test("UnifiedToolRegistry rejects the first unadvertised internet.search field before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search"],
@@ -790,7 +790,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects the first unadvert
   assert.deepEqual(internetProvider.searchCalls, []);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects invalid internet.search_advanced domains before provider calls", async () => {
+test("UnifiedToolRegistry rejects invalid internet.search_advanced domains before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search_advanced"],
@@ -819,7 +819,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects invalid internet.s
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects invalid internet.search_advanced country before provider calls", async () => {
+test("UnifiedToolRegistry rejects invalid internet.search_advanced country before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search_advanced"],
@@ -842,14 +842,13 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects invalid internet.s
       }),
     {
       field: "country",
-      expected: "one of Tavily's supported lowercase country names",
       invalidValues: ["United States"],
     }
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry strips internet.search_advanced country outside general topic", async () => {
+test("UnifiedToolRegistry strips internet.search_advanced country outside general topic", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search_advanced"],
@@ -879,7 +878,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry strips internet.search_adv
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry strips internet.search_advanced freshness and days when explicit dates are present", async () => {
+test("UnifiedToolRegistry strips internet.search_advanced freshness and days when explicit dates are present", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search_advanced"],
@@ -910,7 +909,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry strips internet.search_adv
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects invalid internet.search_advanced explicit dates before provider calls", async () => {
+test("UnifiedToolRegistry rejects invalid internet.search_advanced explicit dates before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search_advanced"],
@@ -939,7 +938,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects invalid internet.s
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects internet.search_advanced explicit date ranges with the same start and end day before provider calls", async () => {
+test("UnifiedToolRegistry rejects internet.search_advanced explicit date ranges with the same start and end day before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search_advanced"],
@@ -969,7 +968,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects internet.search_ad
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects internet.search_advanced exactMatch queries without a quoted phrase before provider calls", async () => {
+test("UnifiedToolRegistry rejects internet.search_advanced exactMatch queries without a quoted phrase before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search_advanced"],
@@ -999,7 +998,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects internet.search_ad
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry strips Tavily-conditional internet.search_advanced fields without prerequisites", async () => {
+test("UnifiedToolRegistry strips Tavily-conditional internet.search_advanced fields without prerequisites", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search_advanced"],
@@ -1030,7 +1029,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry strips Tavily-conditional 
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry strips extract and crawl chunksPerSource without Tavily prerequisites", async () => {
+test("UnifiedToolRegistry strips extract and crawl chunksPerSource without Tavily prerequisites", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.extract", "internet.crawl"],
@@ -1066,7 +1065,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry strips extract and crawl c
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry passes valid internet.search_advanced domains to provider", async () => {
+test("UnifiedToolRegistry passes valid internet.search_advanced domains to provider", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.search_advanced"],
@@ -1097,7 +1096,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry passes valid internet.sear
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects invalid built-in internet URLs before provider calls", async () => {
+test("UnifiedToolRegistry rejects invalid built-in internet URLs before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.extract"],
@@ -1134,7 +1133,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects invalid built-in i
   assert.equal(internetProvider.extractCalls.length, 0);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects local built-in internet URLs before provider calls", async () => {
+test("UnifiedToolRegistry rejects local built-in internet URLs before provider calls", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.extract", "internet.crawl", "internet.map"],
@@ -1186,7 +1185,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects local built-in int
   assert.equal(internetProvider.mapCalls.length, 0);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry reports built-in schema bound failures as recoverable tool input errors", async () => {
+test("UnifiedToolRegistry reports built-in schema bound failures as recoverable tool input errors", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.extract"],
@@ -1215,7 +1214,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry reports built-in schema bo
   assert.equal(internetProvider.extractCalls.length, 0);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry accepts valid built-in internet URLs", async () => {
+test("UnifiedToolRegistry accepts valid built-in internet URLs", async () => {
   const internetProvider = new MockInternetProvider();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.extract"],
@@ -1248,7 +1247,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry accepts valid built-in int
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry applies only advertised schemas to MCP tools", async () => {
+test("UnifiedToolRegistry applies only advertised schemas to MCP tools", async () => {
   const mcp = new MockMcpProvider({
     healthy: true,
     checkedAt: new Date().toISOString(),
@@ -1300,7 +1299,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry applies only advertised sc
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry preserves MCP schema failure codes for dynamic tools", async () => {
+test("UnifiedToolRegistry preserves MCP schema failure codes for dynamic tools", async () => {
   const mcp = new MockMcpProvider({
     healthy: true,
     checkedAt: new Date().toISOString(),
@@ -1355,7 +1354,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry preserves MCP schema failu
   assert.equal(mcp.calls.length, 0);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry reports the first nested unsupported MCP field", async () => {
+test("UnifiedToolRegistry reports the first nested unsupported MCP field", async () => {
   const mcp = new MockMcpProvider({
     healthy: true,
     checkedAt: new Date().toISOString(),
@@ -1425,7 +1424,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry reports the first nested u
   assert.equal(mcp.calls.length, 0);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry preRun does not fail on unhealthy optional MCP servers", async () => {
+test("UnifiedToolRegistry preRun does not fail on unhealthy optional MCP servers", async () => {
   const mcp = new MockMcpProvider({
     healthy: false,
     checkedAt: new Date().toISOString(),
@@ -1473,7 +1472,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry preRun does not fail on un
   assert.equal(mcp.assertHealthyCalls, 0);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry hides code.execute when profile code-mode is disabled", async () => {
+test("UnifiedToolRegistry hides code.execute when profile code-mode is disabled", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["code.execute"],
     context: {
@@ -1515,7 +1514,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry hides code.execute when pr
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry carries cancellation into code.execute", async () => {
+test("UnifiedToolRegistry carries cancellation into code.execute", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["code.execute"],
     context: {
@@ -1560,7 +1559,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry carries cancellation into 
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry gates dev.shell tools by devShell profile config", async () => {
+test("UnifiedToolRegistry gates dev.shell tools by devShell profile config", async () => {
   const disabledRegistry = new UnifiedToolRegistry({
     allowlist: ["dev.shell.run"],
     context: {
@@ -1610,7 +1609,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry gates dev.shell tools by d
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry enables managed dev-shell mode from trusted agent session binding", async () => {
+test("UnifiedToolRegistry enables managed dev-shell mode from trusted agent session binding", async () => {
   const execInputs: Array<Record<string, unknown>> = [];
   const registry = new UnifiedToolRegistry({
     allowlist: ["dev.shell.run"],
@@ -1698,7 +1697,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry enables managed dev-shell 
   assert.equal(execInputs[1]?.sourceWriteAuthority, "source_write");
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry passes Build-mode dev-shell commands without package-manager preflight", async () => {
+test("UnifiedToolRegistry passes Build-mode dev-shell commands without package-manager preflight", async () => {
   const runInputs: Array<Record<string, unknown>> = [];
   const startInputs: Array<Record<string, unknown>> = [];
   const registry = new UnifiedToolRegistry({
@@ -1776,7 +1775,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry passes Build-mode dev-shel
   }
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects managed dev-shell mode when trusted binding does not match the session or workspace", async () => {
+test("UnifiedToolRegistry rejects managed dev-shell mode when trusted binding does not match the session or workspace", async () => {
   const execInputs: Array<Record<string, unknown>> = [];
   const registry = new UnifiedToolRegistry({
     allowlist: ["dev.shell.run"],
@@ -1858,7 +1857,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects managed dev-shell 
   assert.deepEqual(execInputs[1]?.sourceWriteGuard, { enabled: true });
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry does not grant direct source writes for explicit managed worktree contracts before binding", async () => {
+test("UnifiedToolRegistry does not grant direct source writes for explicit managed worktree contracts before binding", async () => {
   const execInputs: Array<Record<string, unknown>> = [];
   const registry = new UnifiedToolRegistry({
     allowlist: ["dev.shell.run"],
@@ -1916,7 +1915,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry does not grant direct sour
   });
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry carries source-write authority and write roots for default source workspaces", async () => {
+test("UnifiedToolRegistry carries source-write authority and write roots for default source workspaces", async () => {
   const execInputs: Array<Record<string, unknown>> = [];
   const registry = new UnifiedToolRegistry({
     allowlist: ["dev.shell.run"],
@@ -1976,7 +1975,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry carries source-write autho
   });
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry ignores descriptive workspace authority without an explicit source-workspace contract", async () => {
+test("UnifiedToolRegistry ignores descriptive workspace authority without an explicit source-workspace contract", async () => {
   const execInputs: Array<Record<string, unknown>> = [];
   const registry = new UnifiedToolRegistry({
     allowlist: ["dev.shell.run"],
@@ -2031,7 +2030,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry ignores descriptive worksp
   assert.deepEqual(execInputs[0]?.sourceWriteGuard, { enabled: true });
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry exposes allowlisted filesystem tools and can call them with default policy", async () => {
+test("UnifiedToolRegistry exposes allowlisted filesystem tools and can call them with default policy", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-unified-fs-"));
   const filePath = path.join(tempDir, "note.txt");
   await writeFile(filePath, "registry file", "utf8");
@@ -2075,7 +2074,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry exposes allowlisted filesy
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace inspection", async () => {
+test("UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace inspection", async () => {
   const tempDir = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-unified-repo-trace-")
   );
@@ -2144,7 +2143,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry exposes allowlisted repo.t
   assert.match(result.modelContext.text, /TRACE_TOKEN/u);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry rejects unsupported fields before normalization", async () => {
+test("UnifiedToolRegistry rejects unsupported fields before normalization", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["free.time.current"],
     mcpManager: new MockMcpProvider({
@@ -2170,7 +2169,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry rejects unsupported fields
   );
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry validates internet.research after canonicalizing advertised query input", async () => {
+test("UnifiedToolRegistry validates internet.research after canonicalizing advertised query input", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.research"],
     mcpManager: new MockMcpProvider({
@@ -2193,9 +2192,9 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry validates internet.researc
   });
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry validates evidence.extract after canonicalizing content aliases", async () => {
+test("UnifiedToolRegistry rejects legacy aliases and accepts canonical model input", async () => {
   const registry = new UnifiedToolRegistry({
-    allowlist: ["evidence.extract"],
+    allowlist: ["evidence.extract", "fs.read_text", "fs.copy"],
     mcpManager: new MockMcpProvider({
       healthy: true,
       checkedAt: new Date().toISOString(),
@@ -2206,10 +2205,41 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry validates evidence.extract
 
   await registry.refresh();
 
+  for (const [name, input] of [
+    ["evidence.extract", { content: "legacy", source: "report", limit: 2 }],
+    ["fs.read_text", { filePath: "README.md" }],
+    ["fs.read_text", { targetPath: "README.md" }],
+    ["fs.copy", { from: "a.txt", to: "b.txt" }],
+  ] as const) {
+    await assert.rejects(
+      () => registry.validateInput(name, input),
+      (error: unknown) => {
+        assert.equal(error instanceof RuntimeFailure, true);
+        const failure = error as RuntimeFailure;
+        assert.equal(failure.code, "TOOL_INPUT_INVALID");
+        assert.equal(
+          (failure.details?.validationErrors as Array<{ keyword?: string }> | undefined)
+            ?.some((item) => item.keyword === "additionalProperties"),
+          true,
+        );
+        return true;
+      },
+    );
+  }
+
+  await assert.rejects(
+    () => registry.validateInput("fs.read_text", { path: "README.md", maxBytes: "2" }),
+    (error: unknown) => {
+      assert.equal(error instanceof RuntimeFailure, true);
+      assert.equal((error as RuntimeFailure).code, "TOOL_INPUT_INVALID");
+      return true;
+    },
+  );
+
   const normalized = await registry.validateInput("evidence.extract", {
-    content: "Deterministic validation reduced approval rework by 18 percent.",
-    source: "benchmark-1",
-    limit: "2",
+    text: "Deterministic validation reduced approval rework by 18 percent.",
+    sourceId: "benchmark-1",
+    maxItems: 2,
   });
 
   assert.deepEqual(normalized, {
@@ -2219,7 +2249,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry validates evidence.extract
   });
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry scopes allowlists per run context", async () => {
+test("UnifiedToolRegistry scopes allowlists per run context", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["fs.read_text", "mcp.remote.lookup"],
     mcpManager: new MockMcpProvider({
@@ -2273,7 +2303,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry scopes allowlists per run 
   assert.deepEqual(mcpOnly, ["mcp.remote.lookup"]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry preserves runtime built-ins when pruning unavailable tools", async () => {
+test("UnifiedToolRegistry preserves runtime built-ins when pruning unavailable tools", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: [
       "internet.search",
@@ -2309,7 +2339,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry preserves runtime built-in
   ]);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn tools", async () => {
+test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn tools", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["dialog.open", "dialog.send", "dialog.close", "agent.spawn", "delegate.spawn_child"],
     context: {
@@ -2330,7 +2360,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry exposes persistent dialog 
   );
 });
 
-contractTest("runtime.hermetic", "Kestrel-One profile exposes only model-visible collaborator dialogs", async () => {
+test("Kestrel-One profile exposes only model-visible collaborator dialogs", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dialog-profile-registry-"));
   const store = new ProfileStore(tempDir);
   const profile = store.findById(await store.load(), "kestrel-one");
@@ -2359,7 +2389,7 @@ contractTest("runtime.hermetic", "Kestrel-One profile exposes only model-visible
   );
 });
 
-contractTest("runtime.hermetic", "every canonical Kestrel One environment exposes dialogs without legacy delegation tools", async () => {
+test("every canonical Kestrel One environment exposes dialogs without legacy delegation tools", async () => {
   for (const environmentPresetId of [
     "cli_safe_local",
     "cli_dev_local",
@@ -2400,7 +2430,7 @@ contractTest("runtime.hermetic", "every canonical Kestrel One environment expose
   }
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry blocks all legacy spawn tools even when allowlisted", async () => {
+test("UnifiedToolRegistry blocks all legacy spawn tools even when allowlisted", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: [
       "agent.spawn",
@@ -2445,7 +2475,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry blocks all legacy spawn to
   );
 });
 
-contractTest("runtime.hermetic", "dialog.open validates its minimal name and message contract", async () => {
+test("dialog.open validates its minimal name and message contract", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["dialog.open"],
     context: {
@@ -2481,7 +2511,7 @@ contractTest("runtime.hermetic", "dialog.open validates its minimal name and mes
   );
 });
 
-contractTest("runtime.hermetic", "dialog.open uses active thread identity and forbids nested dialogs", async () => {
+test("dialog.open uses active thread identity and forbids nested dialogs", async () => {
   const requests: unknown[] = [];
   const now = new Date().toISOString();
   const registry = new UnifiedToolRegistry({
@@ -2555,7 +2585,7 @@ contractTest("runtime.hermetic", "dialog.open uses active thread identity and fo
   assert.match(String((nested.auditRecord.error as { message?: string } | undefined)?.message), /Only Kestrel can open collaborator dialogs/);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry scopes filesystem root per workspace payload", async () => {
+test("UnifiedToolRegistry scopes filesystem root per workspace payload", async () => {
   const baseDir = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-unified-workspace-fs-")
   );
@@ -2641,7 +2671,7 @@ contractTest("runtime.hermetic", "UnifiedToolRegistry scopes filesystem root per
   }, /outside allowed roots/i);
 });
 
-contractTest("runtime.hermetic", "UnifiedToolRegistry records exact provenance when an installed SKILL.md is fully loaded", async () => {
+test("UnifiedToolRegistry records exact provenance when an installed SKILL.md is fully loaded", async () => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-unified-skill-read-"));
   const commitSha = "a".repeat(40);
   const skillFile = `.kestrel/skills/review/revisions/${commitSha}/SKILL.md`;

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { KESTREL_APP_IDS } from "@kestrel-agents/protocol";
 import {
@@ -9,7 +10,6 @@ import type {
   ProjectAppConfiguration,
   ProjectAppConnection,
 } from "./project-service";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 function connection(
@@ -74,7 +74,7 @@ function appConfiguration(input: {
   };
 }
 
-contractTest("web.hermetic", "hybrid App resolution chooses the actor personal default first", () => {
+test("hybrid App resolution chooses the actor personal default first", () => {
   const shared = connection({ id: "shared", scope: "shared" });
   const personal = connection({ id: "personal", scope: "personal" });
   assert.equal(
@@ -86,7 +86,7 @@ contractTest("web.hermetic", "hybrid App resolution chooses the actor personal d
   );
 });
 
-contractTest("web.hermetic", "hybrid App resolution falls back to the Project shared default", () => {
+test("hybrid App resolution falls back to the Project shared default", () => {
   const personal = connection({
     id: "personal",
     scope: "personal",
@@ -102,7 +102,7 @@ contractTest("web.hermetic", "hybrid App resolution falls back to the Project sh
   );
 });
 
-contractTest("web.hermetic", "optional Environment Apps may resolve without a connection", () => {
+test("optional Environment Apps may resolve without a connection", () => {
   assert.equal(
     selectEffectiveConnection({
       connectionModel: "environment",
@@ -112,7 +112,7 @@ contractTest("web.hermetic", "optional Environment Apps may resolve without a co
   );
 });
 
-contractTest("web.hermetic", "a degraded default remains executable when no healthy connection is available", () => {
+test("a degraded default remains executable when no healthy connection is available", () => {
   const degraded = connection({
     id: "degraded-shared",
     scope: "shared",
@@ -127,7 +127,7 @@ contractTest("web.hermetic", "a degraded default remains executable when no heal
   );
 });
 
-contractTest("web.hermetic", "workflow readiness requires every dependency role without widening App access", () => {
+test("workflow readiness requires every dependency role without widening App access", () => {
   const configurations = addProjectAppDependencyStatuses([
     appConfiguration({
       appKey: KESTREL_APP_IDS.SOFTWARE_DELIVERY,
@@ -161,7 +161,7 @@ contractTest("web.hermetic", "workflow readiness requires every dependency role 
   assert.match(context ?? "", /do not grant additional access/iu);
 });
 
-contractTest("web.hermetic", "workflow context is absent when a required App role is missing", () => {
+test("workflow context is absent when a required App role is missing", () => {
   const configurations = addProjectAppDependencyStatuses([
     appConfiguration({
       appKey: KESTREL_APP_IDS.SOFTWARE_DELIVERY,
@@ -179,7 +179,7 @@ contractTest("web.hermetic", "workflow context is absent when a required App rol
   assert.equal(formatActiveProjectWorkflowContext(configurations), null);
 });
 
-contractTest("web.hermetic", "workflow readiness requires the capability pack that fulfills each App role", () => {
+test("workflow readiness requires the capability pack that fulfills each App role", () => {
   const configurations = addProjectAppDependencyStatuses([
     appConfiguration({ appKey: KESTREL_APP_IDS.SOFTWARE_DELIVERY, name: "Software delivery", executable: false }),
     appConfiguration({ appKey: KESTREL_APP_IDS.GITHUB, name: "GitHub", groupKey: "repositories" }),

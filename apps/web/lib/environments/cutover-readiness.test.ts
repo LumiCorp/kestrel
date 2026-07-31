@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
@@ -5,10 +6,9 @@ import {
   evaluateHostedEnvironmentSchemaReadiness,
   type HostedEnvironmentCutoverSnapshot,
 } from "./cutover-readiness";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "hosted preparation requires every Environment and GitHub migration relation", () => {
+test("hosted preparation requires every Environment and GitHub migration relation", () => {
   assert.deepEqual(evaluateHostedEnvironmentSchemaReadiness([]), {
     ready: true,
     missingRelations: [],
@@ -27,7 +27,7 @@ contractTest("web.hermetic", "hosted preparation requires every Environment and 
     }
   );
 });
-contractTest("web.hermetic", "hosted preparation requires the trusted preview gateway schema", async () => {
+test("hosted preparation requires the trusted preview gateway schema", async () => {
   const source = await readFile(
     new URL("./cutover-readiness.ts", import.meta.url),
     "utf8"
@@ -61,7 +61,7 @@ function validSnapshot(
   };
 }
 
-contractTest("web.hermetic", "cutover readiness permits historical Threads to remain lazily unbound", () => {
+test("cutover readiness permits historical Threads to remain lazily unbound", () => {
   assert.deepEqual(evaluateHostedEnvironmentCutoverReadiness(validSnapshot()), {
     ready: true,
     blockers: [],
@@ -69,7 +69,7 @@ contractTest("web.hermetic", "cutover readiness permits historical Threads to re
   });
 });
 
-contractTest("web.hermetic", "cutover readiness fails closed on missing defaults and relational drift", () => {
+test("cutover readiness fails closed on missing defaults and relational drift", () => {
   const result = evaluateHostedEnvironmentCutoverReadiness(
     validSnapshot({
       enabledOrganizationWithoutReadyDefaultCount: 2,
@@ -86,7 +86,7 @@ contractTest("web.hermetic", "cutover readiness fails closed on missing defaults
   assert.match(result.blockers[3] ?? "", /4 Environment execution record/u);
 });
 
-contractTest("web.hermetic", "cutover readiness requires an enabled organization and a quiet execution boundary", () => {
+test("cutover readiness requires an enabled organization and a quiet execution boundary", () => {
   const result = evaluateHostedEnvironmentCutoverReadiness(
     validSnapshot({
       enabledOrganizationCount: 0,

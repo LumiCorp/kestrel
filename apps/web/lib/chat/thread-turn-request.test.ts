@@ -1,10 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type { UIMessage } from "ai";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import { buildThreadTurnRequestBody } from "./thread-turn-request";
 
-contractTest(
-  "web.hermetic",
+test(
   "Thread turn submissions exclude oversized durable assistant history",
   () => {
     const historicalAssistant: UIMessage = {
@@ -39,8 +38,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Thread turn submissions encode approvals without assistant activity history",
   () => {
     const approvalResponse = {
@@ -89,8 +87,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Thread turn request authority cannot be overridden by caller body fields",
   () => {
     const currentUserMessage: UIMessage = {
@@ -121,8 +118,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Runtime interaction responses exclude incidental UI messages",
   () => {
     const body = buildThreadTurnRequestBody({

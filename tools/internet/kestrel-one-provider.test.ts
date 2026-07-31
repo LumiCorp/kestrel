@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { createKestrelOneTavilyProvider } from "./kestrel-one-provider.js";
-import { contractTest } from "../../tests/helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Kestrel One Tavily proxy uses an execution ticket instead of provider credentials", async () => {
+test("Kestrel One Tavily proxy uses an execution ticket instead of provider credentials", async () => {
   let requestUrl = "";
   let authorization = "";
   const provider = createKestrelOneTavilyProvider({

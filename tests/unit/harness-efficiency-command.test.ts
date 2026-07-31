@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -14,9 +15,8 @@ import {
   parseExperimentSpec,
   validatePlanLaneProfiles,
 } from "../../scripts/harness-efficiency.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "efficiency plan validates strict profiles and balances pair order", () => {
+test("efficiency plan validates strict profiles and balances pair order", () => {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-efficiency-plan-"));
   try {
     const baselineFile = path.join(temporary, "baseline.json");
@@ -46,7 +46,7 @@ contractTest("runtime.hermetic", "efficiency plan validates strict profiles and 
   }
 });
 
-contractTest("runtime.hermetic", "efficiency attempts derive model identity from the selected profile", () => {
+test("efficiency attempts derive model identity from the selected profile", () => {
   const selectedProfile = {
     ...profile("observe"),
     modelProvider: "openrouter",
@@ -63,7 +63,7 @@ contractTest("runtime.hermetic", "efficiency attempts derive model identity from
   assert.equal(environment.KESTREL_BENCHMARK_MODEL, "z-ai/glm-5.2");
 });
 
-contractTest("runtime.hermetic", "efficiency attempt identities isolate experiments and variants", () => {
+test("efficiency attempt identities isolate experiments and variants", () => {
   const baseline = buildHarnessEfficiencyAttemptId({
     specHash: "spec-a",
     variant: "baseline",
@@ -90,13 +90,13 @@ contractTest("runtime.hermetic", "efficiency attempt identities isolate experime
   }));
 });
 
-contractTest("runtime.hermetic", "efficiency comparison reads only collector-owned result artifacts", () => {
+test("efficiency comparison reads only collector-owned result artifacts", () => {
   assert.equal(isCollectedEfficiencyResultPath("/results/baseline/pair/result-1.json"), true);
   assert.equal(isCollectedEfficiencyResultPath("/results/baseline/raw/harness-efficiency-result.json"), false);
   assert.equal(isCollectedEfficiencyResultPath("/results/baseline/jobs/result.v2.json"), false);
 });
 
-contractTest("runtime.hermetic", "efficiency spec rejects unknown fields", () => {
+test("efficiency spec rejects unknown fields", () => {
   assert.throws(() => parseExperimentSpec({
     version: 1,
     experiment: "efficiency_ab",
@@ -109,13 +109,13 @@ contractTest("runtime.hermetic", "efficiency spec rejects unknown fields", () =>
   }), /unknown field 'promotionPolicy'/u);
 });
 
-contractTest("runtime.hermetic", "efficiency command accepts the documented pnpm separator", () => {
+test("efficiency command accepts the documented pnpm separator", () => {
   const direct = parseHarnessEfficiencyCommand(["plan", "--spec", "experiment.json"]);
   const separated = parseHarnessEfficiencyCommand(["--", "plan", "--spec", "experiment.json"]);
   assert.deepEqual(separated, direct);
 });
 
-contractTest("runtime.hermetic", "efficiency plan validates every variant with each lane-owned profile contract", () => {
+test("efficiency plan validates every variant with each lane-owned profile contract", () => {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-efficiency-validation-"));
   try {
     const baselineFile = path.join(temporary, "baseline.json");
@@ -166,7 +166,7 @@ contractTest("runtime.hermetic", "efficiency plan validates every variant with e
   }
 });
 
-contractTest("runtime.hermetic", "measurement A/A requires identical source and normalized profiles", () => {
+test("measurement A/A requires identical source and normalized profiles", () => {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-measurement-aa-"));
   try {
     const baselineFile = path.join(temporary, "baseline.json");
@@ -191,7 +191,7 @@ contractTest("runtime.hermetic", "measurement A/A requires identical source and 
   }
 });
 
-contractTest("runtime.hermetic", "efficiency result discovery includes the external variant output root", () => {
+test("efficiency result discovery includes the external variant output root", () => {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-efficiency-results-"));
   try {
     const sourceRoot = path.join(temporary, "source");

@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   RunPodControlPlaneClient,
   RunPodControlPlaneError,
 } from "./runpod-control-plane";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "control-plane client creates private serverless resources with bearer auth", async () => {
+test("control-plane client creates private serverless resources with bearer auth", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const client = new RunPodControlPlaneClient({
     apiKey: "runpod-secret",
@@ -82,7 +82,7 @@ contractTest("web.hermetic", "control-plane client creates private serverless re
   assert.deepEqual(endpointBody.gpuTypeIds, ["NVIDIA L40S"]);
 });
 
-contractTest("web.hermetic", "control-plane deletion is idempotent when a resource is already absent", async () => {
+test("control-plane deletion is idempotent when a resource is already absent", async () => {
   const client = new RunPodControlPlaneClient({
     apiKey: "runpod-secret",
     fetchImpl: async () => new Response(null, { status: 404 }),
@@ -91,7 +91,7 @@ contractTest("web.hermetic", "control-plane deletion is idempotent when a resour
   await assert.doesNotReject(client.deleteTemplate("missing-template"));
 });
 
-contractTest("web.hermetic", "control-plane errors expose stable retry policy without response secrets", async () => {
+test("control-plane errors expose stable retry policy without response secrets", async () => {
   const client = new RunPodControlPlaneClient({
     apiKey: "runpod-secret",
     fetchImpl: async () =>
@@ -109,7 +109,7 @@ contractTest("web.hermetic", "control-plane errors expose stable retry policy wi
   });
 });
 
-contractTest("web.hermetic", "control-plane billing requests use hourly endpoint attribution", async () => {
+test("control-plane billing requests use hourly endpoint attribution", async () => {
   let requestedUrl = "";
   const client = new RunPodControlPlaneClient({
     apiKey: "runpod-secret",
@@ -136,7 +136,7 @@ contractTest("web.hermetic", "control-plane billing requests use hourly endpoint
   assert.equal(rows[0]?.endpointId, "endpoint-1");
 });
 
-contractTest("web.hermetic", "control-plane billing normalizes RunPod's timezone-free UTC buckets", async () => {
+test("control-plane billing normalizes RunPod's timezone-free UTC buckets", async () => {
   const client = new RunPodControlPlaneClient({
     apiKey: "runpod-secret",
     fetchImpl: async () =>

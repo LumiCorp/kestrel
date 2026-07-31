@@ -1,13 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { encryptGatewayCredential } from "./gateway-credential-crypto";
 import {
   getGatewayCredentialAuthorityHealth,
   getGatewayCredentialStorageHealth,
 } from "./gateway-credential-readiness";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "web.hermetic",
+test(
   "gateway credential authority readiness requires encryption configuration",
   () => {
     assert.deepEqual(
@@ -30,8 +29,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "gateway credential storage readiness proves the encrypted-only cutover",
   () => {
     const env: NodeJS.ProcessEnv = {

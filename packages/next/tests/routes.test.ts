@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -8,10 +9,9 @@ import {
   createWebhookRunRouteHandler,
   readRequestCorrelation,
 } from "../src/index.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("packages.hermetic", "createJsonRunRouteHandler runs the agent and propagates correlation headers", async () => {
+test("createJsonRunRouteHandler runs the agent and propagates correlation headers", async () => {
   const seen: Array<{ input: KestrelAgentTurnInput; context: KestrelRequestContext }> = [];
   const handler = createJsonRunRouteHandler({
     agent: createFakeAgent(seen),
@@ -44,7 +44,7 @@ contractTest("packages.hermetic", "createJsonRunRouteHandler runs the agent and 
   assert.equal(seen[0]?.input.sessionId, "session-1");
 });
 
-contractTest("packages.hermetic", "createStreamRunRouteHandler emits SSE events", async () => {
+test("createStreamRunRouteHandler emits SSE events", async () => {
   const seen: Array<{ input: KestrelAgentTurnInput; context: KestrelRequestContext }> = [];
   const handler = createStreamRunRouteHandler({
     agent: createFakeAgent(seen),
@@ -75,7 +75,7 @@ contractTest("packages.hermetic", "createStreamRunRouteHandler emits SSE events"
   assert.match(text, /event: run.completed/);
 });
 
-contractTest("packages.hermetic", "createWebhookRunRouteHandler maps webhook payloads into agent inputs", async () => {
+test("createWebhookRunRouteHandler maps webhook payloads into agent inputs", async () => {
   const seen: Array<{ input: KestrelAgentTurnInput; context: KestrelRequestContext }> = [];
   const handler = createWebhookRunRouteHandler<{ session: string; prompt: string }>({
     agent: createFakeAgent(seen),
@@ -112,7 +112,7 @@ contractTest("packages.hermetic", "createWebhookRunRouteHandler maps webhook pay
   assert.equal(seen[0]?.input.sessionId, "session-3");
 });
 
-contractTest("packages.hermetic", "createStreamRunRouteHandler tolerates client cancellation before the first event arrives", async () => {
+test("createStreamRunRouteHandler tolerates client cancellation before the first event arrives", async () => {
   let cancelCalled = false;
   let releaseCancelled: (() => void) | undefined;
   const cancelled = new Promise<void>((resolve) => {
@@ -183,7 +183,7 @@ contractTest("packages.hermetic", "createStreamRunRouteHandler tolerates client 
   assert.equal(cancelCalled, true);
 });
 
-contractTest("packages.hermetic", "readRequestCorrelation falls back to a generated request id", () => {
+test("readRequestCorrelation falls back to a generated request id", () => {
   const correlation = readRequestCorrelation(new Request("http://localhost"));
   assert.ok(correlation.requestId.length > 0);
   assert.equal(correlation.correlationId, correlation.requestId);

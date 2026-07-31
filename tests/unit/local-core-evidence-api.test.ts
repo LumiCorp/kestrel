@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
@@ -8,10 +9,9 @@ import {
   startLocalCoreApiServer,
 } from "../../src/localCore/index.js";
 import { ensureLocalCoreStore } from "../../src/localCore/store.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Local Core owns replay, doctor, and bundle reads from its canonical runtime store", async () => {
+test("Local Core owns replay, doctor, and bundle reads from its canonical runtime store", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcev-"));
   const server = await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },

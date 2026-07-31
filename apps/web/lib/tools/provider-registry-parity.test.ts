@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { RUNNER_SHARED_TOOL_NAMES } from "@kestrel-agents/protocol";
 
 import { listToolProviders } from "./registry";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const SHARED_RUNTIME_PROVIDER_KEYS = new Set([
@@ -13,7 +13,7 @@ const SHARED_RUNTIME_PROVIDER_KEYS = new Set([
   "tavily",
 ]);
 
-contractTest("web.hermetic", "Kestrel One App capabilities reference canonical shared runtime tools", () => {
+test("Kestrel One App capabilities reference canonical shared runtime tools", () => {
   const sharedToolNames = new Set<string>(RUNNER_SHARED_TOOL_NAMES);
   const capabilities = listToolProviders()
     .filter((provider) => SHARED_RUNTIME_PROVIDER_KEYS.has(provider.key))

@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getToolProviderDefinition,
   listToolProviders,
   listToolRuntimeNames,
 } from "./registry";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "tool registry includes seeded built-in and external providers", () => {
+test("tool registry includes seeded built-in and external providers", () => {
   const providers = listToolProviders();
   assert.ok(providers.some((provider) => provider.key === "built_in.weather"));
   const previews = getToolProviderDefinition("built_in.previews");
@@ -44,7 +44,7 @@ contractTest("web.hermetic", "tool registry includes seeded built-in and externa
   assert.equal(getToolProviderDefinition("source.youtube"), undefined);
 });
 
-contractTest("web.hermetic", "GitHub exposes governed repository capabilities", () => {
+test("GitHub exposes governed repository capabilities", () => {
   const github = getToolProviderDefinition("github");
 
   assert.ok(github);
@@ -65,7 +65,7 @@ contractTest("web.hermetic", "GitHub exposes governed repository capabilities", 
   );
 });
 
-contractTest("web.hermetic", "weather provider defaults weather capability to auto approval", () => {
+test("weather provider defaults weather capability to auto approval", () => {
   const provider = getToolProviderDefinition("built_in.weather");
   assert.ok(provider);
   assert.equal(provider?.capabilities[0]?.key, "getWeather");
@@ -82,7 +82,7 @@ contractTest("web.hermetic", "weather provider defaults weather capability to au
   );
 });
 
-contractTest("web.hermetic", "runtime names expose current chat tools", () => {
+test("runtime names expose current chat tools", () => {
   const runtimeNames = listToolRuntimeNames();
   assert.ok(runtimeNames.includes("free.weather.current"));
   assert.ok(runtimeNames.includes("free.weather.forecast"));
@@ -93,7 +93,7 @@ contractTest("web.hermetic", "runtime names expose current chat tools", () => {
   assert.ok(runtimeNames.includes("createDocument"));
 });
 
-contractTest("web.hermetic", "every provider declares a coherent App connection contract", () => {
+test("every provider declares a coherent App connection contract", () => {
   for (const provider of listToolProviders()) {
     assert.equal(
       provider.app.connectionModel === "none",

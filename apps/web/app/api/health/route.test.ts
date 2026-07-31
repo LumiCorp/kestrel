@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { buildHealthResponsePayload } from "./payload";
-import { contractTest } from "../../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "health payload reports healthy database state", () => {
+test("health payload reports healthy database state", () => {
   const { body, statusCode } = buildHealthResponsePayload({
     databaseHealth: {
       ok: true,
@@ -51,7 +51,7 @@ contractTest("web.hermetic", "health payload reports healthy database state", ()
   assert.equal(body.revision, "abc123");
 });
 
-contractTest("web.hermetic", "health payload reports unhealthy categorized database failures", () => {
+test("health payload reports unhealthy categorized database failures", () => {
   const { body, statusCode } = buildHealthResponsePayload({
     databaseHealth: {
       ok: false,

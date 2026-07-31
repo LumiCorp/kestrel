@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { normalizeSubmittedLine } from "../../cli/app/submitInput.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "normalizeSubmittedLine trims trailing CR/LF without changing inner content", () => {
+test("normalizeSubmittedLine trims trailing CR/LF without changing inner content", () => {
   assert.equal(normalizeSubmittedLine("hello"), "hello");
   assert.equal(normalizeSubmittedLine("hello\r"), "hello");
   assert.equal(normalizeSubmittedLine("hello\n"), "hello");

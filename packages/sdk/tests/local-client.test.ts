@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -14,7 +15,6 @@ import {
   type RunnerEvent,
 } from "../src/runner.js";
 import { resolveClientTarget } from "../src/internal/clientTarget.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const context = {
@@ -25,7 +25,7 @@ const context = {
   durability: "continue_on_disconnect" as const,
 };
 
-contractTest("packages.process", "KestrelClient dispatches unary, run-stream, and subscription traffic over Local Core", async (t) => {
+test("KestrelClient dispatches unary, run-stream, and subscription traffic over Local Core", async (t) => {
   const requests: Array<{
     path: string;
     authorization: string | undefined;
@@ -280,7 +280,7 @@ contractTest("packages.process", "KestrelClient dispatches unary, run-stream, an
   );
 });
 
-contractTest("packages.process", "KestrelClient supports the preferred explicit remote target", async () => {
+test("KestrelClient supports the preferred explicit remote target", async () => {
   let requestedUrl = "";
   const client = new KestrelClient({
     target: {
@@ -307,7 +307,7 @@ contractTest("packages.process", "KestrelClient supports the preferred explicit 
   await client.close();
 });
 
-contractTest("packages.process", "KestrelClient cancellation closes local subscriptions without rejecting the result", async (t) => {
+test("KestrelClient cancellation closes local subscriptions without rejecting the result", async (t) => {
   let resolveClosed!: () => void;
   const connectionClosed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
@@ -350,7 +350,7 @@ contractTest("packages.process", "KestrelClient cancellation closes local subscr
   await connectionClosed;
 });
 
-contractTest("packages.process", "KestrelClient can close immediately after a completed local run stream", async (t) => {
+test("KestrelClient can close immediately after a completed local run stream", async (t) => {
   let markConnectionClosed: (() => void) | undefined;
   const connectionClosed = new Promise<void>((resolve) => {
     markConnectionClosed = resolve;
@@ -410,7 +410,7 @@ contractTest("packages.process", "KestrelClient can close immediately after a co
   await connectionClosed;
 });
 
-contractTest("runtime.stream-terminal", "KestrelClient rejects a local run stream that ends before a terminal event", async (t) => {
+test("KestrelClient rejects a local run stream that ends before a terminal event", async (t) => {
   const { socketPath, close } = await startLocalCoreServer(async (request, response) => {
     assert.equal(request.url, "/runtime/v2/commands/stream");
     const command = JSON.parse(await readRequestBody(request)) as { id: string };
@@ -454,7 +454,7 @@ contractTest("runtime.stream-terminal", "KestrelClient rejects a local run strea
   );
 });
 
-contractTest("packages.process", "KestrelClient rejects a local terminal SSE event without a command id", async (t) => {
+test("KestrelClient rejects a local terminal SSE event without a command id", async (t) => {
   const { socketPath, close } = await startLocalCoreServer(async (request, response) => {
     assert.equal(request.url, "/runtime/v2/commands/stream");
     await readRequestBody(request);
@@ -512,7 +512,7 @@ contractTest("packages.process", "KestrelClient rejects a local terminal SSE eve
   );
 });
 
-contractTest("packages.process", "KestrelClient rejects a local nonterminal SSE event for another command", async (t) => {
+test("KestrelClient rejects a local nonterminal SSE event for another command", async (t) => {
   const { socketPath, close } = await startLocalCoreServer(async (request, response) => {
     assert.equal(request.url, "/runtime/v2/commands/stream");
     await readRequestBody(request);
@@ -556,7 +556,7 @@ contractTest("packages.process", "KestrelClient rejects a local nonterminal SSE 
   );
 });
 
-contractTest("packages.process", "KestrelClient rejects mismatched local terminal events without cross-settling another run", async (t) => {
+test("KestrelClient rejects mismatched local terminal events without cross-settling another run", async (t) => {
   let victimCommandId: string | undefined;
   let sourceCommandId: string | undefined;
   let markVictimReady!: () => void;
@@ -659,7 +659,7 @@ contractTest("packages.process", "KestrelClient rejects mismatched local termina
   assert.equal(closedVictim.status, "rejected");
 });
 
-contractTest("packages.process", "local KestrelClient does not connect for an already-aborted job", async () => {
+test("local KestrelClient does not connect for an already-aborted job", async () => {
   const client = new KestrelClient({
     target: {
       kind: "local",
@@ -688,7 +688,7 @@ contractTest("packages.process", "local KestrelClient does not connect for an al
   await client.close();
 });
 
-contractTest("packages.process", "local KestrelClient rejects unary responses with a mismatched command id", async (t) => {
+test("local KestrelClient rejects unary responses with a mismatched command id", async (t) => {
   const { socketPath, close } = await startLocalCoreServer(async (_request, response) => {
     sendJson(response, {
       id: "evt-local-wrong-command-id",
@@ -716,7 +716,7 @@ contractTest("packages.process", "local KestrelClient rejects unary responses wi
   await client.close();
 });
 
-contractTest("packages.process", "KestrelClient requires an explicit target and rejects local targets outside Node", () => {
+test("KestrelClient requires an explicit target and rejects local targets outside Node", () => {
   const originalRunnerUrl = process.env.KESTREL_RUNNER_SERVICE_URL;
   process.env.KESTREL_RUNNER_SERVICE_URL = "http://environment-must-not-be-used.internal";
   try {

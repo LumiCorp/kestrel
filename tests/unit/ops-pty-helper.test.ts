@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { toDriverAbortPatterns, toDriverActions } from "../ops/helpers/pty.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "toDriverActions preserves ordered text and key actions", () => {
+test("toDriverActions preserves ordered text and key actions", () => {
   const actions = toDriverActions([
     { typeText: "/mcp" },
     { key: "enter" },
@@ -21,11 +21,11 @@ contractTest("runtime.hermetic", "toDriverActions preserves ordered text and key
   ]);
 });
 
-contractTest("runtime.hermetic", "toDriverActions returns empty array for undefined", () => {
+test("toDriverActions returns empty array for undefined", () => {
   assert.deepEqual(toDriverActions(undefined), []);
 });
 
-contractTest("runtime.hermetic", "toDriverAbortPatterns preserves scoped regex and count options", () => {
+test("toDriverAbortPatterns preserves scoped regex and count options", () => {
   assert.deepEqual(
     toDriverAbortPatterns([
       {

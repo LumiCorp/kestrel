@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import {
   parsePreviewHostname,
   PreviewEdgeRouteError,
@@ -30,8 +30,7 @@ function routeBody(
   };
 }
 
-contractTest(
-  "services.hermetic",
+test(
   "Preview Edge accepts only one canonical generated preview hostname",
   () => {
     assert.equal(parsePreviewHostname(hostname, suffix), hostname);
@@ -56,8 +55,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "Preview Edge authenticates route resolution and accepts only an exact Fly target",
   async () => {
     let requestedUrl = "";
@@ -109,8 +107,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "Preview Edge coalesces cache misses, refreshes at signed expiry, and never negative-caches",
   async () => {
     let currentTime = now;
@@ -172,8 +169,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "Preview Edge maps resolver failures and oversized or expired responses to a bounded unavailable error",
   async () => {
     const cases: Array<() => Promise<Response>> = [
@@ -206,8 +202,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "Preview Edge rejects resolver tickets that exceed the signed five-minute horizon",
   async () => {
     const accepted = new PreviewEdgeRouteResolver({

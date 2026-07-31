@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import * as kestrel from "../../src/index.js";
@@ -10,10 +11,8 @@ import {
   createEmptyProjectSnapshot,
   normalizeProjectSnapshot,
 } from "../../src/project/state.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest(
-  "runtime.hermetic",
+test(
   "retired session Mission Control reducers and snapshot authorities are absent",
   () => {
     assert.equal("applyTaskQueueAction" in kestrel, false);
@@ -31,8 +30,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "legacy Mission Control records remain read-only and provenance complete",
   () => {
     const snapshot = parseMissionControlLegacyProjectSnapshot({
@@ -107,8 +105,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "canonical Mission Control state rejects an inactive authority epoch",
   () => {
     const projectId = "11111111-1111-4111-8111-111111111111";

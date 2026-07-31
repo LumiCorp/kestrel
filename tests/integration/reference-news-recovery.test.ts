@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
@@ -7,7 +8,6 @@ import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -81,7 +81,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
   return [];
 }
 
-contractTest("runtime.process", "reference harness pivots from weak headlines to soft handoff without looping", async () => {
+test("reference harness pivots from weak headlines to soft handoff without looping", async () => {
   const store = new InMemorySessionStore();
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const finalized: Record<string, unknown>[] = [];

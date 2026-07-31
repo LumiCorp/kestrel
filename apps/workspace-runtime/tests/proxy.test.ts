@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
 	buildWorkspaceProxyHeaders,
 	isRunnerProxyPath,
 } from "../src/proxy.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("services.hermetic", "application proxy strips the Environment ticket instead of forwarding an undefined header", () => {
+test("application proxy strips the Environment ticket instead of forwarding an undefined header", () => {
 	const headers = buildWorkspaceProxyHeaders({
 		incoming: {
 			authorization: "Bearer environment-ticket",
@@ -21,7 +21,7 @@ contractTest("services.hermetic", "application proxy strips the Environment tick
 	});
 });
 
-contractTest("services.hermetic", "runner proxy replaces the Environment ticket with its internal token", () => {
+test("runner proxy replaces the Environment ticket with its internal token", () => {
 	const headers = buildWorkspaceProxyHeaders({
 		incoming: {
 			authorization: "Bearer environment-ticket",
@@ -38,7 +38,7 @@ contractTest("services.hermetic", "runner proxy replaces the Environment ticket 
 	});
 });
 
-contractTest("services.hermetic", "runner proxy includes filtered event subscriptions", () => {
+test("runner proxy includes filtered event subscriptions", () => {
 	assert.equal(isRunnerProxyPath("/commands"), true);
 	assert.equal(isRunnerProxyPath("/commands/stream"), true);
 	assert.equal(isRunnerProxyPath("/events/stream"), true);

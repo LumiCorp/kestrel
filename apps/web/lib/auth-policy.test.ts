@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { isDisallowedToolProviderSignIn } from "./auth-policy";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "GitHub is link-only and cannot be used to sign in", () => {
+test("GitHub is link-only and cannot be used to sign in", () => {
   assert.equal(
     isDisallowedToolProviderSignIn({
       path: "/sign-in/social",

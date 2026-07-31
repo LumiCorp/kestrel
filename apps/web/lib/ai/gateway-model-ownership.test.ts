@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "gateway model mutations remain scoped to the gateway in the route", async () => {
+test("gateway model mutations remain scoped to the gateway in the route", async () => {
   const source = await readFile(
     new URL(
       "../../app/api/organization/ai/gateways/[id]/models/route.ts",
@@ -22,7 +22,7 @@ contractTest("web.hermetic", "gateway model mutations remain scoped to the gatew
   );
 });
 
-contractTest("web.hermetic", "gateway model update and delete require matching gateway ownership", async () => {
+test("gateway model update and delete require matching gateway ownership", async () => {
   const source = await readFile(new URL("./gateways.ts", import.meta.url), "utf8");
   const updateStart = source.indexOf("if (input.id) {");
   const updateEnd = source.indexOf("const [created]", updateStart);

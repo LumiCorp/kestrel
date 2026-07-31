@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { clearDesktopThreadError, updateDesktopThreadFeedback } from "../renderer/src/feedbackState.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-contractTest("desktop.hermetic", "Desktop feedback updates only its owning conversation", () => {
+test("Desktop feedback updates only its owning conversation", () => {
   const initial = {
     a: { activity: "Running" },
     b: { activity: "Ready", error: "Keep B" },

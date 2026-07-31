@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   kestrelOneGoogleCalendarCheckAvailabilityTool,
@@ -5,10 +6,9 @@ import {
   kestrelOneGoogleCalendarListAvailabilitySubjectsTool,
   kestrelOneGoogleCalendarListEventsTool,
 } from "../../tools/kestrelOne/google-calendar.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Google Calendar writes require external confirmation", () => {
+test("Google Calendar writes require external confirmation", () => {
   assert.equal(
     kestrelOneGoogleCalendarCreateEventTool.definition.capability
       .executionClass,
@@ -21,7 +21,7 @@ contractTest("runtime.hermetic", "Google Calendar writes require external confir
   );
 });
 
-contractTest("runtime.hermetic", "Google Calendar reads remain read-only and availability is privacy explicit", () => {
+test("Google Calendar reads remain read-only and availability is privacy explicit", () => {
   assert.equal(
     kestrelOneGoogleCalendarListEventsTool.definition.capability.executionClass,
     "read_only"
@@ -40,7 +40,7 @@ contractTest("runtime.hermetic", "Google Calendar reads remain read-only and ava
   );
 });
 
-contractTest("runtime.hermetic", "Calendar tool handler uses the execution ticket and omits notifications unless requested", async () => {
+test("Calendar tool handler uses the execution ticket and omits notifications unless requested", async () => {
   let capturedHeaders: unknown;
   let capturedBody = "";
   const handler = kestrelOneGoogleCalendarCreateEventTool.createHandler({
@@ -77,7 +77,7 @@ contractTest("runtime.hermetic", "Calendar tool handler uses the execution ticke
   assert.equal("notifyAttendees" in body, false);
 });
 
-contractTest("runtime.hermetic", "Google Calendar reads forward a completed App approval when configured to ask", async () => {
+test("Google Calendar reads forward a completed App approval when configured to ask", async () => {
   let capturedHeaders = new Headers();
   const handler = kestrelOneGoogleCalendarListEventsTool.createHandler({
     kestrelOne: {

@@ -48,7 +48,6 @@ import {
   isFilesystemInspectionCacheInvalidatingTool,
   isFilesystemInspectionToolName,
 } from "../filesystemInspection.js";
-import { normalizeToolActionInput } from "../toolInputNormalization.js";
 import type {
   ReactAction,
   ReadOnlyResultDuplicateLedgerEntry,
@@ -248,9 +247,8 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       });
     }
 
-    const action = normalizeCompiledAction(
+    const action = validateCompiledActionForDispatch(
       readCompiledAction(reactState.nextAction),
-      readActiveWorkspaceRootFromExecState(execState),
     );
 
     if (action === undefined) {
@@ -2486,9 +2484,8 @@ function readCompiledAction(value: unknown): ReactAction | undefined {
   throw createActerInvalidCompiledActionError(validation.failure);
 }
 
-function normalizeCompiledAction(
+function validateCompiledActionForDispatch(
   action: ReactAction | undefined,
-  workspaceRoot: string | undefined,
 ): ReactAction | undefined {
   if (action === undefined) {
     return ;
@@ -2505,21 +2502,6 @@ function normalizeCompiledAction(
         actionId: action.type,
       },
     );
-  }
-  if (action.kind === "tool") {
-    return {
-      ...action,
-      input: normalizeToolActionInput(action.name, action.input, workspaceRoot),
-    };
-  }
-  if (action.kind === "tool_batch") {
-    return {
-      ...action,
-      items: action.items.map((item) => ({
-        ...item,
-        input: normalizeToolActionInput(item.name, item.input, workspaceRoot),
-      })),
-    };
   }
   return action;
 }

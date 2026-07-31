@@ -1,11 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { McpClientManager } from "../../src/mcp/McpClientManager.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest(
-  "runtime.hermetic",
+test(
   "McpClientManager throws a normalized failure when a tool is unavailable",
   async () => {
     const manager = new McpClientManager({ servers: [] });
@@ -21,8 +20,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "McpClientManager assertHealthy throws a normalized failure with unhealthy server details",
   async () => {
     const manager = new McpClientManager({ servers: [] });
@@ -52,8 +50,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "McpClientManager fails closed when an OAuth App has no Local Core provider",
   async () => {
     const manager = new McpClientManager({
@@ -77,8 +74,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "McpClientManager rejects mixed OAuth and static App credentials before network use",
   async () => {
     let providerCalls = 0;

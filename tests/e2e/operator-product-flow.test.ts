@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import os from "node:os";
@@ -22,7 +23,6 @@ import {
   buildOperatorWorkspaceJourney,
 } from "../../src/operatorShell.js";
 import type { TuiSessionMeta } from "../../cli/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 async function createHarness(): Promise<{
@@ -114,7 +114,7 @@ async function createHarness(): Promise<{
   return { app, cwd };
 }
 
-contractTest("runtime.process", "operator shell deterministic journey e2e covers start, inspect, delegation, recovery, and relaunch", async () => {
+test("operator shell deterministic journey e2e covers start, inspect, delegation, recovery, and relaunch", async () => {
   const { app, cwd } = await createHarness();
   const appState = app as unknown as Record<string, unknown>;
   const workspaceStore = appState.workspaceStore as WorkspaceStore;
@@ -305,7 +305,7 @@ contractTest("runtime.process", "operator shell deterministic journey e2e covers
   assert.equal(finalState.activeSession.name, "Run deterministic shell journey");
 });
 
-contractTest("runtime.process", "operator shell workspace journey e2e keeps binding and mismatch state explicit", async () => {
+test("operator shell workspace journey e2e keeps binding and mismatch state explicit", async () => {
   const { app, cwd } = await createHarness();
   const appState = app as unknown as Record<string, unknown>;
   const workspaceStore = appState.workspaceStore as WorkspaceStore;
@@ -374,7 +374,7 @@ contractTest("runtime.process", "operator shell workspace journey e2e keeps bind
   assert.equal(buildOperatorBackActionLabel(undefined), "Back to Chat");
 });
 
-contractTest("runtime.process", "operator shell derives deterministic bootstrap and next actions across journeys", async () => {
+test("operator shell derives deterministic bootstrap and next actions across journeys", async () => {
   const firstRunBootstrap = buildOperatorBootstrapSnapshot({
     hasWorkspace: false,
     profileLabel: "Default",

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,7 +6,6 @@ import {
   type SqlExecutor,
 } from "../../src/store/PostgresSessionStore.js";
 import type { ProviderReasoningEncryptedRecord } from "../../src/kestrel/contracts/store.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function recordingExecutor(rowCount = 1) {
@@ -37,7 +37,7 @@ const record: ProviderReasoningEncryptedRecord = {
   expiresAt: "2026-07-22T12:00:00.000Z",
 };
 
-contractTest("runtime.hermetic", "Postgres reasoning writes carry the retention scope without plaintext", async () => {
+test("Postgres reasoning writes carry the retention scope without plaintext", async () => {
   const fake = recordingExecutor();
   const store = new PostgresSessionStore(fake.executor);
   await store.saveProviderReasoningRecord(record);
@@ -47,7 +47,7 @@ contractTest("runtime.hermetic", "Postgres reasoning writes carry the retention 
   assert.equal(JSON.stringify(fake.calls).includes("provider summary"), false);
 });
 
-contractTest("runtime.hermetic", "Postgres retention policy deletes disabled visible content only within its scope", async () => {
+test("Postgres retention policy deletes disabled visible content only within its scope", async () => {
   const fake = recordingExecutor(3);
   const store = new PostgresSessionStore(fake.executor);
   const changed = await store.applyProviderReasoningRetentionPolicy({
@@ -62,7 +62,7 @@ contractTest("runtime.hermetic", "Postgres retention policy deletes disabled vis
   assert.deepEqual(fake.calls[0]?.values, ["profile-1"]);
 });
 
-contractTest("runtime.hermetic", "Postgres retention shortening can only clamp existing expiration", async () => {
+test("Postgres retention shortening can only clamp existing expiration", async () => {
   const fake = recordingExecutor(2);
   const store = new PostgresSessionStore(fake.executor);
   const expiresAt = "2026-07-18T12:00:00.000Z";

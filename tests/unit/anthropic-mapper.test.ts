@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import { buildAnthropicHttpRequest, mapAnthropicResponse } from "../../models/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "Anthropic mapper preserves cache read and cache write token classes", () => {
+test("Anthropic mapper preserves cache read and cache write token classes", () => {
   const mapped = mapAnthropicResponse({
     model: "claude-test",
     content: [{ type: "text", text: "done" }],
@@ -25,7 +25,7 @@ contractTest("runtime.hermetic", "Anthropic mapper preserves cache read and cach
   });
 });
 
-contractTest("runtime.hermetic", "Anthropic request builder places explicit ephemeral cache breakpoints on stable system and tool blocks", () => {
+test("Anthropic request builder places explicit ephemeral cache breakpoints on stable system and tool blocks", () => {
   const mapped = buildAnthropicHttpRequest({
     model: "claude-test",
     input: "Act now",
@@ -56,7 +56,7 @@ contractTest("runtime.hermetic", "Anthropic request builder places explicit ephe
 });
 
 
-contractTest("runtime.hermetic", "Anthropic request builder serializes assistant tool-call history with provider aliases", () => {
+test("Anthropic request builder serializes assistant tool-call history with provider aliases", () => {
   const request: ModelRequest = {
     model: "claude-test",
     input: {},
@@ -120,7 +120,7 @@ contractTest("runtime.hermetic", "Anthropic request builder serializes assistant
   });
 });
 
-contractTest("runtime.hermetic", "Anthropic request builder honors direct and OpenRouter fallback parallel-call controls", () => {
+test("Anthropic request builder honors direct and OpenRouter fallback parallel-call controls", () => {
   const baseRequest: ModelRequest = {
     model: "claude-test",
     input: "Act now",
@@ -164,7 +164,7 @@ contractTest("runtime.hermetic", "Anthropic request builder honors direct and Op
   });
 });
 
-contractTest("runtime.hermetic", "Anthropic adaptive thinking is visible and its signed block is preserved exactly", () => {
+test("Anthropic adaptive thinking is visible and its signed block is preserved exactly", () => {
   const signedThinking = {
     type: "thinking",
     thinking: "I checked the provider contract.",

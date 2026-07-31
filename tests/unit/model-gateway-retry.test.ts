@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createOpenRouterHttpError } from "../../models/openrouter/OpenRouterErrors.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import type { ModelGatewayCallOptions, ModelRequest } from "../../src/kestrel/contracts/model-io.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "createOpenRouterHttpError preserves retry-after seconds for rate limits", () => {
+test("createOpenRouterHttpError preserves retry-after seconds for rate limits", () => {
   const error = createOpenRouterHttpError(
     429,
     JSON.stringify({
@@ -24,7 +24,7 @@ contractTest("runtime.hermetic", "createOpenRouterHttpError preserves retry-afte
   assert.equal(error.details?.retryAfterSeconds, 7);
 });
 
-contractTest("runtime.hermetic", "RetryingModelGateway honors retry-after hints on rate-limited model calls", async () => {
+test("RetryingModelGateway honors retry-after hints on rate-limited model calls", async () => {
   const originalRandom = Math.random;
   Math.random = () => 0.5;
   let attempts = 0;
@@ -64,7 +64,7 @@ contractTest("runtime.hermetic", "RetryingModelGateway honors retry-after hints 
   }
 });
 
-contractTest("runtime.hermetic", "RetryingModelGateway uses slower backoff for rate limits without retry-after hints", async () => {
+test("RetryingModelGateway uses slower backoff for rate limits without retry-after hints", async () => {
   const originalRandom = Math.random;
   Math.random = () => 0;
   let attempts = 0;
@@ -100,7 +100,7 @@ contractTest("runtime.hermetic", "RetryingModelGateway uses slower backoff for r
   }
 });
 
-contractTest("runtime.hermetic", "RetryingModelGateway retries OpenRouter provider-wrapper bad responses", async () => {
+test("RetryingModelGateway retries OpenRouter provider-wrapper bad responses", async () => {
   const originalRandom = Math.random;
   Math.random = () => 0;
   let attempts = 0;
@@ -136,7 +136,7 @@ contractTest("runtime.hermetic", "RetryingModelGateway retries OpenRouter provid
   }
 });
 
-contractTest("runtime.hermetic", "RetryingModelGateway does not retry ordinary bad responses", async () => {
+test("RetryingModelGateway does not retry ordinary bad responses", async () => {
   let attempts = 0;
   const gateway = new RetryingModelGateway(async <T>() => {
     attempts += 1;
@@ -164,7 +164,7 @@ contractTest("runtime.hermetic", "RetryingModelGateway does not retry ordinary b
   assert.equal(attempts, 1);
 });
 
-contractTest("runtime.hermetic", "RetryingModelGateway does not retry provider schema bad responses", async () => {
+test("RetryingModelGateway does not retry provider schema bad responses", async () => {
   let attempts = 0;
   const gateway = new RetryingModelGateway(async <T>() => {
     attempts += 1;
@@ -198,7 +198,7 @@ contractTest("runtime.hermetic", "RetryingModelGateway does not retry provider s
   assert.equal(attempts, 1);
 });
 
-contractTest("runtime.hermetic", "RetryingModelGateway annotates exhausted provider retries", async () => {
+test("RetryingModelGateway annotates exhausted provider retries", async () => {
   const originalRandom = Math.random;
   Math.random = () => 0;
   let attempts = 0;
@@ -240,7 +240,7 @@ contractTest("runtime.hermetic", "RetryingModelGateway annotates exhausted provi
   }
 });
 
-contractTest("runtime.hermetic", "RetryingModelGateway never starts a hidden retry after visible provider output", async () => {
+test("RetryingModelGateway never starts a hidden retry after visible provider output", async () => {
   let attempts = 0;
   const events: string[] = [];
   const gateway = new RetryingModelGateway(async <T>(_request: ModelRequest, options?: ModelGatewayCallOptions) => {

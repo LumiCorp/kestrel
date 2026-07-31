@@ -1,13 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 
 import { MemoryLocalCoreCredentialStore } from "../../src/localCore/credentialStore.js";
 import { LocalCoreMcpOAuthSessionManager } from "../../src/localCore/mcpOAuthSessions.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core completes an App OAuth session through a verified loopback callback",
   async () => {
     const credentialStore = new MemoryLocalCoreCredentialStore();
@@ -69,8 +68,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core allows only one active authorization window per App connection",
   async () => {
     const manager = new LocalCoreMcpOAuthSessionManager({
@@ -98,8 +96,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core seeds a trusted PKCE public client without storing a client secret",
   async () => {
     const credentialStore = new MemoryLocalCoreCredentialStore();
@@ -144,8 +141,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core rejects forged App OAuth callback state without exchanging a code",
   async () => {
     let exchanges = 0;
@@ -178,8 +174,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core claims an App OAuth callback before exchanging its code",
   async () => {
     let releaseExchange!: () => void;
@@ -227,8 +222,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core removes terminal App OAuth sessions after their status window",
   async () => {
     let now = 1_000;

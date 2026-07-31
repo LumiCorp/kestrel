@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-contractTest("web.hermetic", "Email App requires project access, ask approval, and organization sender configuration", async () => {
+test("Email App requires project access, ask approval, and organization sender configuration", async () => {
   const source = await readFile(new URL("../../app/api/runtime/email/action/route.ts", import.meta.url), "utf8");
   assert.match(source, /resolveEffectiveProjectAppAccess/u);
   assert.match(source, /capability\?\.approvalMode === "ask"/u);
@@ -11,7 +11,7 @@ contractTest("web.hermetic", "Email App requires project access, ask approval, a
   assert.doesNotMatch(source, /resolvePlatformEmailConfig|RESEND_API_KEY/u);
 });
 
-contractTest("web.hermetic", "Email App persists metadata without message content or raw addresses", async () => {
+test("Email App persists metadata without message content or raw addresses", async () => {
   const [route, schema] = await Promise.all([
     readFile(new URL("../../app/api/runtime/email/action/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../../drizzle/schema.ts", import.meta.url), "utf8"),
@@ -25,7 +25,7 @@ contractTest("web.hermetic", "Email App persists metadata without message conten
   assert.doesNotMatch(deliverySchema, /recipient_address|subject_text|body|html|text_content/u);
 });
 
-contractTest("web.hermetic", "Email App has no attachment input and expired payloads are redacted", async () => {
+test("Email App has no attachment input and expired payloads are redacted", async () => {
   const [tool, approvals] = await Promise.all([
     readFile(new URL("../../../../tools/kestrelOne/email.ts", import.meta.url), "utf8"),
     readFile(new URL("./app-operation-approvals.ts", import.meta.url), "utf8"),

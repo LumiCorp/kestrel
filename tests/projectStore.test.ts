@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { InMemorySessionStore } from "../src/store/InMemorySessionStore.js";
@@ -7,7 +8,6 @@ import {
   normalizeProjectSnapshot,
 } from "../src/project/state.js";
 import type { ProductTaskGraph } from "../src/taskGraph/contracts.js";
-import { contractTest } from "./helpers/contract-test.js";
 
 const graph: ProductTaskGraph = {
   version: 1,
@@ -39,8 +39,7 @@ const graph: ProductTaskGraph = {
   },
 };
 
-contractTest(
-  "runtime.hermetic",
+test(
   "project store remains a read-only supporting projection",
   async () => {
     const sessionStore = new InMemorySessionStore();
@@ -80,8 +79,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "project actions are restricted to workspace Git operations",
   async () => {
     const sessionStore = new InMemorySessionStore();
@@ -115,8 +113,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "project snapshot normalization drops retired work-item authorities",
   () => {
     const normalized = normalizeProjectSnapshot({

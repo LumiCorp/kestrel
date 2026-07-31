@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildQwen3RunPodProfile,
   QWEN3_8B_RUNPOD_IMAGE,
 } from "./qwen3-runpod-profile";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "Qwen3 bootstrap is immutable, scale-to-zero, and cost bounded", () => {
+test("Qwen3 bootstrap is immutable, scale-to-zero, and cost bounded", () => {
   const profile = buildQwen3RunPodProfile(
     `runpod/worker-v1-vllm@sha256:${"a".repeat(64)}`
   );

@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { deriveDesktopReadiness } from "../../../src/desktopShell/readiness.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("desktop.hermetic", "blocked database owns the readiness summary ahead of provider setup", () => {
+test("blocked database owns the readiness summary ahead of provider setup", () => {
   const settings = createDefaultDesktopSettings();
   const readiness = deriveDesktopReadiness({
     isDesktopApp: true,
@@ -32,7 +32,7 @@ contractTest("desktop.hermetic", "blocked database owns the readiness summary ah
   });
 });
 
-contractTest("desktop.hermetic", "provider setup owns the summary when no higher-severity check is blocked", () => {
+test("provider setup owns the summary when no higher-severity check is blocked", () => {
   const settings = createDefaultDesktopSettings();
   const readiness = deriveDesktopReadiness({
     isDesktopApp: true,
@@ -61,7 +61,7 @@ contractTest("desktop.hermetic", "provider setup owns the summary when no higher
   assert.equal(readiness.summary.detail, "Choose a model provider to finish Desktop setup.");
 });
 
-contractTest("desktop.hermetic", "Local Core profile incompatibility directs the user to update Desktop", () => {
+test("Local Core profile incompatibility directs the user to update Desktop", () => {
   const readiness = deriveDesktopReadiness({
     isDesktopApp: true,
     settings: createDefaultDesktopSettings(),

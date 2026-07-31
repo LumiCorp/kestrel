@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const routeSource = fs.readFileSync(
   path.join(
@@ -12,8 +12,7 @@ const routeSource = fs.readFileSync(
   "utf8",
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "organization email save remains successful when derived side effects fail",
   () => {
     const save = routeSource.indexOf("await saveOrganizationEmailConfig");
@@ -45,8 +44,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "organization email side-effect failures do not log underlying error details",
   () => {
     assert.match(

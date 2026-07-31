@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { InlineEffectRunner } from "../../src/effects/EffectRunner.js";
@@ -6,10 +7,9 @@ import { createExecuteToolCallHandler } from "../../src/effects/handlers/execute
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Effect runner reports compiled tool activity", async () => {
+test("Effect runner reports compiled tool activity", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();
   registry.register("execute_tool_call", async () => buildAgentToolSuccessResult({
@@ -57,7 +57,7 @@ contractTest("runtime.hermetic", "Effect runner reports compiled tool activity",
   assert.equal((activities[1]?.output as { status?: string }).status, "OK");
 });
 
-contractTest("runtime.hermetic", "Effect runner STOP policy halts on failure", async () => {
+test("Effect runner STOP policy halts on failure", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();
   registry.register("explode", async () => {
@@ -92,7 +92,7 @@ contractTest("runtime.hermetic", "Effect runner STOP policy halts on failure", a
   assert.equal(outcome.errors.length, 1);
 });
 
-contractTest("runtime.hermetic", "Effect runner CONTINUE policy keeps running", async () => {
+test("Effect runner CONTINUE policy keeps running", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();
 
@@ -143,7 +143,7 @@ contractTest("runtime.hermetic", "Effect runner CONTINUE policy keeps running", 
   assert.equal(results.find((result) => result.idempotencyKey === "k2")?.status, "DONE");
 });
 
-contractTest("runtime.hermetic", "Effect runner honors existing FAILED result and WAIT policy", async () => {
+test("Effect runner honors existing FAILED result and WAIT policy", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();
   registry.register("ok", async () => ({ ok: true }));
@@ -185,7 +185,7 @@ contractTest("runtime.hermetic", "Effect runner honors existing FAILED result an
   assert.equal(outcome.errors.length, 1);
 });
 
-contractTest("runtime.hermetic", "Effect runner re-enters tool preRun context for persisted managed worktree tool effects", async () => {
+test("Effect runner re-enters tool preRun context for persisted managed worktree tool effects", async () => {
   const store = new InMemorySessionStore();
   const initialSession = await store.ensureSession("s-managed", "agent.exec.dispatch");
   await store.patchSessionState?.({
@@ -290,7 +290,7 @@ contractTest("runtime.hermetic", "Effect runner re-enters tool preRun context fo
   });
 });
 
-contractTest("runtime.hermetic", "Effect runner clamps durable dev.shell.run timeout against runtime budget", async () => {
+test("Effect runner clamps durable dev.shell.run timeout against runtime budget", async () => {
   const store = new InMemorySessionStore();
   const calls: Array<Record<string, unknown>> = [];
   const registryEffects = new EffectRegistry();

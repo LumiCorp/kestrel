@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -10,10 +11,9 @@ import {
   parseDesktopRunTurnRequest,
   parseDesktopUiStateV1,
 } from "../../src/desktopShell/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Desktop bridge v7 exposes update, workspace, attachment, and operator-control contracts", () => {
+test("Desktop bridge v7 exposes update, workspace, attachment, and operator-control contracts", () => {
   assert.equal(DESKTOP_BRIDGE_VERSION, "7");
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("updates"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("attachments"), true);
@@ -40,7 +40,7 @@ contractTest("runtime.hermetic", "Desktop bridge v7 exposes update, workspace, a
   assert.equal(parseDesktopOperatorControlRequest({ action: "continue_waiting", threadId: "thread-1" }).action, "continue_waiting");
 });
 
-contractTest("runtime.hermetic", "Desktop UI state accepts only the versioned legacy storage contract", () => {
+test("Desktop UI state accepts only the versioned legacy storage contract", () => {
   const state = parseDesktopUiStateV1({
     version: DESKTOP_UI_STATE_VERSION,
     source: DESKTOP_UI_STATE_SOURCE,
@@ -59,7 +59,7 @@ contractTest("runtime.hermetic", "Desktop UI state accepts only the versioned le
   assert.equal(state.sourceAppVersion, "0.5.1");
 });
 
-contractTest("runtime.hermetic", "Desktop UI state rejects unknown storage keys and non-string values", () => {
+test("Desktop UI state rejects unknown storage keys and non-string values", () => {
   assert.throws(
     () => parseDesktopLegacyUiStateEntries({ "provider-api-key": "secret" }),
     /unsupported key/u,
@@ -70,7 +70,7 @@ contractTest("runtime.hermetic", "Desktop UI state rejects unknown storage keys 
   );
 });
 
-contractTest("runtime.hermetic", "Desktop run requests admit only tagged runtime system prompts", () => {
+test("Desktop run requests admit only tagged runtime system prompts", () => {
   const timestamp = "2026-07-09T12:00:00.000Z";
   const executionSelection = {
     modelConfiguration: { id: "desktop-default", revision: 1 },

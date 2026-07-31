@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getOfficialRemoteOauthApp } from "../../apps/web/lib/apps/official-remote-apps.js";
@@ -5,12 +6,10 @@ import {
   desktopStandardAppToolRequiresApproval,
   getDesktopStandardAppConnection,
 } from "../../src/desktopShell/standardAppConnections.js";
-import { contractTest } from "../helpers/contract-test.js";
 import { MICROSOFT_365_PACKS, scopesForMicrosoft365Packs } from "../../apps/web/lib/integrations/microsoft-365-contract.js";
 import { GOOGLE_CALENDAR_SCOPES } from "../../apps/web/lib/integrations/google-calendar-contract.js";
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Desktop and Kestrel One share official Notion and Slack connection contracts",
   () => {
     for (const appId of ["notion", "slack"] as const) {
@@ -31,8 +30,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Desktop native App write approvals are explicit capability contracts",
   () => {
     assert.equal(
@@ -59,7 +57,7 @@ contractTest(
   },
 );
 
-contractTest("runtime.hermetic", "Desktop and Kestrel One share the Google Workspace Calendar scope contract", () => {
+test("Desktop and Kestrel One share the Google Workspace Calendar scope contract", () => {
   const desktop = getDesktopStandardAppConnection("google_workspace");
   assert.equal(desktop?.kind, "authorization");
   if (desktop?.kind !== "authorization") return;
@@ -69,8 +67,7 @@ contractTest("runtime.hermetic", "Desktop and Kestrel One share the Google Works
   assert.deepEqual(Object.keys(desktop.capabilityPackScopes ?? {}), ["calendar"]);
 });
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Desktop and Kestrel One share the Microsoft 365 capability and least-scope contract",
   () => {
     const desktop = getDesktopStandardAppConnection("microsoft_365");
@@ -87,8 +84,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Desktop Vercel uses the official OAuth App endpoint with local capability narrowing",
   () => {
     const desktop = getDesktopStandardAppConnection("vercel");

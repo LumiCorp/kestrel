@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { Pool } from "pg";
 
 import type { AuthorizedMcpGrant } from "../src/contracts.js";
 import { PostgresMcpInteractionCoordinator } from "../src/interaction-coordinator.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const grant: AuthorizedMcpGrant = {
@@ -69,7 +69,7 @@ function createPool(input?: {
   return { pool, queries };
 }
 
-contractTest("services.hermetic", "interaction coordinator propagates failed sampling without relabeling it as a denial", async () => {
+test("interaction coordinator propagates failed sampling without relabeling it as a denial", async () => {
   const { pool, queries } = createPool({
     checkpoint: {
       status: "failed",
@@ -100,7 +100,7 @@ contractTest("services.hermetic", "interaction coordinator propagates failed sam
   );
 });
 
-contractTest("services.hermetic", "interaction coordinator follows claimed sampling through grant expiry", async () => {
+test("interaction coordinator follows claimed sampling through grant expiry", async () => {
   const { pool, queries } = createPool({
     checkpoints: [
       {
@@ -133,7 +133,7 @@ contractTest("services.hermetic", "interaction coordinator follows claimed sampl
   );
 });
 
-contractTest("services.hermetic", "interaction coordinator terminalizes an expired processing claim", async () => {
+test("interaction coordinator terminalizes an expired processing claim", async () => {
   const { pool, queries } = createPool({
     checkpoints: [
       {
@@ -170,7 +170,7 @@ contractTest("services.hermetic", "interaction coordinator terminalizes an expir
   );
 });
 
-contractTest("services.hermetic", "interaction cancellation cannot overwrite a processing checkpoint", async () => {
+test("interaction cancellation cannot overwrite a processing checkpoint", async () => {
   const { pool, queries } = createPool();
   const coordinator = new PostgresMcpInteractionCoordinator(pool, 0);
   const controller = new AbortController();

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,7 +6,6 @@ import {
   initializeDevShellRuntimeWithRecovery,
   type DevShellRuntimeRecoveryOperations,
 } from "../../src/devshell/DevShellRuntimeBootstrap.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 interface FakeStoreHandle {
@@ -18,7 +18,7 @@ interface FakeRuntime {
   initialize(): Promise<void>;
 }
 
-contractTest("runtime.hermetic", "dev shell runtime recovery quarantines one failed sqlite store and initializes a fresh handle", async () => {
+test("dev shell runtime recovery quarantines one failed sqlite store and initializes a fresh handle", async () => {
   const events: string[] = [];
   const firstFailure = Object.assign(new Error("corrupt sqlite store"), {
     code: "STORE_SQLITE_INIT_FAILED",
@@ -51,7 +51,7 @@ contractTest("runtime.hermetic", "dev shell runtime recovery quarantines one fai
   ]);
 });
 
-contractTest("runtime.hermetic", "dev shell runtime recovery does not quarantine or retry a non-recoverable failure", async () => {
+test("dev shell runtime recovery does not quarantine or retry a non-recoverable failure", async () => {
   const events: string[] = [];
   const failure = Object.assign(new Error("migration failed"), {
     code: "DEV_SHELL_MIGRATION_FAILED",
@@ -78,7 +78,7 @@ contractTest("runtime.hermetic", "dev shell runtime recovery does not quarantine
   ]);
 });
 
-contractTest("runtime.hermetic", "dev shell runtime recovery retries at most once and closes the failed recovery handle", async () => {
+test("dev shell runtime recovery retries at most once and closes the failed recovery handle", async () => {
   const events: string[] = [];
   const firstFailure = Object.assign(new Error("corrupt sqlite store"), {
     code: "STORE_SQLITE_INIT_FAILED",
@@ -117,7 +117,7 @@ contractTest("runtime.hermetic", "dev shell runtime recovery retries at most onc
   ]);
 });
 
-contractTest("runtime.hermetic", "createDevShellStoreRecoveryPath uses stable input coordinates", () => {
+test("createDevShellStoreRecoveryPath uses stable input coordinates", () => {
   assert.equal(
     createDevShellStoreRecoveryPath("/runtime/store.db", 1_784_512_345_678, 42),
     "/runtime/store.db.recovery-1784512345678-42",

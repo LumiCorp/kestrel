@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import {
@@ -6,7 +7,6 @@ import {
   type WorkspaceRunnerReadinessEvent,
   workspaceRunnerHealthStatus,
 } from "../src/runner-readiness.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 function deferred() {
   let resolve!: () => void;
@@ -24,8 +24,7 @@ function fakeRunner() {
   return runner;
 }
 
-contractTest(
-  "services.hermetic",
+test(
   "concurrent Workspace health checks start one runner and stay unavailable until it is ready",
   async () => {
     const health = deferred();
@@ -68,8 +67,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "Workspace runner loss downgrades health and permits one replacement start",
   async () => {
     const firstRunner = fakeRunner();
@@ -104,8 +102,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "Workspace runner health failures remain retryable without duplicate processes",
   async () => {
     const health = deferred();
@@ -139,8 +136,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "Workspace health downgrades when the running runner loses its health contract",
   async () => {
     const runner = fakeRunner();
@@ -176,8 +172,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "Workspace shutdown is shared and waits for the runner to exit",
   async () => {
     const runner = new EventEmitter() as WorkspaceRunnerProcess;
@@ -216,8 +211,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "Workspace shutdown escalates once after the graceful timeout and still awaits exit",
   async () => {
     const runner = new EventEmitter() as WorkspaceRunnerProcess;

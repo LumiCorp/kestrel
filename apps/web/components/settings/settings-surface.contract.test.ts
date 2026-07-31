@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const settingsComponentsRoot = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(settingsComponentsRoot, "../..");
@@ -22,8 +22,7 @@ function read(relativePath: string) {
   return fs.readFileSync(path.join(webRoot, relativePath), "utf8");
 }
 
-contractTest(
-  "web.hermetic",
+test(
   "settings-owned modules use the shared cardless settings surface",
   () => {
     const files = [
@@ -43,8 +42,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "organization management replaces settings navigation while settings retains personal and platform surfaces",
   () => {
     const layout = read("app/(workspace)/settings/layout.tsx");

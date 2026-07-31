@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   workspacePreviewCloseTool,
@@ -5,10 +6,8 @@ import {
   workspacePreviewPublishTool,
   workspacePreviewRenewTool,
 } from "../../tools/kestrelOne/workspacePreviews.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Workspace preview tools call the governed Kestrel Edge lifecycle with the signed execution ticket",
   async () => {
     assert.match(

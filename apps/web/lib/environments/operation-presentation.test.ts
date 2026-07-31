@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { describeEnvironmentOperation } from "./operation-presentation";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "Environment operations expose human-readable provisioning and wake progress", () => {
+test("Environment operations expose human-readable provisioning and wake progress", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "environment.provision",
@@ -54,7 +54,7 @@ contractTest("web.hermetic", "Environment operations expose human-readable provi
   );
 });
 
-contractTest("web.hermetic", "Environment operations surface retained sleep and stored failures", () => {
+test("Environment operations surface retained sleep and stored failures", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "workspace.stop",
@@ -82,7 +82,7 @@ contractTest("web.hermetic", "Environment operations surface retained sleep and 
   );
 });
 
-contractTest("web.hermetic", "queued Environment operations identify Kestrel One as the control plane", () => {
+test("queued Environment operations identify Kestrel One as the control plane", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "environment.provision",
@@ -97,8 +97,7 @@ contractTest("web.hermetic", "queued Environment operations identify Kestrel One
   );
 });
 
-contractTest(
-  "web.hermetic",
+test(
   "queued Workspace backup explains active-execution deferral",
   () => {
     assert.deepEqual(
@@ -117,7 +116,7 @@ contractTest(
   },
 );
 
-contractTest("web.hermetic", "queued Environment persistence recovery explains the retry", () => {
+test("queued Environment persistence recovery explains the retry", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "environment.provision",
@@ -134,7 +133,7 @@ contractTest("web.hermetic", "queued Environment persistence recovery explains t
   );
 });
 
-contractTest("web.hermetic", "Environment updates expose the durable rollout stage", () => {
+test("Environment updates expose the durable rollout stage", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "environment.update",
@@ -149,7 +148,7 @@ contractTest("web.hermetic", "Environment updates expose the durable rollout sta
   );
 });
 
-contractTest("web.hermetic", "maintenance updates disclose skipped Workspace retention", () => {
+test("maintenance updates disclose skipped Workspace retention", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "environment.update",
@@ -164,7 +163,7 @@ contractTest("web.hermetic", "maintenance updates disclose skipped Workspace ret
   );
 });
 
-contractTest("web.hermetic", "Environment updates surface provisioning recovery without a false success tone", () => {
+test("Environment updates surface provisioning recovery without a false success tone", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
       type: "environment.update",

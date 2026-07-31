@@ -1,12 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { parseDesktopAuthorizationRequest } from "./desktop-account";
 
 const challenge = "a".repeat(43);
 const state = "b".repeat(32);
 
-contractTest(
-  "web.hermetic",
+test(
   "Desktop account authorization requires PKCE S256 and an exact loopback callback",
   () => {
     const parsed = parseDesktopAuthorizationRequest(

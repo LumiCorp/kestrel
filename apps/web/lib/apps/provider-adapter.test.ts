@@ -1,12 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getAppProviderAdapter,
   listAppProviderAdapters,
 } from "./provider-adapter";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "web.hermetic",
+test(
   "provider adapter registry exposes managed API Apps through the shared contract",
   () => {
     assert.deepEqual(
@@ -35,8 +34,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Vercel adapter binds bounded reads to the official API",
   () => {
     const adapter = getAppProviderAdapter("vercel");
@@ -84,8 +82,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Weather adapter stores only Visual Crossing credential fields",
   () => {
     const adapter = getAppProviderAdapter("built_in.weather");
@@ -151,8 +148,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Tavily adapter constructs only an allowlisted credentialed request",
   () => {
     const runtime = getAppProviderAdapter("tavily")?.runtime;

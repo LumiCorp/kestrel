@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,7 +6,6 @@ import {
   hashAppOperationPayload,
   type AppOperationApprovalBinding,
 } from "./app-operation-approval-contract";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const binding: AppOperationApprovalBinding = {
@@ -25,14 +25,14 @@ const binding: AppOperationApprovalBinding = {
   payload: { channelId: "channel-1", body: { content: "Ship it" } },
 };
 
-contractTest("web.hermetic", "App operation payload hashes are deterministic across object key order", () => {
+test("App operation payload hashes are deterministic across object key order", () => {
   assert.equal(
     hashAppOperationPayload({ b: 2, a: { d: 4, c: 3 } }),
     hashAppOperationPayload({ a: { c: 3, d: 4 }, b: 2 })
   );
 });
 
-contractTest("web.hermetic", "App operation approval binding accepts only the exact resource and payload", () => {
+test("App operation approval binding accepts only the exact resource and payload", () => {
   const expected = {
     ...binding,
     payloadHash: hashAppOperationPayload(binding.payload),

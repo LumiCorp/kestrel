@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 class StartRunFailureStore extends InMemorySessionStore {
@@ -25,7 +25,7 @@ class StartRunFailureStore extends InMemorySessionStore {
   }
 }
 
-contractTest("runtime.hermetic", "ExecutionEngine preserves startRun failures without flushing lifecycle buffers", async () => {
+test("ExecutionEngine preserves startRun failures without flushing lifecycle buffers", async () => {
   const store = new StartRunFailureStore();
   const kestrel = new Kestrel({
     store,

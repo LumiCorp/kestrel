@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import { parseJobInputV1, type JobOutputV1 } from "../../cli/job/contracts.js";
 import { RunnerHost, type RunnerRuntime } from "../../cli/runner/RunnerHost.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "parseJobInputV1 preserves turn metadata externalDeadlineMs", () => {
+test("parseJobInputV1 preserves turn metadata externalDeadlineMs", () => {
   const parsed = parseJobInputV1({
     version: "job_input_v1",
     turn: {
@@ -22,7 +22,7 @@ contractTest("runtime.hermetic", "parseJobInputV1 preserves turn metadata extern
   assert.equal(parsed.turn.metadata?.externalDeadlineMs, 160_000);
 });
 
-contractTest("runtime.hermetic", "parseJobInputV1 preserves canonical turn mode fields", () => {
+test("parseJobInputV1 preserves canonical turn mode fields", () => {
   const parsed = parseJobInputV1({
     version: "job_input_v1",
     turn: {
@@ -38,7 +38,7 @@ contractTest("runtime.hermetic", "parseJobInputV1 preserves canonical turn mode 
   assert.equal(parsed.turn.actSubmode, "full_auto");
 });
 
-contractTest("runtime.hermetic", "parseJobInputV1 rejects invalid turn mode fields", () => {
+test("parseJobInputV1 rejects invalid turn mode fields", () => {
   assert.throws(
     () => parseJobInputV1({
       version: "job_input_v1",
@@ -67,7 +67,7 @@ contractTest("runtime.hermetic", "parseJobInputV1 rejects invalid turn mode fiel
   );
 });
 
-contractTest("runtime.hermetic", "job output can carry wait continuation details", () => {
+test("job output can carry wait continuation details", () => {
   const output: JobOutputV1 = {
     version: "job_output_v1",
     terminalEventType: "job.completed",
@@ -135,7 +135,7 @@ contractTest("runtime.hermetic", "job output can carry wait continuation details
   assert.equal(output.job.waitFor?.metadata?.reason, "max_model_calls_continuation");
 });
 
-contractTest("runtime.hermetic", "RunnerHost preserves waitFor in job completed output", async () => {
+test("RunnerHost preserves waitFor in job completed output", async () => {
   const events: Array<{ type: string; payload: unknown }> = [];
   const runtime: RunnerRuntime = {
     async close() {},

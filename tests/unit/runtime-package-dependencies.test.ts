@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { resolveRuntimePackageDependencies } from "../../scripts/runtime-package-dependencies.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "runtime package manifests replace workspace links with exact packed versions", async (t) => {
+test("runtime package manifests replace workspace links with exact packed versions", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-dependencies-"));
   t.after(async () => await rm(repoRoot, { recursive: true, force: true }));
   await writeWorkspaceManifests(repoRoot, "0.5.1");
@@ -34,7 +34,7 @@ contractTest("runtime.hermetic", "runtime package manifests replace workspace li
   );
 });
 
-contractTest("runtime.hermetic", "runtime package manifests reject protocol and runtime version drift", async (t) => {
+test("runtime package manifests reject protocol and runtime version drift", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-dependencies-drift-"));
   t.after(async () => await rm(repoRoot, { recursive: true, force: true }));
   await writeWorkspaceManifests(repoRoot, "0.5.1");

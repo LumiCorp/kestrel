@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   listOperatorProfilePresets,
   listOperatorTaskTemplates,
 } from "../../src/operatorShell.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "coding preset copy advertises inspect-implement-validate host-shell posture", () => {
+test("coding preset copy advertises inspect-implement-validate host-shell posture", () => {
   const coding = listOperatorProfilePresets().find((preset) => preset.id === "coding");
   assert.notEqual(coding, undefined);
   assert.match(coding?.description ?? "", /workspace inspection/i);
@@ -15,7 +15,7 @@ contractTest("runtime.hermetic", "coding preset copy advertises inspect-implemen
   assert.match(coding?.description ?? "", /host-shell workflows/i);
 });
 
-contractTest("runtime.hermetic", "coding task template prompt seed includes inspection, validation, and host-shell allowance", () => {
+test("coding task template prompt seed includes inspection, validation, and host-shell allowance", () => {
   const codingTask = listOperatorTaskTemplates().find((template) => template.id === "coding-task");
   assert.notEqual(codingTask, undefined);
   assert.match(codingTask?.description ?? "", /Inspect, implement, validate/i);

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   mkdtemp,
@@ -20,10 +21,9 @@ import {
   LocalCoreRuntimeConfigurationStore,
   parseLocalCoreRuntimeConfiguration,
 } from "../../src/localCore/runtimeConfiguration.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "runtime configuration defaults expose the exact immutable v1 shape", () => {
+test("runtime configuration defaults expose the exact immutable v1 shape", () => {
   const configuration = createDefaultLocalCoreRuntimeConfiguration();
 
   assert.deepEqual(configuration, {
@@ -52,7 +52,7 @@ contractTest("runtime.hermetic", "runtime configuration defaults expose the exac
   assert.equal(Object.isFrozen(configuration.tools.visualCrossing), true);
 });
 
-contractTest("runtime.hermetic", "runtime configuration parser trims strings and canonicalizes HTTP URLs", () => {
+test("runtime configuration parser trims strings and canonicalizes HTTP URLs", () => {
   const configuration = parseLocalCoreRuntimeConfiguration({
     ...createDefaultLocalCoreRuntimeConfiguration(),
     generation: 3,
@@ -103,7 +103,7 @@ contractTest("runtime.hermetic", "runtime configuration parser trims strings and
   );
 });
 
-contractTest("runtime.hermetic", "runtime configuration rejects unknown and credential-shaped fields", () => {
+test("runtime configuration rejects unknown and credential-shaped fields", () => {
   const defaults = createDefaultLocalCoreRuntimeConfiguration();
   assert.throws(
     () => parseLocalCoreRuntimeConfiguration({ ...defaults, extra: true }),
@@ -141,7 +141,7 @@ contractTest("runtime.hermetic", "runtime configuration rejects unknown and cred
   );
 });
 
-contractTest("runtime.hermetic", "runtime configuration rejects credential-bearing and non-HTTP URLs", () => {
+test("runtime configuration rejects credential-bearing and non-HTTP URLs", () => {
   const defaults = createDefaultLocalCoreRuntimeConfiguration();
   for (const baseUrl of [
     "https://user:password@example.com/v1",
@@ -163,7 +163,7 @@ contractTest("runtime.hermetic", "runtime configuration rejects credential-beari
   }
 });
 
-contractTest("runtime.hermetic", "runtime configuration rejects wrong versions, generations, option modes, and model policies", () => {
+test("runtime configuration rejects wrong versions, generations, option modes, and model policies", () => {
   const defaults = createDefaultLocalCoreRuntimeConfiguration();
   for (const generation of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
     assert.throws(
@@ -206,7 +206,7 @@ contractTest("runtime.hermetic", "runtime configuration rejects wrong versions, 
   );
 });
 
-contractTest("runtime.hermetic", "runtime configuration store durably captures frozen bootstrap defaults once", async () => {
+test("runtime configuration store durably captures frozen bootstrap defaults once", async () => {
   const homePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-config-"));
   try {
     let fallbackCalls = 0;
@@ -252,7 +252,7 @@ contractTest("runtime.hermetic", "runtime configuration store durably captures f
   }
 });
 
-contractTest("runtime.hermetic", "runtime configuration store atomically persists private files and increments generation", async () => {
+test("runtime configuration store atomically persists private files and increments generation", async () => {
   const homePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-config-"));
   try {
     const store = new LocalCoreRuntimeConfigurationStore(homePath);
@@ -285,7 +285,7 @@ contractTest("runtime.hermetic", "runtime configuration store atomically persist
   }
 });
 
-contractTest("runtime.hermetic", "runtime configuration store rejects invalid persisted files without repairing them", async () => {
+test("runtime configuration store rejects invalid persisted files without repairing them", async () => {
   const homePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-config-"));
   const settingsPath = path.join(homePath, "settings");
   const filePath = path.join(settingsPath, LOCAL_CORE_RUNTIME_CONFIGURATION_FILE_NAME);
@@ -305,7 +305,7 @@ contractTest("runtime.hermetic", "runtime configuration store rejects invalid pe
   }
 });
 
-contractTest("runtime.hermetic", "runtime configuration store repairs only an invalid persisted snapshot", async () => {
+test("runtime configuration store repairs only an invalid persisted snapshot", async () => {
   const homePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-config-"));
   const settingsPath = path.join(homePath, "settings");
   const filePath = path.join(settingsPath, LOCAL_CORE_RUNTIME_CONFIGURATION_FILE_NAME);
@@ -339,7 +339,7 @@ contractTest("runtime.hermetic", "runtime configuration store repairs only an in
   }
 });
 
-contractTest("runtime.hermetic", "invalid writes and updates preserve the last valid configuration and clean temporary files", async () => {
+test("invalid writes and updates preserve the last valid configuration and clean temporary files", async () => {
   const homePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-config-"));
   try {
     const store = new LocalCoreRuntimeConfigurationStore(homePath);

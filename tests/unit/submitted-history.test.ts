@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,10 +6,9 @@ import {
   normalizeSubmittedHistory,
 } from "../../src/runtime/submittedHistory.js";
 import { mergeSubmittedHistoryMetadata } from "../../src/orchestration/TurnOrchestrator.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "normalizeSubmittedHistory keeps conversation rows and drops UI-only rows", () => {
+test("normalizeSubmittedHistory keeps conversation rows and drops UI-only rows", () => {
   const history = normalizeSubmittedHistory([
     {
       role: "system",
@@ -55,7 +55,7 @@ contractTest("runtime.hermetic", "normalizeSubmittedHistory keeps conversation r
   );
 });
 
-contractTest("runtime.hermetic", "tagged runtime waiting prompts survive repeated history normalization", () => {
+test("tagged runtime waiting prompts survive repeated history normalization", () => {
   const initial = [
     {
       role: "user",
@@ -88,7 +88,7 @@ contractTest("runtime.hermetic", "tagged runtime waiting prompts survive repeate
   });
 });
 
-contractTest("runtime.hermetic", "submitted waiting prompt echoes reuse runtime identity and canonical placement", () => {
+test("submitted waiting prompt echoes reuse runtime identity and canonical placement", () => {
   const merged = mergeSubmittedHistoryMetadata(
     {
       history: [{
@@ -130,7 +130,7 @@ contractTest("runtime.hermetic", "submitted waiting prompt echoes reuse runtime 
   ]);
 });
 
-contractTest("runtime.hermetic", "identical waiting prompt text from different runs remains distinct", () => {
+test("identical waiting prompt text from different runs remains distinct", () => {
   const merged = mergeSubmittedHistoryMetadata(
     {
       history: [{
@@ -156,7 +156,7 @@ contractTest("runtime.hermetic", "identical waiting prompt text from different r
   );
 });
 
-contractTest("runtime.hermetic", "normalizeSubmittedHistory preserves attachments on retained rows", () => {
+test("normalizeSubmittedHistory preserves attachments on retained rows", () => {
   const attachments = [
     {
       kind: "image",
@@ -176,7 +176,7 @@ contractTest("runtime.hermetic", "normalizeSubmittedHistory preserves attachment
   assert.equal(history?.[0]?.attachments, attachments);
 });
 
-contractTest("runtime.hermetic", "normalizeSubmittedHistory clamps while preserving the first user task", () => {
+test("normalizeSubmittedHistory clamps while preserving the first user task", () => {
   const history = normalizeSubmittedHistory([
     {
       role: "user",
@@ -196,7 +196,7 @@ contractTest("runtime.hermetic", "normalizeSubmittedHistory clamps while preserv
   assert.equal(history?.[63]?.text, "line-69");
 });
 
-contractTest("runtime.hermetic", "buildModelHistoryWindow normalizes CLI/TUI and Web/Desktop history identically", () => {
+test("buildModelHistoryWindow normalizes CLI/TUI and Web/Desktop history identically", () => {
   const attachments = [
     {
       kind: "image",

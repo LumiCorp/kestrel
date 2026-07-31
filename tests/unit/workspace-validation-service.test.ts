@@ -1,15 +1,15 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { WorkspaceValidationService } from "../../src/validation/WorkspaceValidationService.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const fp = (value: string) => `sha256:${value.repeat(64)}`;
 
-contractTest("runtime.hermetic", "WorkspaceValidationService discovers package scripts and explicit ordered actions", async () => {
+test("WorkspaceValidationService discovers package scripts and explicit ordered actions", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-validation-discovery-"));
   await writeFile(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node test.js", bespoke: "node bespoke.js" } }), "utf8");
   await mkdir(path.join(root, ".kestrel"));
@@ -27,7 +27,7 @@ contractTest("runtime.hermetic", "WorkspaceValidationService discovers package s
   assert.equal(snapshot.readiness.state, "not_run");
 });
 
-contractTest("runtime.hermetic", "WorkspaceValidationService records output, exit evidence, readiness, and candidate staleness", async () => {
+test("WorkspaceValidationService records output, exit evidence, readiness, and candidate staleness", async () => {
   const root = await configuredWorkspace([
     { id: "passing", label: "Passing", kind: "test", command: process.execPath, args: ["-e", "require('fs').writeFileSync('evidence.txt','ok'); require('fs').writeFileSync('locations.json', JSON.stringify([{path:'src/app.ts',line:12,column:4,message:'Type error'}])); console.log('passed output API_TOKEN=supersecretvalue')"], required: true, artifacts: ["evidence.txt"], locationsFile: "locations.json" },
   ]);
@@ -48,7 +48,7 @@ contractTest("runtime.hermetic", "WorkspaceValidationService records output, exi
   assert.equal(stale.readiness.state, "stale");
 });
 
-contractTest("runtime.hermetic", "WorkspaceValidationService strips trusted runner credentials from validation processes", async () => {
+test("WorkspaceValidationService strips trusted runner credentials from validation processes", async () => {
   const originalToken = process.env.KESTREL_WORKSPACE_SERVICE_TOKEN;
   process.env.KESTREL_WORKSPACE_SERVICE_TOKEN = "workspace-secret";
   try {
@@ -68,7 +68,7 @@ contractTest("runtime.hermetic", "WorkspaceValidationService strips trusted runn
   }
 });
 
-contractTest("runtime.hermetic", "WorkspaceValidationService invalidates and terminates a running result when the candidate changes", async () => {
+test("WorkspaceValidationService invalidates and terminates a running result when the candidate changes", async () => {
   const root = await configuredWorkspace([
     { id: "slow", label: "Slow", kind: "test", command: process.execPath, args: ["-e", "setTimeout(() => process.exit(0), 10000)"], required: true },
   ]);
@@ -81,7 +81,7 @@ contractTest("runtime.hermetic", "WorkspaceValidationService invalidates and ter
   assert.match(stale.results[0]?.output.at(-1)?.text ?? "", /cannot be used as evidence/u);
 });
 
-contractTest("runtime.hermetic", "WorkspaceValidationService stops an ordered suite and records skipped outcomes", async () => {
+test("WorkspaceValidationService stops an ordered suite and records skipped outcomes", async () => {
   const root = await configuredWorkspace([
     { id: "failing", label: "Failing", kind: "lint", command: process.execPath, args: ["-e", "console.error('failed output'); process.exit(2)"], required: true },
     { id: "later", label: "Later", kind: "build", command: process.execPath, args: ["-e", "process.exit(0)"], required: true },

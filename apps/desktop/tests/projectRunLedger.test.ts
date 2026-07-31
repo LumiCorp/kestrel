@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,7 +9,6 @@ import {
   createDesktopProjectRunLedger,
   DesktopProjectRunRegistry,
 } from "../src/projectRuns.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 function run(input: Partial<DesktopManagedProjectRun> = {}): DesktopManagedProjectRun {
@@ -37,7 +37,7 @@ function run(input: Partial<DesktopManagedProjectRun> = {}): DesktopManagedProje
   };
 }
 
-contractTest("desktop.hermetic", "Desktop project run ledger persists bounded redacted runs", async () => {
+test("Desktop project run ledger persists bounded redacted runs", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "kestrel-run-ledger-"));
   const ledgerPath = path.join(dir, "project-runs.json");
   const ledger = createDesktopProjectRunLedger({ ledgerPath, limit: 2 });
@@ -57,7 +57,7 @@ contractTest("desktop.hermetic", "Desktop project run ledger persists bounded re
   assert.match(restored[0]?.outputTail?.[0]?.line ?? "", /redacted:env/u);
 });
 
-contractTest("desktop.hermetic", "Desktop project run ledger bounds ordered output during persistence and parsing", async () => {
+test("Desktop project run ledger bounds ordered output during persistence and parsing", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "kestrel-run-ledger-"));
   const ledgerPath = path.join(dir, "project-runs.json");
   const ledger = createDesktopProjectRunLedger({ ledgerPath, limit: 2 });
@@ -80,7 +80,7 @@ contractTest("desktop.hermetic", "Desktop project run ledger bounds ordered outp
   assert.equal(raw.runs[0]?.outputTail?.length, 160);
 });
 
-contractTest("desktop.hermetic", "DesktopProjectRunRegistry hydrates runs from ledger", async () => {
+test("DesktopProjectRunRegistry hydrates runs from ledger", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "kestrel-run-ledger-"));
   const ledger = createDesktopProjectRunLedger({
     ledgerPath: path.join(dir, "project-runs.json"),
@@ -94,7 +94,7 @@ contractTest("desktop.hermetic", "DesktopProjectRunRegistry hydrates runs from l
   assert.deepEqual(registry.listRuns().map((entry) => entry.runId), ["run-ledger"]);
 });
 
-contractTest("desktop.hermetic", "Desktop project run ledger restores stale active runs as stopped history", async () => {
+test("Desktop project run ledger restores stale active runs as stopped history", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "kestrel-run-ledger-"));
   const ledger = createDesktopProjectRunLedger({
     ledgerPath: path.join(dir, "project-runs.json"),
@@ -117,7 +117,7 @@ contractTest("desktop.hermetic", "Desktop project run ledger restores stale acti
   assert.match(restored[0]?.outputTail?.at(-1)?.line ?? "", /Desktop restarted/u);
 });
 
-contractTest("desktop.hermetic", "Desktop project run ledger accepts legacy runs without ordered output", async () => {
+test("Desktop project run ledger accepts legacy runs without ordered output", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "kestrel-run-ledger-"));
   const ledgerPath = path.join(dir, "project-runs.json");
   const legacy = run();

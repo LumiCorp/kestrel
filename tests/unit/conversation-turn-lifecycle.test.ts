@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type {
@@ -5,7 +6,6 @@ import type {
 } from "../../src/kestrel/contracts/store.js";
 import { InMemorySessionStore as RuntimeInMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 async function createStore(): Promise<InMemorySessionStore> {
   const store = new InMemorySessionStore();
@@ -50,7 +50,7 @@ function claimInput(overrides: Partial<ClaimConversationTurnExecutionInput> = {}
   };
 }
 
-contractTest("runtime.hermetic", "conversation turn claim creates one actual prestarted run", async () => {
+test("conversation turn claim creates one actual prestarted run", async () => {
   const store = await createStore();
   const [left, right] = await Promise.all([
     store.claimConversationTurnExecution(claimInput()),
@@ -75,7 +75,7 @@ contractTest("runtime.hermetic", "conversation turn claim creates one actual pre
   assert.notEqual(claimed.runId, "event-id-is-independent");
 });
 
-contractTest("runtime.hermetic", "orphan recovery fails run turn and thread before releasing the lease", async () => {
+test("orphan recovery fails run turn and thread before releasing the lease", async () => {
   const store = new RuntimeInMemorySessionStore();
   await store.ensureSession("session-lifecycle", "agent.loop");
   await store.upsertThread({
@@ -101,7 +101,7 @@ contractTest("runtime.hermetic", "orphan recovery fails run turn and thread befo
   );
 });
 
-contractTest("runtime.hermetic", "atomic wait settlement and resume keep run turn thread and lease aligned", async () => {
+test("atomic wait settlement and resume keep run turn thread and lease aligned", async () => {
   const store = await createStore();
   await store.claimConversationTurnExecution(claimInput());
   await store.completeRun("run-lifecycle-1", "WAITING", undefined, {
@@ -145,7 +145,7 @@ contractTest("runtime.hermetic", "atomic wait settlement and resume keep run tur
   assert.equal(runningThread?.waitFor, undefined);
 });
 
-contractTest("runtime.hermetic", "resume reconciles a durable waiting run with stale running projections", async () => {
+test("resume reconciles a durable waiting run with stale running projections", async () => {
   const store = await createStore();
   const event = {
     id: "event-lifecycle-wait",
@@ -223,7 +223,7 @@ contractTest("runtime.hermetic", "resume reconciles a durable waiting run with s
   assert.equal((await store.getThread("thread-lifecycle"))?.activeRunId, "run-lifecycle-2");
 });
 
-contractTest("runtime.hermetic", "post-run enrichment cannot overwrite a resumed run", async () => {
+test("post-run enrichment cannot overwrite a resumed run", async () => {
   const store = await createStore();
   await store.claimConversationTurnExecution(claimInput());
   await store.completeRun("run-lifecycle-1", "WAITING", undefined, {
@@ -262,7 +262,7 @@ contractTest("runtime.hermetic", "post-run enrichment cannot overwrite a resumed
   assert.equal((await store.getThread("thread-lifecycle"))?.activeRunId, "run-lifecycle-2");
 });
 
-contractTest("runtime.hermetic", "resume submissions cannot replace the immutable turn request identity", async () => {
+test("resume submissions cannot replace the immutable turn request identity", async () => {
   const store = await createStore();
   await store.claimConversationTurnExecution(claimInput());
   await store.completeRun("run-lifecycle-1", "WAITING", undefined, {
@@ -295,7 +295,7 @@ contractTest("runtime.hermetic", "resume submissions cannot replace the immutabl
   assert.equal(await store.getRun("run-lifecycle-2"), null);
 });
 
-contractTest("runtime.hermetic", "atomic suspension projects every canonical wait kind without a running lease", async () => {
+test("atomic suspension projects every canonical wait kind without a running lease", async () => {
   for (const kind of ["approval", "user", "effect", "tool", "region_merge"] as const) {
     const store = await createStore();
     await store.claimConversationTurnExecution(claimInput());
@@ -338,7 +338,7 @@ contractTest("runtime.hermetic", "atomic suspension projects every canonical wai
   }
 });
 
-contractTest("runtime.hermetic", "atomic terminal settlement leaves a pending replay envelope without a running projection", async () => {
+test("atomic terminal settlement leaves a pending replay envelope without a running projection", async () => {
   const store = await createStore();
   await store.claimConversationTurnExecution(claimInput());
   await store.completeRun("run-lifecycle-1", "COMPLETED");
@@ -361,7 +361,7 @@ contractTest("runtime.hermetic", "atomic terminal settlement leaves a pending re
   assert.equal(await store.getRun("run-must-not-start"), null);
 });
 
-contractTest("runtime.hermetic", "terminal handoff enrichment cannot overwrite a newer active turn", async () => {
+test("terminal handoff enrichment cannot overwrite a newer active turn", async () => {
   const store = await createStore();
   await store.claimConversationTurnExecution(claimInput());
   await store.completeRun("run-lifecycle-1", "COMPLETED");
@@ -417,7 +417,7 @@ contractTest("runtime.hermetic", "terminal handoff enrichment cannot overwrite a
   assert.equal(activeThread?.metadata?.terminalEnvelope, undefined);
 });
 
-contractTest("runtime.hermetic", "missing claimed run is failed instead of stranded", async () => {
+test("missing claimed run is failed instead of stranded", async () => {
   const store = await createStore();
   await store.upsertConversationTurn({
     turnId: "turn-lifecycle",

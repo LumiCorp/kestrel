@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
 import { runDesktopUserTerminalCommand } from "../src/userTerminal.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const context: WebRunnerRequestContext = { actor: { actorId: "desktop-shell", actorType: "operator" } };
@@ -22,7 +22,7 @@ const terminal = {
   updatedAt: now,
 };
 
-contractTest("desktop.hermetic", "Desktop user terminal bridge preserves raw terminal input and validates Local Core responses", async () => {
+test("Desktop user terminal bridge preserves raw terminal input and validates Local Core responses", async () => {
   const calls: unknown[] = [];
   const adapter = {
     sendControl: async (command: { type: string; sessionId: string; data?: string }) => {
@@ -45,7 +45,7 @@ contractTest("desktop.hermetic", "Desktop user terminal bridge preserves raw ter
   assert.equal((calls[0] as { data: string }).data, " ");
 });
 
-contractTest("desktop.hermetic", "Desktop user terminal bridge rejects mismatched session responses", async () => {
+test("Desktop user terminal bridge rejects mismatched session responses", async () => {
   const adapter = {
     sendControl: async () => ({
       id: "event-1",

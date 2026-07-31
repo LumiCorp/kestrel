@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   applyLiveProgress,
   applyProviderReasoning,
@@ -7,8 +7,7 @@ import {
   selectLiveRuntimePresentationForAssistant,
 } from "./live-runtime-presentation";
 
-contractTest(
-  "web.hermetic",
+test(
   "provider reasoning selects the reasoning card and is excluded from Activity details",
   () => {
     const withProgress = applyLiveProgress(null, {

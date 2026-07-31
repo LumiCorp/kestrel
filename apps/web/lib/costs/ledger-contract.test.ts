@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const packageRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -13,7 +13,7 @@ function read(relativePath: string) {
   return fs.readFileSync(path.join(packageRoot, relativePath), "utf8");
 }
 
-contractTest("web.hermetic", "organization cost ledger uses additive numeric money tables", () => {
+test("organization cost ledger uses additive numeric money tables", () => {
   const migration = read("lib/db/migrations/0045_organization_cost_ledger.sql");
   for (const table of [
     "organization_usage_events",
@@ -31,21 +31,21 @@ contractTest("web.hermetic", "organization cost ledger uses additive numeric mon
   assert.doesNotMatch(migration, /DROP TABLE|DROP COLUMN/u);
 });
 
-contractTest("web.hermetic", "billable app effects are metered before upstream fetch", () => {
+test("billable app effects are metered before upstream fetch", () => {
   const runtime = read("lib/apps/runtime-route.ts");
   assert.ok(runtime.indexOf("await recordUsageEvent") < runtime.indexOf("await fetch"));
   assert.match(runtime, /sourceKind: "app_runtime_invocation"/u);
   assert.match(runtime, /App usage outcome enrichment failed/u);
 });
 
-contractTest("web.hermetic", "preview lease usage is attributed to Kestrel Edge", () => {
+test("preview lease usage is attributed to Kestrel Edge", () => {
   const metering = read("lib/costs/metering.ts");
   assert.match(metering, /provider: "kestrel_edge"/u);
   assert.match(metering, /sourceKind: "workspace_preview_lease"/u);
   assert.match(metering, /previewEvents: leaseRows\.length/u);
 });
 
-contractTest("web.hermetic", "cost workers stay in the durable environment worker", () => {
+test("cost workers stay in the durable environment worker", () => {
   const queue = read("lib/knowledge/queue.ts");
   const worker = queue.slice(queue.indexOf("startEnvironmentLifecycleWorker"));
   assert.match(worker, /boss\.work\(\s*COST_PRICING_QUEUE/u);

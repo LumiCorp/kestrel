@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import {
@@ -13,7 +14,6 @@ import {
   authorizeEnvironmentRequest,
   authorizeEnvironmentSubscription,
 } from "../src/router.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const keys = generateKeyPairSync("ed25519");
@@ -108,7 +108,7 @@ const reasoningReadToken = signEnvironmentExecutionTicket({
   },
 });
 
-contractTest("services.hermetic", "router binds event subscriptions to the ticket Thread", () => {
+test("router binds event subscriptions to the ticket Thread", () => {
   assert.equal(
     authorizeEnvironmentSubscription({
       authorization: `Bearer ${token}`,
@@ -195,7 +195,7 @@ contractTest("services.hermetic", "router binds event subscriptions to the ticke
   );
 });
 
-contractTest("services.hermetic", "router binds retained reasoning commands to action capability, tenant, and Thread", () => {
+test("router binds retained reasoning commands to action capability, tenant, and Thread", () => {
   const command = (action: "read" | "delete", sessionId = "thread-1") => ({
     id: "command-reasoning",
     type: "operator.run.reasoning",
@@ -222,7 +222,7 @@ contractTest("services.hermetic", "router binds retained reasoning commands to a
   }).status, 403);
 });
 
-contractTest("services.hermetic", "router authorizes Workspace HTTP APIs by exact method and path", () => {
+test("router authorizes Workspace HTTP APIs by exact method and path", () => {
   assert.equal(authorizeEnvironmentHttpRequest({
     authorization: `Bearer ${token}`,
     publicKey,
@@ -239,7 +239,7 @@ contractTest("services.hermetic", "router authorizes Workspace HTTP APIs by exac
   }).status, 403);
 });
 
-contractTest("services.hermetic", "router authorizes interactive PTY session operations exactly", () => {
+test("router authorizes interactive PTY session operations exactly", () => {
   for (const [method, pathname] of [
     ["POST", "/v1/terminal/sessions"],
     ["POST", "/v1/terminal/sessions/terminal-1/input"],
@@ -269,7 +269,7 @@ contractTest("services.hermetic", "router authorizes interactive PTY session ope
   );
 });
 
-contractTest("services.hermetic", "router authorizes candidate preview and acceptance by exact path", () => {
+test("router authorizes candidate preview and acceptance by exact path", () => {
   for (const [method, pathname] of [
     ["GET", "/v1/promotions"],
     ["GET", "/v1/promotions/promotion-1"],
@@ -298,7 +298,7 @@ contractTest("services.hermetic", "router authorizes candidate preview and accep
   );
 });
 
-contractTest("services.hermetic", "router authorizes the exact tenant and Thread into a signed Fly App", () => {
+test("router authorizes the exact tenant and Thread into a signed Fly App", () => {
   const decision = authorizeEnvironmentRequest({
     authorization: `Bearer ${token}`,
     publicKey,
@@ -318,7 +318,7 @@ contractTest("services.hermetic", "router authorizes the exact tenant and Thread
   }
 });
 
-contractTest("services.hermetic", "router rejects a ticket issued for another Environment gateway", () => {
+test("router rejects a ticket issued for another Environment gateway", () => {
   assert.equal(
     authorizeEnvironmentHttpRequest({
       authorization: `Bearer ${token}`,
@@ -332,7 +332,7 @@ contractTest("services.hermetic", "router rejects a ticket issued for another En
   );
 });
 
-contractTest("services.hermetic", "gateway refresh accepts only an exactly scoped control-plane credential", () => {
+test("gateway refresh accepts only an exactly scoped control-plane credential", () => {
   const credential = signEnvironmentToolCredential({
     privateKey,
     ticket: {
@@ -371,7 +371,7 @@ contractTest("services.hermetic", "gateway refresh accepts only an exactly scope
   }));
 });
 
-contractTest("services.hermetic", "router rejects cross-organization and cross-Thread commands", () => {
+test("router rejects cross-organization and cross-Thread commands", () => {
   for (const body of [
     {
       type: "run.start",
@@ -396,7 +396,7 @@ contractTest("services.hermetic", "router rejects cross-organization and cross-T
   }
 });
 
-contractTest("services.hermetic", "router rejects missing tickets and ungranted command capabilities", () => {
+test("router rejects missing tickets and ungranted command capabilities", () => {
   assert.equal(
     authorizeEnvironmentRequest({
       authorization: undefined,

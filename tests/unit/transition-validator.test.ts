@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { Transition } from "../../src/kestrel/contracts/execution.js";
 
 import { validateTransition } from "../../src/engine/TransitionValidator.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "WAITING requires waitFor", () => {
+test("WAITING requires waitFor", () => {
   assert.throws(
     () => {
       validateTransition({
@@ -24,7 +24,7 @@ contractTest("runtime.hermetic", "WAITING requires waitFor", () => {
   );
 });
 
-contractTest("runtime.hermetic", "RUNNING requires nextStepAgent", () => {
+test("RUNNING requires nextStepAgent", () => {
   assert.throws(() => {
     validateTransition({
       status: "RUNNING",
@@ -32,7 +32,7 @@ contractTest("runtime.hermetic", "RUNNING requires nextStepAgent", () => {
   });
 });
 
-contractTest("runtime.hermetic", "accepts valid transition", () => {
+test("accepts valid transition", () => {
   assert.doesNotThrow(() => {
     validateTransition({
       status: "RUNNING",
@@ -48,7 +48,7 @@ contractTest("runtime.hermetic", "accepts valid transition", () => {
   });
 });
 
-contractTest("runtime.hermetic", "rejects invalid region ops payloads", () => {
+test("rejects invalid region ops payloads", () => {
   assert.throws(() => {
     validateTransition({
       status: "RUNNING",
@@ -60,7 +60,7 @@ contractTest("runtime.hermetic", "rejects invalid region ops payloads", () => {
   });
 });
 
-contractTest("runtime.hermetic", "rejects malformed transition boundary fields without trim TypeErrors", () => {
+test("rejects malformed transition boundary fields without trim TypeErrors", () => {
   const cases: Array<{ transition: unknown; contractPath: string }> = [
     {
       transition: {
@@ -135,7 +135,7 @@ contractTest("runtime.hermetic", "rejects malformed transition boundary fields w
   }
 });
 
-contractTest("runtime.hermetic", "accepts valid region ops", () => {
+test("accepts valid region ops", () => {
   assert.doesNotThrow(() => {
     validateTransition({
       status: "RUNNING",

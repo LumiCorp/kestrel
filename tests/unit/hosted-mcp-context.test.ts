@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,7 +6,6 @@ import {
   parseHostedMcpContext,
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const VALID_CONTEXT = {
@@ -18,7 +18,7 @@ const VALID_CONTEXT = {
   threadId: "thread-1",
 };
 
-contractTest("runtime.hermetic", "hosted MCP context carries grant identity without upstream credentials", () => {
+test("hosted MCP context carries grant identity without upstream credentials", () => {
   const parsed = parseHostedMcpContext(VALID_CONTEXT);
 
   assert.deepEqual(parsed, VALID_CONTEXT);
@@ -36,14 +36,14 @@ contractTest("runtime.hermetic", "hosted MCP context carries grant identity with
   assert.equal("secret" in parsed, false);
 });
 
-contractTest("runtime.hermetic", "hosted MCP context rejects a non-UUID grant", () => {
+test("hosted MCP context rejects a non-UUID grant", () => {
   assert.throws(
     () => parseHostedMcpContext({ ...VALID_CONTEXT, grantId: "grant-1" }),
     /grantId must be a UUID/u
   );
 });
 
-contractTest("runtime.hermetic", "hosted MCP context rejects non-HTTP transports", () => {
+test("hosted MCP context rejects non-HTTP transports", () => {
   assert.throws(
     () =>
       parseHostedMcpContext({
@@ -54,7 +54,7 @@ contractTest("runtime.hermetic", "hosted MCP context rejects non-HTTP transports
   );
 });
 
-contractTest("runtime.hermetic", "hosted MCP context rejects credentials embedded in the gateway URL", () => {
+test("hosted MCP context rejects credentials embedded in the gateway URL", () => {
   assert.throws(
     () =>
       parseHostedMcpContext({
@@ -65,7 +65,7 @@ contractTest("runtime.hermetic", "hosted MCP context rejects credentials embedde
   );
 });
 
-contractTest("runtime.hermetic", "hosted MCP context rejects unsupported protocol versions", () => {
+test("hosted MCP context rejects unsupported protocol versions", () => {
   assert.throws(
     () =>
       parseHostedMcpContext({
@@ -76,7 +76,7 @@ contractTest("runtime.hermetic", "hosted MCP context rejects unsupported protoco
   );
 });
 
-contractTest("runtime.hermetic", "hosted MCP runtime connection reads only the short-lived execution ticket", () => {
+test("hosted MCP runtime connection reads only the short-lived execution ticket", () => {
   const connection = parseHostedMcpRuntimeConnection({
     mcpContext: VALID_CONTEXT,
     mcpAuthorization: { executionTicket: "signed-run-ticket" },
@@ -89,7 +89,7 @@ contractTest("runtime.hermetic", "hosted MCP runtime connection reads only the s
   assert.equal("credentials" in connection, false);
 });
 
-contractTest("runtime.hermetic", "hosted MCP runtime connection requires an execution ticket", () => {
+test("hosted MCP runtime connection requires an execution ticket", () => {
   assert.throws(
     () =>
       parseHostedMcpRuntimeConnection({

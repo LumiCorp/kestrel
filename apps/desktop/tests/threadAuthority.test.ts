@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { inspectDesktopThreadAuthority } from "../src/threadAuthority.js";
 import { reconcileDesktopThreadAuthority } from "../renderer/src/threadAuthorityState.js";
 import type { DesktopRuntimeThreadInspection } from "../src/contracts.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 const view = {
   thread: {
@@ -26,7 +26,7 @@ const view = {
   inboxItems: [],
 } satisfies DesktopRuntimeThreadInspection;
 
-contractTest("desktop.hermetic", "thread authority normalizes expected missing threads without hiding other failures", async () => {
+test("thread authority normalizes expected missing threads without hiding other failures", async () => {
   const missing = Object.assign(new Error("missing"), { code: "OPERATOR_THREAD_NOT_FOUND" });
   assert.deepEqual(await inspectDesktopThreadAuthority({ inspect: async () => { throw missing; } }), { status: "missing" });
   const unavailable = Object.assign(new Error("offline"), { code: "RUNNER_UNAVAILABLE" });
@@ -34,7 +34,7 @@ contractTest("desktop.hermetic", "thread authority normalizes expected missing t
   assert.deepEqual(await inspectDesktopThreadAuthority({ inspect: async () => view }), { status: "available", view });
 });
 
-contractTest("desktop.hermetic", "authority reconciliation owns view run and workspace caches together", () => {
+test("authority reconciliation owns view run and workspace caches together", () => {
   const available = reconcileDesktopThreadAuthority({
     caches: { threadViews: {}, activeRuns: {}, threadWorkspaces: {}, authorityStatuses: {} },
     rendererThreadId: "renderer-1",

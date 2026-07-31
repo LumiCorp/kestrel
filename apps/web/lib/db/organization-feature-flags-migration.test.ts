@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const migration = fs.readFileSync(
@@ -22,7 +22,7 @@ const journal = JSON.parse(
   )
 ) as { entries: Array<{ idx: number; tag: string }> };
 
-contractTest("web.hermetic", "organization feature flags are tenant-owned and administrator-attributed", () => {
+test("organization feature flags are tenant-owned and administrator-attributed", () => {
   assert.match(migration, /CREATE TABLE "organization_feature_flags"/u);
   assert.match(migration, /PRIMARY KEY \("organization_id", "key"\)/u);
   assert.match(migration, /"enabled" boolean DEFAULT false NOT NULL/u);

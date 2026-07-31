@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { MemoryLocalCoreCredentialStore } from "../../src/localCore/credentialStore.js";
 import { verifyAndStoreLocalCoreExternalDatabase } from "../../src/localCore/externalDatabaseVerification.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Local Core verifies an external database before replacing its Keychain credential", async () => {
+test("Local Core verifies an external database before replacing its Keychain credential", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   await store.set("data.database.external", "postgresql://user:old@old.example/kestrel");
   const candidate = "postgresql://user:new@db.example.test:5433/kestrel";
@@ -20,7 +20,7 @@ contractTest("runtime.hermetic", "Local Core verifies an external database befor
   assert.equal(JSON.stringify(result).includes("user:new"), false);
 });
 
-contractTest("runtime.hermetic", "Local Core preserves the prior external database credential when verification fails", async () => {
+test("Local Core preserves the prior external database credential when verification fails", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   const previous = "postgresql://user:old@old.example/kestrel";
   await store.set("data.database.external", previous);

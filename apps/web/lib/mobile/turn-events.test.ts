@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { toMobileTurnEvent } from "./event-contract";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "mobile SSE translates text deltas without exposing runner event payloads", () => {
+test("mobile SSE translates text deltas without exposing runner event payloads", () => {
   assert.deepEqual(
     toMobileTurnEvent({
       turnId: "turn-1",
@@ -17,7 +17,7 @@ contractTest("web.hermetic", "mobile SSE translates text deltas without exposing
   );
 });
 
-contractTest("web.hermetic", "mobile SSE collapses internal lifecycle events to a snapshot invalidation", () => {
+test("mobile SSE collapses internal lifecycle events to a snapshot invalidation", () => {
   assert.deepEqual(
     toMobileTurnEvent({
       turnId: "turn-1",
@@ -31,7 +31,7 @@ contractTest("web.hermetic", "mobile SSE collapses internal lifecycle events to 
   );
 });
 
-contractTest("web.hermetic", "mobile SSE delivers explicitly projected durable activity", () => {
+test("mobile SSE delivers explicitly projected durable activity", () => {
   assert.deepEqual(
     toMobileTurnEvent({
       turnId: "turn-1",
@@ -49,7 +49,7 @@ contractTest("web.hermetic", "mobile SSE delivers explicitly projected durable a
   );
 });
 
-contractTest("web.hermetic", "mobile SSE normalizes progress codes into stable user-safe activity", () => {
+test("mobile SSE normalizes progress codes into stable user-safe activity", () => {
   assert.deepEqual(
     toMobileTurnEvent({
       turnId: "turn-1",
@@ -75,7 +75,7 @@ contractTest("web.hermetic", "mobile SSE normalizes progress codes into stable u
   );
 });
 
-contractTest("web.hermetic", "mobile SSE presents tool progress without exposing free-form text", () => {
+test("mobile SSE presents tool progress without exposing free-form text", () => {
   assert.deepEqual(
     toMobileTurnEvent({
       turnId: "turn-1",
@@ -99,7 +99,7 @@ contractTest("web.hermetic", "mobile SSE presents tool progress without exposing
   );
 });
 
-contractTest("web.hermetic", "mobile SSE preserves canonical agent-authored progress narration", () => {
+test("mobile SSE preserves canonical agent-authored progress narration", () => {
   assert.deepEqual(
     toMobileTurnEvent({
       turnId: "turn-1",
@@ -122,7 +122,7 @@ contractTest("web.hermetic", "mobile SSE preserves canonical agent-authored prog
   );
 });
 
-contractTest("web.hermetic", "mobile SSE projects typed tool parts as capability activity", () => {
+test("mobile SSE projects typed tool parts as capability activity", () => {
   assert.deepEqual(
     toMobileTurnEvent({
       turnId: "turn-1",

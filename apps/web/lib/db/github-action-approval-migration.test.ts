@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const migration = fs.readFileSync(
@@ -30,7 +30,7 @@ const journal = JSON.parse(
   }>;
 };
 
-contractTest("web.hermetic", "GitHub action approvals bind the actor, runtime, resource, and payload", () => {
+test("GitHub action approvals bind the actor, runtime, resource, and payload", () => {
   assert.match(migration, /CREATE TABLE "github_action_approvals"/u);
   for (const column of [
     "organization_id",
@@ -54,7 +54,7 @@ contractTest("web.hermetic", "GitHub action approvals bind the actor, runtime, r
   assert.match(migration, /\^\[0-9a-f\]\{64\}\$/u);
 });
 
-contractTest("web.hermetic", "GitHub action approvals enforce single-use lifecycle evidence", () => {
+test("GitHub action approvals enforce single-use lifecycle evidence", () => {
   assert.match(
     migration,
     /'pending', 'approved', 'denied', 'consumed', 'expired'/u

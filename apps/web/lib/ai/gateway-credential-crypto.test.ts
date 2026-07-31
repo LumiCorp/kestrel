@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   decryptGatewayCredential,
@@ -5,7 +6,6 @@ import {
   GatewayCredentialEncryptionError,
   isEncryptedGatewayCredential,
 } from "./gateway-credential-crypto";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const encryptionEnv: NodeJS.ProcessEnv = {
@@ -17,7 +17,7 @@ const encryptionEnv: NodeJS.ProcessEnv = {
   }),
 };
 
-contractTest("web.hermetic", "gateway credentials round-trip through an authenticated envelope", () => {
+test("gateway credentials round-trip through an authenticated envelope", () => {
   const encrypted = encryptGatewayCredential({
     gatewayId: "gateway-1",
     plaintext: "provider-secret",
@@ -36,7 +36,7 @@ contractTest("web.hermetic", "gateway credentials round-trip through an authenti
   );
 });
 
-contractTest("web.hermetic", "gateway credential envelopes are bound to their gateway", () => {
+test("gateway credential envelopes are bound to their gateway", () => {
   const encrypted = encryptGatewayCredential({
     gatewayId: "gateway-1",
     plaintext: "provider-secret",
@@ -56,7 +56,7 @@ contractTest("web.hermetic", "gateway credential envelopes are bound to their ga
   );
 });
 
-contractTest("web.hermetic", "gateway credential runtime reads reject plaintext", () => {
+test("gateway credential runtime reads reject plaintext", () => {
   assert.throws(
     () =>
       decryptGatewayCredential({
@@ -70,7 +70,7 @@ contractTest("web.hermetic", "gateway credential runtime reads reject plaintext"
   );
 });
 
-contractTest("web.hermetic", "gateway credential envelopes fail closed when authentication is changed", () => {
+test("gateway credential envelopes fail closed when authentication is changed", () => {
   const encrypted = encryptGatewayCredential({
     gatewayId: "gateway-1",
     plaintext: "provider-secret",

@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { validateFinalizationDecision } from "../../agents/reference-react/src/finalizationPolicy.js";
 import { DecisionCompileError } from "../../agents/reference-react/src/decision/DecisionCompileError.js";
 import type { ReactAction } from "../../agents/reference-react/src/types.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const FINALIZE_ACTION: ReactAction = {
@@ -16,7 +16,7 @@ const FINALIZE_ACTION: ReactAction = {
   },
 };
 
-contractTest("runtime.hermetic", "goal-satisfied finalization does not use artifact evidence as a hidden completion gate", () => {
+test("goal-satisfied finalization does not use artifact evidence as a hidden completion gate", () => {
   assert.doesNotThrow(() =>
     validateFinalizationDecision({
       action: {
@@ -38,7 +38,7 @@ contractTest("runtime.hermetic", "goal-satisfied finalization does not use artif
   );
 });
 
-contractTest("runtime.hermetic", "finalization policy stays benchmark agnostic", () => {
+test("finalization policy stays benchmark agnostic", () => {
   const source = readFileSync("agents/reference-react/src/finalizationPolicy.ts", "utf8");
 
   assert.doesNotMatch(source, /benchmark\.name/u);
@@ -46,7 +46,7 @@ contractTest("runtime.hermetic", "finalization policy stays benchmark agnostic",
   assert.doesNotMatch(source, /sweValidation/u);
 });
 
-contractTest("runtime.hermetic", "goal-satisfied finalization rejects implemented_and_verified with inconclusive artifact verification", () => {
+test("goal-satisfied finalization rejects implemented_and_verified with inconclusive artifact verification", () => {
   assert.throws(
     () =>
       validateFinalizationDecision({
@@ -73,7 +73,7 @@ contractTest("runtime.hermetic", "goal-satisfied finalization rejects implemente
   );
 });
 
-contractTest("runtime.hermetic", "finalization still requires a non-empty user-facing message", () => {
+test("finalization still requires a non-empty user-facing message", () => {
   assert.throws(
     () =>
       validateFinalizationDecision({
@@ -93,7 +93,7 @@ contractTest("runtime.hermetic", "finalization still requires a non-empty user-f
   );
 });
 
-contractTest("runtime.hermetic", "finalization rejects a rewritten Workspace preview hostname", () => {
+test("finalization rejects a rewritten Workspace preview hostname", () => {
   const exactUrl =
     "https://p-49d7077ad58642715cb42553de349d44.preview.kestrelagents.dev";
   assert.throws(
@@ -127,7 +127,7 @@ contractTest("runtime.hermetic", "finalization rejects a rewritten Workspace pre
   );
 });
 
-contractTest("runtime.hermetic", "finalization accepts the exact Workspace preview URL", () => {
+test("finalization accepts the exact Workspace preview URL", () => {
   const exactUrl =
     "https://p-49d7077ad58642715cb42553de349d44.preview.kestrelagents.dev";
   assert.doesNotThrow(() =>
@@ -150,7 +150,7 @@ contractTest("runtime.hermetic", "finalization accepts the exact Workspace previ
   );
 });
 
-contractTest("runtime.hermetic", "finalization preserves Workspace preview URLs from durable evidence", () => {
+test("finalization preserves Workspace preview URLs from durable evidence", () => {
   const exactUrl =
     "https://p-49d7077ad58642715cb42553de349d44.preview.kestrelagents.dev";
   assert.throws(
@@ -184,7 +184,7 @@ contractTest("runtime.hermetic", "finalization preserves Workspace preview URLs 
   );
 });
 
-contractTest("runtime.hermetic", "goal-satisfied finalization rejects legacy closeout evidence fields", () => {
+test("goal-satisfied finalization rejects legacy closeout evidence fields", () => {
   assert.throws(
     () =>
       validateFinalizationDecision({
@@ -213,7 +213,7 @@ contractTest("runtime.hermetic", "goal-satisfied finalization rejects legacy clo
   );
 });
 
-contractTest("runtime.hermetic", "goal-satisfied finalization accepts unique non-empty keep-running session ids", () => {
+test("goal-satisfied finalization accepts unique non-empty keep-running session ids", () => {
   assert.doesNotThrow(() =>
     validateFinalizationDecision({
       action: {
@@ -248,27 +248,27 @@ function assertKeepRunningSessionIdsRejected(value: unknown, reason: string): vo
   );
 }
 
-contractTest("runtime.hermetic", "finalization rejects non-array keep-running session ids", () => {
+test("finalization rejects non-array keep-running session ids", () => {
   assertKeepRunningSessionIdsRejected("proc-app", "keep_running_sessions_must_be_array");
 });
 
-contractTest("runtime.hermetic", "finalization rejects empty keep-running session ids", () => {
+test("finalization rejects empty keep-running session ids", () => {
   assertKeepRunningSessionIdsRejected([""], "keep_running_session_id_invalid");
 });
 
-contractTest("runtime.hermetic", "finalization rejects whitespace-padded keep-running session ids", () => {
+test("finalization rejects whitespace-padded keep-running session ids", () => {
   assertKeepRunningSessionIdsRejected([" proc-app "], "keep_running_session_id_invalid");
 });
 
-contractTest("runtime.hermetic", "finalization rejects non-string keep-running session ids", () => {
+test("finalization rejects non-string keep-running session ids", () => {
   assertKeepRunningSessionIdsRejected([123], "keep_running_session_id_invalid");
 });
 
-contractTest("runtime.hermetic", "finalization rejects duplicate keep-running session ids", () => {
+test("finalization rejects duplicate keep-running session ids", () => {
   assertKeepRunningSessionIdsRejected(["proc-app", "proc-app"], "keep_running_session_ids_duplicate");
 });
 
-contractTest("runtime.hermetic", "out-of-scope finalization cannot retain a running session", () => {
+test("out-of-scope finalization cannot retain a running session", () => {
   assert.throws(
     () =>
       validateFinalizationDecision({

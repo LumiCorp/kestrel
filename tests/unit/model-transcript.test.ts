@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -14,10 +15,9 @@ import {
 } from "../../src/runtime/modelTranscript.js";
 import { buildManagedScratchpadFromRuntime } from "../../src/runtime/workspaceScratchpad.js";
 import { buildKestrelAgentContext as buildContextRequest } from "../../src/runtime/KestrelAgentContextBuilder.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "tool result transcript renders fresh read content into next model messages", () => {
+test("tool result transcript renders fresh read content into next model messages", () => {
   let transcript = appendUserTurnToTranscript({
     transcript: undefined,
     message: "Update src/App.jsx.",
@@ -63,7 +63,7 @@ contractTest("runtime.hermetic", "tool result transcript renders fresh read cont
   assert.doesNotMatch(rendered, /evidenceRefs/u);
 });
 
-contractTest("runtime.hermetic", "parallel same-name tool results preserve explicit original tool call ids", () => {
+test("parallel same-name tool results preserve explicit original tool call ids", () => {
   let transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -108,7 +108,7 @@ contractTest("runtime.hermetic", "parallel same-name tool results preserve expli
   assert.match(String(toolMessages[1]?.content), /output B/u);
 });
 
-contractTest("runtime.hermetic", "fs.write_text tool result renders compact factual output without raw JSON", () => {
+test("fs.write_text tool result renders compact factual output without raw JSON", () => {
   let transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -164,7 +164,7 @@ contractTest("runtime.hermetic", "fs.write_text tool result renders compact fact
   assert.doesNotMatch(rendered, /"status": "OK"/u);
 });
 
-contractTest("runtime.hermetic", "fs.write_text shaped large output renders compact digest facts", () => {
+test("fs.write_text shaped large output renders compact digest facts", () => {
   const longContent = `${"line\n".repeat(140)}final marker that should not appear in compact input`;
   let transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
@@ -220,7 +220,7 @@ contractTest("runtime.hermetic", "fs.write_text shaped large output renders comp
   assert.doesNotMatch(rendered, /final marker that should not appear/u);
 });
 
-contractTest("runtime.hermetic", "fs.replace_text tool result renders compact factual output without raw JSON", () => {
+test("fs.replace_text tool result renders compact factual output without raw JSON", () => {
   let transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -273,7 +273,7 @@ contractTest("runtime.hermetic", "fs.replace_text tool result renders compact fa
   assert.doesNotMatch(rendered, /"status": "NO_CHANGE"/u);
 });
 
-contractTest("runtime.hermetic", "dev shell run tool result renders process fields and raw stdout without classification", () => {
+test("dev shell run tool result renders process fields and raw stdout without classification", () => {
   let transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -326,7 +326,7 @@ contractTest("runtime.hermetic", "dev shell run tool result renders process fiel
   assert.doesNotMatch(rendered, /suspicious|risky|regression|failed-looking|likely blocker|may indicate/u);
 });
 
-contractTest("runtime.hermetic", "unknown tool result renders generic envelope fallback", () => {
+test("unknown tool result renders generic envelope fallback", () => {
   let transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -360,7 +360,7 @@ contractTest("runtime.hermetic", "unknown tool result renders generic envelope f
   assert.doesNotMatch(rendered, /\nOutput:/u);
 });
 
-contractTest("runtime.hermetic", "weather forecast transcript renders nested daily and hourly evidence", () => {
+test("weather forecast transcript renders nested daily and hourly evidence", () => {
   let transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -420,7 +420,7 @@ contractTest("runtime.hermetic", "weather forecast transcript renders nested dai
   assert.match(rendered, /Raw output ref: tool-output:[a-f0-9]{16}/u);
 });
 
-contractTest("runtime.hermetic", "re-appending same user task after tool results does not duplicate transcript user items", () => {
+test("re-appending same user task after tool results does not duplicate transcript user items", () => {
   let transcript = appendUserTurnToTranscript({
     transcript: undefined,
     message: "Fix the bug.",
@@ -464,7 +464,7 @@ contractTest("runtime.hermetic", "re-appending same user task after tool results
   assert.equal(userItems[1]?.content, "Now fix the other bug.");
 });
 
-contractTest("runtime.hermetic", "transcript append preserves all valid history and the original active task", () => {
+test("transcript append preserves all valid history and the original active task", () => {
   let transcript = appendUserTurnToTranscript({
     transcript: undefined,
     message: "Initial task",
@@ -482,7 +482,7 @@ contractTest("runtime.hermetic", "transcript append preserves all valid history 
   assert.equal(readActiveTaskGoalFromTranscript(transcript), "Initial task");
 });
 
-contractTest("runtime.hermetic", "transcript normalization preserves all valid history and the original active task", () => {
+test("transcript normalization preserves all valid history and the original active task", () => {
   const transcript = normalizeModelTranscript({
     version: 1,
     windowId: 1,
@@ -509,7 +509,7 @@ contractTest("runtime.hermetic", "transcript normalization preserves all valid h
   assert.equal(readActiveTaskGoalFromTranscript(transcript), "Initial task");
 });
 
-contractTest("runtime.hermetic", "normalizing transcript duplicate ids keeps the latest occurrence", () => {
+test("normalizing transcript duplicate ids keeps the latest occurrence", () => {
   const transcript = normalizeModelTranscript({
     version: 1,
     windowId: 1,
@@ -533,7 +533,7 @@ contractTest("runtime.hermetic", "normalizing transcript duplicate ids keeps the
   assert.equal(transcript?.items[0]?.content, "latest task");
 });
 
-contractTest("runtime.hermetic", "appending after compaction allocates from max existing window ordinal", () => {
+test("appending after compaction allocates from max existing window ordinal", () => {
   const transcript = appendModelTranscriptItems(
     {
       version: 1,
@@ -560,7 +560,7 @@ contractTest("runtime.hermetic", "appending after compaction allocates from max 
   assert.equal(transcript.items.at(-1)?.id, "mt_7_0011_user");
 });
 
-contractTest("runtime.hermetic", "compaction removes duplicate tail ids from retained items", () => {
+test("compaction removes duplicate tail ids from retained items", () => {
   const compacted = compactModelTranscript({
     retainedTailItems: 4,
     summary: "Summary",
@@ -597,7 +597,7 @@ contractTest("runtime.hermetic", "compaction removes duplicate tail ids from ret
   assert.equal(new Set(compacted.compactions?.[0]?.retainedItemIds).size, compacted.compactions?.[0]?.retainedItemIds.length);
 });
 
-contractTest("runtime.hermetic", "rebase after compaction skips retained and replaced outgoing ids", () => {
+test("rebase after compaction skips retained and replaced outgoing ids", () => {
   const compacted = compactModelTranscript({
     retainedTailItems: 1,
     summary: "Summary",
@@ -654,7 +654,7 @@ contractTest("runtime.hermetic", "rebase after compaction skips retained and rep
   assert.equal(rebased?.items.at(-1)?.id, "mt_2_0002_user");
 });
 
-contractTest("runtime.hermetic", "rebase after repeated partial compactions does not resurrect earlier replaced items", () => {
+test("rebase after repeated partial compactions does not resurrect earlier replaced items", () => {
   const original = {
     version: 1 as const,
     windowId: 1,
@@ -723,7 +723,7 @@ contractTest("runtime.hermetic", "rebase after repeated partial compactions does
   );
 });
 
-contractTest("runtime.hermetic", "rebase preserves complete lineage after more than twenty partial compactions", () => {
+test("rebase preserves complete lineage after more than twenty partial compactions", () => {
   const task = {
     id: "task",
     createdAt: "2026-07-30T00:00:00.000Z",
@@ -788,7 +788,7 @@ contractTest("runtime.hermetic", "rebase preserves complete lineage after more t
   );
 });
 
-contractTest("runtime.hermetic", "large tool results store bounded visible output with an internal raw-output ref", () => {
+test("large tool results store bounded visible output with an internal raw-output ref", () => {
   const transcript = appendToolResultToTranscript({
     transcript: undefined,
     toolName: "dev.shell.run",
@@ -810,7 +810,7 @@ contractTest("runtime.hermetic", "large tool results store bounded visible outpu
   assert.match(rendered, /\[omitted \d+ chars\]/u);
 });
 
-contractTest("runtime.hermetic", "context request uses transcript and omits projection-era model fields", () => {
+test("context request uses transcript and omits projection-era model fields", () => {
   const request = buildContextRequest({
     reactState: {
       modelTranscript: appendUserTurnToTranscript({
@@ -844,7 +844,7 @@ contractTest("runtime.hermetic", "context request uses transcript and omits proj
   assert.equal(JSON.stringify(request.messages).includes("Build the app"), true);
 });
 
-contractTest("runtime.hermetic", "context request does not render the current task twice as runtime context and transcript", () => {
+test("context request does not render the current task twice as runtime context and transcript", () => {
   const task = "Resolve SWE-bench Verified instance sympy__sympy-20916.";
   const request = buildContextRequest({
     reactState: {},
@@ -870,7 +870,7 @@ contractTest("runtime.hermetic", "context request does not render the current ta
   assert.equal(request.transcript.items.some((item) => item.kind === "user"), true);
 });
 
-contractTest("runtime.hermetic", "context request still renders a new user reply separately from the current task", () => {
+test("context request still renders a new user reply separately from the current task", () => {
   const request = buildContextRequest({
     reactState: {},
     eventPayload: {
@@ -898,7 +898,7 @@ contractTest("runtime.hermetic", "context request still renders a new user reply
   );
 });
 
-contractTest("runtime.hermetic", "context request surfaces recent filesystem result from runtime state", () => {
+test("context request surfaces recent filesystem result from runtime state", () => {
   const request = buildContextRequest({
     reactState: {
       lastActionResult: {
@@ -938,7 +938,7 @@ contractTest("runtime.hermetic", "context request surfaces recent filesystem res
   assert.match(rendered, /before repeating the same filesystem inspection/u);
 });
 
-contractTest("runtime.hermetic", "context request surfaces ledger filesystem facts after newer actions", () => {
+test("context request surfaces ledger filesystem facts after newer actions", () => {
   const request = buildContextRequest({
     reactState: {
       lastActionResult: {
@@ -1054,7 +1054,7 @@ contractTest("runtime.hermetic", "context request surfaces ledger filesystem fac
   assert.match(rendered, /fs\.search_text \/app\/synonyms\.txt for \\"privileged\\" returned 0 matches/u);
 });
 
-contractTest("runtime.hermetic", "context request ignores legacy session task queue state", () => {
+test("context request ignores legacy session task queue state", () => {
   const request = buildContextRequest({
     reactState: {},
     eventPayload: {
@@ -1112,7 +1112,7 @@ contractTest("runtime.hermetic", "context request ignores legacy session task qu
   );
 });
 
-contractTest("runtime.hermetic", "Plan context does not import legacy session proposals", () => {
+test("Plan context does not import legacy session proposals", () => {
   const tasks = Object.fromEntries(
     Array.from({ length: 9 }, (_, index) => {
       const taskNumber = index + 1;
@@ -1154,7 +1154,7 @@ contractTest("runtime.hermetic", "Plan context does not import legacy session pr
   );
 });
 
-contractTest("runtime.hermetic", "context request omits mission control task queue context for non-project turns", () => {
+test("context request omits mission control task queue context for non-project turns", () => {
   const request = buildContextRequest({
     reactState: {},
     eventPayload: {
@@ -1169,7 +1169,7 @@ contractTest("runtime.hermetic", "context request omits mission control task que
   assert.doesNotMatch(JSON.stringify(request.messages), /Mission Control task queue/u);
 });
 
-contractTest("runtime.hermetic", "context request surfaces loop-stall recovery checkpoint after resume", () => {
+test("context request surfaces loop-stall recovery checkpoint after resume", () => {
   const request = buildContextRequest({
     reactState: {
       loopStall: {
@@ -1212,7 +1212,7 @@ contractTest("runtime.hermetic", "context request surfaces loop-stall recovery c
   assert.doesNotMatch(rendered, /Active wait/u);
 });
 
-contractTest("runtime.hermetic", "workspace scratchpad preserves recent filesystem result summary", () => {
+test("workspace scratchpad preserves recent filesystem result summary", () => {
   const scratchpad = buildManagedScratchpadFromRuntime({
     output: {
       status: "WAITING",
@@ -1268,7 +1268,7 @@ contractTest("runtime.hermetic", "workspace scratchpad preserves recent filesyst
   );
 });
 
-contractTest("runtime.hermetic", "tool result transcript correlates normalized tool inputs by canonical tool name", () => {
+test("tool result transcript correlates normalized tool inputs by canonical tool name", () => {
   let transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -1293,7 +1293,7 @@ contractTest("runtime.hermetic", "tool result transcript correlates normalized t
   assert.equal(toolResult?.toolCallId, "call_shell");
 });
 
-contractTest("runtime.hermetic", "rendering repairs dangling tool calls instead of sending provider-invalid history", () => {
+test("rendering repairs dangling tool calls instead of sending provider-invalid history", () => {
   const transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -1318,7 +1318,7 @@ contractTest("runtime.hermetic", "rendering repairs dangling tool calls instead 
   assert.match(rendered, /call_missing_result/u);
 });
 
-contractTest("runtime.hermetic", "rendering repairs orphan tool results instead of sending provider-invalid tool output", () => {
+test("rendering repairs orphan tool results instead of sending provider-invalid tool output", () => {
   const transcript = appendToolResultToTranscript({
     transcript: undefined,
     toolName: "fs.read_text",
@@ -1335,7 +1335,7 @@ contractTest("runtime.hermetic", "rendering repairs orphan tool results instead 
   assert.match(rendered, /Tool result: fs.read_text/u);
 });
 
-contractTest("runtime.hermetic", "compaction stores visible summary and retained transcript tail", () => {
+test("compaction stores visible summary and retained transcript tail", () => {
   let transcript = appendUserTurnToTranscript({
     transcript: undefined,
     message: "Initial task",
@@ -1370,7 +1370,7 @@ contractTest("runtime.hermetic", "compaction stores visible summary and retained
   assert.deepEqual(compacted.compactions?.[0]?.retainedItemIds, [transcript.items[0]?.id, transcript.items[2]?.id]);
 });
 
-contractTest("runtime.hermetic", "compaction preserves active task plus latest correction", () => {
+test("compaction preserves active task plus latest correction", () => {
   let transcript = appendUserTurnToTranscript({
     transcript: undefined,
     message: "Build the dashboard.",
@@ -1402,7 +1402,7 @@ contractTest("runtime.hermetic", "compaction preserves active task plus latest c
   assert.deepEqual(compacted.compactions?.[0]?.retainedItemIds, [transcript.items[0]?.id, transcript.items[2]?.id]);
 });
 
-contractTest("runtime.hermetic", "compaction retains matched tool call and result pairs in retained tails", () => {
+test("compaction retains matched tool call and result pairs in retained tails", () => {
   let transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -1440,7 +1440,7 @@ contractTest("runtime.hermetic", "compaction retains matched tool call and resul
   assert.match(rendered, /export default function App/u);
 });
 
-contractTest("runtime.hermetic", "compaction drops dangling tool calls from retained tails instead of preserving repair spam", () => {
+test("compaction drops dangling tool calls from retained tails instead of preserving repair spam", () => {
   const transcript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -1467,7 +1467,7 @@ contractTest("runtime.hermetic", "compaction drops dangling tool calls from reta
   assert.doesNotMatch(rendered, /missing\.txt/u);
 });
 
-contractTest("runtime.hermetic", "legacy compaction records normalize as model summaries", () => {
+test("legacy compaction records normalize as model summaries", () => {
   const transcript = normalizeModelTranscript({
     version: 1,
     windowId: 2,

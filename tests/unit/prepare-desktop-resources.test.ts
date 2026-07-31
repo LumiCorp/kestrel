@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -7,10 +8,9 @@ import {
   checkDesktopResourceDrift,
   shouldCopyDesktopResourceEntry,
 } from "../../scripts/prepare-desktop-resources.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "shouldCopyDesktopResourceEntry excludes local env and generated output files", () => {
+test("shouldCopyDesktopResourceEntry excludes local env and generated output files", () => {
   assert.equal(shouldCopyDesktopResourceEntry("/tmp/repo/apps/web/.env"), false);
   assert.equal(shouldCopyDesktopResourceEntry("/tmp/repo/apps/web/.env.local"), false);
   assert.equal(shouldCopyDesktopResourceEntry("/tmp/repo/apps/web/.env.example"), false);
@@ -19,7 +19,7 @@ contractTest("runtime.hermetic", "shouldCopyDesktopResourceEntry excludes local 
   assert.equal(shouldCopyDesktopResourceEntry("/tmp/repo/apps/web/app/page.tsx"), true);
 });
 
-contractTest("runtime.hermetic", "checkDesktopResourceDrift skips absent generated resources", () => {
+test("checkDesktopResourceDrift skips absent generated resources", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-desktop-drift-"));
   try {
     mkdirSync(path.join(tempDir, "repo", "agents"), { recursive: true });
@@ -38,7 +38,7 @@ contractTest("runtime.hermetic", "checkDesktopResourceDrift skips absent generat
   }
 });
 
-contractTest("runtime.hermetic", "checkDesktopResourceDrift reports stale generated resources", () => {
+test("checkDesktopResourceDrift reports stale generated resources", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-desktop-drift-"));
   try {
     const repoRoot = path.join(tempDir, "repo");

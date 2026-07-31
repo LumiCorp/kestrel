@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   decryptWorkspaceBackup,
   encryptWorkspaceBackup,
 } from "./backup-crypto";
 import { createAuxiliaryVolumeSnapshot } from "./backup-snapshot";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "Workspace object backups are authenticated and decryptable", () => {
+test("Workspace object backups are authenticated and decryptable", () => {
   const key = Buffer.alloc(32, 7);
   const archive = Buffer.from("durable workspace state");
   const encrypted = encryptWorkspaceBackup(archive, key);
@@ -17,7 +17,7 @@ contractTest("web.hermetic", "Workspace object backups are authenticated and dec
   assert.throws(() => decryptWorkspaceBackup(encrypted, key));
 });
 
-contractTest("web.hermetic", "an accepted asynchronous Fly snapshot remains auxiliary", async () => {
+test("an accepted asynchronous Fly snapshot remains auxiliary", async () => {
   const snapshot = await createAuxiliaryVolumeSnapshot({
     appName: "kestrel-env-test",
     volumeId: "vol_test",
@@ -30,7 +30,7 @@ contractTest("web.hermetic", "an accepted asynchronous Fly snapshot remains auxi
   });
 });
 
-contractTest("web.hermetic", "a rejected Fly snapshot does not reject the canonical archive backup", async () => {
+test("a rejected Fly snapshot does not reject the canonical archive backup", async () => {
   const snapshot = await createAuxiliaryVolumeSnapshot({
     appName: "kestrel-env-test",
     volumeId: "vol_test",

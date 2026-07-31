@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { getKnowledgeEmbeddingRuntime } from "../knowledge/documents/embed";
 import {
@@ -6,21 +7,20 @@ import {
   getGatewayResolutionFailureMessage,
   isPlaceholderRuntimeApiKey,
 } from "./surface-policy";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 function toEnv(values: Record<string, string>) {
   return values as unknown as NodeJS.ProcessEnv;
 }
 
-contractTest("web.hermetic", "gateway-governed and direct-runtime surfaces stay explicit", () => {
+test("gateway-governed and direct-runtime surfaces stay explicit", () => {
   assert.equal(getAISurfacePolicy("chat"), "gateway-required");
   assert.equal(getAISurfacePolicy("artifact"), "gateway-required");
   assert.equal(getAISurfacePolicy("embedding"), "runtime-direct");
   assert.equal(getAISurfacePolicy("ocr"), "runtime-direct");
 });
 
-contractTest("web.hermetic", "runtime-direct config treats placeholder API keys as fallback mode", () => {
+test("runtime-direct config treats placeholder API keys as fallback mode", () => {
   const config = getDirectRuntimeConfig(
     "runtime-direct",
     toEnv({
@@ -35,7 +35,7 @@ contractTest("web.hermetic", "runtime-direct config treats placeholder API keys 
   assert.equal(isPlaceholderRuntimeApiKey("sk_your_provider_key"), true);
 });
 
-contractTest("web.hermetic", "embedding config safely inherits the official OpenRouter agent runtime", () => {
+test("embedding config safely inherits the official OpenRouter agent runtime", () => {
   const config = getDirectRuntimeConfig(
     "embedding",
     toEnv({
@@ -62,7 +62,7 @@ contractTest("web.hermetic", "embedding config safely inherits the official Open
   );
 });
 
-contractTest("web.hermetic", "embedding config reuses the standard OpenRouter gateway credential", () => {
+test("embedding config reuses the standard OpenRouter gateway credential", () => {
   const config = getDirectRuntimeConfig(
     "embedding",
     toEnv({
@@ -77,7 +77,7 @@ contractTest("web.hermetic", "embedding config reuses the standard OpenRouter ga
   assert.equal(config.mode, "live");
 });
 
-contractTest("web.hermetic", "dedicated embedding configuration retains precedence over OpenRouter inheritance", () => {
+test("dedicated embedding configuration retains precedence over OpenRouter inheritance", () => {
   const dedicatedEmbedding = getDirectRuntimeConfig(
     "embedding",
     toEnv({
@@ -93,7 +93,7 @@ contractTest("web.hermetic", "dedicated embedding configuration retains preceden
   assert.equal(dedicatedEmbedding.apiKey, "dedicated-key");
 });
 
-contractTest("web.hermetic", "embedding runtime refuses to send an OpenRouter key to another endpoint", () => {
+test("embedding runtime refuses to send an OpenRouter key to another endpoint", () => {
   const config = getDirectRuntimeConfig(
     "embedding",
     toEnv({
@@ -107,7 +107,7 @@ contractTest("web.hermetic", "embedding runtime refuses to send an OpenRouter ke
   assert.equal(config.mode, "fallback");
 });
 
-contractTest("web.hermetic", "embedding runtime derives semantic and lexical retrieval strategies", () => {
+test("embedding runtime derives semantic and lexical retrieval strategies", () => {
   const openrouterEmbedding = getKnowledgeEmbeddingRuntime(
     toEnv({
       AI_EMBEDDING_BASE_URL: "https://openrouter.ai/api/v1",
@@ -128,7 +128,7 @@ contractTest("web.hermetic", "embedding runtime derives semantic and lexical ret
   assert.equal(fallbackEmbedding.retrievalStrategy, "lexical");
 });
 
-contractTest("web.hermetic", "gateway resolution errors are explicit about the surface and model", () => {
+test("gateway resolution errors are explicit about the surface and model", () => {
   assert.equal(
     getGatewayResolutionFailureMessage({
       surface: "chat",

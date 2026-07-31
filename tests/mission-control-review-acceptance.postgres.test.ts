@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -17,7 +18,6 @@ import {
   type MissionControlReviewBundle,
 } from "../src/missionControl/reviewContracts.js";
 import { createSessionStoreFromEnv } from "../src/store/createSessionStore.js";
-import { contractTest } from "./helpers/contract-test.js";
 
 const ACTION_TS = "2026-07-30T12:00:00.000Z";
 const CANDIDATE_A = `sha256:${"a".repeat(64)}`;
@@ -44,8 +44,7 @@ const NON_CODE_CONTRACT: MissionControlCompletionContract = {
   requiredEvidence: ["artifact"],
 };
 
-contractTest(
-  "runtime.mission-control-review-acceptance",
+test(
   "candidate-bound review acceptance is exact, atomic, replay safe, and durable",
   async (context) => {
     const databaseUrl =

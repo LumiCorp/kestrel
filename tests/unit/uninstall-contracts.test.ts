@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -10,16 +11,15 @@ import {
   parseKestrelUninstallScope,
   type KestrelUninstallPlanV1,
 } from "../../src/uninstall/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "uninstall scope accepts public aliases", () => {
+test("uninstall scope accepts public aliases", () => {
   assert.equal(parseKestrelUninstallScope("current"), "current_component");
   assert.equal(parseKestrelUninstallScope("software"), "all_software");
   assert.equal(parseKestrelUninstallScope("complete"), "complete");
   assert.throws(() => parseKestrelUninstallScope("everything"), /scope/u);
 });
 
-contractTest("runtime.hermetic", "UninstallPlanV1 rejects unknown fields", () => {
+test("UninstallPlanV1 rejects unknown fields", () => {
   const plan = minimalPlan();
   assert.equal(parseKestrelUninstallPlanV1(plan).planId, "plan-test");
   assert.throws(
@@ -36,7 +36,7 @@ contractTest("runtime.hermetic", "UninstallPlanV1 rejects unknown fields", () =>
   );
 });
 
-contractTest("runtime.hermetic", "UninstallPlanV1 preserves package manager command arrays", () => {
+test("UninstallPlanV1 preserves package manager command arrays", () => {
   const plan = minimalPlan();
   const parsed = parseKestrelUninstallPlanV1({
     ...plan,
@@ -57,7 +57,7 @@ contractTest("runtime.hermetic", "UninstallPlanV1 preserves package manager comm
   ]);
 });
 
-contractTest("runtime.hermetic", "UninstallApplyResultV1 strictly parses structured outcomes", () => {
+test("UninstallApplyResultV1 strictly parses structured outcomes", () => {
   const result = {
     version: KESTREL_UNINSTALL_APPLY_RESULT_VERSION,
     planId: "plan-test",
@@ -105,7 +105,7 @@ contractTest("runtime.hermetic", "UninstallApplyResultV1 strictly parses structu
   );
 });
 
-contractTest("runtime.hermetic", "uninstall completion reports are strict and versioned", () => {
+test("uninstall completion reports are strict and versioned", () => {
   const report = {
     version: KESTREL_UNINSTALL_COMPLETION_REPORT_VERSION,
     executor: "cli_finalizer",

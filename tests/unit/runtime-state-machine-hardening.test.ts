@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, stat, realpath, rm, readFile } from "node:fs/promises";
@@ -16,7 +17,6 @@ import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { buildAgentToolSuccessResult, rawOutputRefFor, unwrapAgentToolOutput } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const execFileAsync = promisify(execFile);
@@ -75,7 +75,7 @@ function createRuntime(
   });
 }
 
-contractTest("runtime.process", "managed mutation tools capture pre/post workspace checkpoints and expose changed files", async () => {
+test("managed mutation tools capture pre/post workspace checkpoints and expose changed files", async () => {
   const store = new InMemorySessionStore();
   const captures: string[] = [];
   const checkpointService: RuntimeWorkspaceCheckpointService = {
@@ -210,7 +210,7 @@ contractTest("runtime.process", "managed mutation tools capture pre/post workspa
   ]);
 });
 
-contractTest("runtime.process", "managed mutation tools fail fast when dev shell guard falls back to source-readonly mode", async () => {
+test("managed mutation tools fail fast when dev shell guard falls back to source-readonly mode", async () => {
   const store = new InMemorySessionStore();
   const checkpointService: RuntimeWorkspaceCheckpointService = {
     capture: async (input) => ({
@@ -334,7 +334,7 @@ contractTest("runtime.process", "managed mutation tools fail fast when dev shell
   assert.equal(output.errors[0]?.code, "MANAGED_WORKTREE_SOURCE_WRITE_GUARD_MODE_MISMATCH");
 });
 
-contractTest("runtime.process", "spoofed managed worktree payload does not enable checkpoint wrapping without a session binding", async () => {
+test("spoofed managed worktree payload does not enable checkpoint wrapping without a session binding", async () => {
   const store = new InMemorySessionStore();
   let captureCount = 0;
   const checkpointService: RuntimeWorkspaceCheckpointService = {
@@ -390,7 +390,7 @@ contractTest("runtime.process", "spoofed managed worktree payload does not enabl
   assert.equal(captureCount, 0);
 });
 
-contractTest("runtime.process", "managed worktree approval binds resumed mutation runs before tool context is scoped", async () => {
+test("managed worktree approval binds resumed mutation runs before tool context is scoped", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-managed-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -503,7 +503,7 @@ contractTest("runtime.process", "managed worktree approval binds resumed mutatio
   assert.equal(pendingApproval, undefined);
 });
 
-contractTest("runtime.process", "filesystem mutation tools auto-provision managed worktree before tool context is scoped", async () => {
+test("filesystem mutation tools auto-provision managed worktree before tool context is scoped", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-fs-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -626,7 +626,7 @@ contractTest("runtime.process", "filesystem mutation tools auto-provision manage
   assert.equal(eventTypes.includes("managed_worktree.approval_requested"), false);
 });
 
-contractTest("runtime.process", "filesystem mutation batches auto-provision managed worktree before tool context is scoped", async () => {
+test("filesystem mutation batches auto-provision managed worktree before tool context is scoped", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-fs-batch-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -727,7 +727,7 @@ contractTest("runtime.process", "filesystem mutation batches auto-provision mana
   assert.equal(eventTypes.includes("managed_worktree.approval_requested"), false);
 });
 
-contractTest("runtime.process", "dev shell tools auto-provision managed worktree before tool context is scoped", async () => {
+test("dev shell tools auto-provision managed worktree before tool context is scoped", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -833,7 +833,7 @@ contractTest("runtime.process", "dev shell tools auto-provision managed worktree
   assert.ok(eventTypes.includes("managed_worktree.bound"));
 });
 
-contractTest("runtime.process", "dev shell auto-provision refreshes registry context at invocation time", async () => {
+test("dev shell auto-provision refreshes registry context at invocation time", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-registry-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -939,7 +939,7 @@ contractTest("runtime.process", "dev shell auto-provision refreshes registry con
   assert.equal(typeof execInputs[0]?.workspaceRoot, "string");
 });
 
-contractTest("runtime.process", "terminal managed worktree runs emit fan-in candidates for changed files", async () => {
+test("terminal managed worktree runs emit fan-in candidates for changed files", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-worktree-fanin-candidate-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1014,7 +1014,7 @@ contractTest("runtime.process", "terminal managed worktree runs emit fan-in cand
   assert.equal(typeof fanInEvent?.metadata?.candidateFingerprint, "string");
 });
 
-contractTest("runtime.process", "managed worktree auto-provision uses session isolation when requested", async () => {
+test("managed worktree auto-provision uses session isolation when requested", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-worktree-session-isolation-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1094,7 +1094,7 @@ contractTest("runtime.process", "managed worktree auto-provision uses session is
   });
 });
 
-contractTest("runtime.process", "dev shell tools do not auto-provision managed worktrees unless requested", async () => {
+test("dev shell tools do not auto-provision managed worktrees unless requested", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-no-auto-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1153,7 +1153,7 @@ contractTest("runtime.process", "dev shell tools do not auto-provision managed w
   assert.equal(eventTypes.includes("managed_worktree.auto_requested"), false);
 });
 
-contractTest("runtime.process", "dev shell auto-provision reuses workspace-scoped worktrees across new sessions", async () => {
+test("dev shell auto-provision reuses workspace-scoped worktrees across new sessions", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-workspace-scoped-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1238,7 +1238,7 @@ contractTest("runtime.process", "dev shell auto-provision reuses workspace-scope
   assert.ok(eventTypes.includes("managed_worktree.reused"));
 });
 
-contractTest("runtime.process", "dev process tools auto-provision managed worktree before tool context is scoped", async () => {
+test("dev process tools auto-provision managed worktree before tool context is scoped", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-process-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1344,7 +1344,7 @@ contractTest("runtime.process", "dev process tools auto-provision managed worktr
   assert.ok(eventTypes.includes("managed_worktree.bound"));
 });
 
-contractTest("runtime.process", "dev shell tools reuse valid persisted managed worktree bindings without auto-provisioning", async () => {
+test("dev shell tools reuse valid persisted managed worktree bindings without auto-provisioning", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-existing-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1443,7 +1443,7 @@ contractTest("runtime.process", "dev shell tools reuse valid persisted managed w
   assert.equal(runEventTypes.includes("managed_worktree.bound"), false);
 });
 
-contractTest("runtime.process", "successful finalization leaves an intentionally retained exec_command session running", async () => {
+test("successful finalization leaves an intentionally retained exec_command session running", async () => {
   const store = new InMemorySessionStore();
   const initialSession = await store.ensureSession("retained-process-session", "agent.exec.finalize");
   await store.patchSessionState?.({
@@ -1507,7 +1507,7 @@ contractTest("runtime.process", "successful finalization leaves an intentionally
   assert.equal(processes["proc-app"]?.status, "RUNNING");
 });
 
-contractTest("runtime.process", "cancelActiveRun releases persisted managed worktree leases and records terminal events", async () => {
+test("cancelActiveRun releases persisted managed worktree leases and records terminal events", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-cancel-managed-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1592,7 +1592,7 @@ contractTest("runtime.process", "cancelActiveRun releases persisted managed work
   assert.equal(runEventTypes.includes("terminal.normalized"), true);
 });
 
-contractTest("runtime.process", "dev shell tools clear missing persisted managed worktree bindings before auto-provisioning", async () => {
+test("dev shell tools clear missing persisted managed worktree bindings before auto-provisioning", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-missing-worktree-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1705,7 +1705,7 @@ contractTest("runtime.process", "dev shell tools clear missing persisted managed
   await stat(String(binding.worktreeRoot));
 });
 
-contractTest("runtime.process", "auto-provisioned dev tools block on invalid deterministic worktree collisions", async () => {
+test("auto-provisioned dev tools block on invalid deterministic worktree collisions", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-collision-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1789,7 +1789,7 @@ contractTest("runtime.process", "auto-provisioned dev tools block on invalid det
   assert.equal(persistedExec.managedWorktreeBinding, undefined);
 });
 
-contractTest("runtime.process", "auto-provisioned dev tools reclaim orphaned deterministic worktrees", async () => {
+test("auto-provisioned dev tools reclaim orphaned deterministic worktrees", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-orphan-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1883,7 +1883,7 @@ contractTest("runtime.process", "auto-provisioned dev tools reclaim orphaned det
   assert.equal(binding.worktreeRoot, provisioned.binding.worktreeRoot);
 });
 
-contractTest("runtime.process", "auto-provisioned dev tools block orphan reclaim while the previous run lease owner is still active", async () => {
+test("auto-provisioned dev tools block orphan reclaim while the previous run lease owner is still active", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-auto-orphan-active-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -1972,7 +1972,7 @@ contractTest("runtime.process", "auto-provisioned dev tools block orphan reclaim
   assert.equal(runEvents.some((event) => event.type === "managed_worktree.orphan_reclaimed"), false);
 });
 
-contractTest("runtime.process", "approval resume rejects corrupted persisted nextAction before executing the resumed step", async () => {
+test("approval resume rejects corrupted persisted nextAction before executing the resumed step", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("corrupt-approval-session", "agent.exec.dispatch");
   store.unsafeOverwriteSessionStateForTest({
@@ -2028,7 +2028,7 @@ contractTest("runtime.process", "approval resume rejects corrupted persisted nex
   assert.equal(blocked?.metadata?.invalidStatePath, "state.agent.nextAction");
 });
 
-contractTest("runtime.process", "approval resume rejects malformed pendingApproval before executing the resumed step", async () => {
+test("approval resume rejects malformed pendingApproval before executing the resumed step", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("bad-approval-session", "agent.exec.dispatch");
   store.unsafeOverwriteSessionStateForTest({
@@ -2096,7 +2096,7 @@ contractTest("runtime.process", "approval resume rejects malformed pendingApprov
   assert.equal(blocked?.metadata?.resumeStepAgent, "agent.exec.dispatch");
 });
 
-contractTest("runtime.process", "reference-react registration uses source filesystem mutations from runtime service by default", async () => {
+test("reference-react registration uses source filesystem mutations from runtime service by default", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-runtime-managed-registration-"));
   const repo = path.join(root, "repo");
   const home = path.join(root, "home");
@@ -2154,7 +2154,7 @@ contractTest("runtime.process", "reference-react registration uses source filesy
   assert.equal(eventTypes.includes("managed_worktree.approval_requested"), false);
 });
 
-contractTest("runtime.process", "managed failed mutation tools roll back changed files to the pre-action checkpoint", async () => {
+test("managed failed mutation tools roll back changed files to the pre-action checkpoint", async () => {
   const store = new InMemorySessionStore();
   const restoredCheckpointIds: string[] = [];
   const checkpointService: RuntimeWorkspaceCheckpointService = {
@@ -2388,7 +2388,7 @@ function buildLoopFingerprintForTest(
   });
 }
 
-contractTest("runtime.process", "WAITING transitions persist normalized react.wait envelope and replay waiting/resumed events", async () => {
+test("WAITING transitions persist normalized react.wait envelope and replay waiting/resumed events", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store);
 
@@ -2450,7 +2450,7 @@ contractTest("runtime.process", "WAITING transitions persist normalized react.wa
   assert.equal(replay.some((event) => event.type === "terminal.normalized"), true);
 });
 
-contractTest("runtime.process", "reference-react transitions keep working plan without narration memory", async () => {
+test("reference-react transitions keep working plan without narration memory", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store);
 
@@ -2507,7 +2507,7 @@ contractTest("runtime.process", "reference-react transitions keep working plan w
   assert.equal(Object.hasOwn(working, "agentNarrationMemory"), false);
 });
 
-contractTest("runtime.process", "COMPLETED transitions normalize react.terminal and force phase DONE", async () => {
+test("COMPLETED transitions normalize react.terminal and force phase DONE", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store);
 
@@ -2547,7 +2547,7 @@ contractTest("runtime.process", "COMPLETED transitions normalize react.terminal 
   assert.equal(terminal.outputRef, "agent.finalOutput");
 });
 
-contractTest("runtime.process", "fresh user turns clear stale finalized control state before routing", async () => {
+test("fresh user turns clear stale finalized control state before routing", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("fresh-turn-session", "agent.loop");
 
@@ -2844,7 +2844,7 @@ contractTest("runtime.process", "fresh user turns clear stale finalized control 
   assert.equal((react.commandBatch ?? null), null);
 });
 
-contractTest("runtime.process", "fresh turn reset preserves executable intent state for explicit blocked-resume lineage", async () => {
+test("fresh turn reset preserves executable intent state for explicit blocked-resume lineage", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("fresh-turn-resume-session", "agent.loop");
 
@@ -3030,7 +3030,7 @@ contractTest("runtime.process", "fresh turn reset preserves executable intent st
   });
 });
 
-contractTest("runtime.process", "fresh turn reset clears stale pending continuation offers and canonical plan handoff wait state", async () => {
+test("fresh turn reset clears stale pending continuation offers and canonical plan handoff wait state", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("fresh-turn-stale-offer-session", "agent.loop");
 
@@ -3124,7 +3124,7 @@ contractTest("runtime.process", "fresh turn reset clears stale pending continuat
   assert.equal(observedReact?.resumableFollowUp, undefined);
 });
 
-contractTest("runtime.process", "legacy execution sessions are normalized to react.exec.* steps at run start", async () => {
+test("legacy execution sessions are normalized to react.exec.* steps at run start", async () => {
   const store = new InMemorySessionStore();
   const legacyStep = ["react", "acter"].join(".");
   await store.ensureSession("legacy-session", legacyStep);
@@ -3184,7 +3184,7 @@ contractTest("runtime.process", "legacy execution sessions are normalized to rea
   assert.equal(output.finalStep, "agent.exec.finalize");
 });
 
-contractTest("runtime.process", "repeated non-blocked wait tokens trip LOOP_GUARD_TRIGGERED before max steps", async () => {
+test("repeated non-blocked wait tokens trip LOOP_GUARD_TRIGGERED before max steps", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store);
 
@@ -3234,7 +3234,7 @@ contractTest("runtime.process", "repeated non-blocked wait tokens trip LOOP_GUAR
   assert.equal(second.errors[0]?.details?.guardType, "REPEATED_WAIT_LOOP");
 });
 
-contractTest("runtime.process", "repeated mode-blocked waits stay waiting instead of tripping the loop guard", async () => {
+test("repeated mode-blocked waits stay waiting instead of tripping the loop guard", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store);
 
@@ -3291,7 +3291,7 @@ contractTest("runtime.process", "repeated mode-blocked waits stay waiting instea
   assert.equal((second.waitFor?.metadata as Record<string, unknown> | undefined)?.reason, "planner_mode_blocked");
 });
 
-contractTest("runtime.process", "MAX_STEPS_EXCEEDED becomes a continuation wait on first exhaustion", async () => {
+test("MAX_STEPS_EXCEEDED becomes a continuation wait on first exhaustion", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store, { maxStepsPerRun: 2 });
 
@@ -3342,7 +3342,7 @@ contractTest("runtime.process", "MAX_STEPS_EXCEEDED becomes a continuation wait 
   assert.equal(continuationRequestEvent?.metadata?.nextStepAgent, "loop.step");
 });
 
-contractTest("runtime.process", "MAX_MODEL_CALLS_EXCEEDED becomes a continuation wait instead of a terminal fresh-turn failure", async () => {
+test("MAX_MODEL_CALLS_EXCEEDED becomes a continuation wait instead of a terminal fresh-turn failure", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store, { maxModelCallsPerRun: 1 });
 
@@ -3474,7 +3474,7 @@ contractTest("runtime.process", "MAX_MODEL_CALLS_EXCEEDED becomes a continuation
   assert.equal(continuation.modelCallsConsumed, 1);
 });
 
-contractTest("runtime.process", "fresh user message resets exhausted model-call continuation state", async () => {
+test("fresh user message resets exhausted model-call continuation state", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store, { maxModelCallsPerRun: 1 });
   let modelBackedSteps = 0;
@@ -3544,7 +3544,7 @@ contractTest("runtime.process", "fresh user message resets exhausted model-call 
   assert.equal(((react.finalOutput ?? {}) as Record<string, unknown>).message, "fresh task completed");
 });
 
-contractTest("runtime.process", "model-call continuation approval preserves cumulative model-call accounting", async () => {
+test("model-call continuation approval preserves cumulative model-call accounting", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store, {
     maxModelCallsPerRun: 1,
@@ -3615,7 +3615,7 @@ contractTest("runtime.process", "model-call continuation approval preserves cumu
   assert.equal(continuation.modelCallsConsumed, 51);
 });
 
-contractTest("runtime.process", "continuation approval resumes and completes with cumulative step counting", async () => {
+test("continuation approval resumes and completes with cumulative step counting", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store, { maxStepsPerRun: 2 });
 
@@ -3688,7 +3688,7 @@ contractTest("runtime.process", "continuation approval resumes and completes wit
   );
 });
 
-contractTest("runtime.process", "continuation decline leaves terminal session without stale active wait", async () => {
+test("continuation decline leaves terminal session without stale active wait", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store, { maxStepsPerRun: 1 });
 
@@ -3737,7 +3737,7 @@ contractTest("runtime.process", "continuation decline leaves terminal session wi
   assert.equal(readActiveWaitState(react), undefined);
 });
 
-contractTest("runtime.process", "continuation approval tolerates corrupted wait metadata when terminal reason is preserved", async () => {
+test("continuation approval tolerates corrupted wait metadata when terminal reason is preserved", async () => {
   const store = new CorruptedContinuationWaitMetadataStore();
   const kestrel = createRuntime(store, { maxStepsPerRun: 2 });
 
@@ -3798,7 +3798,7 @@ contractTest("runtime.process", "continuation approval tolerates corrupted wait 
   assert.equal(((react.finalOutput ?? {}) as Record<string, unknown>).message, "done");
 });
 
-contractTest("runtime.process", "continuation requests continue past the former third-grant cap", async () => {
+test("continuation requests continue past the former third-grant cap", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store, { maxStepsPerRun: 1 });
 
@@ -3851,7 +3851,7 @@ contractTest("runtime.process", "continuation requests continue past the former 
   assert.equal(metadata.continuationCount, 4);
 });
 
-contractTest("runtime.process", "continuation approval fails hard when committed continuation state is stale", async () => {
+test("continuation approval fails hard when committed continuation state is stale", async () => {
   const store = new StaleContinuationGrantStore();
   const kestrel = createRuntime(store, { maxStepsPerRun: 2 });
 
@@ -3888,7 +3888,7 @@ contractTest("runtime.process", "continuation approval fails hard when committed
   assert.equal(resumed.errors[0]?.code, "CONTINUATION_GRANT_STATE_INVALID");
 });
 
-contractTest("runtime.process", "run-scoped historical state reconstructs the target run snapshot", async () => {
+test("run-scoped historical state reconstructs the target run snapshot", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store);
 

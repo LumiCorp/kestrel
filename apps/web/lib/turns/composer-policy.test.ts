@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
 import {
   type ComposerSubmissionPolicy,
   getComposerSubmissionPolicy,
 } from "@/lib/turns/composer-policy";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const baseState: ThreadConversationState = {
@@ -25,7 +25,7 @@ function policy(
   return getComposerSubmissionPolicy({ conversationState, transportStatus });
 }
 
-contractTest("web.hermetic", "answers the exact pending runtime user-input request", () => {
+test("answers the exact pending runtime user-input request", () => {
   const interaction: ThreadConversationState["interactions"][number] = {
     id: "interaction-1",
     requestId: "request-1",
@@ -49,7 +49,7 @@ contractTest("web.hermetic", "answers the exact pending runtime user-input reque
   });
 });
 
-contractTest("web.hermetic", "blocks ordinary messages while approval is pending", () => {
+test("blocks ordinary messages while approval is pending", () => {
   const interaction: ThreadConversationState["interactions"][number] = {
     id: "interaction-2",
     requestId: "request-2",
@@ -73,7 +73,7 @@ contractTest("web.hermetic", "blocks ordinary messages while approval is pending
   );
 });
 
-contractTest("web.hermetic", "queues against a durable active turn even when transport is ready", () => {
+test("queues against a durable active turn even when transport is ready", () => {
   assert.deepEqual(
     policy({
       ...baseState,
@@ -98,6 +98,6 @@ contractTest("web.hermetic", "queues against a durable active turn even when tra
   );
 });
 
-contractTest("web.hermetic", "starts a turn when no durable work or interaction is active", () => {
+test("starts a turn when no durable work or interaction is active", () => {
   assert.deepEqual(policy(baseState), { mode: "start_turn" });
 });

@@ -49,7 +49,6 @@ import {
   parseDraftIntent,
   resolveExecutionIntentToolName,
 } from "../toolIntent.js";
-import { normalizeToolActionInput, sanitizeToolInputForSchema } from "../toolInputNormalization.js";
 import { validateFinalizationDecision } from "../finalizationPolicy.js";
 import { hashToolInput } from "../memory/workingMemory.js";
 import type {
@@ -228,13 +227,9 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
     },
   ];
 
-  const normalizedAction = normalizeCompiledDecisionAction(
-    input.action,
-    readActiveWorkspaceRootFromDevShellProcesses(input.devShellProcesses),
-  );
-  validateDevShellExecCommandContract(normalizedAction);
+  validateDevShellExecCommandContract(input.action);
   const action = validateToolActionSchemas(
-    normalizedAction,
+    input.action,
     input.availableTools,
   );
   validatePublicInternetUrlToolContract(action);
@@ -1197,42 +1192,6 @@ function mergeRequiredCapabilities(...sets: Array<readonly string[] | undefined>
   return uniqueStrings(sets.flatMap((set) => [...(set ?? [])]));
 }
 
-function normalizeCompiledDecisionAction(
-  action: ReactAction,
-  workspaceRoot: string | undefined,
-): ReactAction {
-  if (action.kind === "tool") {
-    return {
-      ...action,
-      input: normalizeToolActionInput(action.name, action.input, workspaceRoot),
-    };
-  }
-
-  if (action.kind === "tool_batch") {
-    return {
-      ...action,
-      items: action.items.map((item) => ({
-        ...item,
-        input: normalizeToolActionInput(item.name, item.input, workspaceRoot),
-      })),
-    };
-  }
-
-  return action;
-}
-
-function readActiveWorkspaceRootFromDevShellProcesses(
-  devShellProcesses: Record<string, unknown>[] | undefined,
-): string | undefined {
-  for (const process of asArray(devShellProcesses)) {
-    const processWorkspaceRoot = asString(asRecord(process)?.workspaceRoot)?.trim();
-    if (processWorkspaceRoot !== undefined && processWorkspaceRoot.length > 0) {
-      return processWorkspaceRoot;
-    }
-  }
-  return ;
-}
-
 function validateDevShellProcessBatchContract(action: ReactAction): void {
   if (action.kind !== "tool_batch" || action.items.length <= 1) {
     return;
@@ -1791,39 +1750,28 @@ export function validateToolActionSchemas(
   const toolSpecs = new Map(availableTools.map((tool) => [tool.name, tool] as const));
   if (action.kind === "tool") {
     assertToolIsAvailable(action.name, "nextAction.name", toolSpecs);
-    const sanitizedInput = sanitizeActionInputForSchema(action.name, action.input, toolSpecs);
     validateToolActionInput({
       name: action.name,
-      input: sanitizedInput,
+      input: action.input,
       path: "nextAction.input",
       toolSpecs,
     });
-    return {
-      ...action,
-      input: sanitizedInput,
-    };
+    return action;
   }
 
   if (action.kind === "tool_batch") {
     for (const [index, item] of action.items.entries()) {
       assertToolIsAvailable(item.name, `nextAction.items[${index}].name`, toolSpecs);
     }
-    const sanitizedItems = action.items.map((item) => ({
-      ...item,
-      input: sanitizeActionInputForSchema(item.name, item.input, toolSpecs),
-    }));
     for (const [index, item] of action.items.entries()) {
       validateToolActionInput({
-        name: sanitizedItems[index]?.name ?? item.name,
-        input: sanitizedItems[index]?.input ?? item.input,
+        name: item.name,
+        input: item.input,
         path: `nextAction.items[${index}].input`,
         toolSpecs,
       });
     }
-    return {
-      ...action,
-      items: sanitizedItems,
-    };
+    return action;
   }
 
   return action;
@@ -1848,19 +1796,6 @@ function assertToolIsAvailable(
       reason: "tool_not_available",
     },
   );
-}
-
-function sanitizeActionInputForSchema(
-  name: string,
-  input: Record<string, unknown>,
-  toolSpecs: Map<string, ModelToolSpec>,
-): Record<string, unknown> {
-  const tool = toolSpecs.get(name);
-  if (tool === undefined) {
-    return input;
-  }
-  const sanitized = sanitizeToolInputForSchema(tool.inputSchema, input);
-  return asRecord(sanitized) ?? input;
 }
 
 function validateToolActionInput(input: {

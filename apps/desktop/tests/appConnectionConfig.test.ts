@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,10 +8,8 @@ import {
   parseDesktopPublicAppConnectionConfig,
   resolveDesktopPublicAppClientId,
 } from "../src/appConnectionConfig.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop public App configuration contains client identities but no secrets",
   () => {
     assert.deepEqual(
@@ -35,8 +34,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop resolves a packaged public App identity without exposing it to the renderer",
   async () => {
     const directory = await mkdtemp(

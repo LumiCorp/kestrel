@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import {
   invitationSignupError,
   type InvitationCandidate,
@@ -31,8 +31,7 @@ function signupError(
   });
 }
 
-contractTest(
-  "web.hermetic",
+test(
   "account creation requires a live invitation for the invited email",
   () => {
     assert.equal(signupError(invitation(), "MEMBER@example.com"), null);

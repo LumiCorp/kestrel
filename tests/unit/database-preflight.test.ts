@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
 
@@ -8,10 +9,9 @@ import {
   preflightDatabaseConnection,
   resolveDatabasePreflightTarget,
 } from "../../src/runtime/databasePreflight.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.process", "resolveDatabasePreflightTarget parses the default local harness database", () => {
+test("resolveDatabasePreflightTarget parses the default local harness database", () => {
   const target = resolveDatabasePreflightTarget(
     `postgres://kestrel:kestrel@localhost:${DEFAULT_KESTREL_DB_PORT}/kestrel`,
   );
@@ -24,7 +24,7 @@ contractTest("runtime.process", "resolveDatabasePreflightTarget parses the defau
   });
 });
 
-contractTest("runtime.process", "resolveDatabasePreflightTarget marks non-default databases as non-local-harness targets", () => {
+test("resolveDatabasePreflightTarget marks non-default databases as non-local-harness targets", () => {
   const target = resolveDatabasePreflightTarget("postgres://kestrel:kestrel@db.internal:5432/reference");
 
   assert.equal(target.host, "db.internal");
@@ -33,7 +33,7 @@ contractTest("runtime.process", "resolveDatabasePreflightTarget marks non-defaul
   assert.equal(target.isLocalHarnessDefault, false);
 });
 
-contractTest("runtime.process", "preflightDatabaseConnection reports invalid DATABASE_URL payloads with actionable guidance", async () => {
+test("preflightDatabaseConnection reports invalid DATABASE_URL payloads with actionable guidance", async () => {
   const result = await preflightDatabaseConnection({
     descriptor: {
       databaseUrl: "mysql://root@localhost:3306/demo",
@@ -50,7 +50,7 @@ contractTest("runtime.process", "preflightDatabaseConnection reports invalid DAT
   assert.match(result.failure.recommendedAction, /Fix DATABASE_URL/u);
 });
 
-contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure fills in blank ECONNREFUSED failures", () => {
+test("maybeBuildDatabaseConnectionFailure fills in blank ECONNREFUSED failures", () => {
   const failure = maybeBuildDatabaseConnectionFailure({
     error: Object.assign(new Error(""), { code: "ECONNREFUSED" }),
     descriptor: {
@@ -67,7 +67,7 @@ contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure fills in bl
   assert.equal(failure?.details?.databaseUrlSource, "desktop_default");
 });
 
-contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure ignores non-connection runtime failures", () => {
+test("maybeBuildDatabaseConnectionFailure ignores non-connection runtime failures", () => {
   const failure = maybeBuildDatabaseConnectionFailure({
     error: Object.assign(new Error("Thread has a pending context checkpoint."), {
       code: "CONTEXT_CHECKPOINT_PENDING",
@@ -85,7 +85,7 @@ contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure ignores non
   assert.equal(failure, undefined);
 });
 
-contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure reports hosted desktop external source guidance", () => {
+test("maybeBuildDatabaseConnectionFailure reports hosted desktop external source guidance", () => {
   const failure = maybeBuildDatabaseConnectionFailure({
     error: Object.assign(new Error(""), { code: "ECONNREFUSED" }),
     descriptor: {
@@ -101,7 +101,7 @@ contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure reports hos
   assert.equal(failure?.details?.databaseUrlSource, "desktop_external");
 });
 
-contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure reports Local Core managed source guidance", () => {
+test("maybeBuildDatabaseConnectionFailure reports Local Core managed source guidance", () => {
   const failure = maybeBuildDatabaseConnectionFailure({
     error: Object.assign(new Error(""), { code: "ECONNREFUSED" }),
     descriptor: {
@@ -117,7 +117,7 @@ contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure reports Loc
   assert.equal(failure?.details?.databaseUrlSource, "local_core_managed");
 });
 
-contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure reports CLI external source guidance", () => {
+test("maybeBuildDatabaseConnectionFailure reports CLI external source guidance", () => {
   const failure = maybeBuildDatabaseConnectionFailure({
     error: Object.assign(new Error(""), { code: "ECONNREFUSED" }),
     descriptor: {
@@ -133,7 +133,7 @@ contractTest("runtime.process", "maybeBuildDatabaseConnectionFailure reports CLI
   assert.equal(failure?.details?.databaseUrlSource, "cli_external");
 });
 
-contractTest("runtime.process", "describeConnectionFailure preserves timeout and reset codes", () => {
+test("describeConnectionFailure preserves timeout and reset codes", () => {
   assert.deepEqual(
     describeConnectionFailure(Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })),
     {
@@ -150,7 +150,7 @@ contractTest("runtime.process", "describeConnectionFailure preserves timeout and
   );
 });
 
-contractTest("runtime.process", "preflightDatabaseConnection can recover after a supported auto-start", async () => {
+test("preflightDatabaseConnection can recover after a supported auto-start", async () => {
   const port = await reserveLocalPort();
   const server = createServer();
 

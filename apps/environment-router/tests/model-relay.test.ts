@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-auth";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { EnvironmentGatewayConfigClient } from "../src/gateway-config.js";
 import { handleModelRelay } from "../src/model-relay.js";
 
-contractTest("services.process", "model relay enforces workspace run and model while keeping provider credentials at the gateway", async () => {
+test("model relay enforces workspace run and model while keeping provider credentials at the gateway", async () => {
   const upstreamRequests: Array<{
     path: string | undefined;
     authorization: string | undefined;

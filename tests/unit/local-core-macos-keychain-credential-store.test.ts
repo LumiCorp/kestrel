@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -21,10 +22,9 @@ import {
   type MacosSecurityCommandInput,
   type MacosSecurityCommandResult,
 } from "../../src/localCore/macosKeychainCredentialStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "macOS Keychain writes credentials through stdin and never argv", async () => {
+test("macOS Keychain writes credentials through stdin and never argv", async () => {
   const calls: MacosSecurityCommandInput[] = [];
   const secret = "sk-keychain-write-only";
   const store = new MacosKeychainCredentialStore({
@@ -48,7 +48,7 @@ contractTest("runtime.hermetic", "macOS Keychain writes credentials through stdi
   assert.doesNotMatch(JSON.stringify(store), new RegExp(secret, "u"));
 });
 
-contractTest("runtime.hermetic", "macOS Keychain reads, inspects, and deletes from the same service and account", async () => {
+test("macOS Keychain reads, inspects, and deletes from the same service and account", async () => {
   const calls: MacosSecurityCommandInput[] = [];
   const results: MacosSecurityCommandResult[] = [
     success("sk-restored\n"),
@@ -81,7 +81,7 @@ contractTest("runtime.hermetic", "macOS Keychain reads, inspects, and deletes fr
   assert.equal(calls[2]?.args.includes("-w"), false);
 });
 
-contractTest("runtime.hermetic", "macOS Keychain uses exit 44 as the exact item-not-found classification", async () => {
+test("macOS Keychain uses exit 44 as the exact item-not-found classification", async () => {
   const notFound = {
     exitCode: MACOS_KEYCHAIN_ITEM_NOT_FOUND_EXIT_CODE,
     stdout: "",
@@ -98,7 +98,7 @@ contractTest("runtime.hermetic", "macOS Keychain uses exit 44 as the exact item-
   assert.equal(await store.delete("provider.anthropic.default"), false);
 });
 
-contractTest("runtime.hermetic", "macOS Keychain status uses metadata inspection and remains redacted", async () => {
+test("macOS Keychain status uses metadata inspection and remains redacted", async () => {
   const calls: MacosSecurityCommandInput[] = [];
   const secret = "sk-must-not-enter-status";
   const store = new MacosKeychainCredentialStore({
@@ -130,7 +130,7 @@ contractTest("runtime.hermetic", "macOS Keychain status uses metadata inspection
   assert.doesNotMatch(JSON.stringify(status), new RegExp(secret, "u"));
 });
 
-contractTest("runtime.hermetic", "macOS Keychain failures discard command output and never fall back", async () => {
+test("macOS Keychain failures discard command output and never fall back", async () => {
   const calls: MacosSecurityCommandInput[] = [];
   const secret = "sk-failure-must-be-redacted";
   const store = new MacosKeychainCredentialStore({
@@ -159,7 +159,7 @@ contractTest("runtime.hermetic", "macOS Keychain failures discard command output
   assert.equal(calls[0]?.stdin?.includes(secret), false);
 });
 
-contractTest("runtime.hermetic", "macOS Keychain rejects values that exceed security interactive input without a fallback", async () => {
+test("macOS Keychain rejects values that exceed security interactive input without a fallback", async () => {
   let calls = 0;
   const store = new MacosKeychainCredentialStore({
     runCommand: async () => {
@@ -175,7 +175,7 @@ contractTest("runtime.hermetic", "macOS Keychain rejects values that exceed secu
   assert.equal(calls, 0);
 });
 
-contractTest("runtime.hermetic", "macOS Keychain wraps thrown runner errors without retaining their message", async () => {
+test("macOS Keychain wraps thrown runner errors without retaining their message", async () => {
   const secret = "sk-thrown-runner-message";
   const store = new MacosKeychainCredentialStore({
     runCommand: async () => {
@@ -193,7 +193,7 @@ contractTest("runtime.hermetic", "macOS Keychain wraps thrown runner errors with
   );
 });
 
-contractTest("runtime.hermetic", "macOS Keychain validates IDs and values before invoking security", async () => {
+test("macOS Keychain validates IDs and values before invoking security", async () => {
   let calls = 0;
   const store = new MacosKeychainCredentialStore({
     runCommand: async () => {
@@ -213,7 +213,7 @@ contractTest("runtime.hermetic", "macOS Keychain validates IDs and values before
   assert.equal(calls, 0);
 });
 
-contractTest("runtime.hermetic", "macOS Keychain purge deletes every exact-service item and is idempotent", async () => {
+test("macOS Keychain purge deletes every exact-service item and is idempotent", async () => {
   let remaining = 2;
   const runner = async (
     input: MacosSecurityCommandInput,
@@ -252,7 +252,7 @@ contractTest("runtime.hermetic", "macOS Keychain purge deletes every exact-servi
   });
 });
 
-contractTest("runtime.process", "macOS Keychain purge works against a disposable keychain", async () => {
+test("macOS Keychain purge works against a disposable keychain", async () => {
   if (process.platform !== "darwin") return;
   const root = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-disposable-keychain-"),

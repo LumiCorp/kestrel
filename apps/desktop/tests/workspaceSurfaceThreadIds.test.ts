@@ -1,15 +1,15 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 const desktopAppPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../renderer/src/DesktopApp.tsx",
 );
 
-contractTest("desktop.hermetic", "Desktop Diff binds restored conversations to the canonical Local Core thread", async () => {
+test("Desktop Diff binds restored conversations to the canonical Local Core thread", async () => {
   const source = await readFile(desktopAppPath, "utf8");
   const diffBranch = source.slice(
     source.indexOf("<DiffWorkspace"),
@@ -21,7 +21,7 @@ contractTest("desktop.hermetic", "Desktop Diff binds restored conversations to t
   assert.doesNotMatch(diffBranch, /threadId=\{activeThread\.sessionId\}/u);
 });
 
-contractTest("desktop.hermetic", "Desktop Terminal binds restored conversations to the canonical Local Core thread", async () => {
+test("Desktop Terminal binds restored conversations to the canonical Local Core thread", async () => {
   const source = await readFile(desktopAppPath, "utf8");
   const terminalStart = source.indexOf("<TerminalWorkspace");
   const terminalOpeningElement = source.slice(
@@ -33,7 +33,7 @@ contractTest("desktop.hermetic", "Desktop Terminal binds restored conversations 
   assert.doesNotMatch(terminalOpeningElement, /threadId=\{activeThread\.sessionId\}/u);
 });
 
-contractTest("desktop.hermetic", "Desktop Review binds restored conversations to the canonical Local Core thread", async () => {
+test("Desktop Review binds restored conversations to the canonical Local Core thread", async () => {
   const source = await readFile(desktopAppPath, "utf8");
   const reviewBranch = source.slice(
     source.indexOf("<ReviewWorkspace"),
@@ -44,7 +44,7 @@ contractTest("desktop.hermetic", "Desktop Review binds restored conversations to
   assert.doesNotMatch(reviewBranch, /threadId=\{activeThread\.sessionId\}/u);
 });
 
-contractTest("desktop.hermetic", "Desktop Validation binds restored conversations to the canonical Local Core thread", async () => {
+test("Desktop Validation binds restored conversations to the canonical Local Core thread", async () => {
   const source = await readFile(desktopAppPath, "utf8");
   const validationStart = source.indexOf("<ValidationWorkspace");
   const validationOpeningElement = source.slice(
@@ -56,7 +56,7 @@ contractTest("desktop.hermetic", "Desktop Validation binds restored conversation
   assert.doesNotMatch(validationOpeningElement, /threadId=\{activeThread\.sessionId\}/u);
 });
 
-contractTest("desktop.hermetic", "Desktop Git binds restored conversations to the canonical Local Core thread", async () => {
+test("Desktop Git binds restored conversations to the canonical Local Core thread", async () => {
   const source = await readFile(desktopAppPath, "utf8");
   const gitStart = source.indexOf("<GitWorkspace");
   const gitOpeningElement = source.slice(
@@ -68,7 +68,7 @@ contractTest("desktop.hermetic", "Desktop Git binds restored conversations to th
   assert.doesNotMatch(gitOpeningElement, /threadId=\{activeThread\.sessionId\}/u);
 });
 
-contractTest("desktop.hermetic", "Desktop Projects binds restored conversations to the canonical Local Core thread", async () => {
+test("Desktop Projects binds restored conversations to the canonical Local Core thread", async () => {
   const source = await readFile(desktopAppPath, "utf8");
   const projectStart = source.indexOf("<ProjectWorkspace");
   const projectOpeningElement = source.slice(
@@ -80,7 +80,7 @@ contractTest("desktop.hermetic", "Desktop Projects binds restored conversations 
   assert.doesNotMatch(projectOpeningElement, /threadId=\{activeThread\.sessionId\}/u);
 });
 
-contractTest("desktop.hermetic", "Desktop Preview binds restored conversations to the canonical Local Core thread", async () => {
+test("Desktop Preview binds restored conversations to the canonical Local Core thread", async () => {
   const source = await readFile(desktopAppPath, "utf8");
   const previewStart = source.indexOf("<PreviewWorkspace");
   const previewOpeningElement = source.slice(

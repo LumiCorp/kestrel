@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -7,10 +8,9 @@ import {
   resolveDesktopPathConfig,
 } from "../src/config.js";
 import { parseDesktopAttachmentImportInput, parseDesktopAttachmentThreadId } from "../src/attachmentInput.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("desktop.hermetic", "resolveDesktopLibexecRoot points Local Core bootstrap at the active Desktop runtime sources", () => {
+test("resolveDesktopLibexecRoot points Local Core bootstrap at the active Desktop runtime sources", () => {
   assert.equal(resolveDesktopLibexecRoot({
     isPackaged: true,
     repoRoot: "/Applications/Kestrel.app/Contents/Resources/kestrel-runtime/payload",
@@ -26,7 +26,7 @@ contractTest("desktop.hermetic", "resolveDesktopLibexecRoot points Local Core bo
   }), "/workspace/kestrel");
 });
 
-contractTest("desktop.hermetic", "attachment thread input requires a complete canonical Desktop thread ID", () => {
+test("attachment thread input requires a complete canonical Desktop thread ID", () => {
   assert.equal(
     parseDesktopAttachmentThreadId(" thread-main:session-1 "),
     "thread-main:session-1",
@@ -41,7 +41,7 @@ contractTest("desktop.hermetic", "attachment thread input requires a complete ca
   }
 });
 
-contractTest("desktop.hermetic", "attachment import input validates the complete Local Core payload", () => {
+test("attachment import input validates the complete Local Core payload", () => {
   assert.deepEqual(parseDesktopAttachmentImportInput({
     threadId: "thread-main:session-1",
     filename: "evidence.txt",
@@ -79,7 +79,7 @@ contractTest("desktop.hermetic", "attachment import input validates the complete
   }));
 });
 
-contractTest("desktop.hermetic", "resolveDesktopPathConfig uses repo-relative paths in development", () => {
+test("resolveDesktopPathConfig uses repo-relative paths in development", () => {
   const repoRoot = mkdtempSync(path.join(os.tmpdir(), "kestrel-desktop-config-"));
   const stateRoot = path.join("/tmp/kestrel-user", "state", "0.6");
   try {
@@ -105,7 +105,7 @@ contractTest("desktop.hermetic", "resolveDesktopPathConfig uses repo-relative pa
   }
 });
 
-contractTest("desktop.hermetic", "resolveDesktopPathConfig falls back to the Electron app path in development", () => {
+test("resolveDesktopPathConfig falls back to the Electron app path in development", () => {
   const repoRoot = mkdtempSync(path.join(os.tmpdir(), "kestrel-desktop-config-"));
   try {
     writeFileSync(path.join(repoRoot, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n", "utf8");
@@ -123,7 +123,7 @@ contractTest("desktop.hermetic", "resolveDesktopPathConfig falls back to the Ele
   }
 });
 
-contractTest("desktop.hermetic", "resolveDesktopPathConfig uses packaged resource paths in production", () => {
+test("resolveDesktopPathConfig uses packaged resource paths in production", () => {
   const resourcesPath = "/Applications/Kestrel.app/Contents/Resources";
   const stateRoot = path.join("/tmp/kestrel-user", "state", "0.6");
   const config = resolveDesktopPathConfig({
@@ -148,7 +148,7 @@ contractTest("desktop.hermetic", "resolveDesktopPathConfig uses packaged resourc
   assert.equal(config.isPackaged, true);
 });
 
-contractTest("desktop.hermetic", "resolveDesktopPathConfig can root shell state in Kestrel Local Core", () => {
+test("resolveDesktopPathConfig can root shell state in Kestrel Local Core", () => {
   const resourcesPath = "/Applications/Kestrel.app/Contents/Resources";
   const localCoreHomePath = "/tmp/kestrel-core";
   const stateRoot = path.join(localCoreHomePath, "state", "0.6");

@@ -1,15 +1,15 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const source = fs.readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "message.tsx"),
   "utf8",
 );
 
-contractTest("web.hermetic", "console artifacts render as closed disclosures with retained output", () => {
+test("console artifacts render as closed disclosures with retained output", () => {
   assert.match(source, /function ConsoleArtifactDisclosure/u);
   assert.match(source, /<details className="group">/u);
   assert.doesNotMatch(source, /<details[^>]+open/u);

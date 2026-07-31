@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { HistoryStore } from "../../cli/history/HistoryStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "HistoryStore merges legacy split assistant segments on read", async () => {
+test("HistoryStore merges legacy split assistant segments on read", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-history-store-"));
   const store = new HistoryStore(tempDir);
 
@@ -56,7 +56,7 @@ contractTest("runtime.hermetic", "HistoryStore merges legacy split assistant seg
   assert.equal(transcript[0]?.run?.runId, "run-1");
 });
 
-contractTest("runtime.hermetic", "HistoryStore does not merge distinct assistant turns", async () => {
+test("HistoryStore does not merge distinct assistant turns", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-history-store-distinct-"));
   const store = new HistoryStore(tempDir);
 
@@ -116,7 +116,7 @@ contractTest("runtime.hermetic", "HistoryStore does not merge distinct assistant
   assert.equal(transcript[1]?.text, "Second answer.");
 });
 
-contractTest("runtime.hermetic", "HistoryStore derives session overviews for launch summaries and artifacts", async () => {
+test("HistoryStore derives session overviews for launch summaries and artifacts", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-history-store-overview-"));
   const store = new HistoryStore(tempDir);
 

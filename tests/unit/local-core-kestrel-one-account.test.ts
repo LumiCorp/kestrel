@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,10 +6,8 @@ import {
   UnavailableLocalCoreCredentialStore,
 } from "../../src/localCore/credentialStore.js";
 import { LocalCoreKestrelOneAccountManager } from "../../src/localCore/kestrelOneAccount.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Kestrel One account status is signed out when credential storage is unavailable",
   async () => {
     const manager = new LocalCoreKestrelOneAccountManager({
@@ -19,8 +18,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Kestrel One account requests coalesce rotating credential refreshes",
   async (context) => {
     const credentialStore = new MemoryLocalCoreCredentialStore();

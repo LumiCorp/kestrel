@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,10 +8,9 @@ import {
   deriveThreadWorkspaceSummaryProjection,
   resolveThreadWorkspaceRuntimeContext,
 } from "../../src/workspace/threadWorkspaceBinding.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "desktop project bindings synthesize a minimal runtime workspace context", () => {
+test("desktop project bindings synthesize a minimal runtime workspace context", () => {
   const binding = createDesktopProjectThreadWorkspaceBinding({
     path: "/tmp/project-a",
     label: "project-a",
@@ -30,7 +30,7 @@ contractTest("runtime.hermetic", "desktop project bindings synthesize a minimal 
   });
 });
 
-contractTest("runtime.hermetic", "resolved workspace bindings preserve the full runtime context", () => {
+test("resolved workspace bindings preserve the full runtime context", () => {
   const binding = createResolvedWorkspaceThreadWorkspaceBinding({
     workspaceId: "ws-1",
     workspaceRoot: "/tmp/project-a",
@@ -43,7 +43,7 @@ contractTest("runtime.hermetic", "resolved workspace bindings preserve the full 
   assert.equal(resolveThreadWorkspaceRuntimeContext(binding)?.label, "Project A");
 });
 
-contractTest("runtime.hermetic", "thread workspace authority projects the submitted local workspace", () => {
+test("thread workspace authority projects the submitted local workspace", () => {
   assert.deepEqual(deriveThreadWorkspaceAuthorityProjection({
     threadMetadata: {
       workspace: {
@@ -61,7 +61,7 @@ contractTest("runtime.hermetic", "thread workspace authority projects the submit
   });
 });
 
-contractTest("runtime.hermetic", "thread workspace authority prefers the bound managed worktree from session state", () => {
+test("thread workspace authority prefers the bound managed worktree from session state", () => {
   assert.deepEqual(deriveThreadWorkspaceAuthorityProjection({
     threadMetadata: {
       workspace: {

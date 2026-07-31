@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
@@ -15,11 +16,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { contractTest } from "../helpers/contract-test.js";
 
 const repoRoot = process.cwd();
 
-contractTest("desktop.hermetic", "Desktop uninstall helper preserves native safety checks", () => {
+test("Desktop uninstall helper preserves native safety checks", () => {
   const source = readFileSync(
     path.join(repoRoot, "apps", "desktop", "native", "kestrel-uninstall-helper.swift"),
     "utf8",
@@ -38,7 +38,7 @@ contractTest("desktop.hermetic", "Desktop uninstall helper preserves native safe
   assert.match(source, /profile target resolves outside verified Desktop paths/u);
 });
 
-contractTest("desktop.hermetic", "Desktop packaging includes the uninstall helper for macOS", () => {
+test("Desktop packaging includes the uninstall helper for macOS", () => {
   const packageSource = readFileSync(
     path.join(repoRoot, "scripts", "package-desktop.ts"),
     "utf8",
@@ -56,7 +56,7 @@ contractTest("desktop.hermetic", "Desktop packaging includes the uninstall helpe
   assert.match(builderSource, /kestrel-uninstall-helper/u);
 });
 
-contractTest("desktop.hermetic", "Desktop main exposes guarded uninstall apply IPC", () => {
+test("Desktop main exposes guarded uninstall apply IPC", () => {
   const source = readFileSync(
     path.join(repoRoot, "apps", "desktop", "src", "main.ts"),
     "utf8",
@@ -72,7 +72,7 @@ contractTest("desktop.hermetic", "Desktop main exposes guarded uninstall apply I
   assert.match(source, /mergeDesktopHelperReport/u);
 });
 
-contractTest("desktop.hermetic", "Desktop preload exposes uninstall apply bridge", () => {
+test("Desktop preload exposes uninstall apply bridge", () => {
   const source = readFileSync(
     path.join(repoRoot, "apps", "desktop", "src", "preload.ts"),
     "utf8",
@@ -82,7 +82,7 @@ contractTest("desktop.hermetic", "Desktop preload exposes uninstall apply bridge
   assert.match(source, /desktop:apply-uninstall-plan/u);
 });
 
-contractTest("desktop.hermetic", "Desktop uninstall helper rejects wrong mode and malformed plans", () => {
+test("Desktop uninstall helper rejects wrong mode and malformed plans", () => {
   if (process.platform !== "darwin") return;
   let swiftc: string;
   try {
@@ -152,7 +152,7 @@ contractTest("desktop.hermetic", "Desktop uninstall helper rejects wrong mode an
   }
 });
 
-contractTest("desktop.hermetic", "Desktop uninstall helper waits for its parent and writes a mode-0600 completion report", async () => {
+test("Desktop uninstall helper waits for its parent and writes a mode-0600 completion report", async () => {
   if (process.platform !== "darwin") return;
   let swiftc: string;
   try {
@@ -231,7 +231,7 @@ contractTest("desktop.hermetic", "Desktop uninstall helper waits for its parent 
   }
 });
 
-contractTest("desktop.hermetic", "Desktop uninstall helper refuses foreign profile targets", () => {
+test("Desktop uninstall helper refuses foreign profile targets", () => {
   if (process.platform !== "darwin") return;
   let swiftc: string;
   try {
@@ -280,7 +280,7 @@ contractTest("desktop.hermetic", "Desktop uninstall helper refuses foreign profi
   }
 });
 
-contractTest("desktop.hermetic", "Desktop uninstall helper removes signed fixtures and approved profile data", () => {
+test("Desktop uninstall helper removes signed fixtures and approved profile data", () => {
   if (process.platform !== "darwin") return;
   const tempRoot = mkdtempSync(
     path.join("/tmp", "kestrel-desktop-helper-removal-"),
@@ -361,7 +361,7 @@ contractTest("desktop.hermetic", "Desktop uninstall helper removes signed fixtur
   }
 });
 
-contractTest("desktop.hermetic", "Desktop uninstall helper refuses mismatched, ad-hoc, and symlink bundles", () => {
+test("Desktop uninstall helper refuses mismatched, ad-hoc, and symlink bundles", () => {
   if (process.platform !== "darwin") return;
   const tempRoot = mkdtempSync(
     path.join("/tmp", "kestrel-desktop-helper-refusal-"),

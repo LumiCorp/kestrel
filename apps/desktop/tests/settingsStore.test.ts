@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -17,10 +18,8 @@ import {
   preserveDesktopProjectRegistrationIds,
   writeDesktopSettings,
 } from "../src/settingsStore.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "desktop.hermetic",
+test(
   "renderer project settings preserve the registered UUID by exact path",
   () => {
     const existingId = "11111111-1111-4111-8111-111111111111";
@@ -38,8 +37,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "legacy desktop settings seed the Default model configuration from Local Core policy",
   () => {
     const settings = normalizeDesktopSettings(
@@ -67,8 +65,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "readDesktopSettings returns default settings when the file is missing",
   async () => {
     const tempDir = await mkdtemp(
@@ -86,8 +83,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop project tombstones restore a registration UUID after re-adding a folder",
   () => {
     const projectId = "a310bc8e-b8fb-4d57-81de-27e58f6d48b1";
@@ -109,8 +105,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "persisted Desktop connections cannot spoof a standard App identity",
   () => {
     const base = {
@@ -151,8 +146,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "readDesktopSettings normalizes legacy OpenRouter-only settings",
   async () => {
     const tempDir = await mkdtemp(
@@ -186,8 +180,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "readDesktopSettings removes dev shell only from the untouched legacy default capability sequence",
   async () => {
     const tempDir = await mkdtemp(
@@ -225,8 +218,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "readDesktopSettings keeps provider selection unset for pristine legacy OpenRouter defaults",
   async () => {
     const tempDir = await mkdtemp(
@@ -264,8 +256,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "readDesktopSettings backfills provider selection for intentional legacy provider states",
   async () => {
     const tempDir = await mkdtemp(
@@ -305,8 +296,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "writeDesktopSettings persists provider options without serializing credentials",
   async () => {
     const tempDir = await mkdtemp(
@@ -418,8 +408,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "writeDesktopSettings persists external database mode without serializing its credential",
   async () => {
     const tempDir = await mkdtemp(
@@ -451,8 +440,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "writeDesktopSettings round-trips local-provider settings",
   async () => {
     const tempDir = await mkdtemp(
@@ -486,8 +474,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "buildDesktopModelEnvironment exposes only the selected provider key",
   () => {
     const openrouterEnv = buildDesktopModelEnvironment(
@@ -714,8 +701,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "buildDesktopModelEnvironment configures local OpenAI-compatible providers without API keys",
   () => {
     const env = buildDesktopModelEnvironment(
@@ -764,8 +750,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "buildDesktopRunnerEnvironment applies local runtime defaults for desktop runs",
   () => {
     const env = buildDesktopRunnerEnvironment(
@@ -814,8 +799,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "buildDesktopRunnerEnvironment preserves explicit database wiring for managed desktop postgres",
   () => {
     const env = buildDesktopRunnerEnvironment(
@@ -861,8 +845,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "buildDesktopRunnerEnvironment does not fallback to local defaults when external database mode is selected without DATABASE_URL",
   () => {
     const env = buildDesktopRunnerEnvironment(
@@ -901,8 +884,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "buildDesktopModelEnvironment uses the shared model policy instead of DesktopSettings model authority",
   () => {
     const env = buildDesktopModelEnvironment(
@@ -946,8 +928,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "buildDesktopRunnerProfile applies the selected model policy to run.start",
   () => {
     const profile = buildDesktopRunnerProfile({
@@ -969,8 +950,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "buildDesktopRunnerProfile applies verified managed MCP servers and tools",
   () => {
     const settings = {
@@ -1007,8 +987,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "buildDesktopRunnerProfile retains the secure authorization identity for a connected App",
   () => {
     const settings = {
@@ -1041,8 +1020,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop settings retain only valid selected Slack capability packs",
   () => {
     const settings = normalizeDesktopSettings({
@@ -1092,8 +1070,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop Vercel settings fail closed and retain only selected capability tools",
   () => {
     const valid = normalizeDesktopSettings({
@@ -1141,8 +1118,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop Microsoft 365 settings retain only tools from selected packs",
   () => {
     const valid = normalizeDesktopSettings({
@@ -1179,8 +1155,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop execution selection retains the connected App server that owns selected tools",
   () => {
     const settings = {
@@ -1225,8 +1200,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop execution selection rejects an unavailable App contract",
   () => {
     const result = buildDesktopExecutionProfile(
@@ -1244,8 +1218,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop Microsoft 365 selection exposes native tools without treating Graph as MCP",
   () => {
     const settings = {
@@ -1290,7 +1263,7 @@ contractTest(
   },
 );
 
-contractTest("desktop.hermetic", "Desktop Google Workspace selection exposes Calendar tools without treating Google APIs as MCP", () => {
+test("Desktop Google Workspace selection exposes Calendar tools without treating Google APIs as MCP", () => {
   const settings = { ...createDefaultDesktopSettings(), mcpServers: [{ id: "standard.google_workspace", appId: "google_workspace", name: "Google Workspace", transport: "http" as const, url: "https://www.googleapis.com/", enabled: true, source: "Kestrel Desktop", sourceKind: "desktop-managed" as const, oauthCredentialPrefix: "mcp.standard.google_workspace" as const, capabilityPacks: ["calendar"], tools: [{ name: "google_workspace.list_events" }, { name: "google_workspace.create_event" }, { name: "google_workspace.update_event" }, { name: "google_workspace.delete_event" }], toolCount: 4 }] };
   const result = buildDesktopExecutionProfile(createDefaultModelPolicy(), settings, { modelConfiguration: { id: "desktop-default", revision: 1 }, apps: [{ id: "google_workspace", contractVersion: 1 }] });
   assert.equal("profile" in result, true);
@@ -1299,8 +1272,7 @@ contractTest("desktop.hermetic", "Desktop Google Workspace selection exposes Cal
   assert.ok(result.profile.toolAllowlist?.includes("google_workspace.list_events"));
 });
 
-contractTest(
-  "desktop.hermetic",
+test(
   "hasConfiguredDesktopProviderCredential follows the selected provider",
   () => {
     assert.equal(
@@ -1374,8 +1346,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "describeDesktopProviderCredentialRequirement explains the missing selected provider key",
   () => {
     assert.equal(

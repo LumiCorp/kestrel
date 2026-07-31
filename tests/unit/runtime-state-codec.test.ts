@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,10 +8,9 @@ import {
   readWaitState,
   validateRuntimeSessionState,
 } from "../../src/runtime/state.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "runtime state codec normalizes agent pending fields into exec", () => {
+test("runtime state codec normalizes agent pending fields into exec", () => {
   const state = decodeRuntimeSessionState({
     agent: {
       observations: [],
@@ -36,7 +36,7 @@ contractTest("runtime.hermetic", "runtime state codec normalizes agent pending f
   assert.equal(state.agent.waitingFor?.eventType, "user.reply");
 });
 
-contractTest("runtime.hermetic", "runtime state validation rejects unknown schema version", () => {
+test("runtime state validation rejects unknown schema version", () => {
   const error = validateRuntimeSessionState({
     runtime: {
       schemaVersion: 999,
@@ -50,7 +50,7 @@ contractTest("runtime.hermetic", "runtime state validation rejects unknown schem
   assert.equal(error?.code, "RUNTIME_STATE_VERSION_UNSUPPORTED");
 });
 
-contractTest("runtime.hermetic", "runtime state normalization produces a persistable canonical shape", () => {
+test("runtime state normalization produces a persistable canonical shape", () => {
   const normalized = normalizeRuntimeStateForPersist({
     agent: {
       observations: [],
@@ -67,7 +67,7 @@ contractTest("runtime.hermetic", "runtime state normalization produces a persist
   );
 });
 
-contractTest("runtime.hermetic", "runtime state codec preserves plan metadata and visible todos", () => {
+test("runtime state codec preserves plan metadata and visible todos", () => {
   const normalized = normalizeRuntimeStateForPersist({
     agent: {
       observations: [],
@@ -115,7 +115,7 @@ contractTest("runtime.hermetic", "runtime state codec preserves plan metadata an
   });
 });
 
-contractTest("runtime.hermetic", "runtime state codec drops legacy progress objective as deprecated state", () => {
+test("runtime state codec drops legacy progress objective as deprecated state", () => {
   const normalized = normalizeRuntimeStateForPersist({
     agent: {
       observations: [],
@@ -132,7 +132,7 @@ contractTest("runtime.hermetic", "runtime state codec drops legacy progress obje
   assert.equal(Object.hasOwn(normalized.agent as Record<string, unknown>, "progress"), false);
 });
 
-contractTest("runtime.hermetic", "readWaitState reflects canonical waitingFor state", () => {
+test("readWaitState reflects canonical waitingFor state", () => {
   const wait = readWaitState({
     agent: {
       observations: [],
@@ -162,7 +162,7 @@ contractTest("runtime.hermetic", "readWaitState reflects canonical waitingFor st
   });
 });
 
-contractTest("runtime.hermetic", "runtime state validation rejects legacy execution ledger", () => {
+test("runtime state validation rejects legacy execution ledger", () => {
   const error = validateRuntimeSessionState({
     runtime: {
       schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
@@ -179,7 +179,7 @@ contractTest("runtime.hermetic", "runtime state validation rejects legacy execut
   assert.match(error?.message ?? "", /legacy progress surface/u);
 });
 
-contractTest("runtime.hermetic", "runtime state validation rejects agent evidence ledger as legacy progress state", () => {
+test("runtime state validation rejects agent evidence ledger as legacy progress state", () => {
   const error = validateRuntimeSessionState({
     runtime: {
       schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
@@ -197,7 +197,7 @@ contractTest("runtime.hermetic", "runtime state validation rejects agent evidenc
   assert.equal((error?.details as Record<string, unknown> | undefined)?.path, "state.agent.evidenceLedger");
 });
 
-contractTest("runtime.hermetic", "runtime state normalization lifts legacy agent evidence to backing records", () => {
+test("runtime state normalization lifts legacy agent evidence to backing records", () => {
   const normalized = normalizeRuntimeStateForPersist({
     agent: {
       observations: [],
@@ -226,7 +226,7 @@ contractTest("runtime.hermetic", "runtime state normalization lifts legacy agent
   ]);
 });
 
-contractTest("runtime.hermetic", "runtime state validation rejects invalid plan metadata", () => {
+test("runtime state validation rejects invalid plan metadata", () => {
   const error = validateRuntimeSessionState({
     runtime: {
       schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
@@ -246,7 +246,7 @@ contractTest("runtime.hermetic", "runtime state validation rejects invalid plan 
   assert.match(error?.message ?? "", /state\.agent\.plan\.path/u);
 });
 
-contractTest("runtime.hermetic", "runtime state validation rejects non-object agent nextAction", () => {
+test("runtime state validation rejects non-object agent nextAction", () => {
   const error = validateRuntimeSessionState({
     runtime: {
       schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
@@ -263,7 +263,7 @@ contractTest("runtime.hermetic", "runtime state validation rejects non-object ag
   assert.equal(error?.message, "state.agent.nextAction must be an object");
 });
 
-contractTest("runtime.hermetic", "runtime state validation accepts object agent nextAction", () => {
+test("runtime state validation accepts object agent nextAction", () => {
   const error = validateRuntimeSessionState({
     runtime: {
       schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
@@ -285,7 +285,7 @@ contractTest("runtime.hermetic", "runtime state validation accepts object agent 
   assert.equal(error, undefined);
 });
 
-contractTest("runtime.hermetic", "runtime state migration initializes historical assistant text to null without payload inference", () => {
+test("runtime state migration initializes historical assistant text to null without payload inference", () => {
   const state = decodeRuntimeSessionState({
     runtime: { schemaVersion: 1 },
     agent: {
@@ -307,7 +307,7 @@ contractTest("runtime.hermetic", "runtime state migration initializes historical
   });
 });
 
-contractTest("runtime.hermetic", "v2 runtime state requires explicit non-empty assistant text or null", () => {
+test("v2 runtime state requires explicit non-empty assistant text or null", () => {
   const missing = validateRuntimeSessionState({
     runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
     agent: { observations: [], exec: {} },
@@ -321,7 +321,7 @@ contractTest("runtime.hermetic", "v2 runtime state requires explicit non-empty a
   assert.match(empty?.message ?? "", /non-empty string/u);
 });
 
-contractTest("runtime.hermetic", "runtime state codec preserves migratedAt for already-canonical state", () => {
+test("runtime state codec preserves migratedAt for already-canonical state", () => {
   const migratedAt = "2026-03-09T12:00:00.000Z";
   const state = decodeRuntimeSessionState({
     runtime: {

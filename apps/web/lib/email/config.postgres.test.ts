@@ -1,12 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const databaseUrl = process.env.KESTREL_APPS_DB_TEST_URL?.trim();
 
-contractTest(
-  "web.postgres",
+test(
   "platform email rejects an unavailable environment credential and accepts an encrypted key",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");

@@ -1,7 +1,7 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const RUNTIME_SOURCE = path.join(process.cwd(), "cli/runtime/KestrelChatRuntime.ts");
@@ -15,7 +15,7 @@ const TASK_GRAPH_PROJECTION_SOURCE = path.join(process.cwd(), "src/taskGraph/Run
 const TASK_GRAPH_RUNTIME_INTEGRATION_SOURCE = path.join(process.cwd(), "src/taskGraph/runtimeIntegration.ts");
 const COMMAND_ROUTER_SOURCE = path.join(process.cwd(), "cli/runner/CommandRouter.ts");
 
-contractTest("runtime.hermetic", "KestrelChatRuntime.runTurn stays a coordinator delegation seam", async () => {
+test("KestrelChatRuntime.runTurn stays a coordinator delegation seam", async () => {
   const source = await readFile(RUNTIME_SOURCE, "utf8");
   const runTurnBody = sectionBetween(source, "  async runTurn(", "\n  async getToolRuntimeStatus(");
 
@@ -34,7 +34,7 @@ contractTest("runtime.hermetic", "KestrelChatRuntime.runTurn stays a coordinator
   assert.doesNotMatch(runTurnBody, /ensureMainThread/u);
 });
 
-contractTest("runtime.hermetic", "default turn executor delegates threaded payload preparation to runtime service", async () => {
+test("default turn executor delegates threaded payload preparation to runtime service", async () => {
   const source = await readFile(RUNTIME_SOURCE, "utf8");
   const threadedExecutorSource = await readFile(THREADED_EXECUTOR_SOURCE, "utf8");
   const executorBody = sectionBetween(source, "function createDefaultRuntime(", "\nexport function resolveDevShellServiceForProfile(");
@@ -51,7 +51,7 @@ contractTest("runtime.hermetic", "default turn executor delegates threaded paylo
   assert.match(threadedExecutorSource, /payload:\s*runtimeTurn\.payload/u);
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime delegates operator session projection to orchestration", async () => {
+test("KestrelChatRuntime delegates operator session projection to orchestration", async () => {
   const source = await readFile(RUNTIME_SOURCE, "utf8");
 
   assert.match(source, /buildOperatorSessionProjection/u);
@@ -64,14 +64,14 @@ contractTest("runtime.hermetic", "KestrelChatRuntime delegates operator session 
   assert.doesNotMatch(source, /function toCheckpointSummary/u);
 });
 
-contractTest("runtime.hermetic", "runner control boundary delegates operator policy field validation", async () => {
+test("runner control boundary delegates operator policy field validation", async () => {
   const commandRouterSource = await readFile(COMMAND_ROUTER_SOURCE, "utf8");
 
   assert.match(commandRouterSource, /parseOperatorControlPolicyFields/u);
   assert.doesNotMatch(commandRouterSource, /allowToolClasses contains an invalid tool class/u);
 });
 
-contractTest("runtime.hermetic", "operator affordance payload construction stays source-owned", async () => {
+test("operator affordance payload construction stays source-owned", async () => {
   const runtimeSource = await readFile(RUNTIME_SOURCE, "utf8");
   const cliAppSource = await readFile(CLI_APP_SOURCE, "utf8");
   const cliAffordanceSource = await readFile(CLI_OPERATOR_AFFORDANCES_SOURCE, "utf8");
@@ -92,7 +92,7 @@ contractTest("runtime.hermetic", "operator affordance payload construction stays
   assert.doesNotMatch(cliAppSource, /operator_thread_blocker/u);
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime delegates session state and task graph projection to orchestration", async () => {
+test("KestrelChatRuntime delegates session state and task graph projection to orchestration", async () => {
   const runtimeSource = await readFile(RUNTIME_SOURCE, "utf8");
   const sessionProjectionSource = await readFile(SESSION_STATE_PROJECTION_SOURCE, "utf8");
   const getSessionStateBody = sectionBetween(runtimeSource, "  async getSessionState(", "\n  private async buildSessionDescription(");
@@ -105,7 +105,7 @@ contractTest("runtime.hermetic", "KestrelChatRuntime delegates session state and
   assert.match(sessionProjectionSource, /readRuntimeTaskGraphProjectionContext/u);
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime delegates task graph runtime integration to source helpers", async () => {
+test("KestrelChatRuntime delegates task graph runtime integration to source helpers", async () => {
   const runtimeSource = await readFile(RUNTIME_SOURCE, "utf8");
   const taskGraphIntegrationSource = await readFile(TASK_GRAPH_RUNTIME_INTEGRATION_SOURCE, "utf8");
 
@@ -117,7 +117,7 @@ contractTest("runtime.hermetic", "KestrelChatRuntime delegates task graph runtim
   assert.doesNotMatch(runtimeSource, /taskGraphStore\.applyDelegationUpdate/u);
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime delegates task graph projection to source helpers", async () => {
+test("KestrelChatRuntime delegates task graph projection to source helpers", async () => {
   const runtimeSource = await readFile(RUNTIME_SOURCE, "utf8");
   const taskGraphProjectionSource = await readFile(TASK_GRAPH_PROJECTION_SOURCE, "utf8");
   const getTaskGraphBody = sectionBetween(runtimeSource, "  async getTaskGraph(", "\n  async updateTaskGraph(");
@@ -130,7 +130,7 @@ contractTest("runtime.hermetic", "KestrelChatRuntime delegates task graph projec
   assert.match(taskGraphProjectionSource, /getOperatorThreadView/u);
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime binds proposals directly to canonical project authority", async () => {
+test("KestrelChatRuntime binds proposals directly to canonical project authority", async () => {
   const runtimeSource = await readFile(RUNTIME_SOURCE, "utf8");
   const defaultRuntimeBody = sectionBetween(runtimeSource, "function createDefaultRuntime(", "\nexport function resolveDevShellServiceForProfile(");
 

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -6,10 +7,9 @@ import {
   resolveBlockedWaitModeReply,
 } from "../../cli/app/waitForPrompt.js";
 import { extractWaitPrompt as extractSharedWaitPrompt } from "../../src/runtime/waitForPrompt.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "extractWaitPrompt returns prompt from wait metadata", () => {
+test("extractWaitPrompt returns prompt from wait metadata", () => {
   const waitFor = {
     kind: "user" as const,
     eventType: "user.reply",
@@ -21,7 +21,7 @@ contractTest("runtime.hermetic", "extractWaitPrompt returns prompt from wait met
   assert.equal(extractWaitPrompt(waitFor), "Should I proceed?");
 });
 
-contractTest("runtime.hermetic", "shared wait prompt extraction retains the legacy direct prompt shape", () => {
+test("shared wait prompt extraction retains the legacy direct prompt shape", () => {
   assert.equal(
     extractSharedWaitPrompt({
       eventType: "user.reply",
@@ -31,7 +31,7 @@ contractTest("runtime.hermetic", "shared wait prompt extraction retains the lega
   );
 });
 
-contractTest("runtime.hermetic", "buildWaitingSystemText includes prompt when present", () => {
+test("buildWaitingSystemText includes prompt when present", () => {
   const waitFor = {
     kind: "user" as const,
     eventType: "user.reply",
@@ -50,7 +50,7 @@ contractTest("runtime.hermetic", "buildWaitingSystemText includes prompt when pr
   );
 });
 
-contractTest("runtime.hermetic", "buildWaitingSystemText falls back to generic waiting text", () => {
+test("buildWaitingSystemText falls back to generic waiting text", () => {
   assert.equal(
     buildWaitingSystemText({
       kind: "user",
@@ -63,7 +63,7 @@ contractTest("runtime.hermetic", "buildWaitingSystemText falls back to generic w
   );
 });
 
-contractTest("runtime.hermetic", "buildWaitingSystemText formats max-step continuation waits", () => {
+test("buildWaitingSystemText formats max-step continuation waits", () => {
   assert.equal(
     buildWaitingSystemText({
       kind: "user",
@@ -91,7 +91,7 @@ contractTest("runtime.hermetic", "buildWaitingSystemText formats max-step contin
   );
 });
 
-contractTest("runtime.hermetic", "buildWaitingSystemText formats model-call continuation waits with both budgets", () => {
+test("buildWaitingSystemText formats model-call continuation waits with both budgets", () => {
   assert.equal(
     buildWaitingSystemText({
       kind: "user",
@@ -120,7 +120,7 @@ contractTest("runtime.hermetic", "buildWaitingSystemText formats model-call cont
   );
 });
 
-contractTest("runtime.hermetic", "resolveBlockedWaitModeReply accepts natural-language build mode switches for blocked waits", () => {
+test("resolveBlockedWaitModeReply accepts natural-language build mode switches for blocked waits", () => {
   const resolved = resolveBlockedWaitModeReply(
     {
       kind: "user",
@@ -145,7 +145,7 @@ contractTest("runtime.hermetic", "resolveBlockedWaitModeReply accepts natural-la
   });
 });
 
-contractTest("runtime.hermetic", "buildWaitingSystemText formats acter mode-blocked waits with the required mode guidance", () => {
+test("buildWaitingSystemText formats acter mode-blocked waits with the required mode guidance", () => {
   assert.equal(
     buildWaitingSystemText({
       kind: "user",
@@ -175,7 +175,7 @@ contractTest("runtime.hermetic", "buildWaitingSystemText formats acter mode-bloc
   );
 });
 
-contractTest("runtime.hermetic", "resolveBlockedWaitModeReply accepts build switches for acter-blocked waits", () => {
+test("resolveBlockedWaitModeReply accepts build switches for acter-blocked waits", () => {
   const resolved = resolveBlockedWaitModeReply(
     {
       kind: "user",
@@ -200,7 +200,7 @@ contractTest("runtime.hermetic", "resolveBlockedWaitModeReply accepts build swit
   });
 });
 
-contractTest("runtime.hermetic", "resolveBlockedWaitModeReply ignores natural-language mode switches outside blocked waits", () => {
+test("resolveBlockedWaitModeReply ignores natural-language mode switches outside blocked waits", () => {
   const resolved = resolveBlockedWaitModeReply(
     {
       kind: "user",
@@ -215,7 +215,7 @@ contractTest("runtime.hermetic", "resolveBlockedWaitModeReply ignores natural-la
   assert.equal(resolved, undefined);
 });
 
-contractTest("runtime.hermetic", "resolveBlockedWaitModeReply rejects non-string replies without throwing", () => {
+test("resolveBlockedWaitModeReply rejects non-string replies without throwing", () => {
   const resolved = resolveBlockedWaitModeReply(
     {
       kind: "user",

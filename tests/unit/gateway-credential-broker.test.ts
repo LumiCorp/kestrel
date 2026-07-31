@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   BrokeredModelGateway,
@@ -12,7 +13,6 @@ import {
   GatewayCredentialLeaseCache,
 } from "../../cli/runtime/gateway-credential-broker.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const reference = {
   source: "kestrel-one" as const,
@@ -43,8 +43,7 @@ function lease(input: {
   };
 }
 
-contractTest(
-  "runtime.hermetic",
+test(
   "credential cache reuses a lease until its bounded expiry",
   async () => {
     let now = 1_000_000;
@@ -69,8 +68,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "credential cache isolates otherwise identical references by organization",
   async () => {
     let loads = 0;
@@ -96,8 +94,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "credential cache isolates otherwise identical references by Environment",
   async () => {
     let loads = 0;
@@ -123,8 +120,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "credential cache isolates otherwise identical references by run",
   async () => {
     let loads = 0;
@@ -149,8 +145,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "credential rotation is observed on the first call after cache expiry",
   async () => {
     let now = 3_000_000;
@@ -192,8 +187,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "governance revocation fails the first call after cache expiry",
   async () => {
     let now = 4_000_000;
@@ -238,8 +232,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "credential cache coalesces concurrent misses",
   async () => {
     let releaseLoad: (() => void) | undefined;
@@ -269,8 +262,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "credential cache applies bounded early-expiration jitter",
   async () => {
     let now = 2_000_000;
@@ -293,8 +285,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "credential cache evicts the least recently used bounded entry",
   async () => {
     const secondReference = {
@@ -321,8 +312,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "brokered model gateway refreshes once after provider authentication failure",
   async () => {
     let loads = 0;
@@ -372,8 +362,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "brokered model gateway refreshes once after provider authorization failure",
   async () => {
     let loads = 0;
@@ -410,8 +399,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "managed provider errors cannot expose leased credentials after refresh",
   async () => {
     let loads = 0;
@@ -454,8 +442,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "brokered model gateway fails closed when lease resolution fails",
   async () => {
     const cache = new GatewayCredentialLeaseCache({
@@ -483,8 +470,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "embedded Desktop model grants remain reusable until lease expiry",
   async (context) => {
     resetDefaultGatewayCredentialCacheForTests();
@@ -526,8 +512,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "all approved language gateway transports construct from leased credentials without runner provider keys",
   () => {
     const original = {
@@ -596,8 +581,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "managed Ollama omits a runner environment key when its lease has no key",
   async () => {
     let authorization: string | null = "not-called";
@@ -634,8 +618,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "all gateway transports send the leased model and credential to the expected protocol",
   async () => {
     const cases: Array<{
@@ -778,8 +761,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "RunPod gateway responses preserve RunPod model provenance",
   async () => {
     const gateway = createProviderGatewayForLease(

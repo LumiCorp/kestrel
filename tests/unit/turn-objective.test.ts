@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveKestrelTurnObjective } from "../../src/runtime/turnObjective.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "resume objective uses fallback goal instead of acknowledgement message", () => {
+test("resume objective uses fallback goal instead of acknowledgement message", () => {
   const result = resolveKestrelTurnObjective({
     reactState: {},
     eventType: "user.message",
@@ -20,7 +20,7 @@ contractTest("runtime.hermetic", "resume objective uses fallback goal instead of
   assert.equal(result.preservesTranscriptTask, true);
 });
 
-contractTest("runtime.hermetic", "resume objective uses explicit payload goal when present", () => {
+test("resume objective uses explicit payload goal when present", () => {
   const result = resolveKestrelTurnObjective({
     reactState: {},
     eventType: "user.message",
@@ -36,7 +36,7 @@ contractTest("runtime.hermetic", "resume objective uses explicit payload goal wh
   assert.equal(result.source, "payload");
 });
 
-contractTest("runtime.hermetic", "resume objective preserves transcript task over acknowledgement message", () => {
+test("resume objective preserves transcript task over acknowledgement message", () => {
   const result = resolveKestrelTurnObjective({
     reactState: {
       modelTranscript: {
@@ -64,7 +64,7 @@ contractTest("runtime.hermetic", "resume objective preserves transcript task ove
   assert.equal(result.source, "transcript");
 });
 
-contractTest("runtime.hermetic", "resume objective uses payload message only after explicit fallback is absent", () => {
+test("resume objective uses payload message only after explicit fallback is absent", () => {
   const result = resolveKestrelTurnObjective({
     reactState: {},
     eventType: "user.message",
@@ -78,7 +78,7 @@ contractTest("runtime.hermetic", "resume objective uses payload message only aft
   assert.equal(result.source, "payload");
 });
 
-contractTest("runtime.hermetic", "fresh user message still starts a fresh objective from message text", () => {
+test("fresh user message still starts a fresh objective from message text", () => {
   const result = resolveKestrelTurnObjective({
     reactState: {},
     eventType: "user.message",

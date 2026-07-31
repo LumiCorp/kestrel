@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import readline from "node:readline";
 import { PassThrough } from "node:stream";
@@ -23,13 +24,11 @@ import {
 } from "../../src/missionControl/executionAuthority.js";
 import { MissionControlProjectService } from "../../src/missionControl/projectAuthority.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const ACTION_TS = "2026-07-30T12:00:00.000Z";
 
-contractTest(
-  "runtime.mission-control-execution-authority",
+test(
   "real runner accepts and exposes the exact reserved Mission Control identity",
   async () => {
     const output = new PassThrough();
@@ -107,11 +106,7 @@ contractTest(
   },
 );
 
-contractTest(
-  [
-    "runtime.mission-control-execution-authority",
-    "desktop.mission-control-boundary",
-  ],
+test(
   "canonical attempts control exact runner execution and recover without duplicate dispatch",
   async () => {
     const store = new InMemorySessionStore();
@@ -363,8 +358,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.mission-control-execution-authority",
+test(
   "pending outbox converges before and after dispatch without duplicate execution",
   async () => {
     const disconnected = await createPendingStart("disconnected");
@@ -563,8 +557,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.mission-control-execution-authority",
+test(
   "already-stopped and changed-run cancellation outcomes converge truthfully",
   async () => {
     const changed = await startControlledAttempt("changed-run");

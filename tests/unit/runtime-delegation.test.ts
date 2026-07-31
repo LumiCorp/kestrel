@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import { RuntimeDelegationService } from "../../cli/runtime/delegation.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "RuntimeDelegationService rehydrates lineage into child turn metadata", async () => {
+test("RuntimeDelegationService rehydrates lineage into child turn metadata", async () => {
   const store = new InMemorySessionStore();
   const childTurns: Array<{
     sessionId: string;
@@ -52,7 +52,7 @@ contractTest("runtime.hermetic", "RuntimeDelegationService rehydrates lineage in
   });
 });
 
-contractTest("runtime.hermetic", "RuntimeDelegationService rejects child spawn beyond profile delegation maxDepth", async () => {
+test("RuntimeDelegationService rejects child spawn beyond profile delegation maxDepth", async () => {
   const store = new InMemorySessionStore();
   const service = new RuntimeDelegationService({
     profile: {

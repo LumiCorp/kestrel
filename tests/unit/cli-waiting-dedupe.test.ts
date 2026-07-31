@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { isSameWaitFor } from "../../cli/app/App.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "isSameWaitFor returns true when event and prompt match", () => {
+test("isSameWaitFor returns true when event and prompt match", () => {
   const left = {
     kind: "user" as const,
     eventType: "user.reply",
@@ -23,7 +23,7 @@ contractTest("runtime.hermetic", "isSameWaitFor returns true when event and prom
   assert.equal(isSameWaitFor(left, right), true);
 });
 
-contractTest("runtime.hermetic", "isSameWaitFor returns false when prompt or event differs", () => {
+test("isSameWaitFor returns false when prompt or event differs", () => {
   assert.equal(
     isSameWaitFor(
       {

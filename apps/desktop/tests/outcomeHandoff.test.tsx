@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import React, { act } from "react";
@@ -10,7 +11,6 @@ import {
   withDesktopOutcomeWorkspaceChanges,
 } from "../renderer/src/outcomeHandoff.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 function installDom(): { root: Root; container: HTMLDivElement } {
   const browser = new Window({ url: "http://localhost/" });
@@ -46,7 +46,7 @@ function terminalEvent(type: "run.completed" | "run.failed" | "run.cancelled"): 
   } as DesktopRunnerEvent;
 }
 
-contractTest("desktop.hermetic", "terminal handoff metadata is explicit, normalized, and rejects prose-shaped data", () => {
+test("terminal handoff metadata is explicit, normalized, and rejects prose-shaped data", () => {
   assert.deepEqual(extractDesktopTerminalOutcome(terminalEvent("run.completed")), {
     kind: "desktop.terminal-outcome.v1",
     runId: "run-123",
@@ -91,7 +91,7 @@ contractTest("desktop.hermetic", "terminal handoff metadata is explicit, normali
   });
 });
 
-contractTest("desktop.hermetic", "completed workspace outcomes hand off directly to existing evidence surfaces", async () => {
+test("completed workspace outcomes hand off directly to existing evidence surfaces", async () => {
   const { root, container } = installDom();
   const reviewed: string[] = [];
   const inspected: string[] = [];
@@ -122,7 +122,7 @@ contractTest("desktop.hermetic", "completed workspace outcomes hand off directly
   await act(async () => root.unmount());
 });
 
-contractTest("desktop.hermetic", "outcome handoff stays available for inspection without a workspace and is absent for non-successful outcomes", async () => {
+test("outcome handoff stays available for inspection without a workspace and is absent for non-successful outcomes", async () => {
   const { root, container } = installDom();
   await act(async () => root.render(<OutcomeHandoff
     outcome={{

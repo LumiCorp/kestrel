@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { KESTREL_APP_IDS } from "@kestrel-agents/protocol";
 import { getCoreAppDefinition, listCoreAppDefinitions } from "./catalog";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "Apps catalog exposes only implemented providers", () => {
+test("Apps catalog exposes only implemented providers", () => {
   const keys = listCoreAppDefinitions().map((app) => app.key);
   assert.ok(keys.includes("google_workspace"));
   assert.ok(keys.includes("tavily"));
@@ -27,7 +27,7 @@ contractTest("web.hermetic", "Apps catalog exposes only implemented providers", 
   assert.ok(!keys.includes("microsoft"));
 });
 
-contractTest("web.hermetic", "Vercel is an operational App with governed delivery reads", () => {
+test("Vercel is an operational App with governed delivery reads", () => {
   const vercel = getCoreAppDefinition(KESTREL_APP_IDS.VERCEL);
   assert.ok(vercel);
   assert.equal(vercel.delivery, "api_key");
@@ -38,7 +38,7 @@ contractTest("web.hermetic", "Vercel is an operational App with governed deliver
   );
 });
 
-contractTest("web.hermetic", "Email exposes its organization configuration surface", () => {
+test("Email exposes its organization configuration surface", () => {
   const email = getCoreAppDefinition("email");
   assert.ok(email);
   assert.equal(email.connectionModel, "organization");
@@ -46,7 +46,7 @@ contractTest("web.hermetic", "Email exposes its organization configuration surfa
   assert.equal(email.metadata.configurationPath, "/settings/organization/email");
 });
 
-contractTest("web.hermetic", "Atlassian is a standard App with Jira and Confluence packs", () => {
+test("Atlassian is a standard App with Jira and Confluence packs", () => {
   const atlassian = getCoreAppDefinition(KESTREL_APP_IDS.ATLASSIAN);
   assert.ok(atlassian);
   assert.equal(atlassian.connectionModel, "environment");
@@ -69,7 +69,7 @@ contractTest("web.hermetic", "Atlassian is a standard App with Jira and Confluen
   );
 });
 
-contractTest("web.hermetic", "Slack is one App with selectable search and message permissions", () => {
+test("Slack is one App with selectable search and message permissions", () => {
   const slack = getCoreAppDefinition(KESTREL_APP_IDS.SLACK);
   assert.ok(slack);
   assert.equal(slack.connectionModel, "environment");
@@ -84,7 +84,7 @@ contractTest("web.hermetic", "Slack is one App with selectable search and messag
   );
 });
 
-contractTest("web.hermetic", "Notion is one connectable App with workspace capability packs", () => {
+test("Notion is one connectable App with workspace capability packs", () => {
   const notion = getCoreAppDefinition(KESTREL_APP_IDS.NOTION);
   assert.ok(notion);
   assert.equal(notion.connectionModel, "environment");
@@ -99,7 +99,7 @@ contractTest("web.hermetic", "Notion is one connectable App with workspace capab
   );
 });
 
-contractTest("web.hermetic", "Kestrel One uses canonical shared App identities", () => {
+test("Kestrel One uses canonical shared App identities", () => {
   const oneAppKeys = new Set(listCoreAppDefinitions().map((app) => app.key));
   assert.ok(oneAppKeys.has(KESTREL_APP_IDS.WEATHER));
   assert.ok(oneAppKeys.has(KESTREL_APP_IDS.GITHUB));
@@ -107,7 +107,7 @@ contractTest("web.hermetic", "Kestrel One uses canonical shared App identities",
   assert.ok(oneAppKeys.has(KESTREL_APP_IDS.MICROSOFT_365));
 });
 
-contractTest("web.hermetic", "workflow Apps are installable Apps with explicit dependency contracts", () => {
+test("workflow Apps are installable Apps with explicit dependency contracts", () => {
   const workflows = [
     KESTREL_APP_IDS.SOFTWARE_DELIVERY,
     KESTREL_APP_IDS.MEETING_FOLLOW_THROUGH,
@@ -127,7 +127,7 @@ contractTest("web.hermetic", "workflow Apps are installable Apps with explicit d
   }
 });
 
-contractTest("web.hermetic", "Microsoft 365 is one App with three capability packs", () => {
+test("Microsoft 365 is one App with three capability packs", () => {
   const microsoft = getCoreAppDefinition(KESTREL_APP_IDS.MICROSOFT_365);
   assert.ok(microsoft);
   assert.deepEqual(
@@ -138,7 +138,7 @@ contractTest("web.hermetic", "Microsoft 365 is one App with three capability pac
   assert.equal(microsoft.installMode, "explicit");
 });
 
-contractTest("web.hermetic", "Tavily recommended defaults require approval for expansive work", () => {
+test("Tavily recommended defaults require approval for expansive work", () => {
   const tavily = getCoreAppDefinition("tavily");
   assert.ok(tavily);
   const byKey = new Map(
@@ -153,7 +153,7 @@ contractTest("web.hermetic", "Tavily recommended defaults require approval for e
   assert.equal(byKey.get("usage")?.defaultApprovalMode, "deny");
 });
 
-contractTest("web.hermetic", "Google Workspace is personal while built-ins are inherited", () => {
+test("Google Workspace is personal while built-ins are inherited", () => {
   const google = getCoreAppDefinition("google_workspace");
   const weather = getCoreAppDefinition("built_in.weather");
   assert.equal(google?.connectionModel, "personal");

@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildQualityScorecard } from "../../src/governance/qualityScorecard.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "buildQualityScorecard computes bounded score and trend", () => {
+test("buildQualityScorecard computes bounded score and trend", () => {
   const scorecard = buildQualityScorecard([
     {
       domain: "runtime",

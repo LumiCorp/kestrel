@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createEmailConfigFingerprint,
@@ -5,10 +6,9 @@ import {
   type ResolvedEmailConfig,
   toPublicEmailConfig,
 } from "./config";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "email configuration fingerprints change with delivery authority", () => {
+test("email configuration fingerprints change with delivery authority", () => {
   const base = {
     credentialSource: "stored" as const,
     apiKey: "re_secret_one",
@@ -27,7 +27,7 @@ contractTest("web.hermetic", "email configuration fingerprints change with deliv
   );
 });
 
-contractTest("web.hermetic", "email test authority rejects stale fingerprints and revisions", () => {
+test("email test authority rejects stale fingerprints and revisions", () => {
   const revision = new Date("2026-07-12T12:00:00.000Z");
   const config: ResolvedEmailConfig = {
     provider: "resend",
@@ -65,7 +65,7 @@ contractTest("web.hermetic", "email test authority rejects stale fingerprints an
   );
 });
 
-contractTest("web.hermetic", "public email configuration redacts secrets and fingerprints", () => {
+test("public email configuration redacts secrets and fingerprints", () => {
   const config: ResolvedEmailConfig = {
     provider: "resend",
     enabled: true,

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import React from "react";
@@ -5,7 +6,6 @@ import { renderToString } from "ink";
 
 import { SplashGate } from "../../cli/ink/splash/SplashGate.js";
 import type { SplashPreflightState } from "../../cli/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function createPreflightState(
@@ -23,7 +23,7 @@ function createPreflightState(
   };
 }
 
-contractTest("runtime.hermetic", "SplashGate renders the ascii mark and dismiss prompt when visible", () => {
+test("SplashGate renders the ascii mark and dismiss prompt when visible", () => {
   const text = renderToString(
     React.createElement(SplashGate, {
       visible: true,
@@ -37,7 +37,7 @@ contractTest("runtime.hermetic", "SplashGate renders the ascii mark and dismiss 
   assert.match(text, /WARN/);
 });
 
-contractTest("runtime.hermetic", "SplashGate falls back to a readable KESTREL wordmark at narrow widths", () => {
+test("SplashGate falls back to a readable KESTREL wordmark at narrow widths", () => {
   const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, "columns");
   Object.defineProperty(process.stdout, "columns", {
     configurable: true,
@@ -68,7 +68,7 @@ contractTest("runtime.hermetic", "SplashGate falls back to a readable KESTREL wo
   }
 });
 
-contractTest("runtime.hermetic", "SplashGate shows failure summary and keeps the prompt hidden until pre-flight succeeds", () => {
+test("SplashGate shows failure summary and keeps the prompt hidden until pre-flight succeeds", () => {
   const text = renderToString(
     React.createElement(SplashGate, {
       visible: true,
@@ -86,7 +86,7 @@ contractTest("runtime.hermetic", "SplashGate shows failure summary and keeps the
   assert.doesNotMatch(text, /Press Space to continue/);
 });
 
-contractTest("runtime.hermetic", "SplashGate wraps long failure details instead of truncating them", () => {
+test("SplashGate wraps long failure details instead of truncating them", () => {
   const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, "columns");
   Object.defineProperty(process.stdout, "columns", {
     configurable: true,
@@ -123,7 +123,7 @@ contractTest("runtime.hermetic", "SplashGate wraps long failure details instead 
   }
 });
 
-contractTest("runtime.hermetic", "SplashGate returns null when hidden", () => {
+test("SplashGate returns null when hidden", () => {
   const text = renderToString(
     React.createElement(SplashGate, {
       visible: false,

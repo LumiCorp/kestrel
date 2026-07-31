@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -11,7 +12,6 @@ import {
 } from "../../src/economics/index.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import type { RunEvent } from "../../src/kestrel/contracts/events.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const PROFILE: ModelEconomicsProfileV1 = {
   version: 1,
@@ -44,7 +44,7 @@ const PROFILE: ModelEconomicsProfileV1 = {
   },
 };
 
-contractTest("runtime.hermetic", "economics pricing preserves cache and reasoning attribution without double counting", () => {
+test("economics pricing preserves cache and reasoning attribution without double counting", () => {
   const usage = normalizeEconomicsUsage({
     inputTokens: 1_000,
     outputTokens: 500,
@@ -73,7 +73,7 @@ contractTest("runtime.hermetic", "economics pricing preserves cache and reasonin
   assert.equal(Math.abs(pricing.totalCostUsd - 0.01885) < 1e-12, true);
 });
 
-contractTest("runtime.hermetic", "append-only economics events replay into one call attempt and independent outcome", () => {
+test("append-only economics events replay into one call attempt and independent outcome", () => {
   const usage = normalizeEconomicsUsage({ inputTokens: 100, outputTokens: 20, totalTokens: 120 });
   const events: RunEvent[] = [
     event("2026-07-22T10:00:00.000Z", {
@@ -133,7 +133,7 @@ contractTest("runtime.hermetic", "append-only economics events replay into one c
   assert.equal(projection.totals.unpricedCalls, 0);
 });
 
-contractTest("runtime.hermetic", "economics replay reports mutated event payloads instead of trusting them", () => {
+test("economics replay reports mutated event payloads instead of trusting them", () => {
   const runEvent = event("2026-07-22T10:00:00.000Z", {
     kind: "model_attempt.started",
     callId: "call-1",
@@ -151,7 +151,7 @@ contractTest("runtime.hermetic", "economics replay reports mutated event payload
   assert.match(projection.invalidEvents[0]?.reason ?? "", /payload hash does not match/u);
 });
 
-contractTest("runtime.hermetic", "economics replay keeps tool result reduction separate from model calls", () => {
+test("economics replay keeps tool result reduction separate from model calls", () => {
   const result = buildAgentToolSuccessResult({
     toolName: "fs.read_text",
     input: { path: "large.txt" },

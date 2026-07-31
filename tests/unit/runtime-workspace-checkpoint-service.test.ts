@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -13,12 +14,11 @@ import { createEmptyProjectSnapshot } from "../../src/project/state.js";
 import { ManagedTaskWorktreeService } from "../../src/workspace/ManagedTaskWorktreeService.js";
 import { WorkspaceCheckpointService } from "../../src/workspaceCheckpoints/service.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const execFileAsync = promisify(execFile);
 
-contractTest("runtime.process", "RuntimeWorkspaceCheckpointService resolves project setup before checkpoint capture and diff", async () => {
+test("RuntimeWorkspaceCheckpointService resolves project setup before checkpoint capture and diff", async () => {
   const setup = {
     ...createEmptyProjectSnapshot().setup,
     workspaceRoot: "/tmp/runtime-workspace",
@@ -61,7 +61,7 @@ contractTest("runtime.process", "RuntimeWorkspaceCheckpointService resolves proj
   ]);
 });
 
-contractTest("runtime.process", "WorkspaceContextResolver fails closed when project setup is missing", async () => {
+test("WorkspaceContextResolver fails closed when project setup is missing", async () => {
   const resolver = new WorkspaceContextResolver({
     getProjectSnapshot: async () => ({
       sessionId: "session-missing-workspace",
@@ -78,7 +78,7 @@ contractTest("runtime.process", "WorkspaceContextResolver fails closed when proj
   );
 });
 
-contractTest("runtime.process", "RuntimeWorkspaceCheckpointService captures and restores the authoritative managed thread workspace", async () => {
+test("RuntimeWorkspaceCheckpointService captures and restores the authoritative managed thread workspace", async () => {
   const sourceSetup = {
     ...createEmptyProjectSnapshot().setup,
     workspaceRoot: "/tmp/source-workspace",
@@ -120,7 +120,7 @@ contractTest("runtime.process", "RuntimeWorkspaceCheckpointService captures and 
   ]);
 });
 
-contractTest("runtime.process", "WorkspaceContextResolver rejects cross-session thread workspace authority", async () => {
+test("WorkspaceContextResolver rejects cross-session thread workspace authority", async () => {
   const resolver = new WorkspaceContextResolver({
     getProjectSnapshot: async () => ({
       sessionId: "session-a",
@@ -149,7 +149,7 @@ contractTest("runtime.process", "WorkspaceContextResolver rejects cross-session 
   );
 });
 
-contractTest("runtime.process", "RuntimeWorkspaceCheckpointService snapshots and clears authority before managed cleanup", async () => {
+test("RuntimeWorkspaceCheckpointService snapshots and clears authority before managed cleanup", async () => {
   const binding = {
     status: "bound" as const,
     sessionId: "session-1",
@@ -233,7 +233,7 @@ contractTest("runtime.process", "RuntimeWorkspaceCheckpointService snapshots and
   assert.deepEqual(bindingUpdates, [undefined]);
 });
 
-contractTest("runtime.process", "RuntimeWorkspaceCheckpointService reprovisions and restores a cleaned managed worktree from its retained checkpoint", async () => {
+test("RuntimeWorkspaceCheckpointService reprovisions and restores a cleaned managed worktree from its retained checkpoint", async () => {
   const binding = {
     status: "bound" as const,
     sessionId: "session-restore",
@@ -328,7 +328,7 @@ contractTest("runtime.process", "RuntimeWorkspaceCheckpointService reprovisions 
   ]);
 });
 
-contractTest("runtime.process", "RuntimeWorkspaceCheckpointService retries managed setup against source authority and rebinds the retained worktree", async () => {
+test("RuntimeWorkspaceCheckpointService retries managed setup against source authority and rebinds the retained worktree", async () => {
   const binding = {
     status: "bound" as const,
     sessionId: "session-setup-retry",
@@ -424,7 +424,7 @@ contractTest("runtime.process", "RuntimeWorkspaceCheckpointService retries manag
   assert.equal(calls[2]?.method, "inspect");
 });
 
-contractTest("runtime.process", "managed cleanup and restore round-trip real uncommitted work through the shared Git checkpoint ref", async () => {
+test("managed cleanup and restore round-trip real uncommitted work through the shared Git checkpoint ref", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-restore-roundtrip-"));
   const sourceRoot = path.join(root, "source");
   await execFileAsync("git", ["init", sourceRoot]);

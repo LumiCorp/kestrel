@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -6,10 +7,9 @@ import {
   mapOpenRouterTransportError,
   OpenRouterModelError,
 } from "../../models/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "OpenRouter error mapping covers auth/rate/provider/bad response", () => {
+test("OpenRouter error mapping covers auth/rate/provider/bad response", () => {
   assert.equal(createOpenRouterHttpError(401, "unauthorized").code, "MODEL_AUTH_ERROR");
   assert.equal(createOpenRouterHttpError(403, "forbidden").code, "MODEL_AUTH_ERROR");
   assert.equal(createOpenRouterHttpError(429, "slow down").code, "MODEL_RATE_LIMITED");
@@ -17,7 +17,7 @@ contractTest("runtime.hermetic", "OpenRouter error mapping covers auth/rate/prov
   assert.equal(createOpenRouterHttpError(400, "bad req").code, "MODEL_BAD_RESPONSE");
 });
 
-contractTest("runtime.hermetic", "OpenRouter bad-response errors include full diagnostics payload", () => {
+test("OpenRouter bad-response errors include full diagnostics payload", () => {
   const body = JSON.stringify({
     error: {
       message: "Provider returned error",
@@ -40,12 +40,12 @@ contractTest("runtime.hermetic", "OpenRouter bad-response errors include full di
   assert.equal(isOpenRouterProviderSchemaError(err), true);
 });
 
-contractTest("runtime.hermetic", "OpenRouter transport mapping preserves model errors", () => {
+test("OpenRouter transport mapping preserves model errors", () => {
   const err = new OpenRouterModelError("MODEL_AUTH_ERROR", "nope");
   assert.equal(mapOpenRouterTransportError(err), err);
 });
 
-contractTest("runtime.hermetic", "OpenRouter transport mapping returns timeout/provider codes", () => {
+test("OpenRouter transport mapping returns timeout/provider codes", () => {
   const timeout = mapOpenRouterTransportError(new Error("request timed out"));
   assert.equal(timeout.code, "MODEL_TIMEOUT");
 
@@ -53,7 +53,7 @@ contractTest("runtime.hermetic", "OpenRouter transport mapping returns timeout/p
   assert.equal(generic.code, "MODEL_PROVIDER_ERROR");
 });
 
-contractTest("runtime.hermetic", "OpenRouter transport mapping classifies DNS failures with details", () => {
+test("OpenRouter transport mapping classifies DNS failures with details", () => {
   const dnsCause = Object.assign(new Error("getaddrinfo ENOTFOUND openrouter.ai"), {
     code: "ENOTFOUND",
     syscall: "getaddrinfo",
@@ -73,7 +73,7 @@ contractTest("runtime.hermetic", "OpenRouter transport mapping classifies DNS fa
   assert.equal((details.codes as string[]).includes("ENOTFOUND"), true);
 });
 
-contractTest("runtime.hermetic", "OpenRouter transport mapping classifies connectivity failures", () => {
+test("OpenRouter transport mapping classifies connectivity failures", () => {
   const connCause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), {
     code: "ECONNREFUSED",
   });

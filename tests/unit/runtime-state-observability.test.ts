@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "commitStep emits compact runtime state diagnostics without action input", async () => {
+test("commitStep emits compact runtime state diagnostics without action input", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("state-diagnostics-session", "agent.loop");
 
@@ -52,7 +52,7 @@ contractTest("runtime.hermetic", "commitStep emits compact runtime state diagnos
   assert.equal(JSON.stringify(diagnostic?.metadata).includes("SECRET_CONTENT_SHOULD_NOT_BE_LOGGED"), false);
 });
 
-contractTest("runtime.hermetic", "commitStep validation failures include compact runtime state diagnostics", async () => {
+test("commitStep validation failures include compact runtime state diagnostics", async () => {
   const store = new InMemorySessionStore();
   await store.ensureSession("state-validation-session", "agent.loop");
 

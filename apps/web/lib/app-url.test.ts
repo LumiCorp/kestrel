@@ -1,9 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { KESTREL_APP_ORIGIN, resolveKestrelAppUrl } from "./app-url";
 
-contractTest(
-  "web.hermetic",
+test(
   "production auth URLs always use the canonical Kestrel domain",
   () => {
     assert.equal(
@@ -18,8 +17,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "preview auth URLs use the Vercel branch alias over production configuration",
   () => {
     assert.equal(
@@ -36,8 +34,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "preview auth URLs fall back to the immutable Vercel deployment URL",
   () => {
     assert.equal(
@@ -51,8 +48,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "local auth URLs remain environment-driven",
   () => {
     assert.equal(

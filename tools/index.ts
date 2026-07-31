@@ -167,3 +167,4 @@ export {
   UnifiedToolRegistry,
   type UnifiedToolRegistryOptions,
 } from "./runtime/UnifiedToolRegistry.js";
+export { adaptTrustedLegacyToolInput } from "./runtime/trustedToolInputCompatibility.js";

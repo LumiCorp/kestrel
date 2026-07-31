@@ -2,25 +2,6 @@ import { resolve, sep } from "node:path";
 import { normalizeDevShellExecCommand } from "../../src/devshell/normalizeCommand.js";
 import { asNonEmptyRecord } from "../helpers.js";
 
-const TOOL_INPUT_COMPATIBILITY_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  "evidence.extract": ["content", "source", "limit"],
-  "fs.list": ["filePath", "targetPath"],
-  "fs.read_text": ["filePath", "targetPath"],
-  "fs.verify_json": ["filePath", "targetPath"],
-  "fs.search_text": ["filePath", "targetPath", "pattern"],
-  "repo.trace": ["filePath", "targetPath"],
-  "fs.write_text": ["filePath", "targetPath", "text"],
-  "fs.replace_text": ["filePath", "targetPath"],
-  "fs.mkdir": ["filePath", "targetPath"],
-  "fs.delete": ["filePath", "targetPath"],
-  "fs.copy": ["from", "to"],
-  "fs.move": ["from", "to"],
-};
-
-export function getToolInputCompatibilityAliases(name: string): readonly string[] {
-  return TOOL_INPUT_COMPATIBILITY_ALIASES[name] ?? [];
-}
-
 export function normalizeToolActionInput(
   name: string,
   input: Record<string, unknown>,
@@ -226,25 +207,13 @@ export function normalizeToolActionInput(
   if (name === "evidence.extract") {
     const {
       text: _text,
-      content: _content,
       claim: _claim,
       sourceId: _sourceId,
-      source: _source,
       maxItems: _maxItems,
-      limit: _limit,
     } = input;
-    const text = firstDefinedString(
-      normalizeOptionalRawString(_text),
-      normalizeOptionalRawString(_content),
-    );
-    const sourceId = firstDefinedString(
-      normalizeOptionalString(_sourceId),
-      normalizeOptionalString(_source),
-    );
-    const maxItems = firstDefinedInteger(
-      normalizeOptionalInteger(_maxItems),
-      normalizeOptionalInteger(_limit),
-    );
+    const text = normalizeOptionalRawString(_text);
+    const sourceId = normalizeOptionalString(_sourceId);
+    const maxItems = normalizeOptionalInteger(_maxItems);
     return {
       ...(text !== undefined ? { text } : {}),
       ...(normalizeOptionalString(_claim) !== undefined
@@ -258,9 +227,7 @@ export function normalizeToolActionInput(
   if (name === "fs.list") {
     const { recursive: _recursive, maxDepth: _maxDepth, includeHidden: _includeHidden } = input;
     return {
-      path: normalizeFilesystemPathField(input, {
-        aliases: ["filePath", "targetPath"],
-      }),
+      path: normalizeFilesystemPathField(input),
       ...(normalizeOptionalBoolean(_recursive) !== undefined
         ? { recursive: normalizeOptionalBoolean(_recursive) }
         : {}),
@@ -280,9 +247,7 @@ export function normalizeToolActionInput(
       expectedRevision: _expectedRevision,
     } = input;
     return {
-      path: normalizeFilesystemPathField(input, {
-        aliases: ["filePath", "targetPath"],
-      }),
+      path: normalizeFilesystemPathField(input),
       ...(normalizeOptionalInteger(_maxBytes) !== undefined
         ? { maxBytes: normalizeOptionalInteger(_maxBytes) }
         : {}),
@@ -305,9 +270,7 @@ export function normalizeToolActionInput(
       maxBytes: _maxBytes,
     } = input;
     return {
-      path: normalizeFilesystemPathField(input, {
-        aliases: ["filePath", "targetPath"],
-      }),
+      path: normalizeFilesystemPathField(input),
       ...(normalizeOptionalString(_arrayPath) !== undefined
         ? { arrayPath: normalizeOptionalString(_arrayPath) }
         : {}),
@@ -338,18 +301,10 @@ export function normalizeToolActionInput(
       maxTotalPreviewChars: _maxTotalPreviewChars,
     } = input;
     return {
-      path: normalizeFilesystemPathField(input, {
-        aliases: ["filePath", "targetPath"],
-      }),
-      ...(normalizeFilesystemField(input, {
-        key: "query",
-        aliases: ["pattern"],
-      }) !== undefined
+      path: normalizeFilesystemPathField(input),
+      ...(normalizeFilesystemField(input, "query") !== undefined
         ? {
-            query: normalizeFilesystemField(input, {
-              key: "query",
-              aliases: ["pattern"],
-            }),
+            query: normalizeFilesystemField(input, "query"),
           }
         : {}),
       ...(normalizeOptionalString(_glob) !== undefined
@@ -379,9 +334,7 @@ export function normalizeToolActionInput(
       contextLines: _contextLines,
     } = input;
     return {
-      path: normalizeFilesystemPathField(input, {
-        aliases: ["filePath", "targetPath"],
-      }),
+      path: normalizeFilesystemPathField(input),
       ...(normalizeOptionalStringArray(_seeds) !== undefined
         ? { seeds: normalizeOptionalStringArray(_seeds) }
         : {}),
@@ -403,18 +356,10 @@ export function normalizeToolActionInput(
   if (name === "fs.write_text") {
     const { mode: _mode, createParents: _createParents } = input;
     return {
-      path: normalizeFilesystemPathField(input, {
-        aliases: ["filePath", "targetPath"],
-      }),
-      ...(normalizeFilesystemRawField(input, {
-        key: "content",
-        aliases: ["text"],
-      }) !== undefined
+      path: normalizeFilesystemPathField(input),
+      ...(normalizeFilesystemRawField(input, "content") !== undefined
         ? {
-            content: normalizeFilesystemRawField(input, {
-              key: "content",
-              aliases: ["text"],
-            }),
+            content: normalizeFilesystemRawField(input, "content"),
           }
         : {}),
       ...(normalizeOptionalString(_mode) !== undefined
@@ -429,9 +374,7 @@ export function normalizeToolActionInput(
   if (name === "fs.replace_text") {
     const { find: _find, replace: _replace, all: _all } = input;
     return {
-      path: normalizeFilesystemPathField(input, {
-        aliases: ["filePath", "targetPath"],
-      }),
+      path: normalizeFilesystemPathField(input),
       ...(normalizeOptionalRawString(_find) !== undefined
         ? { find: normalizeOptionalRawString(_find) }
         : {}),
@@ -446,10 +389,7 @@ export function normalizeToolActionInput(
 
   if (name === "fs.mkdir") {
     const { recursive: _recursive } = input;
-    const path = normalizeFilesystemPathField(input, {
-      aliases: ["filePath", "targetPath"],
-      defaultToDot: false,
-    });
+    const path = normalizeFilesystemPathField(input, false);
     return {
       ...(path !== undefined ? { path } : {}),
       ...(normalizeOptionalBoolean(_recursive) !== undefined
@@ -460,10 +400,7 @@ export function normalizeToolActionInput(
 
   if (name === "fs.delete") {
     const { recursive: _recursive } = input;
-    const path = normalizeFilesystemPathField(input, {
-      aliases: ["filePath", "targetPath"],
-      defaultToDot: false,
-    });
+    const path = normalizeFilesystemPathField(input, false);
     return {
       ...(path !== undefined ? { path } : {}),
       ...(normalizeOptionalBoolean(_recursive) !== undefined
@@ -475,26 +412,14 @@ export function normalizeToolActionInput(
   if (name === "fs.copy") {
     const { overwrite: _overwrite } = input;
     return {
-      ...(normalizeFilesystemField(input, {
-        key: "sourcePath",
-        aliases: ["from"],
-      }) !== undefined
+      ...(normalizeFilesystemField(input, "sourcePath") !== undefined
         ? {
-            sourcePath: normalizeFilesystemField(input, {
-              key: "sourcePath",
-              aliases: ["from"],
-            }),
+            sourcePath: normalizeFilesystemField(input, "sourcePath"),
           }
         : {}),
-      ...(normalizeFilesystemField(input, {
-        key: "destinationPath",
-        aliases: ["to"],
-      }) !== undefined
+      ...(normalizeFilesystemField(input, "destinationPath") !== undefined
         ? {
-            destinationPath: normalizeFilesystemField(input, {
-              key: "destinationPath",
-              aliases: ["to"],
-            }),
+            destinationPath: normalizeFilesystemField(input, "destinationPath"),
           }
         : {}),
       ...(normalizeOptionalBoolean(_overwrite) !== undefined
@@ -506,26 +431,14 @@ export function normalizeToolActionInput(
   if (name === "fs.move") {
     const { overwrite: _overwrite } = input;
     return {
-      ...(normalizeFilesystemField(input, {
-        key: "sourcePath",
-        aliases: ["from"],
-      }) !== undefined
+      ...(normalizeFilesystemField(input, "sourcePath") !== undefined
         ? {
-            sourcePath: normalizeFilesystemField(input, {
-              key: "sourcePath",
-              aliases: ["from"],
-            }),
+            sourcePath: normalizeFilesystemField(input, "sourcePath"),
           }
         : {}),
-      ...(normalizeFilesystemField(input, {
-        key: "destinationPath",
-        aliases: ["to"],
-      }) !== undefined
+      ...(normalizeFilesystemField(input, "destinationPath") !== undefined
         ? {
-            destinationPath: normalizeFilesystemField(input, {
-              key: "destinationPath",
-              aliases: ["to"],
-            }),
+            destinationPath: normalizeFilesystemField(input, "destinationPath"),
           }
         : {}),
       ...(normalizeOptionalBoolean(_overwrite) !== undefined
@@ -740,18 +653,6 @@ export function sanitizeToolInputForSchema(
   return sanitizeSchemaValue(schema, input);
 }
 
-export function normalizeTrustedToolActionInput(input: {
-  name: string;
-  value: Record<string, unknown>;
-  schema: Record<string, unknown>;
-  workspaceRoot?: string | undefined;
-}): unknown {
-  return sanitizeToolInputForSchema(
-    input.schema,
-    normalizeToolActionInput(input.name, input.value, input.workspaceRoot),
-  );
-}
-
 function normalizeCodeExecuteFiles(value: unknown): unknown[] | undefined {
   if (Array.isArray(value)) {
     return value;
@@ -794,10 +695,6 @@ function normalizeOptionalInteger(value: unknown): number | undefined {
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   return ;
-}
-
-function firstDefinedInteger(...values: Array<number | undefined>): number | undefined {
-  return values.find((value) => value !== undefined);
 }
 
 function normalizeOptionalBoolean(value: unknown): boolean | undefined {
@@ -877,55 +774,23 @@ function isPathWithinWorkspace(workspaceRoot: string, target: string): boolean {
 
 function normalizeFilesystemPathField(
   input: Record<string, unknown>,
-  options: {
-    aliases: string[];
-    defaultToDot?: boolean;
-  },
+  defaultToDot = true,
 ): string | undefined {
-  return normalizeFilesystemField(input, {
-    key: "path",
-    aliases: options.aliases,
-  }) ?? (options.defaultToDot === false ? undefined : ".");
+  return normalizeFilesystemField(input, "path") ?? (defaultToDot ? "." : undefined);
 }
 
 function normalizeFilesystemField(
   input: Record<string, unknown>,
-  options: {
-    key: string;
-    aliases: string[];
-  },
+  key: string,
 ): string | undefined {
-  const direct = normalizeOptionalString(input[options.key]);
-  if (direct !== undefined) {
-    return direct;
-  }
-  for (const alias of options.aliases) {
-    const normalized = normalizeOptionalString(input[alias]);
-    if (normalized !== undefined) {
-      return normalized;
-    }
-  }
-  return ;
+  return normalizeOptionalString(input[key]);
 }
 
 function normalizeFilesystemRawField(
   input: Record<string, unknown>,
-  options: {
-    key: string;
-    aliases: string[];
-  },
+  key: string,
 ): string | undefined {
-  const direct = normalizeOptionalRawString(input[options.key]);
-  if (direct !== undefined) {
-    return direct;
-  }
-  for (const alias of options.aliases) {
-    const normalized = normalizeOptionalRawString(input[alias]);
-    if (normalized !== undefined) {
-      return normalized;
-    }
-  }
-  return ;
+  return normalizeOptionalRawString(input[key]);
 }
 
 function firstDefinedString(...values: Array<string | undefined>): string | undefined {

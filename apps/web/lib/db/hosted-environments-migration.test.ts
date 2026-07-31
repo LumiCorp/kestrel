@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const migration = fs.readFileSync(
@@ -13,7 +13,7 @@ const migration = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "Environment migration establishes the hosted ownership graph", () => {
+test("Environment migration establishes the hosted ownership graph", () => {
   for (const table of [
     "environments",
     "environment_workspaces",
@@ -32,7 +32,7 @@ contractTest("web.hermetic", "Environment migration establishes the hosted owner
   }
 });
 
-contractTest("web.hermetic", "Environment ownership is canonical on Projects after the follow-up migration", () => {
+test("Environment ownership is canonical on Projects after the follow-up migration", () => {
   const ownershipMigration = fs.readFileSync(
     path.join(
       path.dirname(fileURLToPath(import.meta.url)),
@@ -47,7 +47,7 @@ contractTest("web.hermetic", "Environment ownership is canonical on Projects aft
   );
 });
 
-contractTest("web.hermetic", "Environment migration pins isolation and lazy Workspace invariants", () => {
+test("Environment migration pins isolation and lazy Workspace invariants", () => {
   assert.match(migration, /environments_org_default_idx/u);
   assert.match(migration, /fly_gateway_machine_id/u);
   assert.match(migration, /router_url/u);
@@ -69,7 +69,7 @@ contractTest("web.hermetic", "Environment migration pins isolation and lazy Work
   assert.doesNotMatch(migration, /INSERT INTO "thread_execution_bindings"/u);
 });
 
-contractTest("web.hermetic", "Environment router fields converge for databases that applied the original migration", () => {
+test("Environment router fields converge for databases that applied the original migration", () => {
   const upgradeMigration = fs.readFileSync(
     path.join(
       path.dirname(fileURLToPath(import.meta.url)),
@@ -89,7 +89,7 @@ contractTest("web.hermetic", "Environment router fields converge for databases t
   }
 });
 
-contractTest("web.hermetic", "Environment updates extend the existing durable operation contract", () => {
+test("Environment updates extend the existing durable operation contract", () => {
   const updateMigration = fs.readFileSync(
     path.join(
       path.dirname(fileURLToPath(import.meta.url)),
@@ -106,7 +106,7 @@ contractTest("web.hermetic", "Environment updates extend the existing durable op
   assert.doesNotMatch(updateMigration, /UPDATE |DELETE FROM|INSERT INTO/u);
 });
 
-contractTest("web.hermetic", "Environment migration makes provider operations and grants auditable", () => {
+test("Environment migration makes provider operations and grants auditable", () => {
   assert.match(migration, /environment_operations_idempotency_idx/u);
   assert.match(migration, /provider_request_id/u);
   assert.match(migration, /environment_capability_grants_capability_fk/u);
@@ -127,7 +127,7 @@ contractTest("web.hermetic", "Environment migration makes provider operations an
   }
 });
 
-contractTest("web.hermetic", "registered applications remain private and sandbox-port bounded", () => {
+test("registered applications remain private and sandbox-port bounded", () => {
   assert.match(migration, /environment_applications_audience_check/u);
   assert.match(migration, /"audience" = 'workspace'/u);
   assert.match(migration, /environment_applications_port_check/u);

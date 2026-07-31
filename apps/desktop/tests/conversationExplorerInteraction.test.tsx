@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import React, { act } from "react";
@@ -7,7 +8,6 @@ import { ConversationExplorer } from "../renderer/src/ConversationExplorer.js";
 import { ContextSidebar } from "../renderer/src/ContextSidebar.js";
 import { keepFocusInsideDialog } from "../renderer/src/dialogFocus.js";
 import { createRendererThread } from "../renderer/src/state.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 function installDom(): { root: Root; container: HTMLDivElement } {
   const browser = new Window({ url: "http://localhost/" });
@@ -35,7 +35,7 @@ function button(container: HTMLElement, label: string): HTMLButtonElement {
   return found;
 }
 
-contractTest("desktop.hermetic", "conversation explorer hides the archive shortcut until an archived conversation exists", async () => {
+test("conversation explorer hides the archive shortcut until an archived conversation exists", async () => {
   const { root, container } = installDom();
   const thread = { ...createRendererThread(), id: "thread-1", title: "Current conversation" };
   await act(async () => root.render(<ConversationExplorer
@@ -53,7 +53,7 @@ contractTest("desktop.hermetic", "conversation explorer hides the archive shortc
   await act(async () => root.unmount());
 });
 
-contractTest("desktop.hermetic", "conversation explorer exposes its search field for Find Work focus", async () => {
+test("conversation explorer exposes its search field for Find Work focus", async () => {
   const { root, container } = installDom();
   const thread = { ...createRendererThread(), id: "thread-1", title: "Current conversation" };
   const searchInputRef = React.createRef<HTMLInputElement>();
@@ -75,7 +75,7 @@ contractTest("desktop.hermetic", "conversation explorer exposes its search field
   await act(async () => root.unmount());
 });
 
-contractTest("desktop.hermetic", "Find Work focus wraps within its dialog", () => {
+test("Find Work focus wraps within its dialog", () => {
   installDom();
   const drawer = document.createElement("aside");
   const first = document.createElement("button");
@@ -95,7 +95,7 @@ contractTest("desktop.hermetic", "Find Work focus wraps within its dialog", () =
   assert.equal(backward.defaultPrevented, true);
 });
 
-contractTest("desktop.hermetic", "conversation archive waits for authoritative preflight before offering Undo", async () => {
+test("conversation archive waits for authoritative preflight before offering Undo", async () => {
   const { root, container } = installDom();
   const thread = { ...createRendererThread(), id: "thread-1", title: "Review me" };
   let resolveArchive!: (result: { status: "archived" }) => void;
@@ -125,7 +125,7 @@ contractTest("desktop.hermetic", "conversation archive waits for authoritative p
   await act(async () => root.unmount());
 });
 
-contractTest("desktop.hermetic", "conversation rename dialog owns focus and Escape returns it to the menu button", async () => {
+test("conversation rename dialog owns focus and Escape returns it to the menu button", async () => {
   const { root, container } = installDom();
   const thread = { ...createRendererThread(), id: "thread-1", title: "Rename me" };
   await act(async () => root.render(<ConversationExplorer
@@ -152,7 +152,7 @@ contractTest("desktop.hermetic", "conversation rename dialog owns focus and Esca
   await act(async () => root.unmount());
 });
 
-contractTest("desktop.hermetic", "conversation context exposes active work and routes a capability exception to Settings", async () => {
+test("conversation context exposes active work and routes a capability exception to Settings", async () => {
   const { root, container } = installDom();
   let openedCapability: string | undefined;
   await act(async () => root.render(<ContextSidebar
@@ -183,7 +183,7 @@ contractTest("desktop.hermetic", "conversation context exposes active work and r
   await act(async () => root.unmount());
 });
 
-contractTest("desktop.hermetic", "conversation context stays quiet when idle and healthy", async () => {
+test("conversation context stays quiet when idle and healthy", async () => {
   const { root, container } = installDom();
   await act(async () => root.render(<ContextSidebar
     thread={{ ...createRendererThread({ projectPath: "/project" }), title: "Quiet conversation" }}

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -11,12 +12,11 @@ import {
   resolveWorkspaceFromBinding,
   resolveWorkspaceFromCwd,
 } from "../../cli/workspace/WorkspaceResolver.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const execFileAsync = promisify(execFile);
 
-contractTest("runtime.process", "workspace resolver registers the nearest git root without writing project files", async () => {
+test("workspace resolver registers the nearest git root without writing project files", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-resolver-"));
   const home = path.join(root, "home");
   const workspaceRoot = path.join(root, "project");
@@ -41,7 +41,7 @@ contractTest("runtime.process", "workspace resolver registers the nearest git ro
   assert.equal(file.workspaces[0]?.automationEnabled, false);
 });
 
-contractTest("runtime.process", "workspace resolver uses cwd for non-git folders", async () => {
+test("workspace resolver uses cwd for non-git folders", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-nongit-"));
   const home = path.join(root, "home");
   const workspaceRoot = path.join(root, "folder");
@@ -55,7 +55,7 @@ contractTest("runtime.process", "workspace resolver uses cwd for non-git folders
   assert.equal(resolved.workspace?.runtimeContext.launchCwd, expectedWorkspaceRoot);
 });
 
-contractTest("runtime.process", "workspace resolver resolves explicit catalog bindings", async () => {
+test("workspace resolver resolves explicit catalog bindings", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-binding-"));
   const home = path.join(root, "home");
   const workspaceRoot = path.join(root, "project");

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type {
@@ -18,10 +19,9 @@ import type {
 import { devProcessStartTool } from "../../tools/devshell/processStart.js";
 import { execCommandTool } from "../../tools/devshell/execCommand.js";
 import { devShellRunTool } from "../../tools/devshell/run.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "dev.shell.run allows per-call envMode down-scope from inherited profiles", async () => {
+test("dev.shell.run allows per-call envMode down-scope from inherited profiles", async () => {
   const service = new CapturingDevShellService();
   const context = {
     devShell: {
@@ -42,7 +42,7 @@ contractTest("runtime.hermetic", "dev.shell.run allows per-call envMode down-sco
   assert.deepEqual(service.execInputs[0]?.allowedEnvNames, ["SAFE_TOKEN"]);
 });
 
-contractTest("runtime.hermetic", "dev.shell.run does not let per-call envMode broaden allowlist profiles", async () => {
+test("dev.shell.run does not let per-call envMode broaden allowlist profiles", async () => {
   const service = new CapturingDevShellService();
   const context = {
     devShell: {
@@ -62,7 +62,7 @@ contractTest("runtime.hermetic", "dev.shell.run does not let per-call envMode br
   assert.equal(service.execInputs[0]?.envMode, "allowlist");
 });
 
-contractTest("runtime.hermetic", "dev.shell.run rejects invalid envMode values", async () => {
+test("dev.shell.run rejects invalid envMode values", async () => {
   const service = new CapturingDevShellService();
   const context = {
     devShell: {
@@ -83,7 +83,7 @@ contractTest("runtime.hermetic", "dev.shell.run rejects invalid envMode values",
   );
 });
 
-contractTest("runtime.hermetic", "dev.shell.run derives source-write guard from profile context, not model input", async () => {
+test("dev.shell.run derives source-write guard from profile context, not model input", async () => {
   const service = new CapturingDevShellService();
   const context = {
     devShell: {
@@ -125,7 +125,7 @@ contractTest("runtime.hermetic", "dev.shell.run derives source-write guard from 
   });
 });
 
-contractTest("runtime.hermetic", "dev.shell.run source-write guard is on by default for enabled dev-shell profiles", async () => {
+test("dev.shell.run source-write guard is on by default for enabled dev-shell profiles", async () => {
   const service = new CapturingDevShellService();
   const context = {
     devShell: {
@@ -143,7 +143,7 @@ contractTest("runtime.hermetic", "dev.shell.run source-write guard is on by defa
   });
 });
 
-contractTest("runtime.hermetic", "dev.shell.run carries managed worktree guard mode from runtime context", async () => {
+test("dev.shell.run carries managed worktree guard mode from runtime context", async () => {
   const service = new CapturingDevShellService();
   const context = {
     devShell: {
@@ -165,7 +165,7 @@ contractTest("runtime.hermetic", "dev.shell.run carries managed worktree guard m
   });
 });
 
-contractTest("runtime.hermetic", "exec_command preserves direct checkpoint guard mode in managed worktrees", async () => {
+test("exec_command preserves direct checkpoint guard mode in managed worktrees", async () => {
   const service = new CapturingDevShellService();
   const context = {
     devShell: {
@@ -190,7 +190,7 @@ contractTest("runtime.hermetic", "exec_command preserves direct checkpoint guard
   });
 });
 
-contractTest("runtime.hermetic", "dev.shell.run carries runtime-derived source-write authority", async () => {
+test("dev.shell.run carries runtime-derived source-write authority", async () => {
   const service = new CapturingDevShellService();
   const context = {
     devShell: {
@@ -208,7 +208,7 @@ contractTest("runtime.hermetic", "dev.shell.run carries runtime-derived source-w
   assert.equal(service.execInputs[0]?.sourceWriteAuthority, "source_write");
 });
 
-contractTest("runtime.hermetic", "dev.process.start carries runtime-derived source-write authority", async () => {
+test("dev.process.start carries runtime-derived source-write authority", async () => {
   const service = new CapturingDevShellService();
   const context = {
     devShell: {
@@ -225,7 +225,7 @@ contractTest("runtime.hermetic", "dev.process.start carries runtime-derived sour
   assert.equal(service.startInputs[0]?.sourceWriteAuthority, "source_write");
 });
 
-contractTest("runtime.hermetic", "dev.shell.run defaults cwd to the workspace app root", async () => {
+test("dev.shell.run defaults cwd to the workspace app root", async () => {
   const service = new CapturingDevShellService();
   const context = {
     fileSystem: {
@@ -249,7 +249,7 @@ contractTest("runtime.hermetic", "dev.shell.run defaults cwd to the workspace ap
   assert.equal(service.execInputs[0]?.cwd, "/repo/app");
 });
 
-contractTest("runtime.hermetic", "dev.shell.run ignores app roots that escape the workspace", async () => {
+test("dev.shell.run ignores app roots that escape the workspace", async () => {
   const service = new CapturingDevShellService();
   const context = {
     fileSystem: {
@@ -273,7 +273,7 @@ contractTest("runtime.hermetic", "dev.shell.run ignores app roots that escape th
   assert.equal(service.execInputs[0]?.cwd, "/repo");
 });
 
-contractTest("runtime.hermetic", "dev.process.start ignores app roots that escape the workspace", async () => {
+test("dev.process.start ignores app roots that escape the workspace", async () => {
   const service = new CapturingDevShellService();
   const context = {
     fileSystem: {

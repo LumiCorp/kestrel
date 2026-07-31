@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { readPreviewEdgeConfig } from "../src/config.js";
 
 const validEnvironment = {
@@ -8,8 +8,7 @@ const validEnvironment = {
   KESTREL_PREVIEW_HOST_SUFFIX: "preview.kestrelagents.dev",
 };
 
-contractTest(
-  "services.hermetic",
+test(
   "Preview Edge requires canonical production routing configuration",
   () => {
     assert.deepEqual(readPreviewEdgeConfig(validEnvironment), {

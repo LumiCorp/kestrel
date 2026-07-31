@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -21,7 +22,6 @@ import type {
   AgentProgressUpdateV1,
   NormalizedOutput,
 } from "../../src/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function makeCompletedOutput(sessionId: string, runId: string): NormalizedOutput {
@@ -309,7 +309,7 @@ function createRunHarness(input: {
   };
 }
 
-contractTest("runtime.hermetic", "TuiRunController startActiveTurn forwards blocked-run resume and terminal diagnostics", async () => {
+test("TuiRunController startActiveTurn forwards blocked-run resume and terminal diagnostics", async () => {
   const harness = createRunHarness({
     pendingWaitFor: {
       kind: "user",
@@ -345,7 +345,7 @@ contractTest("runtime.hermetic", "TuiRunController startActiveTurn forwards bloc
   assert.equal(harness.uiStore.getState().running, false);
 });
 
-contractTest("runtime.hermetic", "TuiRunController emits an explicit terminal marker for scripted completion", async () => {
+test("TuiRunController emits an explicit terminal marker for scripted completion", async () => {
   const harness = createRunHarness({ scripted: true });
 
   await harness.controller.startActiveTurn({ submittedMessage: "complete the task" });
@@ -359,7 +359,7 @@ contractTest("runtime.hermetic", "TuiRunController emits an explicit terminal ma
   );
 });
 
-contractTest("runtime.hermetic", "TuiRunController tags and retains only runtime waiting prompts on continuation", async () => {
+test("TuiRunController tags and retains only runtime waiting prompts on continuation", async () => {
   const waitFor = {
     kind: "user" as const,
     eventType: "user.reply",
@@ -439,7 +439,7 @@ contractTest("runtime.hermetic", "TuiRunController tags and retains only runtime
   ]);
 });
 
-contractTest("runtime.hermetic", "TuiRunController clears submitted wait state while blocked resume is in flight", async () => {
+test("TuiRunController clears submitted wait state while blocked resume is in flight", async () => {
   let resolveRun:
     | ((value: Awaited<ReturnType<TuiRunControllerContext["client"]["sendCommand"]>>) => void)
     | undefined;
@@ -490,7 +490,7 @@ contractTest("runtime.hermetic", "TuiRunController clears submitted wait state w
   assert.equal(harness.uiStore.getState().activeSession.pendingWaitFor, undefined);
 });
 
-contractTest("runtime.hermetic", "TuiRunController forceFreshTurn sends user.message and clears pending wait", async () => {
+test("TuiRunController forceFreshTurn sends user.message and clears pending wait", async () => {
   const submittedWait: TuiSessionMeta["pendingWaitFor"] = {
     kind: "user",
     eventType: "user.reply",
@@ -517,7 +517,7 @@ contractTest("runtime.hermetic", "TuiRunController forceFreshTurn sends user.mes
   assert.equal(harness.uiStore.getState().activeSession.pendingWaitFor, undefined);
 });
 
-contractTest("runtime.hermetic", "TuiRunController restores submitted wait state when blocked resume dispatch fails", async () => {
+test("TuiRunController restores submitted wait state when blocked resume dispatch fails", async () => {
   const submittedWait: TuiSessionMeta["pendingWaitFor"] = {
     kind: "user",
     eventType: "user.reply",
@@ -543,7 +543,7 @@ contractTest("runtime.hermetic", "TuiRunController restores submitted wait state
   assert.equal(harness.uiStore.getState().errorOverlay?.message, "runner unavailable");
 });
 
-contractTest("runtime.hermetic", "TuiRunController does not restore stale wait state when fresh turn dispatch fails", async () => {
+test("TuiRunController does not restore stale wait state when fresh turn dispatch fails", async () => {
   const submittedWait: TuiSessionMeta["pendingWaitFor"] = {
     kind: "user",
     eventType: "user.reply",
@@ -570,7 +570,7 @@ contractTest("runtime.hermetic", "TuiRunController does not restore stale wait s
   assert.equal(harness.uiStore.getState().errorOverlay?.message, "runner unavailable");
 });
 
-contractTest("runtime.hermetic", "TuiRunController recovers compact context checkpoints and retries the submitted turn once", async () => {
+test("TuiRunController recovers compact context checkpoints and retries the submitted turn once", async () => {
   const pendingWait: TuiSessionMeta["pendingWaitFor"] = {
     kind: "user",
     eventType: "user.approval",
@@ -655,7 +655,7 @@ contractTest("runtime.hermetic", "TuiRunController recovers compact context chec
   assert.match(harness.history.find((line) => line.role === "system")?.text ?? "", /Compacted context and continued/u);
 });
 
-contractTest("runtime.hermetic", "TuiRunController does not auto-recover shape-changing context checkpoints", async () => {
+test("TuiRunController does not auto-recover shape-changing context checkpoints", async () => {
   const harness = createRunHarness({
     sendCommand: async () => makeRunnerEvent({
       type: "run.failed",
@@ -683,7 +683,7 @@ contractTest("runtime.hermetic", "TuiRunController does not auto-recover shape-c
   assert.equal(harness.uiStore.getState().errorOverlay?.details?.recommendedAction, "handoff");
 });
 
-contractTest("runtime.hermetic", "TuiRunController attempts context checkpoint recovery only once", async () => {
+test("TuiRunController attempts context checkpoint recovery only once", async () => {
   const commands: Array<{ type: string; payload: Record<string, unknown> }> = [];
   const harness = createRunHarness({
     sendCommand: async (type, payload) => {
@@ -724,7 +724,7 @@ contractTest("runtime.hermetic", "TuiRunController attempts context checkpoint r
   assert.equal(harness.uiStore.getState().errorOverlay?.code, "CONTEXT_CHECKPOINT_PENDING");
 });
 
-contractTest("runtime.hermetic", "TuiRunController cancelActiveRun preserves run.cancel payload shape", async () => {
+test("TuiRunController cancelActiveRun preserves run.cancel payload shape", async () => {
   const harness = createRunHarness();
 
   await harness.controller.cancelActiveRun();
@@ -737,7 +737,7 @@ contractTest("runtime.hermetic", "TuiRunController cancelActiveRun preserves run
   });
 });
 
-contractTest("runtime.hermetic", "TuiRunController separates operational progress, provider reasoning, and agent progress", () => {
+test("TuiRunController separates operational progress, provider reasoning, and agent progress", () => {
   const harness = createRunHarness();
 
   harness.controller.onRunnerEvent({
@@ -793,7 +793,7 @@ contractTest("runtime.hermetic", "TuiRunController separates operational progres
   assert.equal(harness.reasoning[0]?.message, "Thinking");
 });
 
-contractTest("runtime.hermetic", "TuiRunController appendRunFailureDiagnostics records model timeout details", async () => {
+test("TuiRunController appendRunFailureDiagnostics records model timeout details", async () => {
   const harness = createRunHarness();
 
   await harness.controller.appendRunFailureDiagnostics({

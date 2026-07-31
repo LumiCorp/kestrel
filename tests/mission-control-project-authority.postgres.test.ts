@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,10 +12,8 @@ import {
   parseMissionControlProjectDocument,
 } from "../src/missionControl/projectAuthority.js";
 import { createSessionStoreFromEnv } from "../src/store/createSessionStore.js";
-import { contractTest } from "./helpers/contract-test.js";
 
-contractTest(
-  "runtime.mission-control-project-persistence",
+test(
   "canonical project authority is active by default and commits receipts atomically",
   async (context) => {
     const databaseUrl =

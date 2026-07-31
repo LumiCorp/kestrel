@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   access,
@@ -13,10 +14,9 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { prepareDesktopPostgresBundle } from "../../scripts/prepare-desktop-postgres-bundle.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "desktop Postgres preparation materializes source symlinks", async (t) => {
+test("desktop Postgres preparation materializes source symlinks", async (t) => {
   const testRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-postgres-bundle-"));
   t.after(async () => {
     const { rm } = await import("node:fs/promises");

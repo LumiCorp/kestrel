@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,7 +8,6 @@ import {
   type CandidateSession,
   type CliOptions,
 } from "../../scripts/migrate-v2-to-v3.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function makeCandidate(overrides: Partial<CandidateSession>): CandidateSession {
@@ -24,7 +24,7 @@ function makeCandidate(overrides: Partial<CandidateSession>): CandidateSession {
   };
 }
 
-contractTest("runtime.hermetic", "buildPlan defaults to active/resumable migration scope", () => {
+test("buildPlan defaults to active/resumable migration scope", () => {
   const sessions: CandidateSession[] = [
     makeCandidate({ sessionId: "active", hasActiveRun: true }),
     makeCandidate({ sessionId: "pending", hasPendingEffects: true }),
@@ -49,7 +49,7 @@ contractTest("runtime.hermetic", "buildPlan defaults to active/resumable migrati
   );
 });
 
-contractTest("runtime.hermetic", "buildPlan with ids scope reports unknown sessions as blocked", () => {
+test("buildPlan with ids scope reports unknown sessions as blocked", () => {
   const sessions: CandidateSession[] = [
     makeCandidate({ sessionId: "one", hasActiveRun: true }),
   ];
@@ -65,7 +65,7 @@ contractTest("runtime.hermetic", "buildPlan with ids scope reports unknown sessi
   assert.deepEqual(plan.blocked, [{ sessionId: "missing", reason: "session_not_found" }]);
 });
 
-contractTest("runtime.hermetic", "patchStateForV3 backfills memory, budget, and stateNode defaults", () => {
+test("patchStateForV3 backfills memory, budget, and stateNode defaults", () => {
   const patched = patchStateForV3({}, "session-abc");
   const memory = patched.memory as Record<string, unknown>;
   const budget = patched.budget as Record<string, unknown>;
@@ -83,7 +83,7 @@ contractTest("runtime.hermetic", "patchStateForV3 backfills memory, budget, and 
   assert.equal(stateNode.child, "idle");
 });
 
-contractTest("runtime.hermetic", "parseArgs tolerates leading standalone -- forwarded by pnpm run", () => {
+test("parseArgs tolerates leading standalone -- forwarded by pnpm run", () => {
   const options = parseArgs(["--", "--dry-run", "--scope", "active-resumable"]);
   assert.equal(options.dryRun, true);
   assert.equal(options.scope, "active-resumable");

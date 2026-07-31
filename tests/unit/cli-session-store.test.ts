@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -5,10 +6,9 @@ import path from "node:path";
 
 import { SessionStore } from "../../cli/session/SessionStore.js";
 import type { TuiSessionMeta } from "../../cli/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "SessionStore persists pending waitFor metadata", async () => {
+test("SessionStore persists pending waitFor metadata", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-"));
   const store = new SessionStore(tempDir);
 
@@ -41,7 +41,7 @@ contractTest("runtime.hermetic", "SessionStore persists pending waitFor metadata
   assert.equal(loadedSession?.lastMessagePreview, "latest session preview");
 });
 
-contractTest("runtime.hermetic", "SessionStore resolves a unique session id fragment without changing name precedence", async () => {
+test("SessionStore resolves a unique session id fragment without changing name precedence", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-selector-"));
   const store = new SessionStore(tempDir);
   const initial = await store.load();
@@ -80,7 +80,7 @@ contractTest("runtime.hermetic", "SessionStore resolves a unique session id frag
   assert.equal(byIdFragment.status === "matched" ? byIdFragment.match : undefined, "sessionIdFragment");
 });
 
-contractTest("runtime.hermetic", "SessionStore reports ambiguous session id fragments", async () => {
+test("SessionStore reports ambiguous session id fragments", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-selector-"));
   const store = new SessionStore(tempDir);
   const initial = await store.load();
@@ -110,7 +110,7 @@ contractTest("runtime.hermetic", "SessionStore reports ambiguous session id frag
   assert.equal(resolution.status === "ambiguous" ? resolution.matches.length : 0, 2);
 });
 
-contractTest("runtime.hermetic", "SessionStore resets to empty when legacy version file is present", async () => {
+test("SessionStore resets to empty when legacy version file is present", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-legacy-"));
   const filePath = path.join(tempDir, "sessions.json");
   await writeFile(
@@ -128,7 +128,7 @@ contractTest("runtime.hermetic", "SessionStore resets to empty when legacy versi
   assert.equal(loaded.sessions.length, 0);
 });
 
-contractTest("runtime.hermetic", "SessionStore persists auto-compaction and delegation metadata", async () => {
+test("SessionStore persists auto-compaction and delegation metadata", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-task-"));
   const store = new SessionStore(tempDir);
   const initial = await store.load();
@@ -167,7 +167,7 @@ contractTest("runtime.hermetic", "SessionStore persists auto-compaction and dele
   assert.equal(loadedSession?.delegation?.status, "WAITING");
 });
 
-contractTest("runtime.hermetic", "SessionStore persists workspace binding metadata", async () => {
+test("SessionStore persists workspace binding metadata", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-workspace-"));
   const store = new SessionStore(tempDir);
   const initial = await store.load();

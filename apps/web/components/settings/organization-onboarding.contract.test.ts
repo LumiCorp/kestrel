@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -11,8 +11,7 @@ const root = path.resolve(
 const read = (relativePath: string) =>
   fs.readFileSync(path.join(root, relativePath), "utf8");
 
-contractTest(
-  "web.hermetic",
+test(
   "organization creation uses supported slug and active organization APIs",
   () => {
     const source = read("components/create-organization-dialog.tsx");
@@ -25,8 +24,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "new user turns share the stable setup gate while approvals bypass it",
   () => {
     const mainRoute = read("app/api/threads/[id]/route.ts");
@@ -68,8 +66,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "mobile setup errors retain the public mobile envelope",
   () => {
     for (const version of ["mobile-v1.json", "mobile-v2.json"]) {
@@ -101,8 +98,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "setup offers only enabled models that apply to the default Environment",
   () => {
     const source = read("components/settings/setup-client.tsx");

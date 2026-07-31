@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -11,10 +12,9 @@ import {
   preparePackedConsumerFixture,
   runChildProcess,
 } from "./helpers.js";
-import { contractTest } from "../../helpers/contract-test.js";
 
 
-contractTest("runtime.process", "installed @kestrel-agents/next package builds and runs inside a real Next app fixture", async (t) => {
+test("installed @kestrel-agents/next package builds and runs inside a real Next app fixture", async (t) => {
   const abortedSessions: string[] = [];
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),

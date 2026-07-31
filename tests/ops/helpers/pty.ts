@@ -104,7 +104,6 @@ export async function runTuiScenarioWithSession(input: {
   };
   delete tuiEnvironment.CI;
   delete tuiEnvironment.NODE_V8_COVERAGE;
-  delete tuiEnvironment.KESTREL_CONTRACT_TIMINGS;
   const payload = JSON.stringify({
     command: [
       process.execPath,

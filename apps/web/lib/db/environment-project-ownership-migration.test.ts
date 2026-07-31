@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const migration = fs.readFileSync(
@@ -13,7 +13,7 @@ const migration = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "Environment ownership migration creates one default path for every organization", () => {
+test("Environment ownership migration creates one default path for every organization", () => {
   assert.match(migration, /FROM "organization" organization/u);
   assert.match(migration, /"is_default"[\s\S]*true/u);
   assert.match(migration, /environments_org_id_idx/u);
@@ -21,7 +21,7 @@ contractTest("web.hermetic", "Environment ownership migration creates one defaul
   assert.match(migration, /requested_by_user_id/u);
 });
 
-contractTest("web.hermetic", "Environment ownership migration makes Project assignment canonical and mandatory", () => {
+test("Environment ownership migration makes Project assignment canonical and mandatory", () => {
   assert.match(
     migration,
     /ALTER TABLE "projects" ADD COLUMN "environment_id" text/u
@@ -36,7 +36,7 @@ contractTest("web.hermetic", "Environment ownership migration makes Project assi
   );
 });
 
-contractTest("web.hermetic", "Environment ownership migration preserves existing bindings and tool behavior", () => {
+test("Environment ownership migration preserves existing bindings and tool behavior", () => {
   assert.match(migration, /INSERT INTO "project_environment_bindings"/u);
   assert.match(migration, /INSERT INTO "environment_capability_grants"/u);
   assert.match(migration, /JOIN "organization_tool_providers" provider/u);

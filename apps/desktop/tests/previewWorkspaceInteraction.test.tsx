@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import React, { act } from "react";
@@ -9,7 +10,6 @@ import type {
   DesktopPreviewDiagnostic,
   DesktopProjectLauncherDescriptor,
 } from "../src/contracts.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 function run(
   input: Partial<DesktopManagedProjectRun> = {},
@@ -245,8 +245,7 @@ async function renderPreview(
   await flush();
 }
 
-contractTest(
-  "desktop.hermetic",
+test(
   "preview lifecycle uses one intelligent Start, Stop, and Restart control",
   async () => {
     const { root, container, calls } = installPreviewDom({ runs: [] });
@@ -281,8 +280,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "preview starts a newly selected script instead of restarting settled history",
   async () => {
     const { root, container, calls } = installPreviewDom({
@@ -313,8 +311,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "preview clears a prior run URL and retries an early load after dom-ready",
   async () => {
     const stopped = run({ status: "stopped" });
@@ -356,8 +353,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "preview overflow supports focus, arrow navigation, Escape, and running restart",
   async () => {
     const current = run();
@@ -398,8 +394,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "preview keeps manual Output choice and browser controls follow webview events",
   async () => {
     const current = run();

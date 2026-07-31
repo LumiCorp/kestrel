@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { FRESH_TURN_AGENT_CONTROL_KEYS } from "../../src/engine/ExecutionEngine.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "fresh user turns clear stale goal and evidence state", () => {
+test("fresh user turns clear stale goal and evidence state", () => {
   assert.equal(FRESH_TURN_AGENT_CONTROL_KEYS.includes("goal"), true);
   assert.equal((FRESH_TURN_AGENT_CONTROL_KEYS as readonly string[]).includes("workingPlan"), false);
   assert.equal((FRESH_TURN_AGENT_CONTROL_KEYS as readonly string[]).includes("planDocument"), false);
@@ -13,6 +13,6 @@ contractTest("runtime.hermetic", "fresh user turns clear stale goal and evidence
   assert.equal(FRESH_TURN_AGENT_CONTROL_KEYS.includes("observations"), true);
 });
 
-contractTest("runtime.hermetic", "fresh user turns clear stale loop-stall control state", () => {
+test("fresh user turns clear stale loop-stall control state", () => {
   assert.equal((FRESH_TURN_AGENT_CONTROL_KEYS as readonly string[]).includes("loopStall"), true);
 });

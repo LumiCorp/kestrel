@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { projectTabHref, resolveProjectTab } from "./project-tabs";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const appRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -14,8 +14,7 @@ function readAppSource(relativePath: string) {
   return fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 }
 
-contractTest(
-  "web.hermetic",
+test(
   "Project tabs stay owned by the URL across same-page navigation",
   () => {
     assert.equal(resolveProjectTab({ tab: "apps", hasGoogle: false }), "apps");
@@ -47,8 +46,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Project skills have a first-class tab separate from Apps and Workspace setup",
   () => {
     const projectHome = readAppSource(
@@ -84,8 +82,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Project header owns Environment choice and Thread actions",
   () => {
     const projectHome = readAppSource(
@@ -106,8 +103,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Desktop Environment selection rolls back to the committed Project binding",
   () => {
     const projectHome = readAppSource(
@@ -125,8 +121,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Desktop workspace binding atomically moves the Project Environment",
   () => {
     const store = readAppSource("lib/environments/store.ts");
@@ -145,8 +140,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Desktop workspace projections are scoped to the Project Environment",
   () => {
     const projectPage = readAppSource("app/(workspace)/projects/[id]/page.tsx");
@@ -163,8 +157,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Project Threads can duplicate conversation history without re-metering it",
   () => {
     const duplicateRoute = readAppSource(
@@ -178,8 +171,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Project skill catalog migration owns tenant-safe canonical state",
   () => {
     const migration = readAppSource(
@@ -202,8 +194,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Project runs reconcile skills before starting the runtime",
   () => {
     const runtime = readAppSource("lib/agent/kestrel-runtime.ts");
@@ -219,8 +210,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Organization changes refresh Project and Thread sidebar data",
   () => {
     const teamSwitcher = readAppSource("components/team-switcher.tsx");
@@ -249,8 +239,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Project uploads compensate new documents when context attachment fails",
   () => {
     const source = readAppSource("app/api/projects/[id]/files/route.ts");
@@ -263,8 +252,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Project deletion commits metadata before best-effort blob cleanup",
   () => {
     const source = readAppSource("lib/projects/store.ts");
@@ -282,8 +270,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Project collaborators use canonical Thread access for message actions",
   () => {
     for (const relativePath of [
@@ -297,8 +284,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "mobile Thread responses pin Project context and Environment before durable dispatch",
   () => {
     const source = readAppSource(
@@ -317,8 +303,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "durable interactions preserve exact request identity through runtime resume",
   () => {
     const store = readAppSource("lib/turns/store.ts");
@@ -333,8 +318,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "durable turn creation never rebinds an existing message ID",
   () => {
     const source = readAppSource("lib/turns/store.ts");

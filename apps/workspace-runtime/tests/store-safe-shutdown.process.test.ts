@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
@@ -6,15 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 const REPOSITORY_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../.."
 );
 
-contractTest(
-  "runtime.process",
+test(
   "workspace image update shutdown leaves the PGlite store reopenable",
   async () => {
     const root = await mkdtemp(

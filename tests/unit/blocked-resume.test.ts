@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveBlockedResumeRequest } from "../../agents/reference-react/src/blockedResume.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "blocked resume ignores stale agent goal when transcript exists without active task", () => {
+test("blocked resume ignores stale agent goal when transcript exists without active task", () => {
   const result = resolveBlockedResumeRequest(
     {
       goal: "Build Chirp, a text-only microblogging app.",
@@ -44,7 +44,7 @@ contractTest("runtime.hermetic", "blocked resume ignores stale agent goal when t
   assert.equal(result.resumeBlockedRun, true);
 });
 
-contractTest("runtime.hermetic", "blocked resume ignores legacy agent goal when no transcript exists", () => {
+test("blocked resume ignores legacy agent goal when no transcript exists", () => {
   const result = resolveBlockedResumeRequest(
     {
       goal: "Build Chirp, a text-only microblogging app.",
@@ -72,7 +72,7 @@ contractTest("runtime.hermetic", "blocked resume ignores legacy agent goal when 
   assert.equal(result.resumeBlockedRun, true);
 });
 
-contractTest("runtime.hermetic", "blocked resume uses transcript task for task fields", () => {
+test("blocked resume uses transcript task for task fields", () => {
   const result = resolveBlockedResumeRequest(
     {
       goal: "Stale legacy task",

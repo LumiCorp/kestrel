@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   buildRecoveryAdaptationVerdict,
   isLowYieldSourceClusterStalled,
 } from "../../src/runtime/recoveryVerdict.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "buildRecoveryAdaptationVerdict classifies exhausted evidence recovery and low-yield extraction centrally", () => {
+test("buildRecoveryAdaptationVerdict classifies exhausted evidence recovery and low-yield extraction centrally", () => {
   const verdict = buildRecoveryAdaptationVerdict({
     evidenceRecovery: {
       objectiveKey: "weekly supplier audit summary",
@@ -64,7 +64,7 @@ contractTest("runtime.hermetic", "buildRecoveryAdaptationVerdict classifies exha
   assert.equal(verdict.researchStall.active, true);
 });
 
-contractTest("runtime.hermetic", "isLowYieldSourceClusterStalled uses the shared low-yield threshold", () => {
+test("isLowYieldSourceClusterStalled uses the shared low-yield threshold", () => {
   const summary = {
     objectiveKey: "vendor onboarding checklist",
     searchFallbackUsed: false,
@@ -100,7 +100,7 @@ contractTest("runtime.hermetic", "isLowYieldSourceClusterStalled uses the shared
   assert.equal(isLowYieldSourceClusterStalled(summary, "other.example.com/help"), false);
 });
 
-contractTest("runtime.hermetic", "buildRecoveryAdaptationVerdict retains step recurrence without treating it as thrash policy", () => {
+test("buildRecoveryAdaptationVerdict retains step recurrence without treating it as thrash policy", () => {
   const verdict = buildRecoveryAdaptationVerdict({
     evidenceRecovery: undefined,
     webExtraction: undefined,

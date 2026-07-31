@@ -18,7 +18,6 @@ COPY cli cli
 COPY models models
 COPY src src
 COPY tools tools
-COPY tests/helpers/contract-test.ts tests/helpers/contract-test.ts
 COPY db db
 RUN pnpm --filter @lumi/kestrel-environment-auth build \
     && pnpm --filter @kestrel-agents/workspace-skills build \

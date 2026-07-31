@@ -1,14 +1,14 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { RunnerHost } from "../../cli/runner/RunnerHost.js";
 import type { RunnerEventSink } from "../../cli/runner/EventWriter.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const writer: RunnerEventSink = {
   emit() {},
 };
 
-contractTest("runtime.hermetic", "registered-only RunnerHost rejects inline profiles", async () => {
+test("registered-only RunnerHost rejects inline profiles", async () => {
   const host = new RunnerHost(
     writer,
     () => {
@@ -44,7 +44,7 @@ contractTest("runtime.hermetic", "registered-only RunnerHost rejects inline prof
   await host.close();
 });
 
-contractTest("runtime.hermetic", "RunnerHost emits execution profile resolution from provider", async () => {
+test("RunnerHost emits execution profile resolution from provider", async () => {
   const events: Array<{ type: string; payload: unknown }> = [];
   const host = new RunnerHost(
     {
@@ -95,7 +95,7 @@ contractTest("runtime.hermetic", "RunnerHost emits execution profile resolution 
   await host.close();
 });
 
-contractTest("runtime.hermetic", "registered-only RunnerHost rejects mutable profile ids before lookup", async () => {
+test("registered-only RunnerHost rejects mutable profile ids before lookup", async () => {
   let lookups = 0;
   const host = new RunnerHost(
     writer,

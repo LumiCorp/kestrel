@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,10 +6,9 @@ import {
   compactInternetToolOutputForTests,
   shapeToolExecutionResultForTests,
 } from "../../agents/reference-react/src/steps/acter.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "compactInternetToolOutputForTests condenses internet.news results into agent-loop-friendly highlights", () => {
+test("compactInternetToolOutputForTests condenses internet.news results into agent-loop-friendly highlights", () => {
   const compact = compactInternetToolOutputForTests("internet.news", {
     status: "ok",
     provider: "tavily",
@@ -61,7 +61,7 @@ contractTest("runtime.hermetic", "compactInternetToolOutputForTests condenses in
   });
 });
 
-contractTest("runtime.hermetic", "compactInternetToolOutputForTests condenses fetched page content to a preview", () => {
+test("compactInternetToolOutputForTests condenses fetched page content to a preview", () => {
   const compact = compactInternetToolOutputForTests("internet.extract", {
     status: "ok",
     provider: "tavily",
@@ -79,7 +79,7 @@ contractTest("runtime.hermetic", "compactInternetToolOutputForTests condenses fe
   assert.equal((compact?.contentPreview as string).length <= 1600, true);
 });
 
-contractTest("runtime.hermetic", "shapeToolExecutionResultForTests sanitizes malformed unicode in stored previews and artifacts", () => {
+test("shapeToolExecutionResultForTests sanitizes malformed unicode in stored previews and artifacts", () => {
   const shaped = shapeToolExecutionResultForTests({
     runId: "run-1",
     stepIndex: 4,
@@ -99,7 +99,7 @@ contractTest("runtime.hermetic", "shapeToolExecutionResultForTests sanitizes mal
   );
 });
 
-contractTest("runtime.hermetic", "buildToolOutputDigestForTests is deterministic and bounded for generic JSON outputs", () => {
+test("buildToolOutputDigestForTests is deterministic and bounded for generic JSON outputs", () => {
   const output = {
     b: "second",
     a: {
@@ -120,7 +120,7 @@ contractTest("runtime.hermetic", "buildToolOutputDigestForTests is deterministic
   assert.equal(typeof (first as { textPreview?: unknown }).textPreview, "string");
 });
 
-contractTest("runtime.hermetic", "buildToolOutputDigestForTests applies tool adapter for code.execute outputs", () => {
+test("buildToolOutputDigestForTests applies tool adapter for code.execute outputs", () => {
   const digest = buildToolOutputDigestForTests("code.execute", {
     status: "ok",
     summary: "Execution completed successfully.",
@@ -140,7 +140,7 @@ contractTest("runtime.hermetic", "buildToolOutputDigestForTests applies tool ada
   assert.equal(adapter?.artifactCount, 1);
 });
 
-contractTest("runtime.hermetic", "shapeToolExecutionResultForTests persists digest artifact and digest pointers for large outputs", () => {
+test("shapeToolExecutionResultForTests persists digest artifact and digest pointers for large outputs", () => {
   const shaped = shapeToolExecutionResultForTests({
     runId: "run-2",
     stepIndex: 7,
@@ -164,7 +164,7 @@ contractTest("runtime.hermetic", "shapeToolExecutionResultForTests persists dige
   assert.equal(shaped.artifacts.some((artifact) => artifact.type === "tool-output-digest"), true);
 });
 
-contractTest("runtime.hermetic", "shapeToolExecutionResultForTests keeps full verification facts and compact persisted facts", () => {
+test("shapeToolExecutionResultForTests keeps full verification facts and compact persisted facts", () => {
   const requirements = Array.from({ length: 80 }, (_, index) => ({
     id: `field_${index}`,
     status: "passed",

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
 import {
@@ -7,10 +8,9 @@ import {
   logKnowledgeToolAuditEvent,
   readKnowledgeToolRequestMetadata,
 } from "@/lib/agent/kestrel-knowledge-tool-observability";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "knowledge tool audit metadata reads tenant and correlation headers", () => {
+test("knowledge tool audit metadata reads tenant and correlation headers", () => {
   const request = new Request("http://example.test/tool", {
     headers: {
       "x-kestrel-tenant-id": "org_123",
@@ -26,7 +26,7 @@ contractTest("web.hermetic", "knowledge tool audit metadata reads tenant and cor
   });
 });
 
-contractTest("web.hermetic", "knowledge tool audit events omit raw query text", () => {
+test("knowledge tool audit events omit raw query text", () => {
   const query = "private launch plan";
   const event = buildKnowledgeToolAuditEvent({
     status: "success",
@@ -45,7 +45,7 @@ contractTest("web.hermetic", "knowledge tool audit events omit raw query text", 
   assert.equal(JSON.stringify(event).includes(query), false);
 });
 
-contractTest("web.hermetic", "knowledge tool audit classifies invalid auth and runtime failures", () => {
+test("knowledge tool audit classifies invalid auth and runtime failures", () => {
   const unauthorized = Object.assign(new Error("Unauthorized"), {
     code: "UNAUTHORIZED",
   });
@@ -61,7 +61,7 @@ contractTest("web.hermetic", "knowledge tool audit classifies invalid auth and r
   );
 });
 
-contractTest("web.hermetic", "knowledge tool audit logger routes success and failure by severity", () => {
+test("knowledge tool audit logger routes success and failure by severity", () => {
   const calls: Array<{ level: string; message: string; event: unknown }> = [];
   const logger = {
     info(message: string, event: unknown) {

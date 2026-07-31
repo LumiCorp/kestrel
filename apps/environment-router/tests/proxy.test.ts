@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import { proxyWorkspaceRequest } from "../src/proxy.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("services.process", "Environment gateway streams authorized HTTP requests to the private Workspace", async () => {
+test("Environment gateway streams authorized HTTP requests to the private Workspace", async () => {
   let receivedBody = "";
   let receivedAuthorization = "";
   const workspace = createServer(async (request, response) => {
@@ -44,7 +44,7 @@ contractTest("services.process", "Environment gateway streams authorized HTTP re
   }
 });
 
-contractTest("services.process", "Environment gateway reports a bounded error when the Workspace is unavailable", async () => {
+test("Environment gateway reports a bounded error when the Workspace is unavailable", async () => {
   const unavailable = createServer();
   const unavailableUrl = await listen(unavailable);
   await close(unavailable);

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,7 +6,6 @@ import {
   type KestrelAgentDefinition,
   type KestrelMemorySnapshot,
 } from "../src/index.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const context = {
@@ -31,7 +31,7 @@ function createRemoteAgent(
   });
 }
 
-contractTest("packages.hermetic", "createAgent runs and resumes with the configured profile", async () => {
+test("createAgent runs and resumes with the configured profile", async () => {
   const requests: Array<Record<string, unknown>> = [];
   const agent = createRemoteAgent({
     id: "support",
@@ -127,7 +127,7 @@ contractTest("packages.hermetic", "createAgent runs and resumes with the configu
   await agent.close();
 });
 
-contractTest("packages.hermetic", "agent session memory reads and writes through task graph state", async () => {
+test("agent session memory reads and writes through task graph state", async () => {
   let storedMemory: KestrelMemorySnapshot = {
     goal: "Ship the release",
     currentPlan: "Write docs",

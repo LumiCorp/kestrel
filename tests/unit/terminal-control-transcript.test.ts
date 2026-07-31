@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { StepIO } from "../../src/kestrel/contracts/execution.js";
@@ -13,7 +14,6 @@ import {
 } from "../../agents/reference-react/src/steps/acter/finalizeHandler.js";
 import type { ActerStepConfig } from "../../agents/reference-react/src/steps/acter/shared.js";
 import { createContinuationHandoffWaitTransition } from "../../agents/reference-react/src/steps/planHandoffWait.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const config: ActerStepConfig = {
@@ -37,7 +37,7 @@ const io: StepIO = {
   },
 };
 
-contractTest("runtime.hermetic", "finalize terminal control records function call output before the next model turn", async () => {
+test("finalize terminal control records function call output before the next model turn", async () => {
   const modelTranscript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -81,7 +81,7 @@ contractTest("runtime.hermetic", "finalize terminal control records function cal
   ), true);
 });
 
-contractTest("runtime.hermetic", "ask-user terminal control records function call output before waiting", () => {
+test("ask-user terminal control records function call output before waiting", () => {
   const modelTranscript = appendAssistantToolCallsToTranscript({
     transcript: undefined,
     stepIndex: 1,
@@ -128,7 +128,7 @@ contractTest("runtime.hermetic", "ask-user terminal control records function cal
   ), true);
 });
 
-contractTest("runtime.hermetic", "handoff terminal control records function call output before waiting", () => {
+test("handoff terminal control records function call output before waiting", () => {
   const modelTranscript = appendAssistantToolCallsToTranscript({
     transcript: appendUserTurnToTranscript({
       transcript: undefined,
@@ -191,7 +191,7 @@ contractTest("runtime.hermetic", "handoff terminal control records function call
   assert.equal(handoff?.goal, "Build the newsletter.");
 });
 
-contractTest("runtime.hermetic", "cannot-satisfy terminal control records function call output before completion", async () => {
+test("cannot-satisfy terminal control records function call output before completion", async () => {
   let finalizeInput: unknown;
   const localIo: StepIO = {
     ...io,

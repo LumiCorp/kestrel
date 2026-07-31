@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type {
@@ -13,10 +14,9 @@ import {
   type KestrelUIMessage,
 } from "../src/index.js";
 import type { UIMessageStreamWriter } from "ai";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("packages.hermetic", "presentation data part runtime keys stay aligned with the public contract", () => {
+test("presentation data part runtime keys stay aligned with the public contract", () => {
   const contractKeys: readonly (keyof KestrelPresentationDataParts)[] =
     KESTREL_PRESENTATION_DATA_PART_KEYS;
 
@@ -33,7 +33,7 @@ contractTest("packages.hermetic", "presentation data part runtime keys stay alig
   ]);
 });
 
-contractTest("packages.hermetic", "task dialog updates become durable presentation parts", () => {
+test("task dialog updates become durable presentation parts", () => {
   const accumulator = createKestrelPresentationAccumulator({ assistantMessageId: "assistant-dialog" });
   const parts = accumulator.append({
     id: "event-dialog",
@@ -70,7 +70,7 @@ contractTest("packages.hermetic", "task dialog updates become durable presentati
   });
 });
 
-contractTest("packages.hermetic", "completed output becomes canonical assistant text", () => {
+test("completed output becomes canonical assistant text", () => {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: "assistant-1",
     turnId: "turn-1",
@@ -93,7 +93,7 @@ contractTest("packages.hermetic", "completed output becomes canonical assistant 
   });
 });
 
-contractTest("packages.hermetic", "completed output exposes the finalized payload to adapters", () => {
+test("completed output exposes the finalized payload to adapters", () => {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: "assistant-mode-switch",
   });
@@ -109,7 +109,7 @@ contractTest("packages.hermetic", "completed output exposes the finalized payloa
   assert.deepEqual(snapshot.finalizedPayload, finalizedPayload);
 });
 
-contractTest("packages.hermetic", "waiting output persists one assistant prompt and its exact durable interaction", () => {
+test("waiting output persists one assistant prompt and its exact durable interaction", () => {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: "assistant-wait",
   });
@@ -126,7 +126,7 @@ contractTest("packages.hermetic", "waiting output persists one assistant prompt 
   );
 });
 
-contractTest("packages.hermetic", "empty completed output becomes a visible contract failure", () => {
+test("empty completed output becomes a visible contract failure", () => {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: "assistant-empty",
   });
@@ -146,7 +146,7 @@ contractTest("packages.hermetic", "empty completed output becomes a visible cont
   );
 });
 
-contractTest("packages.hermetic", "upstream activation failures remain runtime failures", async () => {
+test("upstream activation failures remain runtime failures", async () => {
   const chunks: Array<Record<string, unknown>> = [];
   const writer = {
     write(chunk: unknown) {
@@ -176,7 +176,7 @@ contractTest("packages.hermetic", "upstream activation failures remain runtime f
   );
 });
 
-contractTest("packages.hermetic", "AI SDK stream and persisted message are emitted from the same accumulator", async () => {
+test("AI SDK stream and persisted message are emitted from the same accumulator", async () => {
   const chunks: Array<Record<string, unknown>> = [];
   const writer = {
     write(chunk: unknown) {
@@ -262,7 +262,7 @@ contractTest("packages.hermetic", "AI SDK stream and persisted message are emitt
   );
 });
 
-contractTest("ai-sdk.hermetic", "live-only progress streams transiently and stays out of the snapshot", async () => {
+test("live-only progress streams transiently and stays out of the snapshot", async () => {
   const chunks: Array<Record<string, unknown>> = [];
   const writer = {
     write(chunk: unknown) {

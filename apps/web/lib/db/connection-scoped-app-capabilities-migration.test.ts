@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const migration = fs.readFileSync(
@@ -14,8 +14,7 @@ const journal = fs.readFileSync(
   "utf8",
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "discovered App capabilities migrate to connection-owned identities",
   () => {
     assert.match(

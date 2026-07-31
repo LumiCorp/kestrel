@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -23,7 +24,6 @@ import {
   type RunnerCommandType,
   type RunnerEventType,
 } from "../src/index.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const profile = {
@@ -239,7 +239,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "mcp.refresh": { profileId: "reference" },
 };
 
-contractTest("packages.hermetic", "conversation message cursors and recovery pages are boundary validated", () => {
+test("conversation message cursors and recovery pages are boundary validated", () => {
   const cursor = encodeConversationMessageCursor({
     completedAt: "2026-07-31T10:00:00.000Z",
     turnId: "turn:recovery/1",
@@ -428,7 +428,7 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "mcp.refreshed": { status: {} },
 };
 
-contractTest("packages.hermetic", "Execution Protocol v3 descriptor owns the full supported registries", () => {
+test("Execution Protocol v3 descriptor owns the full supported registries", () => {
   assert.equal(EXECUTION_PROTOCOL_VERSION, "execution-protocol-v3");
   assert.equal(RUNNER_COMMAND_CONTRACT_VERSION, "runner-command-v3");
   assert.equal(RUNNER_EVENT_CONTRACT_VERSION, "dotted-runtime-events-v3");
@@ -465,7 +465,7 @@ contractTest("packages.hermetic", "Execution Protocol v3 descriptor owns the ful
   assert.equal(isRunnerStreamingCommandType("run.cancel"), false);
 });
 
-contractTest("packages.hermetic", "Execution Protocol v3 correlates command responses and shared workspace operations", () => {
+test("Execution Protocol v3 correlates command responses and shared workspace operations", () => {
   const event = parseRunnerEventV2({
     id: "event-workspace-list",
     type: "workspace.checkpoint",
@@ -518,7 +518,7 @@ contractTest("packages.hermetic", "Execution Protocol v3 correlates command resp
   assert.equal(isRunnerRunStreamEvent(progress), false);
 });
 
-contractTest("packages.hermetic", "canonical command parser accepts every registered discriminant", () => {
+test("canonical command parser accepts every registered discriminant", () => {
   for (const type of RUNNER_COMMAND_TYPES) {
     const parsed = parseRunnerCommandV2({
       id: `command:${type}`,
@@ -534,7 +534,7 @@ contractTest("packages.hermetic", "canonical command parser accepts every regist
   }
 });
 
-contractTest("packages.hermetic", "canonical execution profile contracts accept isolated local presets", () => {
+test("canonical execution profile contracts accept isolated local presets", () => {
   for (const environmentPresetId of [
     "cli_safe_local",
     "desktop_safe_local",
@@ -551,7 +551,7 @@ contractTest("packages.hermetic", "canonical execution profile contracts accept 
   }
 });
 
-contractTest("packages.hermetic", "canonical command parser rejects unknown and malformed payloads", () => {
+test("canonical command parser rejects unknown and malformed payloads", () => {
   assert.throws(
     () => parseRunnerCommandV2({}),
     (error: unknown) => (
@@ -682,7 +682,7 @@ contractTest("packages.hermetic", "canonical command parser rejects unknown and 
   }
 });
 
-contractTest("packages.hermetic", "canonical project actions reject retired lifecycle authorities and malformed Git fields", () => {
+test("canonical project actions reject retired lifecycle authorities and malformed Git fields", () => {
   assert.throws(
     () => parseRunnerCommandV2({
       id: "command-git-push-invalid-branch",
@@ -723,7 +723,7 @@ contractTest("packages.hermetic", "canonical project actions reject retired life
   }
 });
 
-contractTest("packages.hermetic", "canonical job.run parsing preserves job defaults and bounded enums", () => {
+test("canonical job.run parsing preserves job defaults and bounded enums", () => {
   const parsed = parseRunnerCommandV2({
     id: "command-job-default-event",
     type: "job.run",
@@ -770,7 +770,7 @@ contractTest("packages.hermetic", "canonical job.run parsing preserves job defau
   }
 });
 
-contractTest("packages.hermetic", "canonical profile references require one unambiguous source", () => {
+test("canonical profile references require one unambiguous source", () => {
   for (const type of ["run.start", "mcp.status", "mcp.refresh"] as const) {
     assert.throws(
       () => parseRunnerCommandV2({
@@ -820,7 +820,7 @@ contractTest("packages.hermetic", "canonical profile references require one unam
   }
 });
 
-contractTest("packages.hermetic", "canonical turn parsing validates structured auto-compaction fields", () => {
+test("canonical turn parsing validates structured auto-compaction fields", () => {
   const parsed = parseRunnerCommandV2({
     id: "command-auto-compaction",
     type: "run.start",
@@ -884,7 +884,7 @@ contractTest("packages.hermetic", "canonical turn parsing validates structured a
   );
 });
 
-contractTest("packages.hermetic", "canonical execution commands preserve exact Mission Control correlation", () => {
+test("canonical execution commands preserve exact Mission Control correlation", () => {
   const missionControl = {
     projectId: "11111111-1111-4111-8111-111111111111",
     itemId: "work-1",
@@ -940,7 +940,7 @@ contractTest("packages.hermetic", "canonical execution commands preserve exact M
   );
 });
 
-contractTest("packages.hermetic", "canonical turn parsing validates workspace skill catalogs", () => {
+test("canonical turn parsing validates workspace skill catalogs", () => {
   const workspaceSkills = [{
     installationId: "skill-1",
     name: "Release guide",
@@ -978,7 +978,7 @@ contractTest("packages.hermetic", "canonical turn parsing validates workspace sk
   );
 });
 
-contractTest("packages.hermetic", "canonical turn history distinguishes runtime assistant text from legacy waiting prompts", () => {
+test("canonical turn history distinguishes runtime assistant text from legacy waiting prompts", () => {
   const parsed = parseRunnerCommandV2({
     id: "command-runtime-assistant-history",
     type: "run.start",
@@ -1030,7 +1030,7 @@ contractTest("packages.hermetic", "canonical turn history distinguishes runtime 
   }
 });
 
-contractTest("packages.hermetic", "canonical tool presentation validates citation and Artifact identity", () => {
+test("canonical tool presentation validates citation and Artifact identity", () => {
   const event = parseRunnerEventV2({
     id: "event-tool-presentation",
     type: "run.tool.completed",
@@ -1065,7 +1065,7 @@ contractTest("packages.hermetic", "canonical tool presentation validates citatio
   );
 });
 
-contractTest("packages.hermetic", "canonical event parser accepts every registered discriminant", () => {
+test("canonical event parser accepts every registered discriminant", () => {
   for (const type of RUNNER_EVENT_TYPES) {
     const parsed = parseRunnerEventV2({
       id: `event:${type}`,
@@ -1078,7 +1078,7 @@ contractTest("packages.hermetic", "canonical event parser accepts every register
   }
 });
 
-contractTest("packages.hermetic", "provider reasoning events reject opaque continuation state at the protocol boundary", () => {
+test("provider reasoning events reject opaque continuation state at the protocol boundary", () => {
   assert.throws(
     () => parseRunnerEventV2({
       id: "event-reasoning-opaque-state",
@@ -1095,7 +1095,7 @@ contractTest("packages.hermetic", "provider reasoning events reject opaque conti
   );
 });
 
-contractTest("packages.hermetic", "canonical event parser rejects unknown and malformed payloads", () => {
+test("canonical event parser rejects unknown and malformed payloads", () => {
   assert.throws(
     () => parseRunnerEventV2({
       id: "event-1",
@@ -1134,7 +1134,7 @@ contractTest("packages.hermetic", "canonical event parser rejects unknown and ma
   );
 });
 
-contractTest("packages.hermetic", "canonical event parser normalizes a blank optional session updatedAt", () => {
+test("canonical event parser normalizes a blank optional session updatedAt", () => {
   const parsed = parseRunnerEventV2({
     id: "event-session-described",
     type: "session.described",
@@ -1149,7 +1149,7 @@ contractTest("packages.hermetic", "canonical event parser normalizes a blank opt
   assert.equal("updatedAt" in parsed.payload, false);
 });
 
-contractTest("packages.hermetic", "canonical event parser normalizes terminal assistant text without changing payload data", () => {
+test("canonical event parser normalizes terminal assistant text without changing payload data", () => {
   const finalizedPayload = {
     deploymentId: "deployment-1",
     regions: ["iad1"],
@@ -1264,7 +1264,7 @@ contractTest("packages.hermetic", "canonical event parser normalizes terminal as
   );
 });
 
-contractTest("packages.hermetic", "waiting outcomes require one canonical assistant prompt and durable request", () => {
+test("waiting outcomes require one canonical assistant prompt and durable request", () => {
   const waiting = {
     status: "WAITING",
     sessionId: "session-1",
@@ -1315,7 +1315,7 @@ contractTest("packages.hermetic", "waiting outcomes require one canonical assist
   }
 });
 
-contractTest("packages.hermetic", "canonical terminal parsing rejects malformed concrete run outputs", () => {
+test("canonical terminal parsing rejects malformed concrete run outputs", () => {
   assert.throws(
     () => parseRunnerEventV2({
       id: "event-run-output-null",

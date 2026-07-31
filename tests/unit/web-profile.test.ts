@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createWebDemoProfile } from "../../src/web/index.js";
 import { FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "web demo profile resolves to the balanced web preset by default", () => {
+test("web demo profile resolves to the balanced web preset by default", () => {
   const profile = createWebDemoProfile();
 
   assert.equal(profile.shellKind, "web");
@@ -17,7 +17,7 @@ contractTest("runtime.hermetic", "web demo profile resolves to the balanced web 
   assert.equal(profile.toolAllowlist?.includes("code.execute"), false);
 });
 
-contractTest("runtime.hermetic", "desktop demo profile resolves to the isolated desktop preset", () => {
+test("desktop demo profile resolves to the isolated desktop preset", () => {
   const profile = createWebDemoProfile("desktop");
 
   assert.equal(profile.shellKind, "desktop");

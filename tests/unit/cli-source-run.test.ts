@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.process", "AppRoot source-run JSX uses the repository config from an external workspace", async () => {
+test("AppRoot source-run JSX uses the repository config from an external workspace", async () => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), "kestrel-cli-source-run-"));
   try {
     const repoRoot = process.cwd();

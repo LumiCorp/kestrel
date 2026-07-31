@@ -1,7 +1,7 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type { BetterAuthOptions } from "better-auth";
 import { getCookies } from "better-auth/cookies";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import {
   authorizeAuthenticatedMutationOrigin,
   canonicalProductionRedirect,
@@ -10,8 +10,7 @@ import {
   type AuthSecurityEnvironment,
 } from "./auth-security-policy";
 
-contractTest(
-  "web.auth.host-only-cookie",
+test(
   "canonical production redirect matches only explicit legacy hosts",
   () => {
     const policy = resolveAuthSecurityPolicy({
@@ -78,8 +77,7 @@ function authorize(input: {
   });
 }
 
-contractTest(
-  "web.auth.host-only-cookie",
+test(
   "production session cookies use the __Host- contract without a Domain attribute",
   () => {
     const sessionCookie = cookiesFor(productionEnvironment).sessionToken;
@@ -93,8 +91,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.auth.host-only-cookie",
+test(
   "the production session detector reads the exact __Host- cookie",
   () => {
     const headers = new Headers({
@@ -108,8 +105,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.auth.host-only-cookie",
+test(
   "local development cookies remain host-only and work over HTTP",
   () => {
     const developmentEnvironment = {
@@ -131,8 +127,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.auth.preview-origin-isolation",
+test(
   "the active Vercel branch alias and immutable deployment URL are Better Auth trusted origins",
   () => {
     const policy = resolveAuthSecurityPolicy(previewEnvironment);
@@ -152,8 +147,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.auth.preview-origin-isolation",
+test(
   "an authenticated mutation from the active Vercel preview origin is allowed",
   () => {
     assert.deepEqual(
@@ -169,8 +163,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.auth.preview-origin-isolation",
+test(
   "an authenticated mutation from another Vercel preview is rejected",
   () => {
     assert.deepEqual(
@@ -186,8 +179,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.auth.preview-origin-isolation",
+test(
   "an authenticated mutation from the canonical Kestrel One origin is allowed",
   () => {
     assert.deepEqual(
@@ -202,8 +194,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.auth.preview-origin-isolation",
+test(
   "same-site browser mutations cannot bypass the check by omitting Origin",
   () => {
     assert.deepEqual(
@@ -213,8 +204,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.auth.preview-origin-isolation",
+test(
   "unauthenticated and non-browser requests remain owned by endpoint authentication",
   () => {
     assert.deepEqual(
@@ -228,8 +218,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.auth.preview-origin-isolation",
+test(
   "the configured native application origin remains allowed",
   () => {
     assert.deepEqual(

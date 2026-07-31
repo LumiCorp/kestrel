@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { shouldPersistProgressUpdate } from "../../src/engine/ExecutionEngine.js";
 import type { ProgressUpdateV1 } from "../../src/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const progress = (
   code: ProgressUpdateV1["code"],
@@ -20,8 +20,7 @@ const progress = (
   persist,
 });
 
-contractTest(
-  "runtime.hermetic",
+test(
   "compact progress persistence retains provider retry history",
   () => {
     assert.equal(

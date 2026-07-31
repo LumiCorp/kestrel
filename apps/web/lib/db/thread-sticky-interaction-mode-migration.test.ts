@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const migration = fs.readFileSync(
@@ -14,7 +14,7 @@ const journal = fs.readFileSync(
   "utf8",
 );
 
-contractTest("web.hermetic", "task interaction mode is sticky and backfilled from the latest durable turn", () => {
+test("task interaction mode is sticky and backfilled from the latest durable turn", () => {
   assert.match(migration, /ADD COLUMN "interaction_mode" text DEFAULT 'chat' NOT NULL/u);
   assert.match(migration, /SELECT DISTINCT ON \("thread_id"\)/u);
   assert.match(migration, /ORDER BY "thread_id", "sequence" DESC/u);

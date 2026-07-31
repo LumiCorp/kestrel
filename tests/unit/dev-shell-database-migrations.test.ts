@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -8,10 +9,9 @@ import {
   runDevShellDatabaseMigrations,
 } from "../../src/devshell/DevShellDatabaseMigrations.js";
 import { formatDevShellBootstrapFailureMessage } from "../../src/devshell/bootstrapFailure.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.process", "runDevShellDatabaseMigrations runs root migration script with dev shell database url", async () => {
+test("runDevShellDatabaseMigrations runs root migration script with dev shell database url", async () => {
   const spawned: Array<{
     command: string;
     args: string[];
@@ -49,7 +49,7 @@ contractTest("runtime.process", "runDevShellDatabaseMigrations runs root migrati
   ]);
 });
 
-contractTest("runtime.process", "runDevShellDatabaseMigrations surfaces migration failures", async () => {
+test("runDevShellDatabaseMigrations surfaces migration failures", async () => {
   const spawnImpl = (() =>
     createChildProcess(1, {
       stderr: "column already exists",
@@ -74,7 +74,7 @@ contractTest("runtime.process", "runDevShellDatabaseMigrations surfaces migratio
   );
 });
 
-contractTest("runtime.process", "resolveDevShellMigrationEnvironment enables node mode under Electron", () => {
+test("resolveDevShellMigrationEnvironment enables node mode under Electron", () => {
   const env = resolveDevShellMigrationEnvironment(
     { PATH: "/usr/bin" },
     "postgres://kestrel:kestrel@127.0.0.1:61234/kestrel",

@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import postgres from "postgres";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
-contractTest(
-  "web.postgres", "hosted Environment bindings preserve Thread identity and reject cross-organization resolution",
+test(
+  "hosted Environment bindings preserve Thread identity and reject cross-organization resolution",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
     process.env.DATABASE_URL = databaseUrl;

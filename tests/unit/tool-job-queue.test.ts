@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { ToolJobQueue, ToolQueueOverflowError } from "../../src/engine/ToolJobQueue.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "ToolJobQueue schedules jobs fairly across runs", async () => {
+test("ToolJobQueue schedules jobs fairly across runs", async () => {
   const queue = new ToolJobQueue();
   const order: string[] = [];
 
@@ -63,7 +63,7 @@ contractTest("runtime.hermetic", "ToolJobQueue schedules jobs fairly across runs
   assert.deepEqual(order, ["a1", "b1", "a2", "b2"]);
 });
 
-contractTest("runtime.hermetic", "ToolJobQueue fails fast when per-run queue depth overflows", async () => {
+test("ToolJobQueue fails fast when per-run queue depth overflows", async () => {
   const queue = new ToolJobQueue();
   let releaseFirst: (() => void) | undefined;
 
@@ -105,7 +105,7 @@ contractTest("runtime.hermetic", "ToolJobQueue fails fast when per-run queue dep
   await Promise.all([first, second]);
 });
 
-contractTest("runtime.hermetic", "ToolJobQueue retries once for retryable errors", async () => {
+test("ToolJobQueue retries once for retryable errors", async () => {
   const queue = new ToolJobQueue();
   let attempts = 0;
   const retryEvents: Array<{ attempt: number; maxAttempts: number }> = [];

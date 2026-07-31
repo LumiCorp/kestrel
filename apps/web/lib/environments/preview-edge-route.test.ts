@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import {
   PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
   verifyPreviewEdgeRouteTicket,
 } from "@lumi/kestrel-environment-auth";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   PREVIEW_EDGE_RESOLVED_ROUTE_VERSION,
   PREVIEW_EDGE_RESOLVED_ROUTE_V2_VERSION,
@@ -67,8 +67,7 @@ function dependencies(input?: {
   };
 }
 
-contractTest(
-  "web.preview-edge.route-resolution",
+test(
   "an exact active lease resolves to one short-lived signed Environment route",
   async () => {
     const route = await resolvePreviewEdgeRoute(
@@ -108,8 +107,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.preview-edge.route-resolution",
+test(
   "a Project-authorized Desktop lease resolves to an opaque tunnel target",
   async () => {
     const previewId = "11111111-1111-4111-8111-111111111111";
@@ -141,8 +139,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.preview-edge.route-resolution",
+test(
   "missing or inactive preview hosts reveal no route metadata",
   async () => {
     await assert.rejects(
@@ -162,8 +159,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.preview-edge.route-resolution",
+test(
   "a Preview Edge route ticket never outlives its durable preview lease",
   async () => {
     const leaseExpiresAt = new Date(now.getTime() + 120_000);
@@ -189,8 +185,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.preview-edge.route-resolution",
+test(
   "route resolution requires the dedicated Preview Edge service credential",
   async () => {
     for (const authorization of [
@@ -212,8 +207,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.preview-edge.route-resolution",
+test(
   "the resolver refuses a stored target outside the exact Environment Fly App",
   async () => {
     await assert.rejects(

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
 
@@ -5,10 +6,9 @@ import {
   createToolProviderConfigurationResolver,
   createToolProviderRuntimeConfiguration,
 } from "../../tools/providers/runtimeConfiguration.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "provider runtime configuration keeps credentials out of serialized metadata", () => {
+test("provider runtime configuration keeps credentials out of serialized metadata", () => {
   const configuration = createToolProviderRuntimeConfiguration({
     providerKey: "tavily",
     credential: "  tavily-secret  ",
@@ -28,7 +28,7 @@ contractTest("runtime.hermetic", "provider runtime configuration keeps credentia
   assert.equal(inspect(configuration).includes("tavily-secret"), false);
 });
 
-contractTest("runtime.hermetic", "provider configuration resolver rejects duplicate provider authority", () => {
+test("provider configuration resolver rejects duplicate provider authority", () => {
   const first = createToolProviderRuntimeConfiguration({ providerKey: "exa" });
   const second = createToolProviderRuntimeConfiguration({ providerKey: "exa" });
 
@@ -38,7 +38,7 @@ contractTest("runtime.hermetic", "provider configuration resolver rejects duplic
   );
 });
 
-contractTest("runtime.hermetic", "provider configuration resolver returns only exact provider matches", () => {
+test("provider configuration resolver returns only exact provider matches", () => {
   const tavily = createToolProviderRuntimeConfiguration({
     providerKey: "tavily",
     credential: "secret",

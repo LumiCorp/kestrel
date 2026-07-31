@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,7 +8,6 @@ import {
 } from "../../models/index.js";
 import { readServerSentEvents } from "../../models/SseStream.js";
 import type { ModelGatewayStreamEvent } from "../../src/kestrel/contracts/model-io.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function sse(events: unknown[]): Response {
@@ -17,7 +17,7 @@ function sse(events: unknown[]): Response {
   });
 }
 
-contractTest("runtime.hermetic", "OpenAI Responses streams labeled summary deltas and returns opaque continuation", async () => {
+test("OpenAI Responses streams labeled summary deltas and returns opaque continuation", async () => {
   const events: ModelGatewayStreamEvent[] = [];
   const encrypted = {
     type: "reasoning",
@@ -55,7 +55,7 @@ contractTest("runtime.hermetic", "OpenAI Responses streams labeled summary delta
   assert.equal(response.reasoning?.continuation[0]?.kind, "encrypted_content");
 });
 
-contractTest("runtime.hermetic", "Anthropic streams thinking separately and preserves the signature block", async () => {
+test("Anthropic streams thinking separately and preserves the signature block", async () => {
   const events: ModelGatewayStreamEvent[] = [];
   const invoker = createAnthropicInvoker({
     env: { apiKey: "key", model: "claude-sonnet-4-5", baseUrl: "https://api.anthropic.com", version: "2023-06-01" },
@@ -82,7 +82,7 @@ contractTest("runtime.hermetic", "Anthropic streams thinking separately and pres
   assert.equal((response.reasoning?.continuation[0]?.value as { signature?: string }).signature, "opaque-signature");
 });
 
-contractTest("runtime.hermetic", "OpenRouter streams summary details without folding them into answer text", async () => {
+test("OpenRouter streams summary details without folding them into answer text", async () => {
   const events: ModelGatewayStreamEvent[] = [];
   const details = [{ type: "reasoning.summary", summary: "Checked." }];
   const invoker = createOpenRouterInvoker({
@@ -104,7 +104,7 @@ contractTest("runtime.hermetic", "OpenRouter streams summary details without fol
   ]);
 });
 
-contractTest("runtime.hermetic", "OpenRouter emits one reasoning delta when chat aliases carry the same fragment", async () => {
+test("OpenRouter emits one reasoning delta when chat aliases carry the same fragment", async () => {
   const events: ModelGatewayStreamEvent[] = [];
   const invoker = createOpenRouterInvoker({
     env: { apiKey: "key", model: "z-ai/glm-5.2", baseUrl: "https://openrouter.ai" },
@@ -133,7 +133,7 @@ contractTest("runtime.hermetic", "OpenRouter emits one reasoning delta when chat
   );
 });
 
-contractTest("runtime.hermetic", "the SSE reader preserves frames when CRLF separators are split across chunks", async () => {
+test("the SSE reader preserves frames when CRLF separators are split across chunks", async () => {
   const encoder = new TextEncoder();
   const chunks = [
     "event: update\r\ndata: first\r",
@@ -154,7 +154,7 @@ contractTest("runtime.hermetic", "the SSE reader preserves frames when CRLF sepa
   ]);
 });
 
-contractTest("runtime.hermetic", "OpenAI emits a neutral unavailable state when a requested summary is absent", async () => {
+test("OpenAI emits a neutral unavailable state when a requested summary is absent", async () => {
   const events: ModelGatewayStreamEvent[] = [];
   const invoker = createOpenAiInvoker({
     env: {
@@ -178,7 +178,7 @@ contractTest("runtime.hermetic", "OpenAI emits a neutral unavailable state when 
   ]);
 });
 
-contractTest("runtime.hermetic", "Anthropic emits a neutral unavailable state when visible thinking is absent", async () => {
+test("Anthropic emits a neutral unavailable state when visible thinking is absent", async () => {
   const events: ModelGatewayStreamEvent[] = [];
   const invoker = createAnthropicInvoker({
     env: { apiKey: "key", model: "claude-sonnet-4-5", baseUrl: "https://api.anthropic.com", version: "2023-06-01" },
@@ -199,7 +199,7 @@ contractTest("runtime.hermetic", "Anthropic emits a neutral unavailable state wh
   ]);
 });
 
-contractTest("runtime.hermetic", "OpenRouter emits a neutral unavailable state when reasoning details are absent", async () => {
+test("OpenRouter emits a neutral unavailable state when reasoning details are absent", async () => {
   const events: ModelGatewayStreamEvent[] = [];
   const invoker = createOpenRouterInvoker({
     env: { apiKey: "key", model: "openai/gpt-5.2", baseUrl: "https://openrouter.ai" },
@@ -217,7 +217,7 @@ contractTest("runtime.hermetic", "OpenRouter emits a neutral unavailable state w
   ]);
 });
 
-contractTest("runtime.hermetic", "a provider reasoning delta is observable before the model call completes", async () => {
+test("a provider reasoning delta is observable before the model call completes", async () => {
   const encoder = new TextEncoder();
   let releaseCompletion!: () => void;
   const completionGate = new Promise<void>((resolve) => { releaseCompletion = resolve; });

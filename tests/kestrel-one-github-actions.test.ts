@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   kestrelOneGitHubIssueCreateTool,
   kestrelOneGitHubRepositoryReadTool,
 } from "../tools/kestrelOne/githubActions.js";
-import { contractTest } from "./helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Kestrel One GitHub mutations send the pending approval ID", async () => {
+test("Kestrel One GitHub mutations send the pending approval ID", async () => {
   const requests: Request[] = [];
   const handler = kestrelOneGitHubIssueCreateTool.createHandler({
     kestrelOne: {
@@ -33,7 +33,7 @@ contractTest("runtime.hermetic", "Kestrel One GitHub mutations send the pending 
   assert.equal(requests[0]?.headers.get("x-kestrel-runtime-approval"), null);
 });
 
-contractTest("runtime.hermetic", "Kestrel One GitHub mutations fail closed without an approval ID", async () => {
+test("Kestrel One GitHub mutations fail closed without an approval ID", async () => {
   const handler = kestrelOneGitHubIssueCreateTool.createHandler({
     kestrelOne: {
       appUrl: "https://kestrel.example",
@@ -48,7 +48,7 @@ contractTest("runtime.hermetic", "Kestrel One GitHub mutations fail closed witho
   );
 });
 
-contractTest("runtime.hermetic", "Kestrel One GitHub reads do not claim mutation approval", async () => {
+test("Kestrel One GitHub reads do not claim mutation approval", async () => {
   const requests: Request[] = [];
   const handler = kestrelOneGitHubRepositoryReadTool.createHandler({
     kestrelOne: {

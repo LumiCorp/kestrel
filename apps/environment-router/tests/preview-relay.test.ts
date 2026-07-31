@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
@@ -11,12 +12,10 @@ import {
   PREVIEW_EDGE_ROUTE_TICKET_VERSION,
   signPreviewEdgeRouteTicket,
 } from "@lumi/kestrel-environment-auth";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { EnvironmentGatewayConfigClient } from "../src/gateway-config.js";
 import { PreviewRelay } from "../src/preview-relay.js";
 
-contractTest(
-  "services.process",
+test(
   "Kestrel Edge requires an exact signed route for HTTP and WebSocket traffic",
   async () => {
     const keys = generateKeyPairSync("ed25519");
@@ -167,8 +166,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "services.process",
+test(
   "gateway configuration v2 rejects retired provider fields",
   async () => {
     const baseConfig = {
@@ -225,8 +223,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "services.process",
+test(
   "gateway configuration remains available when a relay listener fails",
   async () => {
     const config: EnvironmentGatewayConfig = {
@@ -248,8 +245,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "services.process",
+test(
   "explicit gateway refresh waits for an in-flight load and fetches current state",
   async () => {
     let releaseFirst!: () => void;

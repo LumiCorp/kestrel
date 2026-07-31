@@ -46,10 +46,7 @@ import {
   replaceAgentToolResultOutput,
 } from "../toolResult.js";
 import { validateBuiltInToolInputContract } from "./builtInToolInputContracts.js";
-import {
-  getToolInputCompatibilityAliases,
-  normalizeToolActionInput,
-} from "./normalizeToolInput.js";
+import { normalizeToolActionInput } from "./normalizeToolInput.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -511,24 +508,22 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
 
     const schema = this.resolveInputSchema(name, options.runContext);
     const validator = this.getValidator(name, schema);
-    validator(input);
-    const unsupportedFieldErrors = (validator.errors ?? [])
-      .filter((error) => isUnsupportedFieldError(name, error))
-      .slice(0, 1);
-    if (unsupportedFieldErrors.length > 0) {
+    const rawInputValid = validator(input);
+    if (rawInputValid !== true) {
+      const validationErrors = validator.errors ?? [];
       if (this.builtInToolSpecs.has(name)) {
         throw createBuiltInSchemaValidationError(
           name,
           input,
-          unsupportedFieldErrors,
+          validationErrors,
         );
       }
       throw new RuntimeFailure(
         "TOOL_INPUT_SCHEMA_FAILED",
-        `Tool '${name}' input contains unsupported fields.`,
+        `Tool '${name}' input failed schema validation.`,
         {
           toolName: name,
-          validationErrors: unsupportedFieldErrors.map((error) => ({
+          validationErrors: validationErrors.map((error) => ({
             field: readAjvErrorField(error),
             instancePath: error.instancePath,
             schemaPath: error.schemaPath,
@@ -1091,19 +1086,6 @@ function createBuiltInSchemaValidationError(
       })),
     },
   );
-}
-
-function isUnsupportedFieldError(toolName: string, error: ErrorObject): boolean {
-  if (
-    error.keyword !== "additionalProperties" ||
-    typeof error.params.additionalProperty !== "string"
-  ) {
-    return false;
-  }
-  return error.instancePath !== "" ||
-    getToolInputCompatibilityAliases(toolName).includes(
-      error.params.additionalProperty,
-    ) === false;
 }
 
 function readAjvErrorField(error: ErrorObject): string {

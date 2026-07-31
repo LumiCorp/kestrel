@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type {
@@ -12,7 +13,6 @@ import {
   projectPreviewActivity,
   resolveActivePreviewRuns,
 } from "../renderer/src/previewPresentation.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 function run(
   input: Partial<DesktopManagedProjectRun> = {},
@@ -47,8 +47,7 @@ function diagnostic(
   };
 }
 
-contractTest(
-  "desktop.hermetic",
+test(
   "preview lifecycle presentation covers idle, pending, active, and settled states",
   () => {
     assert.deepEqual(
@@ -93,8 +92,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "preview selects the newest active run without hiding other active runs",
   () => {
     const oldest = run({
@@ -122,8 +120,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "preview drawer defaults follow explicit run and typed diagnostic state",
   () => {
     assert.equal(defaultPreviewDrawerOpen({ diagnostics: [] }), false);
@@ -161,8 +158,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "preview activity uses contract events and typed diagnostic severity only",
   () => {
     const current = run({

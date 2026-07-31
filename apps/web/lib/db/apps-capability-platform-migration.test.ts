@@ -1,6 +1,6 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const migrationUrl = new URL(
@@ -20,7 +20,7 @@ const googleProjectAccessCutoverUrl = new URL(
   import.meta.url
 );
 
-contractTest("web.hermetic", "Apps migration creates the canonical control-plane tables", async () => {
+test("Apps migration creates the canonical control-plane tables", async () => {
   const migration = await readFile(migrationUrl, "utf8");
   for (const table of [
     "app_definitions",
@@ -41,7 +41,7 @@ contractTest("web.hermetic", "Apps migration creates the canonical control-plane
   }
 });
 
-contractTest("web.hermetic", "Apps migration preserves existing Google and MCP authority", async () => {
+test("Apps migration preserves existing Google and MCP authority", async () => {
   const migration = await readFile(migrationUrl, "utf8");
   assert.match(migration, /FROM "user_tool_connections" connection/u);
   assert.match(migration, /FROM "project_user_tool_capabilities" capability/u);
@@ -52,7 +52,7 @@ contractTest("web.hermetic", "Apps migration preserves existing Google and MCP a
   assert.match(migration, /project_app_connections_shared_default_idx/u);
 });
 
-contractTest("web.hermetic", "Apps migration installs Tavily with restrictive long-running defaults", async () => {
+test("Apps migration installs Tavily with restrictive long-running defaults", async () => {
   const migration = await readFile(migrationUrl, "utf8");
   assert.match(
     migration,
@@ -74,7 +74,7 @@ contractTest("web.hermetic", "Apps migration installs Tavily with restrictive lo
   );
 });
 
-contractTest("web.hermetic", "Apps migration fails rather than widening Project access", async () => {
+test("Apps migration fails rather than widening Project access", async () => {
   const migration = await readFile(migrationUrl, "utf8");
   assert.match(migration, /Project capability policy beyond its Environment/u);
   assert.match(
@@ -83,7 +83,7 @@ contractTest("web.hermetic", "Apps migration fails rather than widening Project 
   );
 });
 
-contractTest("web.hermetic", "Custom MCP migrates into canonical App capabilities and Project attachments", async () => {
+test("Custom MCP migrates into canonical App capabilities and Project attachments", async () => {
   const migration = await readFile(customMcpCutoverUrl, "utf8");
   assert.match(
     migration,
@@ -96,7 +96,7 @@ contractTest("web.hermetic", "Custom MCP migrates into canonical App capabilitie
   assert.match(migration, /Custom App cutover would widen Project access/u);
 });
 
-contractTest("web.hermetic", "GitHub Workspace sources cut over to canonical App resources without widening", async () => {
+test("GitHub Workspace sources cut over to canonical App resources without widening", async () => {
   const migration = await readFile(githubResourceCutoverUrl, "utf8");
   assert.match(migration, /INSERT INTO "app_connection_resources"/u);
   assert.match(
@@ -107,7 +107,7 @@ contractTest("web.hermetic", "GitHub Workspace sources cut over to canonical App
   assert.match(migration, /VALIDATE CONSTRAINT/u);
 });
 
-contractTest("web.hermetic", "Google Project sharing cuts over to canonical App connections and capabilities", async () => {
+test("Google Project sharing cuts over to canonical App connections and capabilities", async () => {
   const migration = await readFile(googleProjectAccessCutoverUrl, "utf8");
   assert.match(migration, /RENAME TO "project_app_user_capabilities"/u);
   assert.match(migration, /RENAME COLUMN "provider_key" TO "app_key"/u);

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Window } from "happy-dom";
@@ -14,10 +15,8 @@ import type {
 } from "../src/contracts.js";
 import { toDesktopRendererSettings } from "../src/rendererSettings.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop uninstall wizard enforces blockers and renders partial completion",
   async () => {
     const browser = new Window({
@@ -162,8 +161,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Settings navigation remains available when capability readiness fails",
   async () => {
     const browser = new Window({

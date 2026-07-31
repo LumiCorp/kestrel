@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   canonicalizeDuplicateUrl,
   detectReadOnlyResultDuplicate,
 } from "../../src/runtime/readOnlyResultDuplicates.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "detectReadOnlyResultDuplicate matches repeated search payloads across executions", () => {
+test("detectReadOnlyResultDuplicate matches repeated search payloads across executions", () => {
   const first = detectReadOnlyResultDuplicate({
     toolName: "internet.search",
     output: {
@@ -51,7 +51,7 @@ contractTest("runtime.hermetic", "detectReadOnlyResultDuplicate matches repeated
   assert.equal(second?.fingerprint, first?.fingerprint);
 });
 
-contractTest("runtime.hermetic", "detectReadOnlyResultDuplicate matches repeated page payloads across get_url and scrape", () => {
+test("detectReadOnlyResultDuplicate matches repeated page payloads across get_url and scrape", () => {
   const first = detectReadOnlyResultDuplicate({
     toolName: "internet.extract",
     output: {
@@ -86,21 +86,21 @@ contractTest("runtime.hermetic", "detectReadOnlyResultDuplicate matches repeated
   assert.equal(second?.fingerprint, first?.fingerprint);
 });
 
-contractTest("runtime.hermetic", "canonicalizeDuplicateUrl strips obvious tracking variants", () => {
+test("canonicalizeDuplicateUrl strips obvious tracking variants", () => {
   assert.equal(
     canonicalizeDuplicateUrl("https://www.example.com/report/?utm_source=mail&gclid=abc#top"),
     "https://example.com/report",
   );
 });
 
-contractTest("runtime.hermetic", "canonicalizeDuplicateUrl preserves non-tracking ref and source params", () => {
+test("canonicalizeDuplicateUrl preserves non-tracking ref and source params", () => {
   assert.equal(
     canonicalizeDuplicateUrl("https://example.com/report?ref=chapter-2&source=archive"),
     "https://example.com/report?ref=chapter-2&source=archive",
   );
 });
 
-contractTest("runtime.hermetic", "detectReadOnlyResultDuplicate does not collide materially different payloads", () => {
+test("detectReadOnlyResultDuplicate does not collide materially different payloads", () => {
   const first = detectReadOnlyResultDuplicate({
     toolName: "internet.news",
     output: {

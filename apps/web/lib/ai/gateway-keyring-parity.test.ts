@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   assertGatewayKeyringParity,
   summarizeGatewayKeyring,
@@ -10,8 +10,7 @@ const source = summarizeGatewayKeyring({
   keys: JSON.stringify({ primary: "a", previous: "b" }),
 });
 
-contractTest(
-  "web.hermetic",
+test(
   "gateway keyring parity rejects missing, extra, and mismatched worker keys",
   () => {
     for (const worker of [

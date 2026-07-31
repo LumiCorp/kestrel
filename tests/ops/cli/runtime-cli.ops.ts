@@ -8,7 +8,6 @@ import { startLocalCoreApiServer, type LocalCoreApiServer } from "../../../src/l
 import { ensureLocalCoreStore } from "../../../src/localCore/store.js";
 import { OPS_FIXTURE_IDS, seedOpsInspectionFixtures } from "../helpers/fixtures.js";
 import { runRuntimeCli } from "../helpers/runtimeCli.js";
-import { contractTest } from "../../helpers/contract-test.js";
 
 
 let coreHome = "";
@@ -33,7 +32,7 @@ after(async () => {
   }
 });
 
-contractTest("runtime.process", "runtime replay renders focus header, approval chain, and delegation milestones", async () => {
+test("runtime replay renders focus header, approval chain, and delegation milestones", async () => {
   const result = await runRuntimeCli({
     args: ["replay", "--thread-id", OPS_FIXTURE_IDS.approvalChild.threadId],
     env: runtimeEnv(),
@@ -48,7 +47,7 @@ contractTest("runtime.process", "runtime replay renders focus header, approval c
   assert.match(result.stdout, /assembly bundle=bundle:ops:approval-child:downgraded/);
 });
 
-contractTest("runtime.process", "runtime replay surfaces compaction summaries for compacted threads", async () => {
+test("runtime replay surfaces compaction summaries for compacted threads", async () => {
   const result = await runRuntimeCli({
     args: ["replay", "--run-id", OPS_FIXTURE_IDS.compaction.runId],
     env: runtimeEnv(),
@@ -60,7 +59,7 @@ contractTest("runtime.process", "runtime replay surfaces compaction summaries fo
   assert.match(result.stdout, /\[compaction\] context compaction applied/);
 });
 
-contractTest("runtime.process", "runtime doctor reports blocked parent threads with child blocker details", async () => {
+test("runtime doctor reports blocked parent threads with child blocker details", async () => {
   const result = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.root.runId],
     env: runtimeEnv(),
@@ -76,7 +75,7 @@ contractTest("runtime.process", "runtime doctor reports blocked parent threads w
   assert.match(result.stdout, /assemblyCompatibility status=downgraded source=policy downgrade="provider_variant_unavailable" capabilityLoss="structured_output_unavailable"/);
 });
 
-contractTest("runtime.process", "runtime replay surfaces multi-child supervision outcomes for parent threads", async () => {
+test("runtime replay surfaces multi-child supervision outcomes for parent threads", async () => {
   const result = await runRuntimeCli({
     args: ["replay", "--run-id", OPS_FIXTURE_IDS.root.runId],
     env: runtimeEnv(),
@@ -89,7 +88,7 @@ contractTest("runtime.process", "runtime replay surfaces multi-child supervision
   assert.match(result.stdout, /child thread=ops-superseded-child-thread status=COMPLETED delegation=CANCELLED outcome="Superseded by a newer delegation branch\."/);
 });
 
-contractTest("runtime.process", "runtime doctor reports delegation failure and trusts authoritative running thread state", async () => {
+test("runtime doctor reports delegation failure and trusts authoritative running thread state", async () => {
   const failed = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.failureRoot.runId],
     env: runtimeEnv(),
@@ -107,7 +106,7 @@ contractTest("runtime.process", "runtime doctor reports delegation failure and t
   assert.match(stalled.stdout, /status=RUNNING/);
 });
 
-contractTest("runtime.process", "runtime doctor reports user-input wait classification for explicit operator reply blockers", async () => {
+test("runtime doctor reports user-input wait classification for explicit operator reply blockers", async () => {
   const result = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.userInput.runId],
     env: runtimeEnv(),
@@ -120,7 +119,7 @@ contractTest("runtime.process", "runtime doctor reports user-input wait classifi
   assert.match(result.stdout, /Clarify the target report format\./);
 });
 
-contractTest("runtime.process", "runtime doctor reports mode-switch blockers with explicit wait classification", async () => {
+test("runtime doctor reports mode-switch blockers with explicit wait classification", async () => {
   const result = await runRuntimeCli({
     args: ["doctor", "--run-id", OPS_FIXTURE_IDS.modeBlocked.runId],
     env: runtimeEnv(),

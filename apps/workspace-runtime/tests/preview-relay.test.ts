@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
@@ -8,10 +9,9 @@ import {
   PREVIEW_RELAY_TICKET_VERSION,
   signPreviewRelayTicket,
 } from "@lumi/kestrel-environment-auth";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { handlePreviewRelayHttp, handlePreviewRelayUpgrade } from "../src/preview-relay.js";
 
-contractTest("services.process", "preview relay authenticates its exact workspace and streams without exposing the ticket", async () => {
+test("preview relay authenticates its exact workspace and streams without exposing the ticket", async () => {
   const observed: Array<{ url: string | undefined; authorization: string | undefined; host: string | undefined; forwardedHost: string | undefined }> = [];
   const application = createServer((request, response) => {
     observed.push({
@@ -91,7 +91,7 @@ contractTest("services.process", "preview relay authenticates its exact workspac
   }
 });
 
-contractTest("services.process", "preview relay carries WebSocket upgrades to the selected loopback port", async () => {
+test("preview relay carries WebSocket upgrades to the selected loopback port", async () => {
   let observedAuthorization: string | undefined;
   const application = createServer();
   application.on("upgrade", (request, socket) => {

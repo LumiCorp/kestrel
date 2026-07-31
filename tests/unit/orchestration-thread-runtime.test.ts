@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
@@ -20,7 +21,6 @@ import {
 import { buildCanonicalWaitingFor } from "../../src/runtime/waitState.js";
 import type { RuntimeWaitMatcher } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 class QueueTurnExecutor implements TurnExecutor {
@@ -124,7 +124,7 @@ class RunForeignKeyEnforcingStore extends InMemorySessionStore {
   }
 }
 
-contractTest("runtime.hermetic", "ThreadRuntime exposes the authoritative workspace on operator thread views", async () => {
+test("ThreadRuntime exposes the authoritative workspace on operator thread views", async () => {
   const sessionStore = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore,
@@ -192,7 +192,7 @@ class OperatorRunWindowStore extends InMemorySessionStore {
   }
 }
 
-contractTest("runtime.hermetic", "ThreadRuntime binds the canonical main thread to an existing root session thread", async () => {
+test("ThreadRuntime binds the canonical main thread to an existing root session thread", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, []);
   const runtime = new ThreadRuntime({
@@ -216,7 +216,7 @@ contractTest("runtime.hermetic", "ThreadRuntime binds the canonical main thread 
   assert.equal(mainThread.sessionId, "session-web-main");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime creates a persisted canonical main thread instead of reusing the session ID", async () => {
+test("ThreadRuntime creates a persisted canonical main thread instead of reusing the session ID", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, []);
   const runtime = new ThreadRuntime({
@@ -235,7 +235,7 @@ contractTest("runtime.hermetic", "ThreadRuntime creates a persisted canonical ma
   assert.notEqual(mainThread.threadId, mainThread.sessionId);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata", async () => {
+test("ThreadRuntime makes the explicit turn mode authoritative over stale thread metadata", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -285,7 +285,7 @@ contractTest("runtime.hermetic", "ThreadRuntime makes the explicit turn mode aut
   assert.equal(turn?.metadata?.actSubmode, "safe");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime exposes bounded operator run inspection from persisted replay evidence", async () => {
+test("ThreadRuntime exposes bounded operator run inspection from persisted replay evidence", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, []);
   const runtime = new ThreadRuntime({
@@ -395,7 +395,7 @@ contractTest("runtime.hermetic", "ThreadRuntime exposes bounded operator run ins
   });
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime derives operator session summaries only from the returned run window", async () => {
+test("ThreadRuntime derives operator session summaries only from the returned run window", async () => {
   const sessionStore = new OperatorRunWindowStore([
     {
       runId: "run-new",
@@ -479,7 +479,7 @@ contractTest("runtime.hermetic", "ThreadRuntime derives operator session summari
   assert.deepEqual(sessionStore.listRunInputs[1], { limit: 51 });
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime preserves failures on the atomically prestarted run", async () => {
+test("ThreadRuntime preserves failures on the atomically prestarted run", async () => {
   const sessionStore = new RunForeignKeyEnforcingStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -529,7 +529,7 @@ contractTest("runtime.hermetic", "ThreadRuntime preserves failures on the atomic
   assert.equal((await sessionStore.getRun(result.output.runId))?.status, "FAILED");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime skips side-band reply events when the active run row is stale", async () => {
+test("ThreadRuntime skips side-band reply events when the active run row is stale", async () => {
   const sessionStore = new RunForeignKeyEnforcingStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -594,7 +594,7 @@ contractTest("runtime.hermetic", "ThreadRuntime skips side-band reply events whe
   assert.equal((await sessionStore.getRun(result.output.runId))?.status, "FAILED");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime always owns a run row before executor completion", async () => {
+test("ThreadRuntime always owns a run row before executor completion", async () => {
   const sessionStore = new RunForeignKeyEnforcingStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -625,7 +625,7 @@ contractTest("runtime.hermetic", "ThreadRuntime always owns a run row before exe
   assert.equal((await sessionStore.getRun(result.output.runId))?.status, "COMPLETED");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime fails closed when a session has multiple root threads and no canonical main thread", async () => {
+test("ThreadRuntime fails closed when a session has multiple root threads and no canonical main thread", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, []);
   const runtime = new ThreadRuntime({
@@ -661,7 +661,7 @@ contractTest("runtime.hermetic", "ThreadRuntime fails closed when a session has 
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime persists operator-facing user input requests from waits", async () => {
+test("ThreadRuntime persists operator-facing user input requests from waits", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -706,7 +706,7 @@ contractTest("runtime.hermetic", "ThreadRuntime persists operator-facing user in
   assert.equal(status?.openRequests[0]?.runId, result.output.runId);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime supersedes stale waits when a new continuation wait replaces them", async () => {
+test("ThreadRuntime supersedes stale waits when a new continuation wait replaces them", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -780,7 +780,7 @@ contractTest("runtime.hermetic", "ThreadRuntime supersedes stale waits when a ne
   assert.equal(status?.thread.currentRequestId, second.wait?.request?.requestId);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime clears stale waits when a later turn completes without waiting", async () => {
+test("ThreadRuntime clears stale waits when a later turn completes without waiting", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -845,7 +845,7 @@ contractTest("runtime.hermetic", "ThreadRuntime clears stale waits when a later 
   assert.equal(status?.thread.currentRequestId, undefined);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime appends completed assistant output to durable thread history", async () => {
+test("ThreadRuntime appends completed assistant output to durable thread history", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -919,7 +919,7 @@ contractTest("runtime.hermetic", "ThreadRuntime appends completed assistant outp
   assert.deepEqual(persisted?.metadata?.evidenceLedger, [{ claim: "preserved" }]);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime persists the canonical waiting prompt instead of stale assistant text", async () => {
+test("ThreadRuntime persists the canonical waiting prompt instead of stale assistant text", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1007,7 +1007,7 @@ contractTest("runtime.hermetic", "ThreadRuntime persists the canonical waiting p
   ]);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime preserves identical waiting prompts from separate runs", async () => {
+test("ThreadRuntime preserves identical waiting prompts from separate runs", async () => {
   const sessionStore = new InMemorySessionStore();
   const waitFor = {
     kind: "user" as const,
@@ -1072,7 +1072,7 @@ contractTest("runtime.hermetic", "ThreadRuntime preserves identical waiting prom
   ]);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime auto-resolves compact checkpoints after a prior waiting assistant prompt is persisted", async () => {
+test("ThreadRuntime auto-resolves compact checkpoints after a prior waiting assistant prompt is persisted", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1151,7 +1151,7 @@ contractTest("runtime.hermetic", "ThreadRuntime auto-resolves compact checkpoint
   assert.equal(checkpoint?.resolvedBy, "runtime.auto");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime merges short continuation history with durable thread history", async () => {
+test("ThreadRuntime merges short continuation history with durable thread history", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1228,7 +1228,7 @@ contractTest("runtime.hermetic", "ThreadRuntime merges short continuation histor
   ]);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime resolves approval requests and expires turn-scoped grants after resume", async () => {
+test("ThreadRuntime resolves approval requests and expires turn-scoped grants after resume", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1322,7 +1322,7 @@ contractTest("runtime.hermetic", "ThreadRuntime resolves approval requests and e
   assert.equal(replay.some((event) => event.type === "approval.granted"), true);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime resumes the active blocked request and derives approval grants", async () => {
+test("ThreadRuntime resumes the active blocked request and derives approval grants", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1408,7 +1408,7 @@ contractTest("runtime.hermetic", "ThreadRuntime resumes the active blocked reque
   assert.deepEqual(grants[0]?.allowedCapabilities, ["workspace.write"]);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime spawns delegated child threads with reconstructable lineage", async () => {
+test("ThreadRuntime spawns delegated child threads with reconstructable lineage", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1479,7 +1479,7 @@ contractTest("runtime.hermetic", "ThreadRuntime spawns delegated child threads w
   assert.equal(updates.some((entry) => entry.startsWith("completed:")), true);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime delegation service preserves agent spawn lineage", async () => {
+test("ThreadRuntime delegation service preserves agent spawn lineage", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1579,7 +1579,7 @@ contractTest("runtime.hermetic", "ThreadRuntime delegation service preserves age
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime rejects agent child spawn beyond profile delegation maxDepth", async () => {
+test("ThreadRuntime rejects agent child spawn beyond profile delegation maxDepth", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, []);
   const runtime = new ThreadRuntime({
@@ -1632,7 +1632,7 @@ contractTest("runtime.hermetic", "ThreadRuntime rejects agent child spawn beyond
   assert.equal(executor.inputs.length, 0);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime stores completed child result envelope from finalize payload", async () => {
+test("ThreadRuntime stores completed child result envelope from finalize payload", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1687,7 +1687,7 @@ contractTest("runtime.hermetic", "ThreadRuntime stores completed child result en
   });
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime treats explicit failed child result envelope as failed outcome", async () => {
+test("ThreadRuntime treats explicit failed child result envelope as failed outcome", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1741,7 +1741,7 @@ contractTest("runtime.hermetic", "ThreadRuntime treats explicit failed child res
   });
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime stores blocked child result envelope when child waits", async () => {
+test("ThreadRuntime stores blocked child result envelope when child waits", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1792,7 +1792,7 @@ contractTest("runtime.hermetic", "ThreadRuntime stores blocked child result enve
   assert.equal(delegation?.resultSummary, "Waiting for user.reply.");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime stores failed child result envelope from runtime failure", async () => {
+test("ThreadRuntime stores failed child result envelope from runtime failure", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, []);
   const runtime = new ThreadRuntime({
@@ -1833,7 +1833,7 @@ contractTest("runtime.hermetic", "ThreadRuntime stores failed child result envel
   assert.equal(delegation?.resultSummary, "Child runtime failed deterministically.");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime stores failed child result envelope from returned failed output", async () => {
+test("ThreadRuntime stores failed child result envelope from returned failed output", async () => {
   const sessionStore = new InMemorySessionStore();
   const output = buildOutput({
     runId: "run-child-result-returned-failed",
@@ -1877,7 +1877,7 @@ contractTest("runtime.hermetic", "ThreadRuntime stores failed child result envel
   assert.equal(asRecord(asRecord(delegation?.policy)?.supervision)?.resultState, "failed");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime allows child spawn at maxDepth and records normalized depth policy", async () => {
+test("ThreadRuntime allows child spawn at maxDepth and records normalized depth policy", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -1952,7 +1952,7 @@ contractTest("runtime.hermetic", "ThreadRuntime allows child spawn at maxDepth a
   assert.equal(executor.inputs[0]?.metadata?.rootDelegationId, "delegation-root");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime child spawn preserves managed worktree fan-in context", async () => {
+test("ThreadRuntime child spawn preserves managed worktree fan-in context", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2006,7 +2006,7 @@ contractTest("runtime.hermetic", "ThreadRuntime child spawn preserves managed wo
   assert.equal(executor.inputs[0]?.metadata?.parentTaskId, "task-parent");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime operator child spawn preserves policy supervision intent", async () => {
+test("ThreadRuntime operator child spawn preserves policy supervision intent", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2068,7 +2068,7 @@ contractTest("runtime.hermetic", "ThreadRuntime operator child spawn preserves p
   assert.equal(asRecord(delegations[0]?.policy)?.sourceMutationFanIn, "manual");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime records replay-aware compaction artifacts when compaction is applied", async () => {
+test("ThreadRuntime records replay-aware compaction artifacts when compaction is applied", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2170,7 +2170,7 @@ contractTest("runtime.hermetic", "ThreadRuntime records replay-aware compaction 
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime auto-resolves pending compact checkpoints on submit and continues execution", async () => {
+test("ThreadRuntime auto-resolves pending compact checkpoints on submit and continues execution", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2253,7 +2253,7 @@ contractTest("runtime.hermetic", "ThreadRuntime auto-resolves pending compact ch
   assert.equal(autoResolved?.metadata?.recommendedAction, "compact");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime blocks auto compact when a continuation brief cannot be grounded", async () => {
+test("ThreadRuntime blocks auto compact when a continuation brief cannot be grounded", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2310,7 +2310,7 @@ contractTest("runtime.hermetic", "ThreadRuntime blocks auto compact when a conti
   assert.equal(executor.inputs.length, 0);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime auto-resolves pending summarize_forward checkpoints on submit and continues execution", async () => {
+test("ThreadRuntime auto-resolves pending summarize_forward checkpoints on submit and continues execution", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2360,7 +2360,7 @@ contractTest("runtime.hermetic", "ThreadRuntime auto-resolves pending summarize_
   assert.equal(autoResolved?.metadata?.recommendedAction, "summarize_forward");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime blocks submit when a non-auto context checkpoint is pending", async () => {
+test("ThreadRuntime blocks submit when a non-auto context checkpoint is pending", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2410,7 +2410,7 @@ contractTest("runtime.hermetic", "ThreadRuntime blocks submit when a non-auto co
   assert.equal(executor.inputs.length, 0);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime resolves auto checkpoints before blocking on a pending manual checkpoint", async () => {
+test("ThreadRuntime resolves auto checkpoints before blocking on a pending manual checkpoint", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2488,7 +2488,7 @@ contractTest("runtime.hermetic", "ThreadRuntime resolves auto checkpoints before
   assert.equal(executor.inputs.length, 0);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime submit checkpoint gate ignores pending fan-in checkpoints", async () => {
+test("ThreadRuntime submit checkpoint gate ignores pending fan-in checkpoints", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2531,7 +2531,7 @@ contractTest("runtime.hermetic", "ThreadRuntime submit checkpoint gate ignores p
   assert.equal(checkpoint?.status, "PENDING");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime surfaces operator inbox items for pending requests and context checkpoints", async () => {
+test("ThreadRuntime surfaces operator inbox items for pending requests and context checkpoints", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2580,7 +2580,7 @@ contractTest("runtime.hermetic", "ThreadRuntime surfaces operator inbox items fo
   assert.equal(inbox.items.some((item) => item.kind === "context_checkpoint"), true);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime steerThread persists operator steering events", async () => {
+test("ThreadRuntime steerThread persists operator steering events", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2618,7 +2618,7 @@ contractTest("runtime.hermetic", "ThreadRuntime steerThread persists operator st
   assert.equal(steeringEvent?.metadata?.message, "Focus on the child blocker first.");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime steerThread starts a fresh steering turn when user input is pending", async () => {
+test("ThreadRuntime steerThread starts a fresh steering turn when user input is pending", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2672,7 +2672,7 @@ contractTest("runtime.hermetic", "ThreadRuntime steerThread starts a fresh steer
   assert.equal(executor.inputs[1]?.metadata?.steering, true);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime queues steering during a running turn and drains it after the boundary", async () => {
+test("ThreadRuntime queues steering during a running turn and drains it after the boundary", async () => {
   const sessionStore = new InMemorySessionStore();
   const detachedEvents: Array<{ type: string; runId: string; status?: string | undefined }> = [];
   let releaseMainTurn: (() => void) | undefined;
@@ -2757,7 +2757,7 @@ contractTest("runtime.hermetic", "ThreadRuntime queues steering during a running
   assert.equal(steeringEvent?.metadata?.message, "Pause after the current step and regroup.");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime drains queued steering as operator steer when the interrupted run ends waiting", async () => {
+test("ThreadRuntime drains queued steering as operator steer when the interrupted run ends waiting", async () => {
   const sessionStore = new InMemorySessionStore();
   let releaseMainTurn: (() => void) | undefined;
   const executor = new class extends QueueTurnExecutor {
@@ -2829,7 +2829,7 @@ contractTest("runtime.hermetic", "ThreadRuntime drains queued steering as operat
   assert.equal(executor.inputs[1]?.message, "Stop stale work and re-plan.");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime retryThread allows retry for failed threads and blocks idle threads", async () => {
+test("ThreadRuntime retryThread allows retry for failed threads and blocks idle threads", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2900,7 +2900,7 @@ contractTest("runtime.hermetic", "ThreadRuntime retryThread allows retry for fai
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime resolves context checkpoints and persists compaction lineage", async () => {
+test("ThreadRuntime resolves context checkpoints and persists compaction lineage", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -2968,7 +2968,7 @@ contractTest("runtime.hermetic", "ThreadRuntime resolves context checkpoints and
   assert.equal(typeof events[0]?.summaryArtifactId, "string");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime resolves summarize_forward checkpoints with persisted adaptation lineage", async () => {
+test("ThreadRuntime resolves summarize_forward checkpoints with persisted adaptation lineage", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -3037,7 +3037,7 @@ contractTest("runtime.hermetic", "ThreadRuntime resolves summarize_forward check
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime resolves split_into_child_thread checkpoints with child lineage references", async () => {
+test("ThreadRuntime resolves split_into_child_thread checkpoints with child lineage references", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -3123,7 +3123,7 @@ contractTest("runtime.hermetic", "ThreadRuntime resolves split_into_child_thread
   assert.equal(adaptationEvent?.metadata?.childThreadId, delegation?.childThreadId);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime supervises multiple child launches and selects the dominant waiting blocker", async () => {
+test("ThreadRuntime supervises multiple child launches and selects the dominant waiting blocker", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -3194,7 +3194,7 @@ contractTest("runtime.hermetic", "ThreadRuntime supervises multiple child launch
   assert.equal(inbox.items.filter((item) => item.kind === "child_thread_blocker").length, 1);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime treats completed multi-child fan-in as safe with no actionable child blocker", async () => {
+test("ThreadRuntime treats completed multi-child fan-in as safe with no actionable child blocker", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -3252,7 +3252,7 @@ contractTest("runtime.hermetic", "ThreadRuntime treats completed multi-child fan
   assert.equal(inbox.items.some((item) => item.kind === "child_thread_blocker"), false);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime surfaces ambiguous multi-child fan-in via context checkpoint actionability", async () => {
+test("ThreadRuntime surfaces ambiguous multi-child fan-in via context checkpoint actionability", async () => {
   const sessionStore = new InMemorySessionStore();
   const now = new Date().toISOString();
   const runtime = new ThreadRuntime({
@@ -3316,7 +3316,7 @@ contractTest("runtime.hermetic", "ThreadRuntime surfaces ambiguous multi-child f
   assert.equal(inbox.summary.childBlockers, 0);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime rejects repeated fan-in resolution once the checkpoint is no longer pending", async () => {
+test("ThreadRuntime rejects repeated fan-in resolution once the checkpoint is no longer pending", async () => {
   const sessionStore = new InMemorySessionStore();
   const now = new Date().toISOString();
   const runtime = new ThreadRuntime({
@@ -3383,7 +3383,7 @@ contractTest("runtime.hermetic", "ThreadRuntime rejects repeated fan-in resoluti
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime auto fan-in retires older pending checkpoints once reconciliation is safe", async () => {
+test("ThreadRuntime auto fan-in retires older pending checkpoints once reconciliation is safe", async () => {
   const sessionStore = new InMemorySessionStore();
   const detachedEvents: Array<{ type: string; runId: string; status?: string | undefined }> = [];
   const executor = new QueueTurnExecutor(sessionStore, [
@@ -3480,7 +3480,7 @@ contractTest("runtime.hermetic", "ThreadRuntime auto fan-in retires older pendin
   ]);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime auto fan-in idempotency uses durable disposition instead of result summary text", async () => {
+test("ThreadRuntime auto fan-in idempotency uses durable disposition instead of result summary text", async () => {
   const sessionStore = new InMemorySessionStore();
   const now = new Date().toISOString();
   const executor = new QueueTurnExecutor(sessionStore, [
@@ -3575,7 +3575,7 @@ contractTest("runtime.hermetic", "ThreadRuntime auto fan-in idempotency uses dur
   assert.equal(delegations.length, 2);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime resolves superseded child blockers out of actionable attention state", async () => {
+test("ThreadRuntime resolves superseded child blockers out of actionable attention state", async () => {
   const sessionStore = new InMemorySessionStore();
   const now = new Date().toISOString();
   const runtime = new ThreadRuntime({
@@ -3652,7 +3652,7 @@ contractTest("runtime.hermetic", "ThreadRuntime resolves superseded child blocke
   assert.equal(attention.some((record) => record.status === "RESOLVED"), true);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime can surface failed child delegations as the dominant blocker", async () => {
+test("ThreadRuntime can surface failed child delegations as the dominant blocker", async () => {
   const sessionStore = new InMemorySessionStore();
   const now = new Date().toISOString();
   const runtime = new ThreadRuntime({
@@ -3704,7 +3704,7 @@ contractTest("runtime.hermetic", "ThreadRuntime can surface failed child delegat
   assert.equal(inbox.items.some((item) => item.kind === "child_thread_blocker"), true);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime surfaces split-created waiting children in supervision blocker truth", async () => {
+test("ThreadRuntime surfaces split-created waiting children in supervision blocker truth", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -3785,7 +3785,7 @@ contractTest("runtime.hermetic", "ThreadRuntime surfaces split-created waiting c
   assert.equal(childBlockerItem?.childThreadId, delegation?.childThreadId);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime rejects resolving a non-pending checkpoint twice", async () => {
+test("ThreadRuntime rejects resolving a non-pending checkpoint twice", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -3843,7 +3843,7 @@ contractTest("runtime.hermetic", "ThreadRuntime rejects resolving a non-pending 
   assert.equal(artifacts.length, 1);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime focusThread updates operator inbox focus deterministically", async () => {
+test("ThreadRuntime focusThread updates operator inbox focus deterministically", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -3914,7 +3914,7 @@ contractTest("runtime.hermetic", "ThreadRuntime focusThread updates operator inb
   assert.equal(after.focusThreadId, "thread-focus-child");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime persists focused thread across runtime recreation with shared store", async () => {
+test("ThreadRuntime persists focused thread across runtime recreation with shared store", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -3982,7 +3982,7 @@ contractTest("runtime.hermetic", "ThreadRuntime persists focused thread across r
   assert.equal(inbox.focusThreadId, "thread-focus-persist-child");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime surfaces dominant descendant child blocker for parent thread views", async () => {
+test("ThreadRuntime surfaces dominant descendant child blocker for parent thread views", async () => {
   const sessionStore = new InMemorySessionStore();
   const now = new Date().toISOString();
   const runtime = new ThreadRuntime({
@@ -4057,7 +4057,7 @@ contractTest("runtime.hermetic", "ThreadRuntime surfaces dominant descendant chi
   assert.equal(view?.childBlocker?.delegationId, "delegation-child-grandchild");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime persists delegation lifecycle events under the parent session id", async () => {
+test("ThreadRuntime persists delegation lifecycle events under the parent session id", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -4107,7 +4107,7 @@ contractTest("runtime.hermetic", "ThreadRuntime persists delegation lifecycle ev
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime exposes checkpoint disposition in operator thread view after resolution", async () => {
+test("ThreadRuntime exposes checkpoint disposition in operator thread view after resolution", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -4156,7 +4156,7 @@ contractTest("runtime.hermetic", "ThreadRuntime exposes checkpoint disposition i
   assert.equal(disposition?.action, "compact");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime composes and injects a thread-scoped runtime assembly", async () => {
+test("ThreadRuntime composes and injects a thread-scoped runtime assembly", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -4225,7 +4225,7 @@ contractTest("runtime.hermetic", "ThreadRuntime composes and injects a thread-sc
   assert.equal(replay.some((event) => event.type === "runtime.assembly.changed"), true);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime narrows inherited child assemblies and requires approval for model widening proposals", async () => {
+test("ThreadRuntime narrows inherited child assemblies and requires approval for model widening proposals", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -4302,7 +4302,7 @@ contractTest("runtime.hermetic", "ThreadRuntime narrows inherited child assembli
   assert.equal(grants.length, 0);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime requires approval for model-originated provider changes", async () => {
+test("ThreadRuntime requires approval for model-originated provider changes", async () => {
   const sessionStore = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore,
@@ -4334,7 +4334,7 @@ contractTest("runtime.hermetic", "ThreadRuntime requires approval for model-orig
   assert.equal(proposal.request?.eventType, "runtime.assembly_change");
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime surfaces compatibility downgrades as operator inbox alerts", async () => {
+test("ThreadRuntime surfaces compatibility downgrades as operator inbox alerts", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, []);
   const runtime = new ThreadRuntime({
@@ -4363,7 +4363,7 @@ contractTest("runtime.hermetic", "ThreadRuntime surfaces compatibility downgrade
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime replays a delivered terminal turn without executing it again", async () => {
+test("ThreadRuntime replays a delivered terminal turn without executing it again", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -4424,7 +4424,7 @@ contractTest("runtime.hermetic", "ThreadRuntime replays a delivered terminal tur
   assert.equal(Object.hasOwn(messages[0]?.result ?? {}, "finalizedPayload"), false);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime stores oversized finalized payloads as digest-validated artifacts", async () => {
+test("ThreadRuntime stores oversized finalized payloads as digest-validated artifacts", async () => {
   const sessionStore = new InMemorySessionStore();
   const oversizedPayload = { text: "x".repeat(70 * 1024) };
   const executor = new QueueTurnExecutor(sessionStore, [
@@ -4468,7 +4468,7 @@ contractTest("runtime.hermetic", "ThreadRuntime stores oversized finalized paylo
   assert.deepEqual(replay.finalizedPayload, oversizedPayload);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime records and rethrows terminal handoff validation failure", async () => {
+test("ThreadRuntime records and rethrows terminal handoff validation failure", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -4508,7 +4508,7 @@ contractTest("runtime.hermetic", "ThreadRuntime records and rethrows terminal ha
   assert.equal(executor.inputs.length, 1);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime rejects a different initial request reusing a terminal turn ID", async () => {
+test("ThreadRuntime rejects a different initial request reusing a terminal turn ID", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
@@ -4548,7 +4548,7 @@ contractTest("runtime.hermetic", "ThreadRuntime rejects a different initial requ
   assert.equal(executor.inputs.length, 1);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime turn identity binds attachment content without hashing volatile payload fields", async () => {
+test("ThreadRuntime turn identity binds attachment content without hashing volatile payload fields", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {

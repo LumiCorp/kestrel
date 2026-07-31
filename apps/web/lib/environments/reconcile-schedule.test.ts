@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,14 +7,13 @@ import {
   ENVIRONMENT_RECONCILE_CRON,
   runScheduledEnvironmentReconciliation,
 } from "./reconcile-schedule";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "hosted Environment reconciliation runs every minute", () => {
+test("hosted Environment reconciliation runs every minute", () => {
   assert.equal(ENVIRONMENT_RECONCILE_CRON, "* * * * *");
 });
 
-contractTest("web.hermetic", "Vercel invokes the authenticated Environment reconciliation route every minute", () => {
+test("Vercel invokes the authenticated Environment reconciliation route every minute", () => {
   const config = JSON.parse(
     fs.readFileSync(
       path.join(
@@ -31,7 +31,7 @@ contractTest("web.hermetic", "Vercel invokes the authenticated Environment recon
   ]);
 });
 
-contractTest("web.hermetic", "scheduled Environment reconciliation uses the shared advisory lock", async () => {
+test("scheduled Environment reconciliation uses the shared advisory lock", async () => {
   const events: string[] = [];
   const result = await runScheduledEnvironmentReconciliation({
     reconcile: async () => {
@@ -75,7 +75,7 @@ contractTest("web.hermetic", "scheduled Environment reconciliation uses the shar
   });
 });
 
-contractTest("web.hermetic", "scheduled Environment reconciliation skips overlap without running", async () => {
+test("scheduled Environment reconciliation skips overlap without running", async () => {
   let reconciled = false;
   const result = await runScheduledEnvironmentReconciliation({
     reconcile: async () => {

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -12,10 +13,9 @@ import {
   benchmarkTurnMode,
   loadBenchmarkDotEnv,
 } from "../../scripts/benchmark-provider-config.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "benchmark smoke defaults to offline mode", () => {
+test("benchmark smoke defaults to offline mode", () => {
   assert.deepEqual(parseBenchmarkSmokeArgs([]), {
     livePreflight: false,
   });
@@ -24,13 +24,13 @@ contractTest("runtime.hermetic", "benchmark smoke defaults to offline mode", () 
   });
 });
 
-contractTest("runtime.hermetic", "benchmark smoke validates offline benchmark contracts", async () => {
+test("benchmark smoke validates offline benchmark contracts", async () => {
   const code = await runBenchmarkSmoke([]);
 
   assert.equal(code, 0);
 });
 
-contractTest("runtime.hermetic", "benchmark mode helpers expose canonical build full-auto mode", () => {
+test("benchmark mode helpers expose canonical build full-auto mode", () => {
   assert.deepEqual(benchmarkTurnMode(), {
     interactionMode: "build",
     actSubmode: "full_auto",
@@ -41,7 +41,7 @@ contractTest("runtime.hermetic", "benchmark mode helpers expose canonical build 
   });
 });
 
-contractTest("runtime.hermetic", "benchmark dotenv loader ignores repo model while loading benchmark credentials", async () => {
+test("benchmark dotenv loader ignores repo model while loading benchmark credentials", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "kestrel-benchmark-dotenv-"));
   try {
     await writeFile(
@@ -71,7 +71,7 @@ contractTest("runtime.hermetic", "benchmark dotenv loader ignores repo model whi
   }
 });
 
-contractTest("runtime.hermetic", "benchmark dotenv loader no-ops without .env and honors disable flag", async () => {
+test("benchmark dotenv loader no-ops without .env and honors disable flag", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "kestrel-benchmark-dotenv-disabled-"));
   try {
     const missingEnv: NodeJS.ProcessEnv = { OPENROUTER_API_KEY: "shell-key" };

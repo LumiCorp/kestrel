@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildMobileProjectCallback,
   resolveMobileProjectReturn,
 } from "./mobile-return";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "accepts only the exact Kestrel One mobile Project return", () => {
+test("accepts only the exact Kestrel One mobile Project return", () => {
   assert.equal(
     resolveMobileProjectReturn({
       source: "mobile",
@@ -30,7 +30,7 @@ contractTest("web.hermetic", "accepts only the exact Kestrel One mobile Project 
   );
 });
 
-contractTest("web.hermetic", "returns the created Project id through the allowlisted callback", () => {
+test("returns the created Project id through the allowlisted callback", () => {
   assert.equal(
     buildMobileProjectCallback("kestrelone://new-thread", "project 1"),
     "kestrelone://new-thread?projectId=project+1"

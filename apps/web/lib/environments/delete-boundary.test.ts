@@ -1,6 +1,6 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const route = readFileSync(
   new URL("../../app/api/organization/environments/[id]/route.ts", import.meta.url),
@@ -15,7 +15,7 @@ const overview = readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "Environment deletion is admin-authenticated, confirmed, and asynchronous", () => {
+test("Environment deletion is admin-authenticated, confirmed, and asynchronous", () => {
   const deletion = route.indexOf("export async function DELETE");
   const authorization = route.indexOf("requireOrganizationAdmin", deletion);
   const confirmation = route.indexOf("deleteEnvironmentInputSchema.parse", deletion);
@@ -29,7 +29,7 @@ contractTest("web.hermetic", "Environment deletion is admin-authenticated, confi
   assert.ok(request < accepted);
 });
 
-contractTest("web.hermetic", "Environment deletion remains durable when audit logging is unavailable", () => {
+test("Environment deletion remains durable when audit logging is unavailable", () => {
   const request = admin.indexOf("requestOrganizationEnvironmentDelete");
   const enqueue = admin.indexOf("enqueueEnvironmentOperation", request);
   const audit = admin.indexOf("environment.delete.requested", enqueue);
@@ -41,7 +41,7 @@ contractTest("web.hermetic", "Environment deletion remains durable when audit lo
   assert.ok(audit < auditFailure);
 });
 
-contractTest("web.hermetic", "Environment deletion UI names the permanent data-loss boundary", () => {
+test("Environment deletion UI names the permanent data-loss boundary", () => {
   assert.match(overview, /No automatic backup is created/u);
   assert.match(overview, /confirmationName/u);
   assert.match(overview, /Create another Environment, wait for it to be ready/u);

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -17,7 +18,6 @@ import {
   sdkE2eContext,
   sdkE2eProfile,
 } from "./helpers.js";
-import { contractTest } from "../../helpers/contract-test.js";
 
 
 const observabilityRequire = createRequire(new URL("../../../packages/observability/package.json", import.meta.url));
@@ -31,7 +31,7 @@ const { InMemorySpanExporter } = await import(
   };
 };
 
-contractTest("runtime.process", "core SDK e2e covers run, resume, subscribe, cancel, and revisioned memory", async (t) => {
+test("core SDK e2e covers run, resume, subscribe, cancel, and revisioned memory", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -146,7 +146,7 @@ contractTest("runtime.process", "core SDK e2e covers run, resume, subscribe, can
   );
 });
 
-contractTest("runtime.process", "core SDK e2e isolates concurrent subscriptions and rejects stale concurrent memory writers", async (t) => {
+test("core SDK e2e isolates concurrent subscriptions and rejects stale concurrent memory writers", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -252,7 +252,7 @@ contractTest("runtime.process", "core SDK e2e isolates concurrent subscriptions 
   assert.match(memoryAfterRace.value.findings, /writer/u);
 });
 
-contractTest("runtime.process", "core SDK e2e stream lifecycle and subscription delivery stay consistent for the same session", async (t) => {
+test("core SDK e2e stream lifecycle and subscription delivery stay consistent for the same session", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -310,7 +310,7 @@ contractTest("runtime.process", "core SDK e2e stream lifecycle and subscription 
   assert.equal(events[events.length - 1], "run.completed");
 });
 
-contractTest("runtime.process", "observability e2e exports native traces and real OTEL spans", async (t) => {
+test("observability e2e exports native traces and real OTEL spans", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -359,7 +359,7 @@ contractTest("runtime.process", "observability e2e exports native traces and rea
   assert.equal(spans[0]?.attributes["kestrel.outcome"], "ok");
 });
 
-contractTest("runtime.process", "next route helpers e2e preserve correlation and propagate abort cancellation", async (t) => {
+test("next route helpers e2e preserve correlation and propagate abort cancellation", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),
@@ -435,7 +435,7 @@ contractTest("runtime.process", "next route helpers e2e preserve correlation and
   assert.match(body, /event: run\.cancelled/);
 });
 
-contractTest("runtime.process", "packed tarball consumer fixture installs and executes real SDK behavior against the live runner service", async (t) => {
+test("packed tarball consumer fixture installs and executes real SDK behavior against the live runner service", async (t) => {
   const server = await createRunnerServiceServer({
     profileProvider: createProfileProvider(),
     runtimeFactory: createSdkE2eRuntimeFactory(),

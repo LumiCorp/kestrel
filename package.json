@@ -113,7 +113,6 @@
     "desktop:upload-update": "node --import tsx scripts/upload-desktop-update.ts",
     "desktop:promote-update": "node --import tsx scripts/promote-desktop-update.ts",
     "desktop:test": "pnpm --filter @kestrel/desktop test",
-    "test-proofs:check": "node scripts/check-contract-proofs.mjs",
     "test-proofs:mutations": "node scripts/validation/audit-mutations.mjs",
     "check:docs": "node --import tsx scripts/check-docs.ts",
     "check:agents": "node --import tsx scripts/check-agents.ts",

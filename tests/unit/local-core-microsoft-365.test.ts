@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { MemoryLocalCoreCredentialStore } from "../../src/localCore/credentialStore.js";
 import { LocalCoreMicrosoft365OAuthSessionManager } from "../../src/localCore/microsoft365OAuthSessions.js";
 import { LocalCoreMicrosoft365Service } from "../../src/localCore/microsoft365Service.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "Microsoft 365 OAuth requests only selected pack scopes and stores tokens in Local Core", async () => {
+test("Microsoft 365 OAuth requests only selected pack scopes and stores tokens in Local Core", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   const requested: URL[] = [];
   const manager = new LocalCoreMicrosoft365OAuthSessionManager({
@@ -49,7 +49,7 @@ contractTest("runtime.hermetic", "Microsoft 365 OAuth requests only selected pac
   }
 });
 
-contractTest("runtime.hermetic", "Microsoft 365 service refreshes in Core and calls Graph without exposing refresh tokens", async () => {
+test("Microsoft 365 service refreshes in Core and calls Graph without exposing refresh tokens", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   await store.set("mcp.standard.microsoft_365.oauth.client", "public-client");
   await store.set("mcp.standard.microsoft_365.oauth.tokens", JSON.stringify({ accessToken: "expired", refreshToken: "refresh-secret", expiresAt: 1, scope: "offline_access User.Read Mail.Read" }));
@@ -74,7 +74,7 @@ contractTest("runtime.hermetic", "Microsoft 365 service refreshes in Core and ca
   assert.equal(requests[1]?.url.includes("refresh-secret"), false);
 });
 
-contractTest("runtime.hermetic", "Microsoft 365 activation fails closed when the stored grant lacks a selected pack", async () => {
+test("Microsoft 365 activation fails closed when the stored grant lacks a selected pack", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   await store.set("mcp.standard.microsoft_365.oauth.tokens", JSON.stringify({
     accessToken: "access",
@@ -89,7 +89,7 @@ contractTest("runtime.hermetic", "Microsoft 365 activation fails closed when the
   );
 });
 
-contractTest("runtime.hermetic", "Microsoft 365 OAuth exchanges a callback only once", async () => {
+test("Microsoft 365 OAuth exchanges a callback only once", async () => {
   let releaseTokenExchange!: () => void;
   const tokenExchangeReleased = new Promise<void>((resolve) => { releaseTokenExchange = resolve; });
   let markTokenExchangeStarted!: () => void;

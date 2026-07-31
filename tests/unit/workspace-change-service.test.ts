@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -6,12 +7,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { WorkspaceChangeService } from "../../src/changes/WorkspaceChangeService.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const execFileAsync = promisify(execFile);
 
-contractTest("runtime.process", "WorkspaceChangeService reads real Git state and safely stages and unstages exact files", async () => {
+test("WorkspaceChangeService reads real Git state and safely stages and unstages exact files", async () => {
   const repo = await createRepo();
   await writeFile(path.join(repo, "tracked.txt"), "one\ntwo changed\n", "utf8");
   await writeFile(path.join(repo, "new file.txt"), "new\n", "utf8");
@@ -46,7 +46,7 @@ contractTest("runtime.process", "WorkspaceChangeService reads real Git state and
   assert.equal(unstaged.snapshot.files.find((file) => file.path === "tracked.txt")?.unstaged, true);
 });
 
-contractTest("runtime.process", "WorkspaceChangeService blocks stale and unsafe mutations and requires explicit revert confirmation", async () => {
+test("WorkspaceChangeService blocks stale and unsafe mutations and requires explicit revert confirmation", async () => {
   const repo = await createRepo();
   await writeFile(path.join(repo, "tracked.txt"), "changed\n", "utf8");
   const service = new WorkspaceChangeService();
@@ -65,7 +65,7 @@ contractTest("runtime.process", "WorkspaceChangeService blocks stale and unsafe 
   assert.equal(await readFile(path.join(repo, "tracked.txt"), "utf8"), "one\ntwo\n");
 });
 
-contractTest("runtime.process", "WorkspaceChangeService resolves branch and commit scopes from verified revisions", async () => {
+test("WorkspaceChangeService resolves branch and commit scopes from verified revisions", async () => {
   const repo = await createRepo();
   await writeFile(path.join(repo, "delete.txt"), "delete me\n", "utf8");
   await writeFile(path.join(repo, "rename.txt"), "rename me\n", "utf8");
@@ -96,7 +96,7 @@ contractTest("runtime.process", "WorkspaceChangeService resolves branch and comm
   assert.equal(sameCommit.files.some((file) => file.path === "unrelated.txt"), false);
 });
 
-contractTest("runtime.process", "WorkspaceChangeService stages, unstages, and explicitly reverts individual current hunks", async () => {
+test("WorkspaceChangeService stages, unstages, and explicitly reverts individual current hunks", async () => {
   const repo = await createRepoWithLongFile();
   const service = new WorkspaceChangeService();
   await writeFile(path.join(repo, "tracked.txt"), ["one", "two changed", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven changed", "twelve", ""].join("\n"), "utf8");
@@ -136,7 +136,7 @@ contractTest("runtime.process", "WorkspaceChangeService stages, unstages, and ex
   assert.equal(reverted.snapshot.hunks.filter((hunk) => hunk.origin === "unstaged").length, 1);
 });
 
-contractTest("runtime.process", "WorkspaceChangeService renders Local Core resolved run and promotion ranges as read-only candidates", async () => {
+test("WorkspaceChangeService renders Local Core resolved run and promotion ranges as read-only candidates", async () => {
   const repo = await createRepo(); const service = new WorkspaceChangeService(); const base = await git(repo, ["rev-parse", "HEAD"]);
   await writeFile(path.join(repo, "tracked.txt"), "run change\n", "utf8"); await git(repo, ["add", "tracked.txt"]); await git(repo, ["commit", "-m", "run change"]); const target = await git(repo, ["rev-parse", "HEAD"]);
   const run = await service.inspectGitRange({ sessionId: "session-1", threadId: "thread-1", workspaceRoot: repo, scope: { kind: "latest_run", runId: "run-1" }, baseRef: base, targetRef: target });
@@ -146,7 +146,7 @@ contractTest("runtime.process", "WorkspaceChangeService renders Local Core resol
   assert.equal(promotion.candidateFingerprint, fp("c")); assert.match(promotion.diff, /promotion working change/u);
 });
 
-contractTest("runtime.process", "WorkspaceChangeService resolves pull request identity and patch through the production gh contract", async () => {
+test("WorkspaceChangeService resolves pull request identity and patch through the production gh contract", async () => {
   const repo = await createRepo();
   const fakeBin = await mkdtemp(path.join(os.tmpdir(), "kestrel-fake-gh-"));
   const ghPath = path.join(fakeBin, "gh");

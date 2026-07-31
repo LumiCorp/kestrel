@@ -1,16 +1,16 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { WorkspaceFeedbackService } from "../../src/review/WorkspaceFeedbackService.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const first = `sha256:${"a".repeat(64)}`;
 const second = `sha256:${"b".repeat(64)}`;
 
-contractTest("runtime.hermetic", "WorkspaceFeedbackService persists candidate-bound feedback without workspace contents", async () => {
+test("WorkspaceFeedbackService persists candidate-bound feedback without workspace contents", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-feedback-"));
   const metadataPath = path.join(root, "feedback.json");
   const service = new WorkspaceFeedbackService(metadataPath);
@@ -26,7 +26,7 @@ contractTest("runtime.hermetic", "WorkspaceFeedbackService persists candidate-bo
   assert.equal((await relaunched.list({ sessionId: "session-1", threadId: "thread-1", candidateFingerprint: first })).comments[0]?.status, "submitted");
 });
 
-contractTest("runtime.hermetic", "WorkspaceFeedbackService marks unsent feedback stale when the candidate changes", async () => {
+test("WorkspaceFeedbackService marks unsent feedback stale when the candidate changes", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-feedback-stale-"));
   const service = new WorkspaceFeedbackService(path.join(root, "feedback.json"));
   await service.initialize();

@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   hasMicrosoft365PackScopes,
   MICROSOFT_365_PACKS,
@@ -8,7 +8,7 @@ import {
   scopesForMicrosoft365Packs,
 } from "./microsoft-365-contract";
 
-contractTest("web.hermetic", "Microsoft 365 packs request bounded delegated scopes", () => {
+test("Microsoft 365 packs request bounded delegated scopes", () => {
   assert.deepEqual(Object.keys(MICROSOFT_365_PACKS), [
     "outlook",
     "teams",
@@ -27,7 +27,7 @@ contractTest("web.hermetic", "Microsoft 365 packs request bounded delegated scop
   assert.ok(!widened.includes("Sites.Read.All"));
 });
 
-contractTest("web.hermetic", "unselected Microsoft 365 packs cannot expose capabilities", () => {
+test("unselected Microsoft 365 packs cannot expose capabilities", () => {
   assert.equal(
     microsoft365PackAllowsCapability({
       selectedPacks: ["outlook"],
@@ -51,7 +51,7 @@ contractTest("web.hermetic", "unselected Microsoft 365 packs cannot expose capab
   );
 });
 
-contractTest("web.hermetic", "Microsoft 365 scope checks are case-insensitive", () => {
+test("Microsoft 365 scope checks are case-insensitive", () => {
   const scopes = scopesForMicrosoft365Packs(["sharepoint"]);
   assert.equal(
     hasMicrosoft365PackScopes({

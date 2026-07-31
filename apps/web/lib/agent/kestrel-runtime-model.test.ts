@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyKestrelOneModelToProfile,
   toKestrelOneRuntimeModelSelection,
 } from "./kestrel-runtime-model";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "approved native gateway models become runner model selections", () => {
+test("approved native gateway models become runner model selections", () => {
   assert.deepEqual(
     toKestrelOneRuntimeModelSelection({
       id: "preferred-model",
@@ -27,7 +27,7 @@ contractTest("web.hermetic", "approved native gateway models become runner model
   );
 });
 
-contractTest("web.hermetic", "runtime model selection preserves the base profile contract", () => {
+test("runtime model selection preserves the base profile contract", () => {
   const profile = applyKestrelOneModelToProfile(
     {
       id: "kestrel-one",
@@ -84,7 +84,7 @@ contractTest("web.hermetic", "runtime model selection preserves the base profile
   assert.deepEqual(profile.guardrails, { maxStepVisits: 80 });
 });
 
-contractTest("web.hermetic", "Desktop-local model selection never carries a Kestrel One credential reference", () => {
+test("Desktop-local model selection never carries a Kestrel One credential reference", () => {
   const profile = applyKestrelOneModelToProfile(
     {
       id: "base",
@@ -116,7 +116,7 @@ contractTest("web.hermetic", "Desktop-local model selection never carries a Kest
   assert.equal(profile.modelCredential, undefined);
 });
 
-contractTest("web.hermetic", "Lumi models select the configured native runner protocol", () => {
+test("Lumi models select the configured native runner protocol", () => {
   assert.equal(
     toKestrelOneRuntimeModelSelection({
       id: "lumi-model",
@@ -131,7 +131,7 @@ contractTest("web.hermetic", "Lumi models select the configured native runner pr
   );
 });
 
-contractTest("web.hermetic", "RunPod models use the OpenAI runner protocol with a gateway credential reference", () => {
+test("RunPod models use the OpenAI runner protocol with a gateway credential reference", () => {
   assert.deepEqual(
     toKestrelOneRuntimeModelSelection({
       id: "runpod-model",

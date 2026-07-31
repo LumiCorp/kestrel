@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type { RunnerRunStreamEvent } from "@kestrel-agents/sdk";
 import { writeKestrelReconnectStreamToUi } from "@/lib/agent/kestrel-reconnect-stream";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "writeKestrelReconnectStreamToUi keeps runner error as fallback until terminal text arrives", async () => {
+test("writeKestrelReconnectStreamToUi keeps runner error as fallback until terminal text arrives", async () => {
   const writer = createChunkWriter();
 
   await writeKestrelReconnectStreamToUi({
@@ -36,7 +36,7 @@ contractTest("web.hermetic", "writeKestrelReconnectStreamToUi keeps runner error
   );
 });
 
-contractTest("web.hermetic", "writeKestrelReconnectStreamToUi emits runner error fallback when no terminal text arrives", async () => {
+test("writeKestrelReconnectStreamToUi emits runner error fallback when no terminal text arrives", async () => {
   const writer = createChunkWriter();
 
   await writeKestrelReconnectStreamToUi({

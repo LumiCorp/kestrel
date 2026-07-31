@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const packageRoot = path.resolve(
@@ -19,7 +19,7 @@ const contract = JSON.parse(
   };
 };
 
-contractTest("web.hermetic", "mobile OpenAPI contract contains every implemented companion route", () => {
+test("mobile OpenAPI contract contains every implemented companion route", () => {
   assert.deepEqual(Object.keys(contract.paths).sort(), [
     "/account/deletion-request",
     "/bootstrap",
@@ -49,7 +49,7 @@ contractTest("web.hermetic", "mobile OpenAPI contract contains every implemented
   ]);
 });
 
-contractTest("web.hermetic", "every Thread mutation returns the authoritative snapshot", () => {
+test("every Thread mutation returns the authoritative snapshot", () => {
   const mutations = [
     ["/threads", "post", ["200", "202"]],
     ["/threads/{id}/turns", "post", ["200", "202"]],
@@ -75,7 +75,7 @@ contractTest("web.hermetic", "every Thread mutation returns the authoritative sn
   }
 });
 
-contractTest("web.hermetic", "Projects are read-only and the contract exposes no management verbs", () => {
+test("Projects are read-only and the contract exposes no management verbs", () => {
   assert.deepEqual(Object.keys(contract.paths["/projects"] ?? {}), ["get"]);
   assert.deepEqual(Object.keys(contract.paths["/projects/{id}"] ?? {}), [
     "get",
@@ -94,7 +94,7 @@ contractTest("web.hermetic", "Projects are read-only and the contract exposes no
   }
 });
 
-contractTest("web.hermetic", "mobile Project routes export GET only", () => {
+test("mobile Project routes export GET only", () => {
   for (const relativePath of [
     "app/api/mobile/v2/projects/route.ts",
     "app/api/mobile/v2/projects/[id]/route.ts",
@@ -111,7 +111,7 @@ contractTest("web.hermetic", "mobile Project routes export GET only", () => {
   }
 });
 
-contractTest("web.hermetic", "every mobile v2 handler reaches the request-scoped mobile session boundary", () => {
+test("every mobile v2 handler reaches the request-scoped mobile session boundary", () => {
   const v2Root = path.join(packageRoot, "app/api/mobile/v2");
   const routeFiles = fs
     .readdirSync(v2Root, { recursive: true })
@@ -146,13 +146,13 @@ contractTest("web.hermetic", "every mobile v2 handler reaches the request-scoped
   );
 });
 
-contractTest("web.hermetic", "mobile v2 responses are private and never cached", () => {
+test("mobile v2 responses are private and never cached", () => {
   const proxySource = fs.readFileSync(path.join(packageRoot, "proxy.ts"), "utf8");
   assert.match(proxySource, /pathname\.startsWith\("\/api\/mobile\/v2\/"\)/u);
   assert.match(proxySource, /"Cache-Control", "private, no-store"/u);
 });
 
-contractTest("web.hermetic", "mobile wire inputs contain no model or agent configuration", () => {
+test("mobile wire inputs contain no model or agent configuration", () => {
   const createThread = JSON.stringify(
     contract.components.schemas.CreateThreadInput
   );
@@ -166,7 +166,7 @@ contractTest("web.hermetic", "mobile wire inputs contain no model or agent confi
   );
 });
 
-contractTest("web.hermetic", "mobile responses, snapshots, message parts, errors, and SSE are concrete", () => {
+test("mobile responses, snapshots, message parts, errors, and SSE are concrete", () => {
   for (const [pathName, pathItem] of Object.entries(contract.paths)) {
     for (const [method, operation] of Object.entries(pathItem)) {
       if (

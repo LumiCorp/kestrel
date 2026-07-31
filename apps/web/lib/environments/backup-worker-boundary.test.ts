@@ -1,9 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "web.hermetic",
+test(
   "daily backup retries remain attached to one durable Environment operation",
   async () => {
     const [backupSource, queueSource, reconcileSource] = await Promise.all([
@@ -41,8 +40,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "backup worker invariant failures cross a terminal platform-visible boundary",
   async () => {
     const backupSource = await readFile(
