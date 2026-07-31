@@ -1723,6 +1723,147 @@ contractTest("runtime.process", "KestrelChatRuntime acknowledges an accepted rep
   await runtime.close();
 });
 
+contractTest("runtime.process", "KestrelChatRuntime accepts retry with the reserved Mission Control run identity", async () => {
+  let threadListener:
+    | ((event: {
+        type: string;
+        threadId: string;
+        timestamp: string;
+        payload: Record<string, unknown>;
+      }) => void)
+    | undefined;
+  let resolveCompletion!: (result: {
+    thread: {
+      threadId: string;
+      sessionId: string;
+      title: string;
+      status: "COMPLETED";
+      createdAt: string;
+      updatedAt: string;
+    };
+    output: {
+      status: "COMPLETED";
+      runId: string;
+      sessionId: string;
+      quality: {
+        citationCoverage: number;
+        unresolvedClaims: number;
+        reworkRate: number;
+        thrashIndex: number;
+      };
+      errors: [];
+      telemetry: {
+        stepsExecuted: number;
+        toolCalls: number;
+        modelCalls: number;
+        durationMs: number;
+      };
+    };
+    assistantText: string;
+  }) => void;
+  const completion = new Promise<Parameters<typeof resolveCompletion>[0]>(
+    (resolve) => {
+      resolveCompletion = resolve;
+    },
+  );
+  const now = new Date().toISOString();
+  const thread = {
+    threadId: "thread-retry-accepted",
+    sessionId: "session-retry-accepted",
+    title: "Retry accepted",
+    status: "FAILED" as const,
+    createdAt: now,
+    updatedAt: now,
+  };
+  let capturedMissionControl: unknown;
+  const runtime = new KestrelChatRuntime(profile, {
+    create: () => ({
+      kestrel: {} as Kestrel,
+      threadRuntime: {
+        getThreadStatus: async () => ({ thread, openRequests: [] }),
+        subscribe: (_target: unknown, listener: typeof threadListener) => {
+          threadListener = listener;
+          return { unsubscribe() {} };
+        },
+        retryThread: (input: {
+          missionControl?: { runId?: string };
+        }) => {
+          capturedMissionControl = input.missionControl;
+          threadListener?.({
+            type: "thread.turn_submitted",
+            threadId: thread.threadId,
+            timestamp: now,
+            payload: { runId: input.missionControl?.runId },
+          });
+          return completion;
+        },
+        getOperatorThreadView: async () => ({
+          thread: { ...thread, status: "RUNNING" as const },
+          childThreads: [],
+        }),
+        listOperatorInbox: async () => ({
+          items: [],
+          summary: {
+            total: 0,
+            actionable: 0,
+            approvals: 0,
+            userInputs: 0,
+            checkpoints: 0,
+            childBlockers: 0,
+            stalled: 0,
+            assemblyProposals: 0,
+            compatibilityAlerts: 0,
+          },
+        }),
+      } as unknown as ThreadRuntime,
+      entryStepAgent: "example.step",
+      close: async () => {},
+    }),
+  });
+  const missionControl = {
+    projectId: "11111111-1111-4111-8111-111111111111",
+    itemId: "work-retry",
+    attemptId: "attempt-retry",
+    commandId: "command-retry",
+    runId: "run-retry-reserved",
+  };
+
+  const accepted = await runtime.performAcceptedOperatorAction({
+    action: "retry",
+    threadId: thread.threadId,
+    message: "Retry exact work.",
+    missionControl,
+  });
+
+  assert.equal(accepted.accepted.disposition, "accepted");
+  assert.equal(accepted.accepted.runId, missionControl.runId);
+  assert.deepEqual(capturedMissionControl, missionControl);
+  resolveCompletion({
+    thread: { ...thread, status: "COMPLETED" },
+    output: {
+      status: "COMPLETED",
+      runId: missionControl.runId,
+      sessionId: thread.sessionId,
+      quality: {
+        citationCoverage: 1,
+        unresolvedClaims: 0,
+        reworkRate: 0,
+        thrashIndex: 0,
+      },
+      errors: [],
+      telemetry: {
+        stepsExecuted: 1,
+        toolCalls: 0,
+        modelCalls: 1,
+        durationMs: 100,
+      },
+    },
+    assistantText: "Retried.",
+  });
+  assert.equal((await accepted.completion).output.runId, missionControl.runId);
+  await runtime.close();
+});
+
 contractTest("runtime.process", "KestrelChatRuntime resolves session turns through the canonical orchestration thread", async () => {
   const submitTurnCalls: Array<{ threadId: string; eventType: string }> = [];
 
