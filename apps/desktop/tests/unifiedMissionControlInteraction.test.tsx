@@ -17,6 +17,11 @@ const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
 function installDom(
   getMissionControlProject: DesktopBridge["getMissionControlProject"],
+  executeMissionControlMigration: DesktopBridge["executeMissionControlMigration"] =
+    async (intent) => {
+      const response = await getMissionControlProject(intent.projectId);
+      return response;
+    },
 ): { root: Root; container: HTMLDivElement } {
   const browser = new Window({ url: "http://localhost/" });
   Object.assign(globalThis, {
@@ -36,7 +41,10 @@ function installDom(
     IS_REACT_ACT_ENVIRONMENT: true,
   });
   Object.assign(browser, {
-    kestrelDesktop: { getMissionControlProject } as DesktopBridge,
+    kestrelDesktop: {
+      getMissionControlProject,
+      executeMissionControlMigration,
+    } as DesktopBridge,
   });
   const container = browser.document.createElement("div") as unknown as HTMLDivElement;
   browser.document.body.append(container);
@@ -152,11 +160,39 @@ function projectResponse(): DesktopMissionControlProjectResponse {
           attemptId: "attempt-2",
           disposition: "applied",
         }],
+        migration: {
+          version: 1,
+          status: "staged",
+          registeredPath: "/project",
+          sources: [],
+          candidates: [],
+          rebinds: [],
+          stagedAt: "2026-07-10T09:00:00.000Z",
+          updatedAt: "2026-07-10T09:00:00.000Z",
+        },
       },
       createdAt: "2026-07-10T09:00:00.000Z",
       updatedAt: "2026-07-10T11:00:00.000Z",
     },
   };
+}
+
+function migrationResponse(
+  revision: number,
+  migration: NonNullable<
+    DesktopMissionControlProjectResponse["project"]["document"]["migration"]
+  > | undefined,
+): DesktopMissionControlProjectResponse {
+  const response = projectResponse();
+  response.project.revision = revision;
+  response.project.document.items = {};
+  response.project.document.history = [];
+  if (migration === undefined) {
+    delete response.project.document.migration;
+  } else {
+    response.project.document.migration = migration;
+  }
+  return response;
 }
 
 contractTest(
@@ -270,6 +306,174 @@ contractTest(
     assert.match(container.textContent ?? "", /last authoritative project state/u);
     assert.match(container.textContent ?? "", /Verify Desktop package/u);
     assert.equal(errors.at(-1), "Runner disconnected.");
+    await act(async () => root.unmount());
+  },
+);
+
+contractTest(
+  "desktop.mission-control-operator-flow",
+  "unified Mission Control stages an explicit empty migration on first project read",
+  async () => {
+    const initial = migrationResponse(0, undefined);
+    const staged = migrationResponse(1, {
+      version: 1,
+      status: "staged_empty",
+      registeredPath: "/project",
+      sources: [],
+      candidates: [],
+      rebinds: [],
+      stagedAt: "2026-07-31T12:00:00.000Z",
+      updatedAt: "2026-07-31T12:00:00.000Z",
+    });
+    const intents: unknown[] = [];
+    const { root, container } = installDom(
+      async () => initial,
+      async (intent) => {
+        intents.push(intent);
+        return staged;
+      },
+    );
+
+    await act(async () => {
+      root.render(
+        <UnifiedMissionControlWorkspace
+          project={{ id: PROJECT_ID, path: "/project", label: "Kestrel" }}
+          onReturnToConversation={() => {}}
+          onOpenConversation={() => {}}
+          onStartConversation={() => {}}
+          onError={() => {}}
+        />,
+      );
+    });
+
+    assert.deepEqual(intents, [{
+      type: "stage",
+      projectId: PROJECT_ID,
+      expectedRevision: 0,
+    }]);
+    assert.match(container.textContent ?? "", /Migration: empty/u);
+    assert.match(
+      container.textContent ?? "",
+      /Legacy session Mission Control remains the sole write authority/u,
+    );
+    assert.match(
+      container.textContent ?? "",
+      /No compatible legacy work exists/u,
+    );
+    await act(async () => root.unmount());
+  },
+);
+
+contractTest(
+  "desktop.mission-control-operator-flow",
+  "unified Mission Control blocks ambiguous sources until explicit rebind and selection",
+  async () => {
+    const fingerprint = "a".repeat(64);
+    const firstCandidate = "b".repeat(64);
+    const secondCandidate = "c".repeat(64);
+    const needsRebind = migrationResponse(2, {
+      version: 1,
+      status: "needs_rebind",
+      registeredPath: "/project",
+      sources: [{
+        sourceId: "session:legacy",
+        kind: "session_snapshot",
+        sessionId: "legacy",
+        sourceVersion: 3,
+        sourceFingerprint: fingerprint,
+        projectPath: "/moved-project",
+        linkStatus: "moved",
+      }],
+      candidates: [],
+      rebinds: [],
+      stagedAt: "2026-07-31T12:00:00.000Z",
+      updatedAt: "2026-07-31T12:00:00.000Z",
+    });
+    const needsResolution = migrationResponse(3, {
+      ...needsRebind.project.document.migration!,
+      status: "needs_resolution",
+      sources: [{
+        ...needsRebind.project.document.migration!.sources[0]!,
+        linkStatus: "rebound",
+        candidateId: firstCandidate,
+      }],
+      candidates: [
+        {
+          id: firstCandidate,
+          canonicalFingerprint: "d".repeat(64),
+          sourceIds: ["session:legacy"],
+          valid: true,
+          conflicts: [],
+        },
+        {
+          id: secondCandidate,
+          canonicalFingerprint: "e".repeat(64),
+          sourceIds: ["session:other"],
+          valid: true,
+          conflicts: [],
+        },
+      ],
+      rebinds: [{
+        sourceId: "session:legacy",
+        sourceFingerprint: fingerprint,
+        projectId: PROJECT_ID,
+        actionId: "rebind-action",
+        reboundAt: "2026-07-31T12:01:00.000Z",
+      }],
+      updatedAt: "2026-07-31T12:01:00.000Z",
+    });
+    const resolved = migrationResponse(4, {
+      ...needsResolution.project.document.migration!,
+      status: "resolved",
+      resolution: {
+        type: "source",
+        candidateId: firstCandidate,
+        sourceFingerprints: { "session:legacy": fingerprint },
+        actionId: "resolve-action",
+        resolvedAt: "2026-07-31T12:02:00.000Z",
+      },
+      updatedAt: "2026-07-31T12:02:00.000Z",
+    });
+    const intents: unknown[] = [];
+    const { root, container } = installDom(
+      async () => needsRebind,
+      async (intent) => {
+        intents.push(intent);
+        return intent.type === "rebind" ? needsResolution : resolved;
+      },
+    );
+
+    await act(async () => {
+      root.render(
+        <UnifiedMissionControlWorkspace
+          project={{ id: PROJECT_ID, path: "/project", label: "Kestrel" }}
+          onReturnToConversation={() => {}}
+          onOpenConversation={() => {}}
+          onStartConversation={() => {}}
+          onError={() => {}}
+        />,
+      );
+    });
+    assert.match(container.textContent ?? "", /project identity required/u);
+    await act(async () => button(container, "Rebind to this project").click());
+    assert.deepEqual(intents[0], {
+      type: "rebind",
+      projectId: PROJECT_ID,
+      expectedRevision: 2,
+      sourceId: "session:legacy",
+      sourceFingerprint: fingerprint,
+    });
+    assert.match(container.textContent ?? "", /source selection required/u);
+    await act(async () =>
+      button(container, "Use this complete source").click()
+    );
+    assert.deepEqual(intents[1], {
+      type: "resolve",
+      projectId: PROJECT_ID,
+      expectedRevision: 3,
+      resolution: { type: "source", candidateId: firstCandidate },
+    });
+    assert.match(container.textContent ?? "", /Migration: resolved/u);
     await act(async () => root.unmount());
   },
 );

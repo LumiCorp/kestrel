@@ -335,6 +335,10 @@ export type WebControlCommand =
       projectId: string;
     }
   | {
+      type: "mission_control.migration.execute";
+      action: Record<string, unknown>;
+    }
+  | {
       type: "project.snapshot.get";
       sessionId: string;
     }

@@ -36,6 +36,11 @@ import {
 } from "../runtime/waitState.js";
 import { InMemoryOrchestrationStore } from "../orchestration/InMemoryOrchestrationStore.js";
 import type { ProductProjectSnapshot } from "../project/contracts.js";
+import type {
+  MissionControlLegacyProjectSource,
+  MissionControlMigrationSourceBinding,
+} from "../missionControl/migrationContracts.js";
+import { requireMissionControlMigrationFingerprint } from "../missionControl/migrationContracts.js";
 import {
   normalizeProjectSnapshot,
   readProjectSnapshotFromRuntimeState,
@@ -129,6 +134,10 @@ export class InMemorySessionStore implements SessionStore {
     Map<string, InMemoryMissionControlReceipt>
   >();
   private readonly missionControlOutbox: MissionControlOutboxRecord[] = [];
+  private readonly missionControlMigrationBindings = new Map<
+    string,
+    MissionControlMigrationSourceBinding
+  >();
   private readonly runs = new Map<string, InMemoryRun>();
   private readonly effects: InMemoryEffect[] = [];
   private readonly effectResults = new Map<string, EffectResult>();
@@ -171,6 +180,54 @@ export class InMemorySessionStore implements SessionStore {
     return project === undefined ? null : structuredClone(project);
   }
 
+  async listMissionControlLegacySources(): Promise<
+    MissionControlLegacyProjectSource[]
+  > {
+    const sessionIds = new Set([
+      ...this.sessions.keys(),
+      ...this.productStates.keys(),
+    ]);
+    const sources: MissionControlLegacyProjectSource[] = [];
+    for (const sessionId of [...sessionIds].sort()) {
+      const productState = this.productStates.get(sessionId);
+      const session = this.sessions.get(sessionId);
+      const product =
+        session !== undefined &&
+        typeof session.state.product === "object" &&
+        session.state.product !== null &&
+        Array.isArray(session.state.product) === false
+          ? (session.state.product as Record<string, unknown>)
+          : undefined;
+      if (productState === undefined && product?.projectSnapshot === undefined) {
+        continue;
+      }
+      const snapshot =
+        productState === undefined
+          ? readProjectSnapshotFromRuntimeState(session?.state ?? {})
+          : normalizeProjectSnapshot(productState.projectSnapshot);
+      const projectPath = snapshot.setup.workspaceRoot.trim();
+      sources.push({
+        sourceId: `session:${sessionId}`,
+        kind: "session_snapshot",
+        sessionId,
+        sourceVersion: productState?.version ?? session?.version ?? 0,
+        ...(projectPath.length === 0 ? {} : { projectPath }),
+        snapshot,
+      });
+    }
+    return structuredClone(sources);
+  }
+
+  async listMissionControlMigrationSourceBindings(): Promise<
+    MissionControlMigrationSourceBinding[]
+  > {
+    return structuredClone(
+      [...this.missionControlMigrationBindings.values()].sort((left, right) =>
+        left.sourceId.localeCompare(right.sourceId)
+      ),
+    );
+  }
+
   async updateMissionControlProjectState(
     input: MissionControlProjectMutationInput,
   ): Promise<MissionControlProjectMutationResult> {
@@ -211,6 +268,40 @@ export class InMemorySessionStore implements SessionStore {
       expectedRevision,
     );
 
+    let migrationSourceClaim:
+      | MissionControlMigrationSourceBinding
+      | undefined;
+    if (input.migrationSourceClaim !== undefined) {
+      const sourceId = requireMissionControlActionId(
+        input.migrationSourceClaim.sourceId,
+      );
+      const sourceFingerprint = requireMissionControlMigrationFingerprint(
+        input.migrationSourceClaim.sourceFingerprint,
+      );
+      const priorBinding = this.missionControlMigrationBindings.get(sourceId);
+      if (
+        priorBinding !== undefined &&
+        (priorBinding.projectId !== projectId ||
+          priorBinding.sourceFingerprint !== sourceFingerprint)
+      ) {
+        throw new Error(
+          `Mission Control legacy source ${sourceId} is bound to another project or source version.`,
+        );
+      }
+      migrationSourceClaim = priorBinding ?? {
+        sourceId,
+        projectId,
+        sourceFingerprint,
+        actionId,
+        boundAt: input.migrationSourceClaim.boundAt,
+      };
+    }
+    const releases = (input.releaseMigrationSourceClaims ?? []).map(
+      (sourceId) => requireMissionControlActionId(sourceId),
+    );
+    if (new Set(releases).size !== releases.length) {
+      throw new Error("Mission Control migration source releases must be unique.");
+    }
     const transition = input.apply(structuredClone(current.document));
     const document = parseMissionControlProjectDocument(
       transition.document,
@@ -254,6 +345,18 @@ export class InMemorySessionStore implements SessionStore {
     });
     this.missionControlReceipts.set(projectId, nextReceipts);
     this.missionControlOutbox.push(...structuredClone(effects));
+    if (migrationSourceClaim !== undefined) {
+      this.missionControlMigrationBindings.set(
+        migrationSourceClaim.sourceId,
+        structuredClone(migrationSourceClaim),
+      );
+    }
+    for (const sourceId of releases) {
+      const binding = this.missionControlMigrationBindings.get(sourceId);
+      if (binding?.projectId === projectId) {
+        this.missionControlMigrationBindings.delete(sourceId);
+      }
+    }
 
     return {
       ...structuredClone(result),

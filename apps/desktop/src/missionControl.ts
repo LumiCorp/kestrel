@@ -1,8 +1,13 @@
 import { parseTaskAction } from "../../../src/missionControl/contracts.js";
 import {
   parseMissionControlProjectStateRecord,
+  requireMissionControlExpectedRevision,
   requireMissionControlProjectId,
 } from "../../../src/missionControl/projectAuthority.js";
+import {
+  requireMissionControlMigrationFingerprint,
+  type MissionControlMigrationProjectRegistration,
+} from "../../../src/missionControl/migrationContracts.js";
 import { parseProductProjectBoardAction } from "../../../src/project/contracts.js";
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
 import type {
@@ -24,6 +29,7 @@ import type {
   DesktopThreadWorkspaceContext,
   DesktopOperatorControlRequest,
   DesktopMissionControlProjectResponse,
+  DesktopMissionControlMigrationIntent,
 } from "./contracts.js";
 import { createDesktopError } from "./errors.js";
 
@@ -67,6 +73,187 @@ export async function getDesktopMissionControlProject(input: {
       message: "Runner returned an invalid Mission Control project document.",
       details: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+export async function executeDesktopMissionControlMigration(input: {
+  adapter: Pick<WebRunnerAdapter, "sendControl">;
+  intent: unknown;
+  registrations: MissionControlMigrationProjectRegistration[];
+  actionId: string;
+  actionTs: string;
+  context: WebRunnerRequestContext;
+}): Promise<DesktopMissionControlProjectResponse> {
+  let intent: DesktopMissionControlMigrationIntent;
+  try {
+    intent = parseDesktopMissionControlMigrationIntent(input.intent);
+  } catch (error) {
+    throw createDesktopError({
+      code: "desktop.invalid_mission_control_migration_intent",
+      message: "Desktop Mission Control migration request is invalid.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+  const registration = input.registrations.find(
+    (candidate) => candidate.projectId === intent.projectId,
+  );
+  if (registration === undefined) {
+    throw createDesktopError({
+      code: "desktop.unregistered_mission_control_project",
+      message: "Desktop Mission Control migration requires a registered project.",
+    });
+  }
+  const base = {
+    projectId: intent.projectId,
+    actionId: input.actionId,
+    actionTs: input.actionTs,
+    expectedRevision: intent.expectedRevision,
+  };
+  const action =
+    intent.type === "stage"
+      ? { ...base, type: "migration.stage", registrations: input.registrations }
+      : intent.type === "rebind"
+        ? {
+            ...base,
+            type: "migration.rebind",
+            registrations: input.registrations,
+            sourceId: intent.sourceId,
+            sourceFingerprint: intent.sourceFingerprint,
+            operatorId: "desktop-operator",
+          }
+        : intent.type === "resolve"
+          ? {
+              ...base,
+              type: "migration.resolve",
+              registrations: input.registrations,
+              operatorId: "desktop-operator",
+              resolution: intent.resolution,
+            }
+          : {
+              ...base,
+              type: "migration.clear",
+              operatorId: "desktop-operator",
+            };
+  const event = await input.adapter.sendControl(
+    { type: "mission_control.migration.execute", action },
+    input.context,
+  );
+  if (event.type !== "mission_control.project") {
+    throw createDesktopError({
+      code: "desktop.mission_control_migration_unexpected_response",
+      message: `Runner returned '${event.type}' for mission_control.migration.execute.`,
+    });
+  }
+  try {
+    const project = parseMissionControlProjectStateRecord(event.payload.project);
+    if (
+      event.payload.projectId !== intent.projectId ||
+      project.projectId !== intent.projectId
+    ) {
+      throw new Error("Mission Control migration response identity did not match.");
+    }
+    return { projectId: intent.projectId, project };
+  } catch (error) {
+    throw createDesktopError({
+      code: "desktop.mission_control_migration_invalid_response",
+      message: "Runner returned an invalid migrated Mission Control project.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export function parseDesktopMissionControlMigrationIntent(
+  value: unknown,
+): DesktopMissionControlMigrationIntent {
+  const record = requireObject(value, "Mission Control migration intent");
+  const type = requireText(record.type, "type");
+  const base = {
+    projectId: requireMissionControlProjectId(record.projectId),
+    expectedRevision: requireMissionControlExpectedRevision(
+      record.expectedRevision,
+    ),
+  };
+  if (type === "stage" || type === "clear") {
+    requireExactKeys(record, ["type", "projectId", "expectedRevision"]);
+    return { ...base, type };
+  }
+  if (type === "rebind") {
+    requireExactKeys(record, [
+      "type",
+      "projectId",
+      "expectedRevision",
+      "sourceId",
+      "sourceFingerprint",
+    ]);
+    return {
+      ...base,
+      type,
+      sourceId: requireText(record.sourceId, "sourceId"),
+      sourceFingerprint: requireMissionControlMigrationFingerprint(
+        record.sourceFingerprint,
+      ),
+    };
+  }
+  if (type === "resolve") {
+    requireExactKeys(record, [
+      "type",
+      "projectId",
+      "expectedRevision",
+      "resolution",
+    ]);
+    const resolution = requireObject(record.resolution, "resolution");
+    if (resolution.type === "source") {
+      requireExactKeys(resolution, ["type", "candidateId"]);
+      return {
+        ...base,
+        type,
+        resolution: {
+          type: "source",
+          candidateId: requireMissionControlMigrationFingerprint(
+            resolution.candidateId,
+          ),
+        },
+      };
+    }
+    if (resolution.type === "merged") {
+      requireExactKeys(resolution, ["type", "document"]);
+      return {
+        ...base,
+        type,
+        resolution: { type: "merged", document: resolution.document },
+      };
+    }
+    throw new Error("resolution.type is invalid.");
+  }
+  throw new Error(`Unsupported Mission Control migration intent: ${type}.`);
+}
+
+function requireObject(
+  value: unknown,
+  field: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${field} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireText(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function requireExactKeys(
+  value: Record<string, unknown>,
+  keys: string[],
+): void {
+  const allowed = new Set(keys);
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
+  const missing = keys.filter((key) => !(key in value));
+  if (unexpected.length > 0 || missing.length > 0) {
+    throw new Error("Mission Control migration intent fields are invalid.");
   }
 }
 

@@ -23,6 +23,7 @@ import type {
   OperatorRunReasoningCommandPayload,
   OperatorRunsCommandPayload,
   OperatorThreadCommandPayload,
+  MissionControlMigrationExecuteCommandPayload,
   MissionControlProjectGetCommandPayload,
   ProfileGetCommandPayload,
   ProfileListCommandPayload,
@@ -447,6 +448,15 @@ export class CommandRouter {
         await this.host.missionControlProjectGet(
           command.id,
           validateMissionControlProjectGetPayload(command.payload),
+          command.metadata
+        );
+        return;
+      }
+
+      if (command.type === "mission_control.migration.execute") {
+        await this.host.missionControlMigrationExecute(
+          command.id,
+          validateMissionControlMigrationExecutePayload(command.payload),
           command.metadata
         );
         return;
@@ -1241,6 +1251,25 @@ function validateMissionControlProjectGetPayload(
       "mission_control.project.get payload.projectId"
     ),
   };
+}
+
+function validateMissionControlMigrationExecutePayload(
+  payload: unknown
+): MissionControlMigrationExecuteCommandPayload {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("mission_control.migration.execute payload must be an object");
+  }
+  const record = payload as Record<string, unknown>;
+  if (
+    typeof record.action !== "object" ||
+    record.action === null ||
+    Array.isArray(record.action)
+  ) {
+    throw new Error(
+      "mission_control.migration.execute payload.action must be an object"
+    );
+  }
+  return { action: record.action as Record<string, unknown> };
 }
 
 function validateProjectSnapshotUpdatePayload(

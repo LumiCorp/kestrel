@@ -69,6 +69,7 @@ export const RUNNER_COMMAND_TYPES = [
   "workspace.git.inspect",
   "workspace.git.action",
   "mission_control.project.get",
+  "mission_control.migration.execute",
   "project.snapshot.get",
   "project.snapshot.update",
   "project.action",
@@ -993,6 +994,10 @@ export interface MissionControlProjectGetCommandPayload {
   projectId: string;
 }
 
+export interface MissionControlMigrationExecuteCommandPayload {
+  action: Record<string, unknown>;
+}
+
 export interface ProjectSnapshotGetCommandPayload {
   sessionId: string;
 }
@@ -1076,6 +1081,7 @@ export interface RunnerCommandPayloadByType {
   "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
   "workspace.git.action": WorkspaceGitActionCommandPayload;
   "mission_control.project.get": MissionControlProjectGetCommandPayload;
+  "mission_control.migration.execute": MissionControlMigrationExecuteCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;
@@ -1654,6 +1660,7 @@ export interface RunnerResponseByCommandType {
   "workspace.git.inspect": RunnerEventEnvelope<"workspace.git">;
   "workspace.git.action": RunnerEventEnvelope<"workspace.git">;
   "mission_control.project.get": RunnerEventEnvelope<"mission_control.project">;
+  "mission_control.migration.execute": RunnerEventEnvelope<"mission_control.project">;
   "project.snapshot.get": RunnerEventEnvelope<"project.snapshot">;
   "project.snapshot.update": RunnerEventEnvelope<"project.snapshot">;
   "project.action": RunnerEventEnvelope<"project.snapshot">;
@@ -1718,6 +1725,7 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "workspace.git.inspect": ["workspace.git"],
   "workspace.git.action": ["workspace.git"],
   "mission_control.project.get": ["mission_control.project"],
+  "mission_control.migration.execute": ["mission_control.project"],
   "project.snapshot.get": ["project.snapshot"],
   "project.snapshot.update": ["project.snapshot"],
   "project.action": ["project.snapshot"],
@@ -2006,6 +2014,18 @@ function parseRunnerCommandPayloadV2(
       break;
     case "mission_control.project.get":
       requireNonEmptyString(payload.projectId, `${label}.projectId`);
+      break;
+    case "mission_control.migration.execute":
+      rejectUnknownFields(payload, label, ["action"]);
+      if (
+        typeof payload.action !== "object" ||
+        payload.action === null ||
+        Array.isArray(payload.action)
+      ) {
+        throw new RunnerProtocolContractError(
+          `${label}.action must be an object`,
+        );
+      }
       break;
     case "operator.inbox":
       validateOptionalNonEmptyString(payload.sessionId, `${label}.sessionId`);

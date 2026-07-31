@@ -3395,29 +3395,35 @@ contractTest("runtime.process", "task graph commands emit graph snapshots throug
   await host.close();
 });
 
-contractTest("runtime.process", "Mission Control project reads preserve the exact registered UUID through the runner", async () => {
+contractTest("runtime.process", "Mission Control project reads and migration commands preserve exact project identity", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const projectId = "11111111-1111-4111-8111-111111111111";
+  const migrationActions: unknown[] = [];
+  const project = (inputProjectId: string) => ({
+    projectId: inputProjectId,
+    schemaVersion: 1 as const,
+    revision: 0,
+    authorityEpoch: 0,
+    document: {
+      schemaVersion: 1 as const,
+      projectId: inputProjectId,
+      autopilot: { enabled: false, wipLimit: 1 },
+      items: {},
+      history: [],
+    },
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  });
   const host = new RunnerHost(writer, () => ({
     runTurn: async () => {
       throw new Error("not used");
     },
-    getMissionControlProject: async (input) => ({
-      projectId: input.projectId,
-      schemaVersion: 1,
-      revision: 0,
-      authorityEpoch: 0,
-      document: {
-        schemaVersion: 1,
-        projectId: input.projectId,
-        autopilot: { enabled: false, wipLimit: 1 },
-        items: {},
-        history: [],
-      },
-      createdAt: "1970-01-01T00:00:00.000Z",
-      updatedAt: "1970-01-01T00:00:00.000Z",
-    }),
+    getMissionControlProject: async (input) => project(input.projectId),
+    executeMissionControlMigration: async (input) => {
+      migrationActions.push(input.action);
+      return project(String(input.action.projectId));
+    },
     getToolRuntimeStatus: async () => ({
       healthy: true,
       checkedAt: new Date().toISOString(),
@@ -3464,6 +3470,28 @@ contractTest("runtime.process", "Mission Control project reads preserve the exac
     (event?.payload.project as { projectId?: string } | undefined)?.projectId,
     projectId,
   );
+  events.length = 0;
+  const migrationAction = {
+    type: "migration.stage",
+    projectId,
+    actionId: "migration-action",
+    actionTs: "2026-07-31T12:00:00.000Z",
+    expectedRevision: 0,
+    registrations: [{
+      projectId,
+      path: "/workspace/kestrel",
+      previousPaths: [],
+    }],
+  };
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-mission-control-migration",
+    type: "mission_control.migration.execute",
+    payload: { action: migrationAction },
+  }));
+  await tick();
+  assert.deepEqual(migrationActions, [migrationAction]);
+  assert.equal(events[0]?.type, "mission_control.project");
+  assert.equal(events[0]?.payload.projectId, projectId);
   rl.close();
   await host.close();
 });

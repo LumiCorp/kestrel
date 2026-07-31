@@ -75,6 +75,8 @@ export * from "./project/workspace.js";
 export * from "./missionControl/contracts.js";
 export * from "./missionControl/queue.js";
 export * from "./missionControl/projectAuthority.js";
+export * from "./missionControl/migrationContracts.js";
+export * from "./missionControl/migrationAuthority.js";
 export * from "./missionControl/executionAuthority.js";
 export * from "./missionControl/executionRuntime.js";
 export * from "./profile/modelPolicy.js";

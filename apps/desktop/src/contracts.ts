@@ -524,6 +524,9 @@ export interface DesktopBridge {
   getMissionControlProject(
     projectId: string,
   ): Promise<DesktopMissionControlProjectResponse>;
+  executeMissionControlMigration(
+    intent: DesktopMissionControlMigrationIntent,
+  ): Promise<DesktopMissionControlProjectResponse>;
   getProjectSnapshot(
     sessionId: string,
   ): Promise<DesktopProjectSnapshotResponse>;
@@ -739,3 +742,30 @@ export interface DesktopMissionControlProjectResponse {
   projectId: string;
   project: MissionControlProjectStateRecord;
 }
+
+export type DesktopMissionControlMigrationIntent =
+  | {
+      type: "stage";
+      projectId: string;
+      expectedRevision: number;
+    }
+  | {
+      type: "rebind";
+      projectId: string;
+      expectedRevision: number;
+      sourceId: string;
+      sourceFingerprint: string;
+    }
+  | {
+      type: "resolve";
+      projectId: string;
+      expectedRevision: number;
+      resolution:
+        | { type: "source"; candidateId: string }
+        | { type: "merged"; document: unknown };
+    }
+  | {
+      type: "clear";
+      projectId: string;
+      expectedRevision: number;
+    };

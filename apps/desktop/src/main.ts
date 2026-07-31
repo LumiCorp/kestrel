@@ -1,7 +1,7 @@
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -192,6 +192,7 @@ import { WorkspaceSkillManager } from "../../../src/skills/WorkspaceSkillStore.j
 import type { WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
 import {
+  executeDesktopMissionControlMigration,
   getDesktopMissionControlProject,
   getDesktopProjectSnapshot,
   getDesktopOperatorRun,
@@ -3063,6 +3064,29 @@ function registerIpcHandlers(
       getDesktopMissionControlProject({
         adapter: requireDesktopRunnerAdapter(runnerTransport),
         projectId,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  );
+  ipcMain.handle(
+    "desktop:execute-mission-control-migration",
+    async (_event, intent: unknown) =>
+      executeDesktopMissionControlMigration({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        intent,
+        registrations: desktopSettings.projects
+          .filter(
+            (project): project is DesktopProjectRegistration & { id: string } =>
+              project.id !== undefined,
+          )
+          .map((project) => ({
+            projectId: project.id,
+            path: path.resolve(project.path),
+            previousPaths: desktopSettings.projectTombstones
+              .filter((tombstone) => tombstone.id === project.id)
+              .map((tombstone) => path.resolve(tombstone.path)),
+          })),
+        actionId: randomUUID(),
+        actionTs: new Date().toISOString(),
         context: DESKTOP_RUNNER_REQUEST_CONTEXT,
       }),
   );

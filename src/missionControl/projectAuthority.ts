@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 
 import type { MissionControlProjectRepository } from "../kestrel/contracts/store.js";
 import {
+  parseMissionControlMigrationState,
+  type MissionControlMigrationState,
+} from "./migrationContracts.js";
+import {
   parseMissionControlCompletionContract,
   parseMissionControlReviewBundle,
   parseMissionControlReviewDecision,
@@ -126,7 +130,11 @@ export type MissionControlHistoryActionType =
   | "execution.retry"
   | "review.admit"
   | "review.accept"
-  | "review.request_changes";
+  | "review.request_changes"
+  | "migration.stage"
+  | "migration.rebind"
+  | "migration.resolve"
+  | "migration.clear";
 
 export interface MissionControlHistoryEntry {
   actionId: string;
@@ -148,6 +156,7 @@ export interface MissionControlProjectDocument {
   };
   items: Record<string, MissionControlWorkItem>;
   history: MissionControlHistoryEntry[];
+  migration?: MissionControlMigrationState | undefined;
 }
 
 export interface MissionControlProjectStateRecord {
@@ -191,6 +200,12 @@ export interface MissionControlProjectMutationInput {
   actionId: string;
   requestFingerprint: string;
   expectedRevision: number;
+  migrationSourceClaim?: {
+    sourceId: string;
+    sourceFingerprint: string;
+    boundAt: string;
+  } | undefined;
+  releaseMigrationSourceClaims?: string[] | undefined;
   apply: (current: MissionControlProjectDocument) => {
     document: MissionControlProjectDocument;
     effects: MissionControlOutboxIntent[];
@@ -467,6 +482,7 @@ export function parseMissionControlProjectDocument(
     "autopilot",
     "items",
     "history",
+    "migration",
   ]);
   if (record.schemaVersion !== MISSION_CONTROL_PROJECT_SCHEMA_VERSION) {
     throw new Error(
@@ -518,6 +534,9 @@ export function parseMissionControlProjectDocument(
     },
     items,
     history,
+    ...(record.migration === undefined
+      ? {}
+      : { migration: parseMissionControlMigrationState(record.migration) }),
   };
 }
 
@@ -1501,7 +1520,11 @@ function requireHistoryActionType(value: string): MissionControlHistoryActionTyp
     value !== "execution.retry" &&
     value !== "review.admit" &&
     value !== "review.accept" &&
-    value !== "review.request_changes"
+    value !== "review.request_changes" &&
+    value !== "migration.stage" &&
+    value !== "migration.rebind" &&
+    value !== "migration.resolve" &&
+    value !== "migration.clear"
   ) {
     throw new Error(`Unsupported Mission Control history action: ${value}.`);
   }

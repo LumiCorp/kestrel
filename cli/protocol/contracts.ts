@@ -282,6 +282,10 @@ export interface MissionControlProjectGetCommandPayload {
   projectId: string;
 }
 
+export interface MissionControlMigrationExecuteCommandPayload {
+  action: Record<string, unknown>;
+}
+
 export interface ProjectSnapshotGetCommandPayload {
   sessionId: string;
 }
@@ -518,6 +522,7 @@ export interface RunnerCommandPayloadByType {
   "workspace.git.inspect": WorkspaceGitInspectCommandPayload;
   "workspace.git.action": WorkspaceGitActionCommandPayload;
   "mission_control.project.get": MissionControlProjectGetCommandPayload;
+  "mission_control.migration.execute": MissionControlMigrationExecuteCommandPayload;
   "project.snapshot.get": ProjectSnapshotGetCommandPayload;
   "project.snapshot.update": ProjectSnapshotUpdateCommandPayload;
   "project.action": ProjectActionCommandPayload;

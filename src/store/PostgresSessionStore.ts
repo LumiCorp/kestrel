@@ -82,6 +82,11 @@ import {
   readProjectSnapshotFromRuntimeState,
 } from "../project/state.js";
 import type { ProductProjectSnapshot } from "../project/contracts.js";
+import type {
+  MissionControlLegacyProjectSource,
+  MissionControlMigrationSourceBinding,
+} from "../missionControl/migrationContracts.js";
+import { requireMissionControlMigrationFingerprint } from "../missionControl/migrationContracts.js";
 import {
   MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
   assertMissionControlExpectedRevision,
@@ -170,6 +175,14 @@ type MissionControlOutboxRow = Record<string, unknown> & {
   attempt_count: number | string;
   last_error: string | null;
   created_at: unknown;
+};
+
+type MissionControlMigrationBindingRow = Record<string, unknown> & {
+  source_id: string;
+  project_id: string;
+  source_fingerprint: string;
+  action_id: string;
+  bound_at: unknown;
 };
 
 function readMissionControlRunCorrelation(value: unknown) {
@@ -460,6 +473,77 @@ export class PostgresSessionStore implements SessionStore {
     return row === undefined ? null : this.mapMissionControlProjectRow(row);
   }
 
+  async listMissionControlLegacySources(): Promise<
+    MissionControlLegacyProjectSource[]
+  > {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<
+      Record<string, unknown> & {
+        session_id: string;
+        current_version: number | string;
+        current_state_json: Record<string, unknown> | null;
+        product_version: number | string | null;
+        project_snapshot_json: Record<string, unknown> | null;
+      }
+    >(
+      `SELECT sessions.session_id,
+              sessions.current_version,
+              sessions.current_state_json,
+              session_product_state.version AS product_version,
+              session_product_state.project_snapshot_json
+         FROM sessions
+         LEFT JOIN session_product_state
+           ON session_product_state.session_id = sessions.session_id
+        ORDER BY sessions.session_id ASC`,
+    );
+    const sources: MissionControlLegacyProjectSource[] = [];
+    for (const row of result.rows) {
+      const snapshot =
+        row.project_snapshot_json === null
+          ? readProjectSnapshotFromRuntimeState(row.current_state_json ?? {})
+          : normalizeProjectSnapshot(row.project_snapshot_json);
+      const hasDedicated = row.project_snapshot_json !== null;
+      const state = this.asRecord(row.current_state_json) ?? {};
+      const product = this.asRecord(state.product) ?? {};
+      if (hasDedicated === false && product.projectSnapshot === undefined) {
+        continue;
+      }
+      const projectPath = snapshot.setup.workspaceRoot.trim();
+      sources.push({
+        sourceId: `session:${row.session_id}`,
+        kind: "session_snapshot",
+        sessionId: row.session_id,
+        sourceVersion: this.normalizeSafeInteger(
+          hasDedicated ? (row.product_version ?? 0) : row.current_version,
+          "Mission Control legacy source version",
+        ),
+        ...(projectPath.length === 0 ? {} : { projectPath }),
+        snapshot,
+      });
+    }
+    return sources;
+  }
+
+  async listMissionControlMigrationSourceBindings(): Promise<
+    MissionControlMigrationSourceBinding[]
+  > {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<MissionControlMigrationBindingRow>(
+      `SELECT source_id, project_id, source_fingerprint, action_id, bound_at
+         FROM mission_control_migration_source_bindings
+        ORDER BY source_id ASC`,
+    );
+    return result.rows.map((row) => ({
+      sourceId: row.source_id,
+      projectId: requireMissionControlProjectId(row.project_id),
+      sourceFingerprint: requireMissionControlMigrationFingerprint(
+        row.source_fingerprint,
+      ),
+      actionId: requireMissionControlActionId(row.action_id),
+      boundAt: normalizeTimestampString(row.bound_at),
+    }));
+  }
+
   async updateMissionControlProjectState(
     input: MissionControlProjectMutationInput,
   ): Promise<MissionControlProjectMutationResult> {
@@ -527,6 +611,59 @@ export class PostgresSessionStore implements SessionStore {
         current.revision,
         expectedRevision,
       );
+      if (input.migrationSourceClaim !== undefined) {
+        const sourceId = requireMissionControlActionId(
+          input.migrationSourceClaim.sourceId,
+        );
+        const sourceFingerprint = requireMissionControlMigrationFingerprint(
+          input.migrationSourceClaim.sourceFingerprint,
+        );
+        const boundAt = normalizeTimestampString(
+          input.migrationSourceClaim.boundAt,
+        );
+        await executor.query(
+          `INSERT INTO mission_control_migration_source_bindings (
+             source_id, project_id, source_fingerprint, action_id, bound_at
+           ) VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (source_id) DO NOTHING`,
+          [sourceId, projectId, sourceFingerprint, actionId, boundAt],
+        );
+        const bindingResult =
+          await executor.query<MissionControlMigrationBindingRow>(
+            `SELECT source_id, project_id, source_fingerprint, action_id, bound_at
+               FROM mission_control_migration_source_bindings
+              WHERE source_id = $1
+              FOR UPDATE`,
+            [sourceId],
+          );
+        const binding = bindingResult.rows[0];
+        if (
+          binding === undefined ||
+          binding.project_id !== projectId ||
+          binding.source_fingerprint !== sourceFingerprint
+        ) {
+          throw new Error(
+            `Mission Control legacy source ${sourceId} is bound to another project or source version.`,
+          );
+        }
+      }
+      if (input.releaseMigrationSourceClaims !== undefined) {
+        const sourceIds = input.releaseMigrationSourceClaims.map((sourceId) =>
+          requireMissionControlActionId(sourceId)
+        );
+        if (new Set(sourceIds).size !== sourceIds.length) {
+          throw new Error(
+            "Mission Control migration source releases must be unique.",
+          );
+        }
+        for (const sourceId of sourceIds) {
+          await executor.query(
+            `DELETE FROM mission_control_migration_source_bindings
+              WHERE source_id = $1 AND project_id = $2`,
+            [sourceId, projectId],
+          );
+        }
+      }
       const transition = input.apply(structuredClone(current.document));
       const document = parseMissionControlProjectDocument(
         transition.document,

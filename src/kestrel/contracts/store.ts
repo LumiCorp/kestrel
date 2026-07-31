@@ -9,6 +9,10 @@ import type {
   MissionControlProjectStateRecord,
 } from "../../missionControl/projectAuthority.js";
 import type {
+  MissionControlLegacyProjectSource,
+  MissionControlMigrationSourceBinding,
+} from "../../missionControl/migrationContracts.js";
+import type {
   WorkspaceCheckpointDetail,
   WorkspaceCheckpointKind,
   WorkspaceCheckpointRole,
@@ -386,6 +390,10 @@ export interface MissionControlProjectRepository {
   updateMissionControlProjectState(
     input: MissionControlProjectMutationInput,
   ): Promise<MissionControlProjectMutationResult>;
+  listMissionControlLegacySources?(): Promise<MissionControlLegacyProjectSource[]>;
+  listMissionControlMigrationSourceBindings?(): Promise<
+    MissionControlMigrationSourceBinding[]
+  >;
   listMissionControlOutbox(
     projectId: string,
   ): Promise<MissionControlOutboxRecord[]>;

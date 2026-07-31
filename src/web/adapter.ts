@@ -962,6 +962,23 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
         return response;
       }
 
+      if (command.type === "mission_control.migration.execute") {
+        const response = await sendCommand(
+          activeClient,
+          "mission_control.migration.execute",
+          { action: command.action },
+          metadata,
+        );
+        if (response.type !== "mission_control.project") {
+          throw createRuntimeFailure(
+            "WEB_ADAPTER_UNEXPECTED_MISSION_CONTROL_PROJECT_RESPONSE",
+            `Unexpected Mission Control migration response '${response.type}'.`,
+            { responseType: response.type },
+          );
+        }
+        return response;
+      }
+
       if (command.type === "project.snapshot.get") {
         const response = await sendCommand(activeClient, "project.snapshot.get", {
           sessionId: command.sessionId,
