@@ -84,7 +84,9 @@ export const codeExecuteTool: SharedToolModule = {
     return async (input: unknown) => {
       const request = parseCodeExecutionRequest(input);
       const profileConfig = mergeCodeModeConfig(context.codeMode);
-      const result = await service.execute(profileConfig, request);
+      const result = await service.execute(profileConfig, request, {
+        signal: context.signal,
+      });
       return result;
     };
   },

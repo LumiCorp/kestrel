@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -33,12 +33,26 @@ const IGNORED_ARTIFACT_DIRS = new Set([
 ]);
 
 export class DockerUnavailableError extends Error {}
+export class DockerSandboxCancellationError extends Error {}
+
+export interface DockerSandboxExecutorOptions {
+  containerNameFactory?: (() => string) | undefined;
+}
 
 export class DockerSandboxExecutor implements SandboxExecutor {
+  private readonly containerNameFactory: () => string;
+
+  constructor(options: DockerSandboxExecutorOptions = {}) {
+    this.containerNameFactory =
+      options.containerNameFactory ?? (() => `kestrel-code-${randomUUID()}`);
+  }
+
   async execute(input: SandboxExecutionInput): Promise<SandboxExecutionOutput> {
+    throwIfCancelled(input.signal);
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-code-"));
     const workspaceDir = path.join(rootDir, "workspace");
     const mainFile = LANGUAGE_MAIN_FILE[input.request.language];
+    const containerName = this.containerNameFactory();
 
     await mkdir(workspaceDir, { recursive: true });
 
@@ -47,10 +61,30 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     await writeFile(path.join(workspaceDir, mainFile), input.request.code, "utf8");
 
     try {
+      throwIfCancelled(input.signal);
       const startedAt = Date.now();
-      const command = buildDockerCommand(input, workspaceDir, mainFile);
-      const run = await runDockerCommand(command, input.policy.timeoutMs, input.policy.maxOutputBytes);
+      const command = buildDockerCommand(
+        input,
+        workspaceDir,
+        mainFile,
+        containerName,
+      );
+      const run = await runDockerCommand(
+        command,
+        input.policy.timeoutMs,
+        input.policy.maxOutputBytes,
+        {
+          containerName,
+          signal: input.signal,
+        },
+      );
       const durationMs = Date.now() - startedAt;
+
+      if (run.cancelled) {
+        throw new DockerSandboxCancellationError(
+          "Docker sandbox execution was cancelled",
+        );
+      }
 
       const artifacts = await collectArtifacts({
         workspaceDir,
@@ -129,7 +163,12 @@ function sanitizeRelativePath(value: string): string | undefined {
   return candidate;
 }
 
-function buildDockerCommand(input: SandboxExecutionInput, workspaceDir: string, mainFile: string): string[] {
+function buildDockerCommand(
+  input: SandboxExecutionInput,
+  workspaceDir: string,
+  mainFile: string,
+  containerName: string,
+): string[] {
   const image = LANGUAGE_IMAGE[input.request.language];
   const commandScript = buildCommandScript(input.request.language, mainFile, input.request.dependencies ?? [], input.request.args ?? []);
 
@@ -137,10 +176,18 @@ function buildDockerCommand(input: SandboxExecutionInput, workspaceDir: string, 
     "run",
     "--rm",
     "--init",
+    "--name",
+    containerName,
     "--memory",
     `${input.policy.memoryMb}m`,
     "--cpu-shares",
     String(input.policy.cpuShares),
+    "--pids-limit",
+    String(input.policy.pidsLimit),
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
     "--network",
     input.policy.network === "off" ? "none" : "bridge",
     "--volume",
@@ -220,25 +267,58 @@ async function runDockerCommand(
   args: string[],
   timeoutMs: number,
   maxOutputBytes: number,
+  options: {
+    containerName: string;
+    signal?: AbortSignal | undefined;
+  },
 ): Promise<{
   exitCode: number | null;
   timedOut: boolean;
+  cancelled: boolean;
   stdout: string;
   stderr: string;
 }> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted === true) {
+      reject(
+        new DockerSandboxCancellationError(
+          "Docker sandbox execution was cancelled",
+        ),
+      );
+      return;
+    }
+
     const child = spawn("docker", args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
     let stdout = "";
     let stderr = "";
-    let timedOut = false;
+    let termination: "timeout" | "cancelled" | undefined;
+    let terminationPromise: Promise<void> | undefined;
+    let settling = false;
+
+    const requestTermination = (reason: "timeout" | "cancelled") => {
+      if (termination !== undefined) {
+        return;
+      }
+      termination = reason;
+      child.kill("SIGKILL");
+      terminationPromise = killAndRemoveContainer(options.containerName);
+    };
 
     const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
+      requestTermination("timeout");
     }, timeoutMs);
+    const onAbort = () => {
+      requestTermination("cancelled");
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+
+    const stopListening = () => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+    };
 
     child.stdout.on("data", (chunk: Buffer | string) => {
       stdout = appendBounded(stdout, String(chunk), maxOutputBytes);
@@ -249,7 +329,11 @@ async function runDockerCommand(
     });
 
     child.on("error", (error) => {
-      clearTimeout(timer);
+      if (settling) {
+        return;
+      }
+      settling = true;
+      stopListening();
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         reject(new DockerUnavailableError("docker command is not available"));
         return;
@@ -258,15 +342,59 @@ async function runDockerCommand(
     });
 
     child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({
-        exitCode: code,
-        timedOut,
-        stdout,
-        stderr,
-      });
+      if (settling) {
+        return;
+      }
+      settling = true;
+      stopListening();
+      void (async () => {
+        await terminationPromise;
+        resolve({
+          exitCode: code,
+          timedOut: termination === "timeout",
+          cancelled: termination === "cancelled",
+          stdout,
+          stderr,
+        });
+      })();
     });
   });
+}
+
+async function killAndRemoveContainer(containerName: string): Promise<void> {
+  await runDockerLifecycleCommand(["kill", containerName]);
+  await runDockerLifecycleCommand(["rm", "--force", containerName]);
+}
+
+async function runDockerLifecycleCommand(args: string[]): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const child = spawn("docker", args, {
+      stdio: "ignore",
+    });
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish();
+    }, 5_000);
+    child.once("error", finish);
+    child.once("close", finish);
+  });
+}
+
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) {
+    throw new DockerSandboxCancellationError(
+      "Docker sandbox execution was cancelled",
+    );
+  }
 }
 
 function appendBounded(value: string, append: string, maxBytes: number): string {

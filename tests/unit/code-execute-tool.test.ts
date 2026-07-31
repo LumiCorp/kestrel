@@ -14,11 +14,14 @@ import { contractTest } from "../helpers/contract-test.js";
 contractTest("runtime.hermetic", "code.execute forwards parsed request to execution service", async () => {
   let capturedConfig: CodeModeProfileConfig | undefined;
   let capturedRequest: CodeExecutionRequest | undefined;
+  let capturedSignal: AbortSignal | undefined;
+  const controller = new AbortController();
 
   const service: CodeExecutionServicePort = {
-    async execute(config, request): Promise<CodeExecutionResult> {
+    async execute(config, request, options): Promise<CodeExecutionResult> {
       capturedConfig = config;
       capturedRequest = request;
+      capturedSignal = options?.signal;
       return {
         status: "ok",
         exitCode: 0,
@@ -35,6 +38,7 @@ contractTest("runtime.hermetic", "code.execute forwards parsed request to execut
           timeoutMs: 1000,
           memoryMb: 256,
           cpuShares: 256,
+          pidsLimit: 64,
           network: "off",
           allowDependencyInstall: false,
           maxOutputBytes: 100,
@@ -52,6 +56,7 @@ contractTest("runtime.hermetic", "code.execute forwards parsed request to execut
   const handler = codeExecuteTool.createHandler({
     codeExecutionService: service,
     codeMode: DEFAULT_CODE_MODE_ENABLED_CONFIG,
+    signal: controller.signal,
   });
 
   const result = await handler({
@@ -66,6 +71,7 @@ contractTest("runtime.hermetic", "code.execute forwards parsed request to execut
   assert.equal(capturedRequest?.language, "javascript");
   assert.equal(capturedRequest?.timeoutMs, 1234);
   assert.deepEqual(capturedRequest?.args, ["--flag"]);
+  assert.equal(capturedSignal, controller.signal);
 });
 
 contractTest("runtime.hermetic", "code.execute rejects invalid inputs", async () => {

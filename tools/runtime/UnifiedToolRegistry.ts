@@ -582,10 +582,14 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const handlers = defaultToolCatalog.createHandlers(
         [name],
         options.console === undefined
-          ? activeContext
+          ? {
+              ...activeContext,
+              signal: options.signal,
+            }
           : {
               ...activeContext,
               toolConsole: options.console,
+              signal: options.signal,
             },
       );
       const builtIn = handlers[name];
@@ -603,7 +607,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         );
       }
 
-      const output = await builtIn(validatedInput);
+      let output: AgentToolResult;
+      try {
+        output = await builtIn(validatedInput);
+      } catch (error) {
+        this.throwIfAborted(options.signal);
+        throw error;
+      }
       this.throwIfAborted(options.signal);
       return await annotateWorkspaceSkillRead({
         toolName: name,

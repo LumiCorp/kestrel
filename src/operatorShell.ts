@@ -1349,7 +1349,7 @@ export function buildOperatorCodeWorkspace(input: {
   const sandboxSummary =
     policy === undefined
       ? "No sandbox policy configured"
-      : `${policy.sandbox.executor} timeout=${policy.sandbox.timeoutMs}ms memory=${policy.sandbox.memoryMb}MB network=${policy.sandbox.networkDefault}`;
+      : `${policy.sandbox.executor} timeout=${policy.sandbox.timeoutMs}ms memory=${policy.sandbox.memoryMb}MB pids=${policy.sandbox.pidsLimit ?? "default"} network=${policy.sandbox.networkDefault}`;
   const retentionSummary =
     policy === undefined
       ? "No retention policy configured"

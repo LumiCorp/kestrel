@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 
 import {
+  DEFAULT_CODE_MODE_SANDBOX,
   DEFAULT_CODE_MODE_ENABLED_CONFIG,
   type CodeExecutionRequest,
 } from "../../src/code/contracts.js";
-import { evaluateExecutionPolicy } from "../../src/code/PolicyEngine.js";
+import {
+  evaluateExecutionPolicy,
+  mergeCodeModeConfig,
+} from "../../src/code/PolicyEngine.js";
 import { contractTest } from "../helpers/contract-test.js";
 
 
@@ -83,4 +87,24 @@ contractTest("runtime.hermetic", "evaluateExecutionPolicy allows configured lang
   assert.equal(decision.policy.timeoutMs, 5000);
   assert.equal(decision.request.timeoutMs, 5000);
   assert.deepEqual(decision.request.dependencies, ["left-pad"]);
+});
+
+contractTest("runtime.hermetic", "code sandbox policy defaults and bounds omitted legacy PID limits", () => {
+  const legacy = mergeCodeModeConfig({
+    ...DEFAULT_CODE_MODE_ENABLED_CONFIG,
+    sandbox: {
+      ...DEFAULT_CODE_MODE_ENABLED_CONFIG.sandbox,
+      pidsLimit: undefined,
+    },
+  });
+  const oversized = mergeCodeModeConfig({
+    ...DEFAULT_CODE_MODE_ENABLED_CONFIG,
+    sandbox: {
+      ...DEFAULT_CODE_MODE_ENABLED_CONFIG.sandbox,
+      pidsLimit: 10_000,
+    },
+  });
+
+  assert.equal(legacy.sandbox.pidsLimit, DEFAULT_CODE_MODE_SANDBOX.pidsLimit);
+  assert.equal(oversized.sandbox.pidsLimit, 1024);
 });

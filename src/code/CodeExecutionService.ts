@@ -22,6 +22,7 @@ export class CodeExecutionService {
   async execute(
     config: CodeModeProfileConfig | undefined,
     request: CodeExecutionRequest,
+    options: { signal?: AbortSignal | undefined } = {},
   ): Promise<CodeExecutionResult> {
     const policyDecision = evaluateExecutionPolicy(config, request);
     if (policyDecision.ok === false) {
@@ -32,6 +33,7 @@ export class CodeExecutionService {
       const output = await this.executor.execute({
         request: policyDecision.request,
         policy: policyDecision.policy,
+        signal: options.signal,
       });
 
       return {
@@ -46,6 +48,9 @@ export class CodeExecutionService {
         retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
       };
     } catch (error) {
+      if (options.signal?.aborted === true) {
+        throw error;
+      }
       if (error instanceof DockerUnavailableError) {
         return {
           status: "runtime_unavailable",
