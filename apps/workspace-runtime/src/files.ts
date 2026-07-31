@@ -12,7 +12,7 @@ export async function readWorkspaceFile(
   workspaceRoot: string,
   requestedPath: string
 ): Promise<WorkspaceFile> {
-  const filePath = resolveWorkspacePath(workspaceRoot, requestedPath);
+  const filePath = await resolveWorkspacePath(workspaceRoot, requestedPath);
   try {
     const content = await readFile(filePath);
     return { content, revision: fileRevision(content) };
@@ -36,7 +36,7 @@ export async function writeWorkspaceFile(input: {
       "WORKSPACE_FILE_REVISION_REQUIRED"
     );
   }
-  const filePath = resolveWorkspacePath(input.workspaceRoot, input.requestedPath);
+  const filePath = await resolveWorkspacePath(input.workspaceRoot, input.requestedPath);
   const before = await readWorkspaceFile(
     input.workspaceRoot,
     input.requestedPath
