@@ -12,6 +12,7 @@ import termios
 import time
 
 ANSI_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+STATUS_PREFIX = "__KESTREL_PTY_STATUS__"
 
 
 def main() -> int:
@@ -20,6 +21,7 @@ def main() -> int:
     env = payload["env"]
     steps = payload["steps"]
     abort_patterns = payload.get("abortPatterns") or []
+    emit_status_events = bool(payload.get("emitStatusEvents", False))
 
     pid, master_fd = pty.fork()
     if pid == 0:
@@ -31,7 +33,7 @@ def main() -> int:
     transcript = ""
     visible_cursor = 0
     try:
-        for step in steps:
+        for step_index, step in enumerate(steps):
             step_abort_patterns = step.get("abortPatterns") or abort_patterns
             transcript, visible_cursor = wait_for_step(
                 pid=pid,
@@ -42,6 +44,11 @@ def main() -> int:
                 from_cursor=bool(step.get("fromCursor", False)),
                 visible_cursor=visible_cursor,
                 abort_patterns=step_abort_patterns,
+                timeout_seconds=step.get("timeoutSeconds"),
+            )
+            emit_status(
+                emit_status_events,
+                {"type": "step_matched", "stepIndex": step_index},
             )
             send_value = step.get("send")
             if send_value:
@@ -82,6 +89,7 @@ def main() -> int:
                 master_fd=master_fd,
                 transcript=transcript,
                 control_buffer=control_buffer,
+                emit_status_events=emit_status_events,
             )
     except Exception as error:
         terminate_child(pid)
@@ -124,17 +132,26 @@ def wait_for_step(
     from_cursor: bool,
     visible_cursor: int,
     abort_patterns,
+    timeout_seconds,
 ):
     matcher = re.compile(pattern) if regex else None
+    deadline = parse_step_deadline(timeout_seconds, pattern)
 
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"Timed out after {timeout_seconds} seconds waiting for {pattern!r}"
+            )
         waited_pid, status = poll_child(pid)
         if waited_pid == pid:
             transcript = drain_output(master_fd, transcript)
             raise RuntimeError(
                 f"TUI exited before matching {pattern!r} with status {status}\n{transcript}"
             )
-        ready, _, _ = select.select([master_fd], [], [], 0.1)
+        select_timeout = 0.1
+        if deadline is not None:
+            select_timeout = min(select_timeout, max(0.0, deadline - time.monotonic()))
+        ready, _, _ = select.select([master_fd], [], [], select_timeout)
         if ready:
             transcript += read_available(master_fd)
             visible = normalize_output(transcript)
@@ -169,16 +186,28 @@ def run_interactive_loop(
     master_fd: int,
     transcript: str,
     control_buffer: str,
+    emit_status_events: bool,
 ) -> str:
     stdin_fd = sys.stdin.fileno()
     stdin_eof = False
     terminate_requested = False
 
     while True:
-        waited_pid, _ = poll_child(pid)
+        waited_pid, status = poll_child(pid)
         if waited_pid == pid:
-            return drain_output(master_fd, transcript)
+            transcript = drain_output(master_fd, transcript)
+            emit_status(
+                emit_status_events,
+                {"type": "termination", "reason": "unexpected_child_exit", "status": status},
+            )
+            raise RuntimeError(
+                f"TUI exited before termination was requested with status {status}\n{transcript}"
+            )
         if terminate_requested:
+            emit_status(
+                emit_status_events,
+                {"type": "termination", "reason": "requested"},
+            )
             request_interrupt(master_fd)
             return drain_output(master_fd, transcript)
 
@@ -223,6 +252,30 @@ def split_control_commands(buffer: str):
             continue
         commands.append(json.loads(stripped))
     return remainder, commands
+
+
+def parse_step_deadline(timeout_seconds, pattern: str):
+    if timeout_seconds is None:
+        return None
+    try:
+        parsed = float(timeout_seconds)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(
+            f"Invalid timeoutSeconds for pattern {pattern!r}: {timeout_seconds!r}"
+        ) from error
+    if parsed <= 0:
+        raise RuntimeError(
+            f"Invalid timeoutSeconds for pattern {pattern!r}: must be > 0"
+        )
+    return time.monotonic() + parsed
+
+
+def emit_status(enabled: bool, event) -> None:
+    if not enabled:
+        return
+    payload = json.dumps(event, separators=(",", ":"))
+    sys.stderr.write(f"{STATUS_PREFIX}{payload}\n")
+    sys.stderr.flush()
 
 
 def find_abort_match(
