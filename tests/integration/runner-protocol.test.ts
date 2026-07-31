@@ -2983,6 +2983,35 @@ contractTest("runtime.process", "operator commands emit inbox, thread, run, and 
         threadId: "thread-child",
       },
     }) : null,
+    listCompletedConversationMessages: async () => [{
+      messageId: "terminal:run-completed-1",
+      turnId: "turn-completed-1",
+      threadId: "thread-main",
+      sessionId: "session-main",
+      runId: "run-completed-1",
+      completedAt: "2026-07-10T12:00:03.000Z",
+      result: {
+        assistantText: "Recovered answer.",
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-main",
+          runId: "run-completed-1",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      },
+    }],
     listOperatorRuns: async (input) => ({
       version: "operator-run-index-v1",
       generatedAt: "2026-07-10T12:00:02.000Z",
@@ -3115,6 +3144,13 @@ contractTest("runtime.process", "operator commands emit inbox, thread, run, and 
   );
   await router.acceptLine(
     JSON.stringify({
+      id: "cmd-conversation-messages",
+      type: "conversation.messages.list",
+      payload: { threadId: "thread-main", limit: 100 },
+    }),
+  );
+  await router.acceptLine(
+    JSON.stringify({
       id: "cmd-operator-thread-missing",
       type: "operator.thread",
       payload: { threadId: "thread-missing" },
@@ -3186,6 +3222,7 @@ contractTest("runtime.process", "operator commands emit inbox, thread, run, and 
     [
       "operator.inbox",
       "operator.thread",
+      "conversation.messages",
       "runner.error",
       "operator.runs",
       "operator.run",
@@ -3205,6 +3242,16 @@ contractTest("runtime.process", "operator commands emit inbox, thread, run, and 
   assert.equal(view?.childBlocker?.childThreadId, "thread-child");
   assert.equal(view?.childBlocker?.delegationId, "delegation-1");
   assert.equal(view?.nextAction?.kind, "switch_thread");
+  const messagesEvent = events.find((event) => event.type === "conversation.messages");
+  const messagesPayload = messagesEvent?.payload as {
+    messages?: Array<{ messageId?: string; result?: { assistantText?: string } }>;
+    hasMore?: boolean;
+    nextCursor?: string;
+  } | undefined;
+  assert.equal(messagesPayload?.messages?.[0]?.messageId, "terminal:run-completed-1");
+  assert.equal(messagesPayload?.messages?.[0]?.result?.assistantText, "Recovered answer.");
+  assert.equal(messagesPayload?.hasMore, false);
+  assert.match(messagesPayload?.nextCursor ?? "", /^v1:/u);
   const missingThreadEvent = events.find((event) => event.type === "runner.error");
   assert.equal(missingThreadEvent?.payload.code, "OPERATOR_THREAD_NOT_FOUND");
   const runsEvent = events.find((event) => event.type === "operator.runs");

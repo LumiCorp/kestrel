@@ -48,6 +48,7 @@ type WebControlTerminalEvent = Extract<
       | "mcp.refreshed"
       | "operator.inbox"
       | "operator.thread"
+      | "conversation.messages"
       | "operator.runs"
       | "operator.run"
       | "operator.controlled"
@@ -614,6 +615,22 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
           throw createRuntimeFailure(
             "WEB_ADAPTER_UNEXPECTED_OPERATOR_CONTROL_RESPONSE",
             `Unexpected operator control response '${response.type}'.`,
+            { responseType: response.type },
+          );
+        }
+        return response;
+      }
+
+      if (command.type === "conversation.messages.list") {
+        const response = await sendCommand(activeClient, "conversation.messages.list", {
+          threadId: command.threadId,
+          ...(command.afterCursor !== undefined ? { afterCursor: command.afterCursor } : {}),
+          ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        }, metadata);
+        if (response.type !== "conversation.messages") {
+          throw createRuntimeFailure(
+            "WEB_ADAPTER_UNEXPECTED_CONVERSATION_MESSAGES_RESPONSE",
+            `Unexpected conversation messages response '${response.type}'.`,
             { responseType: response.type },
           );
         }

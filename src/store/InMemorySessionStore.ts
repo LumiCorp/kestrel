@@ -1474,13 +1474,43 @@ export class InMemorySessionStore implements SessionStore {
     threadId?: string | undefined;
     sessionId?: string | undefined;
     status?: ConversationTurnRecord["status"] | undefined;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    terminalMessagesOnly?: boolean | undefined;
     limit?: number | undefined;
   } = {}): Promise<ConversationTurnRecord[]> {
-    return [...this.conversationTurns.values()]
+    const filtered = [...this.conversationTurns.values()]
       .filter((record) => input.threadId === undefined || record.threadId === input.threadId)
       .filter((record) => input.sessionId === undefined || record.sessionId === input.sessionId)
       .filter((record) => input.status === undefined || record.status === input.status)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .filter((record) => {
+        if (input.terminalMessagesOnly !== true) return true;
+        const envelope = record.metadata?.terminalEnvelope;
+        if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) return false;
+        const handoff = (envelope as Record<string, unknown>).handoff;
+        if (typeof handoff !== "object" || handoff === null || Array.isArray(handoff)) return false;
+        const value = handoff as Record<string, unknown>;
+        return record.status === "COMPLETED"
+          && record.completedAt !== undefined
+          && value.state === "delivered"
+          && typeof value.assistantText === "string"
+          && value.assistantText.trim().length > 0;
+      })
+      .filter((record) => {
+        if (input.completedAfter === undefined || record.completedAt === undefined) return input.completedAfter === undefined;
+        return record.completedAt > input.completedAfter.completedAt
+          || (record.completedAt === input.completedAfter.completedAt && record.turnId > input.completedAfter.turnId);
+      });
+    const ascending = input.completedAfter !== undefined;
+    return filtered
+      .sort((left, right) => {
+        if (input.terminalMessagesOnly !== true && input.completedAfter === undefined) {
+          return right.updatedAt.localeCompare(left.updatedAt) || left.turnId.localeCompare(right.turnId);
+        }
+        const leftAt = left.completedAt ?? left.updatedAt;
+        const rightAt = right.completedAt ?? right.updatedAt;
+        const ordered = leftAt.localeCompare(rightAt) || left.turnId.localeCompare(right.turnId);
+        return ascending ? ordered : -ordered;
+      })
       .slice(0, input.limit ?? Number.MAX_SAFE_INTEGER)
       .map((record) => structuredClone(record));
   }

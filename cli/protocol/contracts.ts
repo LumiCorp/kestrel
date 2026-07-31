@@ -190,6 +190,12 @@ export interface OperatorThreadCommandPayload {
   threadId: string;
 }
 
+export interface ConversationMessagesListCommandPayload {
+  threadId: string;
+  afterCursor?: string | undefined;
+  limit?: number | undefined;
+}
+
 export interface OperatorRunsCommandPayload {
   sessionId?: string | undefined;
   status?: OperatorRunStatus | undefined;
@@ -474,6 +480,7 @@ export interface RunnerCommandPayloadByType {
   "session.state": SessionStateCommandPayload;
   "operator.inbox": OperatorInboxCommandPayload;
   "operator.thread": OperatorThreadCommandPayload;
+  "conversation.messages.list": ConversationMessagesListCommandPayload;
   "operator.runs": OperatorRunsCommandPayload;
   "operator.run": OperatorRunCommandPayload;
   "operator.run.reasoning": OperatorRunReasoningCommandPayload;
@@ -725,6 +732,21 @@ export interface OperatorThreadEventPayload {
   view: OperatorThreadView;
 }
 
+export interface ConversationMessagesEventPayload {
+  threadId: string;
+  messages: Array<{
+    messageId: string;
+    turnId: string;
+    threadId: string;
+    sessionId: string;
+    runId: string;
+    completedAt: string;
+    result: { assistantText: string; output: RunTurnResult["output"] };
+  }>;
+  nextCursor?: string | undefined;
+  hasMore: boolean;
+}
+
 export interface OperatorRunsEventPayload {
   view: OperatorRunIndexView;
 }
@@ -912,6 +934,7 @@ export interface RunnerEventPayloadByType {
   "session.state": SessionStateEventPayload;
   "operator.inbox": OperatorInboxEventPayload;
   "operator.thread": OperatorThreadEventPayload;
+  "conversation.messages": ConversationMessagesEventPayload;
   "operator.runs": OperatorRunsEventPayload;
   "operator.run": OperatorRunEventPayload;
   "operator.run.reasoning": OperatorRunReasoningEventPayload;

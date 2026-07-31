@@ -13,6 +13,10 @@ import type {
 import { buildInitialUiRuntimeState, UiStore } from "../../cli/ink/store/UiStore.js";
 import { createUiDerivedSelectors } from "../../cli/ink/store/selectors.js";
 import type { RunnerEvent } from "../../cli/protocol/contracts.js";
+import {
+  buildWaitingSystemText,
+  extractWaitPrompt,
+} from "../../cli/app/waitForPrompt.js";
 import type {
   AgentProgressUpdateV1,
   NormalizedOutput,
@@ -248,6 +252,42 @@ function createRunHarness(input: {
     syncBackgroundSessionProgress: async () => {},
     syncBackgroundSessionResult: async () => {},
     syncBackgroundSessionFailure: async () => {},
+    applyTerminalResult: async (
+      _sessionId: string,
+      result: { assistantText: string | null; output: NormalizedOutput },
+    ) => {
+      const output = result.output;
+      if (output.status === "WAITING") {
+        const prompt = extractWaitPrompt(output.waitFor);
+        await context.appendHistoryLine(
+          "system",
+          buildWaitingSystemText(output.waitFor),
+          {
+            kind: "runtime.waiting_prompt",
+            runId: output.runId,
+            waitEventType: output.waitFor?.eventType ?? "unknown",
+            ...(prompt === undefined ? {} : { prompt }),
+          },
+          output,
+        );
+        return;
+      }
+      if (output.status === "FAILED") {
+        await context.appendHistoryLine(
+          "system",
+          `Run failed: ${output.errors[0]?.message ?? "Run failed."}`,
+          undefined,
+          output,
+        );
+        return;
+      }
+      await context.appendHistoryLine(
+        result.assistantText === null ? "system" : "assistant",
+        result.assistantText ?? "The run completed, but its final response could not be delivered.",
+        undefined,
+        output,
+      );
+    },
     clearProgressForRun: () => {},
     pushRunLog: (line: AgentRunLogLine) => {
       runLogs.push(line);

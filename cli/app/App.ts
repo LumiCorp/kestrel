@@ -259,6 +259,7 @@ export class App {
   private transcriptAppendQueue: Promise<void> = Promise.resolve();
   private readonly pendingAgentProgressTranscriptUpdates = new Map<string, AgentProgressUpdateV1>();
   private readonly activeAgentProgressTranscriptDrains = new Set<string>();
+  private readonly terminalProjectionRunIds = new Set<string>();
   private startTaskJourney: StartTaskJourneyState | undefined;
   private childMissionJourney: ChildMissionJourneyState | undefined;
   private scriptedInputsEnqueued = false;
@@ -348,6 +349,9 @@ export class App {
     this.client = createConfiguredCliProtocolClient(bootstrap.runnerTransportEnv);
     this.client.onEvent((event) => {
       this.onRunnerEvent(event);
+    });
+    await this.recoverTerminalMessages(bootstrap.activeSession).catch(() => {
+      // Recovery is retried when the session is next focused.
     });
 
     this.enterAlternateScreen();
@@ -1521,6 +1525,7 @@ export class App {
         startActiveTurn: (input) => this.startActiveTurn(input),
         getChatWrappedBodyWidth: () => this.getChatLayout(this.uiStore.getState()).wrappedBodyWidth,
         getChatListRows: () => this.getListRowsForScroll(this.uiStore.getState(), "chat"),
+        recoverTerminalMessages: (session) => this.recoverTerminalMessages(session),
       });
     }
     return this.sessionController;
@@ -1586,6 +1591,7 @@ export class App {
           this.syncBackgroundSessionResult(output, assistantText, finalizedPayload, operatorState),
         syncBackgroundSessionFailure: (sessionId, message) =>
           this.syncBackgroundSessionFailure(sessionId, message),
+        applyTerminalResult: (sessionId, result, finalizedPayload) => this.applyTerminalResult(sessionId, result, finalizedPayload),
         clearProgressForRun: (runId) => {
           this.clearProgressForRun(runId);
         },
@@ -3559,22 +3565,7 @@ export class App {
         pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
         lastRunStatus: output.status,
       });
-      if (output.status === "WAITING") {
-        const waitPrompt = extractWaitPrompt(output.waitFor);
-        await this.appendHistoryLine(
-          "system",
-          buildWaitingSystemText(output.waitFor),
-          {
-            waitEventType: output.waitFor?.eventType ?? "unknown",
-            ...(waitPrompt === undefined ? {} : { prompt: waitPrompt }),
-          },
-          output,
-        );
-      } else if (output.status === "FAILED") {
-        await this.appendHistoryLine("system", `Operator action failed: ${output.errors[0]?.message ?? "Run failed."}`);
-      } else {
-        await this.appendHistoryLine("system", `Operator action '${action}' applied.`);
-      }
+      await this.applyTerminalResult(output.sessionId, payload.result);
     } else {
       await this.appendHistoryLine("system", `Operator action '${action}' applied.`);
     }
@@ -3583,6 +3574,151 @@ export class App {
     });
     if (describe.type === "session.described") {
       await this.syncSessionFromDescribePayload(describe.payload);
+    }
+  }
+
+  private async applyTerminalResult(
+    sessionId: string,
+    result: { assistantText: string | null; output: import("../../src/index.js").NormalizedOutput },
+    finalizedPayload?: unknown | undefined,
+  ): Promise<void> {
+    if (this.terminalProjectionRunIds.has(result.output.runId)) return;
+    this.terminalProjectionRunIds.add(result.output.runId);
+    try {
+      await this.applyTerminalResultOnce(sessionId, result, finalizedPayload);
+    } finally {
+      this.terminalProjectionRunIds.delete(result.output.runId);
+    }
+  }
+
+  private async applyTerminalResultOnce(
+    sessionId: string,
+    result: { assistantText: string | null; output: import("../../src/index.js").NormalizedOutput },
+    finalizedPayload?: unknown | undefined,
+  ): Promise<void> {
+    const session = this.sessionsFile.sessions.find((entry) => entry.sessionId === sessionId);
+    if (session === undefined) return;
+    const state = this.uiStore.getState();
+    let history = state.activeSession.sessionId === sessionId
+      ? state.transcript
+      : await this.historyStore.readTranscript(sessionId, 100_000);
+    if (!history.some((line) => line.run?.runId === result.output.runId)) {
+      history = await this.historyStore.readTranscript(sessionId, 100_000);
+    }
+    if (history.some((line) => line.run?.runId === result.output.runId)) {
+      await this.appendDiagnosticsLog({
+        scope: "terminal_message.duplicate_suppressed",
+        summary: "Suppressed a duplicate terminal message.",
+        details: stringifyDiagnosticDetails({ sessionId, runId: result.output.runId, count: 1 }),
+      });
+      return;
+    }
+    if (result.output.status === "WAITING") {
+      const waitPrompt = extractWaitPrompt(result.output.waitFor);
+      await this.appendSessionHistoryLine(session, "system", buildWaitingSystemText(result.output.waitFor), {
+        kind: "runtime.waiting_prompt",
+        runId: result.output.runId,
+        waitEventType: result.output.waitFor?.eventType ?? "unknown",
+        ...(waitPrompt === undefined ? {} : { prompt: waitPrompt }),
+      }, result.output);
+    } else if (result.output.status === "FAILED") {
+      await this.appendSessionHistoryLine(
+        session,
+        "system",
+        `Run failed: ${result.output.errors[0]?.message ?? "Run failed."}`,
+        undefined,
+        result.output,
+      );
+    } else if (result.assistantText !== null && result.assistantText.trim().length > 0) {
+      const parsed = parseFinalizePayload(finalizedPayload);
+      const structuredData = parsed.ok ? parsed.payload?.data : undefined;
+      await this.appendSessionHistoryLine(session, "assistant", result.assistantText, structuredData, result.output);
+      const notice = structuredData === undefined ? undefined : buildFinalizeReportingGroundingNotice(structuredData);
+      if (notice !== undefined) {
+        await this.appendSessionHistoryLine(session, "system", notice, undefined, result.output);
+      }
+    } else {
+      await this.appendSessionHistoryLine(
+        session,
+        "system",
+        "The run completed, but its final response could not be delivered. Refocus this session to retry recovery.",
+        undefined,
+        result.output,
+      );
+    }
+    await this.appendDiagnosticsLog({
+      scope: "terminal_message.projected",
+      summary: "Projected a terminal message.",
+      details: stringifyDiagnosticDetails({ sessionId, runId: result.output.runId, count: 1 }),
+    });
+  }
+
+  private async recoverTerminalMessages(session: TuiSessionMeta): Promise<void> {
+    let cursor = session.terminalMessageCursor;
+    const fetch = async (afterCursor: string | undefined, limit: number) => {
+      const response = await this.client.sendCommand("conversation.messages.list", {
+        threadId: terminalMessageRecoveryThreadId(session.sessionId),
+        ...(afterCursor !== undefined ? { afterCursor } : {}),
+        limit,
+      });
+      if (response.type !== "conversation.messages") {
+        throw new Error(`Unexpected conversation recovery response '${response.type}'.`);
+      }
+      return response.payload;
+    };
+    const applyPage = async (
+      page: Awaited<ReturnType<typeof fetch>>,
+      resetCursor = false,
+    ) => {
+      for (const message of page.messages) {
+        await this.applyTerminalResult(message.sessionId, message.result);
+      }
+      await this.appendDiagnosticsLog({
+        scope: "terminal_message.recovered",
+        summary: "Recovered terminal messages for a session.",
+        details: stringifyDiagnosticDetails({
+          sessionId: session.sessionId,
+          count: page.messages.length,
+        }),
+      });
+      if (page.nextCursor !== undefined || resetCursor) {
+        const current = this.sessionsFile.sessions.find((entry) => entry.sessionId === session.sessionId) ?? session;
+        const updated = { ...current, terminalMessageCursor: page.nextCursor };
+        this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, updated);
+        this.uiStore.patch({
+          sessions: this.sessionsFile.sessions,
+          ...(this.uiStore.getState().activeSession.sessionId === updated.sessionId ? { activeSession: updated } : {}),
+        });
+        await this.saveSessionsFile();
+      }
+    };
+    try {
+      while (true) {
+        const page = await fetch(cursor, 100);
+        await applyPage(page);
+        if (!page.hasMore || page.nextCursor === undefined) return;
+        cursor = page.nextCursor;
+      }
+    } catch (error) {
+      if (cursor !== undefined) {
+        try {
+          await applyPage(await fetch(undefined, 500), true);
+          await this.appendDiagnosticsLog({
+            scope: "terminal_message.recovery_failed",
+            summary: "Reset an invalid terminal message recovery cursor.",
+            details: stringifyDiagnosticDetails({ sessionId: session.sessionId, count: 1 }),
+          });
+          return;
+        } catch {
+          // Preserve the original failure for diagnostics.
+        }
+      }
+      await this.appendDiagnosticsLog({
+        scope: "terminal_message.recovery_failed",
+        summary: "Terminal message recovery failed and will be retried.",
+        details: stringifyDiagnosticDetails({ sessionId: session.sessionId, count: 1 }),
+      });
+      throw error;
     }
   }
 
@@ -5094,6 +5230,10 @@ export class App {
     process.stdout.write("\u001b[?1049l");
     this.alternateScreenEnabled = false;
   }
+}
+
+export function terminalMessageRecoveryThreadId(sessionId: string): string {
+  return `thread-main:${sessionId}`;
 }
 
 function viewForRegion(region: FocusRegion): AppView {

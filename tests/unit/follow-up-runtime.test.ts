@@ -54,7 +54,20 @@ class FollowUpExecutor implements TurnExecutor {
 contractTest("runtime.hermetic", "ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses duplicate IDs", async () => {
   const store = new InMemorySessionStore();
   const executor = new FollowUpExecutor(store, [completed("run-follow-up-1"), completed("run-follow-up-2")]);
-  const runtime = new ThreadRuntime({ sessionStore: store, executor });
+  const detachedEvents: Array<{ type: string; runId: string; status?: string | undefined }> = [];
+  const runtime = new ThreadRuntime({
+    sessionStore: store,
+    executor,
+    onDetachedTurnEvent: (event) => {
+      detachedEvents.push({
+        type: event.type,
+        runId: event.runId,
+        ...(event.type === "completed" || (event.type === "failed" && event.result !== undefined)
+          ? { status: event.result?.output.status }
+          : {}),
+      });
+    },
+  });
   const started = await runtime.startThread({ threadId: "thread-fifo", sessionId: "session-fifo", title: "FIFO" });
   await store.upsertThread({ ...started, status: "RUNNING", updatedAt: new Date().toISOString() });
 
@@ -72,6 +85,12 @@ contractTest("runtime.hermetic", "ThreadRuntime dispatches durable follow-ups in
 
   assert.deepEqual(executor.inputs.map((input) => input.message), ["first", "second"]);
   assert.deepEqual(executor.inputs.map((input) => input.metadata?.followUpId), ["follow-up-1", "follow-up-2"]);
+  assert.deepEqual(detachedEvents.map((event) => [event.type, event.runId, event.status]), [
+    ["started", executor.inputs[0]?.runtimeTurn?.runId, undefined],
+    ["completed", executor.inputs[0]?.runtimeTurn?.runId, "COMPLETED"],
+    ["started", executor.inputs[1]?.runtimeTurn?.runId, undefined],
+    ["completed", executor.inputs[1]?.runtimeTurn?.runId, "COMPLETED"],
+  ]);
 });
 
 contractTest("runtime.hermetic", "ThreadRuntime pauses remaining follow-ups when an entry waits for operator input", async () => {

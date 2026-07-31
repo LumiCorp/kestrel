@@ -46,6 +46,7 @@ export interface SessionControllerContext extends TuiAppContext {
   }): Promise<void>;
   getChatWrappedBodyWidth(): number;
   getChatListRows(): number;
+  recoverTerminalMessages(session: TuiSessionMeta): Promise<void>;
 }
 
 export class SessionController {
@@ -293,6 +294,10 @@ export class SessionController {
     } catch {
       // Session switching should remain usable if the runner is not ready yet.
     }
+
+    await this.context.recoverTerminalMessages(decoratedTarget).catch(() => {
+      // Recovery diagnostics are durable and the existing transcript remains usable.
+    });
 
     await this.context.appendHistoryLine("system", `Resumed session '${target.name}'.`);
     await this.context.persistUiState();

@@ -82,6 +82,16 @@
       "testFiles": ["packages/sdk/tests/local-client.test.ts"]
     },
     {
+      "id": "terminal-message-projection-omission",
+      "contractId": "runtime.terminal-message-delivery",
+      "target": "apps/desktop/renderer/src/state.ts",
+      "find": "if (runId !== undefined && thread.transcript.some((item) => terminalRunId(item) === runId)) {",
+      "replace": "if (runId !== undefined) {",
+      "command": "pnpm",
+      "args": ["--dir", "apps/desktop", "exec", "node", "--import", "tsx", "--test", "--test-name-pattern=projects terminal messages after pending users", "tests/rendererState.test.ts"],
+      "testFiles": ["apps/desktop/tests/rendererState.test.ts"]
+    },
+    {
       "id": "source-write-guard-fail-open",
       "contractId": "runtime.source-write-guard",
       "target": "src/devshell/DevShellSupervisor.ts",

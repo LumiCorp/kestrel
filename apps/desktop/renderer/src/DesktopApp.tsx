@@ -35,6 +35,7 @@ import type {
   DesktopAttachmentMetadata,
   DesktopFollowUpQueueEntry,
   DesktopOperatorControlRequest,
+  DesktopOperatorControlResult,
   DesktopOperatorInboxItem,
   DesktopRendererSettings,
   DesktopRunnerEvent,
@@ -84,6 +85,10 @@ import {
   type DesktopAuthorityCaches,
 } from "./threadAuthorityState";
 import { extractTerminalFailure } from "./runtimeCapabilityRecovery";
+import {
+  getDesktopTerminalDeliveryError,
+  projectDesktopTerminalMessage,
+} from "./terminalProjection";
 import {
   addRendererThread,
   addRendererDraftAttachment,
@@ -335,7 +340,7 @@ export function DesktopApp() {
       const rendererThread = event.sessionId === undefined
         ? undefined
         : threadsRef.current.find((thread) => thread.sessionId === event.sessionId);
-      if (rendererThread !== undefined) {
+      if (rendererThread !== undefined && event.type !== "run.completed") {
         setThreadActivity(rendererThread.id, describeRunnerActivity(event));
       }
       if (event.type === "run.started" && rendererThread !== undefined) {
@@ -401,6 +406,53 @@ export function DesktopApp() {
         || event.type === "run.cancelled"
       ) {
         if (rendererThread !== undefined && event.type !== "task.updated") {
+          if (event.type === "run.completed") {
+            const result = asRecord(event.payload.result);
+            const output = asRecord(result?.output);
+            const runId = event.runId ?? readString(output?.runId);
+            if (runId !== undefined) {
+              const status = readString(output?.status) ?? "COMPLETED";
+              const assistantText = typeof result?.assistantText === "string" ? result.assistantText : null;
+              const deliveryError = getDesktopTerminalDeliveryError({ assistantText, status });
+              const pending = pendingTurnSubmissionsRef.current[rendererThread.sessionId];
+              if (pending !== undefined) {
+                delete pendingTurnSubmissionsRef.current[rendererThread.sessionId];
+                acceptedTurnSessionsRef.current.add(rendererThread.sessionId);
+              }
+              setState((current) => {
+                if (current === undefined) return current;
+                const projection = projectDesktopTerminalMessage(current, {
+                  threadId: rendererThread.id,
+                  runId,
+                  assistantText,
+                  status,
+                  timestamp: event.ts,
+                  ...(pending !== undefined ? { pendingUser: { text: pending.message, timestamp: pending.submittedAt } } : {}),
+                  pendingWaitEventType: getTerminalWaitEventType(event),
+                  waitingPrompt: getTerminalWaitingPrompt(event)?.text,
+                  data: extractDesktopTerminalOutcome(event),
+                });
+                console.info(`terminal_message.${projection.outcome === "contract_failure"
+                  ? "recovery_failed"
+                  : projection.outcome === "duplicate"
+                    ? "duplicate_suppressed"
+                    : "projected"}`, {
+                  threadId: rendererThread.id,
+                  runId,
+                  count: 1,
+                });
+                return projection.state;
+              });
+              if (deliveryError !== undefined) {
+                setThreadFailure(rendererThread.id, "Final response unavailable", deliveryError);
+              } else {
+                setThreadActivity(
+                  rendererThread.id,
+                  getTerminalWaitEventType(event) === undefined ? "Ready" : `Waiting for ${getTerminalWaitEventType(event)}`,
+                );
+              }
+            }
+          }
           setActiveRuns((current) => {
             const next = { ...current };
             delete next[rendererThread.id];
@@ -591,8 +643,128 @@ export function DesktopApp() {
           ),
         );
       }
+      await recoverConversationMessages(thread).catch((cause) => {
+        setThreadFailure(thread.id, "Some messages could not be restored", errorMessage(cause));
+      });
     }
     return result;
+  }
+
+  async function recoverConversationMessages(
+    thread: DesktopRendererState["threads"][number],
+  ): Promise<void> {
+    const applyPage = (
+      page: Awaited<ReturnType<typeof window.kestrelDesktop.listConversationMessages>>,
+      resetCursor = false,
+    ) => {
+      setState((current) => {
+        if (current === undefined) return current;
+        let next = current;
+        let recovered = 0;
+        for (const message of page.messages) {
+          const output = asRecord(message.result.output);
+          const projection = projectDesktopTerminalMessage(next, {
+            threadId: thread.id,
+            runId: message.runId,
+            turnId: message.turnId,
+            assistantText: message.result.assistantText,
+            status: readString(output?.status) ?? "COMPLETED",
+            timestamp: message.completedAt,
+            data: {
+              kind: "desktop.terminal-outcome.v1",
+              runId: message.runId,
+              terminalEvent: "run.completed",
+              resultStatus: readString(output?.status) ?? "COMPLETED",
+            },
+          });
+          next = projection.state;
+          if (projection.outcome === "projected") recovered += 1;
+        }
+        next = updateRendererThread(next, thread.id, (entry) => ({
+          ...entry,
+          ...(page.nextCursor !== undefined || resetCursor
+            ? { terminalMessageCursor: page.nextCursor }
+            : {}),
+        }));
+        console.info("terminal_message.recovered", {
+          threadId: thread.id,
+          count: recovered,
+        });
+        return next;
+      });
+    };
+    let cursor = thread.terminalMessageCursor;
+    try {
+      while (true) {
+        const page = await window.kestrelDesktop.listConversationMessages(
+          localCoreThreadId(thread.sessionId),
+          cursor,
+          100,
+        );
+        applyPage(page);
+        if (!page.hasMore || page.nextCursor === undefined) return;
+        cursor = page.nextCursor;
+      }
+    } catch (cause) {
+      if (cursor !== undefined) {
+        try {
+          const page = await window.kestrelDesktop.listConversationMessages(
+            localCoreThreadId(thread.sessionId),
+            undefined,
+            500,
+          );
+          applyPage(page, true);
+          console.info("terminal_message.recovery_failed", {
+            threadId: thread.id,
+            count: 1,
+          });
+          return;
+        } catch {
+          // Preserve the original failure below.
+        }
+      }
+      console.info("terminal_message.recovery_failed", {
+        threadId: thread.id,
+        count: 1,
+      });
+      throw cause;
+    }
+  }
+
+  function projectOperatorControlResult(
+    rendererThreadId: string,
+    response: DesktopOperatorControlResult,
+  ): void {
+    const result = response.result;
+    const runId = response.runId ?? readString(result?.output.runId);
+    if (result === undefined || runId === undefined) return;
+    const pendingWaitEventType = readString(asRecord(result.output.waitFor)?.eventType);
+    const failureMessage = getDesktopTerminalFailureMessage(result.output);
+    const waitingPrompt = getDesktopTerminalWaitingPrompt(result.output.waitFor);
+    const deliveryError = getDesktopTerminalDeliveryError({
+      assistantText: result.assistantText,
+      status: result.output.status,
+    });
+    setState((current) => current === undefined ? current : projectDesktopTerminalMessage(current, {
+      threadId: rendererThreadId,
+      runId,
+      assistantText: result.assistantText,
+      status: result.output.status,
+      timestamp: new Date().toISOString(),
+      pendingWaitEventType,
+      waitingPrompt,
+      failureMessage,
+    }).state);
+    if (deliveryError !== undefined) {
+      setThreadFailure(rendererThreadId, "Final response unavailable", deliveryError);
+    } else if (result.output.status === "FAILED") {
+      setThreadFailure(rendererThreadId, "Run failed", failureMessage ?? "Run failed.");
+    } else if (result.output.status === "WAITING") {
+      setThreadActivity(
+        rendererThreadId,
+        pendingWaitEventType === undefined ? "Waiting for input" : `Waiting for ${pendingWaitEventType}`,
+      );
+    }
   }
 
   async function submitTurn(event: FormEvent): Promise<void> {
@@ -627,7 +799,7 @@ export function DesktopApp() {
       setOperatorActionPending((current) => ({ ...current, [item.itemId]: true }));
       setThreadActivity(threadId, "Sending reply");
       try {
-        const view = await window.kestrelDesktop.submitOperatorControl({
+        const controlResult = await window.kestrelDesktop.submitOperatorControl({
           action: "reply",
           threadId: localCoreThreadId(activeThread.sessionId),
           completionMode: "accepted",
@@ -637,6 +809,7 @@ export function DesktopApp() {
           interactionMode: activeThread.mode,
           ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
         });
+        const view = controlResult.view;
         setThreadViews((current) => ({ ...current, [threadId]: view }));
         setActiveRuns((current) => {
           const next = { ...current };
@@ -667,6 +840,7 @@ export function DesktopApp() {
             }));
           });
         }
+        projectOperatorControlResult(threadId, controlResult);
         setHistoryNavigation((current) => { const next = { ...current }; delete next[threadId]; return next; });
         setThreadActivity(threadId, view.activeRun?.status === "RUNNING" ? "Reply sent; run resumed" : "Reply sent");
       } catch (cause) {
@@ -681,7 +855,7 @@ export function DesktopApp() {
     if (composerPolicy.mode === "queue_follow_up") {
       setThreadActivity(threadId, "Queueing follow-up");
       try {
-        const view = await window.kestrelDesktop.submitOperatorControl({
+        const controlResult = await window.kestrelDesktop.submitOperatorControl({
           action: "enqueue_follow_up",
           threadId: localCoreThreadId(activeThread.sessionId),
           followUpId: `follow-up-${crypto.randomUUID()}`,
@@ -690,8 +864,10 @@ export function DesktopApp() {
           interactionMode: activeThread.mode,
           ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
         });
+        const view = controlResult.view;
         setThreadViews((current) => ({ ...current, [threadId]: view }));
         setState((current) => current === undefined ? current : acceptRendererPrompt(current, threadId, message));
+        projectOperatorControlResult(threadId, controlResult);
         setHistoryNavigation((current) => { const next = { ...current }; delete next[threadId]; return next; });
         setThreadActivity(threadId, "Follow-up queued");
       } catch (cause) {
@@ -753,55 +929,58 @@ export function DesktopApp() {
       const terminalFailure = extractTerminalFailure(terminal, settings?.selectedProvider);
       const terminalError = terminalFailure?.message;
       const pendingWaitEventType = getTerminalWaitEventType(terminal);
-      const waitingPrompt = getTerminalWaitingPrompt(terminal);
-      const terminalLine =
-        assistantText !== undefined
-          ? {
-              role: "assistant" as const,
-              text: assistantText,
-              timestamp: new Date().toISOString(),
-              ...(terminalOutcome !== undefined ? { data: terminalOutcome } : {}),
-            }
-          : terminalOutcome?.terminalEvent === "run.completed" &&
-              terminalOutcome.resultStatus === "COMPLETED"
-            ? {
-                role: "system" as const,
-                text: "Run completed.",
-                timestamp: new Date().toISOString(),
-                data: terminalOutcome,
-              }
-          : undefined;
+      const deliveryError = terminal.type === "run.completed" && terminalOutcome !== undefined
+        ? getDesktopTerminalDeliveryError({
+            assistantText: assistantText ?? null,
+            status: terminalOutcome.resultStatus,
+          })
+        : undefined;
       const acceptedFromEvent = acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
       setState((current) => {
         if (current === undefined) return current;
-        const withUser = acceptedFromEvent
+        let projected = acceptedFromEvent
           ? current
           : appendRendererTranscript(
               acceptRendererPrompt(current, threadId, message),
               threadId,
               { role: "user", text: message, timestamp: submittedAt },
             );
-        const withTerminal = terminalLine === undefined ? withUser : appendRendererTranscript(withUser, threadId, terminalLine);
-        return updateRendererThread(withTerminal, threadId, (thread) => ({
+        if (terminal.type === "run.completed" && terminalOutcome !== undefined) {
+          projected = projectDesktopTerminalMessage(projected, {
+            threadId,
+            runId: terminalOutcome.runId,
+            assistantText: assistantText ?? null,
+            status: terminalOutcome.resultStatus,
+            timestamp: terminal.ts,
+            pendingWaitEventType,
+            waitingPrompt: getTerminalWaitingPrompt(terminal)?.text,
+            data: terminalOutcome,
+          }).state;
+        }
+        return updateRendererThread(projected, threadId, (thread) => ({
           ...thread,
           ...(projectPath !== undefined ? { projectPath } : {}),
           pendingWaitEventType,
         }));
       });
       setHistoryNavigation((current) => { const next = { ...current }; delete next[threadId]; return next; });
-      if (terminalError !== undefined) {
+      if (deliveryError !== undefined) {
+        setThreadFailure(threadId, "Final response unavailable", deliveryError);
+      } else if (terminalError !== undefined) {
         setThreadFailure(threadId, "Run failed", terminalError, terminalFailure?.capabilityId);
       }
-      setThreadActivity(
-        threadId,
-        terminal.type === "run.failed"
-          ? "Run failed"
-          : pendingWaitEventType !== undefined
-            ? `Waiting for ${pendingWaitEventType}`
-            : terminal.type === "run.cancelled"
-              ? "Cancelled"
-              : "Ready",
-      );
+      if (deliveryError === undefined) {
+        setThreadActivity(
+          threadId,
+          terminal.type === "run.failed"
+            ? "Run failed"
+            : pendingWaitEventType !== undefined
+              ? `Waiting for ${pendingWaitEventType}`
+              : terminal.type === "run.cancelled"
+                ? "Cancelled"
+                : "Ready",
+        );
+      }
     } catch (cause) {
       if (submittedPendingWaitEventType !== undefined) {
         setState((current) =>
@@ -1015,14 +1194,16 @@ export function DesktopApp() {
     clearThreadError(ownerThread.id);
     setThreadActivity(ownerThread.id, "Applying steering");
     try {
-      const view = await window.kestrelDesktop.submitOperatorControl({
+      const controlResult = await window.kestrelDesktop.submitOperatorControl({
         action: "steer",
         threadId: localCoreThreadId(ownerThread.sessionId),
         message,
         attachmentIds: ownerThread.draftAttachmentIds,
       });
+      const view = controlResult.view;
       setThreadViews((current) => ({ ...current, [ownerThread.id]: view }));
       setState((current) => current === undefined ? current : acceptRendererPrompt(current, ownerThread.id, message));
+      projectOperatorControlResult(ownerThread.id, controlResult);
       setThreadActivity(ownerThread.id, view.latestSteering === undefined ? "Steering queued" : "Steering applied");
     } catch (cause) {
       setThreadFailure(ownerThread.id, "Steering not applied", errorMessage(cause));
@@ -1068,7 +1249,8 @@ export function DesktopApp() {
     const ownerThread = activeThread;
     setOperatorActionPending((current) => ({ ...current, [itemId]: true }));
     try {
-      const view = await window.kestrelDesktop.submitOperatorControl(request);
+      const controlResult = await window.kestrelDesktop.submitOperatorControl(request);
+      const view = controlResult.view;
       if (view.thread.threadId === localCoreThreadId(ownerThread.sessionId)) {
         setThreadViews((current) => ({ ...current, [ownerThread.id]: view }));
       } else {
@@ -1080,6 +1262,7 @@ export function DesktopApp() {
           : updateRendererDraftAttachments(current, ownerThread.id, []));
       }
       clearThreadError(ownerThread.id);
+      projectOperatorControlResult(ownerThread.id, controlResult);
     } catch (cause) {
       setThreadFailure(ownerThread.id, "Action failed", errorMessage(cause));
     } finally {
@@ -2137,7 +2320,18 @@ function extractTerminalMessage(event: DesktopRunnerEvent): string | undefined {
     return;
   }
   const result = asRecord(event.payload.result);
-  return readString(result?.assistantText);
+  return typeof result?.assistantText === "string" ? result.assistantText : undefined;
+}
+
+function getDesktopTerminalFailureMessage(output: unknown): string | undefined {
+  const errors = asRecord(output)?.errors;
+  if (!Array.isArray(errors)) return undefined;
+  return readString(asRecord(errors[0])?.message);
+}
+
+function getDesktopTerminalWaitingPrompt(waitFor: unknown): string | undefined {
+  const record = asRecord(waitFor);
+  return readString(record?.prompt) ?? readString(asRecord(record?.interaction)?.prompt);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

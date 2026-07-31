@@ -197,6 +197,7 @@ import {
   getDesktopOperatorRun,
   getDesktopOperatorThread,
   listDesktopOperatorRuns,
+  listDesktopConversationMessages,
   runDesktopOperatorControl,
 } from "./missionControl.js";
 import {
@@ -1856,6 +1857,27 @@ function registerIpcHandlers(
       context: DESKTOP_RUNNER_REQUEST_CONTEXT,
     });
   });
+  ipcMain.handle(
+    "desktop:conversation-messages",
+    async (_event, threadId: unknown, afterCursor: unknown, limit: unknown) => {
+      if (typeof threadId !== "string" || threadId.trim().length === 0) {
+        throw createDesktopError({ code: "desktop.invalid_thread_id", message: "Conversation message threadId is required." });
+      }
+      if (afterCursor !== undefined && typeof afterCursor !== "string") {
+        throw createDesktopError({ code: "desktop.invalid_message_cursor", message: "Conversation message cursor is invalid." });
+      }
+      if (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 500)) {
+        throw createDesktopError({ code: "desktop.invalid_message_limit", message: "Conversation message limit must be from 1 to 500." });
+      }
+      return listDesktopConversationMessages({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        threadId: threadId.trim(),
+        ...(typeof afterCursor === "string" ? { afterCursor } : {}),
+        ...(typeof limit === "number" ? { limit } : {}),
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      });
+    },
+  );
   ipcMain.handle("desktop:cancel-run", async (_event, input: unknown) => {
     let request: DesktopRunCancelRequest;
     try {

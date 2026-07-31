@@ -1,4 +1,3 @@
-import { parseFinalizePayload } from "../output/FinalizePayload.js";
 import type {
   AgentRunLogLine,
   DelegationTaskMeta,
@@ -59,6 +58,11 @@ export interface TuiRunControllerContext extends TuiAppContext {
     operatorState?: TuiSessionMeta["operatorState"] | undefined,
   ): Promise<void>;
   syncBackgroundSessionFailure(sessionId: string, message: string): Promise<void>;
+  applyTerminalResult(
+    sessionId: string,
+    result: { assistantText: string | null; output: NormalizedOutput },
+    finalizedPayload?: unknown | undefined,
+  ): Promise<void>;
   clearProgressForRun(runId: string): void;
   pushRunLog(line: AgentRunLogLine): void;
   enqueueAgentProgressTranscriptUpdate(update: AgentProgressUpdateV1): void;
@@ -275,25 +279,9 @@ export class TuiRunController {
 
       if (output.status === "WAITING") {
         const waitEvent = output.waitFor?.eventType ?? "unknown";
-        const waitPrompt = extractWaitPrompt(output.waitFor);
         const shouldAppendWaitLine = isSameWaitFor(pendingWait, output.waitFor) === false;
         if (shouldAppendWaitLine) {
-          const waitLineData = {
-            waitEventType: waitEvent,
-            ...(waitPrompt === undefined
-              ? {}
-              : {
-                  kind: "runtime.waiting_prompt" as const,
-                  runId: output.runId,
-                  prompt: waitPrompt,
-                }),
-          };
-          await this.context.appendHistoryLine(
-            "system",
-            buildWaitingSystemText(output.waitFor),
-            waitLineData,
-            output,
-          );
+          await this.context.applyTerminalResult(output.sessionId, response.payload.result);
         }
         this.context.uiStore.patch({
           running: false,
@@ -317,12 +305,7 @@ export class TuiRunController {
 
       if (output.status === "FAILED") {
         const summary = output.errors[0];
-        await this.context.appendHistoryLine(
-          "system",
-          `Run failed: ${summary?.code ?? "UNKNOWN"} ${summary?.message ?? ""}`.trim(),
-          undefined,
-          output,
-        );
+        await this.context.applyTerminalResult(output.sessionId, response.payload.result);
         await this.appendRunFailureDiagnostics(summary);
         this.context.uiStore.patch({
           running: false,
@@ -350,24 +333,13 @@ export class TuiRunController {
         return;
       }
 
-      const parsedFinalize = parseFinalizePayload(response.payload.result.finalizedPayload);
       const assistantText = response.payload.result.assistantText;
+      await this.context.applyTerminalResult(
+        output.sessionId,
+        response.payload.result,
+        response.payload.result.finalizedPayload,
+      );
       if (assistantText !== null) {
-        const structuredData = parsedFinalize.ok && parsedFinalize.payload !== undefined
-          ? parsedFinalize.payload.data
-          : undefined;
-        await this.context.appendHistoryLine(
-          "assistant",
-          assistantText,
-          structuredData,
-          output,
-        );
-        const reportingGroundingNotice = structuredData === undefined
-          ? undefined
-          : buildFinalizeReportingGroundingNotice(structuredData);
-        if (reportingGroundingNotice !== undefined) {
-          await this.context.appendHistoryLine("system", reportingGroundingNotice, undefined, output);
-        }
         await this.appendTerminalHandoffDiagnostics({
           scope: "terminal_handoff.final_message_appended",
           summary: "TUI appended the finalized assistant message for the active run.",
@@ -580,6 +552,9 @@ export class TuiRunController {
         event.payload.result.finalizedPayload,
         event.payload.result.operatorAffordance,
       );
+      if (event.commandId === undefined) {
+        void this.context.applyTerminalResult(output.sessionId, event.payload.result);
+      }
       this.context.clearProgressForRun(output.runId);
       this.context.pushRunLog({
         timestamp: new Date().toISOString(),
@@ -841,43 +816,6 @@ function isSameWaitFor(
   const leftPrompt = extractWaitPrompt(left);
   const rightPrompt = extractWaitPrompt(right);
   return leftPrompt === rightPrompt;
-}
-
-const FINALIZE_REPORTING_GROUNDING_FIELDS = [
-  "summary",
-  "blockers",
-  "residualRisks",
-  "completionState",
-] as const;
-
-type FinalizeReportingGroundingLabel = "model_authored" | "runtime_linked" | "inferred_from_workplan";
-
-function buildFinalizeReportingGroundingNotice(
-  data: Record<string, unknown> | undefined,
-): string | undefined {
-  const reportingGrounding = asRecord(data?.reportingGrounding);
-  if (reportingGrounding === undefined) {
-    return ;
-  }
-  const labeledFields = FINALIZE_REPORTING_GROUNDING_FIELDS
-    .map((field) => {
-      const label = asReportingGroundingLabel(reportingGrounding[field]);
-      return label === undefined ? undefined : `${field}=${label}`;
-    })
-    .filter((entry): entry is string => entry !== undefined);
-  if (labeledFields.length === 0) {
-    return ;
-  }
-  return [
-    `Finalize provenance: ${labeledFields.join(", ")}.`,
-    "Fields labeled model_authored are narrative and not runtime-verified facts.",
-  ].join(" ");
-}
-
-function asReportingGroundingLabel(value: unknown): FinalizeReportingGroundingLabel | undefined {
-  return value === "model_authored" || value === "runtime_linked" || value === "inferred_from_workplan"
-    ? value
-    : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

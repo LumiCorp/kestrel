@@ -2674,6 +2674,7 @@ contractTest("runtime.hermetic", "ThreadRuntime steerThread starts a fresh steer
 
 contractTest("runtime.hermetic", "ThreadRuntime queues steering during a running turn and drains it after the boundary", async () => {
   const sessionStore = new InMemorySessionStore();
+  const detachedEvents: Array<{ type: string; runId: string; status?: string | undefined }> = [];
   let releaseMainTurn: (() => void) | undefined;
   const executor = new class extends QueueTurnExecutor {
     override async executeTurn(input: TurnExecutionInput): Promise<TurnExecutionResult> {
@@ -2702,6 +2703,15 @@ contractTest("runtime.hermetic", "ThreadRuntime queues steering during a running
   const runtime = new ThreadRuntime({
     sessionStore,
     executor,
+    onDetachedTurnEvent: (event) => {
+      detachedEvents.push({
+        type: event.type,
+        runId: event.runId,
+        ...(event.type === "completed" || (event.type === "failed" && event.result !== undefined)
+          ? { status: event.result?.output.status }
+          : {}),
+      });
+    },
   });
 
   await runtime.startThread({
@@ -2734,6 +2744,10 @@ contractTest("runtime.hermetic", "ThreadRuntime queues steering during a running
   assert.equal(executor.inputs[0]?.eventType, "user.message");
   assert.equal(executor.inputs[1]?.eventType, "operator.steer");
   assert.equal(executor.inputs[1]?.message, "Pause after the current step and regroup.");
+  assert.deepEqual(detachedEvents.map((event) => [event.type, event.runId, event.status]), [
+    ["started", executor.inputs[1]?.runtimeTurn?.runId, undefined],
+    ["completed", executor.inputs[1]?.runtimeTurn?.runId, "COMPLETED"],
+  ]);
 
   const replay = await sessionStore.getReplayStream({
     runId: executor.inputs[1]?.runtimeTurn?.runId,
@@ -3371,6 +3385,7 @@ contractTest("runtime.hermetic", "ThreadRuntime rejects repeated fan-in resoluti
 
 contractTest("runtime.hermetic", "ThreadRuntime auto fan-in retires older pending checkpoints once reconciliation is safe", async () => {
   const sessionStore = new InMemorySessionStore();
+  const detachedEvents: Array<{ type: string; runId: string; status?: string | undefined }> = [];
   const executor = new QueueTurnExecutor(sessionStore, [
     {
       output: buildOutput({
@@ -3384,6 +3399,13 @@ contractTest("runtime.hermetic", "ThreadRuntime auto fan-in retires older pendin
         status: "COMPLETED",
       }),
     },
+    {
+      output: buildOutput({
+        runId: "run-auto-fanin-parent",
+        status: "COMPLETED",
+      }),
+      assistantText: "The child results were reconciled.",
+    },
   ]);
   const runtime = new ThreadRuntime({
     sessionStore,
@@ -3391,6 +3413,15 @@ contractTest("runtime.hermetic", "ThreadRuntime auto fan-in retires older pendin
     profile: buildProfile({
       toolAllowlist: ["fs.read_text"],
     }),
+    onDetachedTurnEvent: (event) => {
+      detachedEvents.push({
+        type: event.type,
+        runId: event.runId,
+        ...(event.type === "completed" || (event.type === "failed" && event.result !== undefined)
+          ? { status: event.result?.output.status }
+          : {}),
+      });
+    },
   });
 
   await runtime.startThread({
@@ -3429,7 +3460,9 @@ contractTest("runtime.hermetic", "ThreadRuntime auto fan-in retires older pendin
     prompt: "Complete child two",
     launchedBy: "agent",
   });
-  await tick();
+  for (let attempt = 0; attempt < 10 && executor.inputs.length < 3; attempt += 1) {
+    await tick();
+  }
 
   const checkpoint = await sessionStore.getContextCheckpoint(
     fanInCheckpointId("thread-auto-fanin", defaultSupervisionGroupId("thread-auto-fanin")),
@@ -3440,6 +3473,11 @@ contractTest("runtime.hermetic", "ThreadRuntime auto fan-in retires older pendin
   const view = await runtime.getOperatorThreadView("thread-auto-fanin");
   assert.notEqual(view?.latestCheckpoint?.status, "PENDING");
   assert.notEqual(view?.latestFanInDisposition?.status, "pending_checkpoint");
+  assert.equal(executor.inputs[2]?.eventType, "operator.reconcile_children");
+  assert.deepEqual(detachedEvents.map((event) => [event.type, event.runId, event.status]), [
+    ["started", executor.inputs[2]?.runtimeTurn?.runId, undefined],
+    ["completed", executor.inputs[2]?.runtimeTurn?.runId, "COMPLETED"],
+  ]);
 });
 
 contractTest("runtime.hermetic", "ThreadRuntime auto fan-in idempotency uses durable disposition instead of result summary text", async () => {
@@ -4366,6 +4404,24 @@ contractTest("runtime.hermetic", "ThreadRuntime replays a delivered terminal tur
     message: "A durable answer.",
     source: "inline",
   });
+
+  const messages = await runtime.listCompletedConversationMessages({
+    threadId: "thread-terminal-replay",
+    limit: 100,
+  });
+  assert.deepEqual(messages, [{
+    messageId: `terminal:${first.output.runId}`,
+    turnId: "turn-terminal-replay",
+    threadId: "thread-terminal-replay",
+    sessionId: "thread-terminal-replay",
+    runId: first.output.runId,
+    completedAt: messages[0]?.completedAt,
+    result: {
+      assistantText: "A durable answer.",
+      output: first.output,
+    },
+  }]);
+  assert.equal(Object.hasOwn(messages[0]?.result ?? {}, "finalizedPayload"), false);
 });
 
 contractTest("runtime.hermetic", "ThreadRuntime stores oversized finalized payloads as digest-validated artifacts", async () => {

@@ -16,6 +16,8 @@ import {
   isRunnerRunTerminalEvent,
   isRunnerStreamingCommandType,
   isRunnerTerminalResponseEvent,
+  encodeConversationMessageCursor,
+  parseConversationMessageCursor,
   parseRunnerCommandV2,
   parseRunnerEventV2,
   type RunnerCommandType,
@@ -134,6 +136,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "session.state": { sessionId: "session-1" },
   "operator.inbox": { sessionId: "session-1" },
   "operator.thread": { threadId: "thread-1" },
+  "conversation.messages.list": { threadId: "thread-1", limit: 100 },
   "operator.runs": { status: "RUNNING", limit: 10 },
   "operator.run": { runId: "run-1" },
   "operator.run.reasoning": { runId: "run-1", sessionId: "session-1", action: "read" },
@@ -236,6 +239,93 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "mcp.refresh": { profileId: "reference" },
 };
 
+contractTest("packages.hermetic", "conversation message cursors and recovery pages are boundary validated", () => {
+  const cursor = encodeConversationMessageCursor({
+    completedAt: "2026-07-31T10:00:00.000Z",
+    turnId: "turn:recovery/1",
+  });
+  assert.deepEqual(parseConversationMessageCursor(cursor), {
+    completedAt: "2026-07-31T10:00:00.000Z",
+    turnId: "turn:recovery/1",
+  });
+  assert.equal(parseRunnerCommandV2({
+    id: "messages-1",
+    type: "conversation.messages.list",
+    payload: { threadId: "thread-1", afterCursor: cursor, limit: 500 },
+  }).type, "conversation.messages.list");
+  assert.equal(parseRunnerEventV2({
+    id: "messages-result-1",
+    type: "conversation.messages",
+    ts: "2026-07-31T10:01:00.000Z",
+    threadId: "thread-1",
+    payload: {
+      threadId: "thread-1",
+      messages: [{
+        messageId: "terminal:run-1",
+        turnId: "turn-1",
+        threadId: "thread-1",
+        sessionId: "session-1",
+        runId: "run-1",
+        completedAt: "2026-07-31T10:00:00.000Z",
+        result: { assistantText: "Recovered.", output: terminalResult.output },
+      }],
+      nextCursor: cursor,
+      hasMore: false,
+    },
+  }).type, "conversation.messages");
+  assert.throws(() => parseRunnerCommandV2({
+    id: "messages-invalid",
+    type: "conversation.messages.list",
+    payload: { threadId: "thread-1", afterCursor: "not-a-cursor" },
+  }), /afterCursor is invalid/u);
+  assert.throws(() => parseRunnerCommandV2({
+    id: "messages-too-large",
+    type: "conversation.messages.list",
+    payload: { threadId: "thread-1", limit: 501 },
+  }), /limit must be an integer between 1 and 500/u);
+  assert.throws(() => parseRunnerEventV2({
+    id: "messages-invalid-output",
+    type: "conversation.messages",
+    ts: "2026-07-31T10:01:00.000Z",
+    threadId: "thread-1",
+    payload: {
+      threadId: "thread-1",
+      messages: [{
+        messageId: "terminal:run-1",
+        turnId: "turn-1",
+        threadId: "thread-1",
+        sessionId: "session-1",
+        runId: "run-1",
+        completedAt: "2026-07-31T10:00:00.000Z",
+        result: { assistantText: "Recovered.", output: { status: "COMPLETED" } },
+      }],
+      hasMore: false,
+    },
+  }), /result\.output\.sessionId/u);
+  assert.throws(() => parseRunnerEventV2({
+    id: "messages-mismatched-output",
+    type: "conversation.messages",
+    ts: "2026-07-31T10:01:00.000Z",
+    threadId: "thread-1",
+    payload: {
+      threadId: "thread-1",
+      messages: [{
+        messageId: "terminal:run-1",
+        turnId: "turn-1",
+        threadId: "thread-1",
+        sessionId: "session-1",
+        runId: "run-1",
+        completedAt: "2026-07-31T10:00:00.000Z",
+        result: {
+          assistantText: "Recovered.",
+          output: { ...terminalResult.output, runId: "run-other" },
+        },
+      }],
+      hasMore: false,
+    },
+  }), /result\.output\.runId must match message\.runId/u);
+});
+
 const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "profile.listed": { profiles: [profile] },
   "profile.loaded": { profile },
@@ -308,6 +398,7 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   },
   "operator.inbox": { inbox: {} },
   "operator.thread": { view: {} },
+  "conversation.messages": { threadId: "thread-1", messages: [], hasMore: false },
   "operator.runs": { view: {} },
   "operator.run": { view: {} },
   "operator.run.reasoning": {

@@ -1,4 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  encodeConversationMessageCursor,
+  parseConversationMessageCursor,
+} from "@kestrel-agents/protocol";
 
 import {
   buildPersistedRuntimeEventFromProgressUpdate,
@@ -58,6 +62,7 @@ import type {
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
   OperatorControlCommandPayload,
+  ConversationMessagesListCommandPayload,
   OperatorInboxCommandPayload,
   OperatorRunCommandPayload,
   OperatorRunReasoningCommandPayload,
@@ -134,6 +139,7 @@ import {
   type RunTurnInput,
   type RunTurnResult,
 } from "../runtime/KestrelChatRuntime.js";
+import type { DetachedTurnLifecycleEvent } from "../../src/orchestration/index.js";
 import type { RunnerEventSink } from "./EventWriter.js";
 
 const EMPTY_TOOL_RUNTIME_STATUS: ToolRuntimeStatus = {
@@ -234,6 +240,19 @@ export interface RunnerRuntime {
         import("../../src/orchestration/contracts.js").OperatorThreadView | null
       >)
     | undefined;
+  listCompletedConversationMessages?: ((input: {
+    threadId: string;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    limit: number;
+  }) => Promise<Array<{
+    messageId: string;
+    turnId: string;
+    threadId: string;
+    sessionId: string;
+    runId: string;
+    completedAt: string;
+    result: { assistantText: string; output: RunTurnResult["output"] };
+  }>>) | undefined;
   getOperatorRunView?:
     | ((
         runId: string
@@ -484,7 +503,8 @@ export type RunnerRuntimeFactory = (
   onConsole: (update: RunConsoleUpdateV1) => void,
   onReasoning: (update: ReasoningUpdateV1 | ModelReasoningUpdateV1) => void,
   onTaskUpdate: (update: DelegationTaskUpdate) => void,
-  onRunEvent: (event: RunEvent) => void
+  onRunEvent: (event: RunEvent) => void,
+  onDetachedTurnEvent: (event: DetachedTurnLifecycleEvent) => void,
 ) => RunnerRuntime;
 
 export function createLiveOnlyProgressListener(
@@ -510,6 +530,7 @@ export function createDefaultRunnerRuntimeFactory(
     onReasoning,
     onTaskUpdate,
     onRunEvent,
+    onDetachedTurnEvent,
   ) =>
     createRuntime(profile, {
       onRunLog,
@@ -518,6 +539,7 @@ export function createDefaultRunnerRuntimeFactory(
       onReasoning,
       onTaskUpdate,
       onRunEvent,
+      onDetachedTurnEvent,
     });
 }
 
@@ -1481,6 +1503,45 @@ export class RunnerHost {
       },
       { commandId }
     );
+  }
+
+  async conversationMessagesList(
+    commandId: string,
+    payload: ConversationMessagesListCommandPayload,
+    metadata?: RunnerCommandMetadata,
+  ): Promise<void> {
+    const limit = Math.max(1, Math.min(500, Math.trunc(payload.limit ?? 100)));
+    const completedAfter = payload.afterCursor === undefined
+      ? undefined
+      : parseConversationMessageCursor(payload.afterCursor);
+    for (const runtime of this.selectRuntimes(metadata)) {
+      if (typeof runtime.listCompletedConversationMessages !== "function") continue;
+      const page = await runtime.listCompletedConversationMessages({
+        threadId: payload.threadId,
+        ...(completedAfter !== undefined ? { completedAfter } : {}),
+        limit: limit + 1,
+      });
+      const hasMore = payload.afterCursor !== undefined && page.length > limit;
+      const messages = page.slice(0, limit);
+      if (payload.afterCursor === undefined) messages.reverse();
+      const cursorMessage = messages.at(-1);
+      this.writer.emit("conversation.messages", {
+        threadId: payload.threadId,
+        messages,
+        hasMore,
+        ...(cursorMessage !== undefined ? {
+          nextCursor: encodeConversationMessageCursor({
+            completedAt: cursorMessage.completedAt,
+            turnId: cursorMessage.turnId,
+          }),
+        } : {}),
+      }, { commandId, threadId: payload.threadId });
+      return;
+    }
+    this.writer.emit("runner.error", {
+      code: "RUNNER_RUNTIME_ERROR",
+      message: "Conversation message recovery is unavailable.",
+    }, { commandId, threadId: payload.threadId });
   }
 
   async operatorRuns(
@@ -2815,7 +2876,10 @@ export class RunnerHost {
       },
       (event) => {
         this.onRunEvent(event);
-      }
+      },
+      (event) => {
+        this.onDetachedTurnEvent(event);
+      },
     );
 
     let entry: RuntimeEntry;
@@ -3103,6 +3167,34 @@ export class RunnerHost {
 
   private onTaskUpdate(update: DelegationTaskUpdate): void {
     void this.emitTaskUpdate(update);
+  }
+
+  private onDetachedTurnEvent(event: DetachedTurnLifecycleEvent): void {
+    const identity = {
+      sessionId: event.sessionId,
+      threadId: event.threadId,
+      runId: event.runId,
+      durability: "durable" as const,
+    };
+    if (event.type === "started") {
+      this.writer.emit("run.started", {
+        sessionId: event.sessionId,
+        runId: event.runId,
+        eventType: event.eventType,
+      }, identity);
+      return;
+    }
+    if (event.type === "completed") {
+      this.writer.emit("run.completed", { result: event.result }, identity);
+      return;
+    }
+    const result = event.result ?? buildNonResponsiveTerminalResult({
+      status: "FAILED",
+      sessionId: event.sessionId,
+      runId: event.runId,
+      error: event.error,
+    });
+    this.writer.emit("run.failed", { result, error: event.error }, identity);
   }
 
   private async emitTaskUpdate(update: DelegationTaskUpdate): Promise<void> {
