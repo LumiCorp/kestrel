@@ -40,6 +40,22 @@ import {
   normalizeProjectSnapshot,
   readProjectSnapshotFromRuntimeState,
 } from "../project/state.js";
+import {
+  MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
+  assertMissionControlExpectedRevision,
+  assertMissionControlReceiptFingerprint,
+  createEmptyMissionControlProjectDocument,
+  parseMissionControlProjectDocument,
+  requireMissionControlActionId,
+  requireMissionControlExpectedRevision,
+  requireMissionControlProjectId,
+  requireMissionControlRequestFingerprint,
+  type MissionControlOutboxRecord,
+  type MissionControlPersistedMutationResult,
+  type MissionControlProjectMutationInput,
+  type MissionControlProjectMutationResult,
+  type MissionControlProjectStateRecord,
+} from "../missionControl/projectAuthority.js";
 
 interface InMemorySession {
   sessionId: string;
@@ -67,6 +83,11 @@ interface InMemoryProductState {
   workspaceCheckpointState: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+interface InMemoryMissionControlReceipt {
+  requestFingerprint: string;
+  result: MissionControlPersistedMutationResult;
 }
 
 interface InMemoryRun {
@@ -99,6 +120,15 @@ export class InMemorySessionStore implements SessionStore {
   private readonly orchestrationStore = new InMemoryOrchestrationStore();
   private readonly sessions = new Map<string, InMemorySession>();
   private readonly productStates = new Map<string, InMemoryProductState>();
+  private readonly missionControlProjects = new Map<
+    string,
+    MissionControlProjectStateRecord
+  >();
+  private readonly missionControlReceipts = new Map<
+    string,
+    Map<string, InMemoryMissionControlReceipt>
+  >();
+  private readonly missionControlOutbox: MissionControlOutboxRecord[] = [];
   private readonly runs = new Map<string, InMemoryRun>();
   private readonly effects: InMemoryEffect[] = [];
   private readonly effectResults = new Map<string, EffectResult>();
@@ -112,6 +142,7 @@ export class InMemorySessionStore implements SessionStore {
   private readonly conversationTurnSegments = new Map<string, ConversationTurnSegmentRecord>();
   private readonly legacyArchives: LegacySessionArchive[] = [];
   private readonly sessionVersions: InMemorySessionVersion[] = [];
+  private missionControlOutboxIdCounter = 1;
   private outboxIdCounter = 1;
   private regionWorkItemIdCounter = 1;
 
@@ -130,6 +161,115 @@ export class InMemorySessionStore implements SessionStore {
       currentStepAgent: session.currentStepAgent,
       updatedAt: session.updatedAt,
     };
+  }
+
+  async getMissionControlProjectState(
+    projectIdValue: string,
+  ): Promise<MissionControlProjectStateRecord | null> {
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const project = this.missionControlProjects.get(projectId);
+    return project === undefined ? null : structuredClone(project);
+  }
+
+  async updateMissionControlProjectState(
+    input: MissionControlProjectMutationInput,
+  ): Promise<MissionControlProjectMutationResult> {
+    const projectId = requireMissionControlProjectId(input.projectId);
+    const actionId = requireMissionControlActionId(input.actionId);
+    const requestFingerprint = requireMissionControlRequestFingerprint(
+      input.requestFingerprint,
+    );
+    const expectedRevision = requireMissionControlExpectedRevision(
+      input.expectedRevision,
+    );
+    const receipts = this.missionControlReceipts.get(projectId);
+    const prior = receipts?.get(actionId);
+    if (prior !== undefined) {
+      assertMissionControlReceiptFingerprint(
+        actionId,
+        prior.requestFingerprint,
+        requestFingerprint,
+      );
+      return {
+        ...structuredClone(prior.result),
+        duplicate: true,
+      };
+    }
+
+    const timestamp = new Date().toISOString();
+    const current = this.missionControlProjects.get(projectId) ?? {
+      projectId,
+      schemaVersion: MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
+      revision: 0,
+      authorityEpoch: 0,
+      document: createEmptyMissionControlProjectDocument(projectId),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    assertMissionControlExpectedRevision(
+      current.revision,
+      expectedRevision,
+    );
+
+    const transition = input.apply(structuredClone(current.document));
+    const document = parseMissionControlProjectDocument(
+      transition.document,
+      projectId,
+    );
+    const project: MissionControlProjectStateRecord = {
+      ...current,
+      revision: current.revision + 1,
+      document,
+      updatedAt: timestamp,
+    };
+    const effects = transition.effects.map((effect) => {
+      if (
+        effect.effectId.trim().length === 0 ||
+        effect.effectType.trim().length === 0
+      ) {
+        throw new Error(
+          "Mission Control outbox effectId and effectType are required.",
+        );
+      }
+      return {
+        ...structuredClone(effect),
+        id: this.missionControlOutboxIdCounter++,
+        projectId,
+        actionId,
+        status: "PENDING" as const,
+        attemptCount: 0,
+        createdAt: timestamp,
+      };
+    });
+    const result: MissionControlPersistedMutationResult = {
+      project,
+      effects,
+    };
+
+    this.missionControlProjects.set(projectId, structuredClone(project));
+    const nextReceipts = receipts ?? new Map<string, InMemoryMissionControlReceipt>();
+    nextReceipts.set(actionId, {
+      requestFingerprint,
+      result: structuredClone(result),
+    });
+    this.missionControlReceipts.set(projectId, nextReceipts);
+    this.missionControlOutbox.push(...structuredClone(effects));
+
+    return {
+      ...structuredClone(result),
+      duplicate: false,
+    };
+  }
+
+  async listMissionControlOutbox(
+    projectIdValue: string,
+  ): Promise<MissionControlOutboxRecord[]> {
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    return structuredClone(
+      this.missionControlOutbox
+        .filter((entry) => entry.projectId === projectId)
+        .sort((left, right) => left.id - right.id),
+    );
   }
 
   async getSessionProductState(sessionId: string): Promise<SessionProductStateRecord | null> {

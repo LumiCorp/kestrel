@@ -82,6 +82,24 @@ import {
   readProjectSnapshotFromRuntimeState,
 } from "../project/state.js";
 import type { ProductProjectSnapshot } from "../project/contracts.js";
+import {
+  MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
+  assertMissionControlExpectedRevision,
+  assertMissionControlReceiptFingerprint,
+  createEmptyMissionControlProjectDocument,
+  parseMissionControlPersistedMutationResult,
+  parseMissionControlProjectDocument,
+  parseMissionControlProjectStateRecord,
+  requireMissionControlActionId,
+  requireMissionControlExpectedRevision,
+  requireMissionControlProjectId,
+  requireMissionControlRequestFingerprint,
+  type MissionControlOutboxRecord,
+  type MissionControlPersistedMutationResult,
+  type MissionControlProjectMutationInput,
+  type MissionControlProjectMutationResult,
+  type MissionControlProjectStateRecord,
+} from "../missionControl/projectAuthority.js";
 
 interface QueryResult<Row> {
   rows: Row[];
@@ -124,6 +142,34 @@ type SessionProductStateRow = Record<string, unknown> & {
   workspace_checkpoint_state_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+};
+
+type MissionControlProjectRow = Record<string, unknown> & {
+  project_id: string;
+  schema_version: number;
+  revision: number | string;
+  authority_epoch: number | string;
+  document_json: unknown;
+  created_at: unknown;
+  updated_at: unknown;
+};
+
+type MissionControlReceiptRow = Record<string, unknown> & {
+  request_fingerprint: string;
+  result_json: unknown;
+};
+
+type MissionControlOutboxRow = Record<string, unknown> & {
+  id: number | string;
+  project_id: string;
+  action_id: string;
+  effect_id: string;
+  effect_type: string;
+  payload_json: unknown;
+  status: string;
+  attempt_count: number | string;
+  last_error: string | null;
+  created_at: unknown;
 };
 
 function mapProviderReasoningRow(row: Record<string, unknown>): ProviderReasoningEncryptedRecord {
@@ -374,6 +420,182 @@ export class PostgresSessionStore implements SessionStore {
     }
 
     return this.buildSessionRecord(row);
+  }
+
+  async getMissionControlProjectState(
+    projectIdValue: string,
+  ): Promise<MissionControlProjectStateRecord | null> {
+    await this.ensureSchemaV3();
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const result = await this.db.query<MissionControlProjectRow>(
+      `SELECT project_id, schema_version, revision, authority_epoch,
+              document_json, created_at, updated_at
+         FROM mission_control_projects
+        WHERE project_id = $1`,
+      [projectId],
+    );
+    const row = result.rows[0];
+    return row === undefined ? null : this.mapMissionControlProjectRow(row);
+  }
+
+  async updateMissionControlProjectState(
+    input: MissionControlProjectMutationInput,
+  ): Promise<MissionControlProjectMutationResult> {
+    await this.ensureSchemaV3();
+    const projectId = requireMissionControlProjectId(input.projectId);
+    const actionId = requireMissionControlActionId(input.actionId);
+    const requestFingerprint = requireMissionControlRequestFingerprint(
+      input.requestFingerprint,
+    );
+    const expectedRevision = requireMissionControlExpectedRevision(
+      input.expectedRevision,
+    );
+    return this.withMissionControlTransaction(async (executor) => {
+      const empty = createEmptyMissionControlProjectDocument(projectId);
+      await executor.query(
+        `INSERT INTO mission_control_projects (
+           project_id, schema_version, revision, authority_epoch, document_json
+         ) VALUES ($1, $2, 0, 0, $3::jsonb)
+         ON CONFLICT (project_id) DO NOTHING`,
+        [
+          projectId,
+          MISSION_CONTROL_PROJECT_SCHEMA_VERSION,
+          stringifySanitizedJson(empty),
+        ],
+      );
+
+      const projectResult = await executor.query<MissionControlProjectRow>(
+        `SELECT project_id, schema_version, revision, authority_epoch,
+                document_json, created_at, updated_at
+           FROM mission_control_projects
+          WHERE project_id = $1
+          FOR UPDATE`,
+        [projectId],
+      );
+      const projectRow = projectResult.rows[0];
+      if (projectRow === undefined) {
+        throw new Error(
+          `Mission Control project ${projectId} could not be locked.`,
+        );
+      }
+
+      const receiptResult = await executor.query<MissionControlReceiptRow>(
+        `SELECT request_fingerprint, result_json
+           FROM mission_control_action_receipts
+          WHERE project_id = $1 AND action_id = $2`,
+        [projectId, actionId],
+      );
+      const priorReceipt = receiptResult.rows[0];
+      if (priorReceipt !== undefined) {
+        assertMissionControlReceiptFingerprint(
+          actionId,
+          priorReceipt.request_fingerprint,
+          requestFingerprint,
+        );
+        return {
+          ...parseMissionControlPersistedMutationResult(
+            priorReceipt.result_json,
+          ),
+          duplicate: true,
+        };
+      }
+
+      const current = this.mapMissionControlProjectRow(projectRow);
+      assertMissionControlExpectedRevision(
+        current.revision,
+        expectedRevision,
+      );
+      const transition = input.apply(structuredClone(current.document));
+      const document = parseMissionControlProjectDocument(
+        transition.document,
+        projectId,
+      );
+      const updatedResult = await executor.query<MissionControlProjectRow>(
+        `UPDATE mission_control_projects
+            SET revision = revision + 1,
+                document_json = $2::jsonb,
+                updated_at = NOW()
+          WHERE project_id = $1
+          RETURNING project_id, schema_version, revision, authority_epoch,
+                    document_json, created_at, updated_at`,
+        [projectId, stringifySanitizedJson(document)],
+      );
+      const updatedRow = updatedResult.rows[0];
+      if (updatedRow === undefined) {
+        throw new Error(
+          `Mission Control project ${projectId} could not be updated.`,
+        );
+      }
+
+      const effects: MissionControlOutboxRecord[] = [];
+      for (const effect of transition.effects) {
+        if (
+          effect.effectId.trim().length === 0 ||
+          effect.effectType.trim().length === 0
+        ) {
+          throw new Error(
+            "Mission Control outbox effectId and effectType are required.",
+          );
+        }
+        const inserted = await executor.query<MissionControlOutboxRow>(
+          `INSERT INTO mission_control_outbox (
+             project_id, action_id, effect_id, effect_type, payload_json
+           ) VALUES ($1, $2, $3, $4, $5::jsonb)
+           RETURNING id, project_id, action_id, effect_id, effect_type,
+                     payload_json, status, attempt_count, last_error, created_at`,
+          [
+            projectId,
+            actionId,
+            effect.effectId,
+            effect.effectType,
+            stringifySanitizedJson(effect.payload),
+          ],
+        );
+        const effectRow = inserted.rows[0];
+        if (effectRow === undefined) {
+          throw new Error(
+            `Mission Control effect ${effect.effectId} could not be persisted.`,
+          );
+        }
+        effects.push(this.mapMissionControlOutboxRow(effectRow));
+      }
+
+      const result: MissionControlPersistedMutationResult = {
+        project: this.mapMissionControlProjectRow(updatedRow),
+        effects,
+      };
+      await executor.query(
+        `INSERT INTO mission_control_action_receipts (
+           project_id, action_id, request_fingerprint, result_json
+         ) VALUES ($1, $2, $3, $4::jsonb)`,
+        [
+          projectId,
+          actionId,
+          requestFingerprint,
+          stringifySanitizedJson(result),
+        ],
+      );
+      return {
+        ...result,
+        duplicate: false,
+      };
+    });
+  }
+
+  async listMissionControlOutbox(
+    projectIdValue: string,
+  ): Promise<MissionControlOutboxRecord[]> {
+    await this.ensureSchemaV3();
+    const projectId = requireMissionControlProjectId(projectIdValue);
+    const result = await this.db.query<MissionControlOutboxRow>(
+      `SELECT id, project_id, action_id, effect_id, effect_type,
+              payload_json, status, attempt_count, last_error, created_at
+         FROM mission_control_outbox
+        WHERE project_id = $1
+        ORDER BY id ASC`,
+      [projectId],
+    );
+    return result.rows.map((row) => this.mapMissionControlOutboxRow(row));
   }
 
   async getSessionProductState(sessionId: string): Promise<SessionProductStateRecord | null> {
@@ -3484,6 +3706,63 @@ export class PostgresSessionStore implements SessionStore {
     };
   }
 
+  private mapMissionControlProjectRow(
+    row: MissionControlProjectRow,
+  ): MissionControlProjectStateRecord {
+    return parseMissionControlProjectStateRecord({
+      projectId: row.project_id,
+      schemaVersion: row.schema_version,
+      revision: this.normalizeSafeInteger(row.revision, "revision"),
+      authorityEpoch: this.normalizeSafeInteger(
+        row.authority_epoch,
+        "authority_epoch",
+      ),
+      document: row.document_json,
+      createdAt: normalizeTimestampString(row.created_at),
+      updatedAt: normalizeTimestampString(row.updated_at),
+    });
+  }
+
+  private mapMissionControlOutboxRow(
+    row: MissionControlOutboxRow,
+  ): MissionControlOutboxRecord {
+    return {
+      id: this.normalizeSafeInteger(row.id, "mission_control_outbox.id"),
+      projectId: requireMissionControlProjectId(row.project_id),
+      actionId: row.action_id,
+      effectId: row.effect_id,
+      effectType: row.effect_type,
+      payload: this.asRecord(row.payload_json) ?? {},
+      status: this.normalizeMissionControlOutboxStatus(row.status),
+      attemptCount: this.normalizeSafeInteger(
+        row.attempt_count,
+        "mission_control_outbox.attempt_count",
+      ),
+      ...(row.last_error === null ? {} : { lastError: row.last_error }),
+      createdAt: normalizeTimestampString(row.created_at),
+    };
+  }
+
+  private normalizeMissionControlOutboxStatus(
+    value: string,
+  ): MissionControlOutboxRecord["status"] {
+    if (value !== "PENDING" && value !== "DELIVERED" && value !== "FAILED") {
+      throw new Error(`Invalid Mission Control outbox status: ${value}.`);
+    }
+    return value;
+  }
+
+  private normalizeSafeInteger(
+    value: number | string,
+    field: string,
+  ): number {
+    const numeric = typeof value === "number" ? value : Number(value);
+    if (Number.isSafeInteger(numeric) === false || numeric < 0) {
+      throw new Error(`${field} must be a non-negative safe integer.`);
+    }
+    return numeric;
+  }
+
   private async getSessionProductStateRowForUpdate(
     sessionId: string,
     executor: SqlExecutor,
@@ -3728,6 +4007,12 @@ export class PostgresSessionStore implements SessionStore {
       await this.db.query("ROLLBACK");
       throw error;
     }
+  }
+
+  private withMissionControlTransaction<T>(
+    operation: (executor: SqlExecutor) => Promise<T>,
+  ): Promise<T> {
+    return this.withTransaction(operation);
   }
 
   private async ensureSchemaV3(): Promise<void> {
