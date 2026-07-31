@@ -12,8 +12,11 @@ import {
 } from "@/lib/agent/kestrel-runtime";
 import {
   appendKestrelUiChunkIfDurable,
+  buildKestrelFailureReplayChunks,
   isLiveOnlyKestrelUiChunk,
   prepareKestrelRuntimeMessagesForPersistence,
+  readKestrelReplayScaffoldChunk,
+  readTerminalKestrelUiChunk,
 } from "@/lib/agent/kestrel-runtime-persistence";
 import type { Session } from "@/lib/auth-types";
 import { generateTitleForOrganization } from "@/lib/chat/title";
@@ -34,6 +37,10 @@ import {
   appendDurableTurnEvent,
   claimDurableThreadTurn,
   completeDurableThreadTurn,
+  type DurableAssistantOutcomeMessage,
+  type DurableReplayChunk,
+  getDurableTurn,
+  getDurableTurnOpenReplayScaffold,
   isDurableTurnCancellationRequested,
   listMessagesForDurableTurn,
   persistDurableAssistantOutcome,
@@ -82,6 +89,83 @@ function terminalTurnStatus(status: KestrelTerminalStatus) {
     return "completed" as const;
   }
   return "failed" as const;
+}
+
+function assistantText(message: UIMessage) {
+  return message.parts
+    .flatMap((part) => (part.type === "text" ? [part.text] : []))
+    .join("\n");
+}
+
+function buildFailurePresentation(input: {
+  errorMessage: string;
+  status: "failed" | "cancelled";
+  turn: {
+    id: string;
+    projectContextRevisionId: string | null;
+    requestedModelId: string | null;
+    source: "web" | "mobile" | "api";
+  };
+  assistantMessageId: string | null;
+  textPartId: string | null;
+}) {
+  const [generated] = (
+    input.status === "cancelled"
+      ? [
+          {
+            id: crypto.randomUUID(),
+            role: "assistant" as const,
+            parts: [
+              {
+                type: "text" as const,
+                text: "The response was stopped before completion.",
+              },
+            ],
+          },
+        ]
+      : prepareKestrelRuntimeMessagesForPersistence([], {
+          errorMessage: input.errorMessage,
+          failureVisible: false,
+        })
+  ).filter(
+    (candidate): candidate is UIMessage =>
+      candidate.role === "assistant" &&
+      isPersistableAssistantMessage(candidate),
+  );
+  if (!generated) {
+    throw new Error("The durable failure presentation could not be created.");
+  }
+  const messageId = input.assistantMessageId ?? generated.id;
+  const message = { ...generated, id: messageId };
+  const textPartId = input.textPartId ?? crypto.randomUUID();
+  const messages: DurableAssistantOutcomeMessage[] = [
+    {
+      id: message.id,
+      projectContextRevisionId: input.turn.projectContextRevisionId,
+      parts: message.parts,
+      model: input.turn.requestedModelId ?? "unknown",
+      inputTokens: undefined,
+      cachedInputTokens: undefined,
+      outputTokens: undefined,
+      reasoningTokens: undefined,
+      durationMs: undefined,
+      source: input.turn.source,
+    },
+  ];
+  return {
+    messages,
+    replayChunks: buildKestrelFailureReplayChunks({
+      assistantMessageId: message.id,
+      textPartId,
+      turnId: input.turn.id,
+      status: input.status,
+      text: assistantText(message),
+      errorMessage:
+        input.status === "failed" ? input.errorMessage : null,
+      includeStart: input.assistantMessageId === null,
+      includeTextStart: input.textPartId === null,
+    }) as DurableReplayChunk[],
+  };
 }
 
 async function loadWorkerSession(userId: string): Promise<Session> {
@@ -178,6 +262,9 @@ export async function processDurableThreadTurn(
         organizationId: true,
         environmentExecutionId: true,
         cancelRequestedAt: true,
+        projectContextRevisionId: true,
+        requestedModelId: true,
+        source: true,
       },
     });
     if (interrupted?.status === "running") {
@@ -197,13 +284,29 @@ export async function processDurableThreadTurn(
         });
       }
       const stopped = Boolean(interrupted.cancelRequestedAt);
+      const failureMessage = stopped
+        ? "The user stopped this turn before it finished."
+        : "The Kestrel agent was interrupted before this turn finished. Please try again.";
+      const scaffold = await getDurableTurnOpenReplayScaffold(turnId);
+      const presentation = buildFailurePresentation({
+        errorMessage: failureMessage,
+        status: stopped ? "cancelled" : "failed",
+        turn: {
+          id: turnId,
+          projectContextRevisionId: interrupted.projectContextRevisionId,
+          requestedModelId: interrupted.requestedModelId,
+          source: interrupted.source,
+        },
+        assistantMessageId: scaffold.assistantMessageId,
+        textPartId: scaffold.textPartId,
+      });
       const completion = await completeDurableThreadTurn({
         turnId,
         status: stopped ? "cancelled" : "failed",
+        messages: presentation.messages,
+        replayChunks: presentation.replayChunks,
         failureCode: stopped ? "TURN_STOPPED" : "TURN_WORKER_INTERRUPTED",
-        failureMessage: stopped
-          ? null
-          : "The Kestrel agent was interrupted before this turn finished. Please try again.",
+        failureMessage: stopped ? null : failureMessage,
       });
       return { processed: true, nextTurnId: completion.nextTurnId };
     }
@@ -282,11 +385,20 @@ export async function processDurableThreadTurn(
     status: KestrelTerminalStatus;
     error: string | null;
     interaction: KestrelInteractionPresentation | null;
+    messages: DurableAssistantOutcomeMessage[];
+    replayChunks: DurableReplayChunk[];
+    assistantMessageId: string | null;
+    textPartId: string | null;
   } = {
     status: "contract_failure",
     error: null,
     interaction: null,
+    messages: [],
+    replayChunks: [],
+    assistantMessageId: null,
+    textPartId: null,
   };
+  let waitingCommitted = false;
   try {
     const [session, storedMessages] = await Promise.all([
       loadWorkerSession(turn.authorUserId),
@@ -397,6 +509,18 @@ export async function processDurableThreadTurn(
         }
       },
       onUiChunk(chunk) {
+        const scaffold = readKestrelReplayScaffoldChunk(chunk);
+        if (scaffold.assistantMessageId) {
+          terminal.assistantMessageId = scaffold.assistantMessageId;
+        }
+        if (scaffold.textPartId) {
+          terminal.textPartId = scaffold.textPartId;
+        }
+        const terminalChunk = readTerminalKestrelUiChunk(chunk);
+        if (terminalChunk) {
+          terminal.replayChunks.push(terminalChunk as DurableReplayChunk);
+          return;
+        }
         if (isLiveOnlyKestrelUiChunk(chunk)) {
           return;
         }
@@ -422,23 +546,28 @@ export async function processDurableThreadTurn(
             message.role === "assistant" &&
             isPersistableAssistantMessage(message),
         );
-        persistedAssistantMessageCount = assistantMessages.length;
-        await persistDurableAssistantOutcome({
-          turnId: turn.id,
-          interaction: meta.interaction,
-          messages: assistantMessages.map((message) => ({
-            id: message.id,
-            projectContextRevisionId: turn.projectContextRevisionId,
-            parts: message.parts,
-            model: meta.model,
-            inputTokens: meta.telemetry?.inputTokens,
-            cachedInputTokens: meta.telemetry?.cachedInputTokens,
-            outputTokens: meta.telemetry?.outputTokens,
-            reasoningTokens: meta.telemetry?.reasoningTokens,
-            durationMs: meta.telemetry?.durationMs,
-            source: turn.source,
-          })),
-        });
+        terminal.messages = assistantMessages.map((message) => ({
+          id: message.id,
+          projectContextRevisionId: turn.projectContextRevisionId,
+          parts: message.parts,
+          model: meta.model,
+          inputTokens: meta.telemetry?.inputTokens,
+          cachedInputTokens: meta.telemetry?.cachedInputTokens,
+          outputTokens: meta.telemetry?.outputTokens,
+          reasoningTokens: meta.telemetry?.reasoningTokens,
+          durationMs: meta.telemetry?.durationMs,
+          source: turn.source,
+        }));
+        persistedAssistantMessageCount = terminal.messages.length;
+        if (meta.terminalStatus === "waiting" && meta.interaction) {
+          await persistDurableAssistantOutcome({
+            turnId: turn.id,
+            interaction: meta.interaction,
+            messages: terminal.messages,
+            replayChunks: terminal.replayChunks,
+          });
+          waitingCommitted = true;
+        }
         if (meta.title) {
           await updateThreadTitleForUser({
             id: turn.threadId,
@@ -467,56 +596,52 @@ export async function processDurableThreadTurn(
     if (terminal.status === "waiting" && terminal.interaction) {
       return { processed: true, nextTurnId: null };
     }
-    const completionStatus = workerInterrupted
-      ? "failed"
-      : terminalTurnStatus(terminal.status);
+    // Once the runtime has produced a complete terminal presentation, that
+    // result is authoritative even if the worker lease ends immediately after
+    // it. Earlier worker loss reaches the failed/catch paths instead.
+    const completionStatus = terminalTurnStatus(terminal.status);
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
       status: completionStatus,
-      failureCode: workerInterrupted
-        ? "TURN_WORKER_INTERRUPTED"
-        : completionStatus === "failed"
-          ? terminal.status === "contract_failure"
-            ? "PRESENTATION_CONTRACT_FAILURE"
-            : "RUNTIME_FAILED"
+      messages: terminal.messages,
+      replayChunks: terminal.replayChunks,
+      failureCode:
+        completionStatus === "failed"
+          ? workerInterrupted
+            ? "TURN_WORKER_INTERRUPTED"
+            : terminal.status === "contract_failure"
+              ? "PRESENTATION_CONTRACT_FAILURE"
+              : "RUNTIME_FAILED"
           : null,
       failureMessage: terminal.error,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
   } catch (error) {
     await eventWrites.catch(() => {});
+    if (
+      waitingCommitted ||
+      (await getDurableTurn(turn.id).catch(() => null))?.status ===
+        "waiting_for_input"
+    ) {
+      return { processed: true, nextTurnId: null };
+    }
     const message =
       error instanceof Error ? error.message : "Durable turn execution failed.";
-    const visibleFailure = prepareKestrelRuntimeMessagesForPersistence([], {
-      errorMessage: message,
-      failureVisible: false,
-    }).filter(
-      (candidate): candidate is UIMessage =>
-        candidate.role === "assistant" &&
-        isPersistableAssistantMessage(candidate),
-    );
-    await persistDurableAssistantOutcome({
-      turnId: turn.id,
-      interaction: null,
-      messages: visibleFailure.map((assistantMessage) => ({
-        id: assistantMessage.id,
-        projectContextRevisionId: turn.projectContextRevisionId,
-        parts: assistantMessage.parts,
-        model: turn.requestedModelId ?? "unknown",
-        inputTokens: undefined,
-        cachedInputTokens: undefined,
-        outputTokens: undefined,
-        reasoningTokens: undefined,
-        durationMs: undefined,
-        source: turn.source,
-      })),
-    });
     const stopped =
       cancellationRequested ||
       (await isDurableTurnCancellationRequested(turn.id).catch(() => false));
+    const failurePresentation = buildFailurePresentation({
+      errorMessage: message,
+      status: stopped ? "cancelled" : "failed",
+      turn,
+      assistantMessageId: terminal.assistantMessageId,
+      textPartId: terminal.textPartId,
+    });
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
       status: stopped ? "cancelled" : "failed",
+      messages: failurePresentation.messages,
+      replayChunks: failurePresentation.replayChunks,
       failureCode: stopped
         ? "TURN_STOPPED"
         : workerInterrupted

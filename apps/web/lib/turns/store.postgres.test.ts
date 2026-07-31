@@ -1088,3 +1088,549 @@ contractTest(
     await claimOnce(missing.turn.id);
   },
 );
+
+contractTest(
+  ["web.turn-transaction", "web.worker-claim-recovery"],
+  "terminal presentation commits with terminal state and queue authority",
+  async (context) => {
+    assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.POSTGRES_URL = databaseUrl;
+
+    const [{ resetDbRuntimeForTests }, store, processRuntime, mobileSnapshot] =
+      await Promise.all([
+        import("@/lib/db/runtime"),
+        import("./store"),
+        import("./process-runtime"),
+        import("@/lib/mobile/snapshot"),
+      ]);
+    const sql = postgres(databaseUrl, { max: 2 });
+    const suffix = crypto.randomUUID();
+    const organizationId = `terminal-history-org-${suffix}`;
+    const userId = `terminal-history-user-${suffix}`;
+    const environmentId = `terminal-history-environment-${suffix}`;
+    const successThreadId = `terminal-history-success-${suffix}`;
+    const terminalFaultThreadId = `terminal-history-terminal-fault-${suffix}`;
+    const releaseFaultThreadId = `terminal-history-release-fault-${suffix}`;
+    const failedThreadId = `terminal-history-failed-${suffix}`;
+    const cancelledThreadId = `terminal-history-cancelled-${suffix}`;
+    const now = new Date();
+
+    const dropTerminalFault = async () => {
+      await sql`
+        DROP TRIGGER IF EXISTS "issue_235_fail_terminal_commit"
+        ON "thread_turn_events"
+      `;
+      await sql`
+        DROP FUNCTION IF EXISTS "issue_235_fail_terminal_commit"()
+      `;
+    };
+    const dropReleaseFault = async () => {
+      await sql`
+        DROP TRIGGER IF EXISTS "issue_235_fail_successor_release_commit"
+        ON "thread_turn_queue_state"
+      `;
+      await sql`
+        DROP FUNCTION IF EXISTS "issue_235_fail_successor_release_commit"()
+      `;
+    };
+    const dropFaults = async () => {
+      await dropTerminalFault();
+      await dropReleaseFault();
+    };
+
+    context.after(async () => {
+      await dropFaults();
+      await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await resetDbRuntimeForTests();
+      await sql.end({ timeout: 0 });
+    });
+
+    await dropFaults();
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "user" (
+          "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+        ) VALUES (
+          ${userId}, 'Terminal History User', ${`${userId}@example.test`},
+          true, ${now}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+        VALUES (
+          ${organizationId}, 'Terminal History Org',
+          ${`terminal-history-org-${suffix}`}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "environments" (
+          "id", "organization_id", "created_by_user_id", "name", "slug",
+          "region", "status", "is_default"
+        ) VALUES (
+          ${environmentId}, ${organizationId}, ${userId}, 'Default', 'default',
+          'iad', 'ready', true
+        )
+      `;
+      await transaction`
+        INSERT INTO "threads" (
+          "id", "title", "created_by_user_id", "organization_id", "origin"
+        ) VALUES
+          (
+            ${successThreadId}, 'Terminal Success', ${userId},
+            ${organizationId}, 'mobile'
+          ),
+          (
+            ${terminalFaultThreadId}, 'Terminal Commit Fault', ${userId},
+            ${organizationId}, 'mobile'
+          ),
+          (
+            ${releaseFaultThreadId}, 'Successor Release Fault', ${userId},
+            ${organizationId}, 'mobile'
+          ),
+          (
+            ${failedThreadId}, 'Terminal Failure', ${userId},
+            ${organizationId}, 'mobile'
+          ),
+          (
+            ${cancelledThreadId}, 'Terminal Cancellation', ${userId},
+            ${organizationId}, 'mobile'
+          )
+      `;
+    });
+
+    const createTurn = (threadId: string, label: string) =>
+      store.createDurableThreadTurn({
+        threadId,
+        organizationId,
+        authorUserId: userId,
+        messageId: `terminal-history-message-${label}-${suffix}`,
+        messageParts: [{ type: "text", text: label }],
+        idempotencyKey: `terminal-history-idempotency-${label}-${suffix}`,
+        requestedEnvironmentId: environmentId,
+        source: "mobile",
+      });
+    const presentation = (label: string) => [
+      {
+        id: `terminal-history-assistant-${label}-${suffix}`,
+        parts: [{ type: "text", text: `Outcome: ${label}` }],
+        model: "terminal-history-model",
+        source: "mobile" as const,
+        projectContextRevisionId: null,
+      },
+    ];
+    const terminalReplayChunks = (
+      label: string,
+      status: "completed" | "failed" | "cancelled",
+    ) => [
+      {
+        type: "data-kestrel-status",
+        data: { status },
+      },
+      {
+        type: "text-delta",
+        id: `terminal-history-text-${label}-${suffix}`,
+        delta: `Outcome: ${label}`,
+      },
+      {
+        type: "text-end",
+        id: `terminal-history-text-${label}-${suffix}`,
+      },
+      {
+        type: "message-metadata",
+        messageMetadata: { kestrelTerminalStatus: status },
+      },
+      { type: "finish", finishReason: "stop" },
+    ];
+    const readQueue = async (threadId: string) => {
+      const [state] = await sql<
+        Array<{
+          activeTurnId: string | null;
+          pauseReason: string | null;
+          state: string;
+          version: number;
+        }>
+      >`
+        SELECT
+          "active_turn_id" AS "activeTurnId",
+          "pause_reason" AS "pauseReason",
+          "state",
+          "version"
+        FROM "thread_turn_queue_state"
+        WHERE "thread_id" = ${threadId}
+      `;
+      return state;
+    };
+    const eventTypes = async (turnId: string) =>
+      (await store.listDurableTurnEvents({ turnId })).map(
+        (event) => event.type,
+      );
+    const assistantMessageIds = async (turnId: string) => {
+      const messages = await sql<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "thread_messages"
+        WHERE "turn_id" = ${turnId} AND "role" = 'assistant'
+        ORDER BY "created_at", "id"
+      `;
+      return messages.map((message) => message.id);
+    };
+    const replayChunksForTurn = async (turnId: string) =>
+      (await store.listDurableTurnEvents({ turnId, limit: 500 }))
+        .filter((event) => event.type === "ui.message")
+        .map((event) => event.data as Record<string, unknown>);
+    const appendOpenReplayScaffold = async (turnId: string, label: string) => {
+      for (const data of [
+        {
+          type: "start",
+          messageId: `terminal-history-assistant-${label}-${suffix}`,
+        },
+        {
+          type: "text-start",
+          id: `terminal-history-text-${label}-${suffix}`,
+        },
+        {
+          type: "data-kestrel-progress",
+          data: { persist: true, text: "Still working." },
+        },
+      ]) {
+        await store.appendDurableTurnEvent({
+          turnId,
+          type: "ui.message",
+          data,
+        });
+      }
+    };
+
+    const successful = await createTurn(successThreadId, "success");
+    const successfulNext = await createTurn(successThreadId, "success-next");
+    assert.ok(await store.claimDurableThreadTurn(successful.turn.id));
+    const successfulMessages = presentation("success");
+    const successfulCompletion = await store.completeDurableThreadTurn({
+      turnId: successful.turn.id,
+      status: "completed",
+      messages: successfulMessages,
+      replayChunks: terminalReplayChunks("success", "completed"),
+    });
+    assert.equal(successfulCompletion.nextTurnId, successfulNext.turn.id);
+    assert.deepEqual(await eventTypes(successful.turn.id), [
+      "turn.queued",
+      "turn.running",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "turn.completed",
+    ]);
+    assert.deepEqual(await assistantMessageIds(successful.turn.id), [
+      successfulMessages[0]?.id,
+    ]);
+    assert.ok(
+      (await store.getDurableTurnReplayBoundary(successful.turn.id)) > 0,
+    );
+    assert.deepEqual(await readQueue(successThreadId), {
+      activeTurnId: successfulNext.turn.id,
+      pauseReason: null,
+      state: "running",
+      version: 3,
+    });
+    const successfulMobile = await mobileSnapshot.getMobileThreadSnapshot({
+      threadId: successThreadId,
+      organizationId,
+      userId,
+    });
+    assert.equal(
+      successfulMobile?.turns.find((turn) => turn.id === successful.turn.id)
+        ?.status,
+      "completed",
+    );
+    assert.equal(
+      successfulMobile?.messages.some(
+        (message) => message.id === successfulMessages[0]?.id,
+      ),
+      true,
+    );
+    assert.equal(successfulMobile?.queue.activeTurnId, successfulNext.turn.id);
+
+    const ignoredOppositeMessage = presentation("ignored-opposite");
+    const idempotentCompletion = await store.completeDurableThreadTurn({
+      turnId: successful.turn.id,
+      status: "failed",
+      failureCode: "SHOULD_NOT_REPLACE_COMPLETION",
+      messages: ignoredOppositeMessage,
+      replayChunks: terminalReplayChunks("ignored-opposite", "failed"),
+    });
+    assert.equal(idempotentCompletion.turn.status, "completed");
+    assert.deepEqual(await assistantMessageIds(successful.turn.id), [
+      successfulMessages[0]?.id,
+    ]);
+    assert.deepEqual(await eventTypes(successful.turn.id), [
+      "turn.queued",
+      "turn.running",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "turn.completed",
+    ]);
+
+    const terminalFault = await createTurn(
+      terminalFaultThreadId,
+      "terminal-fault",
+    );
+    assert.ok(await store.claimDurableThreadTurn(terminalFault.turn.id));
+    await appendOpenReplayScaffold(terminalFault.turn.id, "terminal-fault");
+    await sql`
+      CREATE FUNCTION "issue_235_fail_terminal_commit"()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $function$
+      BEGIN
+        RAISE EXCEPTION 'issue 235 terminal commit fault';
+      END;
+      $function$
+    `;
+    await sql`
+      CREATE CONSTRAINT TRIGGER "issue_235_fail_terminal_commit"
+      AFTER INSERT ON "thread_turn_events"
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW
+      WHEN (NEW."type" = 'turn.completed')
+      EXECUTE FUNCTION "issue_235_fail_terminal_commit"()
+    `;
+    await assert.rejects(
+      store.completeDurableThreadTurn({
+        turnId: terminalFault.turn.id,
+        status: "completed",
+        messages: presentation("terminal-fault"),
+        replayChunks: terminalReplayChunks("terminal-fault", "completed"),
+      }),
+      /issue 235 terminal commit fault/u,
+    );
+    assert.equal(
+      (await store.getDurableTurn(terminalFault.turn.id))?.status,
+      "running",
+    );
+    assert.deepEqual(await assistantMessageIds(terminalFault.turn.id), []);
+    assert.equal(
+      await store.getDurableTurnReplayBoundary(terminalFault.turn.id),
+      0,
+    );
+    assert.deepEqual(
+      (await replayChunksForTurn(terminalFault.turn.id)).map(
+        (chunk) => chunk.type,
+      ),
+      ["start", "text-start", "data-kestrel-progress"],
+    );
+    assert.deepEqual(await readQueue(terminalFaultThreadId), {
+      activeTurnId: terminalFault.turn.id,
+      pauseReason: null,
+      state: "running",
+      version: 1,
+    });
+    await dropTerminalFault();
+    await processRuntime.processDurableThreadTurn(terminalFault.turn.id, {
+      retryCount: 1,
+    });
+    const recoveredTerminalFault = await store.getDurableTurn(
+      terminalFault.turn.id,
+    );
+    assert.equal(recoveredTerminalFault?.status, "failed");
+    assert.equal(
+      recoveredTerminalFault?.failureCode,
+      "TURN_WORKER_INTERRUPTED",
+    );
+    assert.equal(
+      (await assistantMessageIds(terminalFault.turn.id)).length,
+      1,
+    );
+    assert.ok(
+      (await store.getDurableTurnReplayBoundary(terminalFault.turn.id)) > 0,
+    );
+    const recoveredTerminalReplay = await replayChunksForTurn(
+      terminalFault.turn.id,
+    );
+    assert.equal(
+      recoveredTerminalReplay.some(
+        (chunk) =>
+          chunk.type === "text-delta" &&
+          chunk.delta === "Outcome: terminal-fault",
+      ),
+      false,
+    );
+    assert.equal(
+      recoveredTerminalReplay.some(
+        (chunk) =>
+          chunk.type === "data-kestrel-status" &&
+          (chunk.data as { status?: unknown })?.status === "failed",
+      ),
+      true,
+    );
+
+    const releaseFault = await createTurn(
+      releaseFaultThreadId,
+      "release-fault",
+    );
+    const releaseFaultNext = await createTurn(
+      releaseFaultThreadId,
+      "release-fault-next",
+    );
+    assert.ok(await store.claimDurableThreadTurn(releaseFault.turn.id));
+    await appendOpenReplayScaffold(releaseFault.turn.id, "release-fault");
+    await sql`
+      CREATE FUNCTION "issue_235_fail_successor_release_commit"()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $function$
+      BEGIN
+        RAISE EXCEPTION 'issue 235 successor release commit fault';
+      END;
+      $function$
+    `;
+    await sql`
+      CREATE CONSTRAINT TRIGGER "issue_235_fail_successor_release_commit"
+      AFTER UPDATE OF "active_turn_id" ON "thread_turn_queue_state"
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW
+      WHEN (
+        OLD."active_turn_id" IS DISTINCT FROM NEW."active_turn_id"
+        AND NEW."active_turn_id" IS NOT NULL
+      )
+      EXECUTE FUNCTION "issue_235_fail_successor_release_commit"()
+    `;
+    await assert.rejects(
+      store.completeDurableThreadTurn({
+        turnId: releaseFault.turn.id,
+        status: "completed",
+        messages: presentation("release-fault"),
+        replayChunks: terminalReplayChunks("release-fault", "completed"),
+      }),
+      /issue 235 successor release commit fault/u,
+    );
+    assert.equal(
+      (await store.getDurableTurn(releaseFault.turn.id))?.status,
+      "running",
+    );
+    assert.equal(
+      (await store.getDurableTurn(releaseFaultNext.turn.id))?.status,
+      "queued",
+    );
+    assert.deepEqual(await assistantMessageIds(releaseFault.turn.id), []);
+    assert.equal(
+      await store.getDurableTurnReplayBoundary(releaseFault.turn.id),
+      0,
+    );
+    assert.deepEqual(
+      (await replayChunksForTurn(releaseFault.turn.id)).map(
+        (chunk) => chunk.type,
+      ),
+      ["start", "text-start", "data-kestrel-progress"],
+    );
+    await dropReleaseFault();
+    await processRuntime.processDurableThreadTurn(releaseFault.turn.id, {
+      retryCount: 1,
+    });
+    assert.equal(
+      (await store.getDurableTurn(releaseFault.turn.id))?.failureCode,
+      "TURN_WORKER_INTERRUPTED",
+    );
+    assert.deepEqual(await readQueue(releaseFaultThreadId), {
+      activeTurnId: null,
+      pauseReason: "turn_failed",
+      state: "paused",
+      version: 3,
+    });
+    assert.equal(
+      (await store.getDurableTurn(releaseFaultNext.turn.id))?.status,
+      "queued",
+    );
+    assert.equal((await assistantMessageIds(releaseFault.turn.id)).length, 1);
+    assert.ok(
+      (await store.getDurableTurnReplayBoundary(releaseFault.turn.id)) > 0,
+    );
+    assert.equal(
+      (await replayChunksForTurn(releaseFault.turn.id)).some(
+        (chunk) =>
+          chunk.type === "text-delta" &&
+          chunk.delta === "Outcome: release-fault",
+      ),
+      false,
+    );
+
+    const failed = await createTurn(failedThreadId, "failed");
+    assert.ok(await store.claimDurableThreadTurn(failed.turn.id));
+    const failedMessages = presentation("failed");
+    await store.completeDurableThreadTurn({
+      turnId: failed.turn.id,
+      status: "failed",
+      failureCode: "TURN_WORKER_FAILED",
+      failureMessage: "The agent failed.",
+      messages: failedMessages,
+      replayChunks: terminalReplayChunks("failed", "failed"),
+    });
+    assert.deepEqual(await assistantMessageIds(failed.turn.id), [
+      failedMessages[0]?.id,
+    ]);
+    assert.deepEqual(await eventTypes(failed.turn.id), [
+      "turn.queued",
+      "turn.running",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "turn.failed",
+    ]);
+    assert.deepEqual(await readQueue(failedThreadId), {
+      activeTurnId: null,
+      pauseReason: "turn_failed",
+      state: "paused",
+      version: 2,
+    });
+    const failedMobile = await mobileSnapshot.getMobileThreadSnapshot({
+      threadId: failedThreadId,
+      organizationId,
+      userId,
+    });
+    assert.equal(failedMobile?.turns[0]?.status, "failed");
+    assert.equal(
+      failedMobile?.messages.some(
+        (message) => message.id === failedMessages[0]?.id,
+      ),
+      true,
+    );
+    assert.equal(failedMobile?.queue.pauseReason, "turn_failed");
+
+    const cancelled = await createTurn(cancelledThreadId, "cancelled");
+    assert.ok(await store.claimDurableThreadTurn(cancelled.turn.id));
+    const cancelledMessages = presentation("cancelled");
+    await store.completeDurableThreadTurn({
+      turnId: cancelled.turn.id,
+      status: "cancelled",
+      failureCode: "TURN_STOPPED",
+      messages: cancelledMessages,
+      replayChunks: terminalReplayChunks("cancelled", "cancelled"),
+    });
+    assert.deepEqual(await assistantMessageIds(cancelled.turn.id), [
+      cancelledMessages[0]?.id,
+    ]);
+    assert.deepEqual(await eventTypes(cancelled.turn.id), [
+      "turn.queued",
+      "turn.running",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "ui.message",
+      "turn.cancelled",
+    ]);
+    assert.deepEqual(await readQueue(cancelledThreadId), {
+      activeTurnId: null,
+      pauseReason: "turn_cancelled",
+      state: "paused",
+      version: 2,
+    });
+  },
+);
