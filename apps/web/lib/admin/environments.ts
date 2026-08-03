@@ -279,7 +279,7 @@ export async function updateAdminEnvironmentRuntime(input: {
     return created;
   });
   if (operation.status !== "completed") {
-    await enqueueEnvironmentOperation(operation.id);
+    await enqueueEnvironmentOperation(operation.id, { retryTerminal: true });
   }
   await logAdminEvent({
     organizationId: input.organizationId,
