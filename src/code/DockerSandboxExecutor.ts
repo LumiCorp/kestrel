@@ -1,8 +1,17 @@
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
 
 import type {
   CodeExecutionArtifact,
@@ -12,6 +21,11 @@ import type {
   SandboxExecutionOutput,
   SandboxExecutor,
 } from "./contracts.js";
+
+const SANDBOX_UID = 65_532;
+const SANDBOX_GID = 65_532;
+const DOCKER_LIFECYCLE_TIMEOUT_MS = 10_000;
+const DOCKER_LIFECYCLE_OUTPUT_BYTES = 16_000;
 
 const LANGUAGE_IMAGE: Record<CodeExecutionLanguage, string> = {
   javascript: "node:20-alpine",
@@ -27,6 +41,7 @@ const LANGUAGE_MAIN_FILE: Record<CodeExecutionLanguage, string> = {
 
 const IGNORED_ARTIFACT_DIRS = new Set([
   "node_modules",
+  ".kestrel-python",
   "__pycache__",
   ".git",
   ".cache",
@@ -37,6 +52,14 @@ export class DockerSandboxCancellationError extends Error {}
 
 export interface DockerSandboxExecutorOptions {
   containerNameFactory?: (() => string) | undefined;
+}
+
+interface DockerProcessResult {
+  exitCode: number | null;
+  timedOut: boolean;
+  cancelled: boolean;
+  stdout: string;
+  stderr: string;
 }
 
 export class DockerSandboxExecutor implements SandboxExecutor {
@@ -50,55 +73,112 @@ export class DockerSandboxExecutor implements SandboxExecutor {
   async execute(input: SandboxExecutionInput): Promise<SandboxExecutionOutput> {
     throwIfCancelled(input.signal);
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-code-"));
-    const workspaceDir = path.join(rootDir, "workspace");
+    const stagingDir = path.join(rootDir, "staging");
+    const snapshotDir = path.join(rootDir, "snapshot");
     const mainFile = LANGUAGE_MAIN_FILE[input.request.language];
     const containerName = this.containerNameFactory();
-
-    await mkdir(workspaceDir, { recursive: true });
-
     const declaredFiles = normalizeFiles(input.request.files);
-    await writeDeclaredFiles(workspaceDir, declaredFiles);
-    await writeFile(path.join(workspaceDir, mainFile), input.request.code, "utf8");
+
+    await mkdir(stagingDir, { recursive: true, mode: 0o777 });
+    await chmod(stagingDir, 0o777);
+    await writeDeclaredFiles(stagingDir, declaredFiles);
+    await writeSandboxFile(
+      path.join(stagingDir, mainFile),
+      input.request.code,
+    );
+
+    const startedAt = Date.now();
+    let run: DockerProcessResult | undefined;
+    let snapshotError: string | undefined;
 
     try {
-      throwIfCancelled(input.signal);
-      const startedAt = Date.now();
-      const command = buildDockerCommand(
-        input,
-        workspaceDir,
-        mainFile,
-        containerName,
+      await runRequiredDockerCommand(
+        buildDockerCreateCommand(input, containerName),
+        "create sandbox container",
+        input.signal,
       );
-      const run = await runDockerCommand(
-        command,
+      await runRequiredDockerCommand(
+        ["start", containerName],
+        "start sandbox container",
+        input.signal,
+      );
+      await copyStagedInputs({
+        stagingDir,
+        relativePaths: [...new Set([
+          ...declaredFiles.map((file) => file.path),
+          mainFile,
+        ])],
+        containerName,
+        signal: input.signal,
+      });
+
+      throwIfCancelled(input.signal);
+      run = await runDockerProcess(
+        buildDockerExecCommand(input, mainFile, containerName),
         input.policy.timeoutMs,
         input.policy.maxOutputBytes,
-        {
-          containerName,
-          signal: input.signal,
-        },
+        input.signal,
       );
-      const durationMs = Date.now() - startedAt;
-
       if (run.cancelled) {
         throw new DockerSandboxCancellationError(
           "Docker sandbox execution was cancelled",
         );
       }
 
-      const artifacts = await collectArtifacts({
-        workspaceDir,
-        baselinePaths: new Set([...declaredFiles.map((file) => file.path), mainFile]),
-        maxArtifacts: input.policy.maxArtifacts,
-        maxArtifactBytes: input.policy.maxArtifactBytes,
-      });
+      throwIfCancelled(input.signal);
+      try {
+        await runRequiredDockerCommand(
+          ["pause", containerName],
+          "pause sandbox container",
+          input.signal,
+        );
+        await snapshotWorkspace({
+          containerName,
+          snapshotDir,
+          baselinePaths: new Set([
+            ...declaredFiles.map((file) => file.path),
+            mainFile,
+          ]),
+          maxArtifacts: input.policy.maxArtifacts,
+          maxArtifactBytes: input.policy.maxArtifactBytes,
+          signal: input.signal,
+        });
+      } catch (error) {
+        if (input.signal?.aborted === true) {
+          throw error;
+        }
+        snapshotError = error instanceof Error ? error.message : String(error);
+        if (run.timedOut === false) {
+          throw error;
+        }
+      }
+
+      const artifacts = snapshotError === undefined
+        ? await collectArtifacts({
+            workspaceDir: snapshotDir,
+            baselinePaths: new Set([
+              ...declaredFiles.map((file) => file.path),
+              mainFile,
+            ]),
+            maxArtifacts: input.policy.maxArtifacts,
+            maxArtifactBytes: input.policy.maxArtifactBytes,
+          })
+        : [];
+      const durationMs = Date.now() - startedAt;
+      const stderr = snapshotError === undefined
+        ? run.stderr
+        : appendBounded(
+            run.stderr,
+            `\nSandbox artifact snapshot failed after timeout: ${snapshotError}`,
+            input.policy.maxOutputBytes,
+          );
 
       if (run.timedOut) {
         return {
           status: "timeout",
           exitCode: null,
           stdout: run.stdout,
-          stderr: run.stderr,
+          stderr,
           durationMs,
           artifacts,
         };
@@ -108,11 +188,12 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         status: run.exitCode === 0 ? "ok" : "error",
         exitCode: run.exitCode,
         stdout: run.stdout,
-        stderr: run.stderr,
+        stderr,
         durationMs,
         artifacts,
       };
     } finally {
+      await removeContainer(containerName);
       await rm(rootDir, { recursive: true, force: true });
     }
   }
@@ -132,52 +213,72 @@ function normalizeFiles(value: CodeExecutionFile[] | undefined): CodeExecutionFi
     if (safePath === undefined) {
       continue;
     }
-    normalized.push({
-      path: safePath,
-      content: file.content,
-    });
+    normalized.push({ path: safePath, content: file.content });
   }
 
   return normalized.slice(0, 100);
 }
 
-async function writeDeclaredFiles(workspaceDir: string, files: CodeExecutionFile[]): Promise<void> {
+async function writeDeclaredFiles(
+  workspaceDir: string,
+  files: CodeExecutionFile[],
+): Promise<void> {
   for (const file of files) {
     const destination = path.join(workspaceDir, file.path);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, file.content, "utf8");
+    await mkdirWritableDirectory(path.dirname(destination), workspaceDir);
+    await writeSandboxFile(destination, file.content);
   }
+}
+
+async function mkdirWritableDirectory(
+  directory: string,
+  workspaceDir: string,
+): Promise<void> {
+  await mkdir(directory, { recursive: true, mode: 0o777 });
+  let current = directory;
+  while (current.startsWith(workspaceDir) && current !== workspaceDir) {
+    await chmod(current, 0o777);
+    current = path.dirname(current);
+  }
+}
+
+async function writeSandboxFile(destination: string, content: string): Promise<void> {
+  await writeFile(destination, content, { encoding: "utf8", mode: 0o666 });
+  await chmod(destination, 0o666);
 }
 
 function sanitizeRelativePath(value: string): string | undefined {
   const normalized = value.replace(/\\/gu, "/").trim();
   if (normalized.length === 0) {
-    return ;
+    return;
   }
 
   const candidate = path.posix.normalize(normalized);
-  if (candidate.startsWith("/") || candidate.startsWith("../") || candidate.includes("/../")) {
-    return ;
+  if (
+    candidate === "." ||
+    candidate.startsWith("/") ||
+    candidate.startsWith("../") ||
+    candidate.includes("/../")
+  ) {
+    return;
   }
 
   return candidate;
 }
 
-function buildDockerCommand(
+function buildDockerCreateCommand(
   input: SandboxExecutionInput,
-  workspaceDir: string,
-  mainFile: string,
   containerName: string,
 ): string[] {
   const image = LANGUAGE_IMAGE[input.request.language];
-  const commandScript = buildCommandScript(input.request.language, mainFile, input.request.dependencies ?? [], input.request.args ?? []);
-
-  const args = [
-    "run",
-    "--rm",
+  return [
+    "create",
     "--init",
     "--name",
     containerName,
+    "--user",
+    `${SANDBOX_UID}:${SANDBOX_GID}`,
+    "--read-only",
     "--memory",
     `${input.policy.memoryMb}m`,
     "--cpu-shares",
@@ -190,17 +291,64 @@ function buildDockerCommand(
     "no-new-privileges",
     "--network",
     input.policy.network === "off" ? "none" : "bridge",
-    "--volume",
-    `${workspaceDir}:/workspace`,
+    "--tmpfs",
+    buildTmpfsSpec(
+      "/workspace",
+      input.policy.workspaceSizeMb,
+      input.policy.workspaceInodes,
+    ),
+    "--tmpfs",
+    buildTmpfsSpec("/tmp", input.policy.tmpSizeMb, input.policy.tmpInodes),
+    "--env",
+    "HOME=/tmp",
+    "--env",
+    "PYTHONPATH=/workspace/.kestrel-python",
+    "--env",
+    "NPM_CONFIG_CACHE=/tmp/.npm",
     "--workdir",
     "/workspace",
     image,
     "sh",
     "-lc",
-    commandScript,
+    "while :; do sleep 3600; done",
   ];
+}
 
-  return args;
+function buildTmpfsSpec(
+  destination: string,
+  sizeMb: number,
+  inodeLimit: number,
+): string {
+  return `${destination}:rw,nosuid,nodev,size=${sizeMb}m,nr_inodes=${inodeLimit},uid=${SANDBOX_UID},gid=${SANDBOX_GID},mode=0700`;
+}
+
+function buildDockerExecCommand(
+  input: SandboxExecutionInput,
+  mainFile: string,
+  containerName: string,
+): string[] {
+  return [
+    "exec",
+    "--user",
+    `${SANDBOX_UID}:${SANDBOX_GID}`,
+    "--workdir",
+    "/workspace",
+    "--env",
+    "HOME=/tmp",
+    "--env",
+    "PYTHONPATH=/workspace/.kestrel-python",
+    "--env",
+    "NPM_CONFIG_CACHE=/tmp/.npm",
+    containerName,
+    "sh",
+    "-lc",
+    buildCommandScript(
+      input.request.language,
+      mainFile,
+      input.request.dependencies ?? [],
+      input.request.args ?? [],
+    ),
+  ];
 }
 
 function buildCommandScript(
@@ -239,63 +387,279 @@ function buildDependencyInstallCommand(
   dependencies: string[],
 ): string | undefined {
   if (dependencies.length === 0) {
-    return ;
+    return;
   }
 
   const packages = dependencies.map((item) => shellQuote(item)).join(" ");
-
   if (language === "javascript") {
     return `npm install --no-audit --no-fund --silent ${packages}`;
   }
-
   if (language === "python") {
-    return `pip install --disable-pip-version-check --no-input --quiet ${packages}`;
+    return `pip install --disable-pip-version-check --no-input --quiet --no-deps --no-build-isolation --target /workspace/.kestrel-python ${packages}`;
   }
-
-  return ;
+  return;
 }
 
 function joinShellCommands(lines: Array<string | undefined>): string {
-  return lines.filter((line): line is string => typeof line === "string" && line.trim().length > 0).join("; ");
+  return lines
+    .filter((line): line is string =>
+      typeof line === "string" && line.trim().length > 0)
+    .join("; ");
 }
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/gu, `'"'"'`)}'`;
 }
 
-async function runDockerCommand(
+async function runRequiredDockerCommand(
+  args: string[],
+  action: string,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const result = await runDockerProcess(
+    args,
+    DOCKER_LIFECYCLE_TIMEOUT_MS,
+    DOCKER_LIFECYCLE_OUTPUT_BYTES,
+    signal,
+  );
+  if (result.cancelled) {
+    throw new DockerSandboxCancellationError(
+      "Docker sandbox execution was cancelled",
+    );
+  }
+  if (result.timedOut) {
+    throw new Error(`Timed out while attempting to ${action}`);
+  }
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim();
+    throw new Error(
+      `Unable to ${action}${detail.length > 0 ? `: ${detail}` : ""}`,
+    );
+  }
+}
+
+async function copyStagedInputs(input: {
+  stagingDir: string;
+  relativePaths: string[];
+  containerName: string;
+  signal: AbortSignal | undefined;
+}): Promise<void> {
+  for (const relativePath of input.relativePaths) {
+    const destination = `/workspace/${relativePath}`;
+    const result = await runDockerProcess(
+      [
+        "exec",
+        "--interactive",
+        "--user",
+        `${SANDBOX_UID}:${SANDBOX_GID}`,
+        input.containerName,
+        "sh",
+        "-c",
+        'mkdir -p -- "$1" && cat > "$2" && chmod 0666 -- "$2"',
+        "kestrel-copy",
+        path.posix.dirname(destination),
+        destination,
+      ],
+      DOCKER_LIFECYCLE_TIMEOUT_MS,
+      DOCKER_LIFECYCLE_OUTPUT_BYTES,
+      input.signal,
+      await readFile(path.join(input.stagingDir, relativePath)),
+    );
+    if (result.cancelled) {
+      throw new DockerSandboxCancellationError(
+        "Docker sandbox execution was cancelled",
+      );
+    }
+    if (result.timedOut) {
+      throw new Error(`Timed out while copying staged input '${relativePath}'`);
+    }
+    if (result.exitCode !== 0) {
+      const detail = result.stderr.trim() || result.stdout.trim();
+      throw new Error(
+        `Unable to copy staged input '${relativePath}'${detail.length > 0 ? `: ${detail}` : ""}`,
+      );
+    }
+  }
+}
+
+async function snapshotWorkspace(input: {
+  containerName: string;
+  snapshotDir: string;
+  baselinePaths: Set<string>;
+  maxArtifacts: number;
+  maxArtifactBytes: number;
+  signal: AbortSignal | undefined;
+}): Promise<void> {
+  // Docker's archive API reads the image rootfs and cannot see tmpfs mounts.
+  // Establish a freezer barrier, then stop every non-supervisor process before
+  // streaming regular files out of the bounded workspace.
+  await runRequiredDockerCommand(
+    ["unpause", input.containerName],
+    "unpause sandbox container for snapshotting",
+    input.signal,
+  );
+  await runRequiredDockerCommand(
+    [
+      "exec",
+      "--user",
+      `${SANDBOX_UID}:${SANDBOX_GID}`,
+      input.containerName,
+      "sh",
+      "-c",
+      [
+        "self=$$",
+        "for process in /proc/[0-9]*; do",
+        "  pid=${process##*/}",
+        '  case "$pid" in 1|"$self") continue ;; esac',
+        '  kill -STOP "$pid" 2>/dev/null || true',
+        "done",
+      ].join("\n"),
+    ],
+    "freeze sandbox background processes",
+    input.signal,
+  );
+
+  const candidateLimit = input.maxArtifacts + input.baselinePaths.size;
+  const listArgs = [
+      "exec",
+      "--user",
+      `${SANDBOX_UID}:${SANDBOX_GID}`,
+      input.containerName,
+      "sh",
+      "-c",
+      [
+        "find /workspace -type f",
+        "  ! -path '/workspace/node_modules/*'",
+        "  ! -path '/workspace/.kestrel-python/*'",
+        "  ! -path '/workspace/__pycache__/*'",
+        "  ! -path '/workspace/.git/*'",
+        "  ! -path '/workspace/.cache/*'",
+        `  -size -${input.maxArtifactBytes + 1}c`,
+        "  -exec sh -c 'for file; do",
+        '    relative=${file#/workspace/};',
+        '    encoded=$(printf "%s" "$relative" | base64 | tr -d "\\n");',
+        '    size=$(wc -c < "$file");',
+        '    printf "%s\\t%s\\n" "$encoded" "$size";',
+        "  done' kestrel-list {} +",
+        `  | head -n ${candidateLimit}`,
+      ].join(" "),
+    ];
+  const listResult = await runDockerProcess(
+    listArgs,
+    DOCKER_LIFECYCLE_TIMEOUT_MS,
+    Math.max(DOCKER_LIFECYCLE_OUTPUT_BYTES, candidateLimit * 6_000),
+    input.signal,
+  );
+  requireSuccessfulDockerResult(listResult, "list sandbox snapshot files");
+
+  const candidates = listResult.stdout
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => parseSnapshotCandidate(line))
+    .filter((candidate): candidate is SnapshotCandidate => candidate !== undefined)
+    .filter((candidate) => input.baselinePaths.has(candidate.path) === false)
+    .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+    .slice(0, input.maxArtifacts);
+
+  await mkdir(input.snapshotDir, { recursive: true });
+  for (const candidate of candidates) {
+    const contentResult = await runDockerProcess(
+      [
+        "exec",
+        "--user",
+        `${SANDBOX_UID}:${SANDBOX_GID}`,
+        input.containerName,
+        "sh",
+        "-c",
+        'base64 "$1" | tr -d "\\n"',
+        "kestrel-snapshot",
+        `/workspace/${candidate.path}`,
+      ],
+      DOCKER_LIFECYCLE_TIMEOUT_MS,
+      Math.ceil(candidate.sizeBytes / 3) * 4 + 16,
+      input.signal,
+    );
+    requireSuccessfulDockerResult(
+      contentResult,
+      `copy sandbox snapshot file '${candidate.path}'`,
+    );
+    const contents = Buffer.from(contentResult.stdout, "base64");
+    if (contents.byteLength !== candidate.sizeBytes) {
+      throw new Error(
+        `Unable to copy sandbox snapshot file '${candidate.path}': expected ${candidate.sizeBytes} bytes but received ${contents.byteLength}`,
+      );
+    }
+    const destination = path.join(input.snapshotDir, candidate.path);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(destination, contents, { mode: 0o600 });
+  }
+}
+
+interface SnapshotCandidate {
+  path: string;
+  sizeBytes: number;
+}
+
+function parseSnapshotCandidate(line: string): SnapshotCandidate | undefined {
+  const separator = line.lastIndexOf("\t");
+  if (separator <= 0) {
+    return;
+  }
+  const decodedPath = Buffer.from(line.slice(0, separator), "base64").toString("utf8");
+  const safePath = sanitizeRelativePath(decodedPath);
+  const sizeBytes = Number(line.slice(separator + 1));
+  if (
+    safePath === undefined ||
+    safePath !== decodedPath ||
+    Number.isSafeInteger(sizeBytes) === false ||
+    sizeBytes < 0
+  ) {
+    return;
+  }
+  return { path: safePath, sizeBytes };
+}
+
+function requireSuccessfulDockerResult(
+  result: DockerProcessResult,
+  action: string,
+): void {
+  if (result.cancelled) {
+    throw new DockerSandboxCancellationError(
+      "Docker sandbox execution was cancelled",
+    );
+  }
+  if (result.timedOut) {
+    throw new Error(`Timed out while attempting to ${action}`);
+  }
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim();
+    throw new Error(
+      `Unable to ${action}${detail.length > 0 ? `: ${detail}` : ""}`,
+    );
+  }
+}
+
+async function runDockerProcess(
   args: string[],
   timeoutMs: number,
   maxOutputBytes: number,
-  options: {
-    containerName: string;
-    signal?: AbortSignal | undefined;
-  },
-): Promise<{
-  exitCode: number | null;
-  timedOut: boolean;
-  cancelled: boolean;
-  stdout: string;
-  stderr: string;
-}> {
+  signal: AbortSignal | undefined,
+  stdin?: Buffer | undefined,
+): Promise<DockerProcessResult> {
   return new Promise((resolve, reject) => {
-    if (options.signal?.aborted === true) {
-      reject(
-        new DockerSandboxCancellationError(
-          "Docker sandbox execution was cancelled",
-        ),
-      );
+    if (signal?.aborted === true) {
+      reject(new DockerSandboxCancellationError(
+        "Docker sandbox execution was cancelled",
+      ));
       return;
     }
 
     const child = spawn("docker", args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
-
     let stdout = "";
     let stderr = "";
     let termination: "timeout" | "cancelled" | undefined;
-    let terminationPromise: Promise<void> | undefined;
     let settling = false;
 
     const requestTermination = (reason: "timeout" | "cancelled") => {
@@ -304,30 +668,26 @@ async function runDockerCommand(
       }
       termination = reason;
       child.kill("SIGKILL");
-      terminationPromise = killAndRemoveContainer(options.containerName);
     };
-
-    const timer = setTimeout(() => {
-      requestTermination("timeout");
-    }, timeoutMs);
-    const onAbort = () => {
-      requestTermination("cancelled");
-    };
-    options.signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => requestTermination("timeout"), timeoutMs);
+    const onAbort = () => requestTermination("cancelled");
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     const stopListening = () => {
       clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onAbort);
+      signal?.removeEventListener("abort", onAbort);
     };
 
-    child.stdout.on("data", (chunk: Buffer | string) => {
+    child.stdout?.on("data", (chunk: Buffer | string) => {
       stdout = appendBounded(stdout, String(chunk), maxOutputBytes);
     });
-
-    child.stderr.on("data", (chunk: Buffer | string) => {
+    child.stderr?.on("data", (chunk: Buffer | string) => {
       stderr = appendBounded(stderr, String(chunk), maxOutputBytes);
     });
-
+    child.stdin?.on("error", () => {});
+    if (stdin !== undefined) {
+      child.stdin?.end(stdin);
+    }
     child.on("error", (error) => {
       if (settling) {
         return;
@@ -340,35 +700,26 @@ async function runDockerCommand(
       }
       reject(error);
     });
-
     child.on("close", (code) => {
       if (settling) {
         return;
       }
       settling = true;
       stopListening();
-      void (async () => {
-        await terminationPromise;
-        resolve({
-          exitCode: code,
-          timedOut: termination === "timeout",
-          cancelled: termination === "cancelled",
-          stdout,
-          stderr,
-        });
-      })();
+      resolve({
+        exitCode: code,
+        timedOut: termination === "timeout",
+        cancelled: termination === "cancelled",
+        stdout,
+        stderr,
+      });
     });
   });
 }
 
-async function killAndRemoveContainer(containerName: string): Promise<void> {
-  await runDockerLifecycleCommand(["kill", containerName]);
-  await runDockerLifecycleCommand(["rm", "--force", containerName]);
-}
-
-async function runDockerLifecycleCommand(args: string[]): Promise<void> {
+async function removeContainer(containerName: string): Promise<void> {
   await new Promise<void>((resolve) => {
-    const child = spawn("docker", args, {
+    const child = spawn("docker", ["rm", "--force", containerName], {
       stdio: "ignore",
     });
     let settled = false;
@@ -405,21 +756,17 @@ function appendBounded(value: string, append: string, maxBytes: number): string 
 
   const marker = "\n...[truncated]";
   const allowedBytes = Math.max(0, maxBytes - Buffer.byteLength(marker, "utf8"));
-  const truncated = truncateUtf8Bytes(combined, allowedBytes);
-  return `${truncated}${marker}`;
+  return `${truncateUtf8Bytes(combined, allowedBytes)}${marker}`;
 }
 
 function truncateUtf8Bytes(value: string, maxBytes: number): string {
   if (maxBytes <= 0) {
     return "";
   }
-
   const bytes = Buffer.from(value, "utf8");
-  if (bytes.byteLength <= maxBytes) {
-    return value;
-  }
-
-  return bytes.subarray(0, maxBytes).toString("utf8");
+  return bytes.byteLength <= maxBytes
+    ? value
+    : bytes.subarray(0, maxBytes).toString("utf8");
 }
 
 async function collectArtifacts(input: {
@@ -429,36 +776,29 @@ async function collectArtifacts(input: {
   maxArtifactBytes: number;
 }): Promise<CodeExecutionArtifact[]> {
   const discovered = await walkFiles(input.workspaceDir, "");
-
   const artifacts: CodeExecutionArtifact[] = [];
+
   for (const relativePath of discovered) {
     if (input.baselinePaths.has(relativePath)) {
       continue;
     }
 
     const absolutePath = path.join(input.workspaceDir, relativePath);
-    const details = await stat(absolutePath);
-    if (details.isFile() === false) {
-      continue;
-    }
-    if (details.size > input.maxArtifactBytes) {
+    const details = await lstat(absolutePath);
+    if (details.isFile() === false || details.size > input.maxArtifactBytes) {
       continue;
     }
 
     const contents = await readFile(absolutePath);
-    const sha256 = createHash("sha256").update(contents).digest("hex");
-    const previewText = contents.toString("utf8", 0, Math.min(contents.byteLength, 2000));
-
     artifacts.push({
       path: relativePath,
       sizeBytes: details.size,
-      sha256,
+      sha256: createHash("sha256").update(contents).digest("hex"),
       preview: {
-        text: previewText,
+        text: contents.toString("utf8", 0, Math.min(contents.byteLength, 2000)),
         truncated: contents.byteLength > 2000,
       },
     });
-
     if (artifacts.length >= input.maxArtifacts) {
       break;
     }
@@ -477,7 +817,9 @@ async function walkFiles(baseDir: string, relativeDir: string): Promise<string[]
       continue;
     }
 
-    const relativePath = relativeDir.length > 0 ? `${relativeDir}/${entry.name}` : entry.name;
+    const relativePath = relativeDir.length > 0
+      ? `${relativeDir}/${entry.name}`
+      : entry.name;
     if (entry.isDirectory()) {
       if (IGNORED_ARTIFACT_DIRS.has(entry.name)) {
         continue;
@@ -485,7 +827,6 @@ async function walkFiles(baseDir: string, relativeDir: string): Promise<string[]
       files.push(...await walkFiles(baseDir, relativePath));
       continue;
     }
-
     if (entry.isFile()) {
       files.push(relativePath);
     }

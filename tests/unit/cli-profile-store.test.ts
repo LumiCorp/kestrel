@@ -932,6 +932,32 @@ test("parseProfilesFile validates codeMode schema in version 3", () => {
   }, /approvalMode/);
 });
 
+test("parseProfilesFile requires positive integer code-mode storage quotas", () => {
+  for (const [field, value] of [
+    ["workspaceSizeMb", 0],
+    ["workspaceInodes", 1.5],
+    ["tmpSizeMb", -1],
+    ["tmpInodes", "2048"],
+  ] as const) {
+    assert.throws(
+      () => parseProfilesFile(JSON.stringify({
+        version: 3,
+        profiles: [{
+          id: "reference",
+          label: "Reference React",
+          agent: "reference-react",
+          sessionPrefix: "reference",
+          codeMode: {
+            enabled: true,
+            sandbox: { [field]: value },
+          },
+        }],
+      })),
+      new RegExp(`${field}.*positive integer`, "u"),
+    );
+  }
+});
+
 test("version 3 profiles migrate to live-only provider reasoning defaults", () => {
   const parsed = parseProfilesFile(JSON.stringify({
     version: 3,

@@ -38,6 +38,10 @@ export function evaluateExecutionPolicy(
     memoryMb: effective.sandbox.memoryMb,
     cpuShares: effective.sandbox.cpuShares,
     pidsLimit: effective.sandbox.pidsLimit ?? 64,
+    workspaceSizeMb: effective.sandbox.workspaceSizeMb ?? 64,
+    workspaceInodes: effective.sandbox.workspaceInodes ?? 8_192,
+    tmpSizeMb: effective.sandbox.tmpSizeMb ?? 32,
+    tmpInodes: effective.sandbox.tmpInodes ?? 2_048,
     network: resolveNetworkMode(effective, request.network),
     allowDependencyInstall: effective.sandbox.allowDependencyInstall,
     maxOutputBytes: effective.sandbox.maxOutputBytes,
@@ -104,6 +108,12 @@ export function mergeCodeModeConfig(
       ? config.languages
       : base.languages;
 
+  const memoryMb = boundedPositiveInt(
+    config?.sandbox?.memoryMb,
+    base.sandbox.memoryMb,
+    8192,
+  );
+
   return {
     enabled: config?.enabled ?? base.enabled,
     languages,
@@ -114,12 +124,32 @@ export function mergeCodeModeConfig(
         base.sandbox.timeoutMs,
         300_000,
       ),
-      memoryMb: boundedPositiveInt(config?.sandbox?.memoryMb, base.sandbox.memoryMb, 8192),
+      memoryMb,
       cpuShares: boundedPositiveInt(config?.sandbox?.cpuShares, base.sandbox.cpuShares, 2048),
       pidsLimit: boundedPositiveInt(
         config?.sandbox?.pidsLimit,
         base.sandbox.pidsLimit ?? 64,
         1024,
+      ),
+      workspaceSizeMb: boundedPositiveInt(
+        config?.sandbox?.workspaceSizeMb,
+        Math.min(base.sandbox.workspaceSizeMb ?? 64, memoryMb),
+        memoryMb,
+      ),
+      workspaceInodes: boundedPositiveInt(
+        config?.sandbox?.workspaceInodes,
+        base.sandbox.workspaceInodes ?? 8_192,
+        1_000_000,
+      ),
+      tmpSizeMb: boundedPositiveInt(
+        config?.sandbox?.tmpSizeMb,
+        Math.min(base.sandbox.tmpSizeMb ?? 32, memoryMb),
+        memoryMb,
+      ),
+      tmpInodes: boundedPositiveInt(
+        config?.sandbox?.tmpInodes,
+        base.sandbox.tmpInodes ?? 2_048,
+        1_000_000,
       ),
       networkDefault: config?.sandbox?.networkDefault ?? base.sandbox.networkDefault,
       allowDependencyInstall:

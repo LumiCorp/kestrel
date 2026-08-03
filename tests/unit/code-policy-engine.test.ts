@@ -108,3 +108,27 @@ test("code sandbox policy defaults and bounds omitted legacy PID limits", () => 
   assert.equal(legacy.sandbox.pidsLimit, DEFAULT_CODE_MODE_SANDBOX.pidsLimit);
   assert.equal(oversized.sandbox.pidsLimit, 1024);
 });
+
+test("code sandbox policy applies bounded workspace and tmpfs quotas", () => {
+  const defaults = mergeCodeModeConfig(DEFAULT_CODE_MODE_ENABLED_CONFIG);
+  assert.equal(defaults.sandbox.workspaceSizeMb, 64);
+  assert.equal(defaults.sandbox.workspaceInodes, 8_192);
+  assert.equal(defaults.sandbox.tmpSizeMb, 32);
+  assert.equal(defaults.sandbox.tmpInodes, 2_048);
+
+  const overridden = mergeCodeModeConfig({
+    ...DEFAULT_CODE_MODE_ENABLED_CONFIG,
+    sandbox: {
+      ...DEFAULT_CODE_MODE_ENABLED_CONFIG.sandbox,
+      memoryMb: 48,
+      workspaceSizeMb: 96,
+      workspaceInodes: 12_000,
+      tmpSizeMb: 64,
+      tmpInodes: 4_000,
+    },
+  });
+  assert.equal(overridden.sandbox.workspaceSizeMb, 48);
+  assert.equal(overridden.sandbox.workspaceInodes, 12_000);
+  assert.equal(overridden.sandbox.tmpSizeMb, 48);
+  assert.equal(overridden.sandbox.tmpInodes, 4_000);
+});

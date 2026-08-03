@@ -1862,6 +1862,22 @@ function parseCodeModeSandbox(
     typeof input.cpuShares === "number" ? input.cpuShares : undefined;
   const pidsLimit =
     typeof input.pidsLimit === "number" ? input.pidsLimit : undefined;
+  const workspaceSizeMb = parseOptionalPositiveInteger(
+    input.workspaceSizeMb,
+    `Profile '${profileId}' field 'codeMode.sandbox.workspaceSizeMb'`,
+  );
+  const workspaceInodes = parseOptionalPositiveInteger(
+    input.workspaceInodes,
+    `Profile '${profileId}' field 'codeMode.sandbox.workspaceInodes'`,
+  );
+  const tmpSizeMb = parseOptionalPositiveInteger(
+    input.tmpSizeMb,
+    `Profile '${profileId}' field 'codeMode.sandbox.tmpSizeMb'`,
+  );
+  const tmpInodes = parseOptionalPositiveInteger(
+    input.tmpInodes,
+    `Profile '${profileId}' field 'codeMode.sandbox.tmpInodes'`,
+  );
   const networkDefault = input.networkDefault;
   if (
     networkDefault !== undefined &&
@@ -1891,6 +1907,10 @@ function parseCodeModeSandbox(
     memoryMb === undefined &&
     cpuShares === undefined &&
     pidsLimit === undefined &&
+    workspaceSizeMb === undefined &&
+    workspaceInodes === undefined &&
+    tmpSizeMb === undefined &&
+    tmpInodes === undefined &&
     networkDefault === undefined &&
     allowDependencyInstall === undefined &&
     maxOutputBytes === undefined &&
@@ -1906,12 +1926,33 @@ function parseCodeModeSandbox(
     ...(memoryMb !== undefined ? { memoryMb } : {}),
     ...(cpuShares !== undefined ? { cpuShares } : {}),
     ...(pidsLimit !== undefined ? { pidsLimit } : {}),
+    ...(workspaceSizeMb !== undefined ? { workspaceSizeMb } : {}),
+    ...(workspaceInodes !== undefined ? { workspaceInodes } : {}),
+    ...(tmpSizeMb !== undefined ? { tmpSizeMb } : {}),
+    ...(tmpInodes !== undefined ? { tmpInodes } : {}),
     ...(networkDefault !== undefined ? { networkDefault } : {}),
     ...(allowDependencyInstall !== undefined ? { allowDependencyInstall } : {}),
     ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),
     ...(maxArtifacts !== undefined ? { maxArtifacts } : {}),
     ...(maxArtifactBytes !== undefined ? { maxArtifactBytes } : {}),
   };
+}
+
+function parseOptionalPositiveInteger(
+  value: unknown,
+  label: string,
+): number | undefined {
+  if (value === undefined) {
+    return;
+  }
+  if (
+    typeof value !== "number" ||
+    Number.isSafeInteger(value) === false ||
+    value <= 0
+  ) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return value;
 }
 
 function parseTheme(
