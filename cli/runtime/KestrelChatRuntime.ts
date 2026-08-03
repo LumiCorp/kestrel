@@ -87,6 +87,17 @@ import type {
   ModelGateway,
   ModelRequest,
 } from "../../src/kestrel/contracts/model-io.js";
+import { parseRecoveryPolicyV1, type RecoveryModelCandidateV1 } from "../../src/kestrel/contracts/recovery.js";
+import {
+  RecoveryModelRegistry,
+  RecoveryToolAdapterRegistry,
+  RecoveryWorkflowHandlerRegistry,
+  createDefaultRecoveryToolResultNormalizers,
+  registerDefaultRecoveryWorkflowHandlers,
+} from "../../src/engine/recovery/RecoveryRegistries.js";
+import type { RecoveryRuntimeConfiguration } from "../../src/engine/recovery/RecoveryCoordinator.js";
+import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
+import { resolveRecoveryPolicyForProfile } from "../../src/profile/recoveryPolicy.js";
 import type { SessionStore } from "../../src/kestrel/contracts/store.js";
 import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
@@ -3291,6 +3302,9 @@ function createRuntimeWithStore(
   }
 
   const modelGateway = createModelGatewayForProfile(profile, { env: modelEnv });
+  const recoveryRuntime = profile.modelProvider !== undefined && profile.model !== undefined
+    ? createRecoveryRuntimeConfiguration(profile, modelGateway, modelEnv)
+    : undefined;
   const providerReasoningVault = createProviderReasoningVaultFromEnv(
     store,
     runtimeEnv,
@@ -3314,6 +3328,7 @@ function createRuntimeWithStore(
   const kestrel = new Kestrel({
     store,
     modelGateway,
+    ...(recoveryRuntime !== undefined ? { recoveryRuntime } : {}),
     providerReasoningVault,
     toolGateway: toolRegistry,
     workspaceCheckpointService,
@@ -3539,6 +3554,96 @@ export function createModelGatewayForProfile(
         : provider === "ollama"
           ? createOllamaModelGatewayFromEnv(gatewayOptions)
           : provider === "lmstudio"
+            ? createLmStudioModelGatewayFromEnv(gatewayOptions)
+            : createOpenRouterModelGatewayFromEnv(gatewayOptions),
+  );
+}
+
+export function createRecoveryRuntimeConfiguration(
+  profile: TuiProfile,
+  primaryGateway: ModelGateway,
+  env: NodeJS.ProcessEnv = process.env,
+): RecoveryRuntimeConfiguration {
+  const policy = profile.recoveryPolicy === undefined
+    ? resolveRecoveryPolicyForProfile(profile, { env })
+    : parseRecoveryPolicyV1(profile.recoveryPolicy);
+  const modelRegistry = new RecoveryModelRegistry();
+  modelRegistry.register({
+    candidate: policy.primaryModel,
+    policyRevision: policy.revision,
+    gateway: primaryGateway,
+  });
+  const retryStage = policy.stages.find((stage) => stage.action === "retry_same_route");
+  const retryCount = retryStage?.action === "retry_same_route"
+    ? Math.max(0, retryStage.maxAttempts - 1)
+    : 0;
+  for (const stage of policy.stages) {
+    if (stage.action !== "alternate_model") continue;
+    for (const candidate of stage.candidates) {
+      modelRegistry.register({
+        candidate,
+        policyRevision: policy.revision,
+        gateway: createModelGatewayForRecoveryCandidate(candidate, {
+          env,
+          timeoutMs: resolveModelTimeoutMs(profile, env),
+          retryCount,
+        }),
+      });
+    }
+  }
+  const workflowHandlerRegistry = new RecoveryWorkflowHandlerRegistry();
+  registerDefaultRecoveryWorkflowHandlers(workflowHandlerRegistry);
+  return {
+    policy,
+    executionProfileFingerprint: fingerprintResolvedProfile({
+      ...profile,
+      recoveryPolicy: policy,
+    }),
+    modelRegistry,
+    toolAdapterRegistry: new RecoveryToolAdapterRegistry(),
+    toolResultNormalizerRegistry: createDefaultRecoveryToolResultNormalizers(),
+    workflowHandlerRegistry,
+    validateCredential: (candidate) => {
+      const credential = candidate.credentialReference;
+      if (credential === undefined) return true;
+      const primaryCredential = policy.primaryModel.credentialReference;
+      return primaryCredential !== undefined &&
+        credential.runId === primaryCredential.runId &&
+        credential.organizationId === primaryCredential.organizationId &&
+        credential.environmentId === primaryCredential.environmentId &&
+        credential.provider === candidate.provider &&
+        credential.rawModelId === candidate.model;
+    },
+  };
+}
+
+function createModelGatewayForRecoveryCandidate(
+  candidate: RecoveryModelCandidateV1,
+  options: {
+    env: NodeJS.ProcessEnv;
+    timeoutMs: number | undefined;
+    retryCount: number;
+  },
+): ModelGateway {
+  if (candidate.credentialReference !== undefined) {
+    return createGatewayManagedModelGateway({
+      modelCredential: candidate.credentialReference,
+    });
+  }
+  const gatewayOptions = {
+    env: options.env,
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    retryCount: options.retryCount,
+    envConfig: { model: candidate.model },
+  };
+  return createLazyModelGateway(() =>
+    candidate.provider === "openai"
+      ? createOpenAiModelGatewayFromEnv(gatewayOptions)
+      : candidate.provider === "anthropic"
+        ? createAnthropicModelGatewayFromEnv(gatewayOptions)
+        : candidate.provider === "ollama"
+          ? createOllamaModelGatewayFromEnv(gatewayOptions)
+          : candidate.provider === "lmstudio"
             ? createLmStudioModelGatewayFromEnv(gatewayOptions)
             : createOpenRouterModelGatewayFromEnv(gatewayOptions),
   );
