@@ -3528,6 +3528,13 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
     pendingWaitFor: {
       kind: "user",
       eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId: "request-mode-command",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Choose a mode.",
+      },
       metadata: {
         reason: "route_mode_blocked",
         requiredToolClass: "sandboxed_only",
@@ -3580,6 +3587,7 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
   assert.equal(capturedTurn?.eventType, "user.reply");
   assert.equal(capturedTurn?.message, "/mode build");
   assert.equal(capturedTurn?.resumeBlockedRun, true);
+  assert.equal(capturedTurn?.resumeRequestId, "request-mode-command");
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /Mode set to Build\. Resuming blocked run\./u);
@@ -4060,6 +4068,13 @@ test("exact continuation replies during pending waits resume the blocked run", a
     pendingWaitFor: {
       kind: "user",
       eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId: "request-continuation",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+      },
       metadata: {
         reason: "loop_visit_stall",
         resumeReply: "continue",
@@ -4108,6 +4123,7 @@ test("exact continuation replies during pending waits resume the blocked run", a
   assert.equal(capturedTurn?.eventType, "user.reply");
   assert.equal(capturedTurn?.message, "continue");
   assert.equal(capturedTurn?.resumeBlockedRun, true);
+  assert.equal(capturedTurn?.resumeRequestId, "request-continuation");
 });
 
 test("approval replies during pending waits resume the blocked run", async () => {
@@ -4118,6 +4134,13 @@ test("approval replies during pending waits resume the blocked run", async () =>
     pendingWaitFor: {
       kind: "approval",
       eventType: "user.approval",
+      interaction: {
+        version: "v1",
+        requestId: "request-approval",
+        kind: "approval",
+        eventType: "user.approval",
+        prompt: "Approve?",
+      },
       metadata: {
         approvalId: "approval-1",
         purpose: "managed_worktree",
@@ -4166,6 +4189,7 @@ test("approval replies during pending waits resume the blocked run", async () =>
   assert.equal(capturedTurn?.eventType, "user.approval");
   assert.equal(capturedTurn?.message, "approve");
   assert.equal(capturedTurn?.resumeBlockedRun, true);
+  assert.equal(capturedTurn?.resumeRequestId, "request-approval");
 });
 
 test("continuation replies apply manual compaction when adaptation already recommends compact", async () => {
