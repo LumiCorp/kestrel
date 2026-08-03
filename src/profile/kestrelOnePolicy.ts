@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { TuiProfile } from "../../cli/contracts.js";
+import type { RecoveryModelCandidateV1 } from "../kestrel/contracts/recovery.js";
 import type { HarnessEconomicsControlV1 } from "../economics/contracts.js";
 import { DEFAULT_ACT_SUBMODE, DEFAULT_INTERACTION_MODE } from "../mode/contracts.js";
 import {
@@ -9,6 +10,7 @@ import {
   type ShellKind,
   type ShellPresetId,
 } from "./runtimeProfile.js";
+import { resolveProfileWithRecoveryPolicy } from "./recoveryPolicy.js";
 
 export const KESTREL_POLICY_ID = "kestrel";
 export const KESTREL_POLICY_LABEL = "Kestrel";
@@ -195,6 +197,8 @@ export interface KestrelOneProfileOverlay {
   modelProvider?: TuiProfile["modelProvider"] | undefined;
   model?: string | undefined;
   modelCredential?: TuiProfile["modelCredential"] | undefined;
+  recoveryPolicy?: TuiProfile["recoveryPolicy"] | undefined;
+  recoveryModelCandidates?: RecoveryModelCandidateV1[] | undefined;
   modelCapabilities?: TuiProfile["modelCapabilities"] | undefined;
   /** @deprecated Harness economics is policy-owned and rejected by composition. */
   harnessEconomics?: TuiProfile["harnessEconomics"] | undefined;
@@ -301,6 +305,9 @@ export function composeKestrelOneProfile(
     ...(input.overlay?.modelCredential !== undefined
       ? { modelCredential: input.overlay.modelCredential }
       : {}),
+    ...(input.overlay?.recoveryPolicy !== undefined
+      ? { recoveryPolicy: input.overlay.recoveryPolicy }
+      : {}),
     ...(input.overlay?.modelCapabilities !== undefined
       ? { modelCapabilities: input.overlay.modelCapabilities }
       : {}),
@@ -354,8 +361,15 @@ export function composeKestrelOneProfile(
       : {}),
   };
 
+  const resolvedProfile =
+    profile.modelProvider !== undefined && profile.model !== undefined
+      ? resolveProfileWithRecoveryPolicy(profile, {
+          alternateModels: input.overlay?.recoveryModelCandidates,
+        })
+      : profile;
+
   return {
-    profile,
+    profile: resolvedProfile,
     provenance: {
       policyId: KESTREL_ONE_POLICY_ID,
       policyVersion: KESTREL_ONE_POLICY_VERSION,

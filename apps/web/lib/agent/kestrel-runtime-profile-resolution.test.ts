@@ -79,14 +79,24 @@ test(
           retention: { mode: "provider_visible", days: 7 },
         },
       },
-      runtimeModel: {
-        id: "gateway_model_123",
-        provider: "openai",
-        model: "gpt-5.1",
-        gatewayId: "gateway_123",
-        organizationId: "org_123",
-        environmentId: "env_123",
-      },
+      runtimeModels: [
+        {
+          id: "gateway_model_123",
+          provider: "openai",
+          model: "gpt-5.1",
+          gatewayId: "gateway_123",
+          organizationId: "org_123",
+          environmentId: "env_123",
+        },
+        {
+          id: "gateway_model_456",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+          gatewayId: "gateway_456",
+          organizationId: "org_123",
+          environmentId: "env_123",
+        },
+      ],
     });
 
     assert.equal(result.profileId, `kestrel:workspace_hosted:${"a".repeat(64)}`);
@@ -124,6 +134,28 @@ test(
           rawModelId: "gpt-5.1",
           provider: "openai",
         },
+        recoveryModelCandidates: [
+          {
+            candidateId: "fallback.1.gateway_model_456",
+            provider: "anthropic",
+            model: "claude-sonnet-4-5",
+            capabilities: {
+              visionInputEnabled: false,
+              toolCallingEnabled: true,
+              structuredOutputEnabled: true,
+              reasoningModes: ["off", "summary", "provider_visible"],
+            },
+            credentialReference: {
+              source: "kestrel-one",
+              runId: "exec_123",
+              gatewayId: "gateway_456",
+              organizationId: "org_123",
+              environmentId: "env_123",
+              rawModelId: "claude-sonnet-4-5",
+              provider: "anthropic",
+            },
+          },
+        ],
         default: false,
       },
     });
@@ -173,14 +205,16 @@ test(
         environmentId: "env_123",
         effectiveCapabilities: [],
       },
-      runtimeModel: {
-        desktopLocal: true,
-        id: "desktop_local_model",
-        provider: "ollama",
-        model: "llama3.2",
-        organizationId: "org_123",
-        environmentId: "env_123",
-      },
+      runtimeModels: [
+        {
+          desktopLocal: true,
+          id: "desktop_local_model",
+          provider: "ollama",
+          model: "llama3.2",
+          organizationId: "org_123",
+          environmentId: "env_123",
+        },
+      ],
     });
 
     assert.equal(calls.length, 1);

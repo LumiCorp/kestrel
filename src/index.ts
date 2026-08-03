@@ -84,6 +84,7 @@ export * from "./profile/modelCatalogDiscovery.js";
 export * from "./profile/modelCatalogPresentation.js";
 export * from "./profile/runtimeProfile.js";
 export * from "./profile/kestrelOnePolicy.js";
+export * from "./profile/recoveryPolicy.js";
 export * from "./desktopShell/executionProfile.js";
 export * from "./economics/index.js";
 export * from "./workspace/threadWorkspaceBinding.js";

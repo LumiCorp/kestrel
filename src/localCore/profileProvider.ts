@@ -347,6 +347,7 @@ export function createLocalCoreProfileProvider(
               modelProvider: selected.modelProvider,
               model: selected.model,
               modelCredential: selected.modelCredential,
+              recoveryPolicy: selected.recoveryPolicy,
               modelCapabilities: selected.modelCapabilities,
               agentStageConfig: selected.agentStageConfig,
               modelTimeoutMs: selected.modelTimeoutMs,

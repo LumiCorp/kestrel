@@ -13,6 +13,10 @@ import type {
   ToolExecutionClass,
 } from "../src/index.js";
 import type { SubAgentResultEnvelope } from "../src/kestrel/contracts/orchestration.js";
+import type {
+  RecoveryModelCredentialReferenceV1,
+  RecoveryPolicyV1,
+} from "../src/kestrel/contracts/recovery.js";
 import type { ManagedTaskWorktreeSetupSpec } from "../src/workspace/ManagedTaskWorktreeService.js";
 import type {
   OperatorAffordancePayload,
@@ -188,15 +192,7 @@ export interface ToolQueueProfileConfig {
   retryCount?: number | undefined;
 }
 
-export interface ModelCredentialReference {
-  source: "kestrel-one";
-  runId: string;
-  gatewayId: string;
-  organizationId: string;
-  environmentId: string;
-  rawModelId: string;
-  provider: Exclude<ModelProviderId, "lmstudio">;
-}
+export type ModelCredentialReference = RecoveryModelCredentialReferenceV1;
 
 export interface TuiProfile {
   id: string;
@@ -214,6 +210,7 @@ export interface TuiProfile {
   modelProvider?: ModelProviderId | undefined;
   model?: string | undefined;
   modelCredential?: ModelCredentialReference | undefined;
+  recoveryPolicy?: RecoveryPolicyV1 | undefined;
   modelCapabilities?:
     | {
         visionInputEnabled?: boolean | undefined;
@@ -284,6 +281,7 @@ export interface KestrelOneManagedProfileOverlay {
       >
     | undefined;
   reasoning?: TuiProfile["reasoning"] | undefined;
+  recoveryPolicy?: RecoveryPolicyV1 | undefined;
   theme?: ThemeOverrides | undefined;
   default?: boolean | undefined;
 }
@@ -321,11 +319,18 @@ export interface ProfilesFileV7 {
   };
 }
 
+export interface ProfilesFileV8 {
+  version: 8;
+  profiles: TuiProfile[];
+  managedProfileOverlays: ProfilesFileV7["managedProfileOverlays"];
+}
+
 export type ProfilesFile =
   | ProfilesFileV4
   | ProfilesFileV5
   | ProfilesFileV6
-  | ProfilesFileV7;
+  | ProfilesFileV7
+  | ProfilesFileV8;
 
 export interface TuiSessionMeta {
   name: string;

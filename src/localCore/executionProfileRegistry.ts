@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { TuiProfile } from "../../cli/contracts.js";
+import { parseRecoveryPolicyV1 } from "../kestrel/contracts/recovery.js";
+import { assertRecoveryPrimaryProjection } from "../profile/recoveryPolicy.js";
 import {
   fingerprintResolvedProfile,
   KESTREL_ONE_POLICY_ID,
@@ -63,6 +65,7 @@ export class LocalCoreExecutionProfileRegistry {
     revisionProvenance?: ExecutionProfileRevisionProvenance | undefined,
   ): Promise<RegisteredExecutionProfile> {
     assertSecretFreeProfile(inputProfile);
+    assertValidRecoveryPolicy(inputProfile);
     const fingerprintSeed = {
       ...structuredClone(inputProfile),
       id:
@@ -191,7 +194,14 @@ function parseStoredProfile(value: unknown, index: number): TuiProfile {
     );
   }
   assertSecretFreeProfile(profile as TuiProfile);
+  assertValidRecoveryPolicy(profile as TuiProfile);
   return structuredClone(profile as TuiProfile);
+}
+
+function assertValidRecoveryPolicy(profile: TuiProfile): void {
+  if (profile.recoveryPolicy === undefined) return;
+  const recoveryPolicy = parseRecoveryPolicyV1(profile.recoveryPolicy);
+  assertRecoveryPrimaryProjection(profile, recoveryPolicy);
 }
 
 function assertSecretFreeProfile(profile: TuiProfile): void {

@@ -48,3 +48,24 @@ export type {
   ToolRuntimeStatus,
 } from "./contracts/model-io.js";
 export type { SessionRecord } from "./contracts/store.js";
+export {
+  RECOVERY_DECISION_VERSION,
+  RECOVERY_POLICY_VERSION,
+  RECOVERY_REVIEW_BINDING_VERSION,
+  createRecoveryPolicyV1,
+  fingerprintRecoveryPolicyV1,
+  parseRecoveryDecisionV1,
+  parseRecoveryModelCandidateV1,
+  parseRecoveryModelCredentialReferenceV1,
+  parseRecoveryPolicyV1,
+  parseRecoveryReviewBindingV1,
+} from "./contracts/recovery.js";
+export type {
+  RecoveryDecisionV1,
+  RecoveryModelCandidateV1,
+  RecoveryModelCredentialReferenceV1,
+  RecoveryPolicyV1,
+  RecoveryReviewBindingV1,
+  RecoveryScopeV1,
+  RecoveryStageV1,
+} from "./contracts/recovery.js";
