@@ -8,8 +8,12 @@ import {
 } from "../../src/store/PostgresSessionStore.js";
 import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
 import { createEmptyProjectSnapshot } from "../../src/project/state.js";
+import { encodeConversationMessageCursor } from "@kestrel-agents/protocol";
 
 test("completed conversation message reads use durable handoff filters and cursor ordering", async () => {
+  const startedAt = new Date("2026-07-31T10:00:00.000Z");
+  const updatedAt = new Date("2026-07-31T10:02:00.000Z");
+  const completedAt = new Date("2026-07-31T10:02:00.000Z");
   const sql = new ScriptedSqlExecutor([{
     match: /FROM conversation_turns[\s\S]*completed_at, turn_id\) >[\s\S]*handoff'[\s\S]*assistantText'[\s\S]*ORDER BY completed_at ASC, turn_id ASC/u,
     rows: [{
@@ -33,9 +37,9 @@ test("completed conversation message reads use durable handoff filters and curso
           handoff: { state: "delivered", assistantText: "Second answer." },
         },
       },
-      started_at: "2026-07-31T10:00:00.000Z",
-      updated_at: "2026-07-31T10:02:00.000Z",
-      completed_at: "2026-07-31T10:02:00.000Z",
+      started_at: startedAt,
+      updated_at: updatedAt,
+      completed_at: completedAt,
     }],
   }]);
   const store = new PostgresSessionStore(sql);
@@ -47,6 +51,13 @@ test("completed conversation message reads use durable handoff filters and curso
     limit: 101,
   });
   assert.equal(turns[0]?.turnId, "turn-2");
+  assert.equal(turns[0]?.startedAt, startedAt.toISOString());
+  assert.equal(turns[0]?.updatedAt, updatedAt.toISOString());
+  assert.equal(turns[0]?.completedAt, completedAt.toISOString());
+  assert.doesNotThrow(() => encodeConversationMessageCursor({
+    completedAt: turns[0]!.completedAt!,
+    turnId: turns[0]!.turnId,
+  }));
   assert.deepEqual(sql.queries[0]?.values, [
     "thread-1",
     "COMPLETED",
