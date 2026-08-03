@@ -940,6 +940,27 @@ test("canonical execution commands preserve exact Mission Control correlation", 
   );
 });
 
+test("operator approval commands reject caller-selected grant authority", () => {
+  for (const legacyAuthority of [
+    { allowToolClasses: ["external_side_effect"] },
+    { allowCapabilities: ["mcp.invoke"] },
+  ]) {
+    assert.throws(
+      () =>
+        parseRunnerCommandV2({
+          id: "command-legacy-approval-authority",
+          type: "operator.control",
+          payload: {
+            action: "approve",
+            threadId: "thread-1",
+            ...legacyAuthority,
+          },
+        }),
+      /is not supported/u,
+    );
+  }
+});
+
 test("canonical turn parsing validates workspace skill catalogs", () => {
   const workspaceSkills = [{
     installationId: "skill-1",

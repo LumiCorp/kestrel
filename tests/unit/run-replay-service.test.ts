@@ -316,7 +316,7 @@ test("RunReplayService includes thread/delegation lineage and orchestration mile
     status: "ACTIVE",
     allowedToolClasses: ["read_only"],
     allowedCapabilities: ["filesystem.read"],
-    issuedBy: "operator",
+    decisionActor: { actorType: "operator", actorId: "operator" },
     issuedAt: "2026-03-16T12:00:03.000Z",
   });
   await store.saveContextSummaryArtifact({

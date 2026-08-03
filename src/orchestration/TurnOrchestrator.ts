@@ -74,6 +74,7 @@ export class TurnOrchestrator {
     const request = await this.interactionManager.syncWaitState({
       threadId: thread.threadId,
       runId: execution.output.runId,
+      ...(input.actor !== undefined ? { actor: input.actor } : {}),
       ...(delegation !== null ? { delegationId: delegation.delegationId } : {}),
       waitFor: execution.output.waitFor,
     });

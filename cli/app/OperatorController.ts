@@ -117,21 +117,15 @@ export class OperatorController {
       if (requestId === undefined || requestId.trim().length === 0) {
         await this.context.appendHistoryLine(
           "system",
-          "Usage: /operator approve --request-id <id> [--thread-id <id>] [--allow-tool-class ...] [--allow-capability ...]",
+          "Usage: /operator approve --request-id <id> [--thread-id <id>]",
         );
         return;
       }
       const threadId = readCommandOption(rest, "--thread-id") ?? focusedThreadId;
-      const allowToolClasses = readCommandMultiOption(rest, "--allow-tool-class")
-        .map((entry) => normalizeToolClassToken(entry))
-        .filter((entry): entry is ToolExecutionClass => entry !== undefined);
-      const allowCapabilities = readCommandMultiOption(rest, "--allow-capability");
       const response = await this.context.client.sendCommand("operator.control", {
         action: "approve",
         threadId,
         requestId,
-        ...(allowToolClasses.length > 0 ? { allowToolClasses } : {}),
-        ...(allowCapabilities.length > 0 ? { allowCapabilities } : {}),
       }, this.context.getActiveRunnerMetadata());
       if (response.type !== "operator.controlled") {
         throw new Error(`Unexpected operator response '${response.type}'`);
@@ -588,16 +582,4 @@ function readCommandMultiOption(args: string[], flag: string): string[] {
     }
   }
   return values;
-}
-
-function normalizeToolClassToken(value: string): ToolExecutionClass | undefined {
-  if (
-    value === "read_only" ||
-    value === "planning_write" ||
-    value === "sandboxed_only" ||
-    value === "external_side_effect"
-  ) {
-    return value;
-  }
-  return ;
 }

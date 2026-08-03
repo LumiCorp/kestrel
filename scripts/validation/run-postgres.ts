@@ -19,11 +19,24 @@ const runtimeFiles = execFileSync("git", ["ls-files", "-z", "tests/**/*.postgres
   .split("\0")
   .filter(Boolean)
   .concat(
+    "tests/action-bound-approval-grants.postgres.test.ts",
     "tests/mission-control-project-authority.postgres.test.ts",
     "tests/mission-control-review-acceptance.postgres.test.ts",
   )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort();
+
+const mcpFiles = execFileSync(
+  "git",
+  ["ls-files", "-z", "apps/mcp-service/**/*.postgres.test.ts"],
+  { encoding: "utf8" },
+)
+  .split("\0")
+  .filter(Boolean)
+  .concat("apps/mcp-service/tests/approval-authorizer.postgres.test.ts")
+  .filter((file, index, all) => all.indexOf(file) === index)
+  .sort()
+  .map((file) => file.slice("apps/mcp-service/".length));
 
 const groups = [
   {
@@ -69,8 +82,41 @@ if (JSON.stringify(assigned) !== JSON.stringify(files)) {
 
 await Promise.all([
   ...groups.map(runGroup),
+  runMcpGroup(),
   runRuntimeGroup(),
 ]);
+
+function runMcpGroup(): Promise<void> {
+  if (JSON.stringify(mcpFiles) !== JSON.stringify([
+    "tests/approval-authorizer.postgres.test.ts",
+  ])) {
+    throw new Error(`MCP PostgreSQL contract assignment drifted.\nDiscovered: ${mcpFiles.join(", ")}`);
+  }
+  process.stdout.write(`[postgres] MCP: ${mcpFiles.join(", ")}\n`);
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      "--import", "tsx",
+      "--test",
+      "--test-concurrency=1",
+      "--test-reporter=spec",
+      ...mcpFiles,
+    ], {
+      cwd: "apps/mcp-service",
+      env: {
+        ...process.env,
+        KESTREL_PRODUCT_RUNNER_DATABASE_URL: required(
+          "KESTREL_PRODUCT_RUNNER_DATABASE_URL",
+        ),
+      },
+      stdio: "inherit",
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`MCP PostgreSQL contracts failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`));
+    });
+  });
+}
 
 function runGroup(group: (typeof groups)[number]): Promise<void> {
   process.stdout.write(`[postgres] ${group.name}: ${group.files.join(", ")}\n`);
@@ -103,6 +149,7 @@ function runRuntimeGroup(): Promise<void> {
   if (
     JSON.stringify(runtimeFiles) !==
     JSON.stringify([
+      "tests/action-bound-approval-grants.postgres.test.ts",
       "tests/mission-control-project-authority.postgres.test.ts",
       "tests/mission-control-review-acceptance.postgres.test.ts",
     ])

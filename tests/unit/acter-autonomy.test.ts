@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { parseRunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
 
 import type { StepContext, StepContractRegistry, StepIO, Transition } from "../../src/kestrel/contracts/execution.js";
 
@@ -958,6 +959,19 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     pendingApproval.approvalId,
     approvalWait.waitFor?.metadata?.approvalId
   );
+  const binding = parseRunnerExternalApprovalBindingV1(
+    approvalWait.waitFor?.metadata?.externalApprovalBinding,
+  );
+  assert.equal(binding.actionKey, definition.name);
+  assert.equal(binding.runId, "run-1");
+  assert.equal(binding.threadId, "session-1");
+  assert.equal(binding.authorityKind, "runtime_policy");
+  assert.deepEqual(
+    binding.capabilities,
+    [...(definition.capability.approvalCapabilities ?? [])].sort(),
+  );
+  assert.match(binding.payloadHash, /^sha256:[0-9a-f]{64}$/u);
+  assert.deepEqual(pendingApproval.externalApprovalBinding, binding);
 
   const resumed = await waitApprovalStep(
     buildContext({

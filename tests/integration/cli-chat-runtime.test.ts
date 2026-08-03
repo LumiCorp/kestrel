@@ -1379,7 +1379,7 @@ test("KestrelChatRuntime describeSession keeps focused thread and blocker parity
   await runtime.close();
 });
 
-test("KestrelChatRuntime maps operator child-thread tool policy into runtime policy", async () => {
+test("KestrelChatRuntime does not accept caller-selected child tool authority", async () => {
   let capturedPolicy: Record<string, unknown> | undefined;
 
   const fakeFactory: RuntimeFactory = {
@@ -1446,14 +1446,9 @@ test("KestrelChatRuntime maps operator child-thread tool policy into runtime pol
     action: "spawn_child_thread",
     threadId: "thread-child-policy-parent",
     message: "Investigate child policy propagation.",
-    allowToolClasses: ["read_only", "sandboxed_only"],
-    allowCapabilities: ["workspace.read"],
   });
 
-  assert.deepEqual(capturedPolicy, {
-    allowedToolClasses: ["read_only", "sandboxed_only"],
-    allowedCapabilities: ["workspace.read"],
-  });
+  assert.equal(capturedPolicy, undefined);
 
   await runtime.close();
 });

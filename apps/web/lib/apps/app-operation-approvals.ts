@@ -1,9 +1,12 @@
 import "server-only";
 
-import { and, eq, gt, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   assertAppOperationApprovalBinding,
+  assertAppExternalApprovalBinding,
+  createAppExternalApprovalBinding,
+  hashAppApprovalAuthority,
   hashAppOperationPayload,
   type AppOperationApprovalBinding,
 } from "./app-operation-approval-contract";
@@ -75,7 +78,9 @@ export async function recordAppOperationApprovalRequest(input: {
     (candidate) => candidate.key === input.binding.capabilityKey
   );
   if (
-    !((thread &&execution ) &&resource ) ||
+    !thread ||
+    !execution ||
+    !resource ||
     access?.environmentId !== input.binding.environmentId ||
     access.connectionId !== input.binding.connectionId ||
     capability?.approvalMode !== "ask"
@@ -85,6 +90,22 @@ export async function recordAppOperationApprovalRequest(input: {
   const expiresAt = new Date(
     Math.min(input.expiresAt.getTime(), now.getTime() + APPROVAL_TTL_MS)
   );
+  const authorityRevision = hashAppApprovalAuthority(
+    appApprovalPolicyEvidence({
+      binding: input.binding,
+      projectId: input.projectId,
+      access,
+      capability,
+      resourceId: resource.id,
+    }),
+  );
+  const externalApprovalBinding = createAppExternalApprovalBinding({
+    binding: input.binding,
+    requestedExecutionId: input.requestedExecutionId,
+    authorityRevision,
+    requestedAt: now,
+    expiresAt,
+  });
   const payloadHash = hashAppOperationPayload(input.binding.payload);
   const [created] = await knowledgeDb
     .insert(schema.appOperationApprovals)
@@ -105,6 +126,8 @@ export async function recordAppOperationApprovalRequest(input: {
       runtimeApprovalId: input.binding.runtimeApprovalId,
       payloadHash,
       payload: input.binding.payload,
+      externalApprovalBinding,
+      authorityRevision,
       expiresAt,
     })
     .onConflictDoNothing({
@@ -146,6 +169,12 @@ export async function recordAppOperationApprovalRequest(input: {
       },
       input.binding
     );
+    assertAppExternalApprovalBinding({
+      stored: existing.externalApprovalBinding,
+      actual: input.binding,
+      requestedExecutionId: input.requestedExecutionId,
+      authorityRevision,
+    });
   } catch {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
   }
@@ -182,6 +211,8 @@ export async function decideAppOperationApproval(input: {
           input.runtimeApprovalId
         ),
         eq(schema.appOperationApprovals.status, "pending"),
+        isNotNull(schema.appOperationApprovals.externalApprovalBinding),
+        isNotNull(schema.appOperationApprovals.authorityRevision),
         gt(schema.appOperationApprovals.expiresAt, now)
       )
     )
@@ -222,6 +253,73 @@ export async function consumeAppOperationApproval(input: {
   consumedExecutionId: string;
 }) {
   const now = new Date();
+  const existing = await knowledgeDb.query.appOperationApprovals.findFirst({
+    where: (table, { and: all, eq: equals }) =>
+      all(
+        equals(table.organizationId, input.binding.organizationId),
+        equals(table.threadId, input.binding.threadId),
+        equals(table.runtimeApprovalId, input.binding.runtimeApprovalId),
+      ),
+  });
+  const thread = await knowledgeDb.query.threads.findFirst({
+    where: (table, { and: all, eq: equals }) =>
+      all(
+        equals(table.id, input.binding.threadId),
+        equals(table.organizationId, input.binding.organizationId),
+      ),
+    columns: { projectId: true },
+  });
+  if (!existing || !thread?.projectId) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+  }
+  const [access, resource] = await Promise.all([
+    resolveEffectiveProjectAppAccess({
+      organizationId: input.binding.organizationId,
+      projectId: thread.projectId,
+      appKey: input.binding.appKey,
+      userId: input.binding.actorUserId,
+    }),
+    knowledgeDb.query.appConnectionResources.findFirst({
+      where: (table, { and: all, eq: equals }) =>
+        all(
+          equals(table.id, input.binding.resourceId),
+          equals(table.connectionId, input.binding.connectionId),
+          equals(table.resourceType, input.binding.resourceType),
+          equals(table.enabled, true),
+        ),
+      columns: { id: true },
+    }),
+  ]);
+  const capability = access?.capabilities.find(
+    (candidate) => candidate.key === input.binding.capabilityKey,
+  );
+  if (
+    !resource ||
+    access?.environmentId !== input.binding.environmentId ||
+    access.connectionId !== input.binding.connectionId ||
+    capability?.approvalMode !== "ask"
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+  }
+  const authorityRevision = hashAppApprovalAuthority(
+    appApprovalPolicyEvidence({
+      binding: input.binding,
+      projectId: thread.projectId,
+      access,
+      capability,
+      resourceId: resource.id,
+    }),
+  );
+  try {
+    assertAppExternalApprovalBinding({
+      stored: existing.externalApprovalBinding,
+      actual: input.binding,
+      requestedExecutionId: existing.requestedExecutionId,
+      authorityRevision,
+    });
+  } catch {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+  }
   const [consumed] = await knowledgeDb
     .update(schema.appOperationApprovals)
     .set({
@@ -236,6 +334,7 @@ export async function consumeAppOperationApproval(input: {
     })
     .where(
       and(
+        eq(schema.appOperationApprovals.id, existing.id),
         eq(schema.appOperationApprovals.organizationId, input.binding.organizationId),
         eq(schema.appOperationApprovals.environmentId, input.binding.environmentId),
         eq(schema.appOperationApprovals.workspaceId, input.binding.workspaceId),
@@ -256,6 +355,7 @@ export async function consumeAppOperationApproval(input: {
           schema.appOperationApprovals.payloadHash,
           hashAppOperationPayload(input.binding.payload)
         ),
+        eq(schema.appOperationApprovals.authorityRevision, authorityRevision),
         eq(schema.appOperationApprovals.status, "approved"),
         gt(schema.appOperationApprovals.expiresAt, now)
       )
@@ -268,6 +368,38 @@ export async function consumeAppOperationApproval(input: {
     now,
   });
   throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+}
+
+type EffectiveProjectAppAccess = NonNullable<
+  Awaited<ReturnType<typeof resolveEffectiveProjectAppAccess>>
+>;
+
+function appApprovalPolicyEvidence(input: {
+  binding: AppOperationApprovalBinding;
+  projectId: string;
+  access: EffectiveProjectAppAccess;
+  capability: EffectiveProjectAppAccess["capabilities"][number];
+  resourceId: string;
+}) {
+  return {
+    organizationId: input.binding.organizationId,
+    projectId: input.projectId,
+    environmentId: input.access.environmentId,
+    actorUserId: input.binding.actorUserId,
+    appKey: input.access.appKey,
+    connectionId: input.access.connectionId,
+    capability: {
+      key: input.capability.key,
+      approvalMode: input.capability.approvalMode,
+      loggingMode: input.capability.loggingMode,
+      rateLimitMode: input.capability.rateLimitMode,
+      settings: input.capability.settings,
+    },
+    resource: {
+      id: input.resourceId,
+      type: input.binding.resourceType,
+    },
+  };
 }
 
 async function expireAppOperationApproval(input: {

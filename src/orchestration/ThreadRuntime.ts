@@ -21,6 +21,7 @@ import type {
   SessionRepository,
 } from "../kestrel/contracts/store.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
+import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
 import type { DelegationServicePort, DialogServicePort } from "../../tools/contracts.js";
 import { buildRuntimeIdentityMetadata } from "../profile/runtimeProfile.js";
 import {
@@ -339,7 +340,10 @@ export class ThreadRuntime implements ThreadRuntimePort {
     const cancelDialogs = () => this.delegationSupervisor?.cancelActiveDialogs(input.threadId);
     input.signal?.addEventListener("abort", cancelDialogs, { once: true });
     try {
-      return await this.submitAcceptedTurn(input);
+      return await this.submitAcceptedTurn({
+        ...input,
+        actor: input.actor ?? localOperatorActor(),
+      });
     } finally {
       input.signal?.removeEventListener("abort", cancelDialogs);
       this.activeThreadSubmissions.delete(input.threadId);
@@ -811,8 +815,12 @@ export class ThreadRuntime implements ThreadRuntimePort {
   }
 
   async replyToRequest(input: ReplyToRequestInput): Promise<SubmitTurnResult> {
+    const effectiveInput: ReplyToRequestInput = {
+      ...input,
+      actor: input.actor ?? localOperatorActor(),
+    };
     const queueWasWaiting = readFollowUpQueue(await this.requireThread(input.threadId)).pauseReason === "waiting";
-    const resolved = await this.interactionManager.resolveRequest(input);
+    const resolved = await this.interactionManager.resolveRequest(effectiveInput);
     this.emit("interaction.resolved", input.threadId, {
       requestId: resolved.request.requestId,
       kind: resolved.request.kind,
@@ -939,6 +947,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
         ...(resolved.request.delegationId !== undefined ? { delegationId: resolved.request.delegationId } : {}),
       },
       ...(input.runtimeTurn !== undefined ? { runtimeTurn: input.runtimeTurn } : {}),
+      actor: effectiveInput.actor,
     });
     if (queueWasWaiting && result.output.status === "COMPLETED") {
       await this.withFollowUpMutation(input.threadId, async (latest) => {
@@ -974,16 +983,12 @@ export class ThreadRuntime implements ThreadRuntimePort {
       ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
       ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
-      issuedBy: input.actor?.actorId ?? input.actor?.displayName ?? "operator",
+      actor: input.actor ?? {
+        actorType: "operator",
+        actorId: "kestrel-local-operator",
+        displayName: "Local Kestrel Operator",
+      },
       approve: true,
-      allowedToolClasses: resolveAllowedToolClasses(
-        {
-          interactionMode: input.interactionMode ?? "chat",
-          ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
-        },
-        input.executionPolicy,
-      ),
-      allowedCapabilities: extractAllowedCapabilities(input.executionPolicy),
       ...(input.runtimeTurn !== undefined ? { runtimeTurn: input.runtimeTurn } : {}),
     });
   }
@@ -2011,6 +2016,14 @@ export class ThreadRuntime implements ThreadRuntimePort {
     const existingRun = await this.store.getRun(runId);
     return existingRun === null ? undefined : runId;
   }
+}
+
+function localOperatorActor(): RuntimeTurnActor {
+  return {
+    actorType: "operator",
+    actorId: "kestrel-local-operator",
+    displayName: "Local Kestrel Operator",
+  };
 }
 
 function isMissingRunPreStartFailureOutput(output: NormalizedOutput): boolean {

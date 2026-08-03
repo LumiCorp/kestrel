@@ -48,6 +48,7 @@ test(
       officialRemoteConnection,
       mcpControl,
       mcpGrant,
+      appApprovals,
     ] = await Promise.all([
       import("@/lib/db/runtime"),
       import("@/lib/environments/store"),
@@ -65,6 +66,7 @@ test(
       import("./official-remote-connection"),
       import("@/lib/mcp/control-plane"),
       import("@/lib/mcp/grant-service"),
+      import("./app-operation-approvals"),
     ]);
     const sql = postgres(databaseUrl, { max: 1 });
     const suffix = crypto.randomUUID();
@@ -643,6 +645,135 @@ test(
     });
     assert.equal(authorizedResearch.connectionId, primary.id);
     assert.equal(authorizedResearch.capability.approvalMode, "ask");
+
+    await sql`
+      INSERT INTO "app_connection_resources" (
+        "id", "connection_id", "external_id", "resource_type", "label",
+        "enabled", "created_at", "updated_at"
+      ) VALUES (
+        ${`approval-resource-${suffix}`}, ${primary.id}, 'approval-integrity',
+        'search_scope', 'Approval integrity fixture', true, ${now}, ${now}
+      )
+    `;
+    const [approvalResource] = await sql<
+      Array<{ id: string; resourceType: string }>
+    >`
+      SELECT "id", "resource_type" AS "resourceType"
+      FROM "app_connection_resources"
+      WHERE "connection_id" = ${primary.id} AND "enabled" = true
+      ORDER BY "created_at"
+      LIMIT 1
+    `;
+    assert.ok(approvalResource);
+    const approvalBinding = {
+      organizationId,
+      environmentId,
+      workspaceId,
+      threadId,
+      actorUserId: userId,
+      agentId: "kestrel-one",
+      appKey: "tavily",
+      capabilityKey: "research",
+      connectionId: primary.id,
+      resourceId: approvalResource.id,
+      resourceType: approvalResource.resourceType,
+      operationKey: "tavily.research",
+      runtimeApprovalId: `approval-${suffix}`,
+      payload: { query: "approval integrity" },
+    };
+    const requestedApproval = await appApprovals.recordAppOperationApprovalRequest({
+      binding: approvalBinding,
+      projectId,
+      requestedExecutionId: runId,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    assert.match(requestedApproval.authorityRevision ?? "", /^sha256:[0-9a-f]{64}$/u);
+    assert.equal(requestedApproval.externalApprovalBinding?.authorityKind, "hosted_app_policy");
+    await assert.rejects(
+      appApprovals.decideAppOperationApproval({
+        organizationId,
+        threadId,
+        userId: isolatedUserId,
+        runtimeApprovalId: approvalBinding.runtimeApprovalId,
+        approved: true,
+      }),
+      (error: unknown) =>
+        error instanceof appApprovals.AppOperationApprovalError &&
+        error.code === "APP_OPERATION_APPROVAL_NOT_PENDING",
+    );
+    await appApprovals.decideAppOperationApproval({
+      organizationId,
+      threadId,
+      userId,
+      runtimeApprovalId: approvalBinding.runtimeApprovalId,
+      approved: true,
+    });
+    const concurrentConsumption = await Promise.allSettled([
+      appApprovals.consumeAppOperationApproval({
+        binding: approvalBinding,
+        consumedExecutionId: runId,
+      }),
+      appApprovals.consumeAppOperationApproval({
+        binding: approvalBinding,
+        consumedExecutionId: runId,
+      }),
+    ]);
+    assert.deepEqual(
+      concurrentConsumption.map((result) => result.status).sort(),
+      ["fulfilled", "rejected"],
+    );
+
+    const changedPolicyBinding = {
+      ...approvalBinding,
+      runtimeApprovalId: `approval-policy-${suffix}`,
+      payload: { query: "policy revision" },
+    };
+    await appApprovals.recordAppOperationApprovalRequest({
+      binding: changedPolicyBinding,
+      projectId,
+      requestedExecutionId: runId,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await appApprovals.decideAppOperationApproval({
+      organizationId,
+      threadId,
+      userId,
+      runtimeApprovalId: changedPolicyBinding.runtimeApprovalId,
+      approved: true,
+    });
+    await appService.saveEnvironmentAppCapabilityGrant({
+      organizationId,
+      environmentId,
+      appKey: "tavily",
+      capabilityKey: "research",
+      grant: {
+        enabled: true,
+        approvalMode: "deny",
+        loggingMode: "metadata_only",
+        rateLimitMode: "strict",
+      },
+    });
+    await assert.rejects(
+      appApprovals.consumeAppOperationApproval({
+        binding: changedPolicyBinding,
+        consumedExecutionId: runId,
+      }),
+      (error: unknown) =>
+        error instanceof appApprovals.AppOperationApprovalError &&
+        error.code === "APP_OPERATION_APPROVAL_INVALID",
+    );
+    await appService.saveEnvironmentAppCapabilityGrant({
+      organizationId,
+      environmentId,
+      appKey: "tavily",
+      capabilityKey: "research",
+      grant: {
+        enabled: true,
+        approvalMode: "ask",
+        loggingMode: "metadata_only",
+        rateLimitMode: "strict",
+      },
+    });
 
     await projectAppService.setProjectAppEnabled({
       organizationId,

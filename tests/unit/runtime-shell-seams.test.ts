@@ -64,11 +64,13 @@ test("KestrelChatRuntime delegates operator session projection to orchestration"
   assert.doesNotMatch(source, /function toCheckpointSummary/u);
 });
 
-test("runner control boundary delegates operator policy field validation", async () => {
+test("runner control boundary rejects caller-selected approval authority", async () => {
   const commandRouterSource = await readFile(COMMAND_ROUTER_SOURCE, "utf8");
 
-  assert.match(commandRouterSource, /parseOperatorControlPolicyFields/u);
-  assert.doesNotMatch(commandRouterSource, /allowToolClasses contains an invalid tool class/u);
+  assert.match(
+    commandRouterSource,
+    /cannot select approval tool classes or capabilities/u,
+  );
 });
 
 test("operator affordance payload construction stays source-owned", async () => {

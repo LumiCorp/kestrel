@@ -1,5 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import {
+  RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
+  serializeCanonicalApprovalPayload,
+} from "@kestrel-agents/protocol";
 
 import type { RuntimeEvent } from "../../src/kestrel/contracts/events.js";
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
@@ -118,6 +123,181 @@ test("InteractionManager emits normalized not-found and state failures", async (
     { code: "INTERACTION_REQUEST_NOT_PENDING" },
   );
 });
+
+test("InteractionManager grants only an exact, current, same-actor external approval once", async () => {
+  const store = new InMemorySessionStore();
+  const manager = new InteractionManager(store);
+  const actor = {
+    actorType: "end_user" as const,
+    actorId: "user-1",
+    tenantId: "org-1",
+  };
+  const payload = { repository: "acme/widgets", title: "Ship it" };
+  const binding = buildApprovalBinding({
+    approvalId: "approval-exact",
+    threadId: "thread-exact",
+    runId: "run-exact",
+    actionKey: "github.issue.create",
+    payload,
+  });
+  const request = await manager.syncWaitState({
+    threadId: "thread-exact",
+    runId: "run-exact",
+    actor,
+    waitFor: {
+      kind: "approval",
+      eventType: "user.approval",
+      metadata: {
+        approvalId: binding.approvalId,
+        toolName: binding.actionKey,
+        toolInput: payload,
+        externalApprovalBinding: binding,
+      },
+    },
+  });
+  assert.ok(request);
+
+  await assert.rejects(
+    () =>
+      manager.resolveRequest({
+        threadId: "thread-exact",
+        requestId: request.requestId,
+        message: "approve",
+        approve: true,
+        actor: { ...actor, actorId: "different-user" },
+      }),
+    { code: "APPROVAL_ACTOR_MISMATCH" },
+  );
+  assert.equal((await store.getInteractionRequest(request.requestId))?.status, "PENDING");
+
+  const resolved = await manager.resolveRequest({
+    threadId: "thread-exact",
+    requestId: request.requestId,
+    message: "approve",
+    approve: true,
+    actor,
+  });
+  assert.equal(resolved.grant?.binding?.payloadHash, binding.payloadHash);
+  assert.deepEqual(resolved.grant?.allowedCapabilities, ["external.invoke"]);
+  await assert.rejects(
+    () =>
+      manager.resolveRequest({
+        threadId: "thread-exact",
+        requestId: request.requestId,
+        message: "approve again",
+        approve: true,
+        actor,
+      }),
+    { code: "INTERACTION_REQUEST_NOT_PENDING" },
+  );
+});
+
+test("InteractionManager rejects changed, expired, or unbound executable authority", async () => {
+  const actor = { actorType: "operator" as const, actorId: "operator-1" };
+  for (const scenario of ["changed_payload", "expired"] as const) {
+    const store = new InMemorySessionStore();
+    const manager = new InteractionManager(store);
+    const payload = { command: "deploy" };
+    const binding = buildApprovalBinding({
+      approvalId: `approval-${scenario}`,
+      threadId: `thread-${scenario}`,
+      runId: `run-${scenario}`,
+      actionKey: "deploy.run",
+      payload,
+      ...(scenario === "expired"
+        ? {
+            requestedAt: new Date(Date.now() - 120_000),
+            expiresAt: new Date(Date.now() - 60_000),
+          }
+        : {}),
+    });
+    const request = await manager.syncWaitState({
+      threadId: binding.threadId,
+      runId: binding.runId,
+      actor,
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          approvalId: binding.approvalId,
+          toolName: binding.actionKey,
+          toolInput:
+            scenario === "changed_payload" ? { command: "deploy --force" } : payload,
+          externalApprovalBinding: binding,
+        },
+      },
+    });
+    assert.ok(request);
+    await assert.rejects(
+      () =>
+        manager.resolveRequest({
+          threadId: binding.threadId,
+          requestId: request.requestId,
+          message: "approve",
+          approve: true,
+          actor,
+        }),
+      {
+        code:
+          scenario === "changed_payload"
+            ? "EXTERNAL_APPROVAL_ACTION_MISMATCH"
+            : "EXTERNAL_APPROVAL_EXPIRED",
+      },
+    );
+    assert.equal((await store.listApprovalGrants({ threadId: binding.threadId })).length, 0);
+  }
+
+  const unboundStore = new InMemorySessionStore();
+  const unboundManager = new InteractionManager(unboundStore);
+  const unbound = await unboundManager.syncWaitState({
+    threadId: "thread-unbound",
+    runId: "run-unbound",
+    actor,
+    waitFor: {
+      kind: "approval",
+      eventType: "user.approval",
+      metadata: { approvalId: "approval-unbound" },
+    },
+  });
+  assert.ok(unbound);
+  const decision = await unboundManager.resolveRequest({
+    threadId: "thread-unbound",
+    requestId: unbound.requestId,
+    message: "approve",
+    approve: true,
+    actor,
+  });
+  assert.equal(decision.grant, undefined);
+});
+
+function buildApprovalBinding(input: {
+  approvalId: string;
+  threadId: string;
+  runId: string;
+  actionKey: string;
+  payload: unknown;
+  requestedAt?: Date;
+  expiresAt?: Date;
+}) {
+  const requestedAt = input.requestedAt ?? new Date(Date.now() - 1_000);
+  const expiresAt = input.expiresAt ?? new Date(Date.now() + 60_000);
+  return {
+    version: RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
+    approvalId: input.approvalId,
+    threadId: input.threadId,
+    runId: input.runId,
+    actionKey: input.actionKey,
+    payloadHash: `sha256:${createHash("sha256")
+      .update(serializeCanonicalApprovalPayload(input.payload))
+      .digest("hex")}`,
+    toolClass: "external_side_effect" as const,
+    capabilities: ["external.invoke"],
+    authorityKind: "runtime_policy" as const,
+    authorityRevision: `sha256:${"c".repeat(64)}`,
+    requestedAt: requestedAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+  };
+}
 
 test("ThreadRuntime emits normalized thread and supervisor failures", async () => {
   const store = new InMemorySessionStore();

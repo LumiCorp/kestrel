@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
 
+import {
+  parseRunnerExternalApprovalBindingV1,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
+  serializeCanonicalApprovalPayload,
+  type RunnerExternalApprovalAuthorityKind,
+  type RunnerExternalApprovalBindingV1,
+} from "@kestrel-agents/protocol";
+
 import type { StepIO, Transition, WaitForMatcher } from "../../../../../src/kestrel/contracts/execution.js";
 
 import { createRuntimeFailure } from "../../../../../src/runtime/RuntimeFailure.js";
@@ -62,6 +70,10 @@ export async function checkToolPolicyGate(input: {
   toolClass: ToolExecutionClass;
   allowedInteractionModes?: readonly CanonicalInteractionMode[] | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
+  approvalAuthority?: {
+    kind: RunnerExternalApprovalAuthorityKind;
+    revision: string;
+  } | undefined;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;
@@ -144,6 +156,7 @@ export async function checkToolPolicyGate(input: {
       acterStepId: input.acterStepId,
       currentStepAgent: input.currentStepAgent,
       runId: input.runId,
+      sessionId: input.sessionId,
       stepIndex: input.stepIndex,
       eventType: input.eventType,
       eventPayload: input.eventPayload,
@@ -154,6 +167,7 @@ export async function checkToolPolicyGate(input: {
       actSubmode: input.actSubmode,
       executionPolicy: input.executionPolicy,
       requiredApprovalCapabilities: input.requiredApprovalCapabilities,
+      approvalAuthority: input.approvalAuthority,
       io: input.io,
     });
     if (approvalTransition !== undefined) {
@@ -301,6 +315,10 @@ export function checkToolBatchChunkPolicyGate(input: {
   modeSystemV2Enabled: boolean;
   executionPolicy: ExecutionPolicy | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
+  approvalAuthority?: {
+    kind: RunnerExternalApprovalAuthorityKind;
+    revision: string;
+  } | undefined;
 }): PolicyGateResult {
   return checkToolItemsModeAndCapabilityPolicy(input);
 }
@@ -447,6 +465,7 @@ async function maybeRequireToolApproval(input: {
   acterStepId: string;
   currentStepAgent: string;
   runId: string;
+  sessionId: string;
   stepIndex: number;
   eventType: string;
   eventPayload: Record<string, unknown> | undefined;
@@ -459,6 +478,10 @@ async function maybeRequireToolApproval(input: {
   io: StepIO;
   executionPolicy: ExecutionPolicy | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
+  approvalAuthority?: {
+    kind: RunnerExternalApprovalAuthorityKind;
+    revision: string;
+  } | undefined;
 }): Promise<Transition | undefined> {
   if (
     !requiresExplicitToolApproval({
@@ -472,6 +495,25 @@ async function maybeRequireToolApproval(input: {
   }
 
   const approvalId = buildApprovalId(input.runId, input.stepIndex, input.toolName, input.toolInput);
+  const requestedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.parse(requestedAt) + 5 * 60_000).toISOString();
+  const binding = input.toolClass === "external_side_effect"
+    ? buildExternalApprovalBinding({
+        approvalId,
+        threadId: readApprovalThreadId(input.eventPayload) ?? input.sessionId,
+        runId: input.runId,
+        toolName: input.toolName,
+        toolInput: input.toolInput,
+        toolClass: input.toolClass,
+        requiredApprovalCapabilities: input.requiredApprovalCapabilities,
+        approvalAuthority: input.approvalAuthority,
+        interactionMode: input.interactionMode,
+        actSubmode: input.actSubmode,
+        executionPolicy: input.executionPolicy,
+        requestedAt,
+        expiresAt,
+      })
+    : undefined;
   const currentPendingApproval = asRecord(asRecord(input.reactState.exec)?.pendingApproval);
   const currentPendingApprovalId = asString(currentPendingApproval?.approvalId);
   const decision = await resolveApprovalDecision({
@@ -491,6 +533,12 @@ async function maybeRequireToolApproval(input: {
   });
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "approve") {
+    if (binding !== undefined) {
+      validatePendingExternalApproval({
+        currentPendingApproval,
+        expected: binding,
+      });
+    }
     return ;
   }
 
@@ -537,7 +585,6 @@ async function maybeRequireToolApproval(input: {
   }
 
   const prompt = `Approve ${input.toolName}? Reply 'approve' or 'deny'.`;
-  const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
   const waitFor: WaitForMatcher = {
     kind: "approval",
     eventType: "user.approval",
@@ -549,6 +596,7 @@ async function maybeRequireToolApproval(input: {
       riskLevel: riskLevelForToolClass(input.toolClass),
       reason: "Build: Ask First requires per-call approval",
       expiresAt,
+      ...(binding !== undefined ? { externalApprovalBinding: binding } : {}),
       prompt,
     },
   };
@@ -590,6 +638,7 @@ async function maybeRequireToolApproval(input: {
         toolName: input.toolName,
         toolClass: input.toolClass,
         expiresAt,
+        ...(binding !== undefined ? { externalApprovalBinding: binding } : {}),
       },
     },
     regionExecPatch: {
@@ -598,6 +647,7 @@ async function maybeRequireToolApproval(input: {
         toolName: input.toolName,
         toolClass: input.toolClass,
         expiresAt,
+        ...(binding !== undefined ? { externalApprovalBinding: binding } : {}),
       },
     },
   });
@@ -927,6 +977,166 @@ function buildApprovalId(
     .digest("hex")
     .slice(0, 12);
   return `${runId}:${stepIndex}:${hash}`;
+}
+
+function buildExternalApprovalBinding(input: {
+  approvalId: string;
+  threadId: string;
+  runId: string;
+  toolName: string;
+  toolInput: unknown;
+  toolClass: "external_side_effect";
+  requiredApprovalCapabilities?: readonly string[] | undefined;
+  approvalAuthority?: {
+    kind: RunnerExternalApprovalAuthorityKind;
+    revision: string;
+  } | undefined;
+  interactionMode: CanonicalInteractionMode;
+  actSubmode: ActSubmode;
+  executionPolicy: ExecutionPolicy | undefined;
+  requestedAt: string;
+  expiresAt: string;
+}): RunnerExternalApprovalBindingV1 {
+  const capabilities = [...new Set(input.requiredApprovalCapabilities ?? [])]
+    .filter((capability) => capability.trim().length > 0)
+    .sort();
+  if (capabilities.length === 0) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_CAPABILITIES_REQUIRED",
+      `External-effect tool '${input.toolName}' cannot request approval without contract-derived capabilities.`,
+      {
+        subsystem: "react",
+        step: "agent.exec.dispatch",
+        classification: "policy",
+        recoverable: false,
+        toolName: input.toolName,
+      },
+    );
+  }
+  const authority = input.approvalAuthority ?? {
+    kind: "runtime_policy" as const,
+    revision: buildRuntimePolicyRevision({
+      interactionMode: input.interactionMode,
+      actSubmode: input.actSubmode,
+      executionPolicy: input.executionPolicy,
+    }),
+  };
+  return parseRunnerExternalApprovalBindingV1({
+    version: RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
+    approvalId: input.approvalId,
+    threadId: input.threadId,
+    runId: input.runId,
+    actionKey: input.toolName,
+    payloadHash: digestApprovalPayload(input.toolInput),
+    toolClass: input.toolClass,
+    capabilities,
+    authorityKind: authority.kind,
+    authorityRevision: authority.revision,
+    requestedAt: input.requestedAt,
+    expiresAt: input.expiresAt,
+  });
+}
+
+function validatePendingExternalApproval(input: {
+  currentPendingApproval: Record<string, unknown> | undefined;
+  expected: RunnerExternalApprovalBindingV1;
+}): void {
+  let pending: RunnerExternalApprovalBindingV1;
+  try {
+    pending = parseRunnerExternalApprovalBindingV1(
+      input.currentPendingApproval?.externalApprovalBinding,
+    );
+  } catch (error) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_BINDING_INVALID",
+      "External-effect approval is missing its exact action binding.",
+      {
+        subsystem: "react",
+        step: "agent.exec.dispatch",
+        classification: "policy",
+        recoverable: false,
+        cause: error instanceof Error ? error.message : String(error),
+      },
+    );
+  }
+  const expectedIdentity = {
+    approvalId: input.expected.approvalId,
+    threadId: input.expected.threadId,
+    runId: input.expected.runId,
+    actionKey: input.expected.actionKey,
+    payloadHash: input.expected.payloadHash,
+    toolClass: input.expected.toolClass,
+    capabilities: input.expected.capabilities,
+    authorityKind: input.expected.authorityKind,
+    authorityRevision: input.expected.authorityRevision,
+  };
+  const pendingIdentity = {
+    approvalId: pending.approvalId,
+    threadId: pending.threadId,
+    runId: pending.runId,
+    actionKey: pending.actionKey,
+    payloadHash: pending.payloadHash,
+    toolClass: pending.toolClass,
+    capabilities: pending.capabilities,
+    authorityKind: pending.authorityKind,
+    authorityRevision: pending.authorityRevision,
+  };
+  if (
+    serializeCanonicalApprovalPayload(pendingIdentity) !==
+    serializeCanonicalApprovalPayload(expectedIdentity)
+  ) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_BINDING_CHANGED",
+      "External-effect approval no longer matches the pending tool action.",
+      {
+        subsystem: "react",
+        step: "agent.exec.dispatch",
+        classification: "policy",
+        recoverable: false,
+        approvalId: pending.approvalId,
+      },
+    );
+  }
+  if (Date.parse(pending.expiresAt) <= Date.now()) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_EXPIRED",
+      "External-effect approval expired before the action could resume.",
+      {
+        subsystem: "react",
+        step: "agent.exec.dispatch",
+        classification: "policy",
+        recoverable: true,
+        approvalId: pending.approvalId,
+      },
+    );
+  }
+}
+
+function digestApprovalPayload(value: unknown): string {
+  return `sha256:${createHash("sha256")
+    .update(serializeCanonicalApprovalPayload(value))
+    .digest("hex")}`;
+}
+
+function buildRuntimePolicyRevision(input: {
+  interactionMode: CanonicalInteractionMode;
+  actSubmode: ActSubmode;
+  executionPolicy: ExecutionPolicy | undefined;
+}): string {
+  return digestApprovalPayload({
+    interactionMode: input.interactionMode,
+    actSubmode: input.actSubmode ?? null,
+    executionPolicy: input.executionPolicy ?? null,
+  });
+}
+
+function readApprovalThreadId(
+  eventPayload: Record<string, unknown> | undefined,
+): string | undefined {
+  return (
+    asString(asRecord(eventPayload?.orchestration)?.threadId) ??
+    asString(asRecord(eventPayload?.metadata)?.threadId)
+  );
 }
 
 async function resolveApprovalDecision(input: {

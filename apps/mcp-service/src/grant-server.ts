@@ -252,9 +252,14 @@ async function invokeCapability<T>(input: {
   if (input.capability.approvalMode === "ask") {
     if (
       input.input.approvalAuthorizer &&
-      (await input.input.approvalAuthorizer.isApproved({
+      (await input.input.approvalAuthorizer.consume({
         grant: input.input.grant,
         capability: input.capability,
+        actionKey:
+          input.capability.toolCapabilityKey ?? input.capability.capabilityKey,
+        payload: input.capability.kind === "tool"
+          ? (asRecord(input.request).arguments ?? {})
+          : input.request,
       }))
     ) {
       return input.input.audit.execute(identity, input.operation);
@@ -270,9 +275,11 @@ async function invokeCapability<T>(input: {
 }
 
 export interface ApprovalAuthorizer {
-  isApproved(input: {
+  consume(input: {
     grant: AuthorizedMcpGrant;
     capability: AuthorizedCapability;
+    actionKey: string;
+    payload: unknown;
   }): Promise<boolean>;
 }
 

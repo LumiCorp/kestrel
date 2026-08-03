@@ -51,8 +51,6 @@
       "flags": [
         "--thread-id",
         "--request-id",
-        "--allow-tool-class",
-        "--allow-capability",
         "--delegation-id",
         "--run-id",
         "--out",

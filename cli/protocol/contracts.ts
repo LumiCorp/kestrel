@@ -268,8 +268,6 @@ export interface OperatorControlCommandPayload {
   maxTurns?: number | undefined;
   maxRuntimeMs?: number | undefined;
   allowApprovalInheritance?: boolean | undefined;
-  allowToolClasses?: ToolExecutionClass[] | undefined;
-  allowCapabilities?: string[] | undefined;
 }
 
 export interface TaskGraphGetCommandPayload {

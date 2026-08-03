@@ -608,8 +608,6 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
           ...(command.allowApprovalInheritance !== undefined
             ? { allowApprovalInheritance: command.allowApprovalInheritance }
             : {}),
-          ...(command.allowToolClasses !== undefined ? { allowToolClasses: command.allowToolClasses } : {}),
-          ...(command.allowCapabilities !== undefined ? { allowCapabilities: command.allowCapabilities } : {}),
         }, metadata);
         if (response.type !== "operator.controlled") {
           throw createRuntimeFailure(

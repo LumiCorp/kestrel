@@ -1237,7 +1237,7 @@ test("runner service streams run events and preserves issuedBy for operator acti
   let progressListener: ((update: ProgressUpdateV1) => void) | undefined;
   let reasoningListener: ((update: ReasoningUpdateV1) => void) | undefined;
   let taskUpdateListener: ((update: DelegationTaskUpdate) => void) | undefined;
-  let capturedIssuedBy: string | undefined;
+  let capturedActor: unknown;
 
   const runtimeFactory = (): RunnerRuntime => ({
     runTurn: async () => {
@@ -1308,7 +1308,7 @@ test("runner service streams run events and preserves issuedBy for operator acti
       };
     },
     performOperatorAction: async (input) => {
-      capturedIssuedBy = input.issuedBy;
+      capturedActor = input.actor;
       return {
         threadId: input.threadId,
       };
@@ -1393,7 +1393,12 @@ test("runner service streams run events and preserves issuedBy for operator acti
 
     const controlEvent = JSON.parse(controlResponse.body) as { type: string };
     assert.equal(controlEvent.type, "operator.controlled");
-    assert.equal(capturedIssuedBy, "Alice");
+    assert.deepEqual(capturedActor, {
+      actorId: "alice",
+      actorType: "operator",
+      displayName: "Alice",
+      tenantId: "internal",
+    });
   } finally {
     await service.close();
   }

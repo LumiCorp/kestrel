@@ -2428,16 +2428,16 @@ test("run.cancel clears a persisted active run when no in-process run is active"
   await host.close();
 });
 
-test("operator.control forwards actor display name into issuedBy", async () => {
+test("operator.control forwards authenticated actor metadata", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
-  let capturedIssuedBy: string | undefined;
+  let capturedActor: unknown;
   const host = new RunnerHost(writer, () => ({
     runTurn: async () => {
       throw new Error("not used");
     },
     performOperatorAction: async (input) => {
-      capturedIssuedBy = input.issuedBy;
+      capturedActor = input.actor;
       return {
         threadId: input.threadId,
       };
@@ -2475,7 +2475,12 @@ test("operator.control forwards actor display name into issuedBy", async () => {
 
   await tick();
   assert.equal(events[0]?.type, "operator.controlled");
-  assert.equal(capturedIssuedBy, "Alice");
+  assert.deepEqual(capturedActor, {
+    actorId: "alice",
+    actorType: "operator",
+    displayName: "Alice",
+    tenantId: "internal",
+  });
   rl.close();
   await host.close();
 });

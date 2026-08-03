@@ -9,7 +9,6 @@ export { InteractionManager } from "./InteractionManager.js";
 export { ContextPolicyManager } from "./ContextPolicyManager.js";
 export { OperatorControlPlane } from "./OperatorControlPlane.js";
 export * from "./OperatorAffordanceProjection.js";
-export * from "./OperatorControlValidation.js";
 export * from "./FollowUpQueue.js";
 export * from "./OperatorSessionProjection.js";
 export * from "./RuntimeSessionStateProjection.js";
