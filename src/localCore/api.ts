@@ -2803,10 +2803,14 @@ function openProjectRunEvents(
   });
   const client = { response };
   clients.add(client);
-  writeProjectRunEvent(response, initialRuns);
-  response.on("close", () => {
+  const removeClient = () => {
     clients.delete(client);
-  });
+  };
+  response.on("close", removeClient);
+  response.on("error", removeClient);
+  if (writeProjectRunEvent(response, initialRuns) === false) {
+    removeClient();
+  }
 }
 
 function broadcastProjectRuns(
@@ -2814,16 +2818,26 @@ function broadcastProjectRuns(
   runs: DesktopManagedProjectRun[],
 ): void {
   for (const client of clients) {
-    writeProjectRunEvent(client.response, runs);
+    if (writeProjectRunEvent(client.response, runs) === false) {
+      clients.delete(client);
+    }
   }
 }
 
 function writeProjectRunEvent(
   response: ServerResponse,
   runs: DesktopManagedProjectRun[],
-): void {
-  response.write("event: project-runs\n");
-  response.write(`data: ${JSON.stringify({ runs })}\n\n`);
+): boolean {
+  if (response.destroyed || response.writableEnded) {
+    return false;
+  }
+  try {
+    response.write("event: project-runs\n");
+    response.write(`data: ${JSON.stringify({ runs })}\n\n`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parsePositiveInteger(value: string | null): number | undefined {

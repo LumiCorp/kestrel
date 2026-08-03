@@ -5153,8 +5153,21 @@ function subscribeToCoreProjectRuns(client?: LocalCoreClient): void {
       mainWindow?.webContents.send("desktop:project-runs", runs);
     },
     onError(error) {
-      requireLocalCoreConnectionManager().invalidate(activeClient);
-      console.warn("Desktop project run event stream failed", { error });
+      const manager = requireLocalCoreConnectionManager();
+      manager.invalidate(activeClient);
+      console.warn("Desktop project run event stream failed", {
+        phase: "disconnected",
+        code: (error as NodeJS.ErrnoException).code,
+        error,
+      });
+      void manager.ensureConnected().catch((recoveryError: unknown) => {
+        console.warn("Desktop project run event stream recovery failed", {
+          phase: "reconnect_failed",
+          disconnectCode: (error as NodeJS.ErrnoException).code,
+          recoveryCode: (recoveryError as NodeJS.ErrnoException | undefined)?.code,
+          error: recoveryError,
+        });
+      });
     },
   });
 }
