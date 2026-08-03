@@ -33,6 +33,12 @@ type McpEnvironmentPanelProps = {
 };
 
 type SourceType = "remote" | "oci";
+type OciEgressMode = "none" | "allow_hosts" | "unrestricted";
+type OciEgressDestination = {
+  hostname: string;
+  port: string;
+  protocol: "http" | "https";
+};
 
 type OperationalSnapshot = {
   summary: {
@@ -80,7 +86,7 @@ export function McpEnvironmentPanel({
   const [credentials, setCredentials] = useState<CredentialMetadata[]>([]);
   const [servers, setServers] = useState<McpServer[]>([]);
   const [operations, setOperations] = useState<OperationalSnapshot | null>(
-    null
+    null,
   );
   const [details, setDetails] = useState<Record<string, ServerDetail>>({});
   const [loading, setLoading] = useState(true);
@@ -91,11 +97,18 @@ export function McpEnvironmentPanel({
   const [remoteUrl, setRemoteUrl] = useState("");
   const [imageReference, setImageReference] = useState("");
   const [launchArguments, setLaunchArguments] = useState("");
-  const [networkAccess, setNetworkAccess] = useState<"full" | "none">("full");
+  const [ociEgressMode, setOciEgressMode] = useState<OciEgressMode>("none");
+  const [ociDestinations, setOciDestinations] = useState<
+    OciEgressDestination[]
+  >([{ hostname: "", port: "443", protocol: "https" }]);
+  const [unrestrictedRiskAcknowledged, setUnrestrictedRiskAcknowledged] =
+    useState(false);
+  const [unrestrictedJustification, setUnrestrictedJustification] =
+    useState("");
   const [credentialId, setCredentialId] = useState("");
   const [credentialName, setCredentialName] = useState("");
   const [secretHeaders, setSecretHeaders] = useState(
-    '{\n  "Authorization": "Bearer …"\n}'
+    '{\n  "Authorization": "Bearer …"\n}',
   );
   const [oauthResource, setOauthResource] = useState("");
   const [oauthClientId, setOauthClientId] = useState("");
@@ -112,12 +125,12 @@ export function McpEnvironmentPanel({
           setCredentials(nextCredentials);
           setServers(nextServers);
           setOperations(nextOperations);
-        }
+        },
       )
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
           toast.error(
-            errorMessage(error, "Custom App configuration failed to load.")
+            errorMessage(error, "Custom App configuration failed to load."),
           );
         }
       })
@@ -145,7 +158,7 @@ export function McpEnvironmentPanel({
             name: credentialName,
             payload: { kind: "secret_headers", headers },
           }),
-        }
+        },
       );
       const payload = await readJson<{
         credential?: CredentialMetadata;
@@ -169,10 +182,10 @@ export function McpEnvironmentPanel({
     setBusyAction("operations:refresh");
     try {
       const response = await fetch(
-        `/api/organization/environments/${environmentId}/mcp/health`
+        `/api/organization/environments/${environmentId}/mcp/health`,
       );
       const payload = await readJson<OperationalSnapshot & { error?: string }>(
-        response
+        response,
       );
       if (!response.ok) {
         throw new Error(payload.error ?? "Custom App activity failed to load.");
@@ -199,7 +212,7 @@ export function McpEnvironmentPanel({
             clientId: oauthClientId,
             tokenEndpointAuthMethod: "none",
           }),
-        }
+        },
       );
       const payload = await readJson<{
         authorizationUrl?: string;
@@ -224,7 +237,7 @@ export function McpEnvironmentPanel({
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ status: "revoked" }),
-        }
+        },
       );
       const payload = await readJson<{
         credential?: CredentialMetadata;
@@ -237,15 +250,15 @@ export function McpEnvironmentPanel({
         current.map((credential) =>
           credential.id === id
             ? { ...credential, status: "revoked" }
-            : credential
-        )
+            : credential,
+        ),
       );
       setServers((current) =>
         current.map((server) =>
           server.credentialId === id
             ? { ...server, status: "degraded" }
-            : server
-        )
+            : server,
+        ),
       );
       toast.success("Credential revoked.");
     } catch (error) {
@@ -261,7 +274,7 @@ export function McpEnvironmentPanel({
       const auth = credentialId
         ? {
             mode: credentials.find(
-              (credential) => credential.id === credentialId
+              (credential) => credential.id === credentialId,
             )?.kind,
             credentialId,
           }
@@ -289,7 +302,25 @@ export function McpEnvironmentPanel({
               transport: "stdio",
               imageReference,
               digest: imageReference.split("@").at(-1),
-              networkAccess,
+              egressPolicy:
+                ociEgressMode === "none"
+                  ? { version: 1, mode: "none" }
+                  : ociEgressMode === "allow_hosts"
+                    ? {
+                        version: 1,
+                        mode: "allow_hosts",
+                        destinations: ociDestinations.map((destination) => ({
+                          hostname: destination.hostname,
+                          port: Number(destination.port),
+                          protocol: destination.protocol,
+                        })),
+                      }
+                    : {
+                        version: 1,
+                        mode: "unrestricted",
+                        acknowledgedRisk: unrestrictedRiskAcknowledged,
+                        justification: unrestrictedJustification,
+                      },
             };
       const response = await fetch(
         `/api/organization/environments/${environmentId}/mcp/servers`,
@@ -297,10 +328,10 @@ export function McpEnvironmentPanel({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
-        }
+        },
       );
       const payload = await readJson<{ server?: McpServer; error?: string }>(
-        response
+        response,
       );
       if (!(response.ok && payload.server)) {
         throw new Error(payload.error ?? "Custom App could not be added.");
@@ -311,9 +342,12 @@ export function McpEnvironmentPanel({
       setRemoteUrl("");
       setImageReference("");
       setLaunchArguments("");
-      setNetworkAccess("full");
+      setOciEgressMode("none");
+      setOciDestinations([{ hostname: "", port: "443", protocol: "https" }]);
+      setUnrestrictedRiskAcknowledged(false);
+      setUnrestrictedJustification("");
       toast.success(
-        "Custom App added. Check its capabilities before enabling access."
+        "Custom App added. Check its capabilities before enabling access.",
       );
     } catch (error) {
       toast.error(errorMessage(error, "Custom App could not be added."));
@@ -326,10 +360,10 @@ export function McpEnvironmentPanel({
     setBusyAction(`server:${serverId}:load`);
     try {
       const response = await fetch(
-        `/api/organization/environments/${environmentId}/mcp/servers/${serverId}`
+        `/api/organization/environments/${environmentId}/mcp/servers/${serverId}`,
       );
       const payload = await readJson<ServerDetail & { error?: string }>(
-        response
+        response,
       );
       if (!response.ok) {
         throw new Error(payload.error ?? "Custom App details failed to load.");
@@ -347,20 +381,20 @@ export function McpEnvironmentPanel({
     try {
       const response = await fetch(
         `/api/organization/environments/${environmentId}/mcp/servers/${serverId}/discover`,
-        { method: "POST" }
+        { method: "POST" },
       );
       const payload = await readJson<{ error?: string }>(response);
       if (!response.ok) {
         throw new Error(
-          payload.error ?? "Capability check could not be queued."
+          payload.error ?? "Capability check could not be queued.",
         );
       }
       setServers((current) =>
         current.map((server) =>
           server.id === serverId && server.status === "draft"
             ? { ...server, status: "discovering" }
-            : server
-        )
+            : server,
+        ),
       );
       toast.success("Capability check queued.");
     } catch (error) {
@@ -373,7 +407,7 @@ export function McpEnvironmentPanel({
   async function reviewSnapshot(
     serverId: string,
     snapshotId: string,
-    decision: "approve" | "reject"
+    decision: "approve" | "reject",
   ) {
     setBusyAction(`snapshot:${snapshotId}`);
     try {
@@ -383,7 +417,7 @@ export function McpEnvironmentPanel({
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ decision }),
-        }
+        },
       );
       const payload = await readJson<{ error?: string }>(response);
       if (!response.ok) {
@@ -391,7 +425,7 @@ export function McpEnvironmentPanel({
       }
       await loadServer(serverId);
       toast.success(
-        `App capabilities ${decision === "approve" ? "approved" : "rejected"}.`
+        `App capabilities ${decision === "approve" ? "approved" : "rejected"}.`,
       );
     } catch (error) {
       toast.error(errorMessage(error, "Snapshot review failed."));
@@ -403,7 +437,7 @@ export function McpEnvironmentPanel({
   async function setCapabilityPolicy(
     serverId: string,
     capability: McpCapability,
-    approvalMode: "auto" | "ask" | "deny"
+    approvalMode: "auto" | "ask" | "deny",
   ) {
     setBusyAction(`capability:${capability.id}`);
     try {
@@ -416,7 +450,7 @@ export function McpEnvironmentPanel({
             enabled: approvalMode !== "deny",
             approvalMode,
           }),
-        }
+        },
       );
       const payload = await readJson<{ error?: string }>(response);
       if (!response.ok) {
@@ -438,7 +472,7 @@ export function McpEnvironmentPanel({
   }
 
   const activeCredentials = credentials.filter(
-    (credential) => credential.status === "active"
+    (credential) => credential.status === "active",
   );
 
   return (
@@ -678,25 +712,151 @@ export function McpEnvironmentPanel({
             />
           </div>
           {sourceType === "oci" ? (
-            <div className="space-y-2">
-              <Label htmlFor={`mcp-network-${environmentId}`}>Network access</Label>
+            <div className="space-y-3">
+              <Label htmlFor={`mcp-network-${environmentId}`}>
+                Network access
+              </Label>
               <select
-                className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                 id={`mcp-network-${environmentId}`}
                 onChange={(event) =>
-                  setNetworkAccess(event.target.value as "full" | "none")
+                  setOciEgressMode(event.target.value as OciEgressMode)
                 }
-                value={networkAccess}
+                value={ociEgressMode}
               >
-                <option value="full">Full network</option>
                 <option value="none">No network</option>
+                <option value="allow_hosts">Exact destinations</option>
+                <option value="unrestricted">
+                  Unrestricted compatibility override
+                </option>
               </select>
               <p className="text-muted-foreground text-xs">
-                Full network is the default. An enabled server can contact any
-                destination and use the credentials or read-only workspace data
-                explicitly configured for it. Choose no network only for a
-                server designed to run offline.
+                No network is the default. Exact destinations authorize only a
+                canonical hostname, port, and HTTP protocol. Unrestricted mode
+                accepts the recorded risk of arbitrary internet, LAN, loopback,
+                link-local, and metadata access.
               </p>
+              {ociEgressMode === "allow_hosts" ? (
+                <div className="space-y-2 rounded-md border p-3">
+                  <p className="text-muted-foreground text-xs">
+                    Until the trusted OCI egress gateway is configured, this
+                    server remains network-disabled and never falls back to
+                    unrestricted bridge access.
+                  </p>
+                  {ociDestinations.map((destination, index) => (
+                    <div
+                      className="grid gap-2 sm:grid-cols-[1fr_7rem_7rem_auto]"
+                      key={index}
+                    >
+                      <Input
+                        aria-label={`Destination ${index + 1} hostname`}
+                        onChange={(event) =>
+                          setOciDestinations((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, hostname: event.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                        placeholder="api.example.com"
+                        value={destination.hostname}
+                      />
+                      <Input
+                        aria-label={`Destination ${index + 1} port`}
+                        max={65_535}
+                        min={1}
+                        onChange={(event) =>
+                          setOciDestinations((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, port: event.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                        type="number"
+                        value={destination.port}
+                      />
+                      <select
+                        aria-label={`Destination ${index + 1} protocol`}
+                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                        onChange={(event) =>
+                          setOciDestinations((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? {
+                                    ...item,
+                                    protocol: event.target.value as
+                                      | "http"
+                                      | "https",
+                                  }
+                                : item,
+                            ),
+                          )
+                        }
+                        value={destination.protocol}
+                      >
+                        <option value="https">HTTPS</option>
+                        <option value="http">HTTP</option>
+                      </select>
+                      <Button
+                        disabled={ociDestinations.length === 1}
+                        onClick={() =>
+                          setOciDestinations((current) =>
+                            current.filter(
+                              (_, itemIndex) => itemIndex !== index,
+                            ),
+                          )
+                        }
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    disabled={ociDestinations.length >= 64}
+                    onClick={() =>
+                      setOciDestinations((current) => [
+                        ...current,
+                        { hostname: "", port: "443", protocol: "https" },
+                      ])
+                    }
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    Add destination
+                  </Button>
+                </div>
+              ) : null}
+              {ociEgressMode === "unrestricted" ? (
+                <div className="space-y-2 rounded-md border border-destructive/50 p-3">
+                  <Label className="flex items-start gap-2 text-sm">
+                    <input
+                      checked={unrestrictedRiskAcknowledged}
+                      onChange={(event) =>
+                        setUnrestrictedRiskAcknowledged(event.target.checked)
+                      }
+                      type="checkbox"
+                    />
+                    I acknowledge that this server and its subprocesses may
+                    connect to arbitrary network destinations.
+                  </Label>
+                  <Textarea
+                    maxLength={1000}
+                    onChange={(event) =>
+                      setUnrestrictedJustification(event.target.value)
+                    }
+                    placeholder="Required compatibility or development justification"
+                    rows={3}
+                    value={unrestrictedJustification}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
           <Button
@@ -706,7 +866,14 @@ export function McpEnvironmentPanel({
               !serverSlug.trim() ||
               (sourceType === "remote"
                 ? !remoteUrl.trim()
-                : !imageReference.trim())
+                : !imageReference.trim() ||
+                  (ociEgressMode === "allow_hosts" &&
+                    ociDestinations.some(
+                      (destination) =>
+                        !(destination.hostname.trim() &&destination.port.trim()),
+                    )) ||
+                  (ociEgressMode === "unrestricted" &&
+                    (!(unrestrictedRiskAcknowledged &&unrestrictedJustification.trim()))))
             }
             onClick={() => void installServer()}
             size="sm"
@@ -771,7 +938,7 @@ export function McpEnvironmentPanel({
                               void reviewSnapshot(
                                 server.id,
                                 snapshot.id,
-                                "approve"
+                                "approve",
                               )
                             }
                             size="sm"
@@ -785,7 +952,7 @@ export function McpEnvironmentPanel({
                               void reviewSnapshot(
                                 server.id,
                                 snapshot.id,
-                                "reject"
+                                "reject",
                               )
                             }
                             size="sm"
@@ -818,7 +985,7 @@ export function McpEnvironmentPanel({
                                   void setCapabilityPolicy(
                                     server.id,
                                     capability,
-                                    mode
+                                    mode,
                                   )
                                 }
                                 size="sm"
@@ -852,8 +1019,12 @@ async function loadEnvironmentMcp(environmentId: string, signal: AbortSignal) {
       fetch(`/api/organization/environments/${environmentId}/mcp/credentials`, {
         signal,
       }),
-      fetch(`/api/organization/environments/${environmentId}/mcp/servers`, { signal }),
-      fetch(`/api/organization/environments/${environmentId}/mcp/health`, { signal }),
+      fetch(`/api/organization/environments/${environmentId}/mcp/servers`, {
+        signal,
+      }),
+      fetch(`/api/organization/environments/${environmentId}/mcp/health`, {
+        signal,
+      }),
     ]);
   const credentialsPayload = await readJson<{
     credentials?: CredentialMetadata[];
@@ -868,7 +1039,7 @@ async function loadEnvironmentMcp(environmentId: string, signal: AbortSignal) {
   >(operationsResponse);
   if (!credentialsResponse.ok) {
     throw new Error(
-      credentialsPayload.error ?? "Custom App credentials failed to load."
+      credentialsPayload.error ?? "Custom App credentials failed to load.",
     );
   }
   if (!serversResponse.ok) {
@@ -876,7 +1047,7 @@ async function loadEnvironmentMcp(environmentId: string, signal: AbortSignal) {
   }
   if (!operationsResponse.ok) {
     throw new Error(
-      operationsPayload.error ?? "Custom App activity failed to load."
+      operationsPayload.error ?? "Custom App activity failed to load.",
     );
   }
   return {

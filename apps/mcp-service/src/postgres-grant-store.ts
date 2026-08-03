@@ -1,4 +1,10 @@
 import type { Pool } from "pg";
+import { createHash } from "node:crypto";
+import {
+  parseOciMcpEgressPolicy,
+  parseResolvedOciMcpEgressBinding,
+  type ResolvedOciMcpEgressBindingV1,
+} from "@kestrel/mcp-security";
 import type { AuthorizedMcpGrant, McpGrantStore } from "./contracts.js";
 
 type GrantRow = {
@@ -10,6 +16,9 @@ type GrantRow = {
   project_id: string | null;
   thread_id: string;
   policy_digest: string;
+  execution_profile_id: string | null;
+  execution_profile_fingerprint: string | null;
+  oci_egress_bindings: unknown;
   expires_at: Date;
   effective_capabilities: unknown;
   effective_policy: unknown;
@@ -22,6 +31,8 @@ type CapabilityRow = {
   tool_capability_key: string | null;
   definition: Record<string, unknown>;
   server_id: string;
+  snapshot_id: string;
+  snapshot_digest: string;
 };
 
 type ServerRow = {
@@ -34,6 +45,10 @@ type ServerRow = {
   oci_digest: string | null;
   launch_arguments: unknown;
   network_access: "full" | "none";
+  oci_egress_policy: unknown;
+  oci_egress_policy_digest: string | null;
+  oci_egress_policy_revision: string | null;
+  oci_egress_policy_source: "custom" | "managed" | null;
   cpu_millicores: number;
   memory_mib: number;
   pids_limit: number;
@@ -70,6 +85,9 @@ export class PostgresMcpGrantStore implements McpGrantStore {
                 grant.project_id,
                 grant.thread_id,
                 grant.policy_digest,
+                grant.execution_profile_id,
+                grant.execution_profile_fingerprint,
+                grant.oci_egress_bindings,
                 grant.expires_at,
                 grant.effective_capabilities,
                 grant.effective_policy
@@ -92,7 +110,7 @@ export class PostgresMcpGrantStore implements McpGrantStore {
           input.environmentId,
           input.threadId,
           input.now,
-        ]
+        ],
       );
       const row = grantResult.rows[0];
       if (!row) {
@@ -100,6 +118,11 @@ export class PostgresMcpGrantStore implements McpGrantStore {
         return null;
       }
       const capabilityIds = parseCapabilityIds(row.effective_capabilities);
+      if (!(row.execution_profile_id && row.execution_profile_fingerprint)) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const ociEgressBindings = parseBindingArray(row.oci_egress_bindings);
       const effectivePolicy = parseEffectivePolicy(row.effective_policy);
       if (
         effectivePolicy.size !== capabilityIds.length ||
@@ -114,7 +137,9 @@ export class PostgresMcpGrantStore implements McpGrantStore {
                 capability.capability_key,
                 capability.tool_capability_key,
                 capability.definition,
-                server.id AS server_id
+                server.id AS server_id,
+                snapshot.id AS snapshot_id,
+                snapshot.capability_digest AS snapshot_digest
            FROM mcp_capabilities capability
            JOIN mcp_capability_snapshots snapshot
              ON snapshot.id = capability.snapshot_id
@@ -127,15 +152,38 @@ export class PostgresMcpGrantStore implements McpGrantStore {
             AND server.organization_id = $2
             AND server.environment_id = $3
             AND server.status = 'ready'`,
-        [capabilityIds, row.organization_id, row.environment_id]
+        [capabilityIds, row.organization_id, row.environment_id],
       );
       if (capabilityResult.rows.length !== capabilityIds.length) {
         await client.query("ROLLBACK");
         return null;
       }
+      const recalculatedPolicyDigest = digestCanonicalJson({
+        organizationId: row.organization_id,
+        environmentId: row.environment_id,
+        projectId: row.project_id,
+        threadId: row.thread_id,
+        executionProfileId: row.execution_profile_id,
+        executionProfileFingerprint: row.execution_profile_fingerprint,
+        ociEgressBindings,
+        capabilities: capabilityResult.rows
+          .map((capability) => ({
+            id: capability.id,
+            kind: capability.kind,
+            approvalMode: effectivePolicy.get(capability.id),
+            serverId: capability.server_id,
+            snapshotId: capability.snapshot_id,
+            snapshotDigest: capability.snapshot_digest,
+          }))
+          .sort((left, right) => left.id.localeCompare(right.id)),
+      });
+      if (recalculatedPolicyDigest !== row.policy_digest) {
+        await client.query("ROLLBACK");
+        return null;
+      }
       const serverIds = [
         ...new Set(
-          capabilityResult.rows.map((capability) => capability.server_id)
+          capabilityResult.rows.map((capability) => capability.server_id),
         ),
       ];
       const serverResult = await client.query<ServerRow>(
@@ -148,6 +196,10 @@ export class PostgresMcpGrantStore implements McpGrantStore {
                 server.oci_digest,
                 server.launch_arguments,
                 server.network_access,
+                server.oci_egress_policy,
+                server.oci_egress_policy_digest,
+                server.oci_egress_policy_revision,
+                server.oci_egress_policy_source,
                 server.cpu_millicores,
                 server.memory_mib,
                 server.pids_limit,
@@ -164,18 +216,44 @@ export class PostgresMcpGrantStore implements McpGrantStore {
             AND server.organization_id = $2
             AND server.environment_id = $3
             AND server.status = 'ready'`,
-        [serverIds, row.organization_id, row.environment_id]
+        [serverIds, row.organization_id, row.environment_id],
       );
       if (serverResult.rows.length !== serverIds.length) {
         await client.query("ROLLBACK");
         return null;
       }
+      const bindingsByServer = new Map(
+        ociEgressBindings.map((binding) => [binding.serverId, binding]),
+      );
+      if (
+        ociEgressBindings.some(
+          (binding) =>
+            binding.organizationId !== row.organization_id ||
+            binding.environmentId !== row.environment_id,
+        )
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const ociServerIds = serverResult.rows
+        .filter((server) => server.source_type === "oci")
+        .map((server) => server.id);
+      if (
+        bindingsByServer.size !== ociServerIds.length ||
+        ociServerIds.some((serverId) => !bindingsByServer.has(serverId))
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const authorizedServers = serverResult.rows.map((server) =>
+        parseServer(server, bindingsByServer.get(server.id)),
+      );
       await client.query(
         `UPDATE mcp_run_grants
             SET status = 'active',
                 activated_at = COALESCE(activated_at, $2)
           WHERE id = $1`,
-        [row.id, input.now]
+        [row.id, input.now],
       );
       await client.query("COMMIT");
       return {
@@ -187,6 +265,9 @@ export class PostgresMcpGrantStore implements McpGrantStore {
         projectId: row.project_id,
         threadId: row.thread_id,
         policyDigest: row.policy_digest,
+        executionProfileId: row.execution_profile_id,
+        executionProfileFingerprint: row.execution_profile_fingerprint,
+        ociEgressBindings,
         expiresAt: row.expires_at,
         capabilities: capabilityResult.rows.map((capability) => ({
           id: capability.id,
@@ -197,7 +278,7 @@ export class PostgresMcpGrantStore implements McpGrantStore {
           definition: capability.definition,
           serverId: capability.server_id,
         })),
-        servers: serverResult.rows.map(parseServer),
+        servers: authorizedServers,
       };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
@@ -208,7 +289,10 @@ export class PostgresMcpGrantStore implements McpGrantStore {
   }
 }
 
-function parseServer(row: ServerRow): AuthorizedMcpGrant["servers"][number] {
+function parseServer(
+  row: ServerRow,
+  binding: ResolvedOciMcpEgressBindingV1 | undefined,
+): AuthorizedMcpGrant["servers"][number] {
   const credential = parseServerCredential(row);
   const common = {
     id: row.id,
@@ -227,7 +311,8 @@ function parseServer(row: ServerRow): AuthorizedMcpGrant["servers"][number] {
       !(
         row.transport === "streamable_http" &&
         row.remote_url &&
-        row.network_access === "full"
+        row.network_access === "full" &&
+        binding === undefined
       )
     ) {
       throw new Error("Authorized remote MCP server is invalid.");
@@ -240,8 +325,23 @@ function parseServer(row: ServerRow): AuthorizedMcpGrant["servers"][number] {
       networkAccess: "full",
     };
   }
-  if (!(row.oci_image_reference && row.oci_digest)) {
+  if (!(row.oci_image_reference && row.oci_digest && binding)) {
     throw new Error("Authorized OCI MCP server is invalid.");
+  }
+  if (
+    binding.serverId !== row.id ||
+    binding.imageDigest !== row.oci_digest ||
+    binding.policyDigest !== row.oci_egress_policy_digest ||
+    binding.policyRevision !== row.oci_egress_policy_revision ||
+    binding.source !== row.oci_egress_policy_source ||
+    JSON.stringify(binding.policy) !==
+      JSON.stringify(parseOciMcpEgressPolicy(row.oci_egress_policy)) ||
+    row.network_access !==
+      (binding.policy.mode === "unrestricted" ? "full" : "none")
+  ) {
+    throw new Error(
+      "Authorized OCI MCP egress binding is stale or mismatched.",
+    );
   }
   return {
     ...common,
@@ -249,23 +349,44 @@ function parseServer(row: ServerRow): AuthorizedMcpGrant["servers"][number] {
     imageReference: row.oci_image_reference,
     digest: row.oci_digest,
     networkAccess: row.network_access,
+    egressBinding: binding,
   };
 }
 
+function parseBindingArray(value: unknown): ResolvedOciMcpEgressBindingV1[] {
+  if (!Array.isArray(value)) {
+    throw new Error("MCP grant OCI egress binding snapshot is invalid.");
+  }
+  const bindings = value.map(parseResolvedOciMcpEgressBinding);
+  if (
+    new Set(bindings.map((binding) => binding.serverId)).size !==
+    bindings.length
+  ) {
+    throw new Error(
+      "MCP grant OCI egress binding snapshot contains duplicates.",
+    );
+  }
+  return bindings;
+}
+
 function parseServerCredential(
-  row: ServerRow
+  row: ServerRow,
 ): AuthorizedMcpGrant["servers"][number]["credential"] {
   if (row.auth_mode === "none") {
     if (row.credential_id || row.credential_kind || row.encrypted_payload) {
-      throw new Error("Credential-free MCP server has an unexpected credential.");
+      throw new Error(
+        "Credential-free MCP server has an unexpected credential.",
+      );
     }
     return;
   }
   if (
-    !((row.credential_id &&row.credential_kind ) &&row.encrypted_payload ) ||
+    !(row.credential_id && row.credential_kind && row.encrypted_payload) ||
     row.credential_kind !== row.auth_mode
   ) {
-    throw new Error("Authorized MCP server credential is unavailable or mismatched.");
+    throw new Error(
+      "Authorized MCP server credential is unavailable or mismatched.",
+    );
   }
   return {
     id: row.credential_id,
@@ -296,7 +417,7 @@ function parseEffectivePolicy(value: unknown): Map<string, "auto" | "ask"> {
       Array.isArray(entry) ||
       typeof (entry as Record<string, unknown>).capabilityId !== "string" ||
       !["auto", "ask"].includes(
-        String((entry as Record<string, unknown>).approvalMode)
+        String((entry as Record<string, unknown>).approvalMode),
       )
     ) {
       throw new Error("MCP grant effective policy is invalid.");
@@ -321,6 +442,33 @@ function parseStringArray(value: unknown, fieldName: string): string[] {
     throw new Error(`MCP server ${fieldName} is invalid.`);
   }
   return value;
+}
+
+function digestCanonicalJson(value: unknown): string {
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(canonicalizeJson(value)))
+    .digest("hex")}`;
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalizeJson(entry)]),
+    );
+  }
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return value;
+  }
+  throw new Error("MCP grant policy evidence must be canonical JSON.");
 }
 
 function requirePositiveInteger(value: number, fieldName: string): number {

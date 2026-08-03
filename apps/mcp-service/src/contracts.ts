@@ -1,3 +1,5 @@
+import type { ResolvedOciMcpEgressBindingV1 } from "@kestrel/mcp-security";
+
 export type AuthorizedMcpGrant = {
   id: string;
   runExecutionId: string;
@@ -7,6 +9,9 @@ export type AuthorizedMcpGrant = {
   projectId: string | null;
   threadId: string;
   policyDigest: string;
+  executionProfileId: string;
+  executionProfileFingerprint: string;
+  ociEgressBindings: ResolvedOciMcpEgressBindingV1[];
   expiresAt: Date;
   capabilities: Array<{
     id: string;
@@ -62,6 +67,7 @@ export type AuthorizedMcpServer = AuthorizedMcpServerBase &
         imageReference: string;
         digest: string;
         networkAccess: "full" | "none";
+        egressBinding: ResolvedOciMcpEgressBindingV1;
       }
   );
 

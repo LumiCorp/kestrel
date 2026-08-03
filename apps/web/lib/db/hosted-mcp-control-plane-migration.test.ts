@@ -33,6 +33,13 @@ const networkAccessMigration = fs.readFileSync(
   ),
   "utf8"
 );
+const ociEgressMigration = fs.readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "migrations/0057_oci_mcp_egress_policy.sql"
+  ),
+  "utf8"
+);
 
 test("hosted MCP credentials are Environment-owned and encrypted-only", () => {
   assert.match(migration, /CREATE TABLE "mcp_credentials"/u);
@@ -59,12 +66,20 @@ test("hosted MCP servers support remote HTTP and digest-pinned OCI with isolatio
   assert.match(migration, /mcp_servers_resource_limits_check/u);
 });
 
-test("MCP network access has only full and none modes and defaults to full", () => {
+test("MCP network access retains a fail-closed compatibility projection", () => {
   assert.match(networkAccessMigration, /network_access" text DEFAULT 'full' NOT NULL/u);
   assert.match(networkAccessMigration, /CHECK \("network_access" IN \('full', 'none'\)\)/u);
   assert.match(
     networkAccessMigration,
     /mcp_servers_remote_network_access_check[\s\S]*CHECK \("source_type" <> 'remote' OR "network_access" = 'full'\)/u
+  );
+  assert.match(
+    ociEgressMigration,
+    /UPDATE "mcp_servers"[\s\S]*"network_access" = 'none'[\s\S]*WHERE "source_type" = 'oci'/u,
+  );
+  assert.match(
+    ociEgressMigration,
+    /WHEN "oci_egress_policy"->>'mode' = 'unrestricted' THEN 'full'[\s\S]*ELSE 'none'/u,
   );
 });
 

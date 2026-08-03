@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import type { AuthorizedMcpServer } from "../src/contracts.js";
 import { buildOciDockerRunCommand } from "../src/oci-runtime.js";
 
-
 const digest = `sha256:${"a".repeat(64)}`;
 const server: Extract<AuthorizedMcpServer, { sourceType: "oci" }> = {
   id: "server-1",
@@ -14,12 +13,24 @@ const server: Extract<AuthorizedMcpServer, { sourceType: "oci" }> = {
   imageReference: `ghcr.io/kestrel/filesystem@${digest}`,
   digest,
   launchArguments: ["--stdio"],
-  networkAccess: "full",
+  networkAccess: "none",
+  egressBinding: {
+    version: 1,
+    source: "custom",
+    organizationId: "org-1",
+    environmentId: "env-1",
+    serverId: "server-1",
+    imageDigest: digest,
+    policyRevision: "custom:server-1",
+    policyDigest:
+      "sha256:59704c11b4f9b612e75f68fac891e4dca743d52d7a946d6d64db287c7b620633",
+    policy: { version: 1, mode: "none" },
+  },
   resources: { cpuMillicores: 250, memoryMib: 384, pidsLimit: 64 },
   credential: undefined,
 };
 
-test("OCI MCP command is per-run, read-only, resource-limited, and defaults to full network", () => {
+test("OCI MCP command is per-run, read-only, resource-limited, and defaults to no network", () => {
   const command = buildOciDockerRunCommand({
     grantId: "grant-1",
     server,
@@ -27,12 +38,8 @@ test("OCI MCP command is per-run, read-only, resource-limited, and defaults to f
   });
 
   assert.equal(command.command, "docker");
-  assert.deepEqual(command.args.slice(0, 3), [
-    "run",
-    "--rm",
-    "--interactive",
-  ]);
-  assert.deepEqual(option(command.args, "--network"), ["bridge"]);
+  assert.deepEqual(command.args.slice(0, 3), ["run", "--rm", "--interactive"]);
+  assert.deepEqual(option(command.args, "--network"), ["none"]);
   assert.equal(command.args.includes("--read-only"), true);
   assert.deepEqual(option(command.args, "--cap-drop"), ["ALL"]);
   assert.deepEqual(option(command.args, "--security-opt"), [
@@ -59,17 +66,43 @@ test("OCI MCP rejects mutable images", () => {
         },
         workspacePath: "/workspace",
       }),
-    /must be pinned/u
+    /must be pinned/u,
   );
 });
 
-test("OCI MCP can be explicitly isolated from the network", () => {
+test("OCI MCP bridge access requires the exact unrestricted binding", () => {
   const command = buildOciDockerRunCommand({
     grantId: "grant-1",
-    server: { ...server, networkAccess: "none" },
+    server: {
+      ...server,
+      networkAccess: "full",
+      egressBinding: {
+        ...server.egressBinding,
+        policyDigest:
+          "sha256:670784f711937cc335266433561a1591174221b47eb40c4bad53ce151294232c",
+        policy: {
+          version: 1,
+          mode: "unrestricted",
+          acknowledgedRisk: true,
+          justification: "legacy development dependency",
+        },
+      },
+    },
     workspacePath: "/workspace",
   });
-  assert.deepEqual(option(command.args, "--network"), ["none"]);
+  assert.deepEqual(option(command.args, "--network"), ["bridge"]);
+});
+
+test("OCI MCP launch rejects disagreement with the network projection", () => {
+  assert.throws(
+    () =>
+      buildOciDockerRunCommand({
+        grantId: "grant-1",
+        server: { ...server, networkAccess: "full" },
+        workspacePath: "/workspace",
+      }),
+    /egress binding does not match/u,
+  );
 });
 
 function option(args: string[], name: string): string[] {

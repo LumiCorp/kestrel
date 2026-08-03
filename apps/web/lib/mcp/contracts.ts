@@ -1,4 +1,9 @@
 import { isIP } from "node:net";
+import {
+  OCI_MCP_NO_EGRESS_POLICY,
+  ociMcpEgressPolicyV1Schema,
+  type OciMcpEgressPolicyV1,
+} from "@kestrel/mcp-security";
 import { mcpCredentialPayloadSchema } from "./credential-crypto";
 import { z } from "zod";
 
@@ -50,7 +55,6 @@ const serverIdentitySchema = z.object({
     .regex(/^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$/u),
   auth: authSchema,
   launchArguments: z.array(z.string().max(4096)).max(64).default([]),
-  networkAccess: mcpNetworkAccessSchema.default("full"),
   resources: resourceLimitsSchema.default({
     cpuMillicores: 500,
     memoryMib: 512,
@@ -63,6 +67,7 @@ const remoteServerSchema = serverIdentitySchema
     sourceType: z.literal("remote"),
     transport: z.literal("streamable_http"),
     remoteUrl: z.string().url(),
+    networkAccess: z.literal("full").default("full"),
   })
   .superRefine((value, context) => {
     try {
@@ -91,6 +96,7 @@ const ociServerSchema = serverIdentitySchema
     transport: z.literal("stdio"),
     imageReference: z.string().trim().min(1),
     digest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+    egressPolicy: ociMcpEgressPolicyV1Schema.default(OCI_MCP_NO_EGRESS_POLICY),
   })
   .superRefine((value, context) => {
     if (!value.imageReference.endsWith(`@${value.digest}`)) {
@@ -114,6 +120,7 @@ export const createMcpServerInputSchema = z.discriminatedUnion("sourceType", [
   ociServerSchema,
 ]);
 export type CreateMcpServerInput = z.infer<typeof createMcpServerInputSchema>;
+export type { OciMcpEgressPolicyV1 };
 
 export const createMcpCredentialInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -157,7 +164,7 @@ export function resolveEffectiveMcpCapabilities(input: {
         input.projectRestrictions.map((restriction) => [
           restriction.capabilityId,
           restriction,
-        ])
+        ]),
       )
     : undefined;
 
@@ -172,7 +179,7 @@ export function resolveEffectiveMcpCapabilities(input: {
     const approvalMode = projectRestriction
       ? stricterApprovalMode(
           capability.approvalMode,
-          projectRestriction.approvalMode
+          projectRestriction.approvalMode,
         )
       : capability.approvalMode;
     if (approvalMode === "deny") {
@@ -209,7 +216,7 @@ export function buildMcpRunGrant(input: {
     threadId: input.threadId,
     policyDigest: input.policyDigest,
     effectiveCapabilities: input.effectiveCapabilities.map(
-      (capability) => capability.id
+      (capability) => capability.id,
     ),
     effectivePolicy: input.effectiveCapabilities.map((capability) => ({
       capabilityId: capability.id,
@@ -243,7 +250,7 @@ export function assertPublicHttpsEndpoint(value: string): URL {
 
 function stricterApprovalMode(
   environmentMode: McpApprovalMode,
-  projectMode: McpApprovalMode
+  projectMode: McpApprovalMode,
 ): McpApprovalMode {
   return APPROVAL_STRICTNESS[projectMode] > APPROVAL_STRICTNESS[environmentMode]
     ? projectMode

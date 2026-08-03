@@ -288,6 +288,33 @@
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=selects registered alternate models in declared order", "tests/unit/recovery-coordinator.test.ts"],
       "testFiles": ["tests/unit/recovery-coordinator.test.ts"]
+    },
+    {
+      "id": "oci-missing-policy-default-bypass",
+      "target": "apps/web/lib/mcp/contracts.ts",
+      "find": "    egressPolicy: ociMcpEgressPolicyV1Schema.default(OCI_MCP_NO_EGRESS_POLICY),",
+      "replace": "    egressPolicy: ociMcpEgressPolicyV1Schema.default({ version: 1, mode: \"unrestricted\", acknowledgedRisk: true, justification: \"mutated\" }),",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "./scripts/register-server-only.mjs", "--import", "tsx", "--test", "--test-name-pattern=requires a matching digest-pinned reference", "lib/mcp/contracts.test.ts"],
+      "testFiles": ["apps/web/lib/mcp/contracts.test.ts"]
+    },
+    {
+      "id": "oci-unrestricted-acknowledgement-bypass",
+      "target": "packages/mcp-security/src/oci-egress-policy.ts",
+      "find": "    acknowledgedRisk: z.literal(true),",
+      "replace": "    acknowledgedRisk: z.boolean().default(true),",
+      "command": "pnpm",
+      "args": ["--dir", "packages/mcp-security", "exec", "node", "--import", "tsx", "--test", "--test-name-pattern=strict policy objects", "src/oci-egress-policy.test.ts"],
+      "testFiles": ["packages/mcp-security/src/oci-egress-policy.test.ts"]
+    },
+    {
+      "id": "oci-profile-grant-binding-bypass",
+      "target": "apps/web/lib/mcp/grant-service.ts",
+      "find": "  const policyEvidence = {\n    organizationId: input.resolvedPolicy.organizationId,\n    environmentId: input.resolvedPolicy.environmentId,\n    projectId: input.resolvedPolicy.projectId,\n    threadId: input.threadId,\n    executionProfileId: input.executionProfileId,\n    executionProfileFingerprint: input.executionProfileFingerprint,",
+      "replace": "  const policyEvidence = {\n    organizationId: input.resolvedPolicy.organizationId,\n    environmentId: input.resolvedPolicy.environmentId,\n    projectId: input.resolvedPolicy.projectId,\n    threadId: input.threadId,\n    executionProfileId: input.executionProfileId,\n    executionProfileFingerprint: \"unbound\",",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "./scripts/register-server-only.mjs", "--import", "tsx", "--test", "--test-name-pattern=binds the execution profile", "lib/mcp/grant-service.test.ts"],
+      "testFiles": ["apps/web/lib/mcp/grant-service.test.ts"]
     }
   ]
 }

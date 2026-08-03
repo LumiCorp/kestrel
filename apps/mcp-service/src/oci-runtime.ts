@@ -16,11 +16,13 @@ export async function connectOciMcpClient(input: {
   server: Extract<AuthorizedMcpServer, { sourceType: "oci" }>;
   workspaceBasePath: string | undefined;
   runtimeCommand?: string | undefined;
-  interactions?: {
-    grant: AuthorizedMcpGrant;
-    serverId: string;
-    coordinator: McpInteractionCoordinator;
-  } | undefined;
+  interactions?:
+    | {
+        grant: AuthorizedMcpGrant;
+        serverId: string;
+        coordinator: McpInteractionCoordinator;
+      }
+    | undefined;
 }): Promise<{ client: Client; close: () => Promise<void> }> {
   if (input.server.transport !== "stdio") {
     throw new Error("OCI Streamable HTTP transport is not yet available.");
@@ -45,7 +47,7 @@ export async function connectOciMcpDiscoveryClient(input: {
   runtimeCommand?: string | undefined;
 }): Promise<{ client: Client; close: () => Promise<void> }> {
   const workspacePath = await mkdtemp(
-    path.join(os.tmpdir(), "kestrel-mcp-discovery-")
+    path.join(os.tmpdir(), "kestrel-mcp-discovery-"),
   );
   try {
     const connected = await connectOciAtWorkspace({
@@ -90,7 +92,7 @@ async function connectOciAtWorkspace(input: {
             capability.kind === "sampling" ||
             capability.kind === "elicitation")
             ? [capability.kind]
-            : []
+            : [],
         )
       : [],
     roots: input.roots,
@@ -121,10 +123,19 @@ export function buildOciDockerRunCommand(input: {
   if (server.credential) {
     throw new Error("OCI stdio MCP servers cannot receive remote credentials.");
   }
-  const containerName = `kestrel-mcp-${sanitizeName(input.grantId)}-${sanitizeName(server.id)}`.slice(
-    0,
-    63
-  );
+  if (
+    server.egressBinding.serverId !== server.id ||
+    server.egressBinding.imageDigest !== server.digest ||
+    server.networkAccess !==
+      (server.egressBinding.policy.mode === "unrestricted" ? "full" : "none")
+  ) {
+    throw new Error("OCI MCP egress binding does not match the server.");
+  }
+  const containerName =
+    `kestrel-mcp-${sanitizeName(input.grantId)}-${sanitizeName(server.id)}`.slice(
+      0,
+      63,
+    );
   return {
     command: input.runtimeCommand ?? "docker",
     args: [
@@ -134,7 +145,7 @@ export function buildOciDockerRunCommand(input: {
       "--name",
       containerName,
       "--network",
-      server.networkAccess === "none" ? "none" : "bridge",
+      server.egressBinding.policy.mode === "unrestricted" ? "bridge" : "none",
       "--read-only",
       "--cap-drop",
       "ALL",
@@ -165,7 +176,9 @@ async function resolveWorkspacePath(input: {
   workspaceId: string;
 }): Promise<string> {
   if (!input.workspaceBasePath) {
-    throw new Error("KESTREL_MCP_WORKSPACE_ROOT is required for OCI MCP servers.");
+    throw new Error(
+      "KESTREL_MCP_WORKSPACE_ROOT is required for OCI MCP servers.",
+    );
   }
   if (!/^[A-Za-z0-9._-]+$/u.test(input.workspaceId)) {
     throw new Error("MCP workspace identity is invalid.");

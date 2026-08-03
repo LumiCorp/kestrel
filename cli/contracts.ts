@@ -18,6 +18,7 @@ import type {
   RecoveryPolicyV1,
 } from "../src/kestrel/contracts/recovery.js";
 import type { ManagedTaskWorktreeSetupSpec } from "../src/workspace/ManagedTaskWorktreeService.js";
+import type { ResolvedOciMcpEgressBindingV1 } from "../packages/mcp-security/src/index.js";
 import type {
   OperatorAffordancePayload,
   OperatorBlockReason,
@@ -249,20 +250,23 @@ export interface TuiProfile {
   toolAllowlist?: string[] | undefined;
   kestrelOneAppApprovalModes?: Record<string, "auto" | "ask"> | undefined;
   mcpServers?: McpServerConfig[] | undefined;
+  ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;
   toolQueue?: ToolQueueProfileConfig | undefined;
   codeMode?: CodeModeProfileConfig | undefined;
   devShell?: DevShellProfileConfig | undefined;
   delegation?: DelegationPolicyConfig | undefined;
-  reasoning?: {
-    request: {
-      mode: "off" | "summary" | "provider_visible";
-      effort?: "low" | "medium" | "high" | undefined;
-    };
-    retention: {
-      mode: "live_only" | "provider_visible";
-      days: number;
-    };
-  } | undefined;
+  reasoning?:
+    | {
+        request: {
+          mode: "off" | "summary" | "provider_visible";
+          effort?: "low" | "medium" | "high" | undefined;
+        };
+        retention: {
+          mode: "live_only" | "provider_visible";
+          days: number;
+        };
+      }
+    | undefined;
   theme?: ThemeOverrides | undefined;
   default?: boolean | undefined;
 }
@@ -275,10 +279,7 @@ export interface KestrelOneManagedProfileOverlay {
   codeMode?: CodeModeProfileConfig | undefined;
   devShell?: DevShellProfileConfig | undefined;
   delegationLimits?:
-    | Pick<
-        DelegationPolicyConfig,
-        "maxConcurrentChildSessions" | "maxDepth"
-      >
+    | Pick<DelegationPolicyConfig, "maxConcurrentChildSessions" | "maxDepth">
     | undefined;
   reasoning?: TuiProfile["reasoning"] | undefined;
   recoveryPolicy?: RecoveryPolicyV1 | undefined;
@@ -296,7 +297,9 @@ export interface ProfilesFileV5 {
   profiles: TuiProfile[];
   managedProfileOverlays: {
     "kestrel-one@cli_dev_local"?: KestrelOneManagedProfileOverlay | undefined;
-    "kestrel-one@workspace_hosted"?: KestrelOneManagedProfileOverlay | undefined;
+    "kestrel-one@workspace_hosted"?:
+      | KestrelOneManagedProfileOverlay
+      | undefined;
   };
 }
 

@@ -3,10 +3,11 @@ id: plans-index
 domain: docs
 status: active
 owner: kestrel-runtime
-last_verified_at: 2026-07-31
+last_verified_at: 2026-08-03
 depends_on:
   - index.md
   - plans/2026-07-31-egress-control-boundaries.md
+  - plans/2026-08-03-oci-mcp-egress-security.md
   - plans/2026-07-28-desktop-0.7-release-handoff.md
   - plans/2026-07-17-local-platform-delivery.md
   - plans/2026-07-17-runtime-evidence-reliability.md
@@ -31,7 +32,8 @@ plans in the repository.
 
 ## Current Delivery Plans
 
-- [MCP network access](plans/2026-07-31-egress-control-boundaries.md)
+- [OCI MCP egress security](plans/2026-08-03-oci-mcp-egress-security.md)
+- [Superseded MCP network access](plans/2026-07-31-egress-control-boundaries.md)
 - [Desktop 0.7 OTA release handoff](plans/2026-07-28-desktop-0.7-release-handoff.md)
 - [Local platform delivery](plans/2026-07-17-local-platform-delivery.md)
 - [Runtime evidence and recovery reliability](plans/2026-07-17-runtime-evidence-reliability.md)

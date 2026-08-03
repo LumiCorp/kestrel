@@ -1,4 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
+import { digestOciMcpEgressPolicy } from "@kestrel/mcp-security";
 
 import { logAdminEvent } from "@/lib/admin/logs";
 import {
@@ -40,8 +41,8 @@ export async function listEnvironmentMcpCredentials(input: {
     .where(
       and(
         eq(schema.mcpCredentials.organizationId, input.organizationId),
-        eq(schema.mcpCredentials.environmentId, input.environmentId)
-      )
+        eq(schema.mcpCredentials.environmentId, input.environmentId),
+      ),
     )
     .orderBy(desc(schema.mcpCredentials.createdAt));
 }
@@ -115,8 +116,8 @@ export async function revokeEnvironmentMcpCredential(input: {
         and(
           eq(schema.mcpCredentials.id, input.credentialId),
           eq(schema.mcpCredentials.organizationId, input.organizationId),
-          eq(schema.mcpCredentials.environmentId, input.environmentId)
-        )
+          eq(schema.mcpCredentials.environmentId, input.environmentId),
+        ),
       )
       .returning({
         id: schema.mcpCredentials.id,
@@ -142,15 +143,15 @@ export async function revokeEnvironmentMcpCredential(input: {
         and(
           eq(schema.mcpServers.organizationId, input.organizationId),
           eq(schema.mcpServers.environmentId, input.environmentId),
-          eq(schema.mcpServers.credentialId, input.credentialId)
-        )
+          eq(schema.mcpServers.credentialId, input.credentialId),
+        ),
       );
     const affectedServers = await transaction.query.mcpServers.findMany({
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.organizationId, input.organizationId),
           equals(table.environmentId, input.environmentId),
-          equals(table.credentialId, input.credentialId)
+          equals(table.credentialId, input.credentialId),
         ),
       columns: { id: true },
     });
@@ -189,7 +190,7 @@ export async function listEnvironmentMcpServers(input: {
     where: (table, { and, eq }) =>
       and(
         eq(table.organizationId, input.organizationId),
-        eq(table.environmentId, input.environmentId)
+        eq(table.environmentId, input.environmentId),
       ),
     orderBy: (table, { desc }) => [desc(table.createdAt)],
   });
@@ -207,7 +208,7 @@ export async function getEnvironmentMcpOperationalSnapshot(input: {
         where: (table, { and, eq }) =>
           and(
             eq(table.organizationId, input.organizationId),
-            eq(table.environmentId, input.environmentId)
+            eq(table.environmentId, input.environmentId),
           ),
         orderBy: (table, { desc }) => [desc(table.createdAt)],
         limit: 20,
@@ -228,13 +229,13 @@ export async function getEnvironmentMcpOperationalSnapshot(input: {
         .from(schema.mcpInvocations)
         .innerJoin(
           schema.mcpRunGrants,
-          eq(schema.mcpRunGrants.id, schema.mcpInvocations.grantId)
+          eq(schema.mcpRunGrants.id, schema.mcpInvocations.grantId),
         )
         .where(
           and(
             eq(schema.mcpRunGrants.organizationId, input.organizationId),
-            eq(schema.mcpRunGrants.environmentId, input.environmentId)
-          )
+            eq(schema.mcpRunGrants.environmentId, input.environmentId),
+          ),
         )
         .orderBy(desc(schema.mcpInvocations.createdAt))
         .limit(50),
@@ -253,22 +254,22 @@ export async function getEnvironmentMcpOperationalSnapshot(input: {
           schema.mcpInvocations,
           eq(
             schema.mcpInvocations.id,
-            schema.mcpInteractionCheckpoints.invocationId
-          )
+            schema.mcpInteractionCheckpoints.invocationId,
+          ),
         )
         .innerJoin(
           schema.mcpRunGrants,
-          eq(schema.mcpRunGrants.id, schema.mcpInvocations.grantId)
+          eq(schema.mcpRunGrants.id, schema.mcpInvocations.grantId),
         )
         .where(
           and(
             eq(schema.mcpRunGrants.organizationId, input.organizationId),
-            eq(schema.mcpRunGrants.environmentId, input.environmentId)
-          )
+            eq(schema.mcpRunGrants.environmentId, input.environmentId),
+          ),
         )
         .orderBy(desc(schema.mcpInteractionCheckpoints.createdAt))
         .limit(20),
-    ]
+    ],
   );
   return {
     summary: {
@@ -278,13 +279,13 @@ export async function getEnvironmentMcpOperationalSnapshot(input: {
       degradedServers: servers.filter((server) => server.status === "degraded")
         .length,
       activeDiscoveryJobs: discoveryJobs.filter(
-        (job) => job.status === "queued" || job.status === "running"
+        (job) => job.status === "queued" || job.status === "running",
       ).length,
       pendingInteractions: interactions.filter(
-        (interaction) => interaction.status === "requested"
+        (interaction) => interaction.status === "requested",
       ).length,
       failedInvocations: invocations.filter(
-        (invocation) => invocation.status === "failed"
+        (invocation) => invocation.status === "failed",
       ).length,
     },
     discoveryJobs,
@@ -303,7 +304,7 @@ export async function getEnvironmentMcpServer(input: {
       and(
         eq(table.id, input.serverId),
         eq(table.organizationId, input.organizationId),
-        eq(table.environmentId, input.environmentId)
+        eq(table.environmentId, input.environmentId),
       ),
   });
   if (!server) {
@@ -326,7 +327,7 @@ export async function getEnvironmentMcpServer(input: {
     snapshots: snapshots.map((snapshot) => ({
       ...snapshot,
       capabilities: capabilities.filter(
-        (capability) => capability.snapshotId === snapshot.id
+        (capability) => capability.snapshotId === snapshot.id,
       ),
     })),
   };
@@ -349,6 +350,11 @@ export async function installEnvironmentMcpServer(input: {
   if (input.appKey && !catalogApp) {
     throw new Error("Published App not found.");
   }
+  if (catalogApp && input.server.sourceType === "oci") {
+    throw new Error(
+      "Managed OCI MCP installation requires a trusted digest-bound manifest.",
+    );
+  }
   const serverId = crypto.randomUUID();
   const providerKey = `mcp.${serverId}`;
   const appKey = catalogApp?.key ?? providerKey;
@@ -362,12 +368,12 @@ export async function installEnvironmentMcpServer(input: {
           eq(table.id, credentialId),
           eq(table.organizationId, input.organizationId),
           eq(table.environmentId, input.environmentId),
-          eq(table.status, "active")
+          eq(table.status, "active"),
         ),
     });
     if (!credential || credential.kind !== input.server.auth.mode) {
       throw new Error(
-        "Active MCP credential does not match server authentication."
+        "Active MCP credential does not match server authentication.",
       );
     }
     credentialPayload = decryptMcpCredential({
@@ -385,6 +391,12 @@ export async function installEnvironmentMcpServer(input: {
     }
   }
   const now = new Date();
+  const ociPolicy =
+    input.server.sourceType === "oci" ? input.server.egressPolicy : undefined;
+  const ociPolicyDigest = ociPolicy
+    ? digestOciMcpEgressPolicy(ociPolicy)
+    : undefined;
+  const ociPolicyRevision = ociPolicy ? `custom:${serverId}` : undefined;
   const created = await knowledgeDb.transaction(async (transaction) => {
     await transaction.insert(schema.toolProviders).values({
       key: providerKey,
@@ -477,7 +489,16 @@ export async function installEnvironmentMcpServer(input: {
           input.server.sourceType === "oci" ? input.server.digest : null,
         authMode: input.server.auth.mode,
         launchArguments: input.server.launchArguments,
-        networkAccess: input.server.networkAccess,
+        networkAccess:
+          input.server.sourceType === "remote" ||
+          input.server.egressPolicy.mode === "unrestricted"
+            ? "full"
+            : "none",
+        ociEgressPolicy: ociPolicy ?? null,
+        ociEgressPolicyDigest: ociPolicyDigest ?? null,
+        ociEgressPolicyRevision: ociPolicyRevision ?? null,
+        ociEgressPolicySource:
+          input.server.sourceType === "oci" ? "custom" : null,
         cpuMillicores: input.server.resources.cpuMillicores,
         memoryMib: input.server.resources.memoryMib,
         pidsLimit: input.server.resources.pidsLimit,
@@ -517,6 +538,15 @@ export async function installEnvironmentMcpServer(input: {
       sourceType: created.sourceType,
       transport: created.transport,
       imageDigest: created.ociDigest,
+      egressPolicyMode: created.ociEgressPolicy?.mode,
+      egressPolicyDigest: created.ociEgressPolicyDigest,
+      egressPolicyRevision: created.ociEgressPolicyRevision,
+      ...(created.ociEgressPolicy?.mode === "unrestricted"
+        ? {
+            unrestrictedRiskAcknowledged: true,
+            unrestrictedJustification: created.ociEgressPolicy.justification,
+          }
+        : {}),
       appKey,
     },
   });
@@ -538,8 +568,8 @@ export async function disableEnvironmentMcpServer(input: {
         and(
           eq(schema.mcpServers.id, input.serverId),
           eq(schema.mcpServers.organizationId, input.organizationId),
-          eq(schema.mcpServers.environmentId, input.environmentId)
-        )
+          eq(schema.mcpServers.environmentId, input.environmentId),
+        ),
       )
       .returning();
     if (disabled) {
@@ -580,7 +610,7 @@ export async function requestEnvironmentMcpDiscovery(input: {
         and(
           eq(table.id, input.serverId),
           eq(table.organizationId, input.organizationId),
-          eq(table.environmentId, input.environmentId)
+          eq(table.environmentId, input.environmentId),
         ),
     });
     if (!server) {
@@ -615,7 +645,7 @@ export async function requestEnvironmentMcpDiscovery(input: {
         where: (table, { and, eq, inArray }) =>
           and(
             eq(table.serverId, server.id),
-            inArray(table.status, ["queued", "running"])
+            inArray(table.status, ["queued", "running"]),
           ),
       }));
     if (!job) {
@@ -672,28 +702,28 @@ export async function setEnvironmentMcpCapabilityPolicy(input: {
       .from(schema.mcpCapabilities)
       .innerJoin(
         schema.mcpCapabilitySnapshots,
-        eq(schema.mcpCapabilitySnapshots.id, schema.mcpCapabilities.snapshotId)
+        eq(schema.mcpCapabilitySnapshots.id, schema.mcpCapabilities.snapshotId),
       )
       .innerJoin(
         schema.mcpServers,
-        eq(schema.mcpServers.id, schema.mcpCapabilitySnapshots.serverId)
+        eq(schema.mcpServers.id, schema.mcpCapabilitySnapshots.serverId),
       )
       .innerJoin(
         schema.appConnections,
-        eq(schema.appConnections.id, schema.mcpServers.id)
+        eq(schema.appConnections.id, schema.mcpServers.id),
       )
       .where(
         and(
           eq(schema.mcpCapabilities.id, input.capabilityId),
           eq(schema.mcpServers.organizationId, input.organizationId),
-          eq(schema.mcpServers.environmentId, input.environmentId)
-        )
+          eq(schema.mcpServers.environmentId, input.environmentId),
+        ),
       )
       .limit(1);
     const found = row[0];
     if (!found || found.snapshotStatus !== "approved") {
       throw new Error(
-        "Only capabilities from an approved snapshot can be enabled."
+        "Only capabilities from an approved snapshot can be enabled.",
       );
     }
     const [capability] = await transaction
@@ -719,7 +749,7 @@ export async function setEnvironmentMcpCapabilityPolicy(input: {
                 eq(table.environmentId, input.environmentId),
                 eq(table.providerKey, capability.providerKey),
                 eq(table.capabilityKey, capability.toolCapabilityKey!),
-                isNull(table.resourceId)
+                isNull(table.resourceId),
               ),
           });
         if (existingGrant) {
@@ -747,17 +777,17 @@ export async function setEnvironmentMcpCapabilityPolicy(input: {
             and(
               eq(
                 schema.environmentCapabilityGrants.environmentId,
-                input.environmentId
+                input.environmentId,
               ),
               eq(
                 schema.environmentCapabilityGrants.providerKey,
-                capability.providerKey
+                capability.providerKey,
               ),
               eq(
                 schema.environmentCapabilityGrants.capabilityKey,
-                capability.toolCapabilityKey
-              )
-            )
+                capability.toolCapabilityKey,
+              ),
+            ),
           );
       }
     }
@@ -826,19 +856,19 @@ export async function reviewEnvironmentMcpSnapshot(input: {
       .from(schema.mcpCapabilitySnapshots)
       .innerJoin(
         schema.mcpServers,
-        eq(schema.mcpServers.id, schema.mcpCapabilitySnapshots.serverId)
+        eq(schema.mcpServers.id, schema.mcpCapabilitySnapshots.serverId),
       )
       .innerJoin(
         schema.appConnections,
-        eq(schema.appConnections.id, schema.mcpServers.id)
+        eq(schema.appConnections.id, schema.mcpServers.id),
       )
       .where(
         and(
           eq(schema.mcpCapabilitySnapshots.id, input.snapshotId),
           eq(schema.mcpServers.id, input.serverId),
           eq(schema.mcpServers.organizationId, input.organizationId),
-          eq(schema.mcpServers.environmentId, input.environmentId)
-        )
+          eq(schema.mcpServers.environmentId, input.environmentId),
+        ),
       )
       .limit(1);
     const currentRecord = rows[0];
@@ -857,13 +887,13 @@ export async function reviewEnvironmentMcpSnapshot(input: {
           where: (table, { and, eq }) =>
             and(
               eq(table.serverId, input.serverId),
-              eq(table.status, "approved")
+              eq(table.status, "approved"),
             ),
         });
       const nextCapabilities = await transaction.query.mcpCapabilities.findMany(
         {
           where: (table, { eq }) => eq(table.snapshotId, input.snapshotId),
-        }
+        },
       );
       const previousCapabilities = previousApproved
         ? await transaction.query.mcpCapabilities.findMany({
@@ -879,7 +909,7 @@ export async function reviewEnvironmentMcpSnapshot(input: {
             candidate.kind === capability.kind &&
             candidate.capabilityKey === capability.capabilityKey &&
             digestCanonicalJson(candidate.definition) ===
-              digestCanonicalJson(capability.definition)
+              digestCanonicalJson(capability.definition),
         );
         if (previous) {
           const restrictions =
@@ -921,17 +951,17 @@ export async function reviewEnvironmentMcpSnapshot(input: {
               and(
                 eq(
                   schema.environmentCapabilityGrants.environmentId,
-                  input.environmentId
+                  input.environmentId,
                 ),
                 eq(
                   schema.environmentCapabilityGrants.providerKey,
-                  capability.providerKey
+                  capability.providerKey,
                 ),
                 eq(
                   schema.environmentCapabilityGrants.capabilityKey,
-                  capability.toolCapabilityKey
-                )
-              )
+                  capability.toolCapabilityKey,
+                ),
+              ),
             );
         }
         await transaction
@@ -991,7 +1021,7 @@ export async function reviewEnvironmentMcpSnapshot(input: {
               where: (table, { and, eq }) =>
                 and(
                   eq(table.appKey, appKey),
-                  eq(table.capabilityKey, previousAppCapabilityKey)
+                  eq(table.capabilityKey, previousAppCapabilityKey),
                 ),
             });
           for (const policy of projectPolicies) {
@@ -1062,7 +1092,7 @@ export async function reviewEnvironmentMcpSnapshot(input: {
           where: (table, { and, eq }) =>
             and(
               eq(table.appKey, appKey),
-              eq(table.connectionId, input.serverId)
+              eq(table.connectionId, input.serverId),
             ),
           columns: { key: true, appKey: true },
         });
@@ -1074,8 +1104,8 @@ export async function reviewEnvironmentMcpSnapshot(input: {
             .where(
               and(
                 eq(schema.appCapabilities.appKey, stale.appKey),
-                eq(schema.appCapabilities.key, stale.key)
-              )
+                eq(schema.appCapabilities.key, stale.key),
+              ),
             );
           await transaction
             .delete(schema.environmentAppCapabilityGrants)
@@ -1083,14 +1113,14 @@ export async function reviewEnvironmentMcpSnapshot(input: {
               and(
                 eq(
                   schema.environmentAppCapabilityGrants.environmentId,
-                  input.environmentId
+                  input.environmentId,
                 ),
                 eq(schema.environmentAppCapabilityGrants.appKey, stale.appKey),
                 eq(
                   schema.environmentAppCapabilityGrants.capabilityKey,
-                  stale.key
-                )
-              )
+                  stale.key,
+                ),
+              ),
             );
           await transaction
             .delete(schema.projectAppCapabilityPolicies)
@@ -1099,9 +1129,9 @@ export async function reviewEnvironmentMcpSnapshot(input: {
                 eq(schema.projectAppCapabilityPolicies.appKey, stale.appKey),
                 eq(
                   schema.projectAppCapabilityPolicies.capabilityKey,
-                  stale.key
-                )
-              )
+                  stale.key,
+                ),
+              ),
             );
         }
       }
@@ -1111,8 +1141,8 @@ export async function reviewEnvironmentMcpSnapshot(input: {
         .where(
           and(
             eq(schema.mcpCapabilitySnapshots.serverId, input.serverId),
-            eq(schema.mcpCapabilitySnapshots.status, "approved")
-          )
+            eq(schema.mcpCapabilitySnapshots.status, "approved"),
+          ),
         );
     }
     const [reviewed] = await transaction
@@ -1135,10 +1165,10 @@ export async function reviewEnvironmentMcpSnapshot(input: {
               where: (table, { and, eq }) =>
                 and(
                   eq(table.serverId, input.serverId),
-                  eq(table.status, "approved")
+                  eq(table.status, "approved"),
                 ),
               columns: { id: true },
-            })
+            }),
           );
     await transaction
       .update(schema.mcpServers)

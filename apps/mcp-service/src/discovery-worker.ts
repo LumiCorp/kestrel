@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Pool, PoolClient } from "pg";
+import { parseResolvedOciMcpEgressBinding } from "@kestrel/mcp-security";
 
 import type { AuthorizedMcpServer } from "./contracts.js";
 import type { McpCredentialStore } from "./credential-store.js";
@@ -197,6 +198,10 @@ export class McpDiscoveryWorker {
         remote_url: string | null;
         oci_image_reference: string | null;
         oci_digest: string | null;
+        oci_egress_policy: unknown;
+        oci_egress_policy_digest: string | null;
+        oci_egress_policy_revision: string | null;
+        oci_egress_policy_source: "custom" | "managed" | null;
       }>(
         `SELECT job.id AS job_id,
                 job.organization_id,
@@ -210,6 +215,10 @@ export class McpDiscoveryWorker {
                 server.remote_url,
                 server.oci_image_reference,
                 server.oci_digest,
+                server.oci_egress_policy,
+                server.oci_egress_policy_digest,
+                server.oci_egress_policy_revision,
+                server.oci_egress_policy_source,
                 server.launch_arguments,
                 server.network_access,
                 server.cpu_millicores,
@@ -764,7 +773,7 @@ function parseDiscoveryCredential(row: {
     return;
   }
   if (
-    !((row.credential_id &&row.credential_kind ) &&row.encrypted_payload ) ||
+    !(row.credential_id && row.credential_kind && row.encrypted_payload) ||
     row.credential_kind !== row.auth_mode
   ) {
     throw new Error("MCP discovery credential is unavailable or mismatched.");
@@ -777,6 +786,8 @@ function parseDiscoveryCredential(row: {
 }
 
 function parseDiscoveryServer(row: {
+  organization_id: string;
+  environment_id: string;
   server_id: string;
   provider_key: string;
   name: string;
@@ -786,6 +797,10 @@ function parseDiscoveryServer(row: {
   remote_url: string | null;
   oci_image_reference: string | null;
   oci_digest: string | null;
+  oci_egress_policy: unknown;
+  oci_egress_policy_digest: string | null;
+  oci_egress_policy_revision: string | null;
+  oci_egress_policy_source: "custom" | "managed" | null;
   launch_arguments: unknown;
   network_access: "full" | "none";
   cpu_millicores: number;
@@ -827,9 +842,32 @@ function parseDiscoveryServer(row: {
   }
   if (
     row.transport !== "stdio" ||
-    !(row.oci_image_reference && row.oci_digest)
+    !(
+      row.oci_image_reference &&
+      row.oci_digest &&
+      row.oci_egress_policy_digest &&
+      row.oci_egress_policy_revision &&
+      row.oci_egress_policy_source
+    )
   ) {
     throw new Error("Stored OCI MCP discovery server is invalid.");
+  }
+  const egressBinding = parseResolvedOciMcpEgressBinding({
+    version: 1,
+    source: row.oci_egress_policy_source,
+    organizationId: row.organization_id,
+    environmentId: row.environment_id,
+    serverId: row.server_id,
+    imageDigest: row.oci_digest,
+    policyRevision: row.oci_egress_policy_revision,
+    policyDigest: row.oci_egress_policy_digest,
+    policy: row.oci_egress_policy,
+  });
+  if (
+    row.network_access !==
+    (egressBinding.policy.mode === "unrestricted" ? "full" : "none")
+  ) {
+    throw new Error("Stored OCI MCP network projection is invalid.");
   }
   return {
     ...common,
@@ -838,5 +876,6 @@ function parseDiscoveryServer(row: {
     imageReference: row.oci_image_reference,
     digest: row.oci_digest,
     networkAccess: row.network_access,
+    egressBinding,
   };
 }

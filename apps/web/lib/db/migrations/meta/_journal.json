@@ -400,6 +400,13 @@
       "when": 1785772800000,
       "tag": "0056_external_approval_bindings",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1785859200000,
+      "tag": "0057_oci_mcp_egress_policy",
+      "breakpoints": true
     }
   ]
 }

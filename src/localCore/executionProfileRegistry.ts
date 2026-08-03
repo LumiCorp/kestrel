@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { TuiProfile } from "../../cli/contracts.js";
+import { parseResolvedOciMcpEgressBinding } from "../../packages/mcp-security/src/index.js";
 import { parseRecoveryPolicyV1 } from "../kestrel/contracts/recovery.js";
 import { assertRecoveryPrimaryProjection } from "../profile/recoveryPolicy.js";
 import {
@@ -34,29 +35,31 @@ export interface ExecutionProfileRevisionProvenance {
     id: ShellPresetId;
     version: number;
   };
-  modelConfiguration?: {
-    id: string;
-    revision: number;
-  } | undefined;
-  integrationContracts?: Array<{
-    id: string;
-    revision: number;
-  }> | undefined;
-  authoringProfile?: {
-    id: string;
-    revision: string;
-  } | undefined;
+  modelConfiguration?:
+    | {
+        id: string;
+        revision: number;
+      }
+    | undefined;
+  integrationContracts?:
+    | Array<{
+        id: string;
+        revision: number;
+      }>
+    | undefined;
+  authoringProfile?:
+    | {
+        id: string;
+        revision: string;
+      }
+    | undefined;
 }
 
 export class LocalCoreExecutionProfileRegistry {
   private readonly filePath: string;
 
   constructor(homePath: string) {
-    this.filePath = path.join(
-      homePath,
-      "runtime",
-      "execution-profiles.json",
-    );
+    this.filePath = path.join(homePath, "runtime", "execution-profiles.json");
   }
 
   async register(
@@ -115,16 +118,23 @@ export class LocalCoreExecutionProfileRegistry {
 
   private async read(): Promise<ExecutionProfileRegistryFile> {
     try {
-      const decoded = JSON.parse(await readFile(this.filePath, "utf8")) as unknown;
+      const decoded = JSON.parse(
+        await readFile(this.filePath, "utf8"),
+      ) as unknown;
       if (
         typeof decoded !== "object" ||
         decoded === null ||
         Array.isArray(decoded)
       ) {
-        throw new Error("Local Core execution profile registry must be an object.");
+        throw new Error(
+          "Local Core execution profile registry must be an object.",
+        );
       }
       const record = decoded as Record<string, unknown>;
-      if (record.version !== REGISTRY_VERSION || Array.isArray(record.profiles) === false) {
+      if (
+        record.version !== REGISTRY_VERSION ||
+        Array.isArray(record.profiles) === false
+      ) {
         throw new Error(
           `Local Core execution profile registry version must be ${REGISTRY_VERSION}.`,
         );
@@ -143,8 +153,7 @@ export class LocalCoreExecutionProfileRegistry {
 
   private async write(value: ExecutionProfileRegistryFile): Promise<void> {
     await mkdir(path.dirname(this.filePath), { recursive: true });
-    const temporary =
-      `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
+    const temporary = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
@@ -195,7 +204,14 @@ function parseStoredProfile(value: unknown, index: number): TuiProfile {
   }
   assertSecretFreeProfile(profile as TuiProfile);
   assertValidRecoveryPolicy(profile as TuiProfile);
+  assertValidOciMcpEgressBindings(profile as TuiProfile);
   return structuredClone(profile as TuiProfile);
+}
+
+function assertValidOciMcpEgressBindings(profile: TuiProfile): void {
+  for (const binding of profile.ociMcpEgressBindings ?? []) {
+    parseResolvedOciMcpEgressBinding(binding);
+  }
 }
 
 function assertValidRecoveryPolicy(profile: TuiProfile): void {
@@ -207,10 +223,10 @@ function assertValidRecoveryPolicy(profile: TuiProfile): void {
 function assertSecretFreeProfile(profile: TuiProfile): void {
   const serialized = JSON.stringify(profile);
   for (const forbidden of [
-    "\"apiKey\"",
-    "\"accessToken\"",
-    "\"refreshToken\"",
-    "\"secret\"",
+    '"apiKey"',
+    '"accessToken"',
+    '"refreshToken"',
+    '"secret"',
   ]) {
     if (serialized.includes(forbidden)) {
       throw new Error(
