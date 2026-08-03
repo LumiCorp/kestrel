@@ -131,6 +131,10 @@ Schema:
           "timeoutMs": 20000,
           "memoryMb": 256,
           "cpuShares": 256,
+          "workspaceSizeMb": 64,
+          "workspaceInodes": 8192,
+          "tmpSizeMb": 32,
+          "tmpInodes": 2048,
           "networkDefault": "off",
           "allowDependencyInstall": false
         },

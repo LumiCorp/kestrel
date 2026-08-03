@@ -41,6 +41,10 @@ export interface AppliedCodeExecutionPolicy {
   memoryMb: number;
   cpuShares: number;
   pidsLimit: number;
+  workspaceSizeMb: number;
+  workspaceInodes: number;
+  tmpSizeMb: number;
+  tmpInodes: number;
   network: CodeNetworkMode;
   allowDependencyInstall: boolean;
   maxOutputBytes: number;
@@ -66,6 +70,10 @@ export interface CodeModeSandboxConfig {
   memoryMb: number;
   cpuShares: number;
   pidsLimit?: number | undefined;
+  workspaceSizeMb?: number | undefined;
+  workspaceInodes?: number | undefined;
+  tmpSizeMb?: number | undefined;
+  tmpInodes?: number | undefined;
   networkDefault: CodeNetworkMode;
   allowDependencyInstall: boolean;
   maxOutputBytes: number;
@@ -92,6 +100,10 @@ export const DEFAULT_CODE_MODE_SANDBOX: CodeModeSandboxConfig = {
   memoryMb: 256,
   cpuShares: 256,
   pidsLimit: 64,
+  workspaceSizeMb: 64,
+  workspaceInodes: 8_192,
+  tmpSizeMb: 32,
+  tmpInodes: 2_048,
   networkDefault: "off",
   allowDependencyInstall: false,
   maxOutputBytes: 32_000,
