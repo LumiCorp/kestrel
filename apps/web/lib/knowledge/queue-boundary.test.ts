@@ -8,12 +8,14 @@ import nextConfig from "../../next.config";
 test("knowledge queue status does not eagerly load worker runtimes", async () => {
   const [
     queueSource,
+    environmentAdminSource,
     documentRuntimeSource,
     processRuntimeSource,
     pageDataSource,
     documentsRouteSource,
   ] = await Promise.all([
     readFile(new URL("./queue.ts", import.meta.url), "utf8"),
+    readFile(new URL("../admin/environments.ts", import.meta.url), "utf8"),
     readFile(new URL("./documents/runtime.ts", import.meta.url), "utf8"),
     readFile(
       new URL("./documents/process-runtime.ts", import.meta.url),
@@ -43,6 +45,14 @@ test("knowledge queue status does not eagerly load worker runtimes", async () =>
   assert.match(
     queueSource,
     /export async function enqueueEnvironmentOperation[\s\S]*getKnowledgeBossProducer\(\)/u,
+  );
+  assert.match(
+    queueSource,
+    /options\.retryTerminal && existingJob[\s\S]*deleteJob\(ENVIRONMENT_OPERATION_QUEUE, operationId\)[\s\S]*replacementJobId/u,
+  );
+  assert.match(
+    environmentAdminSource,
+    /enqueueEnvironmentOperation\(operation\.id, \{ retryTerminal: true \}\)/u,
   );
   assert.doesNotMatch(documentRuntimeSource, /documents\/process-runtime/u);
   assert.doesNotMatch(documentRuntimeSource, /from ["']\.\/extract["']/u);

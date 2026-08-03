@@ -103,7 +103,7 @@ try {
 		},
 		tenantId: identity.organizationId,
 	});
-	assert.equal(profile.id, "kestrel-one");
+	assert.equal(profile.id, "kestrel");
 	assert.equal(profile.delegation?.allowAgentSpawn, true);
 	assert.deepEqual(
 		(profile.toolAllowlist ?? []).filter(
