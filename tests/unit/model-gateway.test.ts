@@ -229,3 +229,35 @@ test("RetryingModelGateway preserves timeout diagnostics from request metadata",
     },
   );
 });
+
+test("RetryingModelGateway requires same-route recovery authorization without changing retry classification", async () => {
+  let calls = 0;
+  const authorizations: Array<{ attempt: number; failureCode?: string | undefined; retryable: boolean }> = [];
+  const gateway = new RetryingModelGateway(
+    async () => {
+      calls += 1;
+      const error = new Error("transient") as Error & { code: string };
+      error.code = "MODEL_NETWORK_ERROR";
+      throw error;
+    },
+    { retryCount: 2, timeoutMs: 1000 },
+  );
+
+  await assert.rejects(() => gateway.call({ input: "test" }, {
+    authorizeRetry: async (input) => {
+      authorizations.push({
+        attempt: input.attempt,
+        failureCode: input.failureCode,
+        retryable: input.retryable,
+      });
+      return false;
+    },
+  }));
+
+  assert.equal(calls, 1);
+  assert.deepEqual(authorizations, [{
+    attempt: 1,
+    failureCode: "MODEL_NETWORK_ERROR",
+    retryable: true,
+  }]);
+});

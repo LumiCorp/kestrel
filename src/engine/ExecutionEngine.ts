@@ -7,6 +7,7 @@ import type { RunEventType, RuntimeError, TransitionStatus } from "../kestrel/co
 import type { MemorySnapshot, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, Transition } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
+import { parseRecoveryDecisionV1, parseRecoveryReviewBindingV1 } from "../kestrel/contracts/recovery.js";
 import type { SessionRecord } from "../kestrel/contracts/store.js";
 import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 
@@ -91,6 +92,7 @@ import {
   summarizeUnknown,
 } from "./ExecutionEngineSupport.js";
 import { RuntimeIO } from "./RuntimeIO.js";
+import { RecoveryCoordinator, normalizeRecoveryFailureCode } from "./recovery/RecoveryCoordinator.js";
 import { resolveKestrelHomePath } from "../runtime/kestrelHome.js";
 import {
   buildPersistedRuntimeEventFromProgressUpdate,
@@ -186,6 +188,7 @@ export class ExecutionEngine {
   private readonly stepFrameBufferEnabled: boolean;
   private readonly progressPersistGranularity: ProgressPersistGranularity;
   private readonly loggedHeapPressureKeys = new Set<string>();
+  private readonly recoveryCoordinator: RecoveryCoordinator | undefined;
 
   constructor(deps: RuntimeDependencies, guardrailConfig?: Partial<GuardrailConfig>) {
     this.deps = deps;
@@ -194,6 +197,29 @@ export class ExecutionEngine {
       ...guardrailConfig,
     };
     this.toolQueueEnabled = this.resolveToolQueueEnabled();
+    const recoveryRuntime = this.deps.recoveryRuntime;
+    this.recoveryCoordinator = recoveryRuntime === undefined
+      ? undefined
+      : new RecoveryCoordinator({
+          policy: recoveryRuntime.policy,
+          executionProfileFingerprint: recoveryRuntime.executionProfileFingerprint,
+          modelRegistry: recoveryRuntime.modelRegistry,
+          toolAdapterRegistry: recoveryRuntime.toolAdapterRegistry,
+          workflowHandlerRegistry: recoveryRuntime.workflowHandlerRegistry,
+          appendLifecycleEvent: (event) =>
+            this.appendRunEvent(
+              event.runId,
+              event.sessionId,
+              event.type,
+              event.level,
+              event.metadata,
+              event.stepIndex,
+              { bypassBuffer: true },
+            ),
+          ...(recoveryRuntime.validateCredential !== undefined
+            ? { validateCredential: recoveryRuntime.validateCredential }
+            : {}),
+        });
     this.regionScheduler = new RegionScheduler({
       store: this.deps.store,
     });
@@ -473,6 +499,20 @@ export class ExecutionEngine {
         runStarted = true;
         progressSeq = runStart.progressSeq;
 
+        const recoveryReviewResume = await this.maybeHandleRecoveryReviewResume({
+          runId,
+          event,
+          session,
+          guardrails,
+          progressSeq,
+        });
+        if (recoveryReviewResume?.output !== undefined) {
+          return recoveryReviewResume.output;
+        }
+        if (recoveryReviewResume?.session !== undefined) {
+          session = recoveryReviewResume.session;
+        }
+
         await this.validateResumedRuntimeState({
           runId,
           event,
@@ -682,38 +722,56 @@ export class ExecutionEngine {
             runtimeError.code === "AGENT_DISPATCH_STALL_DETECTED" ||
             isRecoverableDispatchLoopGuard(runtimeError, lastStepAgent)
           ) {
-            const stalledOutput = await this.loopGuardCoordinator.maybeCompleteResearchStall({
+            const loopRecoveryContext = {
+              handlerId: "run.loop_recovery" as const,
+              failureCode: runtimeError.code,
               runId,
-              session,
-              currentStep: lastStepAgent,
+              sessionId: session.sessionId,
+              threadId: this.asString(event.payload.threadId) ?? session.sessionId,
+              stepIndex: guardrails.telemetry().stepsExecuted,
+              guardrails,
+            };
+            const stalledOutput = await this.runRecoveryWorkflow({
+              ...loopRecoveryContext,
+              execute: () => this.loopGuardCoordinator.maybeCompleteResearchStall({
+              runId,
+              session: session!,
+              currentStep: lastStepAgent!,
               stepIndex: guardrails.telemetry().stepsExecuted,
               guardrails,
               progressSeq,
               runtimeError,
+              }),
             });
             if (stalledOutput !== undefined) {
               return stalledOutput;
             }
-            const documentedFinalizeGapOutput = await this.loopGuardCoordinator.maybeCompleteDocumentedFinalizeGap({
+            const documentedFinalizeGapOutput = await this.runRecoveryWorkflow({
+              ...loopRecoveryContext,
+              execute: () => this.loopGuardCoordinator.maybeCompleteDocumentedFinalizeGap({
               runId,
-              session,
-              currentStep: lastStepAgent,
+              session: session!,
+              currentStep: lastStepAgent!,
               stepIndex: guardrails.telemetry().stepsExecuted,
               runtimeError,
               guardrails,
               progressSeq,
+              }),
             });
             if (documentedFinalizeGapOutput !== undefined) {
               return documentedFinalizeGapOutput;
             }
-            const loopStallOutput = await this.loopGuardCoordinator.maybeResolveLoopVisitStall({
+            const loopStallOutput = await this.runRecoveryWorkflow({
+              ...loopRecoveryContext,
+              execute: () => this.loopGuardCoordinator.maybeResolveLoopVisitStall({
               runId,
-              session,
-              currentStep: lastStepAgent,
+              session: session!,
+              currentStep: lastStepAgent!,
               stepIndex: guardrails.telemetry().stepsExecuted,
               runtimeError,
               guardrails,
               progressSeq,
+              }),
             });
             if (loopStallOutput !== undefined) {
               return loopStallOutput;
@@ -723,14 +781,23 @@ export class ExecutionEngine {
             runtimeError.code === "MAX_STEPS_EXCEEDED" ||
             runtimeError.code === "MAX_MODEL_CALLS_EXCEEDED"
           ) {
-            const stalledOutput = await this.loopGuardCoordinator.maybeCompleteResearchStall({
+            const stalledOutput = await this.runRecoveryWorkflow({
+              handlerId: "run.loop_recovery",
+              failureCode: runtimeError.code,
               runId,
-              session,
-              currentStep: lastStepAgent,
+              sessionId: session.sessionId,
+              threadId: this.asString(event.payload.threadId) ?? session.sessionId,
+              stepIndex: guardrails.telemetry().stepsExecuted,
+              guardrails,
+              execute: () => this.loopGuardCoordinator.maybeCompleteResearchStall({
+              runId,
+              session: session!,
+              currentStep: lastStepAgent!,
               stepIndex: guardrails.telemetry().stepsExecuted,
               guardrails,
               progressSeq,
               runtimeError,
+              }),
             });
             if (stalledOutput !== undefined) {
               return stalledOutput;
@@ -757,8 +824,8 @@ export class ExecutionEngine {
           const loopTimeoutWaitOutput = await this.maybeEnterAgentLoopTimeoutResumeWait({
             runId,
             event,
-            session,
-            currentStep: lastStepAgent,
+            session: session!,
+            currentStep: lastStepAgent!,
             stepIndex: guardrails.telemetry().stepsExecuted,
             runtimeError,
             errors,
@@ -775,27 +842,42 @@ export class ExecutionEngine {
           session !== undefined &&
           lastStepAgent !== undefined
         ) {
-          const loopResolutionOutput = await this.maybeRequestToolInputInvalidLoopResolution({
+          const loopRecoveryContext = {
+            handlerId: "run.loop_recovery" as const,
+            failureCode: runtimeError.code,
             runId,
-            session,
-            currentStep: lastStepAgent,
+            sessionId: session.sessionId,
+            threadId: this.asString(event.payload.threadId) ?? session.sessionId,
+            stepIndex: guardrails.telemetry().stepsExecuted,
+            guardrails,
+          };
+          const loopResolutionOutput = await this.runRecoveryWorkflow({
+            ...loopRecoveryContext,
+            execute: () => this.maybeRequestToolInputInvalidLoopResolution({
+            runId,
+            session: session!,
+            currentStep: lastStepAgent!,
             stepIndex: guardrails.telemetry().stepsExecuted,
             runtimeError,
             guardrails,
             progressSeq,
+            }),
           });
           if (loopResolutionOutput !== undefined) {
             return loopResolutionOutput;
           }
 
-          const documentedFinalizeGapOutput = await this.loopGuardCoordinator.maybeCompleteDocumentedFinalizeGap({
+          const documentedFinalizeGapOutput = await this.runRecoveryWorkflow({
+            ...loopRecoveryContext,
+            execute: () => this.loopGuardCoordinator.maybeCompleteDocumentedFinalizeGap({
             runId,
-            session,
-            currentStep: lastStepAgent,
+            session: session!,
+            currentStep: lastStepAgent!,
             stepIndex: guardrails.telemetry().stepsExecuted,
             runtimeError,
             guardrails,
             progressSeq,
+            }),
           });
           if (documentedFinalizeGapOutput !== undefined) {
             return documentedFinalizeGapOutput;
@@ -830,11 +912,13 @@ export class ExecutionEngine {
                 session = updated;
               },
             );
-            const synthesizedOutput = await this.loopGuardCoordinator.maybeCompleteVerifiedRetrievalSynthesis({
+            const synthesizedOutput = await this.runRecoveryWorkflow({
+              ...loopRecoveryContext,
+              execute: () => this.loopGuardCoordinator.maybeCompleteVerifiedRetrievalSynthesis({
               runId,
               event,
-              session,
-              currentStep: lastStepAgent,
+              session: session!,
+              currentStep: lastStepAgent!,
               stepIndex: guardrails.telemetry().stepsExecuted,
               guardrails,
               progressSeq,
@@ -842,22 +926,41 @@ export class ExecutionEngine {
               runtimeError,
               signal: options.signal,
               useModel: recoveryIO.useModel,
+              }),
             });
             if (synthesizedOutput !== undefined) {
               return synthesizedOutput;
             }
-            const stalledOutput = await this.loopGuardCoordinator.maybeCompleteResearchStall({
+            const stalledOutput = await this.runRecoveryWorkflow({
+              ...loopRecoveryContext,
+              execute: () => this.loopGuardCoordinator.maybeCompleteResearchStall({
               runId,
-              session,
-              currentStep: lastStepAgent,
+              session: session!,
+              currentStep: lastStepAgent!,
               stepIndex: guardrails.telemetry().stepsExecuted,
               guardrails,
               progressSeq,
               runtimeError,
+              }),
             });
             if (stalledOutput !== undefined) {
               return stalledOutput;
             }
+          }
+        }
+        if (session !== undefined && lastStepAgent !== undefined) {
+          const recoveryReview = await this.maybeEnterRecoveryReview({
+            runId,
+            event,
+            session,
+            currentStep: lastStepAgent,
+            stepIndex: guardrails.telemetry().stepsExecuted,
+            guardrails,
+            progressSeq,
+            triggeringFailureCode: normalizeRecoveryFailureCode(runtimeError.code),
+          });
+          if (recoveryReview !== undefined) {
+            return recoveryReview;
           }
         }
         return await this.runLifecycleController.failRun({
@@ -1213,6 +1316,12 @@ export class ExecutionEngine {
         }),
       afterToolResult: (input) => this.maybeAttachManagedWorktreeProcess(input),
       isRetryableToolError: (error) => this.isRetryableToolError(error),
+      ...(this.recoveryCoordinator !== undefined
+        ? { recoveryCoordinator: this.recoveryCoordinator }
+        : {}),
+      ...(this.deps.recoveryRuntime !== undefined
+        ? { recoveryRuntime: this.deps.recoveryRuntime }
+        : {}),
     });
 
     return {
@@ -1229,6 +1338,7 @@ export class ExecutionEngine {
           sessionId: progress.sessionId,
           stepIndex: progress.stepIndex,
           stepAgent: progress.stepAgent,
+          guardrails,
           session: currentSession,
           onSessionUpdated: (updated) => {
             currentSession = updated;
@@ -1256,6 +1366,7 @@ export class ExecutionEngine {
           sessionId: progress.sessionId,
           stepIndex: progress.stepIndex,
           stepAgent: progress.stepAgent,
+          guardrails,
           reason: name,
           session: currentSession,
           onSessionUpdated: (updated) => {
@@ -1286,6 +1397,7 @@ export class ExecutionEngine {
     sessionId: string;
     stepIndex: number;
     stepAgent: string;
+    guardrails: Guardrails;
     reason?: string | undefined;
     session: SessionRecord;
     onSessionUpdated: (session: SessionRecord) => void;
@@ -1309,7 +1421,17 @@ export class ExecutionEngine {
     }
 
     if (sample.guardMode === "compact") {
-      const compacted = await this.compactSessionForHeapPressure(input.session, sample);
+      const pressureSample = sample;
+      const compacted = await this.runRecoveryWorkflow({
+        handlerId: "context.compaction",
+        failureCode: "RUNTIME_HEAP_PRESSURE",
+        runId: input.runId,
+        sessionId: input.sessionId,
+        threadId: input.sessionId,
+        stepIndex: input.stepIndex,
+        guardrails: input.guardrails,
+        execute: () => this.compactSessionForHeapPressure(input.session, pressureSample),
+      });
       if (compacted !== undefined) {
         input.onSessionUpdated(compacted);
       }
@@ -2589,7 +2711,285 @@ export class ExecutionEngine {
     progressSeq: number;
     reason: ContinuationWaitReason;
   }): Promise<NormalizedOutput | undefined> {
-    return this.continuationCoordinator.maybeRequestContinuation(input);
+    return this.runRecoveryWorkflow({
+      handlerId: "run.continuation",
+      failureCode: input.reason === "max_model_calls_continuation"
+        ? "MAX_MODEL_CALLS_EXCEEDED"
+        : "MAX_STEPS_EXCEEDED",
+      runId: input.runId,
+      sessionId: input.session.sessionId,
+      threadId: this.asString(input.event.payload.threadId) ?? input.session.sessionId,
+      stepIndex: input.stepIndex,
+      guardrails: input.guardrails,
+      execute: () => this.continuationCoordinator.maybeRequestContinuation(input),
+    });
+  }
+
+  private async runRecoveryWorkflow<T>(input: {
+    handlerId: "context.compaction" | "run.continuation" | "run.loop_recovery";
+    failureCode: string;
+    runId: string;
+    sessionId: string;
+    threadId: string;
+    stepIndex?: number | undefined;
+    guardrails: Guardrails;
+    execute: () => Promise<T>;
+  }): Promise<T | undefined> {
+    const coordinator = this.recoveryCoordinator;
+    const recoveryRuntime = this.deps.recoveryRuntime;
+    if (coordinator === undefined || recoveryRuntime === undefined) {
+      return input.execute();
+    }
+    const telemetry = input.guardrails.telemetry();
+    const budget = input.guardrails.budgetSnapshot();
+    const selection = await coordinator.decide({
+      runId: input.runId,
+      sessionId: input.sessionId,
+      threadId: input.threadId,
+      scope: "run",
+      failureCode: normalizeRecoveryFailureCode(input.failureCode),
+      visibleOutputStarted: false,
+      budget: {
+        remainingMs: Math.max(0, budget.remainingMs),
+        tokensUsed: Math.max(0, telemetry.totalTokens ?? 0),
+        toolCallsUsed: Math.max(0, telemetry.toolCalls),
+      },
+      ...(input.stepIndex !== undefined ? { stepIndex: input.stepIndex } : {}),
+      expectedPolicyRevision: coordinator.policy.revision,
+      requestedWorkflowHandlerId: input.handlerId,
+    });
+    if (
+      selection.decision.outcome.status !== "selected" ||
+      selection.decision.outcome.action !== "deterministic_workflow" ||
+      selection.decision.outcome.candidateId !== input.handlerId
+    ) {
+      return;
+    }
+    const handler = recoveryRuntime.workflowHandlerRegistry.resolve(input.handlerId);
+    if (handler === undefined) {
+      await coordinator.markActionFailed(selection.decision, "RECOVERY_HANDLER_UNREGISTERED");
+      return;
+    }
+    await coordinator.markActionStarted(selection.decision);
+    try {
+      const result = await handler({
+        runId: input.runId,
+        sessionId: input.sessionId,
+        failureCode: input.failureCode,
+        ...(input.stepIndex !== undefined ? { stepIndex: input.stepIndex } : {}),
+        execute: input.execute,
+      }) as T;
+      await coordinator.markActionCompleted(selection.decision);
+      return result;
+    } catch (error) {
+      await coordinator.markActionFailed(selection.decision, this.mapError(error).code);
+      throw error;
+    }
+  }
+
+  private async maybeEnterRecoveryReview(input: {
+    runId: string;
+    event: RuntimeEvent;
+    session: SessionRecord;
+    currentStep: string;
+    stepIndex: number;
+    guardrails: Guardrails;
+    progressSeq: number;
+    triggeringFailureCode: string;
+  }): Promise<NormalizedOutput | undefined> {
+    const coordinator = this.recoveryCoordinator;
+    if (coordinator === undefined) return;
+    const telemetry = input.guardrails.telemetry();
+    const budget = input.guardrails.budgetSnapshot();
+    const eventMetadata = this.asRecord(input.event.payload.metadata);
+    const actor = this.asRecord(eventMetadata?.actor ?? input.event.payload.actor);
+    const threadId = this.asString(eventMetadata?.threadId ?? input.event.payload.threadId) ?? input.session.sessionId;
+    const selection = await coordinator.decide({
+      runId: input.runId,
+      sessionId: input.session.sessionId,
+      threadId,
+      scope: "run",
+      failureCode: "RECOVERY_EXHAUSTED",
+      visibleOutputStarted: false,
+      budget: {
+        remainingMs: Math.max(0, budget.remainingMs),
+        tokensUsed: Math.max(0, telemetry.totalTokens ?? 0),
+        toolCallsUsed: Math.max(0, telemetry.toolCalls),
+      },
+      stepIndex: input.stepIndex,
+      expectedPolicyRevision: coordinator.policy.revision,
+    });
+    if (
+      selection.decision.outcome.status !== "waiting" ||
+      selection.reviewBinding === undefined
+    ) {
+      return;
+    }
+    const agent = this.asRecord(input.session.state.agent) ?? {};
+    const waitFor = {
+      kind: "user" as const,
+      eventType: "user.reply",
+      metadata: {
+        reason: "recovery_review",
+        prompt: "Recovery is exhausted. Choose exactly one allowed recovery option.",
+        decisionId: selection.decision.decisionId,
+        recoveryReviewBinding: structuredClone(selection.reviewBinding),
+        allowedOptionIds: [...selection.reviewBinding.allowedOptionIds],
+        triggeringFailureCode: input.triggeringFailureCode,
+      },
+    };
+    await this.deps.store.commitStep({
+      runId: input.runId,
+      event: input.event,
+      sessionId: input.session.sessionId,
+      expectedVersion: input.session.version,
+      stepAgent: input.currentStep,
+      nextStepAgent: input.currentStep,
+      statePatch: {
+        agent: {
+          ...agent,
+          waitingFor: this.waitResumeCoordinator.buildWaitingFor({
+            waitFor,
+            resumeStepAgent: input.currentStep,
+            reason: "recovery_review",
+            resumeInstruction: "Reply with one exact recovery option.",
+          }),
+          recovery: {
+            review: {
+              decision: structuredClone(selection.decision),
+              binding: structuredClone(selection.reviewBinding),
+              threadId,
+              triggeringFailureCode: input.triggeringFailureCode,
+              ...(this.asString(actor?.tenantId) !== undefined
+                ? { tenantId: this.asString(actor?.tenantId) }
+                : {}),
+            },
+          },
+        },
+      },
+      effects: [],
+      emitEvents: [],
+      stepIndex: input.stepIndex,
+    });
+    return this.runLifecycleController.returnTerminal({
+      runId: input.runId,
+      sessionId: input.session.sessionId,
+      currentStep: input.currentStep,
+      transition: {
+        status: "WAITING",
+        nextStepAgent: input.currentStep,
+        waitFor,
+      },
+      errors: [],
+      guardrails: input.guardrails,
+      progressSeq: input.progressSeq,
+      stepIndex: input.stepIndex,
+    });
+  }
+
+  private async maybeHandleRecoveryReviewResume(input: {
+    runId: string;
+    event: RuntimeEvent;
+    session: SessionRecord;
+    guardrails: Guardrails;
+    progressSeq: number;
+  }): Promise<{ session?: SessionRecord | undefined; output?: NormalizedOutput | undefined } | undefined> {
+    const coordinator = this.recoveryCoordinator;
+    if (coordinator === undefined) return;
+    const agent = this.asRecord(input.session.state.agent);
+    const review = this.asRecord(this.asRecord(agent?.recovery)?.review);
+    if (review === undefined || input.event.type !== "user.reply") return;
+    const decision = parseRecoveryDecisionV1(review.decision);
+    const binding = parseRecoveryReviewBindingV1(review.binding);
+    const metadata = this.asRecord(input.event.payload.metadata);
+    const actorRecord = this.asRecord(metadata?.actor ?? input.event.payload.actor);
+    const actorId = this.asString(actorRecord?.actorId);
+    const actorType = this.asString(actorRecord?.actorType);
+    const optionId = this.asString(input.event.payload.recoveryOptionId);
+    if (
+      actorId === undefined ||
+      (actorType !== "end_user" && actorType !== "operator" && actorType !== "service") ||
+      optionId === undefined
+    ) {
+      throw createRuntimeFailure(
+        "RECOVERY_RESUME_INVALID",
+        "Recovery review resume requires trusted actor metadata and an exact recoveryOptionId.",
+      );
+    }
+    let disposition: "approved" | "declined";
+    try {
+      disposition = coordinator.validateReviewResume({
+        binding,
+        decision,
+        threadId: this.asString(metadata?.threadId ?? input.event.payload.threadId) ?? input.session.sessionId,
+        runId: binding.runId,
+        optionId,
+        actor: {
+          actorId,
+          actorType,
+          ...(this.asString(actorRecord?.tenantId) !== undefined
+            ? { tenantId: this.asString(actorRecord?.tenantId) }
+            : {}),
+        },
+        ...(this.asString(review.tenantId) !== undefined
+          ? { expectedTenantId: this.asString(review.tenantId) }
+          : {}),
+      });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "RECOVERY_RESUME_INVALID";
+      throw createRuntimeFailure(code, "Recovery review resume validation failed.");
+    }
+    await this.appendRunEvent(
+      input.runId,
+      input.session.sessionId,
+      "interaction.resolved",
+      "INFO",
+      {
+        kind: "recovery_review",
+        decisionId: decision.decisionId,
+        optionId,
+        actorId,
+      },
+      undefined,
+      { bypassBuffer: true },
+    );
+    if (disposition === "declined") {
+      const runtimeError = {
+        code: "RECOVERY_DECLINED",
+        message: "The operator declined recovery.",
+      };
+      return {
+        output: await this.runLifecycleController.returnTerminal({
+          runId: input.runId,
+          sessionId: input.session.sessionId,
+          currentStep: input.session.currentStepAgent,
+          transition: {
+            status: "FAILED",
+            nextStepAgent: input.session.currentStepAgent ?? "agent.loop",
+          },
+          errors: [runtimeError],
+          guardrails: input.guardrails,
+          progressSeq: input.progressSeq,
+        }),
+      };
+    }
+    if (this.deps.store.patchSessionState === undefined) {
+      throw createRuntimeFailure(
+        "RECOVERY_RESUME_UNAVAILABLE",
+        "Recovery resume requires durable session patch support.",
+      );
+    }
+    const nextAgent = { ...(agent ?? {}) };
+    delete nextAgent.recovery;
+    delete nextAgent.waitingFor;
+    delete nextAgent.terminal;
+    const session = await this.deps.store.patchSessionState({
+      sessionId: input.session.sessionId,
+      expectedVersion: input.session.version,
+      reason: "recovery_review_resolved",
+      statePatch: { agent: nextAgent },
+    });
+    return { session };
   }
 
   private async maybeRequestToolInputInvalidLoopResolution(input: {

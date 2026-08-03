@@ -1,3 +1,10 @@
+import { createHash } from "node:crypto";
+
+import {
+  parseRunnerExternalApprovalBindingV1,
+  serializeCanonicalApprovalPayload,
+} from "@kestrel-agents/protocol";
+
 import type {
   Guardrails,
 } from "./Guardrails.js";
@@ -6,13 +13,18 @@ import type { RunLifecycleController } from "./RunLifecycleController.js";
 import type { StepCommitPipeline } from "./StepCommitPipeline.js";
 import { validateTransition } from "./TransitionValidator.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
-import { asPlainRecord, buildStateTransitionLogMetadata } from "./ExecutionEngineSupport.js";
+import {
+  asPlainRecord,
+  buildStateTransitionLogMetadata,
+  parseApprovalDecisionFromPayload,
+} from "./ExecutionEngineSupport.js";
 import { buildRunToolEvent, buildRunToolUpdate } from "./RuntimeIO.js";
 import type { RunEventType, RuntimeError } from "../kestrel/contracts/base.js";
 import type { ProgressCode, ProgressPhase, RunEvent, RunLogEntry, RuntimeEvent, RuntimeEventIntent } from "../kestrel/contracts/events.js";
 import type { NormalizedOutput, RegionWorkItem, RuntimeDependencies, StepCommit, StepContext, StepIO, StepTransition } from "../kestrel/contracts/execution.js";
 import type { EffectStore, PersistedEffect, SessionRecord } from "../kestrel/contracts/store.js";
 import type { HeapPressureSample } from "../runtime/heapDiagnostics.js";
+import { RecoveryToolTransitionRequired } from "./recovery/RecoveryCoordinator.js";
 
 
 export interface StepRunnerObservabilityFrame {
@@ -411,6 +423,7 @@ export class StepRunner {
     );
     const stepFrame = this.deps.createStepObservabilityFrame(input.state.stepIndex);
     let stepExecutionResult: StepExecutionResult;
+    let requiresPostCatchValidation = false;
     const executeStep = async (): Promise<StepExecutionResult> => {
       if (activeRegionItem !== undefined) {
         await this.deps.logInfo({
@@ -473,7 +486,14 @@ export class StepRunner {
         bypassRunEventBuffer: true,
       });
 
-      const transition = await step(
+      const recoveryApprovalTransition = await this.buildRecoveryToolApprovalTransition({
+        runId: input.runId,
+        session: input.state.session,
+        event: input.state.event,
+        stepName,
+        stepIndex: input.state.stepIndex,
+      });
+      const transition = recoveryApprovalTransition ?? await step(
         stepContext,
         this.deps.createStepIO(
           input.guardrails,
@@ -559,8 +579,131 @@ export class StepRunner {
       stepExecutionResult = await this.deps.runStepWithFrame(stepFrame, executeStep);
     } catch (error) {
       await this.deps.flushStepObservabilityFrame(stepFrame);
-      const runtimeError = this.deps.mapError(error);
-      const recovery = await this.deps.maybeBuildConcreteRepairContinuation({
+      if (error instanceof RecoveryToolTransitionRequired) {
+        requiresPostCatchValidation = true;
+        const targetInput = asPlainRecord(error.targetInput);
+        if (targetInput === undefined) {
+          await this.deps.appendRunEvent(
+            input.runId,
+            input.state.session.sessionId,
+            "recovery.action.failed",
+            "ERROR",
+            {
+              decisionId: error.decision.decisionId,
+              failureCode: "RECOVERY_TARGET_INPUT_INVALID",
+            },
+            input.state.stepIndex,
+            { bypassBuffer: true },
+          );
+          throw createRuntimeFailure(
+            "RECOVERY_TARGET_INPUT_INVALID",
+            "Recovery tool adapter target input must be an object.",
+          );
+        }
+        await this.deps.appendRunEvent(
+          input.runId,
+          input.state.session.sessionId,
+          "recovery.action.started",
+          "INFO",
+          {
+            decisionId: error.decision.decisionId,
+            adapterId: error.adapter.adapterId,
+            targetToolId: error.adapter.targetToolId,
+          },
+          input.state.stepIndex,
+          { bypassBuffer: true },
+        );
+        const agent = asPlainRecord(input.state.session.state.agent) ?? {};
+        const exec = asPlainRecord(agent.exec) ?? {};
+        const recoveryState = {
+          decision: structuredClone(error.decision),
+          adapterId: error.adapter.adapterId,
+          sourceToolId: error.adapter.sourceToolId,
+          targetToolId: error.adapter.targetToolId,
+          targetInput: structuredClone(targetInput),
+          idempotencyKey: `${error.decision.decisionId}:tool:${error.adapter.targetToolId}`,
+        };
+        if (error.externalApprovalBinding !== undefined) {
+          const approvalId = error.externalApprovalBinding.approvalId;
+          await this.deps.appendRunEvent(
+            input.runId,
+            input.state.session.sessionId,
+            "recovery.waiting",
+            "INFO",
+            {
+              decisionId: error.decision.decisionId,
+              adapterId: error.adapter.adapterId,
+              approvalId,
+              waitKind: "approval",
+            },
+            input.state.stepIndex,
+            { bypassBuffer: true },
+          );
+          stepExecutionResult = {
+            transition: {
+              status: "WAITING",
+              nextStepAgent: stepName,
+              waitFor: {
+                kind: "approval",
+                eventType: "user.approval",
+                metadata: {
+                  approvalId,
+                  toolName: error.adapter.targetToolId,
+                  toolInput: structuredClone(targetInput),
+                  toolClass: "external_side_effect",
+                  reason: "Recovery selected an alternate external-effect tool.",
+                  externalApprovalBinding: structuredClone(error.externalApprovalBinding),
+                  prompt: `Approve recovery tool ${error.adapter.targetToolId}? Reply 'approve' or 'deny'.`,
+                },
+              },
+              statePatch: {
+                agent: {
+                  ...agent,
+                  exec: {
+                    ...exec,
+                    pendingApproval: {
+                      approvalId,
+                      toolName: error.adapter.targetToolId,
+                      toolInput: structuredClone(targetInput),
+                      toolClass: "external_side_effect",
+                      externalApprovalBinding: structuredClone(error.externalApprovalBinding),
+                      recovery: recoveryState,
+                    },
+                  },
+                  recovery: { pending: recoveryState },
+                },
+              },
+            },
+          };
+        } else {
+          stepExecutionResult = {
+            transition: {
+              status: "RUNNING",
+              nextStepAgent: stepName,
+              statePatch: {
+                agent: {
+                  ...agent,
+                  recovery: { pending: recoveryState },
+                },
+              },
+              effects: [{
+                type: "tool.execute",
+                payload: {
+                  toolName: error.adapter.targetToolId,
+                  toolInput: structuredClone(targetInput),
+                  recoveryDecision: structuredClone(error.decision),
+                  recoveryAdapterId: error.adapter.adapterId,
+                  recoverySourceToolId: error.adapter.sourceToolId,
+                },
+                idempotencyKey: recoveryState.idempotencyKey,
+                failurePolicy: "STOP",
+              }],
+            },
+          };
+        }
+      } else {
+        const runtimeError = this.deps.mapError(error);
+        const recovery = await this.deps.maybeBuildConcreteRepairContinuation({
         event: input.state.event,
         runId: input.runId,
         session: input.state.session,
@@ -570,7 +713,7 @@ export class StepRunner {
         transition: this.deps.buildRunningTransition(input.state.session.state),
         runtimeError,
       });
-      if (recovery !== undefined) {
+        if (recovery !== undefined) {
         await this.deps.recordConcreteRepairContinuation({
           runId: input.runId,
           sessionId: input.state.session.sessionId,
@@ -581,8 +724,8 @@ export class StepRunner {
         stepExecutionResult = {
           transition: recovery.transition,
         };
-      } else {
-        const verifiedRetrievalRecovery = await this.deps.maybeBuildVerifiedRetrievalContinuation({
+        } else {
+          const verifiedRetrievalRecovery = await this.deps.maybeBuildVerifiedRetrievalContinuation({
           event: input.state.event,
           runId: input.runId,
           session: input.state.session,
@@ -592,7 +735,7 @@ export class StepRunner {
           transition: this.deps.buildRunningTransition(input.state.session.state),
           runtimeError,
         });
-        if (verifiedRetrievalRecovery !== undefined) {
+          if (verifiedRetrievalRecovery !== undefined) {
           await this.deps.recordVerifiedRetrievalContinuation({
             runId: input.runId,
             sessionId: input.state.session.sessionId,
@@ -603,8 +746,9 @@ export class StepRunner {
           stepExecutionResult = {
             transition: verifiedRetrievalRecovery.transition,
           };
-        } else {
-          throw error;
+          } else {
+            throw error;
+          }
         }
       }
     }
@@ -612,6 +756,17 @@ export class StepRunner {
     if ("checkpoint" in stepExecutionResult) {
       await this.deps.flushStepObservabilityFrame(stepFrame);
       return stepExecutionResult.checkpoint;
+    }
+    if (requiresPostCatchValidation) {
+      validateTransition(stepExecutionResult.transition);
+      await this.deps.validateStepContract({
+        runId: input.runId,
+        sessionId: input.state.session.sessionId,
+        stepName,
+        transition: stepExecutionResult.transition,
+        context: stepContext,
+        stepIndex: input.state.stepIndex,
+      });
     }
 
     const previousSessionState = input.state.session.state;
@@ -965,6 +1120,30 @@ export class StepRunner {
         reason: String(commit.persistedEffects.length),
       });
     }
+    const recoveryEffects = commit.persistedEffects.filter((effect) =>
+      asPlainRecord(effect.payload)?.recoveryDecision !== undefined);
+    for (const effect of recoveryEffects) {
+      const recoveryDecision = asPlainRecord(asPlainRecord(effect.payload)?.recoveryDecision);
+      const decisionId = typeof recoveryDecision?.decisionId === "string"
+        ? recoveryDecision.decisionId
+        : undefined;
+      if (decisionId === undefined) continue;
+      await this.deps.appendRunEvent(
+        input.runId,
+        input.state.session.sessionId,
+        effectOutcome.stop ? "recovery.action.failed" : "recovery.action.completed",
+        effectOutcome.stop ? "ERROR" : "INFO",
+        {
+          decisionId,
+          targetToolId: asPlainRecord(effect.payload)?.toolName,
+          ...(effectOutcome.errors[0]?.code !== undefined
+            ? { failureCode: effectOutcome.errors[0].code }
+            : {}),
+        },
+        input.state.stepIndex,
+        { bypassBuffer: true },
+      );
+    }
     if (effectOutcome.stop) {
       input.errors.push(...effectOutcome.errors);
       const terminalStatus = effectOutcome.terminalStatus ?? "FAILED";
@@ -1062,6 +1241,136 @@ export class StepRunner {
     input.state.lastStepAgent = stepName;
     input.state.stepIndex += 1;
     return ;
+  }
+
+  private async buildRecoveryToolApprovalTransition(input: {
+    runId: string;
+    session: SessionRecord;
+    event: RuntimeEvent;
+    stepName: string;
+    stepIndex: number;
+  }): Promise<StepTransition | undefined> {
+    if (input.event.type !== "user.approval") return;
+    const agent = asPlainRecord(input.session.state.agent);
+    const exec = asPlainRecord(agent?.exec);
+    const pendingApproval = asPlainRecord(exec?.pendingApproval);
+    const recovery = asPlainRecord(pendingApproval?.recovery);
+    if (pendingApproval === undefined || recovery === undefined) return;
+
+    let binding;
+    try {
+      binding = parseRunnerExternalApprovalBindingV1(pendingApproval.externalApprovalBinding);
+    } catch {
+      throw createRuntimeFailure(
+        "EXTERNAL_APPROVAL_BINDING_INVALID",
+        "Recovery tool approval binding is invalid.",
+      );
+    }
+    const decision = asPlainRecord(recovery.decision);
+    const toolName = typeof pendingApproval.toolName === "string" ? pendingApproval.toolName : undefined;
+    const toolInput = asPlainRecord(pendingApproval.toolInput);
+    const adapterId = typeof recovery.adapterId === "string" ? recovery.adapterId : undefined;
+    const sourceToolId = typeof recovery.sourceToolId === "string" ? recovery.sourceToolId : undefined;
+    const decisionId = typeof decision?.decisionId === "string" ? decision.decisionId : undefined;
+    const decisionRunId = typeof decision?.runId === "string" ? decision.runId : undefined;
+    const metadata = asPlainRecord(input.event.payload.metadata);
+    const actor = asPlainRecord(metadata?.actor ?? input.event.payload.actor);
+    const actorId = typeof actor?.actorId === "string" && actor.actorId.trim().length > 0
+      ? actor.actorId.trim()
+      : undefined;
+    const actorType = typeof actor?.actorType === "string" ? actor.actorType : undefined;
+    const approvalId = typeof input.event.payload.approvalId === "string"
+      ? input.event.payload.approvalId
+      : undefined;
+    const threadId = typeof metadata?.threadId === "string"
+      ? metadata.threadId
+      : input.session.sessionId;
+    const payloadHash = toolName === undefined || toolInput === undefined
+      ? undefined
+      : `sha256:${createHash("sha256").update(serializeCanonicalApprovalPayload({
+          toolName,
+          toolInput,
+        })).digest("hex")}`;
+    if (
+      toolName === undefined ||
+      toolInput === undefined ||
+      adapterId === undefined ||
+      sourceToolId === undefined ||
+      decisionId === undefined ||
+      decisionRunId === undefined ||
+      actorId === undefined ||
+      (actorType !== "end_user" && actorType !== "operator" && actorType !== "service") ||
+      approvalId !== binding.approvalId ||
+      pendingApproval.approvalId !== binding.approvalId ||
+      binding.threadId !== threadId ||
+      binding.runId !== decisionRunId ||
+      binding.actionKey !== toolName ||
+      binding.payloadHash !== payloadHash ||
+      Date.parse(binding.expiresAt) <= Date.now()
+    ) {
+      throw createRuntimeFailure(
+        "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+        "Recovery tool approval does not match the exact pending action and authority.",
+      );
+    }
+    const approvalDecision = parseApprovalDecisionFromPayload(input.event.payload);
+    if (approvalDecision === undefined) {
+      throw createRuntimeFailure(
+        "APPROVAL_DECISION_INVALID",
+        "Recovery tool approval requires an exact approve or deny decision.",
+      );
+    }
+    if (approvalDecision === "deny") {
+      await this.deps.appendRunEvent(
+        input.runId,
+        input.session.sessionId,
+        "recovery.action.failed",
+        "WARN",
+        { decisionId, adapterId, failureCode: "APPROVAL_DENIED", actorId },
+        input.stepIndex,
+        { bypassBuffer: true },
+      );
+      throw createRuntimeFailure("APPROVAL_DENIED", "Recovery tool approval was denied.");
+    }
+
+    await this.deps.appendRunEvent(
+      input.runId,
+      input.session.sessionId,
+      "interaction.resolved",
+      "INFO",
+      { kind: "recovery_tool_approval", decisionId, adapterId, approvalId, actorId },
+      input.stepIndex,
+      { bypassBuffer: true },
+    );
+    return {
+      status: "RUNNING",
+      nextStepAgent: input.stepName,
+      statePatch: {
+        agent: {
+          ...(agent ?? {}),
+          exec: {
+            ...(exec ?? {}),
+            pendingApproval: undefined,
+          },
+          recovery: { pending: recovery },
+        },
+      },
+      effects: [{
+        type: "tool.execute",
+        payload: {
+          toolName,
+          toolInput: structuredClone(toolInput),
+          recoveryDecision: structuredClone(decision),
+          recoveryAdapterId: adapterId,
+          recoverySourceToolId: sourceToolId,
+          externalApprovalBinding: structuredClone(binding),
+        },
+        idempotencyKey: typeof recovery.idempotencyKey === "string"
+          ? recovery.idempotencyKey
+          : `${decisionId}:tool:${toolName}`,
+        failurePolicy: "STOP",
+      }],
+    };
   }
 
   private async selectStep(input: {

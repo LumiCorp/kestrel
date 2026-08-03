@@ -54,6 +54,7 @@ export interface KestrelOptions {
   runEventListener?: RunEventListener;
   stepContractRegistry?: StepContractRegistry;
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
+  recoveryRuntime?: import("../engine/recovery/RecoveryCoordinator.js").RecoveryRuntimeConfiguration | undefined;
 }
 
 export class Kestrel {
@@ -74,7 +75,10 @@ export class Kestrel {
     this.managedTaskWorktreeService = options.managedTaskWorktreeService;
     this.providerReasoningVault = options.providerReasoningVault;
 
-    const executeToolCallHandler = createExecuteToolCallHandler(this.toolGateway);
+    const executeToolCallHandler = createExecuteToolCallHandler(
+      this.toolGateway,
+      options.recoveryRuntime?.toolAdapterRegistry,
+    );
     this.effectRegistry.register("send_message", sendMessageHandler);
     this.effectRegistry.register("assistant.respond", sendMessageHandler);
     this.effectRegistry.register("test_noop", testNoopHandler);
@@ -131,6 +135,7 @@ export class Kestrel {
         reasoningReporter,
         ...(options.runEventListener !== undefined ? { runEventListener: options.runEventListener } : {}),
         ...(options.heapDiagnostics !== undefined ? { heapDiagnostics: options.heapDiagnostics } : {}),
+        ...(options.recoveryRuntime !== undefined ? { recoveryRuntime: options.recoveryRuntime } : {}),
         outputNormalizer: new DefaultOutputNormalizer(),
       },
       options.guardrails,

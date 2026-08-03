@@ -76,6 +76,7 @@ export function resolveRecoveryPolicyForProfile(
           "MAX_MODEL_CALLS_EXCEEDED",
           "MAX_STEPS_EXCEEDED",
           "NO_PROGRESS_REASONING_LOOP",
+          "RUNTIME_HEAP_PRESSURE",
           "SANDBOX_TIMEOUT",
           "SANDBOX_UNAVAILABLE",
         ],

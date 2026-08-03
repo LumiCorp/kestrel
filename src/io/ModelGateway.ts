@@ -117,7 +117,7 @@ export class RetryingModelGateway implements ModelGateway {
           });
         }
         const retryable = isRetryableModelError(error);
-        const willRetry =
+        const retryEligible =
           attempt < maxAttempts - 1 &&
           visibleOutputStarted === false &&
           retryable &&
@@ -126,7 +126,19 @@ export class RetryingModelGateway implements ModelGateway {
             this.config.timingPolicy,
             Date.now() - startedAtMs,
           );
-        const retryDelayMs = willRetry ? resolveRetryDelayMs(error, attempt) : undefined;
+        const retryDelayMs = retryEligible ? resolveRetryDelayMs(error, attempt) : undefined;
+        const retryAuthorized = retryEligible && options.authorizeRetry !== undefined
+          ? await options.authorizeRetry({
+              attempt: attemptNumber,
+              maxAttempts,
+              ...(readFailureCode(error) !== undefined ? { failureCode: readFailureCode(error) } : {}),
+              ...(readFailureClass(error) !== undefined ? { failureClass: readFailureClass(error) } : {}),
+              retryable,
+              visibleOutputStarted,
+              ...(retryDelayMs !== undefined ? { retryDelayMs } : {}),
+            })
+          : retryEligible;
+        const willRetry = retryEligible && retryAuthorized;
         await options.onEvent?.({
           type: "attempt.failed",
           attempt: attemptNumber,

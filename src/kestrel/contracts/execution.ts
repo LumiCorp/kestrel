@@ -303,6 +303,7 @@ export interface RuntimeDependencies {
   outputNormalizer: OutputNormalizer;
   runEventListener?: ((event: PersistedRuntimeEvent) => void | Promise<void>) | undefined;
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
+  recoveryRuntime?: import("../../engine/recovery/RecoveryCoordinator.js").RecoveryRuntimeConfiguration | undefined;
 }
 
 export type { ManagedTaskWorktreeBinding, ManagedTaskWorktreeService };
