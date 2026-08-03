@@ -252,12 +252,15 @@ test("macOS Keychain purge deletes every exact-service item and is idempotent", 
   });
 });
 
-test("macOS Keychain purge works against a disposable keychain", async () => {
-  if (process.platform !== "darwin") return;
+test("macOS Keychain purge works against a disposable keychain", async (t) => {
+  if (process.platform !== "darwin" || process.env.CI === "true") {
+    t.skip("requires a non-CI macOS login keychain session");
+    return;
+  }
   const root = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-disposable-keychain-"),
   );
-  const keychainPath = path.join(root, "uninstall-test.keychain-db");
+  const keychainPath = path.join(root, `${path.basename(root)}.keychain-db`);
   const password = "kestrel-uninstall-test";
   const security = (
     args: string[],
@@ -272,9 +275,11 @@ test("macOS Keychain purge works against a disposable keychain", async () => {
     };
   };
   try {
+    const created = security(["create-keychain", "-p", password, keychainPath]);
     assert.equal(
-      security(["create-keychain", "-p", password, keychainPath]).exitCode,
+      created.exitCode,
       0,
+      `Failed to create disposable keychain: ${created.stderr.trim()}`,
     );
     assert.equal(
       security(["unlock-keychain", "-p", password, keychainPath]).exitCode,

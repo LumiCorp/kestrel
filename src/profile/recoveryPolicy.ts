@@ -125,6 +125,18 @@ export function resolveProfileWithRecoveryPolicy(
   };
 }
 
+export function rebindRecoveryPolicyPrimaryModel(
+  profile: TuiProfile,
+  policy: RecoveryPolicyV1,
+): RecoveryPolicyV1 {
+  const parsed = parseRecoveryPolicyV1(policy);
+  return createRecoveryPolicyV1({
+    policyId: parsed.policyId,
+    primaryModel: buildPrimaryCandidate(profile),
+    stages: parsed.stages,
+  });
+}
+
 export function resolveRecoveryMaxAttempts(
   provider: NonNullable<TuiProfile["modelProvider"]>,
   env: NodeJS.ProcessEnv = process.env,

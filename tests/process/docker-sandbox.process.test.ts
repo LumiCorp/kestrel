@@ -190,6 +190,7 @@ test(
   async () => {
     await requireDocker();
     const containerName = testContainerName("paused-snapshot");
+    const lifecycleSince = new Date(Date.now() - 1_000).toISOString();
     const execution = fixedNameExecutor(containerName).execute({
       request: {
         language: "javascript",
@@ -206,8 +207,8 @@ test(
       policy: policy({ workspaceSizeMb: 24, maxArtifactBytes: 16 * 1024 * 1024 }),
     });
 
-    await waitForContainerPaused(containerName);
     const result = await execution;
+    await assertContainerLifecycleEvent(containerName, "pause", lifecycleSince);
     assert.equal(result.status, "ok", result.stderr);
     const artifact = result.artifacts.find((item) => item.path === "artifact.txt");
     assert.ok(
@@ -527,24 +528,33 @@ async function waitForContainer(
   );
 }
 
-async function waitForContainerPaused(containerName: string): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    try {
-      const { stdout } = await execFileAsync(
-        "docker",
-        ["inspect", "--format", "{{.State.Paused}}", containerName],
-        { timeout: 5_000 },
-      );
-      if (stdout.trim() === "true") {
-        return;
-      }
-    } catch {
-      // The executor may still be creating the named container.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  assert.fail(`Expected Docker container '${containerName}' to become paused.`);
+async function assertContainerLifecycleEvent(
+  containerName: string,
+  action: string,
+  since: string,
+): Promise<void> {
+  const { stdout } = await execFileAsync(
+    "docker",
+    [
+      "events",
+      "--since",
+      since,
+      "--until",
+      new Date().toISOString(),
+      "--filter",
+      `container=${containerName}`,
+      "--filter",
+      `event=${action}`,
+      "--format",
+      "{{.Action}}",
+    ],
+    { timeout: 10_000 },
+  );
+  assert.equal(
+    stdout.trim().split("\n").includes(action),
+    true,
+    `Expected Docker container '${containerName}' to emit '${action}'.`,
+  );
 }
 
 async function containerExists(containerName: string): Promise<boolean> {
