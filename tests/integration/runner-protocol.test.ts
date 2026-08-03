@@ -16,6 +16,7 @@ import {
   buildPersistedRuntimeEventFromProgressUpdate,
   buildPersistedRuntimeEventFromToolUpdate,
 } from "../../src/events/RuntimeEventProjections.js";
+import { createRecoveryPolicyV1 } from "../../src/kestrel/contracts/recovery.js";
 import type {
   ProgressUpdateV1,
   ModelReasoningUpdateV1,
@@ -318,10 +319,12 @@ test("run.start rejects a mismatched gateway-managed model reference", async () 
           model: "openai/gpt-5.4",
           modelCredential: {
             source: "kestrel-one",
+            runId: "run-invalid",
             organizationId: "org-acme",
             environmentId: "env-production",
             gatewayId: "gateway-openrouter",
             rawModelId: "z-ai/glm-5.2",
+            provider: "openrouter",
           },
         },
         turn: {
@@ -380,10 +383,12 @@ test("run.start rejects a stale gateway-managed agent loop model", async () => {
           },
           modelCredential: {
             source: "kestrel-one",
+            runId: "run-invalid",
             organizationId: "org-acme",
             environmentId: "env-production",
             gatewayId: "gateway-openrouter",
             rawModelId: "openai/gpt-5.4",
+            provider: "openrouter",
           },
         },
         turn: {
@@ -433,10 +438,12 @@ test("run.start binds a gateway-managed credential to command tenant context", a
           },
           modelCredential: {
             source: "kestrel-one",
+            runId: "run-cross-tenant",
             organizationId: "org-acme",
             environmentId: "env-production",
             gatewayId: "gateway-openrouter",
             rawModelId: "openai/gpt-5.4",
+            provider: "openrouter",
           },
         },
         turn: {
@@ -454,6 +461,106 @@ test("run.start binds a gateway-managed credential to command tenant context", a
   assert.match(
     String(events[0]?.payload.message),
     /does not belong to the authenticated tenant/u,
+  );
+  rl.close();
+  await host.close();
+});
+
+test("run.start rejects a recovery candidate bound to another tenant", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => {
+    throw new Error("cross-tenant recovery profile must not construct a runtime");
+  });
+  const router = new CommandRouter(host, writer);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  const primary = {
+    candidateId: "primary",
+    provider: "openrouter" as const,
+    model: "openai/gpt-5.4",
+    capabilities: {
+      visionInputEnabled: false,
+      toolCallingEnabled: true,
+      structuredOutputEnabled: true,
+      reasoningModes: ["off", "summary", "provider_visible"] as Array<
+        "off" | "summary" | "provider_visible"
+      >,
+    },
+    credentialReference: {
+      source: "kestrel-one" as const,
+      runId: "run-recovery",
+      organizationId: "org-acme",
+      environmentId: "env-production",
+      gatewayId: "gateway-openrouter",
+      rawModelId: "openai/gpt-5.4",
+      provider: "openrouter" as const,
+    },
+  };
+  const recoveryPolicy = createRecoveryPolicyV1({
+    policyId: "recovery:tenant-test",
+    primaryModel: primary,
+    stages: [
+      {
+        stageId: "model.alternate",
+        scope: "model_call",
+        failureCodes: ["MODEL_TIMEOUT"],
+        action: "alternate_model",
+        candidates: [
+          {
+            ...primary,
+            candidateId: "fallback",
+            credentialReference: {
+              ...primary.credentialReference,
+              organizationId: "org-other",
+              gatewayId: "gateway-fallback",
+            },
+          },
+        ],
+      },
+      {
+        stageId: "run.terminal",
+        scope: "run",
+        failureCodes: ["RECOVERY_EXHAUSTED"],
+        action: "terminal_failure",
+        terminalCode: "RECOVERY_EXHAUSTED",
+      },
+    ],
+  });
+
+  await router.acceptLine(
+    JSON.stringify({
+      id: "cmd-cross-tenant-recovery",
+      type: "run.start",
+      payload: {
+        profile: {
+          ...profile,
+          modelProvider: "openrouter",
+          model: "openai/gpt-5.4",
+          agentStageConfig: {
+            modelByStage: { "agent.loop": "openai/gpt-5.4" },
+          },
+          modelCredential: primary.credentialReference,
+          recoveryPolicy,
+        },
+        turn: {
+          sessionId: "session-cross-tenant-recovery",
+          message: "hello",
+          eventType: "user.message",
+        },
+      },
+      metadata: { tenantId: "org-acme" },
+    }),
+  );
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.match(
+    String(events[0]?.payload.message),
+    /Recovery candidate 'fallback' does not belong to the authenticated tenant/u,
   );
   rl.close();
   await host.close();

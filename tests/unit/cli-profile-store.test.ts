@@ -50,7 +50,7 @@ test("ProfileStore bootstraps default profile when file is missing", async () =>
   assert.equal(profiles[0]?.toolAllowlist?.includes("fs.replace_text"), false);
 
   const persisted = parseProfilesFile(await readFile(path.join(tempDir, "profiles.json"), "utf8"));
-  assert.equal(persisted.sourceVersion, 7);
+  assert.equal(persisted.sourceVersion, 8);
   assert.equal(
     persisted.managedProfileOverlays?.["kestrel@cli_safe_local"] !== undefined,
     true,
@@ -61,7 +61,7 @@ test("ProfileStore bootstraps default profile when file is missing", async () =>
   assert.equal(persisted.profiles[0]?.environmentPresetId, undefined);
 });
 
-test("ProfileStore v7 migrates only generated local profiles and emits the isolation notice once", async () => {
+test("ProfileStore v8 migrates only generated local profiles and emits the isolation notice once", async () => {
   const tempDir = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-profile-store-safe-migration-"),
   );
@@ -133,7 +133,7 @@ test("ProfileStore v7 migrates only generated local profiles and emits the isola
   ]);
 
   const persisted = JSON.parse(await readFile(filePath, "utf8"));
-  assert.equal(persisted.version, 7);
+  assert.equal(persisted.version, 8);
   assert.equal(
     persisted.managedProfileOverlays["kestrel@cli_safe_local"].theme.brandAlt,
     "#123456",
@@ -146,6 +146,72 @@ test("ProfileStore v7 migrates only generated local profiles and emits the isola
 
   await store.load();
   assert.deepEqual(store.consumeLoadNotices(), []);
+});
+
+test("ProfileStore migrates V7 custom recovery behavior to V8 without changing Docker quotas", async () => {
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-v8-recovery-"),
+  );
+  const filePath = path.join(tempDir, "profiles.json");
+  const sandboxQuotas = {
+    workspaceSizeMb: 96,
+    workspaceInodes: 12_000,
+    tmpSizeMb: 48,
+    tmpInodes: 4_000,
+  };
+  await writeFile(
+    filePath,
+    `${JSON.stringify({
+      version: 7,
+      profiles: [
+        {
+          id: "custom-v7",
+          label: "Custom V7",
+          agent: "reference-react",
+          sessionPrefix: "custom-v7",
+          codeMode: {
+            enabled: true,
+            sandbox: sandboxQuotas,
+          },
+        },
+      ],
+      managedProfileOverlays: {},
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const profiles = await new ProfileStore(tempDir).load();
+  const custom = profiles.find((profile) => profile.id === "custom-v7");
+  assert.deepEqual(
+    custom?.recoveryPolicy?.stages.map((stage) => stage.action),
+    ["retry_same_route", "terminal_failure"],
+  );
+  assert.equal(custom?.recoveryPolicy?.stages[0]?.action, "retry_same_route");
+  assert.equal(
+    custom?.recoveryPolicy?.stages[0]?.action === "retry_same_route"
+      ? custom.recoveryPolicy.stages[0].maxAttempts
+      : undefined,
+    3,
+  );
+
+  const persisted = JSON.parse(await readFile(filePath, "utf8")) as {
+    version: number;
+    profiles: Array<{ codeMode?: { sandbox?: Record<string, number> } }>;
+  };
+  assert.equal(persisted.version, 8);
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.keys(sandboxQuotas).map((key) => [
+        key,
+        persisted.profiles[0]?.codeMode?.sandbox?.[key],
+      ]),
+    ),
+    sandboxQuotas,
+  );
+  assert.equal(
+    (await readFile(`${filePath}.v7.bak`, "utf8")).includes('"version": 7'),
+    true,
+  );
 });
 
 test("ProfileStore applies shared model policy when profiles.json is missing", async () => {
@@ -270,7 +336,7 @@ test("ProfileStore reconciles persisted Kestrel-One collaborator dialogs idempot
   );
   assert.deepEqual(firstLoad, secondLoad);
   assert.equal(firstPersisted, secondPersisted);
-  assert.equal(JSON.parse(firstPersisted).version, 7);
+  assert.equal(JSON.parse(firstPersisted).version, 8);
   assert.equal(
     JSON.parse(firstPersisted).profiles.some(
       (profile: { id?: string }) => profile.id === "kestrel-one",
@@ -326,7 +392,7 @@ test("ProfileStore adds Kestrel-One profile to existing profile files", async ()
   );
 
   const saved = parseProfilesFile(await readFile(filePath, "utf8"));
-  assert.equal(saved.sourceVersion, 7);
+  assert.equal(saved.sourceVersion, 8);
   assert.equal(saved.profiles.some((profile) => profile.id === "kestrel"), false);
   assert.equal(
     saved.managedProfileOverlays?.["kestrel@cli_safe_local"]?.default,
@@ -470,14 +536,14 @@ test("ProfileStore never persists transient gateway credential references", asyn
           agent: "reference-react",
           sessionPrefix: "reference",
           modelProvider: "openrouter",
-          model: "openai/gpt-5.4",
+          model: "z-ai/glm-5.2",
           modelCredential: {
             source: "kestrel-one",
             runId: "run-active",
             organizationId: "org-acme",
             environmentId: "env-production",
             gatewayId: "gateway-openrouter",
-            rawModelId: "openai/gpt-5.4",
+            rawModelId: "z-ai/glm-5.2",
             provider: "openrouter",
           },
         },

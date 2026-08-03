@@ -29,6 +29,7 @@ import {
 } from "@/lib/agent/kestrel-runtime-core";
 import {
   isKestrelOneManagedRuntimeModel,
+  toRecoveryModelCandidate,
   toKestrelOneRuntimeModelSelection,
   type DesktopLocalRuntimeModelSelection,
   type EnvironmentRuntimeModelSelection,
@@ -484,7 +485,9 @@ function createModelAwareKestrelOneAgent(input: {
               effectiveCapabilities: route.effectiveCapabilities,
               reasoningPolicy: route.reasoningPolicy,
             },
-            runtimeModel,
+            ...(runtimeModel !== undefined
+              ? { runtimeModels: [runtimeModel] }
+              : {}),
           });
           const downstream = client.streamRun(
             {
@@ -592,8 +595,15 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     effectiveCapabilities: string[];
     reasoningPolicy?: RunnerProfile["reasoning"] | undefined;
   };
-  runtimeModel?: EnvironmentRuntimeModelSelection | undefined;
+  runtimeModels?:
+    | readonly [
+        EnvironmentRuntimeModelSelection,
+        ...EnvironmentRuntimeModelSelection[],
+      ]
+    | undefined;
 }) {
+  const primaryRuntimeModel = input.runtimeModels?.[0];
+  const fallbackRuntimeModels = input.runtimeModels?.slice(1) ?? [];
   const toolConfiguration = resolveKestrelOneToolProfileConfiguration({
     availableToolNames: [...KESTREL_ONE_HOSTED_RUNTIME_TOOL_NAMES],
     effectiveCapabilities: input.route.effectiveCapabilities,
@@ -609,26 +619,38 @@ export async function resolveHostedKestrelExecutionProfile(input: {
         ...(input.route.reasoningPolicy !== undefined
           ? { reasoning: input.route.reasoningPolicy }
           : {}),
-        ...(input.runtimeModel !== undefined
+        ...(primaryRuntimeModel !== undefined
           ? {
-              modelProvider: input.runtimeModel.provider,
-              model: input.runtimeModel.model,
+              modelProvider: primaryRuntimeModel.provider,
+              model: primaryRuntimeModel.model,
               agentStageConfig: {
                 modelByStage: {
-                  "agent.loop": input.runtimeModel.model,
+                  "agent.loop": primaryRuntimeModel.model,
                 },
               },
-              ...(isKestrelOneManagedRuntimeModel(input.runtimeModel)
+              ...(isKestrelOneManagedRuntimeModel(primaryRuntimeModel)
                 ? {
                     modelCredential: {
                       source: "kestrel-one",
                       runId: input.route.runId,
-                      gatewayId: input.runtimeModel.gatewayId,
-                      organizationId: input.runtimeModel.organizationId,
-                      environmentId: input.runtimeModel.environmentId,
-                      rawModelId: input.runtimeModel.model,
-                      provider: input.runtimeModel.provider,
+                      gatewayId: primaryRuntimeModel.gatewayId,
+                      organizationId: primaryRuntimeModel.organizationId,
+                      environmentId: primaryRuntimeModel.environmentId,
+                      rawModelId: primaryRuntimeModel.model,
+                      provider: primaryRuntimeModel.provider,
                     },
+                  }
+                : {}),
+              ...(fallbackRuntimeModels.length > 0
+                ? {
+                    recoveryModelCandidates: fallbackRuntimeModels.map(
+                      (candidate, index) =>
+                        toRecoveryModelCandidate(
+                          candidate,
+                          index + 1,
+                          input.route.runId,
+                        ),
+                    ),
                   }
                 : {}),
               default: false,
@@ -793,7 +815,7 @@ export async function generateKestrelOneExternalReply(input: {
         effectiveCapabilities: route.effectiveCapabilities,
         reasoningPolicy: route.reasoningPolicy,
       },
-      runtimeModel,
+      runtimeModels: [runtimeModel],
     });
     const result = await generateKestrelOneExternalReplyFromAgent({
       agent: {
@@ -949,7 +971,7 @@ async function resolveDesktopLocalRuntimeModel(input: {
   const match = input.selection.match(
     /^desktop-local:(openai|openrouter|anthropic|ollama|lmstudio):(.+)$/u,
   );
-  if (!match?.[1] || !match[2]) {
+  if (!(match?.[1] && match[2])) {
     throw new Error("The selected Desktop-local model ID is invalid.");
   }
   let model: string;

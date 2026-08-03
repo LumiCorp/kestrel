@@ -18,6 +18,10 @@ import type {
   GuardrailConfig,
 } from "../../src/kestrel/contracts/execution.js";
 import { parseHarnessEconomicsControlV1 } from "../../src/economics/policy.js";
+import {
+  parseRecoveryModelCandidateV1,
+  parseRecoveryPolicyV1,
+} from "../../src/kestrel/contracts/recovery.js";
 import type {
   McpServerConfig,
 } from "../../src/mcp/contracts.js";
@@ -30,6 +34,7 @@ import {
   ModelPolicyStore,
   resolveProfileWithModelPolicy,
 } from "../../src/profile/modelPolicy.js";
+import { resolveRecoveryPolicyForProfile } from "../../src/profile/recoveryPolicy.js";
 import {
   composeKestrelOneProfile,
   KESTREL_ONE_DIALOG_TOOL_NAMES,
@@ -41,7 +46,7 @@ import {
 import { resolveRuntimeProfileSelection } from "../../src/profile/runtimeProfile.js";
 import type {
   KestrelOneManagedProfileOverlay,
-  ProfilesFileV7,
+  ProfilesFileV8,
   ToolQueueProfileConfig,
   TuiProfile,
 } from "../contracts.js";
@@ -139,12 +144,12 @@ const LEGACY_PROFILE_ALIASES: Readonly<Record<string, string>> = {
 const LOCAL_ISOLATION_MIGRATION_NOTICE =
   "Generated local profiles now use isolated execution. Select the cli_dev_local developer preset to restore host-shell access.";
 
-type ManagedProfileOverlays = ProfilesFileV7["managedProfileOverlays"];
+type ManagedProfileOverlays = ProfilesFileV8["managedProfileOverlays"];
 
 interface ParsedProfilesResult {
   profiles: TuiProfile[];
   managedProfileOverlays?: ManagedProfileOverlays | undefined;
-  sourceVersion: 2 | 3 | 4 | 5 | 6 | 7;
+  sourceVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8;
   migrated: boolean;
   notices: string[];
 }
@@ -308,9 +313,10 @@ export class ProfileStore {
       if (
         parsed.sourceVersion === 4 ||
         parsed.sourceVersion === 5 ||
-        parsed.sourceVersion === 6
+        parsed.sourceVersion === 6 ||
+        parsed.sourceVersion === 7
       ) {
-        await this.writePreVersion7Backup(raw, parsed.sourceVersion);
+        await this.writeVersionedBackup(raw, parsed.sourceVersion);
       }
       await this.save(profiles, parsed.managedProfileOverlays);
     }
@@ -352,8 +358,8 @@ export class ProfileStore {
           }
         : {}),
     };
-    const payload: ProfilesFileV7 = {
-      version: 7,
+    const payload: ProfilesFileV8 = {
+      version: 8,
       profiles: profiles
         .filter((profile) => isKestrelManagedProfileId(profile.id) === false)
         .map((profile) => sanitizeProfileForPersistence(profile)),
@@ -419,9 +425,9 @@ export class ProfileStore {
     }
   }
 
-  private async writePreVersion7Backup(
+  private async writeVersionedBackup(
     raw: string,
-    version: 4 | 5 | 6,
+    version: 4 | 5 | 6 | 7,
   ): Promise<void> {
     try {
       await writeFile(`${this.filePath}.v${version}.bak`, raw, {
@@ -482,10 +488,11 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
     version !== 4 &&
     version !== 5 &&
     version !== 6 &&
-    version !== 7
+    version !== 7 &&
+    version !== 8
   ) {
     throw new ProfileSchemaVersionError(
-      "profiles.json version must be 2, 3, 4, 5, 6, or 7",
+      "profiles.json version must be 2, 3, 4, 5, 6, 7, or 8",
     );
   }
 
@@ -498,7 +505,7 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
     validateProfile(profile, version, notices),
   );
   const managedProfileOverlays =
-    version === 5 || version === 6 || version === 7
+    version === 5 || version === 6 || version === 7 || version === 8
       ? parseKestrelOneManagedOverlays(
           root.managedProfileOverlays,
           notices,
@@ -523,7 +530,7 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
       ? { managedProfileOverlays }
       : {}),
     sourceVersion: version,
-    migrated: version !== 7,
+    migrated: version !== 8,
     notices,
   };
 }
@@ -622,7 +629,7 @@ class ProfileSchemaVersionError extends Error {}
 
 function validateProfile(
   value: unknown,
-  version: 2 | 3 | 4 | 5 | 6 | 7,
+  version: 2 | 3 | 4 | 5 | 6 | 7 | 8,
   notices: string[],
 ): TuiProfile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -677,6 +684,10 @@ function validateProfile(
       ? item.model
       : undefined;
   const modelCredential = parseModelCredential(item.modelCredential, id);
+  const recoveryPolicy =
+    version >= 8 && item.recoveryPolicy !== undefined
+      ? parseRecoveryPolicyV1(item.recoveryPolicy)
+      : undefined;
   const storeDriver = parseStoreDriver(item.storeDriver, id);
   const approvalPolicyPackId = parseApprovalPolicyPackId(
     item.approvalPolicyPackId,
@@ -728,6 +739,7 @@ function validateProfile(
     ...(modelProvider !== undefined ? { modelProvider } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(modelCredential !== undefined ? { modelCredential } : {}),
+    ...(recoveryPolicy !== undefined ? { recoveryPolicy } : {}),
     ...(storeDriver !== undefined ? { storeDriver } : {}),
     ...(approvalPolicyPackId !== undefined ? { approvalPolicyPackId } : {}),
     ...(modeSystemV2Enabled !== undefined ? { modeSystemV2Enabled } : {}),
@@ -857,6 +869,9 @@ function createManagedKestrelOneProfile(
     ...(overlay.reasoning !== undefined
       ? { reasoning: overlay.reasoning }
       : {}),
+    ...(overlay.recoveryPolicy !== undefined
+      ? { recoveryPolicy: overlay.recoveryPolicy }
+      : {}),
     ...(overlay.theme !== undefined ? { theme: overlay.theme } : {}),
     default: true,
   };
@@ -917,6 +932,9 @@ function extractKestrelOneManagedOverlay(
     ...(profile.reasoning !== undefined
       ? { reasoning: structuredClone(profile.reasoning) }
       : {}),
+    ...(isAuthoredRecoveryPolicy(profile)
+      ? { recoveryPolicy: structuredClone(profile.recoveryPolicy) }
+      : {}),
     ...(profile.theme !== undefined
       ? { theme: structuredClone(profile.theme) }
       : {}),
@@ -927,7 +945,7 @@ function extractKestrelOneManagedOverlay(
 function parseKestrelOneManagedOverlays(
   value: unknown,
   notices: string[],
-  sourceVersion: 5 | 6 | 7,
+  sourceVersion: 5 | 6 | 7 | 8,
 ): ManagedProfileOverlays | undefined {
   if (value === undefined) return;
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -947,11 +965,11 @@ function parseKestrelOneManagedOverlays(
       `profiles.json managedProfileOverlays contains unsupported key '${unsupportedKey}'`,
     );
   }
-  const parsed: ProfilesFileV7["managedProfileOverlays"] = {};
+  const parsed: ProfilesFileV8["managedProfileOverlays"] = {};
   const legacyLocalRaw =
     overlays["kestrel@cli_dev_local"] ??
     overlays["kestrel-one@cli_dev_local"];
-  if (sourceVersion === 7) {
+  if (sourceVersion >= 7) {
     for (const key of [
       "kestrel@cli_safe_local",
       "kestrel@cli_dev_local",
@@ -989,6 +1007,7 @@ const KESTREL_MANAGED_OVERLAY_FIELDS = new Set([
   "devShell",
   "delegationLimits",
   "reasoning",
+  "recoveryPolicy",
   "theme",
   "default",
 ]);
@@ -999,6 +1018,8 @@ const KESTREL_MANAGED_CONFIGURATION_FIELDS = new Set([
   "modelProvider",
   "model",
   "modelCredential",
+  "recoveryPolicy",
+  "recoveryModelCandidates",
   "modelCapabilities",
   "agentStageConfig",
   "modelTimeoutMs",
@@ -1021,6 +1042,14 @@ export function parseKestrelManagedConfiguration(
   if (unknown !== undefined) {
     throw new Error(
       `execution-profile.resolve managedConfiguration contains unsupported field '${unknown}'`,
+    );
+  }
+  if (
+    record.recoveryPolicy !== undefined &&
+    record.recoveryModelCandidates !== undefined
+  ) {
+    throw new Error(
+      "execution-profile.resolve managedConfiguration cannot include both recoveryPolicy and recoveryModelCandidates",
     );
   }
   const overlay = parseKestrelOneManagedOverlayValue(
@@ -1051,6 +1080,16 @@ export function parseKestrelManagedConfiguration(
           modelCredential: parseModelCredential(
             record.modelCredential,
             KESTREL_ONE_POLICY_ID,
+          ),
+        }
+      : {}),
+    ...(record.recoveryPolicy !== undefined
+      ? { recoveryPolicy: parseRecoveryPolicyV1(record.recoveryPolicy) }
+      : {}),
+    ...(record.recoveryModelCandidates !== undefined
+      ? {
+          recoveryModelCandidates: parseRecoveryModelCandidates(
+            record.recoveryModelCandidates,
           ),
         }
       : {}),
@@ -1193,6 +1232,9 @@ function parseKestrelOneManagedOverlayValue(
           ),
         }
       : {}),
+    ...(record.recoveryPolicy !== undefined
+      ? { recoveryPolicy: parseRecoveryPolicyV1(record.recoveryPolicy) }
+      : {}),
     ...(record.theme !== undefined
       ? {
           theme: parseTheme(
@@ -1268,6 +1310,7 @@ function isKestrelManagedProfileId(profileId: string): boolean {
 }
 
 function sanitizeProfileForPersistence(profile: TuiProfile): TuiProfile {
+  const preserveRecoveryPolicy = isAuthoredRecoveryPolicy(profile);
   const persisted = structuredClone(profile);
   delete persisted.environmentShellKind;
   delete persisted.environmentPresetId;
@@ -1278,7 +1321,29 @@ function sanitizeProfileForPersistence(profile: TuiProfile): TuiProfile {
   delete persisted.modelCapabilities;
   delete persisted.agentStageConfig;
   delete persisted.modelTimeoutMs;
+  if (preserveRecoveryPolicy === false) {
+    delete persisted.recoveryPolicy;
+  }
   return persisted;
+}
+
+function isAuthoredRecoveryPolicy(profile: TuiProfile): boolean {
+  if (
+    profile.recoveryPolicy === undefined ||
+    profile.modelProvider === undefined ||
+    profile.model === undefined
+  ) {
+    return false;
+  }
+  try {
+    const generated = resolveRecoveryPolicyForProfile({
+      ...structuredClone(profile),
+      recoveryPolicy: undefined,
+    });
+    return generated.revision !== profile.recoveryPolicy.revision;
+  } catch {
+    return true;
+  }
 }
 
 function pickRecordFields(
@@ -1367,6 +1432,26 @@ function parseModelCredential(
     rawModelId: candidate.rawModelId.trim(),
     provider: candidate.provider,
   };
+}
+
+function parseRecoveryModelCandidates(value: unknown) {
+  if (Array.isArray(value) === false || value.length === 0) {
+    throw new Error(
+      "execution-profile.resolve managedConfiguration.recoveryModelCandidates must be a non-empty array",
+    );
+  }
+  const candidates = value.map((candidate) =>
+    parseRecoveryModelCandidateV1(candidate),
+  );
+  if (
+    new Set(candidates.map((candidate) => candidate.candidateId)).size !==
+    candidates.length
+  ) {
+    throw new Error(
+      "execution-profile.resolve managedConfiguration.recoveryModelCandidates must have unique candidate IDs",
+    );
+  }
+  return candidates;
 }
 
 function parseStoreDriver(

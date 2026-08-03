@@ -6,6 +6,7 @@ import type { TuiProfile } from "../../cli/contracts.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { resolveKestrelHomePath } from "../runtime/kestrelHome.js";
 import { DEFAULT_MODEL_BY_PROVIDER, type ModelProviderId } from "./runtimeProfile.js";
+import { resolveProfileWithRecoveryPolicy } from "./recoveryPolicy.js";
 
 export const MODEL_POLICY_FILE_NAME = "model-policy.json";
 
@@ -140,12 +141,13 @@ export function resolveModelPolicyPath(baseDir?: string): string {
 export function resolveProfileWithModelPolicy(
   profile: TuiProfile,
   policy: ResolvedModelPolicy,
+  options: { env?: NodeJS.ProcessEnv | undefined } = {},
 ): TuiProfile {
   const modelByStage = {
     "agent.loop": policy.model,
     ...policy.modelByStage,
   };
-  return {
+  return resolveProfileWithRecoveryPolicy({
     ...structuredClone(profile),
     modelProvider: policy.provider,
     model: policy.model,
@@ -158,7 +160,7 @@ export function resolveProfileWithModelPolicy(
       ...(profile.modelCapabilities ?? {}),
       visionInputEnabled: policy.modelCapabilities.visionInputEnabled,
     },
-  };
+  }, options);
 }
 
 export class ModelPolicyStore {

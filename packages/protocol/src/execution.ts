@@ -342,6 +342,7 @@ export interface RunnerProfile {
   sessionPrefix: string;
   modelProvider?: RunnerModelProvider | undefined;
   model?: string | undefined;
+  recoveryPolicy?: Record<string, unknown> | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   defaultInteractionMode?: RunnerInteractionMode | undefined;
   defaultActSubmode?: RunnerActSubmode | undefined;
@@ -3197,6 +3198,7 @@ function validateRunnerProfile(
     "lmstudio",
   ]);
   validateOptionalNonEmptyString(profile.model, `${label}.model`);
+  validateOptionalRecord(profile.recoveryPolicy, `${label}.recoveryPolicy`);
   validateOptionalBoolean(profile.modeSystemV2Enabled, `${label}.modeSystemV2Enabled`);
   validateOptionalEnum(profile.defaultInteractionMode, `${label}.defaultInteractionMode`, [
     "chat",

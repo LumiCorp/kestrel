@@ -4,6 +4,10 @@ import {
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
 import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
+import {
+  parseRecoveryModelCredentialReferenceV1,
+  parseRecoveryPolicyV1,
+} from "../../src/kestrel/contracts/recovery.js";
 import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
@@ -2284,6 +2288,23 @@ function validateProfilePayload(value: unknown, path: string): void {
     throw new Error(`${path}.agent must be a non-empty string`);
   }
   validateModelCredentialPayload(record, path);
+  if (record.recoveryPolicy !== undefined) {
+    const recoveryPolicy = parseRecoveryPolicyV1(record.recoveryPolicy);
+    const projectedCredential =
+      record.modelCredential === undefined
+        ? undefined
+        : parseRecoveryModelCredentialReferenceV1(record.modelCredential);
+    if (
+      recoveryPolicy.primaryModel.provider !== record.modelProvider ||
+      recoveryPolicy.primaryModel.model !== record.model ||
+      JSON.stringify(recoveryPolicy.primaryModel.credentialReference ?? null) !==
+        JSON.stringify(projectedCredential ?? null)
+    ) {
+      throw new Error(
+        `${path}.recoveryPolicy.primaryModel must match the profile primary model projection`,
+      );
+    }
+  }
 }
 
 function validateModelCredentialPayload(
@@ -2302,25 +2323,8 @@ function validateModelCredentialPayload(
   }
 
   const reference = profile.modelCredential as Record<string, unknown>;
-  if (reference.source !== "kestrel-one") {
-    throw new Error(`${path}.modelCredential.source must be 'kestrel-one'`);
-  }
-  const gatewayId = requireNonEmptyString(
-    reference.gatewayId,
-    `${path}.modelCredential.gatewayId`
-  );
-  const organizationId = requireNonEmptyString(
-    reference.organizationId,
-    `${path}.modelCredential.organizationId`,
-  );
-  const environmentId = requireNonEmptyString(
-    reference.environmentId,
-    `${path}.modelCredential.environmentId`,
-  );
-  const rawModelId = requireNonEmptyString(
-    reference.rawModelId,
-    `${path}.modelCredential.rawModelId`
-  );
+  const parsedReference = parseRecoveryModelCredentialReferenceV1(reference);
+  const rawModelId = parsedReference.rawModelId;
   const model = requireNonEmptyString(profile.model, `${path}.model`);
   if (model.trim() !== rawModelId.trim()) {
     throw new Error(
@@ -2342,26 +2346,6 @@ function validateModelCredentialPayload(
   if (agentLoopModel.trim() !== rawModelId.trim()) {
     throw new Error(
       `${path}.agentStageConfig.modelByStage.agent.loop must match ${path}.modelCredential.rawModelId for gateway-managed execution`,
-    );
-  }
-  if (gatewayId.trim() !== reference.gatewayId) {
-    throw new Error(
-      `${path}.modelCredential.gatewayId must not contain surrounding whitespace`
-    );
-  }
-  if (organizationId.trim() !== reference.organizationId) {
-    throw new Error(
-      `${path}.modelCredential.organizationId must not contain surrounding whitespace`,
-    );
-  }
-  if (environmentId.trim() !== reference.environmentId) {
-    throw new Error(
-      `${path}.modelCredential.environmentId must not contain surrounding whitespace`,
-    );
-  }
-  if (rawModelId.trim() !== reference.rawModelId) {
-    throw new Error(
-      `${path}.modelCredential.rawModelId must not contain surrounding whitespace`
     );
   }
 }
