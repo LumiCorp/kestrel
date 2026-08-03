@@ -81,20 +81,24 @@ logs, or readable API responses.
 
 ## User-enabled MCP servers
 
-Kestrel trusts administrators to select the OCI MCP servers they install and
-enable. Those servers receive full outbound networking by default because MCP
-integrations commonly require destinations that cannot be predicted at install
-time. `none` remains an explicit option for servers designed to run offline.
+Custom OCI MCP servers receive no network by default. Administrators may author
+an exact hostname, port, and HTTP protocol allowlist. The policy is parsed
+strictly, bound to the digest-pinned image and resolved execution profile, and
+never inferred or expanded from runtime behavior. Until the trusted gateway is
+available, allowlisted servers remain network-disabled rather than falling back
+to Docker bridge networking.
 
-Container isolation protects the host and limits filesystem access to explicit
-read-only mounts. It is not an outbound-network security boundary. An enabled
-OCI MCP server can contact arbitrary network destinations and can use only the
-credentials and mounted data explicitly configured for it. Kestrel communicates
-this authority when the server is installed.
+Unrestricted bridge networking is available only for a custom OCI MCP server
+with an organization-administrator risk acknowledgement and non-empty
+justification. Managed OCI MCP servers cannot use unrestricted mode. Container
+isolation still protects only the host and explicit filesystem mounts; an
+unrestricted exception can contact arbitrary internet, LAN, loopback,
+link-local, and metadata destinations and is recorded as an accepted risk.
 
-The architecture audit's default-deny egress zero is an accepted product risk,
-not unfinished implementation. Destination allowlists, egress brokers, and
-per-destination grants are intentionally outside the supported contract.
+This contract applies only to environment-installed OCI MCP containers. It
+does not close system-wide egress controls for host stdio servers, shells,
+browsers, package managers, other code containers, hosted workspaces, or remote
+clients.
 
 Workspace path checks prevent known static symlink escapes. Descriptor-relative
 TOCTOU hardening is deferred until mutually untrusted writers sharing one

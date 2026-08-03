@@ -58,6 +58,8 @@ import { recordGitHubActionApprovalRequest } from "@/lib/integrations/github-act
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import { synchronizeProjectSkills } from "@/lib/projects/skills";
+import { issueHostedMcpRunContext } from "@/lib/mcp/grant-service";
+import type { ResolvedOciMcpEgressBindingV1 } from "@kestrel/mcp-security";
 
 const DEFAULT_PROFILE_ID = "kestrel";
 const DEFAULT_HOSTED_AGENT_ID = "kestrel-one";
@@ -457,6 +459,29 @@ function createModelAwareKestrelOneAgent(input: {
           }
           const { signal, resumeRequestId, ...turn } = turnInput;
           const eventType = turn.eventType || "user.message";
+          const resolvedProfile = await resolveHostedKestrelExecutionProfile({
+            client,
+            context,
+            route: {
+              runId: route.runId,
+              environmentId: route.environmentId,
+              effectiveCapabilities: route.effectiveCapabilities,
+              reasoningPolicy: route.reasoningPolicy,
+              ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
+            },
+            ...(runtimeModel !== undefined
+              ? { runtimeModels: [runtimeModel] }
+              : {}),
+          });
+          const mcpContext = route.mcpPolicy
+            ? await issueHostedMcpRunContext({
+                runExecutionId: route.runId,
+                threadId: turn.sessionId,
+                executionProfileId: resolvedProfile.profileId,
+                executionProfileFingerprint: resolvedProfile.fingerprint,
+                resolvedPolicy: route.mcpPolicy,
+              })
+            : undefined;
           const normalizedTurn = {
             ...turn,
             eventType,
@@ -467,7 +492,7 @@ function createModelAwareKestrelOneAgent(input: {
                   resumeRequestId,
                 }
               : {}),
-            ...(route.mcpContext ? { mcpContext: route.mcpContext } : {}),
+            ...(mcpContext ? { mcpContext } : {}),
             ...(route.executionTicket
               ? {
                   mcpAuthorization: {
@@ -476,19 +501,6 @@ function createModelAwareKestrelOneAgent(input: {
                 }
               : {}),
           };
-          const resolvedProfile = await resolveHostedKestrelExecutionProfile({
-            client,
-            context,
-            route: {
-              runId: route.runId,
-              environmentId: route.environmentId,
-              effectiveCapabilities: route.effectiveCapabilities,
-              reasoningPolicy: route.reasoningPolicy,
-            },
-            ...(runtimeModel !== undefined
-              ? { runtimeModels: [runtimeModel] }
-              : {}),
-          });
           const downstream = client.streamRun(
             {
               profileId: resolvedProfile.profileId,
@@ -594,6 +606,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     environmentId: string;
     effectiveCapabilities: string[];
     reasoningPolicy?: RunnerProfile["reasoning"] | undefined;
+    ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;
   };
   runtimeModels?:
     | readonly [
@@ -618,6 +631,9 @@ export async function resolveHostedKestrelExecutionProfile(input: {
           toolConfiguration.kestrelOneAppApprovalModes,
         ...(input.route.reasoningPolicy !== undefined
           ? { reasoning: input.route.reasoningPolicy }
+          : {}),
+        ...(input.route.ociMcpEgressBindings !== undefined
+          ? { ociMcpEgressBindings: input.route.ociMcpEgressBindings }
           : {}),
         ...(primaryRuntimeModel !== undefined
           ? {
@@ -814,9 +830,19 @@ export async function generateKestrelOneExternalReply(input: {
         environmentId: route.environmentId,
         effectiveCapabilities: route.effectiveCapabilities,
         reasoningPolicy: route.reasoningPolicy,
+        ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
       },
       runtimeModels: [runtimeModel],
     });
+    const mcpContext = route.mcpPolicy
+      ? await issueHostedMcpRunContext({
+          runExecutionId: route.runId,
+          threadId: input.sessionId,
+          executionProfileId: resolvedProfile.profileId,
+          executionProfileFingerprint: resolvedProfile.fingerprint,
+          resolvedPolicy: route.mcpPolicy,
+        })
+      : undefined;
     const result = await generateKestrelOneExternalReplyFromAgent({
       agent: {
         run: (turn, requestContext) =>
@@ -853,9 +879,9 @@ export async function generateKestrelOneExternalReply(input: {
         },
       },
       ...(projectSkills ? { workspaceSkills: projectSkills.catalog } : {}),
-      ...(route.mcpContext && route.executionTicket
+      ...(mcpContext && route.executionTicket
         ? {
-            mcpContext: route.mcpContext,
+            mcpContext,
           }
         : {}),
       ...(route.executionTicket

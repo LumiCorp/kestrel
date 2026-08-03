@@ -1419,6 +1419,60 @@ test(
     `;
     assert.equal(atlassianConnectionRow?.appKey, "atlassian");
 
+    const ociDigest = `sha256:${"a".repeat(64)}`;
+    const defaultDeniedOci = await mcpControl.installEnvironmentMcpServer({
+      organizationId,
+      environmentId,
+      actorUserId: userId,
+      server: {
+        name: "Offline OCI",
+        slug: "offline-oci",
+        sourceType: "oci",
+        transport: "stdio",
+        imageReference: `ghcr.io/kestrel/offline@${ociDigest}`,
+        digest: ociDigest,
+        auth: { mode: "none" },
+        launchArguments: [],
+        egressPolicy: { version: 1, mode: "none" },
+        resources: {
+          cpuMillicores: 500,
+          memoryMib: 512,
+          pidsLimit: 128,
+        },
+      },
+    });
+    assert.equal(defaultDeniedOci.networkAccess, "none");
+    assert.deepEqual(defaultDeniedOci.ociEgressPolicy, {
+      mode: "none",
+      version: 1,
+    });
+    assert.match(defaultDeniedOci.ociEgressPolicyDigest ?? "", /^sha256:/u);
+    await assert.rejects(
+      mcpControl.installEnvironmentMcpServer({
+        organizationId,
+        environmentId,
+        actorUserId: userId,
+        appKey: "atlassian",
+        server: {
+          name: "Untrusted Managed OCI",
+          slug: "untrusted-managed-oci",
+          sourceType: "oci",
+          transport: "stdio",
+          imageReference: `ghcr.io/kestrel/managed@${ociDigest}`,
+          digest: ociDigest,
+          auth: { mode: "none" },
+          launchArguments: [],
+          egressPolicy: { version: 1, mode: "none" },
+          resources: {
+            cpuMillicores: 500,
+            memoryMib: 512,
+            pidsLimit: 128,
+          },
+        },
+      }),
+      /trusted digest-bound manifest/u,
+    );
+
     const customServer = await mcpControl.installEnvironmentMcpServer({
       organizationId,
       environmentId,
@@ -1517,13 +1571,19 @@ test(
       enabled: true,
       approvalMode: "ask",
     });
-    const mcpContext = await mcpGrant.issueHostedMcpRunContext({
-      runExecutionId: runId,
+    const resolvedMcpPolicy = await mcpGrant.resolveHostedMcpRunPolicy({
       organizationId,
       environmentId,
       projectId,
-      threadId,
       gatewayUrl: "https://mcp-gateway.example.test",
+    });
+    assert.ok(resolvedMcpPolicy);
+    const mcpContext = await mcpGrant.issueHostedMcpRunContext({
+      runExecutionId: runId,
+      threadId,
+      executionProfileId: "profile-1",
+      executionProfileFingerprint: "profile-fingerprint-1",
+      resolvedPolicy: resolvedMcpPolicy,
     });
     assert.ok(mcpContext?.grantId);
     const [mcpRunGrant] = await sql<
@@ -1533,17 +1593,26 @@ test(
           capabilityId: string;
           approvalMode: string;
         }>;
+        executionProfileId: string;
+        executionProfileFingerprint: string;
+        ociEgressBindings: unknown[];
       }>
     >`
       SELECT
         "effective_capabilities" AS "effectiveCapabilities",
-        "effective_policy" AS "effectivePolicy"
+        "effective_policy" AS "effectivePolicy",
+        "execution_profile_id" AS "executionProfileId",
+        "execution_profile_fingerprint" AS "executionProfileFingerprint",
+        "oci_egress_bindings" AS "ociEgressBindings"
       FROM "mcp_run_grants"
       WHERE "id" = ${mcpContext?.grantId ?? ""}
     `;
     assert.deepEqual(mcpRunGrant, {
       effectiveCapabilities: [mcpCapabilityId],
       effectivePolicy: [{ capabilityId: mcpCapabilityId, approvalMode: "ask" }],
+      executionProfileId: "profile-1",
+      executionProfileFingerprint: "profile-fingerprint-1",
+      ociEgressBindings: [],
     });
     await mcpControl.disableEnvironmentMcpServer({
       organizationId,

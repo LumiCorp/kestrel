@@ -2,6 +2,22 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { BlockList, isIP, isIPv4 } from "node:net";
 import { z } from "zod";
 
+export {
+  OCI_MCP_NO_EGRESS_POLICY,
+  digestOciMcpEgressPolicy,
+  ociMcpEgressDestinationV1Schema,
+  ociMcpEgressPolicyV1Schema,
+  parseOciMcpEgressPolicy,
+  parseResolvedOciMcpEgressBinding,
+  resolvedOciMcpEgressBindingV1Schema,
+  resolveCustomOciMcpEgressPolicy,
+} from "./oci-egress-policy.js";
+export type {
+  OciMcpEgressDestinationV1,
+  OciMcpEgressPolicyV1,
+  ResolvedOciMcpEgressBindingV1,
+} from "./oci-egress-policy.js";
+
 const ENVELOPE_PREFIX = "kmcp:v1";
 const KEY_BYTES = 32;
 const IV_BYTES = 12;

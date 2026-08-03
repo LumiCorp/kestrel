@@ -38,9 +38,22 @@ contract.
 
 Each run starts the MCP server with a read-only root filesystem, dropped
 capabilities, no-new-privileges, a non-root user, bounded CPU, memory and PIDs,
-and the Project workspace mounted read-only. Network access defaults to
-`full`. An Environment administrator can explicitly select `none` for an MCP
-server designed to run offline.
+and the Project workspace mounted read-only. Custom OCI servers default to no
+network. Exact allowlists are bound to the image digest, tenant, Environment,
+server revision, and hosted execution-profile fingerprint. This contract-only
+phase keeps both `none` and `allow_hosts` on `--network none`; it never weakens
+an allowlist to Docker bridge access while the trusted gateway is unavailable.
+
+Unrestricted bridge networking requires the exact custom-server policy with an
+organization-administrator acknowledgement and justification. Managed OCI
+servers cannot use unrestricted mode. Remote MCP networking and its existing
+public-HTTPS DNS-pinned connection path are unchanged.
+
+Egress policy and lifecycle evidence is stored in the typed
+`mcp_egress_events` surface. Evidence contains canonical host, port, protocol,
+address classification, and typed denial data when applicable; it must not
+contain credentials, headers, paths, queries, request bodies, full URLs, or
+secret-bearing environment variables.
 
 When the service itself is containerized, the deployment must supply a
 constrained Docker API endpoint and the workspace mount. Mounting an

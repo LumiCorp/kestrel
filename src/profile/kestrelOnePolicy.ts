@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import type { TuiProfile } from "../../cli/contracts.js";
 import type { RecoveryModelCandidateV1 } from "../kestrel/contracts/recovery.js";
 import type { HarnessEconomicsControlV1 } from "../economics/contracts.js";
-import { DEFAULT_ACT_SUBMODE, DEFAULT_INTERACTION_MODE } from "../mode/contracts.js";
+import {
+  DEFAULT_ACT_SUBMODE,
+  DEFAULT_INTERACTION_MODE,
+} from "../mode/contracts.js";
 import {
   buildRuntimeIdentityMetadata,
   resolveRuntimeProfileSelection,
@@ -94,62 +97,60 @@ export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.vercel_deployment_events",
 ] as const);
 
-export const KESTREL_HARNESS_ECONOMICS =
-  Object.freeze({
+export const KESTREL_HARNESS_ECONOMICS = Object.freeze({
+  version: 1,
+  policy: {
     version: 1,
-    policy: {
+    policyId: "economics:kestrel:v1",
+    mode: "observe",
+    counting: {
+      estimatorVersion: "utf8-byte-upper-bound:v1",
+      allowEstimatedEnforcement: false,
+    },
+    context: {
+      outputReserveTokens: 8_000,
+      safetyReserveTokens: 2_000,
+      sections: [
+        { id: "active-task", priority: "required" },
+        { id: "transcript", priority: "required" },
+      ],
+    },
+    compaction: {
+      requireStructuredAnchors: true,
+      maxSummaryAttempts: 2,
+    },
+    tools: {
+      exposure: "assembly_allowlist",
+      modelContextMaxTokens: 4_000,
+      allowedFamiliesByPhase: {},
+    },
+    cache: {
+      mode: "provider_default",
+    },
+  },
+  modelProfiles: [
+    {
       version: 1,
-      policyId: "economics:kestrel:v1",
-      mode: "observe",
+      profileId: "openrouter:z-ai/glm-5.2:v1",
+      provider: "openrouter",
+      model: "z-ai/glm-5.2",
+      contextWindowTokens: 1_000_000,
+      maxOutputTokens: 64_000,
       counting: {
-        estimatorVersion: "utf8-byte-upper-bound:v1",
-        allowEstimatedEnforcement: false,
-      },
-      context: {
-        outputReserveTokens: 8_000,
-        safetyReserveTokens: 2_000,
-        sections: [
-          { id: "active-task", priority: "required" },
-          { id: "transcript", priority: "required" },
-        ],
-      },
-      compaction: {
-        requireStructuredAnchors: true,
-        maxSummaryAttempts: 2,
-      },
-      tools: {
-        exposure: "assembly_allowlist",
-        modelContextMaxTokens: 4_000,
-        allowedFamiliesByPhase: {},
+        counter: "utf8-byte-upper-bound",
+        counterVersion: "1",
+        method: "conservative_estimate",
+        confidence: "conservative",
       },
       cache: {
-        mode: "provider_default",
+        behavior: "provider_automatic",
       },
     },
-    modelProfiles: [
-      {
-        version: 1,
-        profileId: "openrouter:z-ai/glm-5.2:v1",
-        provider: "openrouter",
-        model: "z-ai/glm-5.2",
-        contextWindowTokens: 1_000_000,
-        maxOutputTokens: 64_000,
-        counting: {
-          counter: "utf8-byte-upper-bound",
-          counterVersion: "1",
-          method: "conservative_estimate",
-          confidence: "conservative",
-        },
-        cache: {
-          behavior: "provider_automatic",
-        },
-      },
-    ],
-  } satisfies HarnessEconomicsControlV1);
+  ],
+} satisfies HarnessEconomicsControlV1);
 
 /** @deprecated Use KESTREL_HARNESS_ECONOMICS. */
-export const KESTREL_ONE_HOSTED_HARNESS_ECONOMICS =
-  KESTREL_HARNESS_ECONOMICS;
+export const KESTREL_ONE_HOSTED_HARNESS_ECONOMICS = KESTREL_HARNESS_ECONOMICS;
 
 const DEFAULT_TOOL_QUEUE = Object.freeze({
   perRunConcurrency: 8,
@@ -206,9 +207,12 @@ export interface KestrelOneProfileOverlay {
   modelTimeoutMs?: number | undefined;
   storeDriver?: TuiProfile["storeDriver"] | undefined;
   approvalPolicyPackId?: TuiProfile["approvalPolicyPackId"] | undefined;
-  kestrelOneAppApprovalModes?: TuiProfile["kestrelOneAppApprovalModes"] | undefined;
+  kestrelOneAppApprovalModes?:
+    | TuiProfile["kestrelOneAppApprovalModes"]
+    | undefined;
   additionalToolNames?: string[] | undefined;
   mcpServers?: TuiProfile["mcpServers"] | undefined;
+  ociMcpEgressBindings?: TuiProfile["ociMcpEgressBindings"] | undefined;
   toolQueue?: TuiProfile["toolQueue"] | undefined;
   codeMode?: TuiProfile["codeMode"] | undefined;
   devShell?: TuiProfile["devShell"] | undefined;
@@ -259,9 +263,7 @@ export function composeKestrelOneProfile(
     presetId: input.environmentPresetId,
     capabilityPacks: resolvedEnvironment.capabilityPacks,
   });
-  const additionalToolNames = [
-    ...(input.overlay?.additionalToolNames ?? []),
-  ];
+  const additionalToolNames = [...(input.overlay?.additionalToolNames ?? [])];
   const toolAllowlist = normalizeKestrelOneToolAllowlist([
     ...resolvedEnvironment.toolAllowlist,
     ...additionalToolNames,
@@ -326,11 +328,17 @@ export function composeKestrelOneProfile(
     toolAllowlist,
     ...(input.overlay?.kestrelOneAppApprovalModes !== undefined
       ? {
-          kestrelOneAppApprovalModes:
-            input.overlay.kestrelOneAppApprovalModes,
+          kestrelOneAppApprovalModes: input.overlay.kestrelOneAppApprovalModes,
         }
       : {}),
     mcpServers: input.overlay?.mcpServers ?? [],
+    ...(input.overlay?.ociMcpEgressBindings !== undefined
+      ? {
+          ociMcpEgressBindings: structuredClone(
+            input.overlay.ociMcpEgressBindings,
+          ),
+        }
+      : {}),
     toolQueue: {
       ...DEFAULT_TOOL_QUEUE,
       ...(input.overlay?.toolQueue ?? {}),
@@ -430,9 +438,7 @@ export function fingerprintResolvedProfile(
 }
 
 function fingerprintKestrelOneComposition(value: unknown): string {
-  return createHash("sha256")
-    .update(stableJson(value))
-    .digest("hex");
+  return createHash("sha256").update(stableJson(value)).digest("hex");
 }
 
 function assertNoPolicyControlledOverlay(
@@ -482,10 +488,8 @@ function sortJsonValue(value: unknown): unknown {
 function shellKindForPreset(
   presetId: ComposeKestrelOneProfileInput["environmentPresetId"],
 ): ShellKind {
-  if (
-    presetId === "desktop_safe_local" ||
-    presetId === "desktop_dev_local"
-  ) return "desktop";
+  if (presetId === "desktop_safe_local" || presetId === "desktop_dev_local")
+    return "desktop";
   if (presetId === "workspace_hosted") return "web";
   return "cli";
 }

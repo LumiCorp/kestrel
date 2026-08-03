@@ -28,6 +28,10 @@ import {
 } from "drizzle-orm/pg-core";
 import { KNOWLEDGE_EMBEDDING_DIMENSIONS } from "@/lib/knowledge/documents/constants";
 import type { RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import type {
+  OciMcpEgressPolicyV1,
+  ResolvedOciMcpEgressBindingV1,
+} from "@kestrel/mcp-security";
 
 /** =========================
  *  Better Auth Tables
@@ -2975,7 +2979,9 @@ export const appOperationApprovals = pgTable(
     runtimeApprovalId: text("runtime_approval_id").notNull(),
     payloadHash: text("payload_hash").notNull(),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
-    externalApprovalBinding: jsonb("external_approval_binding").$type<RunnerExternalApprovalBindingV1>(),
+    externalApprovalBinding: jsonb(
+      "external_approval_binding",
+    ).$type<RunnerExternalApprovalBindingV1>(),
     authorityRevision: text("authority_revision"),
     status: text("status", {
       enum: ["pending", "approved", "denied", "consumed", "expired"],
@@ -3484,6 +3490,12 @@ export const mcpServers = pgTable(
     networkAccess: text("network_access", { enum: ["full", "none"] })
       .notNull()
       .default("full"),
+    ociEgressPolicy: jsonb("oci_egress_policy").$type<OciMcpEgressPolicyV1>(),
+    ociEgressPolicyDigest: text("oci_egress_policy_digest"),
+    ociEgressPolicyRevision: text("oci_egress_policy_revision"),
+    ociEgressPolicySource: text("oci_egress_policy_source", {
+      enum: ["custom", "managed"],
+    }),
     cpuMillicores: integer("cpu_millicores").notNull().default(500),
     memoryMib: integer("memory_mib").notNull().default(512),
     pidsLimit: integer("pids_limit").notNull().default(128),
@@ -3541,6 +3553,18 @@ export const mcpServers = pgTable(
     check(
       "mcp_servers_remote_network_access_check",
       sql`${table.sourceType} <> 'remote' or ${table.networkAccess} = 'full'`,
+    ),
+    check(
+      "mcp_servers_oci_egress_policy_check",
+      sql`(
+        (${table.sourceType} = 'remote' and ${table.ociEgressPolicy} is null and ${table.ociEgressPolicyDigest} is null and ${table.ociEgressPolicyRevision} is null and ${table.ociEgressPolicySource} is null)
+        or
+        (${table.sourceType} = 'oci' and ${table.ociEgressPolicy} is not null and ${table.ociEgressPolicyDigest} ~ '^sha256:[0-9a-f]{64}$' and length(${table.ociEgressPolicyRevision}) > 0 and ${table.ociEgressPolicySource} is not null)
+      )`,
+    ),
+    check(
+      "mcp_servers_oci_network_projection_check",
+      sql`${table.sourceType} <> 'oci' or ${table.networkAccess} = case when ${table.ociEgressPolicy}->>'mode' = 'unrestricted' then 'full' else 'none' end`,
     ),
     check(
       "mcp_servers_resource_limits_check",
@@ -3800,6 +3824,12 @@ export const mcpRunGrants = pgTable(
       .notNull()
       .references(() => threads.id, { onDelete: "cascade" }),
     policyDigest: text("policy_digest").notNull(),
+    executionProfileId: text("execution_profile_id"),
+    executionProfileFingerprint: text("execution_profile_fingerprint"),
+    ociEgressBindings: jsonb("oci_egress_bindings")
+      .$type<ResolvedOciMcpEgressBindingV1[]>()
+      .notNull()
+      .default([]),
     effectiveCapabilities: jsonb("effective_capabilities")
       .$type<string[]>()
       .notNull(),
@@ -3834,6 +3864,124 @@ export const mcpRunGrants = pgTable(
     check(
       "mcp_run_grants_expiry_check",
       sql`${table.expiresAt} > ${table.createdAt}`,
+    ),
+  ],
+);
+
+export const mcpEgressEvents = pgTable(
+  "mcp_egress_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "restrict" }),
+    grantId: text("grant_id").references(() => mcpRunGrants.id, {
+      onDelete: "cascade",
+    }),
+    discoveryJobId: text("discovery_job_id").references(
+      () => mcpDiscoveryJobs.id,
+      { onDelete: "cascade" },
+    ),
+    executionProfileFingerprint: text("execution_profile_fingerprint"),
+    policyRevision: text("policy_revision").notNull(),
+    policyDigest: text("policy_digest").notNull(),
+    imageDigest: text("image_digest").notNull(),
+    eventKind: text("event_kind", {
+      enum: [
+        "policy.resolved",
+        "launch.allowed",
+        "launch.denied",
+        "gateway.started",
+        "gateway.failed",
+        "gateway.cleaned",
+        "destination.allowed",
+        "destination.denied",
+        "unrestricted.override_used",
+      ],
+    }).notNull(),
+    networkMode: text("network_mode", {
+      enum: ["none", "allow_hosts", "unrestricted"],
+    }).notNull(),
+    hostname: text("hostname"),
+    port: integer("port"),
+    protocol: text("protocol", { enum: ["http", "https"] }),
+    selectedAddress: text("selected_address"),
+    addressFamily: integer("address_family"),
+    addressClassification: text("address_classification", {
+      enum: [
+        "public",
+        "loopback",
+        "private",
+        "link_local",
+        "multicast",
+        "unspecified",
+        "reserved",
+        "broadcast",
+        "metadata",
+        "docker_local",
+        "malformed",
+      ],
+    }),
+    denialReason: text("denial_reason", {
+      enum: [
+        "POLICY_MISSING",
+        "POLICY_MALFORMED",
+        "POLICY_STALE",
+        "BINDING_MISMATCH",
+        "GATEWAY_UNAVAILABLE",
+        "NETWORK_ISOLATION_INVALID",
+        "DESTINATION_NOT_ALLOWED",
+        "HOSTNAME_INVALID",
+        "PORT_NOT_ALLOWED",
+        "PROTOCOL_NOT_ALLOWED",
+        "DNS_RESOLUTION_FAILED",
+        "ADDRESS_FORBIDDEN",
+        "EVIDENCE_UNAVAILABLE",
+        "GATEWAY_FAILED",
+        "UNSUPPORTED_PROTOCOL",
+      ],
+    }),
+    overrideJustification: text("override_justification"),
+    overrideActorUserId: text("override_actor_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "mcp_egress_events_organization_environment_fk",
+    }).onDelete("cascade"),
+    index("mcp_egress_events_server_created_idx").on(
+      table.serverId,
+      table.createdAt,
+    ),
+    index("mcp_egress_events_grant_created_idx").on(
+      table.grantId,
+      table.createdAt,
+    ),
+    check(
+      "mcp_egress_events_owner_check",
+      sql`num_nonnulls(${table.grantId}, ${table.discoveryJobId}) = 1`,
+    ),
+    check(
+      "mcp_egress_events_destination_check",
+      sql`(
+        ${table.eventKind} not in ('destination.allowed', 'destination.denied')
+        or (${table.hostname} is not null and ${table.port} between 1 and 65535 and ${table.protocol} is not null)
+      )`,
     ),
   ],
 );
@@ -5586,6 +5734,7 @@ export type McpProjectResourceReference = InferSelectModel<
   typeof mcpProjectResourceReferences
 >;
 export type McpRunGrant = InferSelectModel<typeof mcpRunGrants>;
+export type McpEgressEvent = InferSelectModel<typeof mcpEgressEvents>;
 export type McpInvocation = InferSelectModel<typeof mcpInvocations>;
 export type McpInteractionCheckpoint = InferSelectModel<
   typeof mcpInteractionCheckpoints

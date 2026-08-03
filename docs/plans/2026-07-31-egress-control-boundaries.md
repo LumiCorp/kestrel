@@ -1,4 +1,8 @@
-# MCP network access
+# MCP network access (superseded)
+
+This accepted-risk design is superseded by
+[OCI MCP egress security](2026-08-03-oci-mcp-egress-security.md). The historical
+contract below is retained only to explain the prior behavior.
 
 ## Scope
 

@@ -8,7 +8,7 @@ import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
 import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
-import { issueHostedMcpRunContext } from "@/lib/mcp/grant-service";
+import { resolveHostedMcpRunPolicy } from "@/lib/mcp/grant-service";
 import {
   getHostedEnvironmentRuntimeMode,
   requireHostedEnvironmentsEnabled,
@@ -193,14 +193,12 @@ export async function resolveEnvironmentExecutionRoute(input: {
       owningLifecycleOperationIds: input.owningLifecycleOperationIds,
     });
   }
-  let mcpContext;
+  let mcpPolicy;
   if (input.recordExecution) {
-    mcpContext = await issueHostedMcpRunContext({
-      runExecutionId: authorization.runId,
+    mcpPolicy = await resolveHostedMcpRunPolicy({
       organizationId: input.organizationId,
       environmentId: authorization.environmentId,
       projectId: authorization.projectId ?? null,
-      threadId: input.threadId,
     });
   }
   input.onProgress?.({
@@ -219,7 +217,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     projectId: authorization.projectId,
     effectiveCapabilities: authorization.effectiveCapabilities,
     reasoningPolicy: authorization.reasoningPolicy,
-    ...(mcpContext ? { mcpContext } : {}),
+    ...(mcpPolicy ? { mcpPolicy } : {}),
   };
 }
 
@@ -296,7 +294,7 @@ async function resolveDesktopEnvironmentExecutionRoute(input: {
     environmentId: environment.id,
   });
   let projectId: string | null | undefined;
-  let mcpContext;
+  let mcpPolicy;
   if (input.recordExecution) {
     projectId = await recordEnvironmentExecution({
       id: runId,
@@ -312,12 +310,10 @@ async function resolveDesktopEnvironmentExecutionRoute(input: {
       projectContextRevisionId: input.recordExecution.projectContextRevisionId,
       durableTurnId: input.recordExecution.durableTurnId,
     });
-    mcpContext = await issueHostedMcpRunContext({
-      runExecutionId: runId,
+    mcpPolicy = await resolveHostedMcpRunPolicy({
       organizationId: input.organizationId,
       environmentId: environment.id,
       projectId,
-      threadId: input.threadId,
     });
   }
   const online =
@@ -350,7 +346,7 @@ async function resolveDesktopEnvironmentExecutionRoute(input: {
     projectId,
     effectiveCapabilities,
     reasoningPolicy,
-    ...(mcpContext ? { mcpContext } : {}),
+    ...(mcpPolicy ? { mcpPolicy } : {}),
   };
 }
 
@@ -528,7 +524,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     organizationId: input.organizationId,
     environmentId: resolved.binding.environmentId,
   });
-  let mcpContext;
+  let mcpPolicy;
   let projectId: string | null | undefined;
   if (input.recordExecution) {
     projectId = await recordEnvironmentExecution({
@@ -545,12 +541,10 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
       projectContextRevisionId: input.recordExecution.projectContextRevisionId,
       durableTurnId: input.recordExecution.durableTurnId,
     });
-    mcpContext = await issueHostedMcpRunContext({
-      runExecutionId: runId,
+    mcpPolicy = await resolveHostedMcpRunPolicy({
       organizationId: input.organizationId,
       environmentId: resolved.binding.environmentId,
       projectId,
-      threadId: input.threadId,
     });
   }
   input.onProgress?.({
@@ -569,7 +563,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     projectId,
     effectiveCapabilities,
     reasoningPolicy,
-    ...(mcpContext ? { mcpContext } : {}),
+    ...(mcpPolicy ? { mcpPolicy } : {}),
   };
 }
 

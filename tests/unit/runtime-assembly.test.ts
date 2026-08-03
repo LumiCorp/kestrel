@@ -13,6 +13,30 @@ import {
 } from "../../src/profile/kestrelOnePolicy.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 
+test("resolved profile fingerprint binds canonical OCI MCP egress authority", () => {
+  const profile = buildProfile({ toolAllowlist: ["fs.read_text"] });
+  const withBinding: TuiProfile = {
+    ...profile,
+    ociMcpEgressBindings: [
+      {
+        version: 1,
+        source: "custom",
+        organizationId: "org-1",
+        environmentId: "env-1",
+        serverId: "server-1",
+        imageDigest: `sha256:${"a".repeat(64)}`,
+        policyRevision: "custom:server-1",
+        policyDigest:
+          "sha256:59704c11b4f9b612e75f68fac891e4dca743d52d7a946d6d64db287c7b620633",
+        policy: { version: 1, mode: "none" },
+      },
+    ],
+  };
+  assert.notEqual(
+    fingerprintResolvedProfile(profile),
+    fingerprintResolvedProfile(withBinding),
+  );
+});
 
 test("AssemblyCatalog persists default bundle, specialist, and context policy definitions", async () => {
   const store = new InMemorySessionStore();
@@ -35,19 +59,36 @@ test("AssemblyCatalog persists default bundle, specialist, and context policy de
   assert.equal(defaults.defaultBundle?.label, "Reference on web:web_balanced");
   assert.equal(defaults.defaultContextPolicy.contextPolicyId, contextPolicyId);
   assert.equal(defaults.defaultContextPolicy.economicsPolicy?.mode, "observe");
-  assert.equal(defaults.specialists[0]?.specialistId, "specialist:reference:delegation");
-  assert.deepEqual(persistedBundle?.toolAllowlist, ["fs.read_text", "web.search"]);
+  assert.equal(
+    defaults.specialists[0]?.specialistId,
+    "specialist:reference:delegation",
+  );
+  assert.deepEqual(persistedBundle?.toolAllowlist, [
+    "fs.read_text",
+    "web.search",
+  ]);
   assert.equal(persistedBundle?.metadata?.agentProfileId, "reference");
   assert.equal(persistedBundle?.metadata?.agentProfileLabel, "Reference");
   assert.equal(persistedBundle?.metadata?.environmentShellKind, "web");
   assert.equal(persistedBundle?.metadata?.environmentPresetId, "web_balanced");
-  assert.deepEqual(persistedBundle?.metadata?.environmentCapabilityPackIds, ["balanced"]);
+  assert.deepEqual(persistedBundle?.metadata?.environmentCapabilityPackIds, [
+    "balanced",
+  ]);
   assert.equal(persistedBundle?.metadata?.effectiveAssemblyId, bundleId);
-  assert.equal(persistedBundle?.metadata?.effectiveAssemblyLabel, "Reference on web:web_balanced");
+  assert.equal(
+    persistedBundle?.metadata?.effectiveAssemblyLabel,
+    "Reference on web:web_balanced",
+  );
   assert.equal(persistedBundle?.metadata?.modelProvider, "openrouter");
-  assert.equal(persistedBundle?.metadata?.promptVariant, "reference-react:chat");
+  assert.equal(
+    persistedBundle?.metadata?.promptVariant,
+    "reference-react:chat",
+  );
   assert.equal(persistedBundle?.metadata?.compatibilityProfile, "router.chat");
-  assert.deepEqual(persistedBundle?.metadata?.harnessEconomics, economicsControl());
+  assert.deepEqual(
+    persistedBundle?.metadata?.harnessEconomics,
+    economicsControl(),
+  );
 });
 
 test("AssemblyCatalog fingerprints profile revisions and keeps prior defaults available", async () => {
@@ -69,22 +110,21 @@ test("AssemblyCatalog fingerprints profile revisions and keeps prior defaults av
   }).ensureDefaults();
 
   assert.equal(first.defaultBundle?.bundleId, repeated.defaultBundle?.bundleId);
-  assert.notEqual(first.defaultBundle?.bundleId, second.defaultBundle?.bundleId);
+  assert.notEqual(
+    first.defaultBundle?.bundleId,
+    second.defaultBundle?.bundleId,
+  );
   assert.notEqual(
     first.defaultContextPolicy.contextPolicyId,
     second.defaultContextPolicy.contextPolicyId,
   );
   assert.equal(
-    (
-      await store.getAssemblyBundle(
-        first.defaultBundle?.bundleId ?? "missing",
-      )
-    )?.metadata?.harnessEconomics !== undefined,
+    (await store.getAssemblyBundle(first.defaultBundle?.bundleId ?? "missing"))
+      ?.metadata?.harnessEconomics !== undefined,
     true,
   );
   assert.equal(
-    second.defaultContextPolicy.economicsPolicy?.compaction
-      .maxSummaryAttempts,
+    second.defaultContextPolicy.economicsPolicy?.compaction.maxSummaryAttempts,
     2,
   );
 });
@@ -124,8 +164,7 @@ test("AssemblyCatalog rejects a conflicting context policy under the same profil
   const store = new InMemorySessionStore();
   const profile = buildProfile({ toolAllowlist: ["fs.read_text"] });
   const profileFingerprint = fingerprintResolvedProfile(profile);
-  const contextPolicyId =
-    `context-policy:reference:${profileFingerprint}`;
+  const contextPolicyId = `context-policy:reference:${profileFingerprint}`;
   await store.upsertContextPolicyDefinition({
     contextPolicyId,
     label: "Conflicting context policy",
@@ -372,7 +411,10 @@ test("RuntimeComposer composes inherited child bundles and applies approved prop
     proposalId: proposal.proposal.proposalId,
   });
   const active = await composer.getActiveAssembly(child.threadId);
-  assert.deepEqual(active?.bundle?.toolAllowlist, ["fs.read_text", "web.search"]);
+  assert.deepEqual(active?.bundle?.toolAllowlist, [
+    "fs.read_text",
+    "web.search",
+  ]);
 });
 
 test("RuntimeComposer selects provider-specific prompt variants and proposal metadata", async () => {
@@ -415,8 +457,14 @@ test("RuntimeComposer selects provider-specific prompt variants and proposal met
   assert.equal(proposal.decision.result, "ALLOWED");
   assert.equal(proposal.bundle?.metadata?.modelProvider, "openai");
   assert.equal(proposal.bundle?.metadata?.model, "gpt-4.1-mini");
-  assert.equal(proposal.bundle?.metadata?.promptVariant, "reference-react:chat:responses");
-  assert.equal(proposal.bundle?.metadata?.compatibilityProfile, "openai.responses");
+  assert.equal(
+    proposal.bundle?.metadata?.promptVariant,
+    "reference-react:chat:responses",
+  );
+  assert.equal(
+    proposal.bundle?.metadata?.compatibilityProfile,
+    "openai.responses",
+  );
 });
 
 test("RuntimeComposer rejects incompatible prompt variants for provider selection", async () => {
@@ -456,7 +504,10 @@ test("RuntimeComposer rejects incompatible prompt variants for provider selectio
   });
 
   assert.equal(proposal.decision.result, "REJECTED");
-  assert.match(proposal.decision.reason, /not compatible with provider 'anthropic'/u);
+  assert.match(
+    proposal.decision.reason,
+    /not compatible with provider 'anthropic'/u,
+  );
 });
 
 test("RuntimeComposer narrows active bundles on capability loss", async () => {
@@ -507,7 +558,13 @@ test("RuntimeComposer keeps runtime-internal tools when capability loss narrows 
   const catalog = new AssemblyCatalog({
     store,
     profile: buildProfile({
-      toolAllowlist: ["fs.read_text", "web.search", "FinalizeAnswer", "effect_result_lookup", "delegate.spawn_child"],
+      toolAllowlist: [
+        "fs.read_text",
+        "web.search",
+        "FinalizeAnswer",
+        "effect_result_lookup",
+        "delegate.spawn_child",
+      ],
     }),
   });
   const composer = new RuntimeComposer({
@@ -532,7 +589,12 @@ test("RuntimeComposer keeps runtime-internal tools when capability loss narrows 
 
   const recomposed = await composer.recomposeForCapabilityLoss({
     threadId: thread.threadId,
-    availableToolNames: ["fs.read_text", "FinalizeAnswer", "effect_result_lookup", "delegate.spawn_child"],
+    availableToolNames: [
+      "fs.read_text",
+      "FinalizeAnswer",
+      "effect_result_lookup",
+      "delegate.spawn_child",
+    ],
   });
 
   assert.equal(recomposed?.record.cause, "capability_loss");
@@ -604,7 +666,9 @@ test("RuntimeComposer appends one canonical assembly transition for legacy Deskt
   );
 });
 
-function buildProfile(input?: { toolAllowlist?: string[] | undefined }): TuiProfile {
+function buildProfile(input?: {
+  toolAllowlist?: string[] | undefined;
+}): TuiProfile {
   return {
     id: "reference",
     label: "Reference",
@@ -625,10 +689,12 @@ function economicsPolicy(
 ): NonNullable<TuiProfile["harnessEconomics"]>["policy"] {
   return {
     version: 1,
-    policyId:
-      `economics:reference:observe:v${maxSummaryAttempts}`,
+    policyId: `economics:reference:observe:v${maxSummaryAttempts}`,
     mode: "observe",
-    counting: { estimatorVersion: "utf8-byte-upper-bound:v1", allowEstimatedEnforcement: false },
+    counting: {
+      estimatorVersion: "utf8-byte-upper-bound:v1",
+      allowEstimatedEnforcement: false,
+    },
     context: {
       outputReserveTokens: 8_000,
       safetyReserveTokens: 2_000,
@@ -644,7 +710,9 @@ function economicsPolicy(
   };
 }
 
-function economicsModelProfile(): NonNullable<TuiProfile["harnessEconomics"]>["modelProfiles"][number] {
+function economicsModelProfile(): NonNullable<
+  TuiProfile["harnessEconomics"]
+>["modelProfiles"][number] {
   return {
     version: 1,
     profileId: "openrouter:mock-model:v1",
@@ -684,8 +752,12 @@ function buildThread(
     sessionId: threadId,
     title: threadId,
     status: "IDLE" as const,
-    ...(overrides?.parentThreadId !== undefined ? { parentThreadId: overrides.parentThreadId } : {}),
-    ...(overrides?.metadata !== undefined ? { metadata: overrides.metadata } : {}),
+    ...(overrides?.parentThreadId !== undefined
+      ? { parentThreadId: overrides.parentThreadId }
+      : {}),
+    ...(overrides?.metadata !== undefined
+      ? { metadata: overrides.metadata }
+      : {}),
     createdAt: "2026-03-16T12:00:00.000Z",
     updatedAt: "2026-03-16T12:00:00.000Z",
   };
