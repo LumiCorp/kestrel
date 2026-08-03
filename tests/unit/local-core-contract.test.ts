@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -20,7 +21,6 @@ import {
   writeCoreManifest,
 } from "../../src/localCore/index.js";
 import { closeLocalCoreStore } from "../../src/localCore/store.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function canonicalLocalCoreStatus(): Record<string, unknown> {
@@ -94,7 +94,7 @@ function canonicalLocalCoreStatus(): Record<string, unknown> {
   };
 }
 
-contractTest("runtime.hermetic", "resolveKestrelCoreHome isolates the default macOS product root in the 0.6 state epoch", () => {
+test("resolveKestrelCoreHome isolates the default macOS product root in the 0.6 state epoch", () => {
   const resolved = resolveKestrelCoreHome({}, "darwin");
   const productRoot = path.join(os.homedir(), "Library", "Application Support", "Kestrel");
 
@@ -105,7 +105,7 @@ contractTest("runtime.hermetic", "resolveKestrelCoreHome isolates the default ma
   assert.equal(resolved.stateEpoch, "0.6");
 });
 
-contractTest("runtime.hermetic", "resolveKestrelCoreHome treats KESTREL_HOME as explicit isolated dev state", () => {
+test("resolveKestrelCoreHome treats KESTREL_HOME as explicit isolated dev state", () => {
   const resolved = resolveKestrelCoreHome({ KESTREL_HOME: "~/kestrel-isolated" }, "darwin");
 
   assert.equal(resolved.source, "isolated_dev_home");
@@ -114,7 +114,7 @@ contractTest("runtime.hermetic", "resolveKestrelCoreHome treats KESTREL_HOME as 
   assert.equal(resolved.homePath, path.join(os.homedir(), "kestrel-isolated", "state", "0.6"));
 });
 
-contractTest("runtime.hermetic", "resolveKestrelCoreHome gives explicit Core home precedence over isolated dev KESTREL_HOME", () => {
+test("resolveKestrelCoreHome gives explicit Core home precedence over isolated dev KESTREL_HOME", () => {
   const resolved = resolveKestrelCoreHome({
     KESTREL_CORE_HOME: "~/Library/Application Support/Kestrel",
     KESTREL_HOME: "~/kestrel-isolated",
@@ -126,7 +126,7 @@ contractTest("runtime.hermetic", "resolveKestrelCoreHome gives explicit Core hom
   assert.equal(resolved.homePath, path.join(os.homedir(), "Library", "Application Support", "Kestrel", "state", "0.6"));
 });
 
-contractTest("runtime.hermetic", "resolveKestrelCoreHome keeps an already canonical state root stable", () => {
+test("resolveKestrelCoreHome keeps an already canonical state root stable", () => {
   const stateRoot = "/tmp/kestrel-product/state/0.6";
   const resolved = resolveKestrelCoreHome({ KESTREL_CORE_HOME: stateRoot }, "darwin");
 
@@ -134,7 +134,7 @@ contractTest("runtime.hermetic", "resolveKestrelCoreHome keeps an already canoni
   assert.equal(resolved.homePath, stateRoot);
 });
 
-contractTest("runtime.hermetic", "Local Core runtime-store reset contracts require explicit confirmation and canonical output", () => {
+test("Local Core runtime-store reset contracts require explicit confirmation and canonical output", () => {
   assert.deepEqual(parseLocalCoreRuntimeStoreResetRequest({ confirm: true }), {
     confirm: true,
   });
@@ -194,7 +194,7 @@ contractTest("runtime.hermetic", "Local Core runtime-store reset contracts requi
   );
 });
 
-contractTest("runtime.hermetic", "Local Core status parser validates the complete nested boundary contract", () => {
+test("Local Core status parser validates the complete nested boundary contract", () => {
   const status = canonicalLocalCoreStatus();
   assert.deepEqual(parseLocalCoreStatus(status), status);
 
@@ -220,7 +220,7 @@ contractTest("runtime.hermetic", "Local Core status parser validates the complet
   );
 });
 
-contractTest("runtime.hermetic", "Core manifest round-trips canonical paths", async () => {
+test("Core manifest round-trips canonical paths", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-manifest-"));
   try {
     const manifest = createCoreManifest({
@@ -250,7 +250,7 @@ contractTest("runtime.hermetic", "Core manifest round-trips canonical paths", as
   }
 });
 
-contractTest("runtime.hermetic", "Core manifest accepts another path spelling for the same physical state root", async () => {
+test("Core manifest accepts another path spelling for the same physical state root", async () => {
   const home = await mkdtemp(path.join("/tmp", "kcmanifest-real-"));
   const alias = `${home}-alias`;
   await symlink(home, alias, "dir");
@@ -271,7 +271,7 @@ contractTest("runtime.hermetic", "Core manifest accepts another path spelling fo
   }
 });
 
-contractTest("runtime.hermetic", "readCoreLock classifies missing, live, stale, incompatible, and invalid locks", async () => {
+test("readCoreLock classifies missing, live, stale, incompatible, and invalid locks", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-"));
   const paths = resolveLocalCorePaths(home);
   try {
@@ -314,7 +314,7 @@ contractTest("runtime.hermetic", "readCoreLock classifies missing, live, stale, 
   }
 });
 
-contractTest("runtime.hermetic", "readCoreLock treats dead or expired old-version owners as stale before version incompatibility", async () => {
+test("readCoreLock treats dead or expired old-version owners as stale before version incompatibility", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-version-precedence-"));
   try {
     const acquired = await acquireCoreLock({
@@ -348,7 +348,7 @@ contractTest("runtime.hermetic", "readCoreLock treats dead or expired old-versio
   }
 });
 
-contractTest("runtime.hermetic", "acquireCoreLock recovers a dead old-version lock without stealing a live old-version owner", async () => {
+test("acquireCoreLock recovers a dead old-version lock without stealing a live old-version owner", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-upgrade-"));
   const staleHome = path.join(root, "stale-owner");
   const liveHome = path.join(root, "live-owner");
@@ -395,7 +395,7 @@ contractTest("runtime.hermetic", "acquireCoreLock recovers a dead old-version lo
   }
 });
 
-contractTest("runtime.hermetic", "acquireCoreLock uses one shared owner under concurrent shell attempts", async () => {
+test("acquireCoreLock uses one shared owner under concurrent shell attempts", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-concurrent-"));
   try {
     const [first, second] = await Promise.all([
@@ -422,7 +422,7 @@ contractTest("runtime.hermetic", "acquireCoreLock uses one shared owner under co
   }
 });
 
-contractTest("runtime.hermetic", "concurrent stale-lock recovery elects one authority without deleting the winner", async () => {
+test("concurrent stale-lock recovery elects one authority without deleting the winner", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-stale-concurrent-"));
   const paths = resolveLocalCorePaths(home);
   const acquisitionPath = `${paths.lockPath}.acquire`;
@@ -483,7 +483,7 @@ contractTest("runtime.hermetic", "concurrent stale-lock recovery elects one auth
   }
 });
 
-contractTest("runtime.hermetic", "release racing stale-lock recovery cannot delete the replacement authority", async () => {
+test("release racing stale-lock recovery cannot delete the replacement authority", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-lock-release-race-"));
   const paths = resolveLocalCorePaths(home);
   const acquisitionPath = `${paths.lockPath}.acquire`;
@@ -536,7 +536,7 @@ contractTest("runtime.hermetic", "release racing stale-lock recovery cannot dele
   }
 });
 
-contractTest("runtime.hermetic", "ensureLocalCoreReady blocks an unreachable external database", async () => {
+test("ensureLocalCoreReady blocks an unreachable external database", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-ready-"));
   const databaseUrl = "postgres://kestrel:kestrel@127.0.0.1:1/kestrel?connect_timeout=1";
   try {
@@ -569,7 +569,7 @@ contractTest("runtime.hermetic", "ensureLocalCoreReady blocks an unreachable ext
   }
 });
 
-contractTest("runtime.hermetic", "ensureLocalCoreReady updates executable metadata without changing compatible epoch state", async () => {
+test("ensureLocalCoreReady updates executable metadata without changing compatible epoch state", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-version-update-"));
   try {
     await writeCoreManifest(home, createCoreManifest({
@@ -602,7 +602,7 @@ contractTest("runtime.hermetic", "ensureLocalCoreReady updates executable metada
   }
 });
 
-contractTest("runtime.hermetic", "ensureLocalCoreReady blocks an incompatible state schema independently of executable version", async () => {
+test("ensureLocalCoreReady blocks an incompatible state schema independently of executable version", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-schema-incompatible-"));
   try {
     await writeCoreManifest(home, createCoreManifest({
@@ -628,7 +628,7 @@ contractTest("runtime.hermetic", "ensureLocalCoreReady blocks an incompatible st
   }
 });
 
-contractTest("runtime.hermetic", "ensureLocalCoreReady blocks a manifest from a different state epoch", async () => {
+test("ensureLocalCoreReady blocks a manifest from a different state epoch", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-epoch-incompatible-"));
   try {
     await writeCoreManifest(home, {
@@ -655,7 +655,7 @@ contractTest("runtime.hermetic", "ensureLocalCoreReady blocks a manifest from a 
   }
 });
 
-contractTest("runtime.hermetic", "ensureLocalCoreReady does not silently use inherited DATABASE_URL for external mode", async () => {
+test("ensureLocalCoreReady does not silently use inherited DATABASE_URL for external mode", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-external-"));
   try {
     const status = await ensureLocalCoreReady({

@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import { threadTurnBodySchema } from "./thread-turn-request-contract";
 
 const userMessage = {
@@ -8,8 +8,7 @@ const userMessage = {
   parts: [{ type: "text", text: "Continue." }],
 };
 
-contractTest(
-  "web.hermetic",
+test(
   "Thread turn boundary accepts exactly one explicit action",
   () => {
     assert.equal(
@@ -39,8 +38,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Thread turn boundary rejects history replay and ambiguous actions",
   () => {
     assert.equal(

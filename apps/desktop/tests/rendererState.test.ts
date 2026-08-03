@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -27,14 +28,13 @@ import {
 } from "../renderer/src/state.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
 import { projectDesktopTerminalMessage } from "../renderer/src/terminalProjection.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("desktop.hermetic", "new Desktop conversations default to the local checkout", () => {
+test("new Desktop conversations default to the local checkout", () => {
   assert.equal(createRendererThread().workspaceMode, "local");
 });
 
-contractTest("runtime.terminal-message-delivery", "Desktop projects terminal messages after pending users and suppresses duplicate run identities", () => {
+test("Desktop projects terminal messages after pending users and suppresses duplicate run identities", () => {
   const thread = createRendererThread();
   const state = {
     entries: {},
@@ -89,7 +89,7 @@ contractTest("runtime.terminal-message-delivery", "Desktop projects terminal mes
   assert.equal(recoveredDuplicate.state.threads[0]?.transcript.length, 2);
 });
 
-contractTest("runtime.terminal-message-delivery", "Desktop preserves authoritative assistant text verbatim", () => {
+test("Desktop preserves authoritative assistant text verbatim", () => {
   const thread = createRendererThread();
   const assistantText = "  indented Markdown\n\n";
   const projection = projectDesktopTerminalMessage({
@@ -107,7 +107,7 @@ contractTest("runtime.terminal-message-delivery", "Desktop preserves authoritati
   assert.equal(projection.state.threads[0]?.transcript[0]?.text, assistantText);
 });
 
-contractTest("runtime.terminal-message-delivery", "Desktop renders waiting and failed terminal results as visible system messages", () => {
+test("Desktop renders waiting and failed terminal results as visible system messages", () => {
   const thread = createRendererThread();
   const initial = {
     entries: {},
@@ -141,7 +141,7 @@ contractTest("runtime.terminal-message-delivery", "Desktop renders waiting and f
   assert.equal(failed.state.threads[0]?.transcript[1]?.text, "Provider connection failed.");
 });
 
-contractTest("runtime.terminal-message-delivery", "Desktop exposes completed results that violate the assistantText contract", () => {
+test("Desktop exposes completed results that violate the assistantText contract", () => {
   const thread = createRendererThread();
   const projection = projectDesktopTerminalMessage({
     entries: {},
@@ -166,7 +166,7 @@ contractTest("runtime.terminal-message-delivery", "Desktop exposes completed res
   assert.equal(projection.state.threads[0]?.transcript[0]?.data, undefined);
 });
 
-contractTest("desktop.hermetic", "Vite renderer preserves an explicitly managed persisted conversation", () => {
+test("Vite renderer preserves an explicitly managed persisted conversation", () => {
   const state = readDesktopRendererState({
     version: "desktop-ui-state-v1",
     source: "desktop-renderer-vite",
@@ -195,7 +195,7 @@ contractTest("desktop.hermetic", "Vite renderer preserves an explicitly managed 
   assert.equal(state.threads[0]?.workspaceMode, "managed");
 });
 
-contractTest("desktop.hermetic", "Vite renderer hydrates legacy threads and preserves unknown persisted fields", () => {
+test("Vite renderer hydrates legacy threads and preserves unknown persisted fields", () => {
   const state = readDesktopRendererState({
     version: "desktop-ui-state-v1",
     source: "legacy-local-storage",
@@ -284,7 +284,7 @@ contractTest("desktop.hermetic", "Vite renderer hydrates legacy threads and pres
   assert.equal((store.states["thread-1"]?.transcript as unknown[]).length, 2);
 });
 
-contractTest("desktop.hermetic", "Vite renderer repairs a blank persisted session without dropping its conversation", () => {
+test("Vite renderer repairs a blank persisted session without dropping its conversation", () => {
   const state = readDesktopRendererState({
     version: "desktop-ui-state-v1",
     source: "legacy-local-storage",
@@ -313,7 +313,7 @@ contractTest("desktop.hermetic", "Vite renderer repairs a blank persisted sessio
   assert.ok((serialized.states["thread-blank-session"]?.sessionId?.length ?? 0) > 0);
 });
 
-contractTest("desktop.hermetic", "Vite renderer persists and resumes the pending wait contract", () => {
+test("Vite renderer persists and resumes the pending wait contract", () => {
   const state = readDesktopRendererState({
     version: "desktop-ui-state-v1",
     source: "desktop-renderer-vite",
@@ -405,7 +405,7 @@ contractTest("desktop.hermetic", "Vite renderer persists and resumes the pending
   assert.equal(hydrated.threads[0]?.pendingWaitEventType, "user.approval");
 });
 
-contractTest("desktop.hermetic", "dialog messages persist inline and deduplicate by runtime message id", () => {
+test("dialog messages persist inline and deduplicate by runtime message id", () => {
   let state = readDesktopRendererState(null);
   const threadId = state.activeThreadId;
   const line = {
@@ -434,7 +434,7 @@ contractTest("desktop.hermetic", "dialog messages persist inline and deduplicate
   assert.deepEqual(restored.threads[0]?.transcript[0]?.dialog, line.dialog);
 });
 
-contractTest("desktop.hermetic", "Vite renderer persists a project binding on project conversations", () => {
+test("Vite renderer persists a project binding on project conversations", () => {
   const initial = readDesktopRendererState(null);
   const scoped = addRendererThread(initial, {
     projectPath: "/workspace/project-a",
@@ -453,7 +453,7 @@ contractTest("desktop.hermetic", "Vite renderer persists a project binding on pr
   assert.equal(hydrated.threads[1]?.projectPath, undefined);
 });
 
-contractTest("desktop.hermetic", "Vite renderer does not implicitly bind an unscoped conversation", () => {
+test("Vite renderer does not implicitly bind an unscoped conversation", () => {
   const state = readDesktopRendererState(null);
   const projectPath = resolveRendererThreadProjectPath({
     thread: state.threads[0]!,
@@ -462,7 +462,7 @@ contractTest("desktop.hermetic", "Vite renderer does not implicitly bind an unsc
   assert.equal(projectPath, undefined);
 });
 
-contractTest("desktop.hermetic", "Vite renderer preserves a persisted conversation project binding", () => {
+test("Vite renderer preserves a persisted conversation project binding", () => {
   const projectPath = resolveRendererThreadProjectPath({
     thread: { projectPath: "/workspace/project-a" },
   });
@@ -470,7 +470,7 @@ contractTest("desktop.hermetic", "Vite renderer preserves a persisted conversati
   assert.equal(projectPath, "/workspace/project-a");
 });
 
-contractTest("desktop.hermetic", "Vite renderer prefers the authoritative thread workspace over renderer selection", () => {
+test("Vite renderer prefers the authoritative thread workspace over renderer selection", () => {
   const projectPath = resolveRendererThreadProjectPath({
     thread: { projectPath: "/workspace/project-a" },
     authoritativeProjectPath: "/workspace/project-b",
@@ -479,7 +479,7 @@ contractTest("desktop.hermetic", "Vite renderer prefers the authoritative thread
   assert.equal(projectPath, "/workspace/project-b");
 });
 
-contractTest("desktop.hermetic", "manual conversation titles are trimmed, bounded, and locked against first-message replacement", () => {
+test("manual conversation titles are trimmed, bounded, and locked against first-message replacement", () => {
   const initial = readDesktopRendererState(null);
   const threadId = initial.activeThreadId;
   const renamed = renameRendererThread(initial, threadId, `  ${"A".repeat(70)}  `);
@@ -497,7 +497,7 @@ contractTest("desktop.hermetic", "manual conversation titles are trimmed, bounde
   assert.equal(renameRendererThread(messaged, threadId, "   "), messaged);
 });
 
-contractTest("desktop.hermetic", "archive selects the next active conversation and restore supports Undo", () => {
+test("archive selects the next active conversation and restore supports Undo", () => {
   const first = { ...createRendererThread({ projectPath: "/workspace/a" }), id: "first", updatedAt: "2026-07-22T12:00:00.000Z" };
   const second = { ...createRendererThread({ projectPath: "/workspace/b" }), id: "second", updatedAt: "2026-07-22T11:00:00.000Z" };
   const initial = { ...readDesktopRendererState(null), activeThreadId: first.id, threads: [first, second] };
@@ -510,7 +510,7 @@ contractTest("desktop.hermetic", "archive selects the next active conversation a
   assert.equal(restored.threads.find((thread) => thread.id === first.id)?.archivedAt, undefined);
 });
 
-contractTest("desktop.hermetic", "archive blocking explains running turns, pending waits, and actionable requests", () => {
+test("archive blocking explains running turns, pending waits, and actionable requests", () => {
   const thread = createRendererThread();
   assert.match(getRendererThreadArchiveBlockReason(thread, { runActive: true, actionableOperatorRequest: false }) ?? "", /Stop the running work/u);
   assert.match(getRendererThreadArchiveBlockReason({ ...thread, pendingWaitEventType: "user.reply" }, { runActive: false, actionableOperatorRequest: false }) ?? "", /pending wait/u);
@@ -519,7 +519,7 @@ contractTest("desktop.hermetic", "archive blocking explains running turns, pendi
   assert.equal(getRendererThreadArchiveBlockReason(thread, { runActive: false, actionableOperatorRequest: false }), undefined);
 });
 
-contractTest("desktop.hermetic", "generated attachments update their owning conversation after navigation", () => {
+test("generated attachments update their owning conversation after navigation", () => {
   const first = { ...createRendererThread(), id: "first", draft: "" };
   const second = { ...createRendererThread(), id: "second", draft: "Second draft" };
   const initial = { ...readDesktopRendererState(null), activeThreadId: second.id, threads: [first, second] };
@@ -533,7 +533,7 @@ contractTest("desktop.hermetic", "generated attachments update their owning conv
   assert.equal(updated.threads.find((thread) => thread.id === second.id)?.draft, "Second draft");
 });
 
-contractTest("desktop.hermetic", "generated attachments preserve draft limits and replacement policy", () => {
+test("generated attachments preserve draft limits and replacement policy", () => {
   const thread = { ...createRendererThread(), id: "thread", draft: "Keep me", draftAttachmentIds: Array.from({ length: 8 }, (_, index) => `attachment-${index}`) };
   const initial = { ...readDesktopRendererState(null), activeThreadId: thread.id, threads: [thread] };
   const overflow = addRendererDraftAttachment(initial, thread.id, { attachmentId: "overflow", generatedDraft: "Replace" });
@@ -545,7 +545,7 @@ contractTest("desktop.hermetic", "generated attachments preserve draft limits an
   assert.equal(replaced.threads[0]?.draft, "Replace");
 });
 
-contractTest("desktop.hermetic", "archiving the only active conversation creates an empty replacement in the same project", () => {
+test("archiving the only active conversation creates an empty replacement in the same project", () => {
   const only = { ...createRendererThread({ projectPath: "/workspace/a" }), id: "only" };
   const initial = { ...readDesktopRendererState(null), activeThreadId: only.id, threads: [only] };
   const archived = archiveRendererThread(initial, only.id, {}, "2026-07-22T13:00:00.000Z");
@@ -559,7 +559,7 @@ contractTest("desktop.hermetic", "archiving the only active conversation creates
   assert.equal(undone.threads[0]?.archivedAt, undefined);
 });
 
-contractTest("desktop.hermetic", "archived state persists without dropping unknown legacy fields", () => {
+test("archived state persists without dropping unknown legacy fields", () => {
   const initial = readDesktopRendererState(null);
   const thread = initial.threads[0]!;
   const changed = {
@@ -580,7 +580,7 @@ contractTest("desktop.hermetic", "archived state persists without dropping unkno
   assert.equal(reserialized.states[thread.id]?.legacyState, "keep");
 });
 
-contractTest("desktop.hermetic", "conversation groups order projects and threads while separating archive and unavailable paths", () => {
+test("conversation groups order projects and threads while separating archive and unavailable paths", () => {
   const threads = [
     { ...createRendererThread({ projectPath: "/workspace/a" }), id: "a-old", title: "Alpha old", updatedAt: "2026-07-22T10:00:00.000Z" },
     { ...createRendererThread({ projectPath: "/workspace/a" }), id: "a-new", title: "Alpha new", updatedAt: "2026-07-22T12:00:00.000Z" },
@@ -598,7 +598,7 @@ contractTest("desktop.hermetic", "conversation groups order projects and threads
   assert.deepEqual(groupRendererThreads({ threads, projects, archived: false, query: "legacy" }).flatMap((group) => group.threads.map((thread) => thread.id)), ["missing"]);
 });
 
-contractTest("desktop.hermetic", "Vite renderer submits only tagged runtime waiting prompts as system history", () => {
+test("Vite renderer submits only tagged runtime waiting prompts as system history", () => {
   const state = readDesktopRendererState(null);
   const attachment = {
     attachmentId: "attachment-1",
@@ -664,7 +664,7 @@ contractTest("desktop.hermetic", "Vite renderer submits only tagged runtime wait
   ]);
 });
 
-contractTest("desktop.hermetic", "Vite renderer bounds persisted transcript history below the UI-state cap", () => {
+test("Vite renderer bounds persisted transcript history below the UI-state cap", () => {
   let state = readDesktopRendererState(null);
   const threadId = state.activeThreadId;
   for (let index = 0; index < 700; index += 1) {
@@ -690,7 +690,7 @@ contractTest("desktop.hermetic", "Vite renderer bounds persisted transcript hist
   assert.match(persisted.at(-1)?.text ?? "", /^699:/u);
 });
 
-contractTest("desktop.hermetic", "Vite renderer persists independent drafts, attachment references, and bounded prompt history", () => {
+test("Vite renderer persists independent drafts, attachment references, and bounded prompt history", () => {
   let state = readDesktopRendererState(null);
   const firstId = state.activeThreadId;
   state = updateRendererDraft(state, firstId, "unfinished first");
@@ -719,7 +719,7 @@ contractTest("desktop.hermetic", "Vite renderer persists independent drafts, att
   assert.equal(second.draft, "unfinished second");
 });
 
-contractTest("desktop.hermetic", "Vite renderer migrates legacy per-thread composer drafts and prompt history", () => {
+test("Vite renderer migrates legacy per-thread composer drafts and prompt history", () => {
   const initial = readDesktopRendererState(null);
   const thread = initial.threads[0]!;
   const entries = serializeDesktopRendererState(initial);

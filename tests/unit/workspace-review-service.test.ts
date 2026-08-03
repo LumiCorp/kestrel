@@ -1,16 +1,16 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { WorkspaceReviewService } from "../../src/review/WorkspaceReviewService.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const fp = (value: string) => `sha256:${value.repeat(64)}`;
 const finding = { severity: "high" as const, confidence: 0.9, path: "src/app.ts", line: 12, problem: "Unsafe state transition", impact: "The candidate can lose work.", evidence: "The transition clears state before persistence succeeds.", remediation: "Persist before clearing state.", verification: "Force persistence failure and assert state remains." };
 
-contractTest("runtime.hermetic", "WorkspaceReviewService persists typed findings and explicit dispositions", async () => {
+test("WorkspaceReviewService persists typed findings and explicit dispositions", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-review-"));
   const metadataPath = path.join(root, "reviews.json");
   const service = new WorkspaceReviewService(metadataPath); await service.initialize();
@@ -26,7 +26,7 @@ contractTest("runtime.hermetic", "WorkspaceReviewService persists typed findings
   assert.equal((await relaunched.list({ sessionId: "session-1", threadId: "thread-1", candidateFingerprint: fp("a") })).reviews[0]?.findings[0]?.status, "accepted");
 });
 
-contractTest("runtime.hermetic", "WorkspaceReviewService marks current findings stale when candidate identity changes", async () => {
+test("WorkspaceReviewService marks current findings stale when candidate identity changes", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-review-stale-"));
   const service = new WorkspaceReviewService(path.join(root, "reviews.json")); await service.initialize();
   const review = await service.begin({ sessionId: "session-1", threadId: "thread-1", candidateFingerprint: fp("a"), scopeLabel: "branch:main", scope: { kind: "branch", baseRef: "main" }, mode: "current_thread" });
@@ -38,7 +38,7 @@ contractTest("runtime.hermetic", "WorkspaceReviewService marks current findings 
   await assert.rejects(service.updateFinding({ reviewId: review.reviewId, findingId: stale.reviews[0]!.findings[0]!.findingId, sessionId: "session-1", threadId: "thread-1", candidateFingerprint: fp("b"), action: "accept" }), /no longer matches/u);
 });
 
-contractTest("runtime.hermetic", "WorkspaceReviewService reconciles each historical review against its own scope fingerprint", async () => {
+test("WorkspaceReviewService reconciles each historical review against its own scope fingerprint", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-review-scope-")); const service = new WorkspaceReviewService(path.join(root, "reviews.json")); await service.initialize();
   const review = await service.begin({ sessionId: "session-1", threadId: "thread-1", candidateFingerprint: fp("a"), scopeLabel: "commit:abc", scope: { kind: "commit", commitSha: "abc" }, mode: "current_thread" });
   await service.complete({ reviewId: review.reviewId, sessionId: "session-1", threadId: "thread-1", candidateFingerprint: fp("a"), runId: "run-1", findings: [finding] });
@@ -48,14 +48,14 @@ contractTest("runtime.hermetic", "WorkspaceReviewService reconciles each histori
   assert.equal(changed.reviews[0]?.status, "stale");
 });
 
-contractTest("runtime.hermetic", "WorkspaceReviewService persists bounded detached review identity", async () => {
+test("WorkspaceReviewService persists bounded detached review identity", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-review-detached-")); const service = new WorkspaceReviewService(path.join(root, "reviews.json")); await service.initialize();
   const review = await service.begin({ sessionId: "session-1", threadId: "thread-1", candidateFingerprint: fp("a"), scopeLabel: "uncommitted", scope: { kind: "uncommitted" }, mode: "detached_thread", reviewerProfileId: "reviewer" });
   const attached = await service.attachDelegation({ reviewId: review.reviewId, sessionId: "session-1", threadId: "thread-1", delegationId: "delegation-1", childThreadId: "child-1" });
   assert.equal(attached.delegationId, "delegation-1"); assert.equal(attached.childThreadId, "child-1"); assert.equal(attached.status, "running");
 });
 
-contractTest("runtime.hermetic", "WorkspaceReviewService records the coding or verification run on selected findings", async () => {
+test("WorkspaceReviewService records the coding or verification run on selected findings", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-review-follow-up-"));
   const service = new WorkspaceReviewService(path.join(root, "reviews.json"));
   await service.initialize();

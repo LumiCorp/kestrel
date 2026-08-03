@@ -1,6 +1,6 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { KESTREL_APP_IDS } from "@kestrel-agents/protocol";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   getOfficialRemoteTokenApp,
   getOfficialRemoteOauthApp,
@@ -10,7 +10,7 @@ import {
 } from "./official-remote-apps";
 import { mcpAppRuntimeName } from "./mcp-app";
 
-contractTest("web.hermetic", "official remote delivery keeps a stable App identity", () => {
+test("official remote delivery keeps a stable App identity", () => {
   const linear = getOfficialRemoteTokenApp(KESTREL_APP_IDS.LINEAR);
   const atlassian = getOfficialRemoteTokenApp(KESTREL_APP_IDS.ATLASSIAN);
   assert.ok(linear);
@@ -34,7 +34,7 @@ contractTest("web.hermetic", "official remote delivery keeps a stable App identi
   );
 });
 
-contractTest("web.hermetic", "official OAuth delivery keeps Notion behind its App identity", () => {
+test("official OAuth delivery keeps Notion behind its App identity", () => {
   const notion = getOfficialRemoteOauthApp(KESTREL_APP_IDS.NOTION);
   assert.ok(notion);
   assert.equal(notion.appKey, "notion");
@@ -49,7 +49,7 @@ contractTest("web.hermetic", "official OAuth delivery keeps Notion behind its Ap
   );
 });
 
-contractTest("web.hermetic", "Slack App maps capability choices to its official granular scopes", () => {
+test("Slack App maps capability choices to its official granular scopes", () => {
   const slack = getOfficialRemoteOauthApp(KESTREL_APP_IDS.SLACK);
   assert.ok(slack);
   assert.equal(slack.remoteUrl, "https://mcp.slack.com/mcp");

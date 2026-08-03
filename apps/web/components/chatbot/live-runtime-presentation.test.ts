@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   applyLiveProgress,
   applyProviderRetry,
@@ -27,7 +27,7 @@ const reasoningUpdate = (
   ...input,
 });
 
-contractTest("web.hermetic", "live reasoning stays separate from live progress", () => {
+test("live reasoning stays separate from live progress", () => {
   const withProgress = applyLiveProgress(null, {
     id: "progress-1",
     assistantMessageId: "assistant-1",
@@ -47,7 +47,7 @@ contractTest("web.hermetic", "live reasoning stays separate from live progress",
   assert.equal(state?.reasoning?.text, "Inspecting the workspace.");
 });
 
-contractTest("web.hermetic", "reasoning availability status survives later heartbeat replacement", () => {
+test("reasoning availability status survives later heartbeat replacement", () => {
   const unavailable = applyProviderReasoning(
     null,
     reasoningUpdate({
@@ -77,7 +77,7 @@ contractTest("web.hermetic", "reasoning availability status survives later heart
   );
 });
 
-contractTest("web.hermetic", "a newer provider attempt replaces failed-attempt reasoning", () => {
+test("a newer provider attempt replaces failed-attempt reasoning", () => {
   const first = applyProviderReasoning(null, reasoningUpdate());
   const retrying = applyProviderRetry(first, {
     id: "progress-retry",
@@ -116,7 +116,7 @@ contractTest("web.hermetic", "a newer provider attempt replaces failed-attempt r
   assert.equal(secondDelta?.reasoning?.text, "Trying the provider again.");
 });
 
-contractTest("web.hermetic", "live reasoning keeps a deterministic 64 KiB rendered tail", () => {
+test("live reasoning keeps a deterministic 64 KiB rendered tail", () => {
   const state = applyProviderReasoning(
     null,
     reasoningUpdate({ delta: "a".repeat(MAX_LIVE_REASONING_BYTES * 2) }),
@@ -138,7 +138,7 @@ contractTest("web.hermetic", "live reasoning keeps a deterministic 64 KiB render
   );
 });
 
-contractTest("web.hermetic", "a new assistant response discards the previous response presentation", () => {
+test("a new assistant response discards the previous response presentation", () => {
   const previous = applyProviderReasoning(null, reasoningUpdate());
   const next = applyLiveProgress(previous, {
     id: "progress-next",
@@ -158,7 +158,7 @@ contractTest("web.hermetic", "a new assistant response discards the previous res
   assert.equal(next?.reasoning, null);
 });
 
-contractTest("web.hermetic", "finishing clears waiting status but keeps completed reasoning", () => {
+test("finishing clears waiting status but keeps completed reasoning", () => {
   const withProgress = applyLiveProgress(null, {
     id: "progress-1",
     assistantMessageId: "assistant-1",

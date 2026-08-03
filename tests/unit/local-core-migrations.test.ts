@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -9,10 +10,9 @@ import {
   resolveLocalCorePaths,
   runLocalCoreMigrations,
 } from "../../src/localCore/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "migration lock classifies missing, live, stale, incompatible, and invalid locks", async () => {
+test("migration lock classifies missing, live, stale, incompatible, and invalid locks", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-migration-lock-"));
   const paths = resolveLocalCorePaths(home);
   try {
@@ -60,7 +60,7 @@ contractTest("runtime.hermetic", "migration lock classifies missing, live, stale
   }
 });
 
-contractTest("runtime.hermetic", "migration lock uses one shared owner under concurrent migration attempts", async () => {
+test("migration lock uses one shared owner under concurrent migration attempts", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-migration-lock-concurrent-"));
   try {
     const [first, second] = await Promise.all([
@@ -89,7 +89,7 @@ contractTest("runtime.hermetic", "migration lock uses one shared owner under con
   }
 });
 
-contractTest("runtime.hermetic", "runLocalCoreMigrations runs under the Core migration lock and injects the explicit database URL", async () => {
+test("runLocalCoreMigrations runs under the Core migration lock and injects the explicit database URL", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-migration-run-"));
   try {
     let observedDatabaseUrl: string | undefined;
@@ -122,7 +122,7 @@ contractTest("runtime.hermetic", "runLocalCoreMigrations runs under the Core mig
   }
 });
 
-contractTest("runtime.hermetic", "runLocalCoreMigrations reports command failure without shell-owned decisions", async () => {
+test("runLocalCoreMigrations reports command failure without shell-owned decisions", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-migration-fail-"));
   try {
     const status = await runLocalCoreMigrations({

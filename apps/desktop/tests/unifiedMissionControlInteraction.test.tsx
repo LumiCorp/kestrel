@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import React, { act } from "react";
@@ -10,7 +11,6 @@ import type {
 import {
   UnifiedMissionControlWorkspace,
 } from "../renderer/src/UnifiedMissionControlWorkspace.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -166,8 +166,7 @@ function projectResponse(): DesktopMissionControlProjectResponse {
   };
 }
 
-contractTest(
-  "desktop.mission-control-operator-flow",
+test(
   "unified Mission Control keeps List and Kanban equivalent with one stable read-only inspector",
   async () => {
     const response = projectResponse();
@@ -248,8 +247,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.mission-control-operator-flow",
+test(
   "unified Mission Control preserves authoritative state when refresh fails",
   async () => {
     const response = projectResponse();
@@ -281,8 +279,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.mission-control-operator-flow",
+test(
   "unified Mission Control routes explicit operator commands through active project authority",
   async () => {
     const inactive = projectResponse();

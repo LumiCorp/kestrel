@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { parseOperatorControlPolicyFields } from "../../src/orchestration/OperatorControlValidation.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "parseOperatorControlPolicyFields accepts shared operator policy fields", () => {
+test("parseOperatorControlPolicyFields accepts shared operator policy fields", () => {
   const parsed = parseOperatorControlPolicyFields({
     allowToolClasses: ["read_only", "sandboxed_only"],
     allowCapabilities: ["workspace.read"],
@@ -19,7 +19,7 @@ contractTest("runtime.hermetic", "parseOperatorControlPolicyFields accepts share
   });
 });
 
-contractTest("runtime.hermetic", "parseOperatorControlPolicyFields rejects invalid tool classes with field evidence", () => {
+test("parseOperatorControlPolicyFields rejects invalid tool classes with field evidence", () => {
   const parsed = parseOperatorControlPolicyFields({
     allowToolClasses: ["read_only", "network"],
   });
@@ -31,7 +31,7 @@ contractTest("runtime.hermetic", "parseOperatorControlPolicyFields rejects inval
   });
 });
 
-contractTest("runtime.hermetic", "parseOperatorControlPolicyFields rejects blank capability entries with field evidence", () => {
+test("parseOperatorControlPolicyFields rejects blank capability entries with field evidence", () => {
   const parsed = parseOperatorControlPolicyFields({
     allowCapabilities: ["workspace.read", " "],
   });

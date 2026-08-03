@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { KESTREL_PRESENTATION_DATA_PART_KEYS } from "@kestrel-agents/ai-sdk";
 import type { UIMessage } from "ai";
 import { CompatibleChatTransport } from "@/lib/chat/compatible-chat-transport";
 import type { ChatStreamChunk } from "@/lib/chat/stream-protocol";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 async function readAllChunks<T>(stream: ReadableStream<T>) {
@@ -24,7 +24,7 @@ function createEventStreamBody(events: string[]) {
   return events.map((event) => `data: ${event}\n\n`).join("");
 }
 
-contractTest("web.hermetic", "CompatibleChatTransport preserves Kestrel presentation events without a warning", async () => {
+test("CompatibleChatTransport preserves Kestrel presentation events without a warning", async () => {
   const mockFetch = (async () =>
     new Response(
       createEventStreamBody([
@@ -68,7 +68,7 @@ contractTest("web.hermetic", "CompatibleChatTransport preserves Kestrel presenta
   );
 });
 
-contractTest("web.hermetic", "CompatibleChatTransport continues text and reports safe diagnostics for rejected events", async () => {
+test("CompatibleChatTransport continues text and reports safe diagnostics for rejected events", async () => {
   const warnings: unknown[][] = [];
   const originalWarn = console.warn;
   console.warn = (...args: unknown[]) => warnings.push(args);
@@ -151,7 +151,7 @@ contractTest("web.hermetic", "CompatibleChatTransport continues text and reports
   assert.equal(JSON.stringify(warnings).includes("--- bad ---"), false);
 });
 
-contractTest("web.hermetic", "CompatibleChatTransport reconnectToStream returns null for 204 responses", async () => {
+test("CompatibleChatTransport reconnectToStream returns null for 204 responses", async () => {
   const mockFetch = (async () =>
     new Response(null, {
       status: 204,
@@ -170,7 +170,7 @@ contractTest("web.hermetic", "CompatibleChatTransport reconnectToStream returns 
   assert.equal(stream, null);
 });
 
-contractTest("web.hermetic", "CompatibleChatTransport reconnectToStream prepends a resumed chunk", async () => {
+test("CompatibleChatTransport reconnectToStream prepends a resumed chunk", async () => {
   const mockFetch = (async () =>
     new Response(
       createEventStreamBody([
@@ -202,7 +202,7 @@ contractTest("web.hermetic", "CompatibleChatTransport reconnectToStream prepends
   );
 });
 
-contractTest("web.hermetic", "CompatibleChatTransport reconnectToStream degrades to a warning stream on fetch errors", async () => {
+test("CompatibleChatTransport reconnectToStream degrades to a warning stream on fetch errors", async () => {
   const mockFetch = (async () => {
     throw new Error("redis unavailable");
   }) as unknown as typeof fetch;
@@ -229,7 +229,7 @@ contractTest("web.hermetic", "CompatibleChatTransport reconnectToStream degrades
   ]);
 });
 
-contractTest("web.hermetic", "CompatibleChatTransport reconnectToStream degrades to a warning chunk on reader errors", async () => {
+test("CompatibleChatTransport reconnectToStream degrades to a warning chunk on reader errors", async () => {
   const encoder = new TextEncoder();
   let sentFirstChunk = false;
   const mockFetch = (async () =>

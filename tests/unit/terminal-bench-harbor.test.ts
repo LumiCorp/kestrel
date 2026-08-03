@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -13,10 +14,9 @@ import {
   terminalBenchTaskInputHash,
 } from "../../scripts/terminal-bench-harbor.js";
 import { formatTb2ReadableSummary } from "../../scripts/tb2-result-summary.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "terminal bench exposes a tb2 shortcut for Harbor", () => {
+test("terminal bench exposes a tb2 shortcut for Harbor", () => {
   const packageJson = JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
   };
@@ -33,7 +33,7 @@ contractTest("runtime.hermetic", "terminal bench exposes a tb2 shortcut for Harb
   assert.match(wrapper, /pnpm run bench:terminal:harbor -- "\$@"/u);
 });
 
-contractTest("runtime.hermetic", "terminal bench task identity excludes randomized job envelope fields", () => {
+test("terminal bench task identity excludes randomized job envelope fields", () => {
   const baseline = terminalBenchTaskInputHash("terminal-bench@2.0", "fix-git");
   const candidate = terminalBenchTaskInputHash("terminal-bench@2.0", "fix-git");
 
@@ -41,7 +41,7 @@ contractTest("runtime.hermetic", "terminal bench task identity excludes randomiz
   assert.notEqual(baseline, terminalBenchTaskInputHash("terminal-bench@2.0", "prove-plus-comm"));
 });
 
-contractTest("runtime.hermetic", "terminal bench exposes a tb2 passing regression script", () => {
+test("terminal bench exposes a tb2 passing regression script", () => {
   const packageJson = JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
   };
@@ -54,7 +54,7 @@ contractTest("runtime.hermetic", "terminal bench exposes a tb2 passing regressio
   assert.match(wrapper, /pnpm run tb2 "\$\{task_id\}" "\$@"/u);
 });
 
-contractTest("runtime.hermetic", "terminal bench exposes a tb2 medium-low candidate script", () => {
+test("terminal bench exposes a tb2 medium-low candidate script", () => {
   const packageJson = JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
   };
@@ -82,7 +82,7 @@ contractTest("runtime.hermetic", "terminal bench exposes a tb2 medium-low candid
   assert.match(wrapper, /pnpm run tb2 "\$\{task_id\}" "\$@"/u);
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor parses single task defaults", () => {
+test("terminal bench harbor parses single task defaults", () => {
   const options = parseTerminalBenchHarborArgs(["cobol-modernization"]);
 
   assert.deepEqual(options, {
@@ -96,7 +96,7 @@ contractTest("runtime.hermetic", "terminal bench harbor parses single task defau
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor builds Harbor custom agent command", () => {
+test("terminal bench harbor builds Harbor custom agent command", () => {
   const command = buildTerminalBenchHarborCommand(
     parseTerminalBenchHarborArgs(["cobol-modernization", "--harbor-bin", "/tmp/harbor", "--artifact", "/app/program.py"]),
   );
@@ -114,7 +114,7 @@ contractTest("runtime.hermetic", "terminal bench harbor builds Harbor custom age
   ]);
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor supports full dataset dry-run", () => {
+test("terminal bench harbor supports full dataset dry-run", () => {
   const options = parseTerminalBenchHarborArgs(["--full", "--dry-run"]);
   const command = buildTerminalBenchHarborCommand(options);
 
@@ -129,14 +129,14 @@ contractTest("runtime.hermetic", "terminal bench harbor supports full dataset dr
   ]);
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor rejects unsafe artifact paths", () => {
+test("terminal bench harbor rejects unsafe artifact paths", () => {
   assert.throws(
     () => parseTerminalBenchHarborArgs(["cobol-modernization", "--artifact", "../program.py"]),
     /Unsafe Harbor artifact path/u,
   );
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor dry-run does not require harbor binary", async () => {
+test("terminal bench harbor dry-run does not require harbor binary", async () => {
   const stdout: string[] = [];
   const stderr: string[] = [];
   let spawnCalls = 0;
@@ -158,7 +158,7 @@ contractTest("runtime.hermetic", "terminal bench harbor dry-run does not require
   assert.equal(stderr.join(""), "");
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor transports the selected profile into the task container", async () => {
+test("terminal bench harbor transports the selected profile into the task container", async () => {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-profile-"));
   try {
     const profileFile = path.join(temporary, "profiles.json");
@@ -185,7 +185,7 @@ contractTest("runtime.hermetic", "terminal bench harbor transports the selected 
   }
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor warns when non-OpenRouter provider keys are present with OpenRouter", async () => {
+test("terminal bench harbor warns when non-OpenRouter provider keys are present with OpenRouter", async () => {
   const stderr: string[] = [];
   const code = await runTerminalBenchHarbor(["cobol-modernization", "--dry-run"], {
     spawn: (() => {
@@ -204,7 +204,7 @@ contractTest("runtime.hermetic", "terminal bench harbor warns when non-OpenRoute
   assert.match(stderr.join(""), /Ignoring non-OpenRouter provider key\(s\) for Kestrel benchmarks: ANTHROPIC_API_KEY/u);
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor installs missing default harbor binary and continues", async () => {
+test("terminal bench harbor installs missing default harbor binary and continues", async () => {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const calls: Array<{ command: string; args: string[] }> = [];
@@ -262,7 +262,7 @@ contractTest("runtime.hermetic", "terminal bench harbor installs missing default
   assert.equal(stderr.join(""), "");
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor reports missing uv when harbor install cannot run", async () => {
+test("terminal bench harbor reports missing uv when harbor install cannot run", async () => {
   const stderr: string[] = [];
   const code = await runTerminalBenchHarbor(["cobol-modernization"], {
     spawn: (() => ({ status: 1, stdout: Buffer.from(""), stderr: Buffer.from(""), signal: null, pid: 1, output: [] })) as never,
@@ -276,7 +276,7 @@ contractTest("runtime.hermetic", "terminal bench harbor reports missing uv when 
   assert.match(stderr.join(""), /uv is not installed/u);
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor detects recent failed Kestrel adapter artifacts", () => {
+test("terminal bench harbor detects recent failed Kestrel adapter artifacts", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-failures-"));
   try {
     const staleNestedArtifactDir = path.join(
@@ -331,7 +331,7 @@ contractTest("runtime.hermetic", "terminal bench harbor detects recent failed Ke
   }
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor detects recent errored Harbor trial", () => {
+test("terminal bench harbor detects recent errored Harbor trial", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-errored-"));
   try {
     const jobDir = path.join(tmp, "jobs", "2026-06-17__10-58-17");
@@ -355,7 +355,7 @@ contractTest("runtime.hermetic", "terminal bench harbor detects recent errored H
   }
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor detects single-task zero reward", () => {
+test("terminal bench harbor detects single-task zero reward", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-zero-reward-"));
   try {
     const jobDir = path.join(tmp, "jobs", "2026-06-17__11-00-09");
@@ -384,7 +384,7 @@ contractTest("runtime.hermetic", "terminal bench harbor detects single-task zero
   }
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor summarizes reward, adapter, exceptions, and process failure", () => {
+test("terminal bench harbor summarizes reward, adapter, exceptions, and process failure", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-summary-"));
   try {
     const jobDir = path.join(tmp, "jobs", "2026-06-17__13-08-08");
@@ -453,7 +453,7 @@ contractTest("runtime.hermetic", "terminal bench harbor summarizes reward, adapt
   }
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor summarizes missing and incomplete results as infrastructure skips", () => {
+test("terminal bench harbor summarizes missing and incomplete results as infrastructure skips", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-no-result-"));
   try {
     assert.deepEqual(readRecentHarborRunSummary(tmp, Date.now() - 1000, "mteb-retrieve"), {
@@ -486,7 +486,7 @@ contractTest("runtime.hermetic", "terminal bench harbor summarizes missing and i
   }
 });
 
-contractTest("runtime.hermetic", "terminal bench harbor fails single-task run when Harbor reward is zero", async () => {
+test("terminal bench harbor fails single-task run when Harbor reward is zero", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-harbor-zero-reward-run-"));
   try {
     const code = await runTerminalBenchHarbor(["caffe-cifar-10"], {

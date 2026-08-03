@@ -1,14 +1,14 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { kestrelOneSearchKnowledgeDocumentsTool } from "../../tools/kestrelOne/searchKnowledgeDocuments.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const TOOL_NAME = "kestrel_one.search_knowledge_documents";
 
-contractTest("runtime.hermetic", "Kestrel-One knowledge tool sends bearer auth and tenant headers", async () => {
+test("Kestrel-One knowledge tool sends bearer auth and tenant headers", async () => {
   let capturedUrl = "";
   let capturedInit: RequestInit | undefined;
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -58,7 +58,7 @@ contractTest("runtime.hermetic", "Kestrel-One knowledge tool sends bearer auth a
   assert.equal(capturedInit?.body, JSON.stringify({ query: "docs", limit: 3 }));
 });
 
-contractTest("runtime.hermetic", "Kestrel-One knowledge tool maps app HTTP failures without retrying", async () => {
+test("Kestrel-One knowledge tool maps app HTTP failures without retrying", async () => {
   let callCount = 0;
   const fetchImpl: typeof fetch = async () => {
     callCount += 1;
@@ -80,7 +80,7 @@ contractTest("runtime.hermetic", "Kestrel-One knowledge tool maps app HTTP failu
   assert.equal(callCount, 1);
 });
 
-contractTest("runtime.hermetic", "Kestrel-One knowledge tool input is validated by the runtime registry before fetch", async () => {
+test("Kestrel-One knowledge tool input is validated by the runtime registry before fetch", async () => {
   let called = false;
   const registry = new UnifiedToolRegistry({
     allowlist: [TOOL_NAME],

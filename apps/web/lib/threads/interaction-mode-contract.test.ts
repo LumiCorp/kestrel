@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const route = fs.readFileSync(path.join(root, "app/api/threads/[id]/route.ts"), "utf8");
@@ -11,7 +11,7 @@ const chat = fs.readFileSync(path.join(root, "components/chatbot/chat.tsx"), "ut
 const turnStore = fs.readFileSync(path.join(root, "lib/turns/store.ts"), "utf8");
 const worker = fs.readFileSync(path.join(root, "lib/turns/process-runtime.ts"), "utf8");
 
-contractTest("web.hermetic", "task interaction mode is canonical across API, composer, turns, and runtime switches", () => {
+test("task interaction mode is canonical across API, composer, turns, and runtime switches", () => {
   assert.match(route, /interactionMode: thread\.interactionMode/u);
   assert.match(route, /updateThreadInteractionModeForUser/u);
   assert.match(page, /initialInteractionMode=\{chat\?\.interactionMode \?\? "chat"\}/u);

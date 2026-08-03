@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,7 +8,6 @@ import {
 } from "../../agents/reference-react/src/decision/compileIntent.js";
 import { buildInternalDecisionContext } from "../../agents/reference-react/src/context/InternalDecisionContext.js";
 import { hashToolInput } from "../../agents/reference-react/src/memory/workingMemory.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const readTextTool = {
@@ -130,7 +130,7 @@ function compileExtractionAt(url: string, consecutiveLowYield: number) {
   });
 }
 
-contractTest("runtime.hermetic", "internal decision context exposes existing exact-repeat evidence honestly", () => {
+test("internal decision context exposes existing exact-repeat evidence honestly", () => {
   const input = {
     path: "newsletter.html",
   };
@@ -194,7 +194,7 @@ contractTest("runtime.hermetic", "internal decision context exposes existing exa
   });
 });
 
-contractTest("runtime.hermetic", "low-yield admission allows the single third same-cluster recovery extraction", () => {
+test("low-yield admission allows the single third same-cluster recovery extraction", () => {
   const compiled = compileExtractionAt(
     "https://www.clevelandmagazine.com/articles/story-3",
     2,
@@ -204,7 +204,7 @@ contractTest("runtime.hermetic", "low-yield admission allows the single third sa
   assert.equal(compiled.action.name, "internet.extract");
 });
 
-contractTest("runtime.hermetic", "low-yield admission blocks a fourth same-cluster extraction across URL changes", () => {
+test("low-yield admission blocks a fourth same-cluster extraction across URL changes", () => {
   assert.throws(
     () =>
       compileExtractionAt(
@@ -227,7 +227,7 @@ contractTest("runtime.hermetic", "low-yield admission blocks a fourth same-clust
   );
 });
 
-contractTest("runtime.hermetic", "low-yield admission leaves different clusters and reset streaks available", () => {
+test("low-yield admission leaves different clusters and reset streaks available", () => {
   const differentCluster = compileExtractionAt(
     "https://www.clevelandmagazine.com/features/story-4",
     3,
@@ -422,7 +422,7 @@ function writeEvidence(path = "src/app/page.tsx") {
   };
 }
 
-contractTest("runtime.hermetic", "compileIntent rejects unknown executable effect actions before runtime dispatch", () => {
+test("compileIntent rejects unknown executable effect actions before runtime dispatch", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -455,7 +455,7 @@ contractTest("runtime.hermetic", "compileIntent rejects unknown executable effec
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects mixed exec_command start and continuation input before dispatch", () => {
+test("compileIntent rejects mixed exec_command start and continuation input before dispatch", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -505,7 +505,7 @@ contractTest("runtime.hermetic", "compileIntent rejects mixed exec_command start
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects duplicate fresh exec_command start while matching live session exists", () => {
+test("compileIntent rejects duplicate fresh exec_command start while matching live session exists", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -561,7 +561,7 @@ contractTest("runtime.hermetic", "compileIntent rejects duplicate fresh exec_com
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent allows fresh exec_command when no matching live session exists", () => {
+test("compileIntent allows fresh exec_command when no matching live session exists", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -607,7 +607,7 @@ contractTest("runtime.hermetic", "compileIntent allows fresh exec_command when n
   assert.equal(compiled.action?.name, "exec_command");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated same-path fs.read_text when cached contents are unchanged", () => {
+test("compileIntent allows repeated same-path fs.read_text when cached contents are unchanged", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: fsReadDecision("./src/app/page.tsx", { maxBytes: 20_000 }),
@@ -625,7 +625,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated same-path fs.rea
   assert.equal(compiled.action?.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects internet.extract for localhost app URLs before provider dispatch", () => {
+test("compileIntent rejects internet.extract for localhost app URLs before provider dispatch", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -672,7 +672,7 @@ contractTest("runtime.hermetic", "compileIntent rejects internet.extract for loc
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent allows same-path fs.read_text after an exact-path filesystem mutation", () => {
+test("compileIntent allows same-path fs.read_text after an exact-path filesystem mutation", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: fsReadDecision("src/app/page.tsx"),
@@ -690,7 +690,7 @@ contractTest("runtime.hermetic", "compileIntent allows same-path fs.read_text af
   assert.equal(compiled.action?.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows default-t5 style repeated read after post-mutation cache is fresh", () => {
+test("compileIntent allows default-t5 style repeated read after post-mutation cache is fresh", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: fsReadDecision("./src/app/page.tsx"),
@@ -735,7 +735,7 @@ contractTest("runtime.hermetic", "compileIntent allows default-t5 style repeated
   assert.equal(compiled.action?.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows fs.read_text for a different normalized path", () => {
+test("compileIntent allows fs.read_text for a different normalized path", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: fsReadDecision("src/app/layout.tsx"),
@@ -753,7 +753,7 @@ contractTest("runtime.hermetic", "compileIntent allows fs.read_text for a differ
   assert.equal(compiled.action?.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows same-path fs.read_text when the prior read was truncated", () => {
+test("compileIntent allows same-path fs.read_text when the prior read was truncated", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: fsReadDecision("src/app/page.tsx"),
@@ -771,7 +771,7 @@ contractTest("runtime.hermetic", "compileIntent allows same-path fs.read_text wh
   assert.equal(compiled.action?.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated fs.search_text actions", () => {
+test("compileIntent allows repeated fs.search_text actions", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -813,7 +813,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated fs.search_text a
   assert.equal(compiled.action?.name, "fs.search_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent accepts repo.trace for inspect_repo operation intent", () => {
+test("compileIntent accepts repo.trace for inspect_repo operation intent", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -860,7 +860,7 @@ contractTest("runtime.hermetic", "compileIntent accepts repo.trace for inspect_r
   assert.equal(compiled.action?.name, "repo.trace");
 });
 
-contractTest("runtime.hermetic", "compileIntent normalizes dev.shell.run cwd against active devShell process workspace root", () => {
+test("compileIntent preserves dev.shell.run paths for registry validation", () => {
   const action = compileIntent({
     phase: "deliberator",
     output: {
@@ -914,11 +914,11 @@ contractTest("runtime.hermetic", "compileIntent normalizes dev.shell.run cwd aga
 
   assert.equal(action.action?.kind, "tool");
   assert.equal(action.action?.name, "dev.shell.run");
-  assert.equal(action.action?.input.workspaceRoot, "/tmp/project-root");
-  assert.equal(action.action?.input.cwd, "/tmp/project-root");
+  assert.equal(action.action?.input.workspaceRoot, ".");
+  assert.equal(action.action?.input.cwd, "../outside-workspace");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows nested create-next-app scaffold targets", () => {
+test("compileIntent allows nested create-next-app scaffold targets", () => {
   for (const command of [
     "CI=1 pnpm create next-app@15.4.5 app --ts --eslint --app --use-pnpm --yes",
     "npm create next-app@latest app -- --ts",
@@ -965,7 +965,7 @@ contractTest("runtime.hermetic", "compileIntent allows nested create-next-app sc
   }
 });
 
-contractTest("runtime.hermetic", "compileIntent allows root create-next-app scaffold target", () => {
+test("compileIntent allows root create-next-app scaffold target", () => {
   const action = compileIntent({
     phase: "deliberator",
     output: {
@@ -1005,7 +1005,7 @@ contractTest("runtime.hermetic", "compileIntent allows root create-next-app scaf
   assert.equal(action.action?.name, "dev.shell.run");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows direct file creation after empty-root evidence", () => {
+test("compileIntent allows direct file creation after empty-root evidence", () => {
   const action = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -1082,7 +1082,7 @@ contractTest("runtime.hermetic", "compileIntent allows direct file creation afte
   assert.equal(action.action?.name, "fs.write_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows shell commands for coding work even when extracted operation intent is write_file", () => {
+test("compileIntent allows shell commands for coding work even when extracted operation intent is write_file", () => {
   const action = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -1137,7 +1137,7 @@ contractTest("runtime.hermetic", "compileIntent allows shell commands for coding
   assert.equal(action.action?.name, "dev.shell.run");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows static file closeout with file-backed evidence", () => {
+test("compileIntent allows static file closeout with file-backed evidence", () => {
   const action = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -1179,7 +1179,7 @@ contractTest("runtime.hermetic", "compileIntent allows static file closeout with
   assert.equal(action.verification.expectedRepoDelta, undefined);
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects contradictory passed artifact verification with failures", () => {
+test("compileIntent rejects contradictory passed artifact verification with failures", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -1234,7 +1234,7 @@ contractTest("runtime.hermetic", "compileIntent rejects contradictory passed art
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent allows static file closeout without completionState when file evidence exists", () => {
+test("compileIntent allows static file closeout without completionState when file evidence exists", () => {
   const action = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -1272,7 +1272,7 @@ contractTest("runtime.hermetic", "compileIntent allows static file closeout with
   assert.equal(action.verification.expectedRepoDelta, undefined);
 });
 
-contractTest("runtime.hermetic", "compileIntent drops non-file expectedRepoDelta prose without evidence backfill", () => {
+test("compileIntent drops non-file expectedRepoDelta prose without evidence backfill", () => {
   const action = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -1311,7 +1311,7 @@ contractTest("runtime.hermetic", "compileIntent drops non-file expectedRepoDelta
   assert.equal(action.verification.expectedRepoDelta, undefined);
 });
 
-contractTest("runtime.hermetic", "compileIntent allows overwriting a verified artifact", () => {
+test("compileIntent allows overwriting a verified artifact", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -1337,7 +1337,7 @@ contractTest("runtime.hermetic", "compileIntent allows overwriting a verified ar
   assert.equal(compiled.action?.name, "fs.write_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows unrelated source writes after artifact verification passed", () => {
+test("compileIntent allows unrelated source writes after artifact verification passed", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -1364,7 +1364,7 @@ contractTest("runtime.hermetic", "compileIntent allows unrelated source writes a
   assert.equal(compiled.action?.input.path, "app/page.tsx");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows verified artifact repair after a newer verifier failure exists", () => {
+test("compileIntent allows verified artifact repair after a newer verifier failure exists", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -1396,7 +1396,7 @@ contractTest("runtime.hermetic", "compileIntent allows verified artifact repair 
   assert.equal(compiled.action?.input.path, "newsletter-report.json");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows ask_user when artifact verification names a repairable failure", () => {
+test("compileIntent allows ask_user when artifact verification names a repairable failure", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -1439,7 +1439,7 @@ contractTest("runtime.hermetic", "compileIntent allows ask_user when artifact ve
   assert.equal(compiled.action?.kind, "ask_user");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows rerunning create-next-app after completed bootstrap", () => {
+test("compileIntent allows rerunning create-next-app after completed bootstrap", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -1490,7 +1490,7 @@ contractTest("runtime.hermetic", "compileIntent allows rerunning create-next-app
   assert.equal(compiled.action?.name, "dev.shell.run");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated filesystem inventory for runtime reuse", () => {
+test("compileIntent allows repeated filesystem inventory for runtime reuse", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -1556,7 +1556,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated filesystem inven
   assert.equal(compiled.action.name, "fs.list");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows retry after failed filesystem inventory evidence", () => {
+test("compileIntent allows retry after failed filesystem inventory evidence", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -1617,7 +1617,7 @@ contractTest("runtime.hermetic", "compileIntent allows retry after failed filesy
   assert.equal(compiled.action.name, "fs.list");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated filesystem inventory inside a mixed batch for runtime reuse", () => {
+test("compileIntent allows repeated filesystem inventory inside a mixed batch for runtime reuse", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -1696,7 +1696,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated filesystem inven
   assert.equal(compiled.action.items[0]?.name, "fs.list");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated filesystem inventory from immediate last action result", () => {
+test("compileIntent allows repeated filesystem inventory from immediate last action result", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -1751,7 +1751,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated filesystem inven
   assert.equal(compiled.action.name, "fs.list");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows retry after string-error filesystem inventory last action result", () => {
+test("compileIntent allows retry after string-error filesystem inventory last action result", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -1805,7 +1805,7 @@ contractTest("runtime.hermetic", "compileIntent allows retry after string-error 
   assert.equal(compiled.action.name, "fs.list");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated filesystem file reads when cached contents are unchanged", () => {
+test("compileIntent allows repeated filesystem file reads when cached contents are unchanged", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -1866,7 +1866,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated filesystem file 
   assert.equal(compiled.action.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated filesystem text searches for runtime reuse", () => {
+test("compileIntent allows repeated filesystem text searches for runtime reuse", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -1928,7 +1928,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated filesystem text 
   assert.equal(compiled.action.name, "fs.search_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows reading a file again after a later same-path mutation", () => {
+test("compileIntent allows reading a file again after a later same-path mutation", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -2001,7 +2001,7 @@ contractTest("runtime.hermetic", "compileIntent allows reading a file again afte
   assert.equal(compiled.action.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated truncated filesystem reads for runtime reuse", () => {
+test("compileIntent allows repeated truncated filesystem reads for runtime reuse", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -2064,7 +2064,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated truncated filesy
   assert.equal(compiled.action.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows a larger byte budget after a truncated filesystem read", () => {
+test("compileIntent allows a larger byte budget after a truncated filesystem read", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -2127,7 +2127,7 @@ contractTest("runtime.hermetic", "compileIntent allows a larger byte budget afte
   assert.equal(compiled.action.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated reads after no-change replace_text result", () => {
+test("compileIntent allows repeated reads after no-change replace_text result", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -2198,7 +2198,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated reads after no-c
   assert.equal(compiled.action.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated reads after patch_text touches the same path", () => {
+test("compileIntent allows repeated reads after patch_text touches the same path", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -2267,7 +2267,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated reads after patc
   assert.equal(compiled.action.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated reads after copy source evidence", () => {
+test("compileIntent allows repeated reads after copy source evidence", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -2340,7 +2340,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated reads after copy
   assert.equal(compiled.action.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated reads from lastActionResult content", () => {
+test("compileIntent allows repeated reads from lastActionResult content", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: fsReadDecision("src/app/page.tsx"),
@@ -2371,7 +2371,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated reads from lastA
   assert.equal(compiled.action?.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows reading a copy destination after the copy mutation", () => {
+test("compileIntent allows reading a copy destination after the copy mutation", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -2441,7 +2441,7 @@ contractTest("runtime.hermetic", "compileIntent allows reading a copy destinatio
   assert.equal(compiled.action.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated filesystem reads inside the same batch for runtime reuse", () => {
+test("compileIntent allows repeated filesystem reads inside the same batch for runtime reuse", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -2489,7 +2489,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated filesystem reads
   assert.equal(compiled.action.items[0]?.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated cached filesystem reads inside a multi-file batch", () => {
+test("compileIntent allows repeated cached filesystem reads inside a multi-file batch", () => {
   const compiled = compileIntent({
         phase: "deliberator",
         output: {
@@ -2537,7 +2537,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated cached filesyste
   ]);
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated cached batch reads when next paths are absolute workspace paths", () => {
+test("compileIntent allows repeated cached batch reads when next paths are absolute workspace paths", () => {
   const workspaceRoot = "/private/tmp/kestrel-cli-prompt-smoke/run/workspace";
   const compiled = compileIntent({
         phase: "deliberator",
@@ -2600,7 +2600,7 @@ contractTest("runtime.hermetic", "compileIntent allows repeated cached batch rea
   ]);
 });
 
-contractTest("runtime.hermetic", "compileIntent allows repeated filesystem inventory when hidden entries were previously omitted", () => {
+test("compileIntent allows repeated filesystem inventory when hidden entries were previously omitted", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: {
@@ -2833,7 +2833,7 @@ function repoTraceTool() {
   };
 }
 
-contractTest("runtime.hermetic", "compileIntent does not seed hidden progress when goal-satisfied finalization omits it", () => {
+test("compileIntent does not seed hidden progress when goal-satisfied finalization omits it", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     sourceRunId: "model-run-direct-answer",
@@ -2865,7 +2865,7 @@ contractTest("runtime.hermetic", "compileIntent does not seed hidden progress wh
   assert.equal(compiled.action?.kind, "finalize");
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects build-mode goal_satisfied before execution evidence", () => {
+test("compileIntent rejects build-mode goal_satisfied before execution evidence", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -2903,7 +2903,7 @@ contractTest("runtime.hermetic", "compileIntent rejects build-mode goal_satisfie
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects build-mode goal_satisfied with only fresh completed visible todos", () => {
+test("compileIntent rejects build-mode goal_satisfied with only fresh completed visible todos", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -2951,7 +2951,7 @@ contractTest("runtime.hermetic", "compileIntent rejects build-mode goal_satisfie
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent allows build-mode goal_satisfied after execution evidence", () => {
+test("compileIntent allows build-mode goal_satisfied after execution evidence", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -2982,7 +2982,7 @@ contractTest("runtime.hermetic", "compileIntent allows build-mode goal_satisfied
   assert.equal(compiled.action?.kind, "finalize");
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects build-mode goal_satisfied with stale workspace evidence", () => {
+test("compileIntent rejects build-mode goal_satisfied with stale workspace evidence", () => {
   assert.throws(
     () => compileIntent({
       phase: "deliberator",
@@ -3020,7 +3020,7 @@ contractTest("runtime.hermetic", "compileIntent rejects build-mode goal_satisfie
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects build-mode goal_satisfied with a live exec_command session", () => {
+test("compileIntent rejects build-mode goal_satisfied with a live exec_command session", () => {
   assert.throws(
     () => compileIntent({
       phase: "deliberator",
@@ -3049,7 +3049,7 @@ contractTest("runtime.hermetic", "compileIntent rejects build-mode goal_satisfie
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent allows build-mode goal_satisfied with an explicitly retained live exec_command session", () => {
+test("compileIntent allows build-mode goal_satisfied with an explicitly retained live exec_command session", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -3079,7 +3079,7 @@ contractTest("runtime.hermetic", "compileIntent allows build-mode goal_satisfied
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects retained sessions that are not active", () => {
+test("compileIntent rejects retained sessions that are not active", () => {
   assert.throws(
     () => compileIntent({
       phase: "deliberator",
@@ -3112,7 +3112,7 @@ contractTest("runtime.hermetic", "compileIntent rejects retained sessions that a
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects inactive retained sessions outside build mode", () => {
+test("compileIntent rejects inactive retained sessions outside build mode", () => {
   assert.throws(
     () => compileIntent({
       phase: "deliberator",
@@ -3144,7 +3144,7 @@ contractTest("runtime.hermetic", "compileIntent rejects inactive retained sessio
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects partial declaration when another exec_command session remains live", () => {
+test("compileIntent rejects partial declaration when another exec_command session remains live", () => {
   assert.throws(
     () => compileIntent({
       phase: "deliberator",
@@ -3180,7 +3180,7 @@ contractTest("runtime.hermetic", "compileIntent rejects partial declaration when
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent allows explicitly warned unresolved validation when no todo remains", () => {
+test("compileIntent allows explicitly warned unresolved validation when no todo remains", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     interactionMode: "build",
@@ -3229,7 +3229,7 @@ contractTest("runtime.hermetic", "compileIntent allows explicitly warned unresol
   assert.equal(compiled.action?.kind, "finalize");
 });
 
-contractTest("runtime.hermetic", "compileIntent allows more tool work without hidden progress gates", () => {
+test("compileIntent allows more tool work without hidden progress gates", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     output: fsReadDecision("newsletter-report.json"),
@@ -3246,7 +3246,7 @@ contractTest("runtime.hermetic", "compileIntent allows more tool work without hi
   assert.equal(compiled.action?.name, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects generic build-mode cannot_satisfy without concrete unavailable evidence", () => {
+test("compileIntent rejects generic build-mode cannot_satisfy without concrete unavailable evidence", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -3297,7 +3297,7 @@ contractTest("runtime.hermetic", "compileIntent rejects generic build-mode canno
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects build-mode insufficient_horizon cannot_satisfy", () => {
+test("compileIntent rejects build-mode insufficient_horizon cannot_satisfy", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -3343,7 +3343,7 @@ contractTest("runtime.hermetic", "compileIntent rejects build-mode insufficient_
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects build-mode need_user_choice cannot_satisfy", () => {
+test("compileIntent rejects build-mode need_user_choice cannot_satisfy", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -3382,7 +3382,7 @@ contractTest("runtime.hermetic", "compileIntent rejects build-mode need_user_cho
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent rejects generic build blocker when executable tools are available", () => {
+test("compileIntent rejects generic build blocker when executable tools are available", () => {
   assert.throws(
     () =>
       compileIntent({
@@ -3435,7 +3435,7 @@ contractTest("runtime.hermetic", "compileIntent rejects generic build blocker wh
   );
 });
 
-contractTest("runtime.hermetic", "compileAgentAction rejects policy_blocked finalize as a deliberator closeout", () => {
+test("compileAgentAction rejects policy_blocked finalize as a deliberator closeout", () => {
   assert.throws(
     () =>
       compileAgentAction({
@@ -3477,7 +3477,7 @@ contractTest("runtime.hermetic", "compileAgentAction rejects policy_blocked fina
   );
 });
 
-contractTest("runtime.hermetic", "compileIntent keeps non-build insufficient_horizon compatibility", () => {
+test("compileIntent keeps non-build insufficient_horizon compatibility", () => {
   const compiled = compileIntent({
     phase: "deliberator",
     interactionMode: "plan",

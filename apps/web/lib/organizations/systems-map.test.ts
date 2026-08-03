@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   mergeProviderEstateStates,
   summarizeProviderEnvironment,
@@ -25,8 +25,7 @@ const environment = {
   ],
 };
 
-contractTest(
-  "web.hermetic",
+test(
   "Systems map provider state exposes only Kestrel-linked resources and flags inventory drift",
   () => {
     const state = summarizeProviderEnvironment({
@@ -57,8 +56,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Systems map keeps the last provider-confirmed state when a later refresh fails",
   () => {
     const confirmed = summarizeProviderEnvironment({
@@ -86,8 +84,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Systems map ignores an older provider response after a newer refresh completes",
   () => {
     const newer = unavailableProviderState({

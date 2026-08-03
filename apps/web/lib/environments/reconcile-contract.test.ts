@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type {
   EnvironmentProviderInventory,
@@ -10,14 +11,12 @@ import {
   retainedFailedRestoreResourceIds,
   selectOrphanVolumeIds,
 } from "./reconcile-contract";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const workspaceId = "87408a50-5dc3-448a-b099-aada6811996a";
 const expectedVolumeName = "ws_87408a505dc3448ab099";
 
-contractTest(
-  "web.hermetic",
+test(
   "started Workspace Machines become ready only after their health check passes",
   async () => {
     let checks = 0;
@@ -34,8 +33,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "started unhealthy Workspace Machines become degraded instead of ready",
   async () => {
     const healthError = new Error("runner unavailable");
@@ -51,8 +49,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "only stopped Workspace Machines reconcile to stopped without a health check",
   async () => {
     let checks = 0;
@@ -121,7 +118,7 @@ function inventory(
   };
 }
 
-contractTest("web.hermetic", "Workspace reconciliation accepts an unchanged exact Volume binding", () => {
+test("Workspace reconciliation accepts an unchanged exact Volume binding", () => {
   assert.deepEqual(
     assessWorkspaceVolumeBinding({
       workspaceId,
@@ -135,7 +132,7 @@ contractTest("web.hermetic", "Workspace reconciliation accepts an unchanged exac
   );
 });
 
-contractTest("web.hermetic", "Workspace reconciliation accepts an exactly bound recovery Volume", () => {
+test("Workspace reconciliation accepts an exactly bound recovery Volume", () => {
   const recoveryVolumeName = `${expectedVolumeName}_r_restore`;
   assert.deepEqual(
     assessWorkspaceVolumeBinding({
@@ -167,7 +164,7 @@ contractTest("web.hermetic", "Workspace reconciliation accepts an exactly bound 
   );
 });
 
-contractTest("web.hermetic", "Workspace reconciliation adopts an exact replacement Volume", () => {
+test("Workspace reconciliation adopts an exact replacement Volume", () => {
   assert.deepEqual(
     assessWorkspaceVolumeBinding({
       workspaceId,
@@ -273,21 +270,21 @@ const assertAmbiguousWorkspaceReconciliation = (
   assert.equal(assessment.status, "degraded");
 };
 
-contractTest("web.hermetic", "Workspace reconciliation degrades when the recorded Machine is missing", () =>
+test("Workspace reconciliation degrades when the recorded Machine is missing", () =>
   assertAmbiguousWorkspaceReconciliation(ambiguousCases[0]!));
-contractTest("web.hermetic", "Workspace reconciliation degrades when the recorded Volume is attached elsewhere", () =>
+test("Workspace reconciliation degrades when the recorded Volume is attached elsewhere", () =>
   assertAmbiguousWorkspaceReconciliation(ambiguousCases[1]!));
-contractTest("web.hermetic", "Workspace reconciliation degrades when the recorded Volume still exists", () =>
+test("Workspace reconciliation degrades when the recorded Volume still exists", () =>
   assertAmbiguousWorkspaceReconciliation(ambiguousCases[2]!));
 
-contractTest("web.hermetic", "orphan cleanup protection includes every mounted inventory Volume", () => {
+test("orphan cleanup protection includes every mounted inventory Volume", () => {
   assert.deepEqual(
     [...mountedVolumeIdsFromInventory(inventory())],
     ["volume-new"]
   );
 });
 
-contractTest("web.hermetic", "orphan cleanup excludes mounted Volumes even when the database binding is stale", () => {
+test("orphan cleanup excludes mounted Volumes even when the database binding is stale", () => {
   const providerInventory = inventory({
     volumes: [
       ...inventory().volumes,
@@ -308,7 +305,7 @@ contractTest("web.hermetic", "orphan cleanup excludes mounted Volumes even when 
   );
 });
 
-contractTest("web.hermetic", "post-cutover failures retain both old resource identities", () => {
+test("post-cutover failures retain both old resource identities", () => {
   const retained = retainedFailedRestoreResourceIds([
     {
       oldMachineId: "machine-old",

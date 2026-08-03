@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getDesktopComposerSubmissionPolicy } from "../renderer/src/composerPolicy.js";
 import type { DesktopOperatorInboxItem } from "../src/contracts.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("desktop.hermetic", "Desktop composer answers the exact pending user-input request", () => {
+test("Desktop composer answers the exact pending user-input request", () => {
   const request = {
     itemId: "request:request-1",
     kind: "user_input_request",
@@ -26,7 +26,7 @@ contractTest("desktop.hermetic", "Desktop composer answers the exact pending use
   });
 });
 
-contractTest("desktop.hermetic", "Desktop composer ignores resolved user-input requests", () => {
+test("Desktop composer ignores resolved user-input requests", () => {
   const request = {
     itemId: "request:request-1",
     kind: "user_input_request",
@@ -44,7 +44,7 @@ contractTest("desktop.hermetic", "Desktop composer ignores resolved user-input r
   }), { mode: "start_turn" });
 });
 
-contractTest("desktop.hermetic", "Desktop composer queues ordinary input only while a run is active", () => {
+test("Desktop composer queues ordinary input only while a run is active", () => {
   assert.deepEqual(getDesktopComposerSubmissionPolicy({
     inboxItems: [],
     runActive: true,

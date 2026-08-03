@@ -1,4 +1,6 @@
+import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { defaultToolCatalog } from "../../tools/catalog.js";
 import {
@@ -6,17 +8,25 @@ import {
   validateBuiltInToolInputContract,
 } from "../../tools/runtime/builtInToolInputContracts.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
-import { normalizeTrustedToolActionInput } from "../../tools/runtime/normalizeToolInput.js";
-import { contractTest } from "../helpers/contract-test.js";
+import { adaptTrustedLegacyToolInput } from "../../tools/runtime/trustedToolInputCompatibility.js";
+
+const compileIntentSource = readFileSync(
+  new URL("../../agents/reference-react/src/decision/compileIntent.ts", import.meta.url),
+  "utf8",
+);
+const acterSource = readFileSync(
+  new URL("../../agents/reference-react/src/steps/acter.ts", import.meta.url),
+  "utf8",
+);
 
 
-contractTest("runtime.hermetic", "trusted compatibility normalization strips unexpected top-level keys", () => {
+test("trusted compatibility normalization strips unexpected top-level keys", () => {
   const strictTools = defaultToolCatalog.list().filter((tool) =>
     tool.inputSchema.type === "object" && tool.inputSchema.additionalProperties === false,
   );
 
   for (const tool of strictTools) {
-    const sanitized = normalizeTrustedToolActionInput({
+    const sanitized = adaptTrustedLegacyToolInput({
       name: tool.name,
       schema: tool.inputSchema,
       value: {
@@ -31,14 +41,22 @@ contractTest("runtime.hermetic", "trusted compatibility normalization strips une
   }
 });
 
-contractTest("runtime.hermetic", "every built-in tool has an explicit input contract entry", () => {
+test("model decision and execution paths cannot import trusted compatibility adaptation", () => {
+  for (const source of [compileIntentSource, acterSource]) {
+    assert.doesNotMatch(source, /adaptTrustedLegacyToolInput/u);
+    assert.doesNotMatch(source, /normalizeToolActionInput/u);
+    assert.doesNotMatch(source, /sanitizeToolInputForSchema/u);
+  }
+});
+
+test("every built-in tool has an explicit input contract entry", () => {
   const toolNames = defaultToolCatalog.list().map((tool) => tool.name).sort();
   const contractNames = Object.keys(BUILT_IN_TOOL_INPUT_CONTRACTS).sort();
 
   assert.deepEqual(contractNames, toolNames);
 });
 
-contractTest("runtime.hermetic", "internet catalog exposes canonical Tavily tools and removes old semantic names", () => {
+test("internet catalog exposes canonical Tavily tools and removes old semantic names", () => {
   const toolNames = new Set(defaultToolCatalog.list().map((tool) => tool.name));
 
   for (const name of [
@@ -66,7 +84,7 @@ contractTest("runtime.hermetic", "internet catalog exposes canonical Tavily tool
   }
 });
 
-contractTest("runtime.hermetic", "internet.search_advanced contract still validates dates when country is ignored for non-general topics", () => {
+test("internet.search_advanced contract still validates dates when country is ignored for non-general topics", () => {
   assert.throws(
     () => validateBuiltInToolInputContract("internet.search_advanced", {
       query: "TCS latest revenue and headcount",
@@ -107,9 +125,9 @@ const assertWorkspaceRootMutationRejected = (
   );
 };
 
-contractTest("runtime.hermetic", "fs.mkdir rejects the dot workspace-root mutation target", () =>
+test("fs.mkdir rejects the dot workspace-root mutation target", () =>
   assertWorkspaceRootMutationRejected(workspaceRootMutationCases[0]));
-contractTest("runtime.hermetic", "fs.mkdir rejects the dot-slash workspace-root mutation target", () =>
+test("fs.mkdir rejects the dot-slash workspace-root mutation target", () =>
   assertWorkspaceRootMutationRejected(workspaceRootMutationCases[1]));
-contractTest("runtime.hermetic", "fs.delete rejects the dot workspace-root mutation target", () =>
+test("fs.delete rejects the dot workspace-root mutation target", () =>
   assertWorkspaceRootMutationRejected(workspaceRootMutationCases[2]));

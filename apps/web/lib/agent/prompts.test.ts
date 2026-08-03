@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { buildChatSystemPrompt } from "./prompts";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "chat system prompt enforces tight prose and notes-style citations", () => {
+test("chat system prompt enforces tight prose and notes-style citations", () => {
   const prompt = buildChatSystemPrompt({
     config: {
       id: "cfg_1",

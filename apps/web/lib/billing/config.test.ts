@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { getStripeBillingConfigStatus } from "./config";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "stripe billing config reports missing values when billing is enabled", () => {
+test("stripe billing config reports missing values when billing is enabled", () => {
   const config = getStripeBillingConfigStatus({
     NEXT_PUBLIC_BILLING_ENABLED: "true",
     BETTER_AUTH_URL: "http://127.0.0.1:43103",
@@ -24,7 +24,7 @@ contractTest("web.hermetic", "stripe billing config reports missing values when 
   );
 });
 
-contractTest("web.hermetic", "stripe billing config reports ready when all required vars exist", () => {
+test("stripe billing config reports ready when all required vars exist", () => {
   const config = getStripeBillingConfigStatus({
     NEXT_PUBLIC_BILLING_ENABLED: "true",
     BETTER_AUTH_URL: "http://127.0.0.1:43103",

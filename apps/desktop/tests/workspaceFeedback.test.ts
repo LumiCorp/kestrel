@@ -1,14 +1,14 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
 import { runDesktopWorkspaceFeedback } from "../src/workspaceFeedback.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const context: WebRunnerRequestContext = { actor: { actorId: "desktop-shell", actorType: "operator" } };
 const fingerprint = `sha256:${"a".repeat(64)}`;
 const snapshot = { sessionId: "session-1", threadId: "thread-1", candidateFingerprint: fingerprint, comments: [] };
 
-contractTest("desktop.hermetic", "Desktop workspace feedback forwards explicit line feedback and submission selection", async () => {
+test("Desktop workspace feedback forwards explicit line feedback and submission selection", async () => {
   const calls: unknown[] = [];
   const adapter = { sendControl: async (command: { type: string; sessionId: string; threadId: string }) => {
     calls.push(command);
@@ -22,7 +22,7 @@ contractTest("desktop.hermetic", "Desktop workspace feedback forwards explicit l
   assert.deepEqual((calls[1] as { commentIds: string[] }).commentIds, ["comment-1"]);
 });
 
-contractTest("desktop.hermetic", "Desktop workspace feedback rejects invalid fingerprints before Local Core", async () => {
+test("Desktop workspace feedback rejects invalid fingerprints before Local Core", async () => {
   const adapter = { sendControl: async () => { throw new Error("must not run"); } } as Pick<WebRunnerAdapter, "sendControl">;
   await assert.rejects(runDesktopWorkspaceFeedback({ adapter, operation: "remove", request: { sessionId: "session-1", threadId: "thread-1", candidateFingerprint: "bad", commentId: "comment-1" }, context }), /candidateFingerprint is invalid/u);
 });

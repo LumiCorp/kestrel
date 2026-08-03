@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   createDesktopBeforeQuitHandler,
   createDesktopShutdownPreparation,
 } from "../src/lifecycle.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 function createDeferred(): {
   promise: Promise<void>;
@@ -17,8 +17,7 @@ function createDeferred(): {
   return { promise, resolve };
 }
 
-contractTest(
-  "desktop.hermetic",
+test(
   "shutdown preparation drains project runs, adapters, runner, and database once in order",
   async () => {
     const order: string[] = [];
@@ -53,8 +52,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "failed update preparation rejects and can be retried",
   async () => {
     let attempts = 0;
@@ -75,8 +73,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "update preparation closes resources without cancelling project runs",
   async () => {
     const order: string[] = [];
@@ -94,8 +91,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "normal quit ignores cleanup failure, quits once, and ignores reentry",
   async () => {
     let prevented = 0;

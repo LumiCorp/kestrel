@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,10 +6,9 @@ import {
   buildWorkspaceSystemMessages,
   readActiveWorkspaceContext,
 } from "../../agents/reference-react/src/prompt/workspace.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "workspace prompt helper reads lean runtime context", () => {
+test("workspace prompt helper reads lean runtime context", () => {
   const context = readActiveWorkspaceContext({
     workspaceId: "ws-1",
     workspaceRoot: "/tmp/project",
@@ -34,6 +34,6 @@ contractTest("runtime.hermetic", "workspace prompt helper reads lean runtime con
   });
 });
 
-contractTest("runtime.hermetic", "workspace prompt helper returns no messages for incomplete context", () => {
+test("workspace prompt helper returns no messages for incomplete context", () => {
   assert.deepEqual(buildWorkspaceSystemMessages({ workspaceId: "missing-root" }), []);
 });

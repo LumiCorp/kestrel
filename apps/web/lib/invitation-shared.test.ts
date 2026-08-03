@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import {
   invitationIdFromCallbackURL,
   invitationPath,
@@ -7,8 +7,7 @@ import {
 } from "./invitation-shared";
 import { invitationOrigin } from "./invitation-origin";
 
-contractTest(
-  "web.hermetic",
+test(
   "invitation callbacks stay scoped to a single invitation route",
   () => {
     assert.equal(invitationPath("invite 1"), "/accept-invitation/invite%201");
@@ -25,8 +24,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "invitation links use the canonical Better Auth origin",
   () => {
     assert.equal(

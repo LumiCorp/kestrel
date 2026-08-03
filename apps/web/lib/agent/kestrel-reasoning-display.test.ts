@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getReasoningTriggerLabel,
   shouldAutoCloseReasoning,
 } from "@/lib/agent/kestrel-reasoning-display";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "getReasoningTriggerLabel reflects terminal failure statuses", () => {
+test("getReasoningTriggerLabel reflects terminal failure statuses", () => {
   assert.equal(
     getReasoningTriggerLabel({
       duration: 4,
@@ -33,7 +33,7 @@ contractTest("web.hermetic", "getReasoningTriggerLabel reflects terminal failure
   );
 });
 
-contractTest("web.hermetic", "getReasoningTriggerLabel keeps completed behavior unchanged", () => {
+test("getReasoningTriggerLabel keeps completed behavior unchanged", () => {
   assert.equal(
     getReasoningTriggerLabel({
       duration: 0,
@@ -52,7 +52,7 @@ contractTest("web.hermetic", "getReasoningTriggerLabel keeps completed behavior 
   );
 });
 
-contractTest("web.hermetic", "getReasoningTriggerLabel identifies a run waiting for the user", () => {
+test("getReasoningTriggerLabel identifies a run waiting for the user", () => {
   assert.equal(
     getReasoningTriggerLabel({
       duration: 7,
@@ -64,7 +64,7 @@ contractTest("web.hermetic", "getReasoningTriggerLabel identifies a run waiting 
   assert.equal(shouldAutoCloseReasoning("waiting"), true);
 });
 
-contractTest("web.hermetic", "shouldAutoCloseReasoning keeps terminal failures open", () => {
+test("shouldAutoCloseReasoning keeps terminal failures open", () => {
   assert.equal(shouldAutoCloseReasoning("completed"), true);
   assert.equal(shouldAutoCloseReasoning("failed"), false);
   assert.equal(shouldAutoCloseReasoning("cancelled"), false);

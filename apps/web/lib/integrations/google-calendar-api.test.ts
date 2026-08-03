@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createGoogleCalendarEvent,
   GoogleCalendarProviderError,
   queryGoogleCalendarFreeBusy,
 } from "./google-calendar-api";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "event creation sends no attendee notifications by default", async () => {
+test("event creation sends no attendee notifications by default", async () => {
   let requestedUrl = "";
   let requestedBody = "";
   const result = await createGoogleCalendarEvent({
@@ -38,7 +38,7 @@ contractTest("web.hermetic", "event creation sends no attendee notifications by 
   assert.equal(result.id, "event-1");
 });
 
-contractTest("web.hermetic", "free/busy returns only normalized intervals", async () => {
+test("free/busy returns only normalized intervals", async () => {
   const result = await queryGoogleCalendarFreeBusy({
     accessToken: "secret-token",
     timeMin: "2026-07-14T00:00:00Z",
@@ -70,7 +70,7 @@ contractTest("web.hermetic", "free/busy returns only normalized intervals", asyn
   assert.equal(JSON.stringify(result).includes("Private event"), false);
 });
 
-contractTest("web.hermetic", "provider failures are sanitized and identify reconnect state", async () => {
+test("provider failures are sanitized and identify reconnect state", async () => {
   await assert.rejects(
     queryGoogleCalendarFreeBusy({
       accessToken: "secret-token",

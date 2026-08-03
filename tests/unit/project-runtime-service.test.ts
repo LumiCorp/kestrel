@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,7 +8,6 @@ import {
 } from "../../src/index.js";
 import type { ProductTaskGraph } from "../../src/taskGraph/contracts.js";
 import { projectTaskProposeTool } from "../../tools/project/taskPropose.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const graph: ProductTaskGraph = {
   version: 1,
@@ -15,8 +15,7 @@ const graph: ProductTaskGraph = {
   tasks: {},
 };
 
-contractTest(
-  "runtime.hermetic",
+test(
   "ProductProjectRuntimeService exposes supporting projection and Git actions only",
   async () => {
     const calls: string[] = [];
@@ -55,8 +54,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "task.propose writes through trusted project-scoped Mission Control context",
   async () => {
     const projectId = "c10d2918-e0b6-48e4-bf3a-8dff7420b5a6";
@@ -106,8 +104,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "task.propose rejects missing project authority",
   async () => {
     const handler = projectTaskProposeTool.createHandler({

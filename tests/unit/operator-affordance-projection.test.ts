@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ThreadRecord } from "../../src/kestrel/contracts/orchestration.js";
 
 import type { OperatorThreadView } from "../../src/orchestration/contracts.js";
 import { buildOperatorAffordanceFromSessionProjection } from "../../src/orchestration/OperatorAffordanceProjection.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "buildOperatorAffordanceFromSessionProjection derives describe affordance from operator thread view", () => {
+test("buildOperatorAffordanceFromSessionProjection derives describe affordance from operator thread view", () => {
   const thread = buildThread("thread-main");
   const view: OperatorThreadView = {
     thread,

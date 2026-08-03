@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { parseDesktopMcpServerMutationInput } from "../../../src/desktopShell/contracts.js";
@@ -5,10 +6,8 @@ import {
   completeDesktopMcpVerification,
   prepareDesktopMcpVerification,
 } from "../src/mcpVerification.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "desktop.hermetic",
+test(
   "MCP mutation parser rejects unknown fields and malformed endpoints",
   () => {
     assert.throws(
@@ -62,8 +61,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "MCP verification preparation carries only credential references into the live request",
   () => {
     const input = parseDesktopMcpServerMutationInput({
@@ -105,8 +103,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "GitHub uses its canonical App identity and official remote endpoint",
   () => {
     const input = parseDesktopMcpServerMutationInput({
@@ -132,8 +129,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Notion uses its canonical App identity without exposing authorization secrets",
   () => {
     const input = parseDesktopMcpServerMutationInput({
@@ -171,8 +167,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Slack uses its canonical public-client App connection",
   () => {
     const input = parseDesktopMcpServerMutationInput({
@@ -206,8 +201,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Vercel exposes only tools from the selected App capability packs",
   () => {
     const input = parseDesktopMcpServerMutationInput({

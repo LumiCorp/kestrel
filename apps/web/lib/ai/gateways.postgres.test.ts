@@ -1,11 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import postgres from "postgres";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
-contractTest(
-  "web.postgres",
+test(
   "default model assignment is atomic and serialized per organization modality",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");

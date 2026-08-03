@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -10,7 +11,6 @@ import {
   CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
   validateRuntimeSessionState,
 } from "../../src/runtime/state.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function buildRuntimeSessionState(agent: Record<string, unknown>): Record<string, unknown> {
@@ -22,7 +22,7 @@ function buildRuntimeSessionState(agent: Record<string, unknown>): Record<string
   };
 }
 
-contractTest("runtime.hermetic", "reference-react state patches leave malformed nextAction to runtime validation", () => {
+test("reference-react state patches leave malformed nextAction to runtime validation", () => {
   const agent = {
     ...applyReferenceReactExecPatch({}, {}),
     ...createReferenceReactNextActionPatch("[Circular]" as unknown as never),
@@ -36,7 +36,7 @@ contractTest("runtime.hermetic", "reference-react state patches leave malformed 
   });
 });
 
-contractTest("runtime.hermetic", "reference-react exec patch keeps pending approval state structured", () => {
+test("reference-react exec patch keeps pending approval state structured", () => {
   const agent = applyReferenceReactExecPatch({}, {
     substate: "wait_approval",
     pendingApproval: {
@@ -54,7 +54,7 @@ contractTest("runtime.hermetic", "reference-react exec patch keeps pending appro
   assert.equal(validateRuntimeSessionState(buildRuntimeSessionState(agent)), undefined);
 });
 
-contractTest("runtime.hermetic", "reference-react exec patch preserves durable pending batches", () => {
+test("reference-react exec patch preserves durable pending batches", () => {
   const agent = applyReferenceReactExecPatch({}, {
     substate: "dispatch",
     pendingBatch: {
@@ -92,7 +92,7 @@ contractTest("runtime.hermetic", "reference-react exec patch preserves durable p
   assert.equal(validateRuntimeSessionState(buildRuntimeSessionState(agent)), undefined);
 });
 
-contractTest("runtime.hermetic", "reference-react final output and terminal patches stay compatible with runtime state validation", () => {
+test("reference-react final output and terminal patches stay compatible with runtime state validation", () => {
   const agent = {
     ...applyReferenceReactExecPatch({}, {
       substate: "finalize",

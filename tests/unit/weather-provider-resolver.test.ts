@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,10 +6,9 @@ import {
   createToolProviderRuntimeConfiguration,
 } from "../../tools/providers/runtimeConfiguration.js";
 import { resolveWeatherProviderSet } from "../../tools/free/weatherProviderResolver.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Weather provider resolution requires an explicitly scoped local fallback credential", () => {
+test("Weather provider resolution requires an explicitly scoped local fallback credential", () => {
   const unavailable = resolveWeatherProviderSet({});
   assert.equal(unavailable.primary.key, "open-meteo");
   assert.equal(unavailable.fallback, undefined);
@@ -26,7 +26,7 @@ contractTest("runtime.hermetic", "Weather provider resolution requires an explic
   assert.equal(JSON.stringify(configured).includes("visual-secret"), false);
 });
 
-contractTest("runtime.hermetic", "Weather provider resolution delegates hosted fallback credentials to Kestrel One", () => {
+test("Weather provider resolution delegates hosted fallback credentials to Kestrel One", () => {
   const providers = resolveWeatherProviderSet({
     kestrelOne: {
       appUrl: "https://kestrel.example",

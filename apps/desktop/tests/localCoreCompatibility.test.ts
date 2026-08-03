@@ -1,16 +1,15 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY,
 } from "../../../src/localCore/contracts.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import {
   DESKTOP_LOCAL_CORE_EXECUTION_PROFILE_INCOMPATIBLE,
   assertDesktopLocalCoreExecutionProfileCompatibility,
 } from "../src/localCoreCompatibility.js";
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop blocks startup when a live Local Core does not advertise execution-profile resolution",
   () => {
     assert.throws(
@@ -26,8 +25,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop accepts a Local Core that explicitly supports execution-profile resolution",
   () => {
     assert.doesNotThrow(() =>

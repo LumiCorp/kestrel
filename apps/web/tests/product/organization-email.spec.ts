@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { contractTest } from "../contract-test.js";
 
 test.beforeEach(async ({ page, request }) => {
   const signInResponse = await request.post("/api/auth/sign-in/email", {
@@ -16,8 +15,7 @@ test.beforeEach(async ({ page, request }) => {
   ).toBeVisible();
 });
 
-contractTest(
-  "web.organization-email",
+test(
   "organization email saves and reloads an encrypted credential without exposing it",
   async ({ page }) => {
     const environments = await page.evaluate(async () => {

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import {
@@ -25,7 +26,6 @@ import {
   type EnvironmentExecutionTicket,
   type EnvironmentToolCredentialTicket,
 } from "../src/index.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const keys = generateKeyPairSync("ed25519");
@@ -73,8 +73,7 @@ const providerNeutralTicket: EnvironmentExecutionTicket = {
   nonce: "nonce-2",
 };
 
-contractTest(
-  "packages.hermetic",
+test(
   "Workspace readiness uses the shared 120 second budget",
   () => {
     assert.equal(WORKSPACE_READINESS_TIMEOUT_SECONDS, 120);
@@ -85,7 +84,7 @@ contractTest(
   },
 );
 
-contractTest("packages.hermetic", "execution tickets bind the complete routing identity", () => {
+test("execution tickets bind the complete routing identity", () => {
   const token = signEnvironmentExecutionTicket({ ticket, privateKey });
   assert.deepEqual(
     verifyEnvironmentExecutionTicket({ token, publicKey, now: 1100 }),
@@ -93,8 +92,7 @@ contractTest("packages.hermetic", "execution tickets bind the complete routing i
   );
 });
 
-contractTest(
-  "packages.hermetic",
+test(
   "v2 execution tickets bind a provider-neutral Desktop target",
   () => {
     const token = signEnvironmentExecutionTicket({
@@ -108,8 +106,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "packages.hermetic",
+test(
   "v2 execution tickets reject malformed or mixed provider targets",
   () => {
     assert.throws(() =>
@@ -141,7 +138,7 @@ contractTest(
   },
 );
 
-contractTest("packages.hermetic", "preview relay tickets bind one hostname, Workspace Machine, and loopback port", () => {
+test("preview relay tickets bind one hostname, Workspace Machine, and loopback port", () => {
   const relayTicket = {
     version: PREVIEW_RELAY_TICKET_VERSION,
     audience: PREVIEW_RELAY_TICKET_AUDIENCE,
@@ -166,8 +163,7 @@ contractTest("packages.hermetic", "preview relay tickets bind one hostname, Work
   assert.throws(() => verifyPreviewRelayTicket({ token, publicKey, now: 1120 }));
 });
 
-contractTest(
-  "packages.hermetic",
+test(
   "preview relay v2 tickets bind a Desktop connection and workspace",
   () => {
     const relayTicket = {
@@ -209,8 +205,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "packages.hermetic",
+test(
   "Preview Edge route tickets bind one public hostname to one Environment gateway",
   () => {
     const edgeTicket = {
@@ -254,8 +249,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "packages.hermetic",
+test(
   "Preview Edge tickets reject malformed runtime payload types and unknown fields",
   () => {
     const edgeTicket = {
@@ -297,7 +291,7 @@ contractTest(
   }
 );
 
-contractTest("packages.hermetic", "execution tickets reject tampering, expiration, and excessive lifetime", () => {
+test("execution tickets reject tampering, expiration, and excessive lifetime", () => {
   const token = signEnvironmentExecutionTicket({ ticket, privateKey });
   assert.throws(() =>
     verifyEnvironmentExecutionTicket({
@@ -337,7 +331,7 @@ const toolCredential: EnvironmentToolCredentialTicket = {
   nonce: "tool-nonce-1",
 };
 
-contractTest("packages.hermetic", "tool credentials bind one provider resource capability and operation", () => {
+test("tool credentials bind one provider resource capability and operation", () => {
   const token = signEnvironmentToolCredential({
     ticket: toolCredential,
     privateKey,
@@ -351,7 +345,7 @@ contractTest("packages.hermetic", "tool credentials bind one provider resource c
   );
 });
 
-contractTest("packages.hermetic", "tool credentials reject tampering expiration and lifetimes over one minute", () => {
+test("tool credentials reject tampering expiration and lifetimes over one minute", () => {
   const token = signEnvironmentToolCredential({
     ticket: toolCredential,
     privateKey,
@@ -374,7 +368,7 @@ contractTest("packages.hermetic", "tool credentials reject tampering expiration 
   );
 });
 
-contractTest("packages.hermetic", "Desktop credential envelopes are enrollment and run bound", () => {
+test("Desktop credential envelopes are enrollment and run bound", () => {
   const recipient = generateDesktopCredentialEncryptionKeyPair();
   const context = desktopCredentialEnvelopeContext({
     organizationId: "org-1",

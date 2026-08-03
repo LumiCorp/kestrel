@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type { RunnerRunTerminalEvent } from "@kestrel-agents/sdk";
 import {
   hashGitHubActionPayload,
   readGitHubApprovalRequest,
 } from "./github-action-approval-contract";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "GitHub approval requests parse only structured mutation waits", () => {
+test("GitHub approval requests parse only structured mutation waits", () => {
   const request = readGitHubApprovalRequest({
     type: "run.completed",
     payload: {
@@ -47,7 +47,7 @@ contractTest("web.hermetic", "GitHub approval requests parse only structured mut
   );
 });
 
-contractTest("web.hermetic", "GitHub approval payload hashes are key-order independent", () => {
+test("GitHub approval payload hashes are key-order independent", () => {
   assert.equal(
     hashGitHubActionPayload({
       operation: "issue.create",

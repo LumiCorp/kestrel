@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -30,7 +30,7 @@ const contractJournal = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "private inference is backfilled into the default Environment", () => {
+test("private inference is backfilled into the default Environment", () => {
   assert.match(expandMigration, /UPDATE "ai_deployments" deployment/u);
   assert.match(expandMigration, /environment\."is_default" = true/u);
   assert.match(expandMigration, /gateway\."provider" = 'runpod'/u);
@@ -48,7 +48,7 @@ contractTest("web.hermetic", "private inference is backfilled into the default E
   );
 });
 
-contractTest("web.hermetic", "Environment ownership is enforced for inference and durable turns", () => {
+test("Environment ownership is enforced for inference and durable turns", () => {
   assert.match(expandMigration, /ai_gateways_organization_environment_fk/u);
   assert.match(expandMigration, /ai_deployments_organization_environment_fk/u);
   assert.match(expandMigration, /thread_turns_organization_environment_fk/u);
@@ -65,7 +65,7 @@ contractTest("web.hermetic", "Environment ownership is enforced for inference an
   );
 });
 
-contractTest("web.hermetic", "Environment defaults seed only for an unambiguous eligible model", () => {
+test("Environment defaults seed only for an unambiguous eligible model", () => {
   assert.match(
     expandMigration,
     /CREATE TABLE "environment_ai_model_defaults"/u
@@ -74,13 +74,13 @@ contractTest("web.hermetic", "Environment defaults seed only for an unambiguous 
   assert.match(expandMigration, /deployment\."status" = 'ready'/u);
 });
 
-contractTest("web.hermetic", "every organization receives the approved two-deployment policy", () => {
+test("every organization receives the approved two-deployment policy", () => {
   assert.match(expandMigration, /SELECT "id", true, 2, now\(\), now\(\)/u);
   assert.match(expandMigration, /seed_default_ai_deployment_policy/u);
   assert.match(expandMigration, /AFTER INSERT ON "organization"/u);
 });
 
-contractTest("web.hermetic", "schema repair, expansion, and contraction are registered separately", () => {
+test("schema repair, expansion, and contraction are registered separately", () => {
   assert.match(journal, /"tag": "0025_schema_reconciliation_audit"/u);
   assert.match(journal, /"tag": "0026_environment_private_inference_expand"/u);
   assert.doesNotMatch(journal, /environment_private_inference_contract/u);

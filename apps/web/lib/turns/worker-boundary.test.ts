@@ -1,9 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "web.hermetic",
+test(
   "the durable turn image builds workspace runtime dependencies",
   async () => {
     const [dockerfile, dockerignore, packageJsonSource] = await Promise.all([
@@ -44,8 +43,7 @@ contractTest(
     assert.equal((packageJson as { type?: string }).type, "module");
   },
 );
-contractTest(
-  "web.hermetic",
+test(
   "an exhausted queue job fails its durable turn visibly",
   async () => {
     const queueSource = await readFile(
@@ -59,8 +57,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "the running worker reconciles missing jobs and interrupted turns",
   async () => {
     const queueSource = await readFile(
@@ -75,8 +72,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "durable turns use a long lease with worker heartbeats",
   async () => {
     const queueSource = await readFile(
@@ -93,8 +89,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "a late worker lease signal cannot override a completed runtime outcome",
   async () => {
     const runtimeSource = await readFile(
@@ -113,8 +108,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "runtime execution binding is part of execution creation",
   async () => {
     const routeSource = await readFile(
@@ -129,8 +123,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "user Stop has a bounded safe-boundary deadline",
   async () => {
     const [runtimeSource, storeSource] = await Promise.all([
@@ -147,8 +140,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "project context Redis failures stay inside the worker boundary",
   async () => {
     const source = await readFile(
@@ -162,8 +154,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "terminal pg-boss jobs cannot block durable turn recovery",
   async () => {
     const queueSource = await readFile(
@@ -176,8 +167,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "the worker entrypoint starts without top-level await",
   async () => {
     const workerSource = await readFile(
@@ -194,8 +184,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "title failures remain non-blocking and emit a durable sanitized diagnostic",
   async () => {
     const source = await readFile(
@@ -210,8 +199,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "dev:all supervises the durable turn worker with the app",
   async () => {
     const devAllSource = await readFile(

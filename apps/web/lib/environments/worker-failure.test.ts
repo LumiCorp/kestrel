@@ -1,12 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   describeEnvironmentWorkerFailure,
   parseEnvironmentWorkerAttempt,
 } from "./worker-failure";
 
-contractTest(
-  "web.hermetic",
+test(
   "Environment worker retry metadata maps every attempt to the same bounded operation",
   () => {
     assert.deepEqual(
@@ -30,8 +29,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Environment worker failures preserve validated service codes for platform diagnostics",
   () => {
     const failure = describeEnvironmentWorkerFailure({

@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildKnowledgeExtractionMetadata,
   buildKnowledgeIngestionFailureState,
 } from "./process-state";
-import { contractTest } from "../../../../../tests/helpers/contract-test.js";
 
 
 const semanticEmbedding = {
@@ -13,7 +13,7 @@ const semanticEmbedding = {
   dimensions: 1536 as const,
 };
 
-contractTest("web.hermetic", "successful ingestion metadata records semantic provenance", () => {
+test("successful ingestion metadata records semantic provenance", () => {
   assert.deepEqual(
     buildKnowledgeExtractionMetadata({
       warnings: [],
@@ -28,7 +28,7 @@ contractTest("web.hermetic", "successful ingestion metadata records semantic pro
   );
 });
 
-contractTest("web.hermetic", "embedding failures produce visible failed document and run state", () => {
+test("embedding failures produce visible failed document and run state", () => {
   const finishedAt = new Date("2026-07-14T12:00:00.000Z");
   const failure = buildKnowledgeIngestionFailureState({
     error: new Error(

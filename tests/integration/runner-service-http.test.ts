@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import type { TestContext } from "node:test";
+import { test, type TestContext } from "node:test";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
@@ -16,7 +16,6 @@ import {
   RUNNER_EVENT_CONTRACT_VERSION,
   RUNNER_HEALTH_VERSION,
 } from "../../packages/protocol/src/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const profile: TuiProfile = {
@@ -36,7 +35,7 @@ const actorMetadata = {
   tenantId: "internal",
 };
 
-contractTest("runtime.process", "shared runner service handler mounts under a prefix and reports active executions", async (t) => {
+test("shared runner service handler mounts under a prefix and reports active executions", async (t) => {
   let resolveRunEntered: (() => void) | undefined;
   const runEntered = new Promise<void>((resolve) => {
     resolveRunEntered = resolve;
@@ -131,7 +130,7 @@ contractTest("runtime.process", "shared runner service handler mounts under a pr
   }
 });
 
-contractTest("runtime.process", "shared runner service close waits for aborted execution cleanup", async (t) => {
+test("shared runner service close waits for aborted execution cleanup", async (t) => {
   let markRunEntered: (() => void) | undefined;
   const runEntered = new Promise<void>((resolve) => {
     markRunEntered = resolve;
@@ -223,7 +222,7 @@ contractTest("runtime.process", "shared runner service close waits for aborted e
   }
 });
 
-contractTest("runtime.process", "shared runner service drains unary runtime commands and rejects new work during close", async (t) => {
+test("shared runner service drains unary runtime commands and rejects new work during close", async (t) => {
   let markStatusEntered: (() => void) | undefined;
   const statusEntered = new Promise<void>((resolve) => {
     markStatusEntered = resolve;
@@ -311,7 +310,7 @@ contractTest("runtime.process", "shared runner service drains unary runtime comm
   }
 });
 
-contractTest("runtime.process", "shared runner service aborts durable replay when its client disconnects", async (t) => {
+test("shared runner service aborts durable replay when its client disconnects", async (t) => {
   let markReplayStarted: (() => void) | undefined;
   const replayStarted = new Promise<void>((resolve) => {
     markReplayStarted = resolve;
@@ -374,7 +373,7 @@ contractTest("runtime.process", "shared runner service aborts durable replay whe
   }
 });
 
-contractTest("runtime.process", "runner service http exposes health and enforces auth and actor metadata", async (t) => {
+test("runner service http exposes health and enforces auth and actor metadata", async (t) => {
   const server = await createHttpServerOrSkip(t, {
     authToken: "secret-token",
     runtimeFactory: () => ({
@@ -455,7 +454,7 @@ contractTest("runtime.process", "runner service http exposes health and enforces
   }
 });
 
-contractTest("runtime.process", "runner service http serves unary commands over /commands", async (t) => {
+test("runner service http serves unary commands over /commands", async (t) => {
   const server = await createHttpServerOrSkip(t, {
     authToken: "secret-token",
     runtimeFactory: () => ({
@@ -499,7 +498,7 @@ contractTest("runtime.process", "runner service http serves unary commands over 
   }
 });
 
-contractTest("runtime.process", "runner service http streams run.start over /commands/stream", async (t) => {
+test("runner service http streams run.start over /commands/stream", async (t) => {
   const runtimeFactory = (): RunnerRuntime => ({
     runTurn: async () => ({
       assistantText: "The HTTP runner turn completed.",
@@ -571,7 +570,7 @@ contractTest("runtime.process", "runner service http streams run.start over /com
   }
 });
 
-contractTest("runtime.process", "runner service http exposes OpenAI-compatible models and chat streaming", async (t) => {
+test("runner service http exposes OpenAI-compatible models and chat streaming", async (t) => {
   let progressListener: ((update: import("../../src/index.js").ProgressUpdateV1) => void) | undefined;
   const server = await createHttpServerOrSkip(t, {
     authToken: "secret-token",
@@ -672,7 +671,7 @@ contractTest("runtime.process", "runner service http exposes OpenAI-compatible m
   }
 });
 
-contractTest("runtime.process", "runner service http cancels OpenAI-compatible streaming runs when the client disconnects", async (t) => {
+test("runner service http cancels OpenAI-compatible streaming runs when the client disconnects", async (t) => {
   let resolveRunTurnEntered: (() => void) | undefined;
   const runTurnEntered = new Promise<void>((resolve) => {
     resolveRunTurnEntered = resolve;
@@ -740,7 +739,7 @@ contractTest("runtime.process", "runner service http cancels OpenAI-compatible s
   }
 });
 
-contractTest("runtime.process", "runner service http tolerates OpenAI-compatible disconnect after progress has started", async (t) => {
+test("runner service http tolerates OpenAI-compatible disconnect after progress has started", async (t) => {
   let progressListener: ((update: import("../../src/index.js").ProgressUpdateV1) => void) | undefined;
   let resolveRunTurnEntered: (() => void) | undefined;
   const runTurnEntered = new Promise<void>((resolve) => {

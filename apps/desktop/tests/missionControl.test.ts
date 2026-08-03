@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
@@ -9,7 +10,6 @@ import {
   getDesktopOperatorThread,
   listDesktopOperatorRuns,
 } from "../src/missionControl.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const context: WebRunnerRequestContext = {
@@ -19,7 +19,7 @@ const context: WebRunnerRequestContext = {
   },
 };
 
-contractTest("desktop.hermetic", "Desktop Mission Control reads the canonical project document by registered UUID", async () => {
+test("Desktop Mission Control reads the canonical project document by registered UUID", async () => {
   const projectId = "11111111-1111-4111-8111-111111111111";
   const calls: unknown[] = [];
   const project = {
@@ -56,7 +56,7 @@ contractTest("desktop.hermetic", "Desktop Mission Control reads the canonical pr
   }]);
 });
 
-contractTest("desktop.hermetic", "Desktop Mission Control rejects cross-project canonical responses", async () => {
+test("Desktop Mission Control rejects cross-project canonical responses", async () => {
   const projectId = "11111111-1111-4111-8111-111111111111";
   const otherProjectId = "22222222-2222-4222-8222-222222222222";
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
@@ -93,8 +93,7 @@ contractTest("desktop.hermetic", "Desktop Mission Control rejects cross-project 
   );
 });
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop sends project-scoped lifecycle actions with exact optimistic identities",
   async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
@@ -223,7 +222,7 @@ contractTest(
   },
 );
 
-contractTest("desktop.hermetic", "Desktop Mission Control projects runtime thread inspection through the runner", async () => {
+test("Desktop Mission Control projects runtime thread inspection through the runner", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command, requestContext) {
@@ -354,7 +353,7 @@ contractTest("desktop.hermetic", "Desktop Mission Control projects runtime threa
   }]);
 });
 
-contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed runtime thread responses", async () => {
+test("Desktop Mission Control rejects malformed runtime thread responses", async () => {
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl() {
       return {
@@ -394,7 +393,7 @@ contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed runt
   );
 });
 
-contractTest("desktop.hermetic", "Desktop Mission Control projects a bounded runtime run and session index", async () => {
+test("Desktop Mission Control projects a bounded runtime run and session index", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command, requestContext) {
@@ -465,7 +464,7 @@ contractTest("desktop.hermetic", "Desktop Mission Control projects a bounded run
   }]);
 });
 
-contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed runtime run indexes", async () => {
+test("Desktop Mission Control rejects malformed runtime run indexes", async () => {
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl() {
       return {
@@ -498,7 +497,7 @@ contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed runt
   );
 });
 
-contractTest("desktop.hermetic", "Desktop Mission Control projects bounded runtime run inspection through the runner", async () => {
+test("Desktop Mission Control projects bounded runtime run inspection through the runner", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command, requestContext) {
@@ -597,7 +596,7 @@ contractTest("desktop.hermetic", "Desktop Mission Control projects bounded runti
   }]);
 });
 
-contractTest("desktop.hermetic", "Desktop Mission Control rejects malformed runtime run responses", async () => {
+test("Desktop Mission Control rejects malformed runtime run responses", async () => {
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl() {
       return {

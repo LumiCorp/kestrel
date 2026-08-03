@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createHash,
@@ -7,12 +8,10 @@ import {
 } from "node:crypto";
 import postgres from "postgres";
 import { generateDesktopCredentialEncryptionKeyPair } from "@lumi/kestrel-environment-auth";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
-contractTest(
-  "web.postgres",
+test(
   "Desktop enrollment isolates credentials, rejects nonce replay, and retains missing catalog identities",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");

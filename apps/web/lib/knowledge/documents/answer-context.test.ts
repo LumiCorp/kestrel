@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { buildKnowledgeAnswerContext } from "./answer-context";
-import { contractTest } from "../../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "buildKnowledgeAnswerContext numbers documents and preserves citation locations", () => {
+test("buildKnowledgeAnswerContext numbers documents and preserves citation locations", () => {
   const result = buildKnowledgeAnswerContext([
     {
       documentId: "document-1",

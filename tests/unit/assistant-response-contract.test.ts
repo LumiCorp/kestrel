@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
 import { finalizeRuntimeAssistantResponse } from "../../src/runtime/assistantResponseContract.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stale assistant text", () => {
+test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stale assistant text", () => {
   const result = finalizeRuntimeAssistantResponse({
     output: output("WAITING", {
       waitFor: {
@@ -27,7 +27,7 @@ contractTest("runtime.hermetic", "finalizeRuntimeAssistantResponse canonicalizes
   });
 });
 
-contractTest("runtime.hermetic", "finalizeRuntimeAssistantResponse canonicalizes an approval wait over stale assistant text", () => {
+test("finalizeRuntimeAssistantResponse canonicalizes an approval wait over stale assistant text", () => {
   const result = finalizeRuntimeAssistantResponse({
     output: output("WAITING", {
       waitFor: {
@@ -60,7 +60,7 @@ contractTest("runtime.hermetic", "finalizeRuntimeAssistantResponse canonicalizes
   });
 });
 
-contractTest("runtime.hermetic", "finalizeRuntimeAssistantResponse rejects a user-facing wait without a prompt", () => {
+test("finalizeRuntimeAssistantResponse rejects a user-facing wait without a prompt", () => {
   assert.throws(
     () =>
       finalizeRuntimeAssistantResponse({
@@ -73,7 +73,7 @@ contractTest("runtime.hermetic", "finalizeRuntimeAssistantResponse rejects a use
   );
 });
 
-contractTest("runtime.hermetic", "finalizeRuntimeAssistantResponse preserves completed and non-user wait behavior", () => {
+test("finalizeRuntimeAssistantResponse preserves completed and non-user wait behavior", () => {
   const completed = finalizeRuntimeAssistantResponse({
     output: output("COMPLETED"),
     assistantText: "  Completed response.  ",

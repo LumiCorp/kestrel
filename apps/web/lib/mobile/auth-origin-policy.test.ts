@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const authSecurityPolicySource = fs.readFileSync(
@@ -20,7 +20,7 @@ const authRouteSource = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "native Kestrel One origins are explicit and Expo development origins are not trusted in production", () => {
+test("native Kestrel One origins are explicit and Expo development origins are not trusted in production", () => {
   assert.match(
     authSecurityPolicySource,
     /KESTREL_ONE_MOBILE_TRUSTED_ORIGINS/u
@@ -32,6 +32,6 @@ contractTest("web.hermetic", "native Kestrel One origins are explicit and Expo d
   );
 });
 
-contractTest("web.hermetic", "the auth route promotes Expo origin metadata before Better Auth validation", () => {
+test("the auth route promotes Expo origin metadata before Better Auth validation", () => {
   assert.match(authRouteSource, /withExpoOrigin\(request\)/u);
 });

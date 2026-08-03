@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   type EnvironmentActivation,
   waitForWorkspaceActivation,
 } from "./workspace-activation";
-import { contractTest } from "../../../../../../../tests/helpers/contract-test.js";
 
 
 const pending: EnvironmentActivation = {
@@ -12,7 +12,7 @@ const pending: EnvironmentActivation = {
   status: "pending",
 };
 
-contractTest("web.hermetic", "Workspace activation reports each pending stage before ready", async () => {
+test("Workspace activation reports each pending stage before ready", async () => {
   const progress: EnvironmentActivation[] = [];
   const reads: EnvironmentActivation[] = [
     {
@@ -43,7 +43,7 @@ contractTest("web.hermetic", "Workspace activation reports each pending stage be
   );
 });
 
-contractTest("web.hermetic", "Workspace activation stops immediately on a failed state", async () => {
+test("Workspace activation stops immediately on a failed state", async () => {
   await assert.rejects(
     waitForWorkspaceActivation({
       initial: pending,
@@ -59,7 +59,7 @@ contractTest("web.hermetic", "Workspace activation stops immediately on a failed
   );
 });
 
-contractTest("web.hermetic", "Workspace activation has a bounded wait and supports cancellation", async () => {
+test("Workspace activation has a bounded wait and supports cancellation", async () => {
   let time = 0;
   await assert.rejects(
     waitForWorkspaceActivation({

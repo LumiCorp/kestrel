@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   assertNoMcpOauthRedirect,
@@ -5,12 +6,11 @@ import {
   registerMcpOauthClient,
   parseMcpOauthTokenResponse,
 } from "./oauth-flow";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const noHeaders: Record<string, string> = {};
 
-contractTest("web.hermetic", "MCP OAuth accepts only explicitly allowed provider token labels", () => {
+test("MCP OAuth accepts only explicitly allowed provider token labels", () => {
   assert.equal(
     parseMcpOauthTokenResponse(
       { access_token: "xoxp-token", token_type: "user", scope: "chat:write" },
@@ -28,7 +28,7 @@ contractTest("web.hermetic", "MCP OAuth accepts only explicitly allowed provider
   );
 });
 
-contractTest("web.hermetic", "MCP OAuth follows protected-resource and authorization-server metadata", async () => {
+test("MCP OAuth follows protected-resource and authorization-server metadata", async () => {
   const requested: string[] = [];
   const discovered = await discoverMcpOauthConfiguration({
     resource: "https://mcp.example.com/mcp",
@@ -89,7 +89,7 @@ contractTest("web.hermetic", "MCP OAuth follows protected-resource and authoriza
   assert.equal(requested.length, 3);
 });
 
-contractTest("web.hermetic", "MCP OAuth registers a bounded public client for one callback", async () => {
+test("MCP OAuth registers a bounded public client for one callback", async () => {
   let registrationBody: unknown;
   const registered = await registerMcpOauthClient({
     registrationEndpoint: new URL("https://auth.example.com/register"),
@@ -127,7 +127,7 @@ contractTest("web.hermetic", "MCP OAuth registers a bounded public client for on
   });
 });
 
-contractTest("web.hermetic", "MCP OAuth refuses implicit client registration support", async () => {
+test("MCP OAuth refuses implicit client registration support", async () => {
   await assert.rejects(
     registerMcpOauthClient({
       registrationEndpoint: null,
@@ -138,7 +138,7 @@ contractTest("web.hermetic", "MCP OAuth refuses implicit client registration sup
   );
 });
 
-contractTest("web.hermetic", "MCP OAuth falls back through well-known and OIDC discovery and requires PKCE", async () => {
+test("MCP OAuth falls back through well-known and OIDC discovery and requires PKCE", async () => {
   const discovered = await discoverMcpOauthConfiguration({
     resource: "https://mcp.example.com/public/mcp",
     request: async (url) => {
@@ -219,7 +219,7 @@ contractTest("web.hermetic", "MCP OAuth falls back through well-known and OIDC d
   );
 });
 
-contractTest("web.hermetic", "MCP OAuth cancels redirect bodies before rejecting them", async () => {
+test("MCP OAuth cancels redirect bodies before rejecting them", async () => {
   const events: string[] = [];
   const response = new Response(
     new ReadableStream({

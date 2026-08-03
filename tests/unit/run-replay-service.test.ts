@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { RunReplayService } from "../../src/replay/RunReplayService.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "RunReplayService reconstructs ordered stream summary and timeline", async () => {
+test("RunReplayService reconstructs ordered stream summary and timeline", async () => {
   const store = new InMemorySessionStore();
 
   await store.appendRunEvent({
@@ -119,7 +119,7 @@ contractTest("runtime.hermetic", "RunReplayService reconstructs ordered stream s
   assert.equal(doctor.lastMeaningfulProgress?.label, "run.completed");
 });
 
-contractTest("runtime.hermetic", "RunReplayService does not silently truncate an unbounded replay", async () => {
+test("RunReplayService does not silently truncate an unbounded replay", async () => {
   const store = new InMemorySessionStore();
   for (let index = 0; index < 1_025; index += 1) {
     await store.appendRunEvent({
@@ -142,7 +142,7 @@ contractTest("runtime.hermetic", "RunReplayService does not silently truncate an
   assert.equal(limited.summary.truncated, true);
 });
 
-contractTest("runtime.hermetic", "RunReplayService reports action and maintenance model call counts", async () => {
+test("RunReplayService reports action and maintenance model call counts", async () => {
   const store = new InMemorySessionStore();
   await store.appendRunEvent({
     runId: "run-model-budget",
@@ -203,7 +203,7 @@ contractTest("runtime.hermetic", "RunReplayService reports action and maintenanc
   );
 });
 
-contractTest("runtime.hermetic", "RunReplayService includes thread/delegation lineage and orchestration milestones", async () => {
+test("RunReplayService includes thread/delegation lineage and orchestration milestones", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("thread-parent");
@@ -456,7 +456,7 @@ contractTest("runtime.hermetic", "RunReplayService includes thread/delegation li
   assert.equal(doctor.compatibility?.model, "google/gemini-3.1-flash-lite-preview");
 });
 
-contractTest("runtime.hermetic", "RunReplayService surfaces summarize_forward adaptation lineage with authoritative summary artifacts", async () => {
+test("RunReplayService surfaces summarize_forward adaptation lineage with authoritative summary artifacts", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("session-adaptation-summarize");
@@ -543,7 +543,7 @@ contractTest("runtime.hermetic", "RunReplayService surfaces summarize_forward ad
   );
 });
 
-contractTest("runtime.hermetic", "RunReplayService surfaces split_into_child_thread adaptation lineage with delegation references", async () => {
+test("RunReplayService surfaces split_into_child_thread adaptation lineage with delegation references", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("session-adaptation-split");
@@ -641,7 +641,7 @@ contractTest("runtime.hermetic", "RunReplayService surfaces split_into_child_thr
   );
 });
 
-contractTest("runtime.hermetic", "RunReplayService identifies blocked parent threads and stalled runs", async () => {
+test("RunReplayService identifies blocked parent threads and stalled runs", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("thread-root");
@@ -703,7 +703,7 @@ contractTest("runtime.hermetic", "RunReplayService identifies blocked parent thr
   assert.equal(doctor.dominantFailure?.classification, "delegation_blocked");
 });
 
-contractTest("runtime.hermetic", "RunReplayService trusts authoritative running thread state over old event timestamps", async () => {
+test("RunReplayService trusts authoritative running thread state over old event timestamps", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("session-running-old-events");
@@ -737,7 +737,7 @@ contractTest("runtime.hermetic", "RunReplayService trusts authoritative running 
   assert.equal(doctor.status, "RUNNING");
 });
 
-contractTest("runtime.hermetic", "RunReplayService exposes supervision groups, fan-in decisions, superseded lineage, and dominant blocker across multiple children", async () => {
+test("RunReplayService exposes supervision groups, fan-in decisions, superseded lineage, and dominant blocker across multiple children", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("thread-supervision-parent");
@@ -930,7 +930,7 @@ contractTest("runtime.hermetic", "RunReplayService exposes supervision groups, f
   );
 });
 
-contractTest("runtime.hermetic", "RunReplayService keeps fan-in checkpoints out of latest adaptation summaries", async () => {
+test("RunReplayService keeps fan-in checkpoints out of latest adaptation summaries", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("session-adaptation-filter");
@@ -1026,7 +1026,7 @@ contractTest("runtime.hermetic", "RunReplayService keeps fan-in checkpoints out 
   );
 });
 
-contractTest("runtime.hermetic", "RunReplayService reports legacy threads without assembly history as implicit/legacy", async () => {
+test("RunReplayService reports legacy threads without assembly history as implicit/legacy", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("session-legacy");
@@ -1062,7 +1062,7 @@ contractTest("runtime.hermetic", "RunReplayService reports legacy threads withou
   assert.deepEqual(doctor.activeAssembly?.toolAllowlist, []);
 });
 
-contractTest("runtime.hermetic", "RunReplayService classifies TOOL_LOOKUP_FAILED caused by capability-loss tool pruning", async () => {
+test("RunReplayService classifies TOOL_LOOKUP_FAILED caused by capability-loss tool pruning", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("session-pruned");
@@ -1155,7 +1155,7 @@ contractTest("runtime.hermetic", "RunReplayService classifies TOOL_LOOKUP_FAILED
   assert.equal(doctor.dominantFailure?.message.includes("FinalizeAnswer"), true);
 });
 
-contractTest("runtime.hermetic", "RunReplayService derives evidence recovery summary from persisted checkpoint signals", async () => {
+test("RunReplayService derives evidence recovery summary from persisted checkpoint signals", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("session-evidence-checkpoint");
@@ -1224,7 +1224,7 @@ contractTest("runtime.hermetic", "RunReplayService derives evidence recovery sum
   assert.equal(doctor.latestEvidenceRecovery?.targetedFetchUsed, true);
 });
 
-contractTest("runtime.hermetic", "RunReplayService surfaces canonical filesystem retrieval family from persisted checkpoint signals", async () => {
+test("RunReplayService surfaces canonical filesystem retrieval family from persisted checkpoint signals", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("session-filesystem-evidence");
@@ -1274,7 +1274,7 @@ contractTest("runtime.hermetic", "RunReplayService surfaces canonical filesystem
   assert.equal(doctor.latestEvidenceRecovery?.family, "filesystem_retrieval");
 });
 
-contractTest("runtime.hermetic", "RunReplayService surfaces split adaptation lineage and compaction-backed evidence fallback", async () => {
+test("RunReplayService surfaces split adaptation lineage and compaction-backed evidence fallback", async () => {
   const store = new InMemorySessionStore();
 
   await store.ensureSession("session-adaptation");
@@ -1367,7 +1367,7 @@ contractTest("runtime.hermetic", "RunReplayService surfaces split adaptation lin
   );
 });
 
-contractTest("runtime.hermetic", "RunReplayService captures compact adaptation for repeated continuation-thrash sessions", async () => {
+test("RunReplayService captures compact adaptation for repeated continuation-thrash sessions", async () => {
   const store = new InMemorySessionStore();
   const sessionId = "session-1773889053602";
   const runId = "run-1773889053605";

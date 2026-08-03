@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import postgres from "postgres";
-import type { TestContext } from "node:test";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
+import { test, type TestContext } from "node:test";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
@@ -197,16 +196,14 @@ async function verifyBackupClaimDefers(
     });
 }
 
-contractTest(
-  "web.postgres",
+test(
   "queued Workspace backup claim defers while an execution owns the Workspace",
   async (context) => {
     await verifyBackupClaimDefers(context, "execution");
   },
 );
 
-contractTest(
-  "web.postgres",
+test(
   "queued Workspace backup claim defers while a durable turn is activating",
   async (context) => {
     await verifyBackupClaimDefers(context, "activating_turn");

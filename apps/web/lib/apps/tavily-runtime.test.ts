@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { assertTavilyProxyTarget, TavilyRuntimeError } from "./tavily-runtime";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "Tavily runtime proxy allows only the endpoint owned by a capability", () => {
+test("Tavily runtime proxy allows only the endpoint owned by a capability", () => {
   assert.doesNotThrow(() =>
     assertTavilyProxyTarget({
       capability: "search_advanced",
@@ -20,7 +20,7 @@ contractTest("web.hermetic", "Tavily runtime proxy allows only the endpoint owne
   );
 });
 
-contractTest("web.hermetic", "Tavily runtime proxy rejects capability and upstream path mismatches", () => {
+test("Tavily runtime proxy rejects capability and upstream path mismatches", () => {
   assert.throws(
     () =>
       assertTavilyProxyTarget({

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,7 +6,6 @@ import {
   NoopReasoningReporter,
 } from "../../src/logging/RunLogger.js";
 import type { ModelReasoningUpdateV1 } from "../../src/kestrel/contracts/events.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const update: ModelReasoningUpdateV1 = {
@@ -21,7 +21,7 @@ const update: ModelReasoningUpdateV1 = {
   contentState: "live",
 };
 
-contractTest("runtime.hermetic", "live reasoning listeners cannot apply backpressure to provider inference", async () => {
+test("live reasoning listeners cannot apply backpressure to provider inference", async () => {
   let listenerStarted = false;
   let releaseListener!: () => void;
   const listenerFinished = new Promise<void>((resolve) => {
@@ -42,7 +42,7 @@ contractTest("runtime.hermetic", "live reasoning listeners cannot apply backpres
   await listenerFinished;
 });
 
-contractTest("runtime.hermetic", "rejected live reasoning delivery does not fail provider inference", async () => {
+test("rejected live reasoning delivery does not fail provider inference", async () => {
   const reporter = new FanoutReasoningReporter(
     new NoopReasoningReporter(),
     async () => {

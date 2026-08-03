@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -8,10 +9,9 @@ import {
   type RuntimeTurnInput,
   type SessionRecord,
 } from "../../src/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor compiles threaded turns with runtime context", async () => {
+test("RuntimeThreadedTurnExecutor compiles threaded turns with runtime context", async () => {
   let event: RuntimeEvent | undefined;
   const executor = new RuntimeThreadedTurnExecutor({
     entryStepAgent: "agent.loop",
@@ -146,7 +146,7 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor compiles threaded 
   assert.equal(result.assistantText, "done");
 });
 
-contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor applies capability-loss recomposition before compilation", async () => {
+test("RuntimeThreadedTurnExecutor applies capability-loss recomposition before compilation", async () => {
   let event: RuntimeEvent | undefined;
   const executor = new RuntimeThreadedTurnExecutor({
     entryStepAgent: "agent.loop",
@@ -210,7 +210,7 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor applies capability
   });
 });
 
-contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor preserves canonical runtime turns while patching thread-owned metadata", async () => {
+test("RuntimeThreadedTurnExecutor preserves canonical runtime turns while patching thread-owned metadata", async () => {
   let event: RuntimeEvent | undefined;
   const executor = new RuntimeThreadedTurnExecutor({
     entryStepAgent: "agent.loop",
@@ -302,7 +302,7 @@ contractTest("runtime.hermetic", "RuntimeThreadedTurnExecutor preserves canonica
   });
 });
 
-contractTest("runtime.hermetic", "resolveRuntimeThreadedStepAgent preserves current resume routing behavior", () => {
+test("resolveRuntimeThreadedStepAgent preserves current resume routing behavior", () => {
   const waitingSession = sessionRecord("session-waiting", undefined, {
     waitingFor: {
       resumeStepAgent: "agent.exec.collect",

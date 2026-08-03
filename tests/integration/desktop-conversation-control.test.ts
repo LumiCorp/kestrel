@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
@@ -9,7 +10,6 @@ import {
   type TurnExecutor,
 } from "../../src/orchestration/index.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 class ConcurrentExecutor implements TurnExecutor {
@@ -40,7 +40,7 @@ class ConcurrentExecutor implements TurnExecutor {
   }
 }
 
-contractTest("runtime.process", "Desktop conversation authority permits concurrent threads and rejects a second active run on one thread", async () => {
+test("Desktop conversation authority permits concurrent threads and rejects a second active run on one thread", async () => {
   const store = new InMemorySessionStore();
   const executor = new ConcurrentExecutor(store);
   const runtime = new ThreadRuntime({ sessionStore: store, executor });

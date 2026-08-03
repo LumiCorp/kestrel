@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { AuthorizedMcpServer } from "../src/contracts.js";
 import { buildOciDockerRunCommand } from "../src/oci-runtime.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const digest = `sha256:${"a".repeat(64)}`;
@@ -19,7 +19,7 @@ const server: Extract<AuthorizedMcpServer, { sourceType: "oci" }> = {
   credential: undefined,
 };
 
-contractTest("services.hermetic", "OCI MCP command is per-run, read-only, resource-limited, and defaults to full network", () => {
+test("OCI MCP command is per-run, read-only, resource-limited, and defaults to full network", () => {
   const command = buildOciDockerRunCommand({
     grantId: "grant-1",
     server,
@@ -48,7 +48,7 @@ contractTest("services.hermetic", "OCI MCP command is per-run, read-only, resour
   assert.equal(command.args.at(-1), "--stdio");
 });
 
-contractTest("services.hermetic", "OCI MCP rejects mutable images", () => {
+test("OCI MCP rejects mutable images", () => {
   assert.throws(
     () =>
       buildOciDockerRunCommand({
@@ -63,7 +63,7 @@ contractTest("services.hermetic", "OCI MCP rejects mutable images", () => {
   );
 });
 
-contractTest("services.hermetic", "OCI MCP can be explicitly isolated from the network", () => {
+test("OCI MCP can be explicitly isolated from the network", () => {
   const command = buildOciDockerRunCommand({
     grantId: "grant-1",
     server: { ...server, networkAccess: "none" },

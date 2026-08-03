@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -6,10 +7,9 @@ import {
   parseRegistration,
   WorkspaceApplicationRegistry,
 } from "../src/applications.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("services.hermetic", "application registration accepts private sandbox ports and bounded paths", async () => {
+test("application registration accepts private sandbox ports and bounded paths", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-app-registration-"));
   try {
     await mkdir(path.join(root, "app"));
@@ -25,13 +25,13 @@ contractTest("services.hermetic", "application registration accepts private sand
   }
 });
 
-contractTest("services.hermetic", "application registration reserves Workspace service ports", async () => {
+test("application registration reserves Workspace service ports", async () => {
   await assert.rejects(
     parseRegistration({ name: "Bad", command: "serve", port: 43_104 }, "/workspace")
   );
 });
 
-contractTest("services.hermetic", "desired applications restart when a sleeping Workspace wakes", async () => {
+test("desired applications restart when a sleeping Workspace wakes", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-apps-"));
   try {
     await mkdir(path.join(root, ".kestrel"));
@@ -62,7 +62,7 @@ contractTest("services.hermetic", "desired applications restart when a sleeping 
   }
 });
 
-contractTest("services.hermetic", "application lifecycle controls persist the desired state", async () => {
+test("application lifecycle controls persist the desired state", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-apps-lifecycle-"));
   try {
     await mkdir(path.join(root, ".kestrel"));

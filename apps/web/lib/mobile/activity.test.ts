@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mobileActivity } from "./activity";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "mobile activity projects canonical runtime event discriminants", () => {
+test("mobile activity projects canonical runtime event discriminants", () => {
   assert.deepEqual(
     mobileActivity({ kind: "runtime_event", eventType: "run.tool.started" }),
     { stage: "using_capability", message: "Using a capability" }
@@ -29,7 +29,7 @@ contractTest("web.hermetic", "mobile activity projects canonical runtime event d
   );
 });
 
-contractTest("web.hermetic", "mobile activity projects canonical progress codes without reading prose", () => {
+test("mobile activity projects canonical progress codes without reading prose", () => {
   assert.deepEqual(
     mobileActivity({ kind: "progress", code: "TOOL_CALL_STARTED" }),
     { stage: "using_capability", message: "Using a capability" }
@@ -44,7 +44,7 @@ contractTest("web.hermetic", "mobile activity projects canonical progress codes 
   });
 });
 
-contractTest("web.hermetic", "mobile activity preserves explicit agent progress narration", () => {
+test("mobile activity preserves explicit agent progress narration", () => {
   assert.deepEqual(
     mobileActivity({
       kind: "agent_progress",

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { WebRunnerAdapter, WebRunnerRequestContext } from "../../../src/web/index.js";
@@ -19,7 +20,6 @@ import {
   restoreDesktopManagedWorktree,
   retryDesktopManagedWorktreeSetup,
 } from "../src/workspaceLifecycle.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const context: WebRunnerRequestContext = {
@@ -80,7 +80,7 @@ const preview: WorkspacePromotionPreview = {
   },
 };
 
-contractTest("desktop.hermetic", "Desktop workspace lifecycle combines Local Core checkpoint and promotion authority", async () => {
+test("Desktop workspace lifecycle combines Local Core checkpoint and promotion authority", async () => {
   const calls: string[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command) {
@@ -109,7 +109,7 @@ contractTest("desktop.hermetic", "Desktop workspace lifecycle combines Local Cor
   assert.deepEqual(calls.sort(), ["workspace.checkpoint.list", "workspace.promotion.list"]);
 });
 
-contractTest("desktop.hermetic", "Desktop promotion preview and apply preserve the candidate fingerprint contract", async () => {
+test("Desktop promotion preview and apply preserve the candidate fingerprint contract", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command) {
@@ -160,7 +160,7 @@ contractTest("desktop.hermetic", "Desktop promotion preview and apply preserve t
   ]);
 });
 
-contractTest("desktop.hermetic", "Desktop workspace lifecycle rejects mismatched Local Core session state", async () => {
+test("Desktop workspace lifecycle rejects mismatched Local Core session state", async () => {
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command) {
       return {
@@ -182,7 +182,7 @@ contractTest("desktop.hermetic", "Desktop workspace lifecycle rejects mismatched
   );
 });
 
-contractTest("desktop.hermetic", "Desktop checkpoint restore requires a reason and preserves thread scope", async () => {
+test("Desktop checkpoint restore requires a reason and preserves thread scope", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command) {
@@ -238,7 +238,7 @@ contractTest("desktop.hermetic", "Desktop checkpoint restore requires a reason a
   );
 });
 
-contractTest("desktop.hermetic", "Desktop checkpoint inspection and comparison expose bounded typed commands", async () => {
+test("Desktop checkpoint inspection and comparison expose bounded typed commands", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
     async sendControl(command) {
@@ -288,14 +288,14 @@ contractTest("desktop.hermetic", "Desktop checkpoint inspection and comparison e
   ]);
 });
 
-contractTest("desktop.hermetic", "Desktop checkpoint cleanup explicitly invokes Local Core retention", async () => {
+test("Desktop checkpoint cleanup explicitly invokes Local Core retention", async () => {
   const calls: unknown[] = []; const cleanup = { cleanupId: "cleanup-1", sessionId: "session-1", trigger: "manual" as const, reason: "Desktop cleanup", createdAt: "2026-07-20T12:00:00.000Z", policy: { maxCheckpointCount: 20, maxRetainedBytes: 1_000_000, protectLabeled: true, protectLatestPerThread: true, protectLatestPerRun: true, protectLatestPerTask: true }, deletedCheckpointIds: ["checkpoint-1"], deletedBytes: 10, retainedCheckpointCount: 0, retainedBytes: 0 };
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = { async sendControl(command) { calls.push(command); return { id: "event-cleanup", type: "workspace.checkpoint", ts: "2026-07-20T12:00:00.000Z", payload: { sessionId: "session-1", operation: "cleanup", cleanup, deletedCheckpoints: [checkpoint], remainingCheckpointCount: 0, remainingBytes: 0 } }; } };
   const result = await cleanupDesktopWorkspaceCheckpoints({ adapter, request: { sessionId: "session-1", reason: "Desktop cleanup" }, context });
   assert.equal(result.cleanup.cleanupId, "cleanup-1"); assert.deepEqual(calls, [{ type: "workspace.checkpoint.cleanup", sessionId: "session-1", reason: "Desktop cleanup" }]);
 });
 
-contractTest("desktop.hermetic", "Desktop managed worktree inspection and cleanup require Local Core evidence", async () => {
+test("Desktop managed worktree inspection and cleanup require Local Core evidence", async () => {
   const calls: unknown[] = [];
   const inspection = {
     status: "valid" as const,

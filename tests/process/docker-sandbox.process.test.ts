@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -12,13 +13,11 @@ import type {
   CodeExecutionRequest,
   SandboxExecutionOutput,
 } from "../../src/code/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const execFileAsync = promisify(execFile);
 let dockerReady: Promise<void> | undefined;
 
-contractTest(
-  "runtime.process",
+test(
   "Docker sandbox bounds fork attempts with the configured PID limit",
   async () => {
     await requireDocker();
@@ -55,8 +54,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.process",
+test(
   "Docker sandbox memory pressure terminates inside the configured limit",
   async () => {
     await requireDocker();
@@ -76,8 +74,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.process",
+test(
   "Docker sandbox does not inherit parent environment secrets",
   async () => {
     await requireDocker();
@@ -102,8 +99,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.process",
+test(
   "Docker sandbox blocks outbound traffic in network-off mode",
   async () => {
     await requireDocker();
@@ -124,8 +120,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.process",
+test(
   "Docker sandbox cancellation enforces hardening and removes the named workload",
   async () => {
     await requireDocker();
@@ -160,8 +155,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.process",
+test(
   "Docker sandbox timeout removes the named container and its child process",
   async () => {
     await requireDocker();

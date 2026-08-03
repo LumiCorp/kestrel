@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -10,10 +11,9 @@ import {
   type LocalCoreApiServer,
   type LocalCoreStatus,
 } from "../../src/localCore/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Local Core connection manager restarts Core after it exits between Desktop UI reads", async () => {
+test("Local Core connection manager restarts Core after it exits between Desktop UI reads", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-reconnect-"));
   let server: LocalCoreApiServer | undefined = await startServer(home);
   let reconnects = 0;
@@ -72,7 +72,7 @@ contractTest("runtime.hermetic", "Local Core connection manager restarts Core af
   }
 });
 
-contractTest("runtime.hermetic", "Local Core connection manager does not retry non-connection failures", async () => {
+test("Local Core connection manager does not retry non-connection failures", async () => {
   const client = {} as LocalCoreClient;
   let reconnects = 0;
   const manager = new LocalCoreConnectionManager({
@@ -96,7 +96,7 @@ contractTest("runtime.hermetic", "Local Core connection manager does not retry n
   assert.equal(reconnects, 0);
 });
 
-contractTest("runtime.hermetic", "Local Core connection manager reconnects before a non-idempotent operation and invokes it once", async () => {
+test("Local Core connection manager reconnects before a non-idempotent operation and invokes it once", async () => {
   const staleClient = {
     async health(): Promise<never> {
       throw Object.assign(new Error("missing socket"), { code: "ENOENT" });
@@ -136,7 +136,7 @@ contractTest("runtime.hermetic", "Local Core connection manager reconnects befor
   assert.equal(operationCalls, 1);
 });
 
-contractTest("runtime.hermetic", "Local Core connection manager coalesces concurrent recovery onto one connection", async () => {
+test("Local Core connection manager coalesces concurrent recovery onto one connection", async () => {
   const staleClient = {} as LocalCoreClient;
   const recoveredClient = {} as LocalCoreClient;
   let reconnects = 0;
@@ -169,7 +169,7 @@ contractTest("runtime.hermetic", "Local Core connection manager coalesces concur
   assert.equal(reconnects, 1);
 });
 
-contractTest("runtime.hermetic", "Local Core project run subscriptions report daemon shutdown as a stale connection", async () => {
+test("Local Core project run subscriptions report daemon shutdown as a stale connection", async () => {
   const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
   const home = await mkdtemp(path.join(tempRoot, "kestrel-core-stream-close-"));
   const server = await startServer(home);

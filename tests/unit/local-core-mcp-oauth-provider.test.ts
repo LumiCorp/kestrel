@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,7 +6,6 @@ import {
   parseOAuthCredentialPrefix,
 } from "../../src/localCore/mcpOAuthProvider.js";
 import { MemoryLocalCoreCredentialStore } from "../../src/localCore/credentialStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const clientMetadata = {
   client_name: "Kestrel Desktop",
@@ -15,8 +15,7 @@ const clientMetadata = {
   token_endpoint_auth_method: "none",
 };
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core persists and rotates App OAuth state in scoped credential records",
   async () => {
     const credentialStore = new MemoryLocalCoreCredentialStore();
@@ -68,8 +67,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core OAuth invalidation removes only the requested App credential scope",
   async () => {
     const credentialStore = new MemoryLocalCoreCredentialStore();
@@ -100,8 +98,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core OAuth storage fails closed without reflecting corrupt credential content",
   async () => {
     const credentialStore = new MemoryLocalCoreCredentialStore();
@@ -129,8 +126,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Local Core OAuth accepts only scoped credential prefixes and loopback callbacks",
   () => {
     assert.equal(

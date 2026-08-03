@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel/contracts/model-io.js";
@@ -7,7 +8,6 @@ import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -66,7 +66,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
   return [];
 }
 
-contractTest("runtime.process", "reference harness grounds a prior news headline into internet.extract on follow-up", async () => {
+test("reference harness grounds a prior news headline into internet.extract on follow-up", async () => {
   const store = new InMemorySessionStore();
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const finalized: Record<string, unknown>[] = [];

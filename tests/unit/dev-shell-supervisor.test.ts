@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -11,7 +12,6 @@ import {
   DEFAULT_DEV_SHELL_DISABLED_CONFIG,
   type DevShellOutputChunk,
 } from "../../src/devshell/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const TEST_COMMAND_TIMEOUT_MS = 5000;
@@ -86,11 +86,11 @@ async function readProcessUntilText(input: {
   return result;
 }
 
-contractTest("runtime.process", "dev shell default maxReadBytes is generous enough for medium file reads", () => {
+test("dev shell default maxReadBytes is generous enough for medium file reads", () => {
   assert.equal(DEFAULT_DEV_SHELL_DISABLED_CONFIG.maxReadBytes, 131_072);
 });
 
-contractTest("runtime.process", "DevShellSupervisor defaults its state directory under ~/ KESTREL_HOME", () => {
+test("DevShellSupervisor defaults its state directory under ~/ KESTREL_HOME", () => {
   const previous = process.env.KESTREL_HOME;
   process.env.KESTREL_HOME = "~/kestrel-dev-shell-supervisor-home";
   try {
@@ -108,7 +108,7 @@ contractTest("runtime.process", "DevShellSupervisor defaults its state directory
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor rejects missing workspace roots during exec preflight", async () => {
+test("DevShellSupervisor rejects missing workspace roots during exec preflight", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-supervisor-"));
   const supervisor = new DevShellSupervisor(new InMemoryDevShellStore(), path.join(baseDir, "state"));
   await supervisor.initialize();
@@ -126,7 +126,7 @@ contractTest("runtime.process", "DevShellSupervisor rejects missing workspace ro
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor returns completed command output without a processId", async () => {
+test("DevShellSupervisor returns completed command output without a processId", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const result = await supervisor.runCommand({
@@ -144,7 +144,7 @@ contractTest("runtime.process", "DevShellSupervisor returns completed command ou
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor rejects requested cwd outside the workspace root", async () => {
+test("DevShellSupervisor rejects requested cwd outside the workspace root", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     await assert.rejects(
@@ -162,7 +162,7 @@ contractTest("runtime.process", "DevShellSupervisor rejects requested cwd outsid
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor points an invalid sessionId to the active command and cwd", async () => {
+test("DevShellSupervisor points an invalid sessionId to the active command and cwd", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const started = await supervisor.startProcess({
@@ -187,7 +187,7 @@ contractTest("runtime.process", "DevShellSupervisor points an invalid sessionId 
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor observes stdout and stderr chunks without changing command output", async () => {
+test("DevShellSupervisor observes stdout and stderr chunks without changing command output", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const chunks: DevShellOutputChunk[] = [];
   try {
@@ -216,7 +216,7 @@ contractTest("runtime.process", "DevShellSupervisor observes stdout and stderr c
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor does not block command completion on console observers", async () => {
+test("DevShellSupervisor does not block command completion on console observers", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   let releaseObserver: (() => void) | undefined;
   let observerResolved = false;
@@ -258,7 +258,7 @@ contractTest("runtime.process", "DevShellSupervisor does not block command compl
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor returns nonzero command exits as failed process results", async () => {
+test("DevShellSupervisor returns nonzero command exits as failed process results", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const result = await supervisor.runCommand({
@@ -276,7 +276,7 @@ contractTest("runtime.process", "DevShellSupervisor returns nonzero command exit
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor observes through the initial window after early output", async () => {
+test("DevShellSupervisor observes through the initial window after early output", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const result = await supervisor.startProcess({
@@ -295,7 +295,7 @@ contractTest("runtime.process", "DevShellSupervisor observes through the initial
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor fails fast for multiline run commands", async () => {
+test("DevShellSupervisor fails fast for multiline run commands", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const result = await supervisor.runCommand({
@@ -319,7 +319,7 @@ contractTest("runtime.process", "DevShellSupervisor fails fast for multiline run
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor does not let a later passing command hide multiline setup failure", async () => {
+test("DevShellSupervisor does not let a later passing command hide multiline setup failure", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const result = await supervisor.runCommand({
@@ -339,7 +339,7 @@ contractTest("runtime.process", "DevShellSupervisor does not let a later passing
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor starts pnpm dev without hidden package-manager commands", async () => {
+test("DevShellSupervisor starts pnpm dev without hidden package-manager commands", async () => {
   const { supervisor, workspaceRoot, baseDir } = await createSupervisor();
   const fake = await createFakePnpm(baseDir);
   const restore = installFakePnpmEnv(fake);
@@ -372,7 +372,7 @@ contractTest("runtime.process", "DevShellSupervisor starts pnpm dev without hidd
   }
 });
 
-contractTest("runtime.source-write-guard", "DevShellSupervisor source-write guard fails and restores unauthorized shell writes", async () => {
+test("DevShellSupervisor source-write guard fails and restores unauthorized shell writes", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const appDir = path.join(workspaceRoot, "app");
   const pagePath = path.join(appDir, "page.tsx");
@@ -401,7 +401,7 @@ contractTest("runtime.source-write-guard", "DevShellSupervisor source-write guar
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor source-write guard ignores its own state under the workspace", async () => {
+test("DevShellSupervisor source-write guard ignores its own state under the workspace", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-nested-state-"));
   const workspaceRootPath = path.join(baseDir, "workspace");
   const stateDir = path.join(workspaceRootPath, ".local", "share", "kestrel", "dev-shell");
@@ -431,7 +431,7 @@ contractTest("runtime.process", "DevShellSupervisor source-write guard ignores i
   }
 });
 
-contractTest("runtime.source-write-guard", "DevShellSupervisor source-write guard excludes Kestrel internal state but still rejects adjacent source writes", async () => {
+test("DevShellSupervisor source-write guard excludes Kestrel internal state but still rejects adjacent source writes", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const pagePath = path.join(workspaceRoot, "app", "page.tsx");
   await mkdir(path.dirname(pagePath), { recursive: true });
@@ -479,7 +479,7 @@ contractTest("runtime.source-write-guard", "DevShellSupervisor source-write guar
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor source-write guard removes created directories after restoring files", async () => {
+test("DevShellSupervisor source-write guard removes created directories after restoring files", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const generatedDir = path.join(workspaceRoot, "generated");
   const generatedFile = path.join(generatedDir, "nested", "file.txt");
@@ -505,7 +505,7 @@ contractTest("runtime.process", "DevShellSupervisor source-write guard removes c
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor rejects source-write authority before spawning source-readonly commands", async () => {
+test("DevShellSupervisor rejects source-write authority before spawning source-readonly commands", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const appDir = path.join(workspaceRoot, "app");
   const pagePath = path.join(appDir, "page.tsx");
@@ -553,7 +553,7 @@ contractTest("runtime.process", "DevShellSupervisor rejects source-write authori
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor source-write guard stops and restores unauthorized managed process writes", async () => {
+test("DevShellSupervisor source-write guard stops and restores unauthorized managed process writes", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const appDir = path.join(workspaceRoot, "app");
   const pagePath = path.join(appDir, "page.tsx");
@@ -588,7 +588,7 @@ contractTest("runtime.process", "DevShellSupervisor source-write guard stops and
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor source-write guard allows a matching per-command approved path", async () => {
+test("DevShellSupervisor source-write guard allows a matching per-command approved path", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const appDir = path.join(workspaceRoot, "app");
   const pagePath = path.join(appDir, "page.tsx");
@@ -635,7 +635,7 @@ contractTest("runtime.process", "DevShellSupervisor source-write guard allows a 
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor allows source workspace writes when the workspace root is explicitly writable", async () => {
+test("DevShellSupervisor allows source workspace writes when the workspace root is explicitly writable", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const appDir = path.join(workspaceRoot, "app");
   const pagePath = path.join(appDir, "page.tsx");
@@ -663,7 +663,7 @@ contractTest("runtime.process", "DevShellSupervisor allows source workspace writ
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor source-write guard protects managed worktree gitfile", async () => {
+test("DevShellSupervisor source-write guard protects managed worktree gitfile", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const gitFilePath = path.join(workspaceRoot, ".git");
   await writeFile(gitFilePath, "gitdir: /tmp/kestrel-worktree-gitdir\n", "utf8");
@@ -690,7 +690,7 @@ contractTest("runtime.process", "DevShellSupervisor source-write guard protects 
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor allows source writes in managed checkpoint worktree mode", async () => {
+test("DevShellSupervisor allows source writes in managed checkpoint worktree mode", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const appDir = path.join(workspaceRoot, "app");
   const pagePath = path.join(appDir, "page.tsx");
@@ -717,7 +717,7 @@ contractTest("runtime.process", "DevShellSupervisor allows source writes in mana
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor capture mode restores source and returns an exact patch", async () => {
+test("DevShellSupervisor capture mode restores source and returns an exact patch", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const appDir = path.join(workspaceRoot, "app");
   const pagePath = path.join(appDir, "page.tsx");
@@ -749,7 +749,7 @@ contractTest("runtime.process", "DevShellSupervisor capture mode restores source
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor marks lost guarded processes as not finally source-write checked", async () => {
+test("DevShellSupervisor marks lost guarded processes as not finally source-write checked", async () => {
   const { supervisor, workspaceRoot, baseDir, store } = await createSupervisor();
   let restarted: DevShellSupervisor | undefined;
   try {
@@ -777,7 +777,7 @@ contractTest("runtime.process", "DevShellSupervisor marks lost guarded processes
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor releases managed worktree process leases during lost-process recovery", async () => {
+test("DevShellSupervisor releases managed worktree process leases during lost-process recovery", async () => {
   const { supervisor, workspaceRoot, baseDir, store } = await createSupervisor();
   let restarted: DevShellSupervisor | undefined;
   try {
@@ -802,7 +802,7 @@ contractTest("runtime.process", "DevShellSupervisor releases managed worktree pr
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor returns timed-out one-shot runs as failed process results", async () => {
+test("DevShellSupervisor returns timed-out one-shot runs as failed process results", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const result = await supervisor.runCommand({
@@ -821,7 +821,7 @@ contractTest("runtime.process", "DevShellSupervisor returns timed-out one-shot r
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor keeps an explicit timeout active after startProcess returns", async () => {
+test("DevShellSupervisor keeps an explicit timeout active after startProcess returns", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const started = await supervisor.startProcess({
@@ -847,7 +847,7 @@ contractTest("runtime.process", "DevShellSupervisor keeps an explicit timeout ac
   }
 });
 
-contractTest("runtime.process", "InMemoryDevShellStore deep clones source-write guard results", async () => {
+test("InMemoryDevShellStore deep clones source-write guard results", async () => {
   const store = new InMemoryDevShellStore();
   const now = new Date().toISOString();
   await store.upsertProcess({
@@ -892,7 +892,7 @@ contractTest("runtime.process", "InMemoryDevShellStore deep clones source-write 
   assert.equal(second!.sourceWriteGuard!.unauthorizedSourceWrites[0]!.path, "app/page.tsx");
 });
 
-contractTest("runtime.process", "DevShellSupervisor writes arbitrary stdin to a running process and read polls with empty input", async () => {
+test("DevShellSupervisor writes arbitrary stdin to a running process and read polls with empty input", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const started = await supervisor.startProcess({
@@ -948,7 +948,7 @@ contractTest("runtime.process", "DevShellSupervisor writes arbitrary stdin to a 
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor writes stdin and reads resulting output in one process call", async () => {
+test("DevShellSupervisor writes stdin and reads resulting output in one process call", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const started = await supervisor.startProcess({
@@ -988,7 +988,7 @@ contractTest("runtime.process", "DevShellSupervisor writes stdin and reads resul
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor delivers a terminal result once and rejects reuse of the settled session", async () => {
+test("DevShellSupervisor delivers a terminal result once and rejects reuse of the settled session", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const started = await supervisor.startProcess({
@@ -1052,7 +1052,7 @@ contractTest("runtime.process", "DevShellSupervisor delivers a terminal result o
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor never regresses a fast terminal process back to running", async () => {
+test("DevShellSupervisor never regresses a fast terminal process back to running", async () => {
   const { supervisor, workspaceRoot, store } = await createSupervisor();
   try {
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -1083,7 +1083,7 @@ contractTest("runtime.process", "DevShellSupervisor never regresses a fast termi
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor reads transcript chunks on UTF-8 character boundaries", async () => {
+test("DevShellSupervisor reads transcript chunks on UTF-8 character boundaries", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const started = await supervisor.startProcess({
@@ -1138,7 +1138,7 @@ contractTest("runtime.process", "DevShellSupervisor reads transcript chunks on U
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor exposes the core in-shell dev-shell client without leaking unrelated env", async () => {
+test("DevShellSupervisor exposes the core in-shell dev-shell client without leaking unrelated env", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const originalSocketPath = process.env.KESTREL_DEV_SHELL_SOCKET_PATH;
   const originalSecret = process.env.KESTREL_DEV_SHELL_TEST_SECRET;
@@ -1179,7 +1179,7 @@ contractTest("runtime.process", "DevShellSupervisor exposes the core in-shell de
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor rebinds pnpm workspace env to the resolved workspace root", async () => {
+test("DevShellSupervisor rebinds pnpm workspace env to the resolved workspace root", async () => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "dev-shell-pnpm-workspace-root-"));
   const store = new InMemoryDevShellStore();
   const supervisor = new DevShellSupervisor(store, workspaceRoot);
@@ -1205,7 +1205,7 @@ contractTest("runtime.process", "DevShellSupervisor rebinds pnpm workspace env t
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor strips trusted runner credentials from inherited shell env", async () => {
+test("DevShellSupervisor strips trusted runner credentials from inherited shell env", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const originalWorkspaceToken = process.env.KESTREL_WORKSPACE_SERVICE_TOKEN;
   const originalRunnerToken = process.env.KESTREL_RUNNER_SERVICE_TOKEN;
@@ -1231,7 +1231,7 @@ contractTest("runtime.process", "DevShellSupervisor strips trusted runner creden
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor stops a live process and rejects writes after completion", async () => {
+test("DevShellSupervisor stops a live process and rejects writes after completion", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const started = await supervisor.startProcess({
@@ -1255,7 +1255,7 @@ contractTest("runtime.process", "DevShellSupervisor stops a live process and rej
   }
 });
 
-contractTest("runtime.process", "DevShellSupervisor stops descendant processes when stopping a live process", async () => {
+test("DevShellSupervisor stops descendant processes when stopping a live process", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const childPidPath = path.join(workspaceRoot, "child.pid");
   let childPid: number | undefined;

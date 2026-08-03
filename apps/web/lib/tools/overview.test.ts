@@ -1,7 +1,7 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { buildToolsOverview } from "./overview";
 import type { ResolvedToolProvider } from "./types";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 function makeProvider(
@@ -33,7 +33,7 @@ function makeProvider(
   };
 }
 
-contractTest("web.hermetic", "tool overview builds provider and capability scan summaries", () => {
+test("tool overview builds provider and capability scan summaries", () => {
   const overview = buildToolsOverview([
     makeProvider({
       key: "built_in.weather",
@@ -125,7 +125,7 @@ contractTest("web.hermetic", "tool overview builds provider and capability scan 
   assert.equal(overview.capabilityRows[1]?.status, "setup_required");
 });
 
-contractTest("web.hermetic", "capability-free custom providers can still show as available", () => {
+test("capability-free custom providers can still show as available", () => {
   const overview = buildToolsOverview([
     makeProvider({
       key: "custom.status",

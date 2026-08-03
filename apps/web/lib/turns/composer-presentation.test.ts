@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
 import {
   type ComposerTransportStatus,
@@ -60,7 +60,7 @@ function activeState(cancelRequestedAt: string | null = null) {
   } satisfies ThreadConversationState;
 }
 
-contractTest("web.hermetic", "idle empty and populated composers resolve disabled and enabled send", () => {
+test("idle empty and populated composers resolve disabled and enabled send", () => {
   assert.deepEqual(presentation().action, { disabled: true, kind: "send" });
   assert.deepEqual(presentation({ hasText: true }).action, {
     disabled: false,
@@ -72,7 +72,7 @@ contractTest("web.hermetic", "idle empty and populated composers resolve disable
   });
 });
 
-contractTest("web.hermetic", "setup blocks submissions but preserves safety and response actions", () => {
+test("setup blocks submissions but preserves safety and response actions", () => {
   assert.equal(isComposerPrimaryActionBlockedBySetup("send", true), true);
   assert.equal(isComposerPrimaryActionBlockedBySetup("queue", true), true);
   assert.equal(isComposerPrimaryActionBlockedBySetup("stop", true), false);
@@ -81,14 +81,14 @@ contractTest("web.hermetic", "setup blocks submissions but preserves safety and 
   assert.equal(isComposerPrimaryActionBlockedBySetup("send", false), false);
 });
 
-contractTest("web.hermetic", "uploads disable an otherwise available send action", () => {
+test("uploads disable an otherwise available send action", () => {
   assert.deepEqual(
     presentation({ hasText: true, uploadCount: 1 }).action,
     { disabled: true, kind: "send" }
   );
 });
 
-contractTest("web.hermetic", "active empty composer stops and active draft queues", () => {
+test("active empty composer stops and active draft queues", () => {
   const conversationState = activeState();
   assert.deepEqual(presentation({ conversationState }).action, {
     disabled: false,
@@ -104,7 +104,7 @@ contractTest("web.hermetic", "active empty composer stops and active draft queue
   );
 });
 
-contractTest("web.hermetic", "queue capability and uploads disable queue submission", () => {
+test("queue capability and uploads disable queue submission", () => {
   const conversationState = activeState();
   assert.equal(
     presentation({ conversationState, hasText: true, canQueue: false }).action
@@ -118,7 +118,7 @@ contractTest("web.hermetic", "queue capability and uploads disable queue submiss
   );
 });
 
-contractTest("web.hermetic", "a recorded cancellation locks the stop action", () => {
+test("a recorded cancellation locks the stop action", () => {
   assert.deepEqual(
     presentation({
       conversationState: activeState("2026-07-21T12:01:00.000Z"),
@@ -128,7 +128,7 @@ contractTest("web.hermetic", "a recorded cancellation locks the stop action", ()
   );
 });
 
-contractTest("web.hermetic", "runtime user input resolves an exact response action", () => {
+test("runtime user input resolves an exact response action", () => {
   const interaction: ThreadConversationState["interactions"][number] = {
     id: "interaction-1",
     requestId: "request-1",
@@ -159,7 +159,7 @@ contractTest("web.hermetic", "runtime user input resolves an exact response acti
   );
 });
 
-contractTest("web.hermetic", "approval blocks the composer with an attention state", () => {
+test("approval blocks the composer with an attention state", () => {
   const interaction: ThreadConversationState["interactions"][number] = {
     id: "interaction-2",
     requestId: "request-2",
@@ -185,7 +185,7 @@ contractTest("web.hermetic", "approval blocks the composer with an attention sta
   assert.equal(result.tone, "attention");
 });
 
-contractTest("web.hermetic", "transport errors expose reset and ready recovery restores send", () => {
+test("transport errors expose reset and ready recovery restores send", () => {
   assert.deepEqual(presentation({ transportStatus: "error" }).action, {
     disabled: false,
     kind: "reset",

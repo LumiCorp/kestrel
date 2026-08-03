@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mapGithubRepository } from "./github-oauth";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "repository mapping preserves GitHub's authoritative actor permissions", () => {
+test("repository mapping preserves GitHub's authoritative actor permissions", () => {
   const repository = mapGithubRepository({
     full_name: "acme/private-repo",
     default_branch: "main",

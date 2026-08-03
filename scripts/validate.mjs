@@ -128,7 +128,15 @@ function processTasks() {
 }
 
 function processSetupTasks() {
+  buildInvocations += 2;
   return [
+    task("shared and root artifacts", PNPM, ["run", "build"]),
+    task("Workspace Runtime artifact", PNPM, [
+      "--filter",
+      "@kestrel/workspace-runtime",
+      "run",
+      "build:self",
+    ]),
     task("packed consumer fixture", process.execPath, [
       "--import",
       "tsx",
@@ -232,14 +240,7 @@ function testBoundary(file, source) {
 
 function postgresTasks(context) {
   return [
-    task(
-      "prepare PostgreSQL templates",
-      process.execPath,
-      ["--import", "tsx", "scripts/validation/prepare-postgres.ts"],
-      {
-        env: context.environment,
-      },
-    ),
+    preparePostgresTask(context),
     task(
       "PostgreSQL contracts",
       process.execPath,
@@ -249,6 +250,17 @@ function postgresTasks(context) {
       },
     ),
   ];
+}
+
+function preparePostgresTask(context) {
+  return task(
+    "prepare PostgreSQL templates",
+    process.execPath,
+    ["--import", "tsx", "scripts/validation/prepare-postgres.ts"],
+    {
+      env: context.environment,
+    },
+  );
 }
 
 async function chromiumTasks(context) {
@@ -273,14 +285,14 @@ async function chromiumTasks(context) {
   ];
 }
 
-function auditTasks() {
+function auditTasks(context) {
   return [
-    task("critical mutations", process.execPath, [
-      "scripts/validation/audit-mutations.mjs",
-    ]),
-    task("contract registry", process.execPath, [
-      "scripts/check-contract-proofs.mjs",
-    ]),
+    task(
+      "critical mutations",
+      process.execPath,
+      ["scripts/validation/audit-mutations.mjs"],
+      { env: context.environment },
+    ),
   ];
 }
 
@@ -301,7 +313,6 @@ function runTask(phaseName, item) {
   const env = {
     ...process.env,
     CI: "true",
-    KESTREL_CONTRACT_TIMINGS: path.join(REPORT_DIR, "contract-timings.jsonl"),
     KESTREL_PACKED_CONSUMER_DIR: PACKED_CONSUMER_DIR,
     KESTREL_VALIDATION_TEMP_ROOT: TEMP_DIR,
     ...item.env,
@@ -550,7 +561,6 @@ function writeReport(status, error, validationRequest) {
   const tasks = measurements
     .filter((item) => item.kind === "task")
     .sort((a, b) => b.durationMs - a.durationMs);
-  const testTimings = readContractTimings();
   writeFileSync(
     REPORT_PATH,
     `${JSON.stringify(
@@ -562,10 +572,6 @@ function writeReport(status, error, validationRequest) {
         invariants: { buildInvocations, dockerStarts, browserStarts },
         telemetry: {
           managedProcessLaunches: processLaunches,
-          assertionTimeMs: testTimings.reduce(
-            (sum, item) => sum + item.durationMs,
-            0,
-          ),
           environmentSetupTimeMs: measurements
             .filter(
               (item) =>
@@ -575,9 +581,6 @@ function writeReport(status, error, validationRequest) {
             .reduce((sum, item) => sum + item.durationMs, 0),
         },
         slowestTasks: tasks.slice(0, 20),
-        slowestTests: testTimings
-          .sort((a, b) => b.durationMs - a.durationMs)
-          .slice(0, 20),
         measurements,
         error:
           error instanceof Error ? error.message : error ? String(error) : null,
@@ -586,15 +589,6 @@ function writeReport(status, error, validationRequest) {
       2,
     )}\n`,
   );
-}
-
-function readContractTimings() {
-  const file = path.join(REPORT_DIR, "contract-timings.jsonl");
-  if (!existsSync(file)) return [];
-  return readFileSync(file, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
 }
 
 function printPlan() {
@@ -621,7 +615,10 @@ async function runLeaf(boundary, workspace) {
     throw new Error(`${boundary} focused validation requires workspace 'all'`);
   }
   if (boundary === "audit") {
-    await phase("audit", auditTasks());
+    postgres = await startPostgres();
+    await phase("audit", auditTasks(postgres), {
+      setup: [preparePostgresTask(postgres)],
+    });
     return;
   }
   if (boundary === "postgres") {

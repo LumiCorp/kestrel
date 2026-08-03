@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
-import { contractTest } from "../contract-test.js";
 
 
 type JsonRecord = Record<string, any>;
@@ -33,7 +32,7 @@ test.beforeEach(async ({ page, request }, testInfo) => {
   await page.goto("/dashboard");
 });
 
-contractTest("web.turn-reload-rendering", "completed turn streams activity, persists one answer, and survives reload", async ({
+test("completed turn streams activity, persists one answer, and survives reload", async ({
   page,
 }, testInfo) => {
   const created = await createThread(page, testInfo, "product-completed");
@@ -87,7 +86,7 @@ contractTest("web.turn-reload-rendering", "completed turn streams activity, pers
   ).toBeVisible();
 });
 
-contractTest("web.waiting-interaction-browser", "waiting prompt and request identity survive reload and resume exactly", async ({
+test("waiting prompt and request identity survive reload and resume exactly", async ({
   page,
 }, testInfo) => {
   const created = await createThread(page, testInfo, "fake-openrouter-wait");

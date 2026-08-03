@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { TuiProfile } from "../../cli/contracts.js";
@@ -11,10 +12,9 @@ import {
   fingerprintResolvedProfile,
 } from "../../src/profile/kestrelOnePolicy.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, specialist, and context policy definitions", async () => {
+test("AssemblyCatalog persists default bundle, specialist, and context policy definitions", async () => {
   const store = new InMemorySessionStore();
   const profile = {
     ...buildProfile({ toolAllowlist: ["fs.read_text", "web.search"] }),
@@ -50,7 +50,7 @@ contractTest("runtime.hermetic", "AssemblyCatalog persists default bundle, speci
   assert.deepEqual(persistedBundle?.metadata?.harnessEconomics, economicsControl());
 });
 
-contractTest("runtime.hermetic", "AssemblyCatalog fingerprints profile revisions and keeps prior defaults available", async () => {
+test("AssemblyCatalog fingerprints profile revisions and keeps prior defaults available", async () => {
   const store = new InMemorySessionStore();
   const firstProfile = {
     ...buildProfile({ toolAllowlist: ["fs.read_text"] }),
@@ -89,7 +89,7 @@ contractTest("runtime.hermetic", "AssemblyCatalog fingerprints profile revisions
   );
 });
 
-contractTest("runtime.hermetic", "AssemblyCatalog rejects a conflicting definition under the same profile fingerprint", async () => {
+test("AssemblyCatalog rejects a conflicting definition under the same profile fingerprint", async () => {
   const store = new InMemorySessionStore();
   const profile = buildProfile({ toolAllowlist: ["fs.read_text"] });
   const profileFingerprint = fingerprintResolvedProfile(profile);
@@ -120,7 +120,7 @@ contractTest("runtime.hermetic", "AssemblyCatalog rejects a conflicting definiti
   );
 });
 
-contractTest("runtime.hermetic", "AssemblyCatalog rejects a conflicting context policy under the same profile fingerprint", async () => {
+test("AssemblyCatalog rejects a conflicting context policy under the same profile fingerprint", async () => {
   const store = new InMemorySessionStore();
   const profile = buildProfile({ toolAllowlist: ["fs.read_text"] });
   const profileFingerprint = fingerprintResolvedProfile(profile);
@@ -151,7 +151,7 @@ contractTest("runtime.hermetic", "AssemblyCatalog rejects a conflicting context 
   );
 });
 
-contractTest("runtime.hermetic", "RuntimeComposer keeps existing threads pinned until an operator applies a new profile revision", async () => {
+test("RuntimeComposer keeps existing threads pinned until an operator applies a new profile revision", async () => {
   const store = new InMemorySessionStore();
   const firstCatalog = new AssemblyCatalog({
     store,
@@ -219,7 +219,7 @@ contractTest("runtime.hermetic", "RuntimeComposer keeps existing threads pinned 
   );
 });
 
-contractTest("runtime.hermetic", "AssemblyPolicyEvaluator rejects unknown bundles and requires approval for model widening", () => {
+test("AssemblyPolicyEvaluator rejects unknown bundles and requires approval for model widening", () => {
   const evaluator = new AssemblyPolicyEvaluator();
   const thread = buildThread("thread-policy");
 
@@ -314,7 +314,7 @@ contractTest("runtime.hermetic", "AssemblyPolicyEvaluator rejects unknown bundle
   assert.equal(providerChangeDecision.result, "APPROVAL_REQUIRED");
 });
 
-contractTest("runtime.hermetic", "RuntimeComposer composes inherited child bundles and applies approved proposals", async () => {
+test("RuntimeComposer composes inherited child bundles and applies approved proposals", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -375,7 +375,7 @@ contractTest("runtime.hermetic", "RuntimeComposer composes inherited child bundl
   assert.deepEqual(active?.bundle?.toolAllowlist, ["fs.read_text", "web.search"]);
 });
 
-contractTest("runtime.hermetic", "RuntimeComposer selects provider-specific prompt variants and proposal metadata", async () => {
+test("RuntimeComposer selects provider-specific prompt variants and proposal metadata", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -419,7 +419,7 @@ contractTest("runtime.hermetic", "RuntimeComposer selects provider-specific prom
   assert.equal(proposal.bundle?.metadata?.compatibilityProfile, "openai.responses");
 });
 
-contractTest("runtime.hermetic", "RuntimeComposer rejects incompatible prompt variants for provider selection", async () => {
+test("RuntimeComposer rejects incompatible prompt variants for provider selection", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -459,7 +459,7 @@ contractTest("runtime.hermetic", "RuntimeComposer rejects incompatible prompt va
   assert.match(proposal.decision.reason, /not compatible with provider 'anthropic'/u);
 });
 
-contractTest("runtime.hermetic", "RuntimeComposer narrows active bundles on capability loss", async () => {
+test("RuntimeComposer narrows active bundles on capability loss", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -502,7 +502,7 @@ contractTest("runtime.hermetic", "RuntimeComposer narrows active bundles on capa
   );
 });
 
-contractTest("runtime.hermetic", "RuntimeComposer keeps runtime-internal tools when capability loss narrows external tools", async () => {
+test("RuntimeComposer keeps runtime-internal tools when capability loss narrows external tools", async () => {
   const store = new InMemorySessionStore();
   const catalog = new AssemblyCatalog({
     store,
@@ -545,7 +545,7 @@ contractTest("runtime.hermetic", "RuntimeComposer keeps runtime-internal tools w
   assert.equal(recomposed?.bundle?.source, "runtime_derived");
 });
 
-contractTest("runtime.hermetic", "RuntimeComposer appends one canonical assembly transition for legacy Desktop threads", async () => {
+test("RuntimeComposer appends one canonical assembly transition for legacy Desktop threads", async () => {
   const store = new InMemorySessionStore();
   const legacyBundle = {
     bundleId: "bundle:reference-web:legacy-desktop",

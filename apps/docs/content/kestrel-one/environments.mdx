@@ -47,6 +47,13 @@ The Apps section lets an administrator configure shared App connections and
 enable or deny individual capabilities. A custom MCP server can be added as a
 private App. Newly reported capabilities remain disabled until approved.
 
+OCI MCP servers have full outbound networking by default because their required
+destinations are often not predictable. The administrator is responsible for
+selecting the server. Container isolation protects the host and limits mounted
+workspace data; it does not restrict outbound destinations. Choose no network
+only for a server designed to run offline, and provide only the credentials and
+read-only mounts that server requires.
+
 Personal App connections are managed from `/apps` and remain associated with
 the person who connected them. Environment connections are shared
 administrative resources.

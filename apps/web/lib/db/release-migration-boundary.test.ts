@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMigrationDatabaseConnection } from "./migration-connection";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const appRoot = path.resolve(
@@ -13,7 +13,7 @@ const appRoot = path.resolve(
 const read = (relativePath: string) =>
   fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 
-contractTest("web.hermetic", "Vercel compilation never mutates the database", () => {
+test("Vercel compilation never mutates the database", () => {
   const packageJson = JSON.parse(read("package.json")) as {
     scripts: Record<string, string>;
   };
@@ -42,7 +42,7 @@ contractTest("web.hermetic", "Vercel compilation never mutates the database", ()
   }
 });
 
-contractTest("web.hermetic", "production migrations serialize and repair known skipped schema", () => {
+test("production migrations serialize and repair known skipped schema", () => {
   const migrate = read("lib/db/migrate.ts");
   const reconciliation = read("lib/db/schema-reconciliation.ts");
   assert.match(migrate, /pg_advisory_lock/u);
@@ -82,7 +82,7 @@ contractTest("web.hermetic", "production migrations serialize and repair known s
   }
 });
 
-contractTest("web.hermetic", "production migrations prefer a direct database connection", () => {
+test("production migrations prefer a direct database connection", () => {
   assert.deepEqual(
     resolveMigrationDatabaseConnection({
       POSTGRES_URL_NON_POOLING: "postgres://direct-postgres",

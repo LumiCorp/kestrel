@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -6,7 +7,6 @@ import {
   type ProjectContextGrant,
   parseProjectContextGrant,
 } from "./context-grants";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const validGrant: ProjectContextGrant = {
@@ -19,7 +19,7 @@ const validGrant: ProjectContextGrant = {
   expiresAt: "2026-07-12T18:00:00.000Z",
 };
 
-contractTest("web.hermetic", "Project context grant parser fails closed for forged payloads", () => {
+test("Project context grant parser fails closed for forged payloads", () => {
   assert.deepEqual(
     parseProjectContextGrant(JSON.stringify(validGrant)),
     validGrant
@@ -39,7 +39,7 @@ contractTest("web.hermetic", "Project context grant parser fails closed for forg
   );
 });
 
-contractTest("web.hermetic", "Project context grant expiry uses the embedded immutable deadline", () => {
+test("Project context grant expiry uses the embedded immutable deadline", () => {
   assert.equal(
     isProjectContextGrantExpired(
       validGrant,
@@ -53,7 +53,7 @@ contractTest("web.hermetic", "Project context grant expiry uses the embedded imm
   );
 });
 
-contractTest("web.hermetic", "Project context grant resolution revalidates membership, Thread, revision, and revocation", () => {
+test("Project context grant resolution revalidates membership, Thread, revision, and revocation", () => {
   const source = fs.readFileSync(
     fileURLToPath(import.meta.url).replace(/\.test\.ts$/, ".ts"),
     "utf8"

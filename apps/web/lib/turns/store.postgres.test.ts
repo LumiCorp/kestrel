@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { PgBoss } from "pg-boss";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const databaseUrl = process.env.KESTREL_TURN_DB_TEST_URL?.trim();
@@ -22,8 +22,7 @@ async function waitFor<T>(
   throw new Error("Timed out waiting for the durable turn to settle.");
 }
 
-contractTest(
-  ["web.interaction-request-identity", "web.worker-claim-recovery"],
+test(
   "durable turns converge across claims, dispatch failure, and worker recovery",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
@@ -712,8 +711,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.worker-claim-recovery",
+test(
   "live reasoning and heartbeats never enter thread_turn_events",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
@@ -860,8 +858,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.worker-claim-recovery",
+test(
   "ambiguous and missing dispatch preserve durable queue authority",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");
@@ -1089,8 +1086,7 @@ contractTest(
   },
 );
 
-contractTest(
-  ["web.turn-transaction", "web.worker-claim-recovery"],
+test(
   "terminal presentation commits with terminal state and queue authority",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_TURN_DB_TEST_URL is required");

@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { requestGitHubToolCredential } from "../src/github-credentials.js";
 import { WorkspaceRequestError } from "../src/security.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("services.hermetic", "Workspace exchanges its execution ticket for a scoped GitHub credential", async () => {
+test("Workspace exchanges its execution ticket for a scoped GitHub credential", async () => {
   let capturedUrl = "";
   let capturedInit: RequestInit | undefined;
   const credential = await requestGitHubToolCredential({
@@ -36,7 +36,7 @@ contractTest("services.hermetic", "Workspace exchanges its execution ticket for 
   });
 });
 
-contractTest("services.hermetic", "Workspace binds push credentials to the candidate fingerprint", async () => {
+test("Workspace binds push credentials to the candidate fingerprint", async () => {
   let body: unknown;
   await requestGitHubToolCredential({
     controlPlaneUrl: "https://kestrel.example",
@@ -56,7 +56,7 @@ contractTest("services.hermetic", "Workspace binds push credentials to the candi
   });
 });
 
-contractTest("services.hermetic", "Workspace preserves broker denial codes", async () => {
+test("Workspace preserves broker denial codes", async () => {
   await assert.rejects(
     requestGitHubToolCredential({
       controlPlaneUrl: "https://kestrel.example",

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import os from "node:os";
@@ -14,7 +15,6 @@ import { createUiDerivedSelectors } from "../../cli/ink/store/selectors.js";
 import { SessionStore } from "../../cli/session/SessionStore.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { initializeWorkspaceAtRoot } from "../../cli/workspace/WorkspaceResolver.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 async function createWorkspaceControllerHarness(): Promise<{
@@ -122,7 +122,7 @@ async function createWorkspaceControllerHarness(): Promise<{
   };
 }
 
-contractTest("runtime.hermetic", "WorkspaceController lists discovered workspaces and binds the active session", async () => {
+test("WorkspaceController lists discovered workspaces and binds the active session", async () => {
   const harness = await createWorkspaceControllerHarness();
   const alphaRoot = path.join(harness.cwd, "alpha");
   const betaRoot = path.join(harness.cwd, "beta");
@@ -143,7 +143,7 @@ contractTest("runtime.hermetic", "WorkspaceController lists discovered workspace
   assert.match(harness.historyLines.join("\n"), /Bound the active session to workspace/u);
 });
 
-contractTest("runtime.hermetic", "WorkspaceController detaches the active session from workspace state", async () => {
+test("WorkspaceController detaches the active session from workspace state", async () => {
   const harness = await createWorkspaceControllerHarness();
   const workspaceRoot = path.join(harness.cwd, "beta");
   await mkdir(workspaceRoot, { recursive: true });

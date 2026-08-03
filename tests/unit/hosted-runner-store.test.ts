@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,10 +8,8 @@ import {
   createHostedRunnerStore,
   createHostedRunnerStoreRecoveryPath,
 } from "../../cli/runner/HostedRunnerStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest(
-  "runtime.hermetic",
+test(
   "hosted runner archives a corrupt PGlite store and retries once with a verified fresh store",
   async () => {
     const storeDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-hosted-runner-store-"));
@@ -43,8 +42,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "hosted runner recovery paths are stable and adjacent to the failed PGlite store",
   () => {
     assert.equal(

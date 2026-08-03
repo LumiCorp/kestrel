@@ -1,12 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   workspaceChildEnvironment,
   workspaceRunnerEnvironment,
 } from "../src/child-environment.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "services.hermetic",
+test(
   "interactive child processes do not inherit Workspace infrastructure credentials",
   () => {
     assert.deepEqual(
@@ -26,8 +25,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "services.hermetic",
+test(
   "trusted runner receives only the workspace-scoped relay token",
   () => {
     assert.deepEqual(

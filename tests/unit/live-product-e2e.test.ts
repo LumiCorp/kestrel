@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -8,10 +9,9 @@ import {
   classifyStepStatus,
   validateExternalProviderEnv,
 } from "../../scripts/live-product-e2e.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "live-product-e2e classifies database connectivity errors as infra_failed", () => {
+test("live-product-e2e classifies database connectivity errors as infra_failed", () => {
   const status = classifyStepStatus(
     {
       id: "ops.cli",
@@ -28,7 +28,7 @@ contractTest("runtime.hermetic", "live-product-e2e classifies database connectiv
   assert.equal(status.status, "infra_failed");
 });
 
-contractTest("runtime.hermetic", "live-product-e2e classifies web compile failures as build_failed", () => {
+test("live-product-e2e classifies web compile failures as build_failed", () => {
   const status = classifyStepStatus(
     {
       id: "ops.web",
@@ -45,7 +45,7 @@ contractTest("runtime.hermetic", "live-product-e2e classifies web compile failur
   assert.equal(status.status, "build_failed");
 });
 
-contractTest("runtime.hermetic", "live-product-e2e classifies research stall convergence as failed", () => {
+test("live-product-e2e classifies research stall convergence as failed", () => {
   const status = classifyStepStatus(
     {
       id: "core.operator-journey",
@@ -62,7 +62,7 @@ contractTest("runtime.hermetic", "live-product-e2e classifies research stall con
   assert.deepEqual(status.diagnostics, ["runtime research stall convergence"]);
 });
 
-contractTest("runtime.hermetic", "live-product-e2e validates required provider credentials", () => {
+test("live-product-e2e validates required provider credentials", () => {
   const missing = validateExternalProviderEnv({
     OPENROUTER_API_KEY: "",
     TAVILY_API_KEY: "",
@@ -78,7 +78,7 @@ contractTest("runtime.hermetic", "live-product-e2e validates required provider c
   assert.deepEqual(present, []);
 });
 
-contractTest("runtime.hermetic", "live-product-e2e bootstraps provider credentials from .env", async () => {
+test("live-product-e2e bootstraps provider credentials from .env", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-live-product-env-"));
   await writeFile(
     path.join(tempDir, ".env"),

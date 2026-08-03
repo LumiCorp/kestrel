@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
@@ -11,7 +12,6 @@ import {
 import { buildCanonicalWaitingFor } from "../../src/runtime/waitState.js";
 import type { RuntimeWaitMatcher } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 class FollowUpExecutor implements TurnExecutor {
@@ -51,7 +51,7 @@ class FollowUpExecutor implements TurnExecutor {
   }
 }
 
-contractTest("runtime.hermetic", "ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses duplicate IDs", async () => {
+test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses duplicate IDs", async () => {
   const store = new InMemorySessionStore();
   const executor = new FollowUpExecutor(store, [completed("run-follow-up-1"), completed("run-follow-up-2")]);
   const detachedEvents: Array<{ type: string; runId: string; status?: string | undefined }> = [];
@@ -93,7 +93,7 @@ contractTest("runtime.hermetic", "ThreadRuntime dispatches durable follow-ups in
   ]);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime pauses remaining follow-ups when an entry waits for operator input", async () => {
+test("ThreadRuntime pauses remaining follow-ups when an entry waits for operator input", async () => {
   const store = new InMemorySessionStore();
   const executor = new FollowUpExecutor(store, [waiting("run-follow-up-wait")]);
   const runtime = new ThreadRuntime({ sessionStore: store, executor });
@@ -115,7 +115,7 @@ contractTest("runtime.hermetic", "ThreadRuntime pauses remaining follow-ups when
   await assert.rejects(runtime.resumeFollowUpQueue({ threadId: started.threadId }), /Resolve the thread's waiting action/u);
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime preserves an explicit cancellation pause for queued follow-ups", async () => {
+test("ThreadRuntime preserves an explicit cancellation pause for queued follow-ups", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({ sessionStore: store, executor: new FollowUpExecutor(store, []) });
   const started = await runtime.startThread({ threadId: "thread-cancel", sessionId: "session-cancel", title: "Cancel" });

@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const ROOT = process.cwd();
 
-contractTest("runtime.hermetic", "CLI production entrypoints do not construct an embedded execution authority", async () => {
+test("CLI production entrypoints do not construct an embedded execution authority", async () => {
   const entrypoints = [
     "cli/app/App.ts",
     "cli/commandMode.ts",
@@ -25,7 +25,7 @@ contractTest("runtime.hermetic", "CLI production entrypoints do not construct an
   }
 });
 
-contractTest("runtime.hermetic", "CLI evidence commands do not open or reconstruct a runtime store", async () => {
+test("CLI evidence commands do not open or reconstruct a runtime store", async () => {
   const evidenceClients = [
     "cli/app/OperatorController.ts",
     "cli/commandMode.ts",

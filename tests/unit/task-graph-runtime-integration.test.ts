@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,10 +6,9 @@ import {
   persistDelegationTaskUpdateToGraph,
 } from "../../src/taskGraph/runtimeIntegration.js";
 import type { DelegationTaskUpdate } from "../../src/orchestration/DelegationSupervisor.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "applyActiveTaskRuntimeMetadata injects active task id from task graph", async () => {
+test("applyActiveTaskRuntimeMetadata injects active task id from task graph", async () => {
   const input = {
     sessionId: "session-1",
     message: "continue",
@@ -31,7 +31,7 @@ contractTest("runtime.hermetic", "applyActiveTaskRuntimeMetadata injects active 
   });
 });
 
-contractTest("runtime.hermetic", "applyActiveTaskRuntimeMetadata preserves explicit active task metadata", async () => {
+test("applyActiveTaskRuntimeMetadata preserves explicit active task metadata", async () => {
   let graphRead = false;
   const input = {
     sessionId: "session-1",
@@ -53,7 +53,7 @@ contractTest("runtime.hermetic", "applyActiveTaskRuntimeMetadata preserves expli
   assert.equal(graphRead, false);
 });
 
-contractTest("runtime.hermetic", "persistDelegationTaskUpdateToGraph maps runtime delegation snapshots into task graph updates", async () => {
+test("persistDelegationTaskUpdateToGraph maps runtime delegation snapshots into task graph updates", async () => {
   let persisted: unknown;
   const update: DelegationTaskUpdate = {
     kind: "completed",

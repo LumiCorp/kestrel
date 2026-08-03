@@ -1,9 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
+  chmodSync,
+  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readlinkSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -15,11 +18,8 @@ import path from "node:path";
 
 const root = process.cwd();
 const specPath = path.join(root, "tests/proof/mutations.json");
-const evidencePath = path.join(root, "tests/proof/mutation-evidence.json");
 const specs = JSON.parse(readFileSync(specPath, "utf8"));
-const requested = process.argv
-  .slice(2)
-  .filter((value) => value !== "--write" && value !== "--");
+const requested = process.argv.slice(2).filter((value) => value !== "--");
 const selected = requested.length > 0
   ? specs.mutations.filter((mutation) => requested.includes(mutation.id))
   : specs.mutations;
@@ -28,8 +28,6 @@ if (requested.length > 0 && selected.length !== requested.length) {
   throw new Error("One or more requested mutation ids do not exist.");
 }
 
-const existing = JSON.parse(readFileSync(evidencePath, "utf8"));
-const byId = new Map(existing.evidence.map((item) => [item.id, item]));
 const temporaryRoot = mkdtempSync(path.join(tmpdir(), "kestrel-mutation-audit-"));
 const checkout = path.join(temporaryRoot, "checkout");
 
@@ -38,10 +36,15 @@ try {
     cwd: root,
     stdio: "pipe",
   });
+  stageCandidateTree(root, checkout);
   linkDependencyTrees(root, checkout);
 
   for (const mutation of selected) {
-    requireCommittedInputs(mutation, checkout);
+    requireCandidateInputs(mutation, checkout);
+  }
+  verifyOwningTestsPass(selected, checkout);
+
+  for (const mutation of selected) {
     const targetPath = path.join(checkout, mutation.target);
     const original = readFileSync(targetPath, "utf8");
     const occurrences = original.split(mutation.find).length - 1;
@@ -56,7 +59,6 @@ try {
     let result;
     const childEnvironment = { ...process.env, CI: "true" };
     delete childEnvironment.NODE_TEST_CONTEXT;
-    delete childEnvironment.KESTREL_CONTRACT_TIMINGS;
     delete childEnvironment.NODE_V8_COVERAGE;
     try {
       writeFileSync(targetPath, original.replace(mutation.find, mutation.replace), "utf8");
@@ -71,26 +73,17 @@ try {
     }
 
     if (result.error) throw result.error;
+    if (result.signal !== null || result.status === null) {
+      throw new Error(
+        `${mutation.id}: owning tests terminated before proving the mutation (${result.signal ?? "unknown signal"})`,
+      );
+    }
     if (result.status === 0) {
       process.stdout.write(result.stdout);
       process.stderr.write(result.stderr);
       throw new Error(`${mutation.id}: mutation survived its owning tests`);
     }
 
-    const testHash = createHash("sha256");
-    for (const file of mutation.testFiles) {
-      testHash.update(readFileSync(path.join(checkout, file)));
-    }
-    byId.set(mutation.id, {
-      id: mutation.id,
-      contractId: mutation.contractId,
-      target: mutation.target,
-      sourceSha256: sha256(targetPath),
-      testFiles: mutation.testFiles,
-      testsSha256: testHash.digest("hex"),
-      command: [mutation.command, ...mutation.args].join(" "),
-      result: "killed",
-    });
     process.stdout.write(`[mutation] killed ${mutation.id} with exit ${result.status}\n`);
   }
 } finally {
@@ -100,24 +93,96 @@ try {
   });
   rmSync(temporaryRoot, { recursive: true, force: true });
 }
+process.stdout.write(`[mutation] verified ${selected.length}/${selected.length} killed\n`);
 
-writeFileSync(
-  evidencePath,
-  `${JSON.stringify({ version: 1, evidence: [...byId.values()].sort((a, b) => a.id.localeCompare(b.id)) }, null, 2)}\n`,
-  "utf8",
-);
-
-function sha256(filePath) {
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+function requireCandidateInputs(mutation, checkoutRoot) {
+  for (const relative of [mutation.target, ...mutation.testFiles]) {
+    const checkoutPath = path.join(checkoutRoot, relative);
+    if (!existsSync(checkoutPath)) {
+      throw new Error(`${mutation.id}: candidate input is missing: ${relative}`);
+    }
+  }
 }
 
-function requireCommittedInputs(mutation, checkoutRoot) {
-  for (const relative of [mutation.target, ...mutation.testFiles]) {
-    const workingPath = path.join(root, relative);
-    const checkoutPath = path.join(checkoutRoot, relative);
-    if (!existsSync(checkoutPath) || sha256(workingPath) !== sha256(checkoutPath)) {
-      throw new Error(`${mutation.id}: ${relative} must be committed before mutation audit`);
+function stageCandidateTree(sourceRoot, checkoutRoot) {
+  const files = execFileSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    { cwd: sourceRoot, encoding: "utf8" },
+  ).split("\0").filter(Boolean);
+  for (const relative of files) {
+    const source = path.join(sourceRoot, relative);
+    const destination = path.join(checkoutRoot, relative);
+    const stat = lstatIfPresent(source);
+    if (stat === undefined) {
+      rmSync(destination, { recursive: true, force: true });
+      continue;
     }
+    mkdirSync(path.dirname(destination), { recursive: true });
+    if (stat.isSymbolicLink()) {
+      rmSync(destination, { recursive: true, force: true });
+      symlinkSync(readlinkSync(source), destination);
+      continue;
+    }
+    rmSync(destination, { recursive: true, force: true });
+    copyFileSync(source, destination);
+    chmodSync(destination, stat.mode);
+  }
+}
+
+function lstatIfPresent(filePath) {
+  try {
+    return lstatSync(filePath);
+  } catch (error) {
+    if (error !== null && typeof error === "object" && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function verifyOwningTestsPass(mutations, checkoutRoot) {
+  const commands = new Map();
+  for (const mutation of mutations) {
+    const key = JSON.stringify([mutation.command, mutation.args]);
+    const existing = commands.get(key);
+    if (existing === undefined) {
+      commands.set(key, {
+        command: mutation.command,
+        args: mutation.args,
+        mutationIds: [mutation.id],
+      });
+    } else {
+      existing.mutationIds.push(mutation.id);
+    }
+  }
+
+  const childEnvironment = { ...process.env, CI: "true" };
+  delete childEnvironment.NODE_TEST_CONTEXT;
+  delete childEnvironment.NODE_V8_COVERAGE;
+  for (const command of commands.values()) {
+    const result = spawnSync(command.command, command.args, {
+      cwd: checkoutRoot,
+      env: childEnvironment,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    if (result.error) throw result.error;
+    if (result.signal !== null || result.status === null) {
+      throw new Error(
+        `owning tests terminated before mutation for ${command.mutationIds.join(", ")} (${result.signal ?? "unknown signal"})`,
+      );
+    }
+    if (result.status !== 0) {
+      process.stdout.write(result.stdout);
+      process.stderr.write(result.stderr);
+      throw new Error(
+        `owning tests fail before mutation for ${command.mutationIds.join(", ")} (exit ${result.status})`,
+      );
+    }
+    process.stdout.write(
+      `[mutation] baseline passed for ${command.mutationIds.join(", ")}\n`,
+    );
   }
 }
 

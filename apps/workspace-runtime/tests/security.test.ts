@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -5,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 import { ENVIRONMENT_ROUTER_AUDIENCE, signEnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "../src/security.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const keys = generateKeyPairSync("ed25519");
@@ -33,7 +33,7 @@ const token = signEnvironmentExecutionTicket({
   },
 });
 
-contractTest("services.hermetic", "Workspace service revalidates the signed tenant boundary", () => {
+test("Workspace service revalidates the signed tenant boundary", () => {
   assert.equal(authorizeWorkspaceRequest({
     authorization: `Bearer ${token}`,
     publicKey,
@@ -53,7 +53,7 @@ contractTest("services.hermetic", "Workspace service revalidates the signed tena
   }));
 });
 
-contractTest("services.hermetic", "Workspace paths cannot escape the mounted volume", async () => {
+test("Workspace paths cannot escape the mounted volume", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-security-"));
   try {
     await mkdir(path.join(root, "src"));
@@ -68,7 +68,7 @@ contractTest("services.hermetic", "Workspace paths cannot escape the mounted vol
   }
 });
 
-contractTest("services.hermetic", "Workspace paths reject external symlinks for existing and missing targets", async () => {
+test("Workspace paths reject external symlinks for existing and missing targets", async () => {
   const parent = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-security-"));
   const root = path.join(parent, "workspace");
   const external = path.join(parent, "external");

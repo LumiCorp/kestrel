@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -8,10 +9,9 @@ import {
   shouldSkipGovernanceDirectory,
   toPosixPath,
 } from "../../scripts/governance-utils.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "governance traversal skips ignored artifact roots but keeps source files", async () => {
+test("governance traversal skips ignored artifact roots but keeps source files", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "kestrel-governance-utils-"));
   try {
     await mkdir(path.join(tmp, "src"), { recursive: true });
@@ -31,7 +31,7 @@ contractTest("runtime.hermetic", "governance traversal skips ignored artifact ro
   }
 });
 
-contractTest("runtime.hermetic", "governance ignored directory list includes benchmark artifact roots", () => {
+test("governance ignored directory list includes benchmark artifact roots", () => {
   for (const name of ["runs", "jobs", "logs", "output", ".kestrel", ".external", ".cli-package", ".pnpm-store", ".venv-swebench", "test-results"]) {
     assert.equal(shouldSkipGovernanceDirectory(name), true);
   }

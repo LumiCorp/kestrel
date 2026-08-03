@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 
@@ -7,10 +8,11 @@ import { validateToolActionSchemas } from "../../agents/reference-react/src/deci
 import {
   normalizeToolActionInput,
   sanitizeToolInputForSchema,
-} from "../../agents/reference-react/src/toolInputNormalization.js";
+} from "../../tools/runtime/normalizeToolInput.js";
+import { adaptTrustedLegacyToolInput } from "../../tools/runtime/trustedToolInputCompatibility.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
 import { execCommandTool } from "../../tools/devshell/execCommand.js";
 import { devShellRunTool } from "../../tools/devshell/run.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const CODE_EXECUTE_TOOLS: ModelToolSpec[] = [
@@ -188,6 +190,15 @@ const FILESYSTEM_TOOLS: ModelToolSpec[] = [
   },
 ];
 
+const EVIDENCE_EXTRACT_TOOL = defaultToolCatalog
+  .list()
+  .find((tool) => tool.name === "evidence.extract");
+assert.ok(EVIDENCE_EXTRACT_TOOL, "missing evidence.extract schema");
+const MODEL_FACING_TOOLS: ModelToolSpec[] = [
+  ...FILESYSTEM_TOOLS,
+  EVIDENCE_EXTRACT_TOOL,
+];
+
 const DEV_SHELL_TOOLS: ModelToolSpec[] = [
   {
     name: "exec_command",
@@ -328,7 +339,20 @@ function assertToolSchemaValid(name: string, input: Record<string, unknown>) {
   );
 }
 
-contractTest("runtime.hermetic", "normalizeToolActionInput wraps scalar code.execute array fields without heuristic guessing", () => {
+function adaptTrusted(
+  name: string,
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  const tool = defaultToolCatalog.list().find((candidate) => candidate.name === name);
+  assert.ok(tool, `missing tool schema for ${name}`);
+  return adaptTrustedLegacyToolInput({
+    name,
+    value,
+    schema: tool.inputSchema,
+  }) as Record<string, unknown>;
+}
+
+test("normalizeToolActionInput wraps scalar code.execute array fields without heuristic guessing", () => {
   const normalized = normalizeToolActionInput("code.execute", {
     language: "bash",
     code: "echo hi",
@@ -361,7 +385,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput wraps scalar code.exe
   );
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput preserves existing code.execute arrays for schema validation", () => {
+test("normalizeToolActionInput preserves existing code.execute arrays for schema validation", () => {
   const normalized = normalizeToolActionInput("code.execute", {
     language: "bash",
     code: "echo hi",
@@ -384,7 +408,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput preserves existing co
   );
 });
 
-contractTest("runtime.hermetic", "validateToolActionSchemas returns compact expected and received details for runtime feedback", () => {
+test("validateToolActionSchemas returns compact expected and received details for runtime feedback", () => {
   let error: (Error & { diagnostics?: Record<string, unknown> }) | undefined;
   try {
     validateToolActionSchemas(
@@ -411,7 +435,101 @@ contractTest("runtime.hermetic", "validateToolActionSchemas returns compact expe
   assert.equal(typeof error.diagnostics?.schemaPath, "string");
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput canonicalizes internet.research topic aliases", () => {
+test("validateToolActionSchemas rejects legacy aliases from model-facing input", () => {
+  for (const input of [
+    {
+      name: "evidence.extract",
+      value: { content: "legacy", sourceId: "report", maxItems: 2 },
+    },
+    { name: "fs.read_text", value: { filePath: "README.md" } },
+    { name: "fs.read_text", value: { targetPath: "README.md" } },
+    { name: "fs.copy", value: { from: "a.txt", to: "b.txt" } },
+  ]) {
+    assert.throws(
+      () =>
+        validateToolActionSchemas(
+          { kind: "tool", name: input.name, input: input.value },
+          MODEL_FACING_TOOLS,
+        ),
+      (error: unknown) => {
+        const failure = error as Error & { diagnostics?: Record<string, unknown> };
+        assert.equal(
+          (failure.diagnostics?.validationErrors as Array<{ keyword?: string }> | undefined)
+            ?.some((item) => item.keyword === "additionalProperties"),
+          true,
+        );
+        return true;
+      },
+    );
+  }
+});
+
+test("validateToolActionSchemas rejects coercible types in model batches", () => {
+  assert.throws(
+    () =>
+      validateToolActionSchemas(
+        {
+          kind: "tool_batch",
+          items: [
+            { name: "fs.read_text", input: { path: "README.md", maxBytes: "1024" } },
+            { name: "fs.copy", input: { from: "a.txt", to: "b.txt" } },
+          ],
+        },
+        FILESYSTEM_TOOLS,
+      ),
+    (error: unknown) => {
+      const failure = error as Error & { diagnostics?: Record<string, unknown> };
+      assert.equal(failure.diagnostics?.path, "nextAction.items[0].input");
+      assert.equal(failure.diagnostics?.expected, "type number");
+      return true;
+    },
+  );
+});
+
+test("validateToolActionSchemas rejects every legacy alias in model batches", () => {
+  for (const input of [
+    {
+      name: "evidence.extract",
+      value: { content: "legacy", sourceId: "report", maxItems: 2 },
+    },
+    { name: "fs.read_text", value: { filePath: "README.md" } },
+    { name: "fs.read_text", value: { targetPath: "README.md" } },
+    {
+      name: "fs.copy",
+      value: { from: "a.txt", destinationPath: "b.txt" },
+    },
+    {
+      name: "fs.copy",
+      value: { sourcePath: "a.txt", to: "b.txt" },
+    },
+  ]) {
+    assert.throws(
+      () =>
+        validateToolActionSchemas(
+          {
+            kind: "tool_batch",
+            items: [
+              { name: "fs.list", input: { path: "." } },
+              { name: input.name, input: input.value },
+            ],
+          },
+          MODEL_FACING_TOOLS,
+        ),
+      (error: unknown) => {
+        const failure = error as Error & { diagnostics?: Record<string, unknown> };
+        assert.equal(failure.diagnostics?.path, "nextAction.items[1].input");
+        assert.equal(
+          (failure.diagnostics?.validationErrors as Array<{ keyword?: string }> | undefined)
+            ?.some((item) => item.keyword === "additionalProperties"),
+          true,
+        );
+        return true;
+      },
+    );
+  }
+});
+
+test("normalizeToolActionInput canonicalizes internet.research topic aliases", () => {
   const normalized = normalizeToolActionInput("internet.research", {
     query: "Cults of Cincinnati, OH",
     depth: "deep",
@@ -427,7 +545,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput canonicalizes interne
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput omits empty internet.research outputSchema", () => {
+test("normalizeToolActionInput omits empty internet.research outputSchema", () => {
   const normalized = normalizeToolActionInput("internet.research", {
     query: "Cults of Cincinnati, OH",
     outputSchema: {},
@@ -439,8 +557,8 @@ contractTest("runtime.hermetic", "normalizeToolActionInput omits empty internet.
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput canonicalizes evidence.extract content aliases", () => {
-  const normalized = normalizeToolActionInput("evidence.extract", {
+test("trusted compatibility adapts evidence.extract aliases", () => {
+  const normalized = adaptTrusted("evidence.extract", {
     content: "Deterministic validation reduced manual rework by 18 percent.",
     claim: "Validation reduces manual rework",
     source: "report-1",
@@ -456,7 +574,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput canonicalizes evidenc
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput strips unsupported fields from strict tool schemas", () => {
+test("normalizeToolActionInput strips unsupported fields from strict tool schemas", () => {
   const codeExecute = normalizeToolActionInput("code.execute", {
     language: "python",
     code: "print('ok')",
@@ -521,7 +639,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput strips unsupported fi
   });
 });
 
-contractTest("runtime.hermetic", "sanitizeToolInputForSchema strips unknown strict-schema fields recursively", () => {
+test("sanitizeToolInputForSchema strips unknown strict-schema fields recursively", () => {
   const sanitized = sanitizeToolInputForSchema(CODE_EXECUTE_TOOLS[0]!.inputSchema, {
     language: "javascript",
     code: "console.log('ok')",
@@ -547,7 +665,7 @@ contractTest("runtime.hermetic", "sanitizeToolInputForSchema strips unknown stri
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput strips unadvertised internet.news domain filters", () => {
+test("normalizeToolActionInput strips unadvertised internet.news domain filters", () => {
   const normalized = normalizeToolActionInput("internet.news", {
     query: "latest U.S. business headlines",
     freshness: "day",
@@ -564,7 +682,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput strips unadvertised i
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput strips internet.search_advanced freshness and days when explicit dates are present", () => {
+test("normalizeToolActionInput strips internet.search_advanced freshness and days when explicit dates are present", () => {
   const normalized = normalizeToolActionInput("internet.search_advanced", {
     query: "TCS latest revenue and headcount",
     freshness: "year",
@@ -580,7 +698,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput strips internet.searc
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput strips Tavily-conditional search_advanced fields without prerequisites", () => {
+test("normalizeToolActionInput strips Tavily-conditional search_advanced fields without prerequisites", () => {
   const normalized = normalizeToolActionInput("internet.search_advanced", {
     query: "TCS latest revenue and headcount",
     topic: "general",
@@ -596,7 +714,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput strips Tavily-conditi
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput preserves Tavily-conditional search_advanced fields with prerequisites", () => {
+test("normalizeToolActionInput preserves Tavily-conditional search_advanced fields with prerequisites", () => {
   const normalized = normalizeToolActionInput("internet.search_advanced", {
     query: "TCS latest revenue and headcount",
     topic: "news",
@@ -614,7 +732,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput preserves Tavily-cond
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput strips extract and crawl chunksPerSource without Tavily prerequisites", () => {
+test("normalizeToolActionInput strips extract and crawl chunksPerSource without Tavily prerequisites", () => {
   const extract = normalizeToolActionInput("internet.extract", {
     url: "https://example.com/page",
     chunksPerSource: 5,
@@ -632,7 +750,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput strips extract and cr
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput strips incompatible internet.search_advanced country hints", () => {
+test("normalizeToolActionInput strips incompatible internet.search_advanced country hints", () => {
   const normalized = normalizeToolActionInput("internet.search_advanced", {
     query: "TCS latest revenue and headcount",
     topic: "news",
@@ -647,7 +765,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput strips incompatible i
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput strips unsupported internet.search_advanced country hints for fast search depth", () => {
+test("normalizeToolActionInput strips unsupported internet.search_advanced country hints for fast search depth", () => {
   const normalized = normalizeToolActionInput("internet.search_advanced", {
     query: "current U.S. business and technology news",
     topic: "general",
@@ -662,7 +780,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput strips unsupported in
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput defaults missing fs.list path to dot", () => {
+test("normalizeToolActionInput defaults missing fs.list path to dot", () => {
   const normalized = normalizeToolActionInput("fs.list", {});
 
   assert.deepEqual(normalized, {
@@ -672,7 +790,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput defaults missing fs.l
   assertToolSchemaValid("fs.list", normalized);
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput defaults blank fs.list path to dot", () => {
+test("normalizeToolActionInput defaults blank fs.list path to dot", () => {
   const normalized = normalizeToolActionInput("fs.list", {
     path: "   ",
     recursive: true,
@@ -686,7 +804,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput defaults blank fs.lis
   assertToolSchemaValid("fs.list", normalized);
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput strips unsupported fs.list fields and preserves supported ones", () => {
+test("normalizeToolActionInput strips unsupported fs.list fields and preserves supported ones", () => {
   const normalized = normalizeToolActionInput("fs.list", {
     path: "src",
     recursive: "true",
@@ -706,13 +824,13 @@ contractTest("runtime.hermetic", "normalizeToolActionInput strips unsupported fs
   assertToolSchemaValid("fs.list", normalized);
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput defaults read and edit filesystem tools to dot", () => {
+test("normalizeToolActionInput defaults read and edit filesystem tools to dot", () => {
   const readText = normalizeToolActionInput("fs.read_text", {});
   const searchText = normalizeToolActionInput("fs.search_text", {
-    pattern: "TODO",
+    query: "TODO",
   });
   const writeText = normalizeToolActionInput("fs.write_text", {
-    text: "hello",
+    content: "hello",
   });
   const replaceText = normalizeToolActionInput("fs.replace_text", {
     find: "a",
@@ -730,7 +848,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput defaults read and edi
   assertToolSchemaValid("fs.replace_text", replaceText);
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput keeps fs.mkdir and fs.delete pathless when the model omitted a target", () => {
+test("normalizeToolActionInput keeps fs.mkdir and fs.delete pathless when the model omitted a target", () => {
   const mkdir = normalizeToolActionInput("fs.mkdir", {});
   const del = normalizeToolActionInput("fs.delete", {});
 
@@ -738,13 +856,13 @@ contractTest("runtime.hermetic", "normalizeToolActionInput keeps fs.mkdir and fs
   assert.deepEqual(del, {});
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput applies filesystem aliases and type coercions", () => {
-  const readText = normalizeToolActionInput("fs.read_text", {
+test("trusted compatibility applies filesystem aliases and type coercions", () => {
+  const readText = adaptTrusted("fs.read_text", {
     filePath: "README.md",
     maxBytes: "1024",
     extra: "ignored",
   });
-  const searchText = normalizeToolActionInput("fs.search_text", {
+  const searchText = adaptTrusted("fs.search_text", {
     targetPath: "src",
     pattern: "TODO",
     caseSensitive: "true",
@@ -753,19 +871,19 @@ contractTest("runtime.hermetic", "normalizeToolActionInput applies filesystem al
     maxTotalPreviewChars: "4096",
     noise: "ignored",
   });
-  const writeText = normalizeToolActionInput("fs.write_text", {
+  const writeText = adaptTrusted("fs.write_text", {
     filePath: "notes.txt",
     text: "hello",
     createParents: "true",
     extra: "ignored",
   });
-  const copy = normalizeToolActionInput("fs.copy", {
+  const copy = adaptTrusted("fs.copy", {
     from: "src/a.txt",
     to: "src/b.txt",
     overwrite: "true",
     extra: "ignored",
   });
-  const move = normalizeToolActionInput("fs.move", {
+  const move = adaptTrusted("fs.move", {
     from: "src/a.txt",
     to: "src/b.txt",
     overwrite: "false",
@@ -807,8 +925,8 @@ contractTest("runtime.hermetic", "normalizeToolActionInput applies filesystem al
   assertToolSchemaValid("fs.move", move);
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput keeps exact filesystem fields over aliases", () => {
-  const normalized = normalizeToolActionInput("fs.write_text", {
+test("trusted compatibility keeps exact filesystem fields over aliases", () => {
+  const normalized = adaptTrusted("fs.write_text", {
     path: "exact.txt",
     filePath: "alias.txt",
     content: "exact",
@@ -823,11 +941,11 @@ contractTest("runtime.hermetic", "normalizeToolActionInput keeps exact filesyste
   assertToolSchemaValid("fs.write_text", normalized);
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput does not invent copy or move paths", () => {
+test("normalizeToolActionInput does not invent copy or move paths", () => {
   const copy = normalizeToolActionInput("fs.copy", {
     overwrite: "true",
   });
-  const move = normalizeToolActionInput("fs.move", {
+  const move = adaptTrusted("fs.move", {
     from: "src/a.txt",
   });
 
@@ -864,7 +982,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput does not invent copy 
   );
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput defaults dev.shell.run workspaceRoot and keeps explicit command fields", () => {
+test("normalizeToolActionInput defaults dev.shell.run workspaceRoot and keeps explicit command fields", () => {
   const normalized = normalizeToolActionInput("dev.shell.run", {
     workspaceRoot: "   ",
     command: "pnpm dev",
@@ -902,7 +1020,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput defaults dev.shell.ru
   );
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput clamps dev.shell.run workspaceRoot and cwd to the active workspace root", () => {
+test("normalizeToolActionInput clamps dev.shell.run workspaceRoot and cwd to the active workspace root", () => {
   const activeWorkspaceRoot = "/home/sandbox/workspace";
   const normalized = normalizeToolActionInput("dev.shell.run", {
     workspaceRoot: "../outside-workspace",
@@ -913,7 +1031,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput clamps dev.shell.run 
   assert.equal(normalized.cwd, path.resolve(activeWorkspaceRoot));
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput clamps dev.shell.run cwd to workspace root even with absolute requests", () => {
+test("normalizeToolActionInput clamps dev.shell.run cwd to workspace root even with absolute requests", () => {
   const activeWorkspaceRoot = "/home/sandbox/workspace";
   const normalized = normalizeToolActionInput("dev.shell.run", {
     workspaceRoot: activeWorkspaceRoot,
@@ -924,7 +1042,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput clamps dev.shell.run 
   assert.equal(normalized.cwd, path.resolve(activeWorkspaceRoot));
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput clamps dev.process.start workspaceRoot and cwd to the active workspace root", () => {
+test("normalizeToolActionInput clamps dev.process.start workspaceRoot and cwd to the active workspace root", () => {
   const activeWorkspaceRoot = "/home/sandbox/workspace";
   const normalized = normalizeToolActionInput("dev.process.start", {
     workspaceRoot: "../outside-workspace",
@@ -935,7 +1053,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput clamps dev.process.st
   assert.equal(normalized.cwd, path.resolve(activeWorkspaceRoot));
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput keeps exec_command lifecycle fields visible for validation", () => {
+test("normalizeToolActionInput keeps exec_command lifecycle fields visible for validation", () => {
   const start = normalizeToolActionInput("exec_command", {
     workspaceRoot: "../outside-workspace",
     cwd: "coding-fixture",
@@ -997,7 +1115,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput keeps exec_command li
   );
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput preserves every advertised dev-shell command field", () => {
+test("normalizeToolActionInput preserves every advertised dev-shell command field", () => {
   const activeWorkspaceRoot = path.resolve(".");
   const runInput = {
     workspaceRoot: activeWorkspaceRoot,
@@ -1033,7 +1151,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput preserves every adver
   ));
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput keeps typed desktop host-open fields and drops extras", () => {
+test("normalizeToolActionInput keeps typed desktop host-open fields and drops extras", () => {
   assert.deepEqual(normalizeToolActionInput("desktop.host.open", {
     kind: " workspace_path ",
     path: " reports/result.html ",
@@ -1046,7 +1164,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput keeps typed desktop h
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput preserves invalid exec_command cwd for explicit boundary rejection", () => {
+test("normalizeToolActionInput preserves invalid exec_command cwd for explicit boundary rejection", () => {
   assert.deepEqual(
     normalizeToolActionInput("exec_command", {
       command: "pwd",
@@ -1060,7 +1178,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput preserves invalid exe
   );
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput keeps explicit dev.process.write input", () => {
+test("normalizeToolActionInput keeps explicit dev.process.write input", () => {
   const normalized = normalizeToolActionInput("dev.process.write", {
     processId: " proc-123 ",
     data: " move N\nmove E\n",
@@ -1085,7 +1203,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput keeps explicit dev.pr
   );
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput normalizes dev.process.read and dev.process.stop process ids", () => {
+test("normalizeToolActionInput normalizes dev.process.read and dev.process.stop process ids", () => {
   const read = normalizeToolActionInput("dev.process.read", {
     processId: " proc-123 ",
     maxBytes: "2048",
@@ -1109,7 +1227,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput normalizes dev.proces
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput keeps explicit dev.process.write_and_read input", () => {
+test("normalizeToolActionInput keeps explicit dev.process.write_and_read input", () => {
   const normalized = normalizeToolActionInput("dev.process.write_and_read", {
     processId: " proc-123 ",
     data: " move N\n",
@@ -1139,7 +1257,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput keeps explicit dev.pr
   );
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput unwraps whole-command quotes for dev.shell.run", () => {
+test("normalizeToolActionInput unwraps whole-command quotes for dev.shell.run", () => {
   const normalized = normalizeToolActionInput("dev.shell.run", {
     command: "'mkdir -p data && cat <<'\\''EOF'\\'' > data/workflow.json\n{\"ok\":true}\nEOF'",
   });
@@ -1150,7 +1268,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput unwraps whole-command
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput unwraps fenced shell commands for dev.shell.run", () => {
+test("normalizeToolActionInput unwraps fenced shell commands for dev.shell.run", () => {
   const normalized = normalizeToolActionInput("dev.shell.run", {
     command: "```bash\ncat <<'EOF' > app/page.tsx\nexport default function Page() { return null; }\nEOF\n```",
   });
@@ -1161,7 +1279,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput unwraps fenced shell 
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput converts escaped multiline python -c payloads to heredoc", () => {
+test("normalizeToolActionInput converts escaped multiline python -c payloads to heredoc", () => {
   const normalized = normalizeToolActionInput("dev.shell.run", {
     command:
       "python3 -c \"import pathlib\\npath = pathlib.Path('/tmp/example.txt')\\npath.write_text('line\\\\n')\\nprint(path.read_text())\"",
@@ -1174,7 +1292,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput converts escaped mult
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput repairs physical newlines inside python heredoc string literals", () => {
+test("normalizeToolActionInput repairs physical newlines inside python heredoc string literals", () => {
   const normalized = normalizeToolActionInput("dev.shell.run", {
     command:
       "python3 <<'PY'\nproc.stdin.write(b'exit\n')\\nproc.stdin.flush()\\nprint('done')\nPY",
@@ -1187,7 +1305,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput repairs physical newl
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput does not rewrite multiline echo redirects into shell writes", () => {
+test("normalizeToolActionInput does not rewrite multiline echo redirects into shell writes", () => {
   const command =
     "echo \"print('start')\\nprint(\\\"done\\\")\" > /app/explore.py && python3 /app/explore.py";
   const normalized = normalizeToolActionInput("dev.shell.run", {
@@ -1200,7 +1318,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput does not rewrite mult
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput does not rewrite single-quoted multiline echo redirects", () => {
+test("normalizeToolActionInput does not rewrite single-quoted multiline echo redirects", () => {
   const command =
     "echo 'print('\"'\"'start'\"'\"')\\nprint(\"done\")' > /app/explore.py && python3 /app/explore.py";
   const normalized = normalizeToolActionInput("dev.shell.run", {
@@ -1213,7 +1331,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput does not rewrite sing
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput does not recover malformed single-quoted echo file writes", () => {
+test("normalizeToolActionInput does not recover malformed single-quoted echo file writes", () => {
   const command =
     "echo '#!/usr/bin/env python3\\nprint(\\'start\\')\\nprint(\\\"done\\\") > /app/explore.py && python3 /app/explore.py";
   const normalized = normalizeToolActionInput("dev.shell.run", {
@@ -1226,7 +1344,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput does not recover malf
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput leaves single-line python -c payloads unchanged", () => {
+test("normalizeToolActionInput leaves single-line python -c payloads unchanged", () => {
   const normalized = normalizeToolActionInput("dev.shell.run", {
     command: "python3 -c \"print('ok')\"",
   });
@@ -1237,7 +1355,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput leaves single-line py
   });
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput drops quote-only dev.shell.run commands", () => {
+test("normalizeToolActionInput drops quote-only dev.shell.run commands", () => {
   const normalized = normalizeToolActionInput("dev.shell.run", {
     command: "\"\"",
   });
@@ -1260,7 +1378,7 @@ contractTest("runtime.hermetic", "normalizeToolActionInput drops quote-only dev.
   );
 });
 
-contractTest("runtime.hermetic", "normalizeToolActionInput drops fence-only dev.shell.run commands", () => {
+test("normalizeToolActionInput drops fence-only dev.shell.run commands", () => {
   const normalized = normalizeToolActionInput("dev.shell.run", {
     command: "```bash\n\n```",
   });

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -9,7 +10,6 @@ import {
   type ModelEconomicsProfileV1,
   type TokenCountV1,
 } from "../../src/economics/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const EXACT_ZERO: TokenCountV1 = {
   version: 1,
@@ -21,7 +21,7 @@ const EXACT_ZERO: TokenCountV1 = {
   counterVersion: "1",
 };
 
-contractTest("runtime.hermetic", "harness economics policy parser accepts the strict v1 contract", () => {
+test("harness economics policy parser accepts the strict v1 contract", () => {
   const policy = parseHarnessEconomicsPolicyV1(policyFixture());
 
   assert.equal(policy.policyId, "economics:test:observe");
@@ -31,7 +31,7 @@ contractTest("runtime.hermetic", "harness economics policy parser accepts the st
   });
 });
 
-contractTest("runtime.hermetic", "harness economics policy parser accepts one or two summary attempts", () => {
+test("harness economics policy parser accepts one or two summary attempts", () => {
   assert.equal(
     parseHarnessEconomicsPolicyV1(policyFixture()).compaction.maxSummaryAttempts,
     1,
@@ -48,7 +48,7 @@ contractTest("runtime.hermetic", "harness economics policy parser accepts one or
   );
 });
 
-contractTest("runtime.hermetic", "harness economics policy parser rejects unknown fields and unsafe compaction", () => {
+test("harness economics policy parser rejects unknown fields and unsafe compaction", () => {
   assert.throws(
     () => parseHarnessEconomicsPolicyV1({ ...policyFixture(), threshold: 0.8 }),
     /unknown field 'threshold'/u,
@@ -97,7 +97,7 @@ contractTest("runtime.hermetic", "harness economics policy parser rejects unknow
   );
 });
 
-contractTest("runtime.hermetic", "model economics profile preserves versioned authoritative pricing", () => {
+test("model economics profile preserves versioned authoritative pricing", () => {
   const profile = parseModelEconomicsProfileV1({
     version: 1,
     profileId: "openai:test-model:2026-07-22",
@@ -131,7 +131,7 @@ contractTest("runtime.hermetic", "model economics profile preserves versioned au
   assert.equal(profile.price?.perMillionTokens.cachedInput, 0.125);
 });
 
-contractTest("runtime.hermetic", "token counting labels exact and conservative estimates", () => {
+test("token counting labels exact and conservative estimates", () => {
   const estimated = countTextTokens("hello");
   const exact = countTextTokens("hello", {
     id: "word-test",
@@ -149,7 +149,7 @@ contractTest("runtime.hermetic", "token counting labels exact and conservative e
   );
 });
 
-contractTest("runtime.hermetic", "observation mode reports policy pressure without changing effective admission", () => {
+test("observation mode reports policy pressure without changing effective admission", () => {
   const controller = new HarnessEconomicsController();
   const decision = controller.decide({
     policy: policyFixture(),
@@ -177,7 +177,7 @@ contractTest("runtime.hermetic", "observation mode reports policy pressure witho
   );
 });
 
-contractTest("runtime.hermetic", "enforcement preserves required context and drops optional sections whole", () => {
+test("enforcement preserves required context and drops optional sections whole", () => {
   const controller = new HarnessEconomicsController();
   const policy: HarnessEconomicsPolicyV1 = {
     ...policyFixture(),
@@ -201,7 +201,7 @@ contractTest("runtime.hermetic", "enforcement preserves required context and dro
   assert.deepEqual(decision.droppedSectionIds, ["background"]);
 });
 
-contractTest("runtime.hermetic", "unlisted transcript sections remain protected in enforce mode", () => {
+test("unlisted transcript sections remain protected in enforce mode", () => {
   const decision = new HarnessEconomicsController().decide({
     policy: { ...policyFixture(), mode: "enforce" },
     modelProfile: profileFixture(),
@@ -215,7 +215,7 @@ contractTest("runtime.hermetic", "unlisted transcript sections remain protected 
   assert.deepEqual(decision.blockedSectionIds, []);
 });
 
-contractTest("runtime.hermetic", "core task context cannot be made optional by profile configuration", () => {
+test("core task context cannot be made optional by profile configuration", () => {
   const policy = policyFixture();
   policy.context.sections = [{ id: "task", priority: "optional" }];
   const decision = new HarnessEconomicsController().decide({
@@ -230,7 +230,7 @@ contractTest("runtime.hermetic", "core task context cannot be made optional by p
   assert.equal(decision.manifest.sections[0]?.policyAdmission, "blocked");
 });
 
-contractTest("runtime.hermetic", "estimated counts cannot enforce unless the policy explicitly permits them", () => {
+test("estimated counts cannot enforce unless the policy explicitly permits them", () => {
   const controller = new HarnessEconomicsController();
   const decision = controller.decide({
     policy: {
@@ -267,7 +267,7 @@ contractTest("runtime.hermetic", "estimated counts cannot enforce unless the pol
   assert.deepEqual(decision.blockedSectionIds, []);
 });
 
-contractTest("runtime.hermetic", "required overflow fails closed under an enforceable policy", () => {
+test("required overflow fails closed under an enforceable policy", () => {
   const controller = new HarnessEconomicsController();
   const decision = controller.decide({
     policy: {

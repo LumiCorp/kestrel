@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -5,7 +6,6 @@ import JSZip from "jszip";
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import { read, utils } from "xlsx";
-import { contractTest } from "../../../../../tests/helpers/contract-test.js";
 
 
 const fixtureRoot = path.join(
@@ -31,13 +31,13 @@ async function readManifest() {
   return JSON.parse(raw) as FixtureManifest;
 }
 
-contractTest("web.hermetic", "knowledge rag fixture corpus is present", async () => {
+test("knowledge rag fixture corpus is present", async () => {
   const manifest = await readManifest();
   assert.equal(manifest.corpusVersion, 1);
   assert.equal(manifest.fixtures.length, 9);
 });
 
-contractTest("web.hermetic", "fixture corpus files are parsable and contain their anchors", async () => {
+test("fixture corpus files are parsable and contain their anchors", async () => {
   const manifest = await readManifest();
 
   for (const fixture of manifest.fixtures) {

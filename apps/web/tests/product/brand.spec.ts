@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Locator, test } from "@playwright/test";
-import { contractTest } from "../contract-test.js";
 
 const PALETTES = ["Lumi", "Graphite", "Harbor", "Juniper", "Ember", "Iris"];
 
@@ -20,8 +19,7 @@ async function expectLockupTone(
   await expect(tone === "black" ? white : black).toBeHidden();
 }
 
-contractTest(
-  "web.brand-auth-appearance",
+test(
   "authentication identity follows resolved appearance without duplication",
   async ({ page }) => {
     await page.emulateMedia({ colorScheme: "dark" });
@@ -55,8 +53,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.brand-sidebar-palettes",
+test(
   "sidebar identity adapts to collapse and appearance but not palette family",
   async ({ page }) => {
     const context = page.context();
@@ -123,8 +120,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.brand-mobile-shared",
+test(
   "mobile drawer and public shared transcript use the canonical home identity",
   async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });

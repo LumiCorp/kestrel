@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { AgentToolResult } from "../../src/kestrel/contracts/model-io.js";
-import { contractTest } from "../helpers/contract-test.js";
 import { finalizeAnswerTool } from "../../tools/runtime/finalizeAnswer.js";
 
-contractTest("runtime.hermetic", "FinalizeAnswer preserves console artifact content as presentation metadata", async () => {
+test("FinalizeAnswer preserves console artifact content as presentation metadata", async () => {
   const handler = finalizeAnswerTool.createHandler({} as never);
   const result = await handler({
     message: "The command finished.",

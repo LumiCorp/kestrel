@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { DesktopUpdateState } from "../src/contracts.js";
@@ -5,7 +6,6 @@ import {
   buildDesktopUpdateDialog,
   resolveDesktopUpdateDialogAction,
 } from "../src/updateDialog.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 function state(
   phase: DesktopUpdateState["phase"],
@@ -27,8 +27,7 @@ function state(
   };
 }
 
-contractTest(
-  "desktop.hermetic",
+test(
   "native update dialog maps available updates to Download or Later",
   () => {
     const available = state("available");
@@ -41,8 +40,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "native update dialog maps downloaded and blocked updates to install retry",
   () => {
     for (const phase of ["downloaded", "blocked"] as const) {
@@ -57,8 +55,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "informational update states dismiss without an action",
   () => {
     const idle = state("idle");

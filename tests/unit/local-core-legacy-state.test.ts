@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { detectLocalCoreMigrationState, resolveLocalCorePaths } from "../../src/localCore/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Local Core migration readiness reports legacy Desktop and CLI state without moving it", async () => {
+test("Local Core migration readiness reports legacy Desktop and CLI state without moving it", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-legacy-home-"));
   const coreHome = path.join(home, "Core");
   const desktopHome = path.join(home, "Library", "Application Support", "@kestrel", "desktop");
@@ -45,7 +45,7 @@ contractTest("runtime.hermetic", "Local Core migration readiness reports legacy 
   }
 });
 
-contractTest("runtime.hermetic", "Local Core migration readiness labels KESTREL_HOME as isolated dev mode", () => {
+test("Local Core migration readiness labels KESTREL_HOME as isolated dev mode", () => {
   const report = detectLocalCoreMigrationState({
     env: { KESTREL_HOME: "~/kestrel-isolated" },
     platform: "darwin",

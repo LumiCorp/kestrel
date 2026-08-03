@@ -97,8 +97,8 @@ Ruhroh owns model-quality evaluation. Kestrel's `pnpm run ruhroh:validate`
 command validates evaluation configuration only; it does not claim to execute
 an evaluation. The generated
 [quality scorecard](docs/generated/quality-scorecard.json) summarizes
-accumulating risk, while direct contract proofs determine whether a particular
-revision is ready.
+accumulating risk, while boundary validation and targeted critical mutations
+determine whether a particular revision is ready.
 
 ## Read Next
 

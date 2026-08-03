@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,10 +8,9 @@ import {
   BROAD_RESUME_MAX_INVENTORY_ACTIONS,
   buildFilesystemResumeReadBudgetDetail,
 } from "../../src/runtime/filesystemResumeBudget.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "buildFilesystemResumeReadBudgetDetail reports configured limits and usage", () => {
+test("buildFilesystemResumeReadBudgetDetail reports configured limits and usage", () => {
   const detail = buildFilesystemResumeReadBudgetDetail({
     inventoryActions: 3,
     groundedReadActions: 7,
@@ -36,7 +36,7 @@ contractTest("runtime.hermetic", "buildFilesystemResumeReadBudgetDetail reports 
   assert.equal(detail.stoppedByBudget, false);
 });
 
-contractTest("runtime.hermetic", "buildFilesystemResumeReadBudgetDetail marks an exhausted stopped run", () => {
+test("buildFilesystemResumeReadBudgetDetail marks an exhausted stopped run", () => {
   const detail = buildFilesystemResumeReadBudgetDetail({
     inventoryActions: BROAD_RESUME_MAX_INVENTORY_ACTIONS,
     groundedReadActions: BROAD_RESUME_MAX_GROUNDED_READ_ACTIONS,
@@ -54,7 +54,7 @@ contractTest("runtime.hermetic", "buildFilesystemResumeReadBudgetDetail marks an
   });
 });
 
-contractTest("runtime.hermetic", "buildFilesystemResumeReadBudgetDetail restores legacy stop reason when newer stop reason is absent", () => {
+test("buildFilesystemResumeReadBudgetDetail restores legacy stop reason when newer stop reason is absent", () => {
   const detail = buildFilesystemResumeReadBudgetDetail({
     inventoryActions: BROAD_RESUME_MAX_INVENTORY_ACTIONS,
     groundedReadActions: BROAD_RESUME_MAX_GROUNDED_READ_ACTIONS,

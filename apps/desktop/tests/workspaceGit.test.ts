@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { DesktopWorkspaceGitSnapshot } from "../src/contracts.js";
 import { runDesktopWorkspaceGit } from "../src/workspaceGit.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 const candidateFingerprint = `sha256:${"a".repeat(64)}`;
@@ -36,7 +36,7 @@ const snapshot: DesktopWorkspaceGitSnapshot = {
   generatedAt: new Date().toISOString(),
 };
 
-contractTest("desktop.hermetic", "Desktop workspace Git forwards explicit typed delivery actions", async () => {
+test("Desktop workspace Git forwards explicit typed delivery actions", async () => {
   const commands: unknown[] = [];
   const adapter = {
     sendControl: async (command: { type: string }) => {
@@ -88,7 +88,7 @@ contractTest("desktop.hermetic", "Desktop workspace Git forwards explicit typed 
   ]);
 });
 
-contractTest("desktop.hermetic", "Desktop workspace Git rejects incomplete actions before transport", async () => {
+test("Desktop workspace Git rejects incomplete actions before transport", async () => {
   const adapter = {
     sendControl: async () => {
       throw new Error("must not send");

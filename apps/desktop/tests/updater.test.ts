@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type {
@@ -10,7 +11,6 @@ import {
   type DesktopUpdateProgress,
   type DesktopUpdaterAdapter,
 } from "../src/updater.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 class FakeUpdater implements DesktopUpdaterAdapter {
   manualMode = false;
@@ -82,8 +82,7 @@ function coordinator(input: {
   return { result, updater, published };
 }
 
-contractTest(
-  "desktop.hermetic",
+test(
   "unsupported environments remain inert",
   async () => {
     const { result, updater } = coordinator({ isPackaged: false });
@@ -94,8 +93,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "manual check, download progress, and completion publish every transition",
   async () => {
     const fake = new FakeUpdater();
@@ -120,8 +118,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "not-available and updater errors produce durable user-facing states",
   async () => {
     const fake = new FakeUpdater();
@@ -136,8 +133,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "check and download promise failures enter the error phase",
   async () => {
     const checkFake = new FakeUpdater();
@@ -161,8 +157,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "blocked installation rechecks blockers and installs after work stops",
   async () => {
     const fake = new FakeUpdater();
@@ -209,8 +204,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "cleanup failure aborts installation",
   async () => {
     const fake = new FakeUpdater();
@@ -233,8 +227,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "reentrant operations and stale updater events cannot advance state",
   async () => {
     const fake = new FakeUpdater();

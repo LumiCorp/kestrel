@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { applyExternalDeadlineToolBudget } from "../../src/engine/ExecutionEngineSupport.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "exec_command clamps only its observation wait and preserves the absolute timeout", () => {
+test("exec_command clamps only its observation wait and preserves the absolute timeout", () => {
   const result = applyExternalDeadlineToolBudget({
     toolName: "exec_command",
     input: {
@@ -23,7 +23,7 @@ contractTest("runtime.hermetic", "exec_command clamps only its observation wait 
   assert.equal(result.shortCircuitResult, undefined);
 });
 
-contractTest("runtime.hermetic", "exec_command rejects a new observation before dispatch when closeout reserve is exhausted", () => {
+test("exec_command rejects a new observation before dispatch when closeout reserve is exhausted", () => {
   const result = applyExternalDeadlineToolBudget({
     toolName: "exec_command",
     input: { command: "pnpm test" },
@@ -34,7 +34,7 @@ contractTest("runtime.hermetic", "exec_command rejects a new observation before 
   assert.equal(result.metadata.toolDeadlineAdmission, "deadline_exhausted");
 });
 
-contractTest("runtime.hermetic", "exec_command stop remains available during closeout", () => {
+test("exec_command stop remains available during closeout", () => {
   const input = { sessionId: "proc-1", stop: true };
   const result = applyExternalDeadlineToolBudget({
     toolName: "exec_command",

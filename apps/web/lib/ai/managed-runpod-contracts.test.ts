@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getManagedRunPodResourceName,
@@ -6,7 +7,6 @@ import {
   parseManagedRunPodSpecSnapshot,
   sanitizeManagedRunPodSpecSnapshot,
 } from "./managed-runpod-contracts";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const digest = `registry.example/kestrel/model@sha256:${"a".repeat(64)}`;
@@ -30,7 +30,7 @@ function profileInput() {
   };
 }
 
-contractTest("web.hermetic", "managed profiles require immutable image digests and apply bounded defaults", () => {
+test("managed profiles require immutable image digests and apply bounded defaults", () => {
   const parsed = managedRunPodProfileInputSchema.parse(profileInput());
   assert.equal(parsed.imageRef, digest);
   assert.equal(parsed.templateSpec.containerDiskInGb, 50);
@@ -46,7 +46,7 @@ contractTest("web.hermetic", "managed profiles require immutable image digests a
   );
 });
 
-contractTest("web.hermetic", "managed profile secrets are provider-owned references, not secret values", () => {
+test("managed profile secrets are provider-owned references, not secret values", () => {
   assert.throws(() =>
     managedRunPodProfileInputSchema.parse({
       ...profileInput(),
@@ -66,7 +66,7 @@ contractTest("web.hermetic", "managed profile secrets are provider-owned referen
   );
 });
 
-contractTest("web.hermetic", "managed profiles reject resource and cost settings outside platform bounds", () => {
+test("managed profiles reject resource and cost settings outside platform bounds", () => {
   assert.throws(() =>
     managedRunPodProfileInputSchema.parse({
       ...profileInput(),
@@ -87,7 +87,7 @@ contractTest("web.hermetic", "managed profiles reject resource and cost settings
   );
 });
 
-contractTest("web.hermetic", "profile hashing is canonical and deployment snapshots are immutable copies", () => {
+test("profile hashing is canonical and deployment snapshots are immutable copies", () => {
   const parsed = managedRunPodProfileInputSchema.parse(profileInput());
   const reordered = {
     ...parsed,
@@ -110,7 +110,7 @@ contractTest("web.hermetic", "profile hashing is canonical and deployment snapsh
   assert.equal(snapshot.endpointSpec.gpuTypeIds[0], "NVIDIA L40S");
 });
 
-contractTest("web.hermetic", "tenant deployment snapshots redact configuration and provider references", () => {
+test("tenant deployment snapshots redact configuration and provider references", () => {
   const parsed = managedRunPodProfileInputSchema.parse({
     ...profileInput(),
     templateSpec: {
@@ -141,7 +141,7 @@ contractTest("web.hermetic", "tenant deployment snapshots redact configuration a
   );
 });
 
-contractTest("web.hermetic", "provider resource names are deterministic and bounded", () => {
+test("provider resource names are deterministic and bounded", () => {
   const first = getManagedRunPodResourceName({
     kind: "deployment",
     id: "Deployment_ABC/123",

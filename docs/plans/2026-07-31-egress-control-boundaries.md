@@ -27,6 +27,12 @@ explicit installation choice and launches with `--network none`. Remote MCP
 servers accept only `full` because reaching the configured remote server is
 their transport.
 
+The administrator is trusted to choose the servers installed in an
+Environment. Container isolation protects the host and restricts filesystem
+access to explicit read-only mounts; it does not promise outbound-network
+containment. An enabled OCI MCP server can contact arbitrary destinations and
+can use only the credentials and mounted data explicitly configured for it.
+
 There are no destination lists, per-capability network grants, egress brokers,
 or heuristic exceptions. Existing server and capability authorization remains
 unchanged.
@@ -43,3 +49,9 @@ unchanged.
 ## Deferred
 
 Developer-shell network isolation is not implemented by this slice.
+Destination allowlists and egress brokers are not planned because unpredictable
+network access is intrinsic to normal MCP usage. The audit's default-deny
+egress zero is accepted risk rather than unfinished implementation.
+
+Filesystem descriptor-relative TOCTOU hardening is also deferred until
+mutually untrusted workspace writers enter the supported threat model.

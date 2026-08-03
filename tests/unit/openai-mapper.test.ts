@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
@@ -5,7 +6,6 @@ import {
   buildOpenAiHttpRequest,
   mapOpenAiResponse,
 } from "../../models/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const env = {
@@ -15,7 +15,7 @@ const env = {
   baseUrl: "https://api.openai.com",
 };
 
-contractTest("runtime.hermetic", "OpenAI mapper preserves cache and reasoning token classes", () => {
+test("OpenAI mapper preserves cache and reasoning token classes", () => {
   const mapped = mapOpenAiResponse({
     model: "gpt-5.2",
     choices: [{ message: { content: "done" } }],
@@ -37,7 +37,7 @@ contractTest("runtime.hermetic", "OpenAI mapper preserves cache and reasoning to
   });
 });
 
-contractTest("runtime.hermetic", "OpenAI request builder enables native parallel tool calls", () => {
+test("OpenAI request builder enables native parallel tool calls", () => {
   const request: ModelRequest = {
     input: {
       taskInstruction: "Run the check.",
@@ -95,7 +95,7 @@ contractTest("runtime.hermetic", "OpenAI request builder enables native parallel
   ]);
 });
 
-contractTest("runtime.hermetic", "OpenAI mapper ignores JSON toolIntents when native tool calls are absent", () => {
+test("OpenAI mapper ignores JSON toolIntents when native tool calls are absent", () => {
   const mapped = mapOpenAiResponse<{
     toolIntents: Array<{ name: string; input: Record<string, unknown> }>;
   }>(
@@ -125,7 +125,7 @@ contractTest("runtime.hermetic", "OpenAI mapper ignores JSON toolIntents when na
   assert.equal(mapped.toolIntents.length, 0);
 });
 
-contractTest("runtime.hermetic", "OpenAI-compatible request builder serializes assistant tool-call history with provider aliases", () => {
+test("OpenAI-compatible request builder serializes assistant tool-call history with provider aliases", () => {
   const request: ModelRequest = {
     model: "local-model",
     input: {},
@@ -183,7 +183,7 @@ contractTest("runtime.hermetic", "OpenAI-compatible request builder serializes a
   assert.equal(tool.name, "dev_shell_run");
 });
 
-contractTest("runtime.hermetic", "OpenAI-compatible response mapper returns canonical provider tool intent names from local providers", () => {
+test("OpenAI-compatible response mapper returns canonical provider tool intent names from local providers", () => {
   const mapped = mapOpenAiResponse(
     {
       model: "local-model",
@@ -227,7 +227,7 @@ contractTest("runtime.hermetic", "OpenAI-compatible response mapper returns cano
   assert.equal(mapped.provider.name, "ollama");
 });
 
-contractTest("runtime.hermetic", "Ollama OpenAI-compatible request builder serializes tool history with provider aliases", () => {
+test("Ollama OpenAI-compatible request builder serializes tool history with provider aliases", () => {
   const request: ModelRequest = {
     model: "llama-local",
     input: {},
@@ -285,7 +285,7 @@ contractTest("runtime.hermetic", "Ollama OpenAI-compatible request builder seria
   assert.equal(mapped.body.parallel_tool_calls, true);
 });
 
-contractTest("runtime.hermetic", "LM Studio OpenAI-compatible response mapper returns native tool intents", () => {
+test("LM Studio OpenAI-compatible response mapper returns native tool intents", () => {
   const mapped = mapOpenAiResponse(
     {
       model: "qwen-local",
@@ -323,7 +323,7 @@ contractTest("runtime.hermetic", "LM Studio OpenAI-compatible response mapper re
   assert.equal(mapped.provider.name, "lmstudio");
 });
 
-contractTest("runtime.hermetic", "OpenAI Responses requests provider summaries without storing raw reasoning", () => {
+test("OpenAI Responses requests provider summaries without storing raw reasoning", () => {
   const mapped = buildOpenAiHttpRequest({
     model: "gpt-5.2",
     input: "decide",
@@ -336,7 +336,7 @@ contractTest("runtime.hermetic", "OpenAI Responses requests provider summaries w
   assert.deepEqual(mapped.body.include, ["reasoning.encrypted_content"]);
 });
 
-contractTest("runtime.hermetic", "OpenAI request builder rejects uniqueItems before a provider request is built", () => {
+test("OpenAI request builder rejects uniqueItems before a provider request is built", () => {
   const request: ModelRequest = {
     model: "gpt-5.2",
     input: "hello",
@@ -366,7 +366,7 @@ contractTest("runtime.hermetic", "OpenAI request builder rejects uniqueItems bef
   );
 });
 
-contractTest("runtime.hermetic", "OpenAI Responses maps summaries separately and keeps encrypted state opaque", () => {
+test("OpenAI Responses maps summaries separately and keeps encrypted state opaque", () => {
   const encryptedItem = {
     type: "reasoning",
     summary: [{ type: "summary_text", text: "Checked the constraints." }],

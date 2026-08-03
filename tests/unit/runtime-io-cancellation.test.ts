@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Guardrails } from "../../src/engine/Guardrails.js";
@@ -15,7 +16,6 @@ import type { ModelGatewayCallOptions, ModelRequest, ModelUsage, ToolGateway } f
 import type { RuntimeStore } from "../../src/kestrel/contracts/store.js";
 import { buildAgentToolFailedOutputResult } from "../../tools/toolResult.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const guardrailConfig = {
@@ -31,7 +31,7 @@ const guardrailConfig = {
   toolCallRetryCount: 0,
 };
 
-contractTest("runtime.hermetic", "RuntimeIO.model does not emit model request events when already aborted", async () => {
+test("RuntimeIO.model does not emit model request events when already aborted", async () => {
   const controller = new AbortController();
   controller.abort();
   const emitted: string[] = [];
@@ -54,7 +54,7 @@ contractTest("runtime.hermetic", "RuntimeIO.model does not emit model request ev
   assert.deepEqual(emitted, []);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO.model does not emit completion when aborted after provider return", async () => {
+test("RuntimeIO.model does not emit completion when aborted after provider return", async () => {
   const controller = new AbortController();
   const emitted: string[] = [];
   const io = createRuntimeIO({
@@ -77,7 +77,7 @@ contractTest("runtime.hermetic", "RuntimeIO.model does not emit completion when 
   assert.equal(emitted.includes("MODEL_CALL_DONE"), false);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO projects typed provider attempts into live start and durable retry progress", async () => {
+test("RuntimeIO projects typed provider attempts into live start and durable retry progress", async () => {
   const emitted: string[] = [];
   const progressUpdates: ProgressUpdateV1[] = [];
   const io = createRuntimeIO({
@@ -139,7 +139,7 @@ contractTest("runtime.hermetic", "RuntimeIO projects typed provider attempts int
   );
 });
 
-contractTest("runtime.hermetic", "RuntimeIO.tool does not emit tool request events when already aborted", async () => {
+test("RuntimeIO.tool does not emit tool request events when already aborted", async () => {
   const controller = new AbortController();
   controller.abort();
   const emitted: string[] = [];
@@ -162,7 +162,7 @@ contractTest("runtime.hermetic", "RuntimeIO.tool does not emit tool request even
   assert.deepEqual(emitted, []);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO.tool does not emit completion when aborted after tool return", async () => {
+test("RuntimeIO.tool does not emit completion when aborted after tool return", async () => {
   const controller = new AbortController();
   const emitted: string[] = [];
   const io = createRuntimeIO({
@@ -184,7 +184,7 @@ contractTest("runtime.hermetic", "RuntimeIO.tool does not emit completion when a
   assert.equal(emitted.includes("TOOL_CALL_DONE"), false);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO never retries exec_command after dispatch", async () => {
+test("RuntimeIO never retries exec_command after dispatch", async () => {
   const emitted: string[] = [];
   let calls = 0;
   const io = createRuntimeIO({
@@ -204,7 +204,7 @@ contractTest("runtime.hermetic", "RuntimeIO never retries exec_command after dis
   assert.equal(emitted.includes("tool_retry"), false);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and versioned price attribution in replay", async () => {
+test("RuntimeIO records request attempts usage and versioned price attribution in replay", async () => {
   const emitted: string[] = [];
   const runEvents: RunEvent[] = [];
   const io = createRuntimeIO({
@@ -270,7 +270,7 @@ contractTest("runtime.hermetic", "RuntimeIO records request attempts usage and v
   assert.equal(ledger.calls[0]?.completion?.pricing.priceVersion, "price:test:v1");
 });
 
-contractTest("runtime.hermetic", "RuntimeIO records stored and exact model-visible tool result economics", async () => {
+test("RuntimeIO records stored and exact model-visible tool result economics", async () => {
   const emitted: string[] = [];
   const runEvents: RunEvent[] = [];
   const output = { content: "x".repeat(100_000) };
@@ -300,7 +300,7 @@ contractTest("runtime.hermetic", "RuntimeIO records stored and exact model-visib
   assert.ok(emitted.includes("economics.tool_result.recorded"));
 });
 
-contractTest("runtime.hermetic", "RuntimeIO joins assembly tool selection to the exact provider-boundary tool surface", async () => {
+test("RuntimeIO joins assembly tool selection to the exact provider-boundary tool surface", async () => {
   const emitted: string[] = [];
   const runEvents: RunEvent[] = [];
   const policy = economicsPolicy({ mode: "observe", exposure: "phase_scoped", maxToolTokens: 20_000 });
@@ -338,7 +338,7 @@ contractTest("runtime.hermetic", "RuntimeIO joins assembly tool selection to the
   assert.equal(exposure?.wouldBlock, false);
 });
 
-contractTest("runtime.hermetic", "phase-scoped exposure preserves tools when the phase has no explicit policy", () => {
+test("phase-scoped exposure preserves tools when the phase has no explicit policy", () => {
   const tool = {
     name: "fs.read_text",
     description: "Read a text file.",
@@ -356,7 +356,7 @@ contractTest("runtime.hermetic", "phase-scoped exposure preserves tools when the
   assert.equal(selected.selection?.entries[0]?.effectiveAdmission, "admitted");
 });
 
-contractTest("runtime.hermetic", "RuntimeIO records tool-schema pressure without failing a viable provider request", async () => {
+test("RuntimeIO records tool-schema pressure without failing a viable provider request", async () => {
   const emitted: string[] = [];
   const runEvents: RunEvent[] = [];
   let providerCalled = false;
@@ -389,7 +389,7 @@ contractTest("runtime.hermetic", "RuntimeIO records tool-schema pressure without
   assert.equal(emitted.includes("economics.model_call.failed"), false);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO observe mode leaves stable-prefix request order unchanged", async () => {
+test("RuntimeIO observe mode leaves stable-prefix request order unchanged", async () => {
   const emitted: string[] = [];
   const modelRequests: ModelRequest[] = [];
   const policy = economicsPolicy({
@@ -424,7 +424,7 @@ contractTest("runtime.hermetic", "RuntimeIO observe mode leaves stable-prefix re
   assert.equal(modelRequests[0]?.providerOptions, undefined);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO does not enforce estimated tool-schema pressure without explicit assembly permission", async () => {
+test("RuntimeIO does not enforce estimated tool-schema pressure without explicit assembly permission", async () => {
   const emitted: string[] = [];
   let providerCalled = false;
   const policy = economicsPolicy({
@@ -453,7 +453,7 @@ contractTest("runtime.hermetic", "RuntimeIO does not enforce estimated tool-sche
   assert.equal(providerCalled, true);
 });
 
-contractTest("runtime.hermetic", "RuntimeIO projects returned structured tool failures as failed activity", async () => {
+test("RuntimeIO projects returned structured tool failures as failed activity", async () => {
   const emitted: string[] = [];
   const consoleUpdates: RunConsoleUpdateV1[] = [];
   const failedResult = buildAgentToolFailedOutputResult({

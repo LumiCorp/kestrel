@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -6,10 +7,9 @@ import {
   parseDockerMcpTools,
   type DesktopMcpCommandRunner,
 } from "../src/mcpDiscovery.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("desktop.hermetic", "parseDesktopMcpConfig discovers config-file MCP servers", () => {
+test("parseDesktopMcpConfig discovers config-file MCP servers", () => {
   const servers = parseDesktopMcpConfig(
     {
       mcpServers: {
@@ -53,7 +53,7 @@ contractTest("desktop.hermetic", "parseDesktopMcpConfig discovers config-file MC
   ]);
 });
 
-contractTest("desktop.hermetic", "parseDockerMcpTools maps Docker JSON tools into capability summaries", () => {
+test("parseDockerMcpTools maps Docker JSON tools into capability summaries", () => {
   const tools = parseDockerMcpTools(JSON.stringify([
     {
       name: "github_create_issue",
@@ -77,7 +77,7 @@ contractTest("desktop.hermetic", "parseDockerMcpTools maps Docker JSON tools int
   ]);
 });
 
-contractTest("desktop.hermetic", "discoverMcpServersFromKnownConfigFiles includes Docker MCP Toolkit when tools are available", async () => {
+test("discoverMcpServersFromKnownConfigFiles includes Docker MCP Toolkit when tools are available", async () => {
   const runCommand: DesktopMcpCommandRunner = async (_command, args) => {
     const command = args.join(" ");
     if (command === "mcp version") {
@@ -140,7 +140,7 @@ contractTest("desktop.hermetic", "discoverMcpServersFromKnownConfigFiles include
   );
 });
 
-contractTest("desktop.hermetic", "discoverMcpServersFromKnownConfigFiles returns diagnostics when Docker MCP is unavailable", async () => {
+test("discoverMcpServersFromKnownConfigFiles returns diagnostics when Docker MCP is unavailable", async () => {
   const runCommand: DesktopMcpCommandRunner = async () => {
     throw new Error("docker command failed");
   };

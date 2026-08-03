@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -19,11 +20,10 @@ import type {
   KestrelUninstallTarget,
   KestrelUninstallWorktreeSummary,
 } from "../../src/uninstall/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const execFileAsync = promisify(execFile);
 
-contractTest("runtime.hermetic", "uninstall apply rejects stale target fingerprints", async () => {
+test("uninstall apply rejects stale target fingerprints", async () => {
   let fingerprint = "first";
   const operations = baseOperations(() => [packageTarget({ fingerprint })]);
   const plan = await createKestrelUninstallPlan({
@@ -44,7 +44,7 @@ contractTest("runtime.hermetic", "uninstall apply rejects stale target fingerpri
   assert.equal(result.blockers[0]?.code, "UNINSTALL_PLAN_STALE");
 });
 
-contractTest("runtime.hermetic", "uninstall fingerprints ignore size-only data changes", async () => {
+test("uninstall fingerprints ignore size-only data changes", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-size-"));
   const previousHome = process.env.HOME;
   try {
@@ -79,7 +79,7 @@ contractTest("runtime.hermetic", "uninstall fingerprints ignore size-only data c
   }
 });
 
-contractTest("runtime.hermetic", "uninstall dry-run skips selected targets without removal", async () => {
+test("uninstall dry-run skips selected targets without removal", async () => {
   let removed = false;
   const operations = baseOperations(() => [packageTarget()]);
   operations.runPackageManager = async () => {
@@ -104,7 +104,7 @@ contractTest("runtime.hermetic", "uninstall dry-run skips selected targets witho
   assert.equal(removed, false);
 });
 
-contractTest("runtime.hermetic", "uninstall apply delegates package removal and verifies final inventory", async () => {
+test("uninstall apply delegates package removal and verifies final inventory", async () => {
   let removed = false;
   let command: string[] | undefined;
   const operations = baseOperations(() => removed ? [] : [packageTarget()]);
@@ -131,7 +131,7 @@ contractTest("runtime.hermetic", "uninstall apply delegates package removal and 
   assert.deepEqual(result.finalTargets, []);
 });
 
-contractTest("runtime.hermetic", "uninstall apply propagates lifecycle blockers before destructive work", async () => {
+test("uninstall apply propagates lifecycle blockers before destructive work", async () => {
   let removed = false;
   const blocker: KestrelUninstallBlocker = {
     code: "LOCAL_CORE_BUSY",
@@ -163,7 +163,7 @@ contractTest("runtime.hermetic", "uninstall apply propagates lifecycle blockers 
   assert.equal(removed, false);
 });
 
-contractTest("runtime.hermetic", "uninstall apply retries idempotently when a selected target is already gone", async () => {
+test("uninstall apply retries idempotently when a selected target is already gone", async () => {
   let inventoryPresent = true;
   let removed = 0;
   const operations = baseOperations(() => inventoryPresent ? [packageTarget()] : []);
@@ -186,7 +186,7 @@ contractTest("runtime.hermetic", "uninstall apply retries idempotently when a se
   assert.equal(removed, 1);
 });
 
-contractTest("runtime.hermetic", "uninstall apply reports Kestrel One disconnect failures as partial and nonblocking", async () => {
+test("uninstall apply reports Kestrel One disconnect failures as partial and nonblocking", async () => {
   const operations = baseOperations(() => []);
   operations.inspectKestrelOne = async (input) => ({
     disconnectSelected: input.disconnectSelected,
@@ -228,7 +228,7 @@ contractTest("runtime.hermetic", "uninstall apply reports Kestrel One disconnect
   ]);
 });
 
-contractTest("runtime.hermetic", "uninstall reports disconnected and already-disconnected Kestrel One environments", async () => {
+test("uninstall reports disconnected and already-disconnected Kestrel One environments", async () => {
   const operations = baseOperations(() => []);
   operations.inspectKestrelOne = async (input) => ({
     disconnectSelected: input.disconnectSelected,
@@ -266,7 +266,7 @@ contractTest("runtime.hermetic", "uninstall reports disconnected and already-dis
   );
 });
 
-contractTest("runtime.hermetic", "uninstall apply treats scheduled CLI self-removal as nonblocking", async () => {
+test("uninstall apply treats scheduled CLI self-removal as nonblocking", async () => {
   const target: KestrelUninstallTarget = {
     id: "cli.bundle.fixture",
     kind: "cli_bundle",
@@ -309,7 +309,7 @@ contractTest("runtime.hermetic", "uninstall apply treats scheduled CLI self-remo
   );
 });
 
-contractTest("runtime.hermetic", "uninstall apply defers Desktop helper targets without failing final verification", async () => {
+test("uninstall apply defers Desktop helper targets without failing final verification", async () => {
   const target: KestrelUninstallTarget = {
     id: "desktop.bundle.fixture",
     kind: "desktop_bundle",
@@ -344,7 +344,7 @@ contractTest("runtime.hermetic", "uninstall apply defers Desktop helper targets 
   assert.deepEqual(result.skippedTargets, [target.id]);
 });
 
-contractTest("runtime.hermetic", "uninstall apply recovers retained managed worktrees through injected operations", async () => {
+test("uninstall apply recovers retained managed worktrees through injected operations", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-worktree-"));
   try {
     const exportRoot = path.join(root, "exports");
@@ -385,7 +385,7 @@ contractTest("runtime.hermetic", "uninstall apply recovers retained managed work
   }
 });
 
-contractTest("runtime.hermetic", "uninstall apply blocks retained worktree deletion when ignored files lack discard confirmation", async () => {
+test("uninstall apply blocks retained worktree deletion when ignored files lack discard confirmation", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-ignored-"));
   try {
     const operations = baseOperations(() => []);
@@ -415,7 +415,7 @@ contractTest("runtime.hermetic", "uninstall apply blocks retained worktree delet
   }
 });
 
-contractTest("runtime.hermetic", "uninstall recovery bundle captures commits patches untracked ignored metadata and checksums", async () => {
+test("uninstall recovery bundle captures commits patches untracked ignored metadata and checksums", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-recovery-"));
   try {
     const sourceRepo = path.join(root, "repo");
@@ -534,7 +534,7 @@ contractTest("runtime.hermetic", "uninstall recovery bundle captures commits pat
   }
 });
 
-contractTest("runtime.hermetic", "uninstall inventory recognizes source shims, standalone bundles, package installs, and foreign shims", async () => {
+test("uninstall inventory recognizes source shims, standalone bundles, package installs, and foreign shims", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-inventory-"));
   const previousPnpmHome = process.env.PNPM_HOME;
   const previousHome = process.env.HOME;
@@ -651,7 +651,7 @@ contractTest("runtime.hermetic", "uninstall inventory recognizes source shims, s
   }
 });
 
-contractTest("runtime.hermetic", "uninstall apply unloads kcron through its exact target without shutting down Core", async () => {
+test("uninstall apply unloads kcron through its exact target without shutting down Core", async () => {
   let unloaded = false;
   let shutdown = false;
   const operations = baseOperations(() => [{
@@ -694,7 +694,7 @@ contractTest("runtime.hermetic", "uninstall apply unloads kcron through its exac
   assert.equal(shutdown, false);
 });
 
-contractTest("runtime.hermetic", "uninstall inventory accepts only the exact kcron LaunchAgent label", async () => {
+test("uninstall inventory accepts only the exact kcron LaunchAgent label", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-kcron-plist-"));
   const previousHome = process.env.HOME;
   try {
@@ -734,7 +734,7 @@ contractTest("runtime.hermetic", "uninstall inventory accepts only the exact kcr
   }
 });
 
-contractTest("runtime.hermetic", "complete uninstall purges an empty Keychain service idempotently before data deletion", async () => {
+test("complete uninstall purges an empty Keychain service idempotently before data deletion", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-keychain-"));
   let purged = 0;
   let removedData = false;
@@ -771,7 +771,7 @@ contractTest("runtime.hermetic", "complete uninstall purges an empty Keychain se
   }
 });
 
-contractTest("runtime.hermetic", "complete uninstall reports custom Core homes but does not select them", async () => {
+test("complete uninstall reports custom Core homes but does not select them", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-custom-home-"));
   const previousHome = process.env.HOME;
   try {
@@ -797,7 +797,7 @@ contractTest("runtime.hermetic", "complete uninstall reports custom Core homes b
   }
 });
 
-contractTest("runtime.hermetic", "uninstall deduplicates nested selected roots without widening deletion", async () => {
+test("uninstall deduplicates nested selected roots without widening deletion", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-overlap-"));
   try {
     const nested = path.join(root, "nested");
@@ -831,7 +831,7 @@ contractTest("runtime.hermetic", "uninstall deduplicates nested selected roots w
   }
 });
 
-contractTest("runtime.hermetic", "uninstall blocks ancestors of registered external projects", async () => {
+test("uninstall blocks ancestors of registered external projects", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-protected-"));
   try {
     const externalProject = path.join(root, "external-project");
@@ -855,7 +855,7 @@ contractTest("runtime.hermetic", "uninstall blocks ancestors of registered exter
   }
 });
 
-contractTest("runtime.hermetic", "apply refuses a symlink deletion root even after inventory verification", async () => {
+test("apply refuses a symlink deletion root even after inventory verification", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-symlink-"));
   try {
     const destination = path.join(root, "destination");
@@ -892,7 +892,7 @@ contractTest("runtime.hermetic", "apply refuses a symlink deletion root even aft
   }
 });
 
-contractTest("runtime.hermetic", "Keychain purge failure blocks filesystem deletion", async () => {
+test("Keychain purge failure blocks filesystem deletion", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-uninstall-keychain-failure-"));
   try {
     const dataPath = path.join(root, "data");
@@ -929,7 +929,7 @@ contractTest("runtime.hermetic", "Keychain purge failure blocks filesystem delet
   }
 });
 
-contractTest("runtime.hermetic", "all-software apply unloads kcron before Core shutdown", async () => {
+test("all-software apply unloads kcron before Core shutdown", async () => {
   const order: string[] = [];
   let kcronPresent = true;
   let packagePresent = true;

@@ -1,6 +1,6 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 function read(relativePath: string) {
   return readFileSync(
@@ -31,8 +31,7 @@ const deletionRoute = read("app/api/organization/deletion/route.ts");
 const deletionService = read("lib/organizations/deletion.ts");
 const environmentStore = read("lib/environments/store.ts");
 
-contractTest(
-  "web.hermetic",
+test(
   "Organization management enters from the active organization and centers Environments",
   () => {
     assert.match(teamSwitcher, /Manage organization/u);
@@ -60,8 +59,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Workspace machine actions stay organization-admin scoped and durable",
   () => {
     for (const route of [startRoute, stopRoute, retireRoute]) {
@@ -76,8 +74,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Organization teardown is owner-only, subscription-gated, and durable",
   () => {
     assert.match(deletionRoute, /requireOrganizationOwner/u);

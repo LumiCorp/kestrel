@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -9,12 +10,11 @@ import {
   resolveRuhrohInvocation,
   validateEvaluationOwnershipLedger,
 } from "../../scripts/validate-ruhroh-evals.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const ROOT = process.cwd();
 
-contractTest("runtime.hermetic", "evaluation ownership ledger covers Ruhroh scenarios, pending executions, and evidenced runtime replacements", async () => {
+test("evaluation ownership ledger covers Ruhroh scenarios, pending executions, and evidenced runtime replacements", async () => {
   const validation = await validateEvaluationOwnershipLedger(ROOT);
 
   assert.deepEqual(validation.errors, []);
@@ -48,7 +48,7 @@ contractTest("runtime.hermetic", "evaluation ownership ledger covers Ruhroh scen
   assert.equal(pendingRuhrohScenarios.every((entry) => entry.parityRecord === undefined), true);
 });
 
-contractTest("runtime.hermetic", "executed Ruhroh parity records prove all semantic dimensions through the maintained native-session adapter", async () => {
+test("executed Ruhroh parity records prove all semantic dimensions through the maintained native-session adapter", async () => {
   const recordPaths = (await walk(path.join(ROOT, "evals", "migration", "parity")))
     .filter((filePath) => filePath.endsWith(".json"));
   assert.equal(recordPaths.length, 6);
@@ -116,7 +116,7 @@ contractTest("runtime.hermetic", "executed Ruhroh parity records prove all seman
   assert.equal(packageArtifactHashes.size, 1);
 });
 
-contractTest("runtime.hermetic", "Kestrel installs the exact released Ruhroh evaluator", async () => {
+test("Kestrel installs the exact released Ruhroh evaluator", async () => {
   const rootPackage = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf8")) as {
     devDependencies?: Record<string, string>;
   };
@@ -133,7 +133,7 @@ contractTest("runtime.hermetic", "Kestrel installs the exact released Ruhroh eva
   );
 });
 
-contractTest("runtime.hermetic", "Kestrel eval targets reference Ruhroh's maintained adapter without copying it", async () => {
+test("Kestrel eval targets reference Ruhroh's maintained adapter without copying it", async () => {
   const target = JSON.parse(
     await readFile(path.join(ROOT, "evals", "targets", "kestrel-reference.json"), "utf8"),
   ) as { targets: Array<{ adapterId?: string; adapterCommand?: string }> };

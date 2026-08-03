@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
@@ -17,14 +18,13 @@ import {
   signPreviewEdgeRouteTicket,
   signPreviewRelayTicket,
 } from "@lumi/kestrel-environment-auth";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import {
   handlePreviewRelayHttp,
   handlePreviewRelayUpgrade,
 } from "../../workspace-runtime/src/preview-relay.js";
 import { PreviewRelay } from "../src/preview-relay.js";
 
-contractTest("services.process", "a real Vite app serves documents and HMR WebSockets through the preview relay", async () => {
+test("a real Vite app serves documents and HMR WebSockets through the preview relay", async () => {
   const projectRoot = await mkdtemp(join(tmpdir(), "kestrel-vite-preview-"));
   const vitePort = await availablePort();
   await Promise.all([

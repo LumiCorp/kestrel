@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
@@ -12,10 +13,9 @@ import {
 } from "../../cli/commandMode.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { resolveDefaultDevShellBaseDir } from "../../src/devshell/paths.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "shouldRunCommandMode recognizes command-mode entry commands", () => {
+test("shouldRunCommandMode recognizes command-mode entry commands", () => {
   assert.equal(shouldRunCommandMode(["model", "show"]), true);
   assert.equal(shouldRunCommandMode(["workspace", "status"]), true);
   assert.equal(shouldRunCommandMode(["status"]), true);
@@ -29,7 +29,7 @@ contractTest("runtime.hermetic", "shouldRunCommandMode recognizes command-mode e
   assert.equal(shouldRunCommandMode(["--session", "default"]), false);
 });
 
-contractTest("runtime.hermetic", "command mode status reports Local Core home and lock state", async () => {
+test("command mode status reports Local Core home and lock state", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-status-"));
   const cwd = path.join(root, "workspace");
   const coreHome = path.join(root, "Kestrel");
@@ -68,7 +68,7 @@ contractTest("runtime.hermetic", "command mode status reports Local Core home an
   }
 });
 
-contractTest("runtime.hermetic", "command mode emits one resolved profile for profile-bearing jobs", () => {
+test("command mode emits one resolved profile for profile-bearing jobs", () => {
   const profile = {
     id: "reference",
     label: "Reference",
@@ -106,7 +106,7 @@ contractTest("runtime.hermetic", "command mode emits one resolved profile for pr
   }
 });
 
-contractTest("runtime.hermetic", "command mode rejects job-owned persistence selection", () => {
+test("command mode rejects job-owned persistence selection", () => {
   assert.throws(
     () => buildResolvedJobRunCommandPayload({
       version: "job_input_v1",
@@ -126,7 +126,7 @@ contractTest("runtime.hermetic", "command mode rejects job-owned persistence sel
   );
 });
 
-contractTest("runtime.hermetic", "command mode model show and set operate on shared model policy", async () => {
+test("command mode model show and set operate on shared model policy", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-"));
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
@@ -167,7 +167,7 @@ contractTest("runtime.hermetic", "command mode model show and set operate on sha
   }
 });
 
-contractTest("runtime.hermetic", "command mode model show prefers the live OpenRouter catalog when available", async () => {
+test("command mode model show prefers the live OpenRouter catalog when available", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-live-openrouter-"));
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
@@ -220,7 +220,7 @@ contractTest("runtime.hermetic", "command mode model show prefers the live OpenR
   }
 });
 
-contractTest("runtime.hermetic", "command mode model search shows bounded matches for the current provider", async () => {
+test("command mode model search shows bounded matches for the current provider", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-search-"));
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
@@ -266,7 +266,7 @@ contractTest("runtime.hermetic", "command mode model search shows bounded matche
   }
 });
 
-contractTest("runtime.hermetic", "command mode model set-provider accepts ollama", async () => {
+test("command mode model set-provider accepts ollama", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-ollama-"));
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
@@ -328,7 +328,7 @@ contractTest("runtime.hermetic", "command mode model set-provider accepts ollama
   }
 });
 
-contractTest("runtime.hermetic", "command mode model set-provider uses the live Ollama catalog when available", async () => {
+test("command mode model set-provider uses the live Ollama catalog when available", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-live-ollama-"));
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
@@ -370,7 +370,7 @@ contractTest("runtime.hermetic", "command mode model set-provider uses the live 
   }
 });
 
-contractTest("runtime.hermetic", "command mode model set-provider accepts lmstudio", async () => {
+test("command mode model set-provider accepts lmstudio", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-lmstudio-"));
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
@@ -399,7 +399,7 @@ contractTest("runtime.hermetic", "command mode model set-provider accepts lmstud
   }
 });
 
-contractTest("runtime.hermetic", "command mode workspace status registers cwd in the central catalog without scaffold files", async () => {
+test("command mode workspace status registers cwd in the central catalog without scaffold files", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-mode-"));
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
@@ -430,7 +430,7 @@ contractTest("runtime.hermetic", "command mode workspace status registers cwd in
   }
 });
 
-contractTest("runtime.hermetic", "command mode expands ~/ KESTREL_HOME consistently with dev-shell defaults", async () => {
+test("command mode expands ~/ KESTREL_HOME consistently with dev-shell defaults", async () => {
   const root = await mkdtemp(path.join("/tmp", "kcth-"));
   const cwd = path.join(root, "workspace");
   const fakeHome = path.join(root, "home");
@@ -480,7 +480,7 @@ contractTest("runtime.hermetic", "command mode expands ~/ KESTREL_HOME consisten
   }
 });
 
-contractTest("runtime.hermetic", "command mode setup writes stable runtime defaults", async () => {
+test("command mode setup writes stable runtime defaults", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-setup-"));
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");

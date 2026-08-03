@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   DEFAULT_TOOL_TIMING_POLICY,
   deriveShellRunTimeoutDecision,
 } from "../../src/io/ToolTimingPolicy.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "deriveShellRunTimeoutDecision preserves requested timeout without external deadline", () => {
+test("deriveShellRunTimeoutDecision preserves requested timeout without external deadline", () => {
   const decision = deriveShellRunTimeoutDecision({
     requestedTimeoutMs: 120_000,
     remainingMs: Number.MAX_SAFE_INTEGER,
@@ -20,7 +20,7 @@ contractTest("runtime.hermetic", "deriveShellRunTimeoutDecision preserves reques
   });
 });
 
-contractTest("runtime.hermetic", "deriveShellRunTimeoutDecision returns default timeout when request omits timeout", () => {
+test("deriveShellRunTimeoutDecision returns default timeout when request omits timeout", () => {
   const decision = deriveShellRunTimeoutDecision({
     remainingMs: Number.MAX_SAFE_INTEGER,
   });
@@ -31,7 +31,7 @@ contractTest("runtime.hermetic", "deriveShellRunTimeoutDecision returns default 
   });
 });
 
-contractTest("runtime.hermetic", "deriveShellRunTimeoutDecision clamps timeout to remaining budget minus closeout reserve", () => {
+test("deriveShellRunTimeoutDecision clamps timeout to remaining budget minus closeout reserve", () => {
   const decision = deriveShellRunTimeoutDecision({
     requestedTimeoutMs: 240_000,
     remainingMs: 95_000,
@@ -47,7 +47,7 @@ contractTest("runtime.hermetic", "deriveShellRunTimeoutDecision clamps timeout t
   });
 });
 
-contractTest("runtime.hermetic", "deriveShellRunTimeoutDecision rejects dispatch when only closeout budget remains", () => {
+test("deriveShellRunTimeoutDecision rejects dispatch when only closeout budget remains", () => {
   const decision = deriveShellRunTimeoutDecision({
     requestedTimeoutMs: 30_000,
     remainingMs: 61_000,

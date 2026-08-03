@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -15,10 +16,8 @@ import {
   resolveDesktopModelConfiguration,
   resolveDesktopWorkflowSelections,
 } from "../../../src/desktopShell/configuration.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "desktop.hermetic",
+test(
   "desktop model configurations retain immutable revisions",
   () => {
     const initial = createDesktopModelConfiguration(
@@ -58,8 +57,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop presents shipped services through canonical Apps",
   () => {
     const apps = new Map(
@@ -156,8 +154,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop Workflow Apps require selected executable dependency Apps",
   () => {
     const connections = [
@@ -252,8 +249,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "connected standard services retain canonical App identity",
   () => {
     const apps = listDesktopAppDefinitions([
@@ -280,8 +276,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "desktop execution selections reject duplicate apps and preserve explicit contracts",
   () => {
     assert.throws(
@@ -314,8 +309,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "desktop model configuration updates preserve pinned revision history",
   () => {
     const initial = createDesktopModelConfiguration(

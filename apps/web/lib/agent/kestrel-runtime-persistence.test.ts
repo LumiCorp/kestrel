@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   appendKestrelUiChunkIfDurable,
@@ -7,10 +8,9 @@ import {
   readKestrelReplayScaffoldChunk,
   readTerminalKestrelUiChunk,
 } from "@/lib/agent/kestrel-runtime-persistence";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "live failure visibility cannot waive canonical durable failure text", () => {
+test("live failure visibility cannot waive canonical durable failure text", () => {
   const messages = prepareKestrelRuntimeMessagesForPersistence(
     [
       {
@@ -34,7 +34,7 @@ contractTest("web.hermetic", "live failure visibility cannot waive canonical dur
   ]);
 });
 
-contractTest("web.hermetic", "prepareKestrelRuntimeMessagesForPersistence keeps legacy failure fallback when failure is not visible", () => {
+test("prepareKestrelRuntimeMessagesForPersistence keeps legacy failure fallback when failure is not visible", () => {
   const messages = prepareKestrelRuntimeMessagesForPersistence(
     [
       {
@@ -66,7 +66,7 @@ contractTest("web.hermetic", "prepareKestrelRuntimeMessagesForPersistence keeps 
   );
 });
 
-contractTest("web.hermetic", "prepareKestrelRuntimeMessagesForPersistence never retains provider reasoning parts", () => {
+test("prepareKestrelRuntimeMessagesForPersistence never retains provider reasoning parts", () => {
   const messages = prepareKestrelRuntimeMessagesForPersistence(
     [
       {
@@ -95,7 +95,7 @@ contractTest("web.hermetic", "prepareKestrelRuntimeMessagesForPersistence never 
   ]);
 });
 
-contractTest("web.hermetic", "live-only runtime chunks are rejected at the durable turn boundary", () => {
+test("live-only runtime chunks are rejected at the durable turn boundary", () => {
   assert.equal(
     isLiveOnlyKestrelUiChunk({
       type: "data-kestrel-provider-reasoning",
@@ -119,8 +119,7 @@ contractTest("web.hermetic", "live-only runtime chunks are rejected at the durab
   );
 });
 
-contractTest(
-  "web.hermetic",
+test(
   "durable turn event writes exclude reasoning and live progress",
   async () => {
     const written: unknown[] = [];
@@ -160,8 +159,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "terminal response chunks are staged while nonterminal progress remains durable",
   () => {
     const terminalChunks = [
@@ -200,8 +198,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "failure replay replaces terminal output on the existing stream scaffold",
   () => {
     assert.deepEqual(
@@ -249,7 +246,7 @@ contractTest(
   },
 );
 
-contractTest("web.hermetic", "final message persistence removes live-only progress defense in depth", () => {
+test("final message persistence removes live-only progress defense in depth", () => {
   const messages = prepareKestrelRuntimeMessagesForPersistence(
     [
       {

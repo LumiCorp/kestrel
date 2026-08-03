@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildRunPodServerlessBaseUrl,
@@ -12,10 +13,9 @@ import {
   selectGatewayModelSelection,
   selectPreferredGatewayModelId,
 } from "./gateway-utils";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "Lumi is registered with OpenAI-style default modalities", () => {
+test("Lumi is registered with OpenAI-style default modalities", () => {
   assert.ok(GATEWAY_PROVIDERS.includes("lumi"));
   assert.deepEqual(getProviderSupportedModalities("lumi"), [
     "language",
@@ -25,7 +25,7 @@ contractTest("web.hermetic", "Lumi is registered with OpenAI-style default modal
   ]);
 });
 
-contractTest("web.hermetic", "RunPod is a language provider with an exact serverless endpoint contract", () => {
+test("RunPod is a language provider with an exact serverless endpoint contract", () => {
   assert.ok(GATEWAY_PROVIDERS.includes("runpod"));
   assert.deepEqual(getProviderSupportedModalities("runpod"), ["language"]);
   assert.equal(
@@ -47,7 +47,7 @@ contractTest("web.hermetic", "RunPod is a language provider with an exact server
   assert.throws(() => buildRunPodServerlessBaseUrl("../admin"));
 });
 
-contractTest("web.hermetic", "an explicit unavailable model never falls back to the gateway default", () => {
+test("an explicit unavailable model never falls back to the gateway default", () => {
   const models = [
     {
       id: "approved-default",
@@ -67,7 +67,7 @@ contractTest("web.hermetic", "an explicit unavailable model never falls back to 
   );
 });
 
-contractTest("web.hermetic", "external Kestrel chat runtime excludes unsupported gateway providers", () => {
+test("external Kestrel chat runtime excludes unsupported gateway providers", () => {
   assert.equal(isKestrelRuntimeLanguageProvider("openai"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("anthropic"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("ollama"), true);
@@ -77,7 +77,7 @@ contractTest("web.hermetic", "external Kestrel chat runtime excludes unsupported
   assert.equal(isKestrelRuntimeLanguageProvider("replicate"), false);
 });
 
-contractTest("web.hermetic", "Environment defaults override but do not erase the platform default", () => {
+test("Environment defaults override but do not erase the platform default", () => {
   assert.equal(
     isGatewayModelDefault({
       modelId: "platform-default",
@@ -103,7 +103,7 @@ contractTest("web.hermetic", "Environment defaults override but do not erase the
   );
 });
 
-contractTest("web.hermetic", "OpenAI-compatible base URLs normalize to /v1 only when needed", () => {
+test("OpenAI-compatible base URLs normalize to /v1 only when needed", () => {
   assert.equal(
     normalizeOpenAICompatibleBaseUrl("https://api.kestrelagents.dev"),
     "https://api.kestrelagents.dev/v1"
@@ -118,7 +118,7 @@ contractTest("web.hermetic", "OpenAI-compatible base URLs normalize to /v1 only 
   );
 });
 
-contractTest("web.hermetic", "Lumi language models default to OpenAI protocol unless overridden", () => {
+test("Lumi language models default to OpenAI protocol unless overridden", () => {
   assert.equal(
     getGatewayLanguageProtocol({
       gatewayProvider: "lumi",
@@ -147,7 +147,7 @@ contractTest("web.hermetic", "Lumi language models default to OpenAI protocol un
   );
 });
 
-contractTest("web.hermetic", "Lumi sync metadata preserves model metadata and defaults protocol", () => {
+test("Lumi sync metadata preserves model metadata and defaults protocol", () => {
   assert.deepEqual(
     normalizeGatewayModelMetadata({
       gatewayProvider: "lumi",
@@ -176,7 +176,7 @@ contractTest("web.hermetic", "Lumi sync metadata preserves model metadata and de
   );
 });
 
-contractTest("web.hermetic", "approved model preference uses explicit selection, then organization default", () => {
+test("approved model preference uses explicit selection, then organization default", () => {
   const models = [
     { id: "org-default", isDefault: false },
     { id: "gateway-default", isDefault: true },

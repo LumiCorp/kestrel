@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 
 import { KestrelClient } from "../../../packages/sdk/src/runner.js";
 import { sdkE2eContext } from "./helpers.js";
-import { contractTest } from "../../helpers/contract-test.js";
 
 
-contractTest("runtime.process", "subscription async iteration fails on malformed SSE after partial delivery over real HTTP", async (t) => {
+test("subscription async iteration fails on malformed SSE after partial delivery over real HTTP", async (t) => {
   const server = http.createServer((request, response) => {
     if (request.method !== "POST" || request.url !== "/events/stream") {
       response.statusCode = 404;

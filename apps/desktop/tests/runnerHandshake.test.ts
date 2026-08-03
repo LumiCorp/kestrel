@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { ensureDesktopRunnerResponsive, type RunnerHandshakeTransport } from "../src/runnerHandshake.js";
 import type { RunnerProtocolObserver } from "../src/runnerTransport.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 class FakeRunnerHandshakeTransport implements RunnerHandshakeTransport {
@@ -39,7 +39,7 @@ class FakeRunnerHandshakeTransport implements RunnerHandshakeTransport {
   }
 }
 
-contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive resolves only after a matching runner.pong", async () => {
+test("ensureDesktopRunnerResponsive resolves only after a matching runner.pong", async () => {
   const transport = new FakeRunnerHandshakeTransport();
   const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
@@ -60,7 +60,7 @@ contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive resolves only af
   await handshake;
 });
 
-contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive surfaces top-level runner startup errors with their original code", async () => {
+test("ensureDesktopRunnerResponsive surfaces top-level runner startup errors with their original code", async () => {
   const transport = new FakeRunnerHandshakeTransport();
   const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
@@ -82,7 +82,7 @@ contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive surfaces top-lev
   });
 });
 
-contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive preserves diagnostics for malformed runner errors", async () => {
+test("ensureDesktopRunnerResponsive preserves diagnostics for malformed runner errors", async () => {
   const transport = new FakeRunnerHandshakeTransport();
   const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 
@@ -106,7 +106,7 @@ contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive preserves diagno
   });
 });
 
-contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive handles synchronous observer errors without sending ping", async () => {
+test("ensureDesktopRunnerResponsive handles synchronous observer errors without sending ping", async () => {
   let sendCalls = 0;
   const transport: RunnerHandshakeTransport = {
     observe(observer) {
@@ -140,7 +140,7 @@ contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive handles synchron
   assert.equal(sendCalls, 0);
 });
 
-contractTest("desktop.hermetic", "ensureDesktopRunnerResponsive rejects when the runner exits before responding", async () => {
+test("ensureDesktopRunnerResponsive rejects when the runner exits before responding", async () => {
   const transport = new FakeRunnerHandshakeTransport();
   const handshake = ensureDesktopRunnerResponsive(transport, { timeoutMs: 100 });
 

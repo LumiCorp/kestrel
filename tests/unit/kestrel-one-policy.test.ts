@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -8,9 +9,8 @@ import {
   KESTREL_HARNESS_ECONOMICS,
   KESTREL_ONE_POLICY,
 } from "../../src/profile/kestrelOnePolicy.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "canonical Kestrel policy composes parity across product environments", () => {
+test("canonical Kestrel policy composes parity across product environments", () => {
   const cliSafe = composeKestrelOneProfile({
     environmentPresetId: "cli_safe_local",
   });
@@ -100,7 +100,7 @@ contractTest("runtime.hermetic", "canonical Kestrel policy composes parity acros
   );
 });
 
-contractTest("runtime.hermetic", "canonical Kestrel One policy and presets are immutable versioned definitions", () => {
+test("canonical Kestrel One policy and presets are immutable versioned definitions", () => {
   assert.equal(Object.isFrozen(KESTREL_ONE_POLICY), true);
   assert.equal(Object.isFrozen(KESTREL_ONE_POLICY.requiredModelToolNames), true);
   assert.equal(Object.isFrozen(KESTREL_ONE_ENVIRONMENT_PRESETS), true);
@@ -114,7 +114,7 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy and presets are i
   assert.equal(KESTREL_ONE_POLICY.allowNestedCollaborators, false);
 });
 
-contractTest("runtime.hermetic", "canonical Kestrel policy accepts explicit hosted capability tools", () => {
+test("canonical Kestrel policy accepts explicit hosted capability tools", () => {
   const hosted = composeKestrelOneProfile({
     environmentPresetId: "workspace_hosted",
     overlay: {
@@ -130,7 +130,7 @@ contractTest("runtime.hermetic", "canonical Kestrel policy accepts explicit host
   );
 });
 
-contractTest("runtime.hermetic", "canonical Kestrel policy rejects policy-owned overrides", () => {
+test("canonical Kestrel policy rejects policy-owned overrides", () => {
   assert.throws(
     () =>
       composeKestrelOneProfile({
@@ -153,7 +153,7 @@ contractTest("runtime.hermetic", "canonical Kestrel policy rejects policy-owned 
   );
 });
 
-contractTest("runtime.hermetic", "canonical Kestrel One policy fingerprints normalized overlays deterministically", () => {
+test("canonical Kestrel One policy fingerprints normalized overlays deterministically", () => {
   const first = composeKestrelOneProfile({
     environmentPresetId: "desktop_dev_local",
     overlay: {
@@ -192,7 +192,7 @@ contractTest("runtime.hermetic", "canonical Kestrel One policy fingerprints norm
   );
 });
 
-contractTest("runtime.hermetic", "canonical Kestrel One policy fails closed without required dialog tools", () => {
+test("canonical Kestrel One policy fails closed without required dialog tools", () => {
   assert.throws(
     () => assertRequiredKestrelOneTools(["dialog.open", "dialog.send"]),
     /dialog\.close/u,

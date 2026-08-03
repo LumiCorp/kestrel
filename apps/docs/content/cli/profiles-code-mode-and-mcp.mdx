@@ -93,5 +93,10 @@ server discovery, tool inspection, connection configuration, and allowlisting:
 MCP authentication values should be referenced through environment variables,
 not placed directly in a profile committed to source control.
 
+Only enable MCP servers you trust. OCI MCP servers use full outbound networking
+by default, and container isolation does not restrict the destinations they can
+contact. They receive only the credentials and mounted data explicitly included
+in their configuration.
+
 Read [CLI terminal client](/cli/kchat) for using a profile in a session and
 [Command suite](/cli/command-suite) for platform state locations.

@@ -1,13 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   kestrelOneMicrosoft365ListMailTool,
   kestrelOneMicrosoft365SendMailTool,
 } from "../../tools/kestrelOne/microsoft-365.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Microsoft 365 tools carry confirmed Project approval to the App route",
   async () => {
     const requests: Headers[] = [];

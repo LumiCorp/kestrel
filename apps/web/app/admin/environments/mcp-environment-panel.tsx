@@ -692,8 +692,10 @@ export function McpEnvironmentPanel({
                 <option value="none">No network</option>
               </select>
               <p className="text-muted-foreground text-xs">
-                Full network is the default. Choose no network only for an MCP
-                server that is designed to run offline.
+                Full network is the default. An enabled server can contact any
+                destination and use the credentials or read-only workspace data
+                explicitly configured for it. Choose no network only for a
+                server designed to run offline.
               </p>
             </div>
           ) : null}

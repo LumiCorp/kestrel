@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,9 +6,8 @@ import {
   kestrelOneVercelListDeploymentsTool,
   kestrelOneVercelListProjectsTool,
 } from "../../tools/kestrelOne/vercel.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "Vercel inspection tools remain read-only", () => {
+test("Vercel inspection tools remain read-only", () => {
   for (const tool of [
     kestrelOneVercelListProjectsTool,
     kestrelOneVercelListDeploymentsTool,
@@ -20,7 +20,7 @@ contractTest("runtime.hermetic", "Vercel inspection tools remain read-only", () 
   }
 });
 
-contractTest("runtime.hermetic", "Vercel tools bind the App capability and signed execution ticket", async () => {
+test("Vercel tools bind the App capability and signed execution ticket", async () => {
   const requests: Array<{
     url: string;
     method: string | undefined;

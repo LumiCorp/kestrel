@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { DesktopMcpServerConfig } from "../../../src/desktopShell/contracts.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { buildExaMcpMutationInput } from "../renderer/src/ToolServicesSettings.js";
 
 const rendererDirectory = path.resolve(
@@ -12,7 +12,7 @@ const rendererDirectory = path.resolve(
   "../renderer/src",
 );
 
-contractTest("desktop.hermetic", "Desktop Tools and services uses a cardless guided connector surface", async () => {
+test("Desktop Tools and services uses a cardless guided connector surface", async () => {
   const [settingsSource, toolServicesSource] = await Promise.all([
     readFile(path.join(rendererDirectory, "SettingsWorkspace.tsx"), "utf8"),
     readFile(path.join(rendererDirectory, "ToolServicesSettings.tsx"), "utf8"),
@@ -27,14 +27,14 @@ contractTest("desktop.hermetic", "Desktop Tools and services uses a cardless gui
   assert.match(toolServicesSource, /<SetupStep number=\{3\}/u);
 });
 
-contractTest("desktop.hermetic", "guided recovery requests select and focus the requested connector", async () => {
+test("guided recovery requests select and focus the requested connector", async () => {
   const toolServicesSource = await readFile(path.join(rendererDirectory, "ToolServicesSettings.tsx"), "utf8");
 
   assert.match(toolServicesSource, /navigationRequest\.requestId !== handledNavigationRequestRef\.current/u);
   assert.match(toolServicesSource, /selectedConnectorRef\.current\?\.focus\(\{ preventScroll: true \}\)/u);
 });
 
-contractTest("desktop.hermetic", "the prebuilt Exa connector uses the official credential-free hosted MCP endpoint", () => {
+test("the prebuilt Exa connector uses the official credential-free hosted MCP endpoint", () => {
   const input = buildExaMcpMutationInput();
 
   assert.equal(input.id, "prebuilt.exa");
@@ -44,7 +44,7 @@ contractTest("desktop.hermetic", "the prebuilt Exa connector uses the official c
   assert.equal(input.credentials, undefined);
 });
 
-contractTest("desktop.hermetic", "reconnecting Exa preserves its explicit tool policies", () => {
+test("reconnecting Exa preserves its explicit tool policies", () => {
   const server: DesktopMcpServerConfig = {
     id: "prebuilt.exa",
     name: "Exa",

@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildCorruptedNextActionInspectionReport } from "../../src/runtime/corruptedNextActionInspection.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "corrupted nextAction inspection reports affected sessions without mutating data", () => {
+test("corrupted nextAction inspection reports affected sessions without mutating data", () => {
   const report = buildCorruptedNextActionInspectionReport({
     sessions: [
       {

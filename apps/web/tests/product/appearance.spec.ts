@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { contractTest } from "../contract-test.js";
 
 test.setTimeout(60_000);
 
@@ -10,8 +9,7 @@ test.beforeEach(async ({ page }) => {
   ).toBeVisible();
 });
 
-contractTest(
-  "web.appearance-palettes",
+test(
   "Appearance settings keep light and dark palettes independent and durable",
   async ({ page }) => {
     const root = page.locator("html");
@@ -61,8 +59,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.appearance-palette-recovery",
+test(
   "Appearance settings recover invalid storage and synchronize open tabs",
   async ({ page }) => {
     await page.evaluate(() => {

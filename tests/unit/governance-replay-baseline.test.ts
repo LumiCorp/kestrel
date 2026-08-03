@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,10 +6,9 @@ import {
   diffReplayAgainstBaseline,
 } from "../../src/governance/replayBaseline.js";
 import type { CapturedReplayBundle, ReplayBaseline } from "../../src/governance/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.replay-ordering", "diffReplayAgainstBaseline catches missing strict events", () => {
+test("diffReplayAgainstBaseline catches missing strict events", () => {
   const baseline: ReplayBaseline = {
     scenario_id: "s1",
     strict_events: ["step.selected", "terminal.normalized"],
@@ -72,7 +72,7 @@ contractTest("runtime.replay-ordering", "diffReplayAgainstBaseline catches missi
   );
 });
 
-contractTest("runtime.replay-ordering", "diffReplayAgainstBaseline enforces expected error codes", () => {
+test("diffReplayAgainstBaseline enforces expected error codes", () => {
   const baseline: ReplayBaseline = {
     scenario_id: "s2",
     strict_events: ["terminal.normalized"],
@@ -124,7 +124,7 @@ contractTest("runtime.replay-ordering", "diffReplayAgainstBaseline enforces expe
   assert.equal(violations.some((violation) => violation.field === "errorCodes"), true);
 });
 
-contractTest("runtime.replay-ordering", "diffCapturedReplayBundle enforces required browser artifact inventory", () => {
+test("diffCapturedReplayBundle enforces required browser artifact inventory", () => {
   const bundle: CapturedReplayBundle = {
     manifest: {
       flow_id: "research.evidence.happy.mock",

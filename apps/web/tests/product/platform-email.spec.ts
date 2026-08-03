@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { contractTest } from "../contract-test.js";
 
 test.beforeEach(async ({ page, request }) => {
   const signInResponse = await request.post("/api/auth/sign-in/email", {
@@ -16,8 +15,7 @@ test.beforeEach(async ({ page, request }) => {
   ).toBeVisible();
 });
 
-contractTest(
-  "web.platform-email",
+test(
   "system email requires a usable credential before testing or enabling delivery",
   async ({ page }) => {
     const environmentSave = await page.evaluate(async () => {

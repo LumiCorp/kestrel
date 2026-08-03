@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
@@ -8,7 +9,6 @@ import {
   buildGatewayCredentialMigrationPlan,
   parseGatewayCredentialMigrationMode,
 } from "./gateway-credential-migration";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const env: NodeJS.ProcessEnv = {
@@ -19,7 +19,7 @@ const env: NodeJS.ProcessEnv = {
   }),
 };
 
-contractTest("web.hermetic", "gateway credential migration identifies only plaintext stored values", () => {
+test("gateway credential migration identifies only plaintext stored values", () => {
   const encrypted = encryptGatewayCredential({
     gatewayId: "gateway-encrypted",
     plaintext: "encrypted-secret",
@@ -40,7 +40,7 @@ contractTest("web.hermetic", "gateway credential migration identifies only plain
   assert.equal(plan.encryptedCount, 1);
 });
 
-contractTest("web.hermetic", "gateway credential migration planning is idempotent after encryption", () => {
+test("gateway credential migration planning is idempotent after encryption", () => {
   const encrypted = encryptGatewayCredential({
     gatewayId: "gateway-1",
     plaintext: "provider-secret",
@@ -56,7 +56,7 @@ contractTest("web.hermetic", "gateway credential migration planning is idempoten
   );
 });
 
-contractTest("web.hermetic", "gateway credential migration arguments fail closed on unknown flags", () => {
+test("gateway credential migration arguments fail closed on unknown flags", () => {
   assert.equal(parseGatewayCredentialMigrationMode([]), "migrate");
   assert.equal(parseGatewayCredentialMigrationMode(["--dry-run"]), "dry-run");
   assert.equal(parseGatewayCredentialMigrationMode(["--verify"]), "verify");
@@ -70,7 +70,7 @@ contractTest("web.hermetic", "gateway credential migration arguments fail closed
   );
 });
 
-contractTest("web.hermetic", "gateway credential migration entrypoint runs in the CommonJS web package", async () => {
+test("gateway credential migration entrypoint runs in the CommonJS web package", async () => {
   const source = await readFile(
     new URL("../../scripts/migrate-gateway-credentials.ts", import.meta.url),
     "utf8"

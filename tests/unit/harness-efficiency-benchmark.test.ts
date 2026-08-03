@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -18,7 +19,6 @@ import {
   type EconomicsLedgerProjectionV1,
   type HarnessEfficiencyResultV2,
 } from "../../src/economics/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 import { runHarnessEfficiencyComparison } from "../../scripts/compare-harness-efficiency.js";
 
 const CONTROL = {
@@ -45,7 +45,7 @@ const CONTROL = {
   }],
 };
 
-contractTest("runtime.hermetic", "SWE and Terminal-Bench share one immutable efficiency result contract", () => {
+test("SWE and Terminal-Bench share one immutable efficiency result contract", () => {
   for (const lane of ["swe_verified", "terminal_bench"] as const) {
     const result = efficiencyResult({ lane, resultId: `${lane}-result`, inputTokens: 1_000, durationMs: 1_000 });
     assert.equal(parseHarnessEfficiencyResultV2(structuredClone(result)).lane, lane);
@@ -56,7 +56,7 @@ contractTest("runtime.hermetic", "SWE and Terminal-Bench share one immutable eff
   }
 });
 
-contractTest("runtime.hermetic", "efficiency ledger appends the independent verifier outcome to the immutable call ledger", () => {
+test("efficiency ledger appends the independent verifier outcome to the immutable call ledger", () => {
   const runId = "run-ledger-1";
   const sessionId = "session-ledger-1";
   const timestamp = "2026-07-22T00:00:00.000Z";
@@ -131,7 +131,7 @@ contractTest("runtime.hermetic", "efficiency ledger appends the independent veri
   assert.equal(economics.costPerAcceptedSuccessUsd, 0);
 });
 
-contractTest("runtime.hermetic", "efficiency ledger rejects reordered canonical sequence even when the outer hash is recomputed", () => {
+test("efficiency ledger rejects reordered canonical sequence even when the outer hash is recomputed", () => {
   const ledger = completeLedgerFixture();
   const mutated = structuredClone(ledger) as unknown as Record<string, unknown>;
   const entries = mutated.entries as Array<Record<string, unknown>>;
@@ -143,7 +143,7 @@ contractTest("runtime.hermetic", "efficiency ledger rejects reordered canonical 
   assert.throws(() => parseHarnessEfficiencyLedgerV2(mutated), /sequence must be contiguous/u);
 });
 
-contractTest("runtime.hermetic", "efficiency ledger keeps missing delegated child evidence inspectable but incomplete", () => {
+test("efficiency ledger keeps missing delegated child evidence inspectable but incomplete", () => {
   const fixture = completeLedgerFixtureInput();
   fixture.events.splice(fixture.events.length - 1, 0, {
     runId: fixture.runId,
@@ -178,7 +178,7 @@ contractTest("runtime.hermetic", "efficiency ledger keeps missing delegated chil
   assert.equal(economics.tokensPerAcceptedSuccess, null);
 });
 
-contractTest("runtime.hermetic", "efficiency result rejects rehashed unknown nested fields and inconsistent derived metrics", () => {
+test("efficiency result rejects rehashed unknown nested fields and inconsistent derived metrics", () => {
   const result = efficiencyResult({ lane: "swe_verified", resultId: "strict-result", inputTokens: 1_000, durationMs: 1_000 });
   const unknownField = structuredClone(result) as unknown as Record<string, unknown>;
   const unknownEconomics = unknownField.economics as Record<string, unknown>;
@@ -196,7 +196,7 @@ contractTest("runtime.hermetic", "efficiency result rejects rehashed unknown nes
   assert.throws(() => parseHarnessEfficiencyResultV2(inconsistent), /tokensPerAcceptedSuccess does not match/u);
 });
 
-contractTest("runtime.hermetic", "paired efficiency comparison passes only accepted lower-cost candidates without regressions", () => {
+test("paired efficiency comparison passes only accepted lower-cost candidates without regressions", () => {
   const baseline = efficiencyResult({ lane: "swe_verified", resultId: "baseline", inputTokens: 1_000, durationMs: 1_000 });
   const candidate = efficiencyResult({ lane: "swe_verified", resultId: "candidate", inputTokens: 700, durationMs: 900, candidate: true });
 
@@ -209,7 +209,7 @@ contractTest("runtime.hermetic", "paired efficiency comparison passes only accep
   assert.equal(comparison.metrics.candidate.tokensPerAcceptedSuccess, 800);
 });
 
-contractTest("runtime.hermetic", "paired efficiency comparison rejects incomplete telemetry and acceptance regressions", () => {
+test("paired efficiency comparison rejects incomplete telemetry and acceptance regressions", () => {
   const baseline = efficiencyResult({ lane: "terminal_bench", resultId: "baseline", inputTokens: 1_000, durationMs: 1_000 });
   const candidate = efficiencyResult({
     lane: "terminal_bench",
@@ -229,7 +229,7 @@ contractTest("runtime.hermetic", "paired efficiency comparison rejects incomplet
   assert.ok(comparison.reasons.some((reason) => /baseline-accepted pair regressed/u.test(reason)));
 });
 
-contractTest("runtime.hermetic", "paired efficiency comparison does not interpret efficiency without an accepted outcome on each side", () => {
+test("paired efficiency comparison does not interpret efficiency without an accepted outcome on each side", () => {
   const rejectedBaseline = efficiencyResult({
     lane: "swe_verified",
     resultId: "baseline-rejected",
@@ -270,7 +270,7 @@ contractTest("runtime.hermetic", "paired efficiency comparison does not interpre
   }
 });
 
-contractTest("runtime.hermetic", "measurement A/A qualifies identical accepted evidence without demanding an efficiency delta", () => {
+test("measurement A/A qualifies identical accepted evidence without demanding an efficiency delta", () => {
   const baseline = efficiencyResult({ lane: "swe_verified", resultId: "aa-baseline", inputTokens: 1_000, durationMs: 1_000 });
   const candidate = efficiencyResult({ lane: "swe_verified", resultId: "aa-candidate", inputTokens: 1_100, durationMs: 1_100, candidate: true });
 
@@ -284,7 +284,7 @@ contractTest("runtime.hermetic", "measurement A/A qualifies identical accepted e
   assert.deepEqual(comparison.reasons, []);
 });
 
-contractTest("runtime.hermetic", "measurement A/A rejects runtime-ledger disagreement", () => {
+test("measurement A/A rejects runtime-ledger disagreement", () => {
   const baseline = efficiencyResult({ lane: "swe_verified", resultId: "aa-baseline", inputTokens: 1_000, durationMs: 1_000 });
   const candidate = efficiencyResult({
     lane: "swe_verified",
@@ -306,7 +306,7 @@ contractTest("runtime.hermetic", "measurement A/A rejects runtime-ledger disagre
   assert.ok(reconciled.missingFields.some((field) => field.startsWith("runtimeTelemetry.modelCalls:")));
 });
 
-contractTest("runtime.hermetic", "paired comparison command reads lane artifacts and writes a pass decision", () => {
+test("paired comparison command reads lane artifacts and writes a pass decision", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-efficiency-compare-"));
   try {
     const baselineDir = path.join(tmp, "baseline");

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -9,10 +10,9 @@ import {
   evaluateExecutionPolicy,
   mergeCodeModeConfig,
 } from "../../src/code/PolicyEngine.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "evaluateExecutionPolicy blocks when code-mode is disabled", () => {
+test("evaluateExecutionPolicy blocks when code-mode is disabled", () => {
   const request: CodeExecutionRequest = {
     language: "javascript",
     code: "console.log('hi')",
@@ -34,7 +34,7 @@ contractTest("runtime.hermetic", "evaluateExecutionPolicy blocks when code-mode 
   assert.match(decision.result.summary, /disabled/);
 });
 
-contractTest("runtime.hermetic", "evaluateExecutionPolicy enforces network tightening only", () => {
+test("evaluateExecutionPolicy enforces network tightening only", () => {
   const request: CodeExecutionRequest = {
     language: "python",
     code: "print('x')",
@@ -60,7 +60,7 @@ contractTest("runtime.hermetic", "evaluateExecutionPolicy enforces network tight
   assert.match(decision.result.summary, /network access/);
 });
 
-contractTest("runtime.hermetic", "evaluateExecutionPolicy allows configured languages and clamps timeout", () => {
+test("evaluateExecutionPolicy allows configured languages and clamps timeout", () => {
   const request: CodeExecutionRequest = {
     language: "javascript",
     code: "console.log('ok')",
@@ -89,7 +89,7 @@ contractTest("runtime.hermetic", "evaluateExecutionPolicy allows configured lang
   assert.deepEqual(decision.request.dependencies, ["left-pad"]);
 });
 
-contractTest("runtime.hermetic", "code sandbox policy defaults and bounds omitted legacy PID limits", () => {
+test("code sandbox policy defaults and bounds omitted legacy PID limits", () => {
   const legacy = mergeCodeModeConfig({
     ...DEFAULT_CODE_MODE_ENABLED_CONFIG,
     sandbox: {

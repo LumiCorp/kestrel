@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page, test } from "@playwright/test";
-import { contractTest } from "../contract-test.js";
 
 test.setTimeout(60_000);
 
@@ -9,8 +8,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page).toHaveURL("/dashboard");
 });
 
-contractTest(
-  "web.thread-shell-scroll",
+test(
   "Thread shell keeps document fixed while the transcript scrolls",
   async ({ page }) => {
     await page.setViewportSize({ height: 1080, width: 1920 });
@@ -80,8 +78,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "web.thread-header-actions",
+test(
   "Thread header preserves rename, Project assignment, and lifecycle actions",
   async ({ page }) => {
     const projectName = `Header actions ${randomUUID().slice(0, 8)}`;

@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   listMicrosoftCalendarEvents,
   searchMicrosoftSharePointSites,
   sendMicrosoftMail,
 } from "./microsoft-365-api";
 
-contractTest("web.hermetic", "Microsoft 365 reads use bounded Graph queries", async () => {
+test("Microsoft 365 reads use bounded Graph queries", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
     requests.push({ url: String(input), init });
@@ -35,7 +35,7 @@ contractTest("web.hermetic", "Microsoft 365 reads use bounded Graph queries", as
   assert.equal(requests[0]?.init?.headers && "authorization" in requests[0].init.headers, true);
 });
 
-contractTest("web.hermetic", "Microsoft 365 mail sends are explicit and plain text", async () => {
+test("Microsoft 365 mail sends are explicit and plain text", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
     requests.push({ url: String(input), init });

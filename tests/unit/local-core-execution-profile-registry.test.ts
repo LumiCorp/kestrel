@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
@@ -5,9 +6,8 @@ import path from "node:path";
 
 import { composeKestrelOneProfile } from "../../src/profile/kestrelOnePolicy.js";
 import { LocalCoreExecutionProfileRegistry } from "../../src/localCore/executionProfileRegistry.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "Local Core execution profile registry is deterministic and survives restart", async () => {
+test("Local Core execution profile registry is deterministic and survives restart", async () => {
   const home = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-execution-profile-registry-"),
   );
@@ -42,7 +42,7 @@ contractTest("runtime.hermetic", "Local Core execution profile registry is deter
   );
 });
 
-contractTest("runtime.hermetic", "Local Core execution profile registry invalidates immutable selection revisions", async () => {
+test("Local Core execution profile registry invalidates immutable selection revisions", async () => {
   const home = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-execution-profile-revisions-"),
   );
@@ -88,7 +88,7 @@ contractTest("runtime.hermetic", "Local Core execution profile registry invalida
   assert.notEqual(first.profileId, integrationRevision.profileId);
 });
 
-contractTest("runtime.hermetic", "Local Core execution profile registry rejects secret material", async () => {
+test("Local Core execution profile registry rejects secret material", async () => {
   const home = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-execution-profile-secret-"),
   );
@@ -111,7 +111,7 @@ contractTest("runtime.hermetic", "Local Core execution profile registry rejects 
   );
 });
 
-contractTest("runtime.hermetic", "Local Core execution profile registry serializes concurrent registrations", async () => {
+test("Local Core execution profile registry serializes concurrent registrations", async () => {
   const home = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-execution-profile-concurrent-"),
   );

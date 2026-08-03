@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { normalizeLaunchPolicy } from "../../src/orchestration/Supervision.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "normalizeLaunchPolicy preserves existing supervision intent while normalizing depth policy", () => {
+test("normalizeLaunchPolicy preserves existing supervision intent while normalizing depth policy", () => {
   const policy = normalizeLaunchPolicy({
     parentThreadId: "thread-parent",
     policy: {
@@ -50,7 +50,7 @@ contractTest("runtime.hermetic", "normalizeLaunchPolicy preserves existing super
   });
 });
 
-contractTest("runtime.hermetic", "normalizeLaunchPolicy lets explicit launch inputs override existing supervision fields", () => {
+test("normalizeLaunchPolicy lets explicit launch inputs override existing supervision fields", () => {
   const policy = normalizeLaunchPolicy({
     parentThreadId: "thread-parent",
     rolePrompt: "New role",

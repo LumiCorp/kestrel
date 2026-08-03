@@ -1,7 +1,7 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { KNOWLEDGE_EMBEDDING_DIMENSIONS } from "./constants";
 import { embedKnowledgeTexts } from "./embed";
-import { contractTest } from "../../../../../tests/helpers/contract-test.js";
 
 
 function openRouterEnv() {
@@ -20,7 +20,7 @@ function embeddingVector() {
   );
 }
 
-contractTest("web.hermetic", "embedKnowledgeTexts uses the inherited OpenRouter credential and strict dimensions", async () => {
+test("embedKnowledgeTexts uses the inherited OpenRouter credential and strict dimensions", async () => {
   let requestURL = "";
   let requestInit: RequestInit | undefined;
   const fetchEmbedding = async (
@@ -62,7 +62,7 @@ contractTest("web.hermetic", "embedKnowledgeTexts uses the inherited OpenRouter 
   assert.equal(embedding?.[1], 0.8);
 });
 
-contractTest("web.hermetic", "embedKnowledgeTexts rejects malformed live vectors instead of padding them", async () => {
+test("embedKnowledgeTexts rejects malformed live vectors instead of padding them", async () => {
   const fetchEmbedding = async () =>
     new Response(
       JSON.stringify({
@@ -88,7 +88,7 @@ contractTest("web.hermetic", "embedKnowledgeTexts rejects malformed live vectors
   );
 });
 
-contractTest("web.hermetic", "embedKnowledgeTexts exposes live provider failures", async () => {
+test("embedKnowledgeTexts exposes live provider failures", async () => {
   const fetchEmbedding = async () =>
     new Response("insufficient credits", { status: 402 });
 

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,10 +8,9 @@ import {
   collectTerminalBenchEvidence,
   summarizeTerminalBenchRun,
 } from "../../scripts/terminal-bench-evidence.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies adapter failure before verifier", async () => {
+test("terminal bench evidence classifies adapter failure before verifier", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter }) => {
     await writeTask({
       is_resolved: false,
@@ -28,7 +28,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies adapter fai
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies setup failure before adapter start", async () => {
+test("terminal bench evidence classifies setup failure before adapter start", async () => {
   await withSyntheticRun(async ({ runDir, writeTask }) => {
     await writeTask({ is_resolved: false, failure_mode: "test_timeout" });
 
@@ -38,7 +38,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies setup failu
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies adapter-completed verifier timeout", async () => {
+test("terminal bench evidence classifies adapter-completed verifier timeout", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter }) => {
     await writeTask({
       is_resolved: false,
@@ -54,7 +54,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies adapter-com
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies artifact pass with failed adapter", async () => {
+test("terminal bench evidence classifies artifact pass with failed adapter", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter }) => {
     await writeTask({
       is_resolved: true,
@@ -69,7 +69,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies artifact pa
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies provider/config failures explicitly", async () => {
+test("terminal bench evidence classifies provider/config failures explicitly", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter }) => {
     await writeTask({
       is_resolved: false,
@@ -85,7 +85,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies provider/co
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies clean unresolved completed adapter as model-quality backlog", async () => {
+test("terminal bench evidence classifies clean unresolved completed adapter as model-quality backlog", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter, writeEvents }) => {
     await writeTask({
       is_resolved: false,
@@ -106,7 +106,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies clean unres
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies event-log waiting as adapter failure", async () => {
+test("terminal bench evidence classifies event-log waiting as adapter failure", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter, writeEvents }) => {
     await writeTask({
       is_resolved: false,
@@ -133,7 +133,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies event-log w
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies exact bridge fetch failures from event logs", async () => {
+test("terminal bench evidence classifies exact bridge fetch failures from event logs", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter, writeEvents }) => {
     await writeTask({
       is_resolved: false,
@@ -164,7 +164,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies exact bridg
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies protected path misuse from event logs", async () => {
+test("terminal bench evidence classifies protected path misuse from event logs", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter, writeEvents }) => {
     await writeTask({
       is_resolved: false,
@@ -193,7 +193,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies protected p
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence ignores protected path mentions in file content", async () => {
+test("terminal bench evidence ignores protected path mentions in file content", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter, writeEvents }) => {
     await writeTask({
       is_resolved: true,
@@ -223,7 +223,7 @@ contractTest("runtime.hermetic", "terminal bench evidence ignores protected path
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence records public-test protected denial as diagnostic only", async () => {
+test("terminal bench evidence records public-test protected denial as diagnostic only", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter, writeEvents }) => {
     await writeTask({
       is_resolved: true,
@@ -262,7 +262,7 @@ contractTest("runtime.hermetic", "terminal bench evidence records public-test pr
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence classifies cannot_satisfy from event logs", async () => {
+test("terminal bench evidence classifies cannot_satisfy from event logs", async () => {
   await withSyntheticRun(async ({ runDir, writeTask, writeAdapter, writeEvents }) => {
     await writeTask({
       is_resolved: false,
@@ -296,7 +296,7 @@ contractTest("runtime.hermetic", "terminal bench evidence classifies cannot_sati
   });
 });
 
-contractTest("runtime.hermetic", "terminal bench evidence collector ignores nested task results as run roots", async () => {
+test("terminal bench evidence collector ignores nested task results as run roots", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "kestrel-tbench-evidence-"));
   try {
     const runDir = path.join(tmp, "runs", "kestrel-cli-sample");

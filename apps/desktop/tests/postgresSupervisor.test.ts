@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -6,10 +7,9 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 
 import { DesktopPostgresSupervisor } from "../src/postgresSupervisor.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("desktop.hermetic", "DesktopPostgresSupervisor initializes, starts, and reuses persisted metadata", async () => {
+test("DesktopPostgresSupervisor initializes, starts, and reuses persisted metadata", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "kestrel-postgres-supervisor-"));
   const bundleRoot = path.join(root, "postgres-bundle");
   const installRoot = path.join(bundleRoot, "darwin-arm64");
@@ -77,7 +77,7 @@ contractTest("desktop.hermetic", "DesktopPostgresSupervisor initializes, starts,
   }
 });
 
-contractTest("desktop.hermetic", "DesktopPostgresSupervisor reports a blocked status when the bundle is missing", async () => {
+test("DesktopPostgresSupervisor reports a blocked status when the bundle is missing", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "kestrel-postgres-supervisor-missing-"));
   const supervisor = new DesktopPostgresSupervisor({
     bundleRootPath: path.join(root, "missing-bundle"),
@@ -101,7 +101,7 @@ contractTest("desktop.hermetic", "DesktopPostgresSupervisor reports a blocked st
   }
 });
 
-contractTest("desktop.hermetic", "DesktopPostgresSupervisor repair never deletes database state", async () => {
+test("DesktopPostgresSupervisor repair never deletes database state", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "kestrel-postgres-supervisor-safe-repair-"));
   let removeCalls = 0;
   const supervisor = new DesktopPostgresSupervisor({
@@ -124,7 +124,7 @@ contractTest("desktop.hermetic", "DesktopPostgresSupervisor repair never deletes
   }
 });
 
-contractTest("desktop.hermetic", "DesktopPostgresSupervisor reuses an already-running managed cluster", async () => {
+test("DesktopPostgresSupervisor reuses an already-running managed cluster", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "kestrel-postgres-supervisor-running-"));
   const bundleRoot = path.join(root, "postgres-bundle");
   const installRoot = path.join(bundleRoot, "darwin-arm64");

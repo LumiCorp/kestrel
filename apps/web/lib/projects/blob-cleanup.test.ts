@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { cleanupProjectBlobKeys } from "./blob-cleanup";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "Project blob cleanup attempts every unique key without rejecting", async () => {
+test("Project blob cleanup attempts every unique key without rejecting", async () => {
   const attempted: string[] = [];
   const result = await cleanupProjectBlobKeys(
     ["one", "two", "one", "three"],

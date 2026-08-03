@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildPresentedProviderModelCatalog } from "../../src/profile/modelCatalogPresentation.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "buildPresentedProviderModelCatalog falls back to discovered models when curated recommendations are absent", () => {
+test("buildPresentedProviderModelCatalog falls back to discovered models when curated recommendations are absent", () => {
   const summary = buildPresentedProviderModelCatalog({
     provider: "openrouter",
     catalog: {

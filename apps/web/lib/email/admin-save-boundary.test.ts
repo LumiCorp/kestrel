@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const routeSource = fs.readFileSync(
@@ -13,7 +13,7 @@ const routeSource = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "email configuration audit failure cannot turn a committed save into failure", () => {
+test("email configuration audit failure cannot turn a committed save into failure", () => {
   const save = routeSource.indexOf("await saveEmailConfig");
   const audit = routeSource.indexOf("await logAdminEvent", save);
   const isolatedAuditFailure = routeSource.indexOf(".catch(() =>", audit);
@@ -32,7 +32,7 @@ contractTest("web.hermetic", "email configuration audit failure cannot turn a co
   );
 });
 
-contractTest("web.hermetic", "email configuration audit failure logs no underlying error details", () => {
+test("email configuration audit failure logs no underlying error details", () => {
   assert.match(routeSource, /\.catch\(\(\) => \{/);
   assert.doesNotMatch(routeSource, /\.catch\(\(error\)/);
 });

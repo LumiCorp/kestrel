@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,7 +7,6 @@ import {
   KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST,
   PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES,
 } from "../route-ownership.manifest";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const testRoot = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(testRoot, "..");
@@ -47,8 +47,7 @@ function readRouteGuardSource(file: string) {
     : source;
 }
 
-contractTest(
-  "web.hermetic",
+test(
   "Kestrel-One route ownership manifest classifies every page and API route",
   () => {
     const actualFiles = listRouteFiles(appRoot);
@@ -61,8 +60,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Kestrel-One route ownership manifest assigns one owner per route",
   () => {
     const routeOwners = KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.map(
@@ -73,8 +71,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Kestrel-One primary navigation routes require an authenticated shell",
   () => {
     assert.deepEqual(
@@ -89,8 +86,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Kestrel-One manifest keeps all required route classes visible",
   () => {
     const classes = new Set(
@@ -109,8 +105,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Kestrel-One API route classes have matching app-boundary guards",
   () => {
     for (const entry of KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST) {
@@ -182,8 +177,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Kestrel-One protected page classes are covered by guarded layouts",
   () => {
     const workspaceLayout = readAppFile("app/(workspace)/layout.tsx");

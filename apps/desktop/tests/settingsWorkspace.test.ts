@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -5,7 +6,6 @@ import { fileURLToPath } from "node:url";
 
 import type { DesktopCapability } from "../../../src/desktopShell/contracts.js";
 import type { KestrelUninstallPlanV1 } from "../src/contracts.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import {
   createToolServicesNavigationRequest,
   desktopUninstallConfirmationsSatisfied,
@@ -35,7 +35,7 @@ function capability(id: DesktopCapability["id"], readiness: DesktopCapability["r
   };
 }
 
-contractTest("desktop.hermetic", "Settings surfaces only explicit readiness blockers in source order", () => {
+test("Settings surfaces only explicit readiness blockers in source order", () => {
   const queue = getDesktopCapabilityAttentionQueue([
     capability("local.filesystem", "ready"),
     capability("local.developer_shell", "unavailable"),
@@ -51,7 +51,7 @@ contractTest("desktop.hermetic", "Settings surfaces only explicit readiness bloc
   ]);
 });
 
-contractTest("desktop.hermetic", "Settings does not let an older readiness probe overwrite a later apply result", async () => {
+test("Settings does not let an older readiness probe overwrite a later apply result", async () => {
   const source = await readFile(path.join(rendererDirectory, "SettingsWorkspace.tsx"), "utf8");
 
   assert.match(source, /const refreshVersionRef = useRef\(0\)/u);
@@ -59,7 +59,7 @@ contractTest("desktop.hermetic", "Settings does not let an older readiness probe
   assert.match(source, /function commitCapabilityView[\s\S]*refreshVersionRef\.current \+= 1;/u);
 });
 
-contractTest("desktop.hermetic", "repeated tool-service recovery requests carry a fresh navigation signal", () => {
+test("repeated tool-service recovery requests carry a fresh navigation signal", () => {
   const initial = createToolServicesNavigationRequest("tools.internet.tavily");
   const repeated = createToolServicesNavigationRequest("tools.internet.tavily", initial);
 
@@ -67,7 +67,7 @@ contractTest("desktop.hermetic", "repeated tool-service recovery requests carry 
   assert.deepEqual(repeated, { capabilityId: "tools.internet.tavily", requestId: 2 });
 });
 
-contractTest("desktop.hermetic", "Settings keeps healthy readiness quiet while retaining targeted recovery", async () => {
+test("Settings keeps healthy readiness quiet while retaining targeted recovery", async () => {
   const source = await readFile(path.join(rendererDirectory, "SettingsWorkspace.tsx"), "utf8");
   const styles = await readFile(path.join(rendererDirectory, "styles.css"), "utf8");
 
@@ -90,7 +90,7 @@ contractTest("desktop.hermetic", "Settings keeps healthy readiness quiet while r
   assert.doesNotMatch(styles, /\.capability-attention-clear/u);
 });
 
-contractTest("desktop.hermetic", "Settings exposes guarded Desktop uninstall apply wizard controls", async () => {
+test("Settings exposes guarded Desktop uninstall apply wizard controls", async () => {
   const source = await readFile(path.join(rendererDirectory, "SettingsWorkspace.tsx"), "utf8");
 
   assert.match(source, /Removal scope/u);
@@ -104,7 +104,7 @@ contractTest("desktop.hermetic", "Settings exposes guarded Desktop uninstall app
   assert.match(source, /Apply result:/u);
 });
 
-contractTest("desktop.hermetic", "Desktop uninstall confirmations require exact destructive phrases", () => {
+test("Desktop uninstall confirmations require exact destructive phrases", () => {
   const plan = {
     confirmations: [
       { kind: "plan_id", phrase: "plan-1" },

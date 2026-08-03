@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import React from "react";
@@ -10,10 +11,9 @@ import {
   projectDesktopRunStream,
 } from "../renderer/src/runStream.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("desktop.hermetic", "Desktop projects assistant progress and tool activity into the conversation stream", () => {
+test("Desktop projects assistant progress and tool activity into the conversation stream", () => {
   const progress = event("run.agent_progress", {
     update: baseUpdate({ message: "I am starting the development server.", stepIndex: 1, stepAgent: "agent.loop" }),
   });
@@ -46,7 +46,7 @@ contractTest("desktop.hermetic", "Desktop projects assistant progress and tool a
   assert.deepEqual(projected[1]?.toolInput, { command: "npm run dev" });
 });
 
-contractTest("desktop.hermetic", "Desktop accumulates live reasoning deltas in one visible stream item", () => {
+test("Desktop accumulates live reasoning deltas in one visible stream item", () => {
   const started = event("run.model.reasoning.started", {
     update: baseUpdate({ event: "started", attempt: 1, format: "summary", contentState: "live" }),
   });
@@ -63,7 +63,7 @@ contractTest("desktop.hermetic", "Desktop accumulates live reasoning deltas in o
   assert.equal(projected[0]?.text, "Inspecting the workspace.");
 });
 
-contractTest("desktop.hermetic", "Desktop distinguishes empty, unavailable, and unretained provider reasoning", () => {
+test("Desktop distinguishes empty, unavailable, and unretained provider reasoning", () => {
   const empty = [
     event("run.model.reasoning.started", {
       update: baseUpdate({ event: "started", attempt: 1, format: "provider_reasoning_text", contentState: "live" }),
@@ -87,7 +87,7 @@ contractTest("desktop.hermetic", "Desktop distinguishes empty, unavailable, and 
   assert.equal(unretained[0]?.text, "Provider reasoning is not retained for this run.");
 });
 
-contractTest("desktop.hermetic", "Desktop keeps mismatched agent narration separate from canonical Weather action truth", () => {
+test("Desktop keeps mismatched agent narration separate from canonical Weather action truth", () => {
   const events = [
     event("run.agent_progress", {
       update: baseUpdate({
@@ -135,7 +135,7 @@ contractTest("desktop.hermetic", "Desktop keeps mismatched agent narration separ
   assert.match(html, /Atlantic Ocean/u);
 });
 
-contractTest("desktop.hermetic", "Desktop ignores repeated reasoning starts after an interrupted stream", () => {
+test("Desktop ignores repeated reasoning starts after an interrupted stream", () => {
   const events = [
     event("run.model.reasoning.started", {
       update: baseUpdate({ event: "started", attempt: 1, format: "provider_reasoning_text", contentState: "live" }),
@@ -157,7 +157,7 @@ contractTest("desktop.hermetic", "Desktop ignores repeated reasoning starts afte
   assert.equal(projected[0]?.text, "Inspecting the workspace.");
 });
 
-contractTest("desktop.hermetic", "Desktop starts a new reasoning block after assistant and tool activity", () => {
+test("Desktop starts a new reasoning block after assistant and tool activity", () => {
   const events = [
     event("run.model.reasoning.started", {
       update: baseUpdate({ event: "started", attempt: 1, format: "summary", contentState: "live" }),
@@ -185,7 +185,7 @@ contractTest("desktop.hermetic", "Desktop starts a new reasoning block after ass
   ]);
 });
 
-contractTest("desktop.hermetic", "Desktop completes an earlier reasoning block without moving it past later activity", () => {
+test("Desktop completes an earlier reasoning block without moving it past later activity", () => {
   const events = [
     event("run.model.reasoning.started", {
       update: baseUpdate({ event: "started", attempt: 1, format: "summary", contentState: "live" }),
@@ -208,7 +208,7 @@ contractTest("desktop.hermetic", "Desktop completes an earlier reasoning block w
   ]);
 });
 
-contractTest("desktop.hermetic", "Desktop preserves a live item's first-seen timestamp when later phases update it", () => {
+test("Desktop preserves a live item's first-seen timestamp when later phases update it", () => {
   const started = event("run.tool.started", {
     update: { ...baseUpdate({ toolCallId: "tool-1", toolName: "exec_command", phase: "started" }), ts: "2026-07-20T12:00:01.000Z" },
   });
@@ -221,7 +221,7 @@ contractTest("desktop.hermetic", "Desktop preserves a live item's first-seen tim
   assert.equal(projected[0]?.status, "completed");
 });
 
-contractTest("desktop.hermetic", "Desktop starts each accepted run with an empty transient stream", () => {
+test("Desktop starts each accepted run with an empty transient stream", () => {
   const current = projectDesktopRunStream([], event("run.agent_progress", {
     update: baseUpdate({ message: "Old progress", stepIndex: 1, stepAgent: "agent.loop" }),
   }));
@@ -231,7 +231,7 @@ contractTest("desktop.hermetic", "Desktop starts each accepted run with an empty
   })), []);
 });
 
-contractTest("desktop.hermetic", "Desktop retains runtime progress as operational timeline detail", () => {
+test("Desktop retains runtime progress as operational timeline detail", () => {
   const projected = projectDesktopRunStream([], event("run.progress", {
     update: baseUpdate({
       kind: "stage",
@@ -255,7 +255,7 @@ contractTest("desktop.hermetic", "Desktop retains runtime progress as operationa
   ]]);
 });
 
-contractTest("desktop.hermetic", "Desktop describes the current runtime progress message for transient feedback", () => {
+test("Desktop describes the current runtime progress message for transient feedback", () => {
   const progress = event("run.progress", {
     update: baseUpdate({
       kind: "stage",
@@ -269,7 +269,7 @@ contractTest("desktop.hermetic", "Desktop describes the current runtime progress
   assert.equal(describeDesktopRunnerActivity(progress), "Calling decision model…");
 });
 
-contractTest("desktop.hermetic", "Desktop interleaves live run items before the terminal assistant response", () => {
+test("Desktop interleaves live run items before the terminal assistant response", () => {
   const transcript = [
     { role: "user" as const, text: "Open the report.", timestamp: "2026-07-20T12:00:00.000Z" },
     { role: "assistant" as const, text: "The report is open.", timestamp: "2026-07-20T12:00:03.000Z" },
@@ -302,7 +302,7 @@ contractTest("desktop.hermetic", "Desktop interleaves live run items before the 
   ]);
 });
 
-contractTest("desktop.hermetic", "Desktop resolves equal event timestamps as user, live run, then terminal response", () => {
+test("Desktop resolves equal event timestamps as user, live run, then terminal response", () => {
   const timestamp = "2026-07-20T12:00:00.000Z";
   const timeline = projectDesktopConversationTimeline(
     [
@@ -326,7 +326,7 @@ contractTest("desktop.hermetic", "Desktop resolves equal event timestamps as use
   ]);
 });
 
-contractTest("desktop.hermetic", "Desktop preserves durable transcript order when transcript timestamps are equal", () => {
+test("Desktop preserves durable transcript order when transcript timestamps are equal", () => {
   const timestamp = "2026-07-20T12:00:00.000Z";
   const timeline = projectDesktopConversationTimeline(
     [
@@ -342,7 +342,7 @@ contractTest("desktop.hermetic", "Desktop preserves durable transcript order whe
   ]);
 });
 
-contractTest("desktop.hermetic", "Desktop renders a stopped transition when cancellation has no assistant response", () => {
+test("Desktop renders a stopped transition when cancellation has no assistant response", () => {
   const items = projectDesktopConversationTimeline(
     [{
       role: "user",
@@ -370,7 +370,7 @@ contractTest("desktop.hermetic", "Desktop renders a stopped transition when canc
   assert.match(html, /state-cancelled/u);
 });
 
-contractTest("desktop.hermetic", "Desktop renders progress calmly while operational evidence stays collapsed", () => {
+test("Desktop renders progress calmly while operational evidence stays collapsed", () => {
   const items = projectDesktopConversationTimeline([], [
     {
       id: "assistant:event-1",

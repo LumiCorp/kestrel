@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -6,10 +7,9 @@ import {
   readActiveWaitState,
   readWaitResumeStepAgent,
 } from "../../src/runtime/waitState.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "readActiveWaitState reads canonical waitingFor and ignores legacy shapes", () => {
+test("readActiveWaitState reads canonical waitingFor and ignores legacy shapes", () => {
   const wait = readActiveWaitState({
     waitingFor: buildCanonicalWaitingFor({
       waitFor: {
@@ -48,7 +48,7 @@ contractTest("runtime.hermetic", "readActiveWaitState reads canonical waitingFor
   assert.deepEqual(wait?.metadata, { reason: "canonical" });
 });
 
-contractTest("runtime.hermetic", "readActiveWaitState ignores legacy nextAction and exec wait shapes", () => {
+test("readActiveWaitState ignores legacy nextAction and exec wait shapes", () => {
   const wait = readActiveWaitState({
     nextAction: {
       waitFor: {
@@ -76,7 +76,7 @@ contractTest("runtime.hermetic", "readActiveWaitState ignores legacy nextAction 
   assert.equal(wait, undefined);
 });
 
-contractTest("runtime.hermetic", "readActiveWaitState does not fall back to legacy exec and top-level wait state", () => {
+test("readActiveWaitState does not fall back to legacy exec and top-level wait state", () => {
   const execWait = readActiveWaitState({
     exec: {
       waitingForUser: {
@@ -106,7 +106,7 @@ contractTest("runtime.hermetic", "readActiveWaitState does not fall back to lega
   assert.equal(topLevelWait, undefined);
 });
 
-contractTest("runtime.hermetic", "buildWaitResumeToken is stable across metadata key order", () => {
+test("buildWaitResumeToken is stable across metadata key order", () => {
   const left = buildWaitResumeToken({
     waitFor: {
       kind: "user",
@@ -128,7 +128,7 @@ contractTest("runtime.hermetic", "buildWaitResumeToken is stable across metadata
   assert.match(left, /agent\.exec\.dispatch/u);
 });
 
-contractTest("runtime.hermetic", "canonical waits preserve every runtime kind and timeout", () => {
+test("canonical waits preserve every runtime kind and timeout", () => {
   for (const kind of ["approval", "effect", "region_merge", "tool", "user"] as const) {
     const canonical = buildCanonicalWaitingFor({
       waitFor: {
@@ -146,7 +146,7 @@ contractTest("runtime.hermetic", "canonical waits preserve every runtime kind an
   }
 });
 
-contractTest("runtime.hermetic", "wait timeout participates in resume-token identity", () => {
+test("wait timeout participates in resume-token identity", () => {
   const short = buildWaitResumeToken({
     waitFor: { kind: "region_merge", eventType: "region.completed", timeoutMs: 1_000 },
     resumeStepAgent: "agent.exec.wait_region",
@@ -158,6 +158,6 @@ contractTest("runtime.hermetic", "wait timeout participates in resume-token iden
   assert.notEqual(short, long);
 });
 
-contractTest("runtime.hermetic", "readWaitResumeStepAgent only reads canonical waitingFor", () => {
+test("readWaitResumeStepAgent only reads canonical waitingFor", () => {
   assert.equal(readWaitResumeStepAgent({ wait: { resumeStepAgent: "agent.exec.collect" } }), undefined);
 });

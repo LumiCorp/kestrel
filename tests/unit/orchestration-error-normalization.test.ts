@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { RuntimeEvent } from "../../src/kestrel/contracts/events.js";
@@ -16,7 +17,6 @@ import {
 } from "../../src/orchestration/index.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 class StaticTurnExecutor implements TurnExecutor {
@@ -65,7 +65,7 @@ class ThrowingTurnExecutor implements TurnExecutor {
   }
 }
 
-contractTest("runtime.hermetic", "InteractionManager emits normalized not-found and state failures", async () => {
+test("InteractionManager emits normalized not-found and state failures", async () => {
   const store = new InMemorySessionStore();
   const manager = new InteractionManager(store);
 
@@ -119,7 +119,7 @@ contractTest("runtime.hermetic", "InteractionManager emits normalized not-found 
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime emits normalized thread and supervisor failures", async () => {
+test("ThreadRuntime emits normalized thread and supervisor failures", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore: store,
@@ -153,7 +153,7 @@ contractTest("runtime.hermetic", "ThreadRuntime emits normalized thread and supe
   );
 });
 
-contractTest("runtime.hermetic", "ThreadRuntime atomically projects failed output over stale thread run metadata", async () => {
+test("ThreadRuntime atomically projects failed output over stale thread run metadata", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore: store,
@@ -205,7 +205,7 @@ contractTest("runtime.hermetic", "ThreadRuntime atomically projects failed outpu
   assert.equal(persistedThread?.status, "FAILED");
 });
 
-contractTest("runtime.hermetic", "DelegationSupervisor emits normalized limit and compatibility failures", async () => {
+test("DelegationSupervisor emits normalized limit and compatibility failures", async () => {
   const store = new InMemorySessionStore();
   const supervisor = new DelegationSupervisor({
     profile: {
@@ -308,7 +308,7 @@ contractTest("runtime.hermetic", "DelegationSupervisor emits normalized limit an
   );
 });
 
-contractTest("runtime.hermetic", "DelegationSupervisor emits normalized not-persisted failure when orchestration store loses the record", async () => {
+test("DelegationSupervisor emits normalized not-persisted failure when orchestration store loses the record", async () => {
   const store = new InMemorySessionStore();
   const orchestrationStore = Object.assign(Object.create(store), {
     async getDelegation(_delegationId: string) {
@@ -373,7 +373,7 @@ contractTest("runtime.hermetic", "DelegationSupervisor emits normalized not-pers
   );
 });
 
-contractTest("runtime.hermetic", "Delegation failure persistence retains normalized message and event code", async () => {
+test("Delegation failure persistence retains normalized message and event code", async () => {
   const store = new InMemorySessionStore();
   const runtime = new ThreadRuntime({
     sessionStore: store,
@@ -423,7 +423,7 @@ contractTest("runtime.hermetic", "Delegation failure persistence retains normali
   assert.equal(failedEvent?.metadata?.errorMessage, "Child execution failed.");
 });
 
-contractTest("runtime.hermetic", "persistent dialogs support multi-turn exchange, name ownership, and explicit close", async () => {
+test("persistent dialogs support multi-turn exchange, name ownership, and explicit close", async () => {
   const store = new InMemorySessionStore();
   const updates: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord[] = [];
   let childCount = 0;

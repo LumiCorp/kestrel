@@ -1,15 +1,15 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { contractTest } from "../helpers/contract-test.js";
 import {
   assertNoExternalDarwinDependencies,
   readMachODependencies,
 } from "../../scripts/darwin-dependency-bundle.js";
 
-contractTest("macos.release", "Darwin dependency audit rejects a load path that escapes the bundled library directory", async (t) => {
+test("Darwin dependency audit rejects a load path that escapes the bundled library directory", async (t) => {
   const testRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-darwin-audit-"));
   t.after(async () => {
     const { rm } = await import("node:fs/promises");

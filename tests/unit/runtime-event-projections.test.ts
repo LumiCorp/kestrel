@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -8,10 +9,9 @@ import {
   readReasoningUpdateFromPersistedRuntimeEvent,
   readToolUpdateFromPersistedRuntimeEvent,
 } from "../../src/events/RuntimeEventProjections.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "progress updates project through persisted runtime events", () => {
+test("progress updates project through persisted runtime events", () => {
   const update = {
     version: "v1" as const,
     runId: "run-progress",
@@ -41,7 +41,7 @@ contractTest("runtime.hermetic", "progress updates project through persisted run
   assert.deepEqual(projected, update);
 });
 
-contractTest("runtime.hermetic", "reasoning updates project through persisted runtime events", () => {
+test("reasoning updates project through persisted runtime events", () => {
   const update = {
     version: "v1" as const,
     runId: "run-reasoning",
@@ -64,7 +64,7 @@ contractTest("runtime.hermetic", "reasoning updates project through persisted ru
   assert.deepEqual(projected, update);
 });
 
-contractTest("runtime.hermetic", "tool updates project through persisted runtime events", () => {
+test("tool updates project through persisted runtime events", () => {
   const update = {
     version: "v1" as const,
     runId: "run-tool",

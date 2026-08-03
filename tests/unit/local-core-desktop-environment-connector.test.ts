@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,10 +12,8 @@ import {
   LocalCoreDesktopEnvironmentManager,
   redactDesktopRunnerEventForUpload,
 } from "../../src/localCore/desktopEnvironmentConnector.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Desktop Environment reports a claimed command that fails before runner startup",
   async (context) => {
     const home = await mkdtemp(
@@ -147,8 +146,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "Desktop Environment runner events redact registered local workspace roots before upload",
   () => {
     const workspacePath = "/workspace/private-client";

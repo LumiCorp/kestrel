@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
@@ -14,7 +15,6 @@ import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 interface ReactActionFlowRow {
@@ -60,7 +60,7 @@ function buildReactActionFlowTable(events: Array<Record<string, unknown>>): Reac
   return rows;
 }
 
-contractTest("runtime.hermetic", "react action flow table exposes gather evidence stdin/read loops", () => {
+test("react action flow table exposes gather evidence stdin/read loops", () => {
   const rows = buildReactActionFlowTable([
     {
       type: "run.log",
@@ -238,7 +238,7 @@ async function seedLoopVisitStallSession(
   });
 }
 
-contractTest("runtime.hermetic", "ExecutionEngine persists step-start telemetry while a buffered step is still running", async () => {
+test("ExecutionEngine persists step-start telemetry while a buffered step is still running", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -299,7 +299,7 @@ contractTest("runtime.hermetic", "ExecutionEngine persists step-start telemetry 
   assert.equal(output.status, "COMPLETED");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine logs compact React state handoff for every committed step", async () => {
+test("ExecutionEngine logs compact React state handoff for every committed step", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -383,7 +383,7 @@ contractTest("runtime.hermetic", "ExecutionEngine logs compact React state hando
   }
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated identical react state", async () => {
+test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated identical react state", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -434,7 +434,7 @@ contractTest("runtime.hermetic", "ExecutionEngine trips LOOP_GUARD_TRIGGERED bef
   assert.equal(output.telemetry.stepsExecuted < 20, true);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine keeps repeated validation feedback loop details mechanical", async () => {
+test("ExecutionEngine keeps repeated validation feedback loop details mechanical", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -504,7 +504,7 @@ contractTest("runtime.hermetic", "ExecutionEngine keeps repeated validation feed
   assert.equal(typeof closeoutLatch?.closeoutRequiredForEvidenceHash, "string");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine treats appended duplicate audit rows as unchanged semantic evidence", async () => {
+test("ExecutionEngine treats appended duplicate audit rows as unchanged semantic evidence", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -573,7 +573,7 @@ contractTest("runtime.hermetic", "ExecutionEngine treats appended duplicate audi
   assert.equal(visits < 10, true);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine completes visible-todo finalize loops with documented residual gap", async () => {
+test("ExecutionEngine completes visible-todo finalize loops with documented residual gap", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -697,7 +697,7 @@ contractTest("runtime.hermetic", "ExecutionEngine completes visible-todo finaliz
   assert.equal(items[1]?.status, "blocked");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine does not complete residual-gap finalize loops on partial post-tool verification", async () => {
+test("ExecutionEngine does not complete residual-gap finalize loops on partial post-tool verification", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -788,7 +788,7 @@ contractTest("runtime.hermetic", "ExecutionEngine does not complete residual-gap
   assert.notEqual(finalData?.documentedResidualGapFinalized, true);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine pauses and asks for operator guidance on missing filesystem path loops", async () => {
+test("ExecutionEngine pauses and asks for operator guidance on missing filesystem path loops", async () => {
   const store = new WaitSettlementCapturingStore();
   const kestrel = new Kestrel({
     store,
@@ -859,7 +859,7 @@ contractTest("runtime.hermetic", "ExecutionEngine pauses and asks for operator g
   );
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine resumes loop visit stalls on high-confidence continue while clearing canonical wait state before the resumed step", async () => {
+test("ExecutionEngine resumes loop visit stalls on high-confidence continue while clearing canonical wait state before the resumed step", async () => {
   const store = new InMemorySessionStore();
   await seedLoopVisitStallSession(store, "loop-stall-resume-session", "loop.resume");
   let observedReact: Record<string, unknown> | undefined;
@@ -914,7 +914,7 @@ contractTest("runtime.hermetic", "ExecutionEngine resumes loop visit stalls on h
   assert.equal(readActiveWaitState(observedReact), undefined);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine replans exec loop stalls instead of replaying stale dispatch actions", async () => {
+test("ExecutionEngine replans exec loop stalls instead of replaying stale dispatch actions", async () => {
   const store = new InMemorySessionStore();
   await seedLoopVisitStallSession(store, "loop-stall-dispatch-resume-session", "agent.exec.dispatch");
   let observedReact: Record<string, unknown> | undefined;
@@ -963,7 +963,7 @@ contractTest("runtime.hermetic", "ExecutionEngine replans exec loop stalls inste
   });
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine does not auto-resume loop visit stalls on ambiguous replies", async () => {
+test("ExecutionEngine does not auto-resume loop visit stalls on ambiguous replies", async () => {
   const store = new InMemorySessionStore();
   await seedLoopVisitStallSession(store, "loop-stall-ambiguous-session", "loop.resume");
   let resumeStepCalled = false;
@@ -1004,7 +1004,7 @@ contractTest("runtime.hermetic", "ExecutionEngine does not auto-resume loop visi
   assert.equal(readActiveWaitState(react)?.source, "waitingFor");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine requires explicit loop-stall continuation wording", async () => {
+test("ExecutionEngine requires explicit loop-stall continuation wording", async () => {
   const store = new InMemorySessionStore();
   await seedLoopVisitStallSession(store, "loop-stall-non-continuation-session", "loop.resume");
   let resumeStepCalled = false;
@@ -1044,7 +1044,7 @@ contractTest("runtime.hermetic", "ExecutionEngine requires explicit loop-stall c
   assert.equal(readActiveWaitState(react)?.source, "waitingFor");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine loop-guards repeated validation loops when a concrete target exists", async () => {
+test("ExecutionEngine loop-guards repeated validation loops when a concrete target exists", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1102,7 +1102,7 @@ contractTest("runtime.hermetic", "ExecutionEngine loop-guards repeated validatio
   assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine checkpoints repeated no-progress dispatch control states", async () => {
+test("ExecutionEngine checkpoints repeated no-progress dispatch control states", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1226,7 +1226,7 @@ contractTest("runtime.hermetic", "ExecutionEngine checkpoints repeated no-progre
   );
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine does not treat pending tool batch advancement as no-progress dispatch looping", async () => {
+test("ExecutionEngine does not treat pending tool batch advancement as no-progress dispatch looping", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1299,7 +1299,7 @@ contractTest("runtime.hermetic", "ExecutionEngine does not treat pending tool ba
   assert.equal(nextIndex, 5);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine treats deliberator policy retries as distinct reasoning progress", async () => {
+test("ExecutionEngine treats deliberator policy retries as distinct reasoning progress", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1380,7 +1380,7 @@ contractTest("runtime.hermetic", "ExecutionEngine treats deliberator policy retr
   assert.equal(deliberatorVisits, 3);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine treats deliberator work item updates as no-action reasoning progress", async () => {
+test("ExecutionEngine treats deliberator work item updates as no-action reasoning progress", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1470,7 +1470,7 @@ contractTest("runtime.hermetic", "ExecutionEngine treats deliberator work item u
   assert.equal(deliberatorWorkItemVisits, 3);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine allows repeated identical react.route states until max-steps continuation", async () => {
+test("ExecutionEngine allows repeated identical react.route states until max-steps continuation", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1527,7 +1527,7 @@ contractTest("runtime.hermetic", "ExecutionEngine allows repeated identical reac
   assert.equal((output.waitFor?.metadata as Record<string, unknown>)?.reason, "max_steps_continuation");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine records normalized tool input in run events", async () => {
+test("ExecutionEngine records normalized tool input in run events", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1579,7 +1579,7 @@ contractTest("runtime.hermetic", "ExecutionEngine records normalized tool input 
   });
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine records decision model request telemetry with requested model metadata", async () => {
+test("ExecutionEngine records decision model request telemetry with requested model metadata", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1671,7 +1671,7 @@ contractTest("runtime.hermetic", "ExecutionEngine records decision model request
   assert.deepEqual(logSnapshot?.inputKeys, ["goal", "transcript"]);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine writes full model prompt dumps to disk when enabled", async () => {
+test("ExecutionEngine writes full model prompt dumps to disk when enabled", async () => {
   const previousHome = process.env.KESTREL_HOME;
   const previousDump = process.env.KESTREL_MODEL_PROMPT_DUMP;
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-model-prompt-dump-"));
@@ -1786,7 +1786,7 @@ contractTest("runtime.hermetic", "ExecutionEngine writes full model prompt dumps
   }
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine excludes maintenance model calls from the action model-call budget", async () => {
+test("ExecutionEngine excludes maintenance model calls from the action model-call budget", async () => {
   const store = new InMemorySessionStore();
   let modelCalls = 0;
   const kestrel = new Kestrel({
@@ -1848,7 +1848,7 @@ contractTest("runtime.hermetic", "ExecutionEngine excludes maintenance model cal
   );
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine refuses too-late deliberator model calls before emitting model start", async () => {
+test("ExecutionEngine refuses too-late deliberator model calls before emitting model start", async () => {
   const store = new InMemorySessionStore();
   let modelCalls = 0;
   const kestrel = new Kestrel({
@@ -1920,7 +1920,7 @@ contractTest("runtime.hermetic", "ExecutionEngine refuses too-late deliberator m
   );
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine clamps dev.shell.run timeout to preserve external closeout budget", async () => {
+test("ExecutionEngine clamps dev.shell.run timeout to preserve external closeout budget", async () => {
   const store = new InMemorySessionStore();
   let seenInput: Record<string, unknown> | undefined;
   const kestrel = new Kestrel({
@@ -1991,7 +1991,7 @@ contractTest("runtime.hermetic", "ExecutionEngine clamps dev.shell.run timeout t
   );
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine returns dev.shell.run deadline exhaustion as tool evidence without dispatch", async () => {
+test("ExecutionEngine returns dev.shell.run deadline exhaustion as tool evidence without dispatch", async () => {
   const store = new InMemorySessionStore();
   let toolCalls = 0;
   let observedResult: Record<string, unknown> | undefined;
@@ -2049,7 +2049,7 @@ contractTest("runtime.hermetic", "ExecutionEngine returns dev.shell.run deadline
   assert.equal(validated?.metadata?.requestedTimeoutMs, 240_000);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine canonicalizes active dev.process.write process identity for loop guard evidence", async () => {
+test("ExecutionEngine canonicalizes active dev.process.write process identity for loop guard evidence", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2112,7 +2112,7 @@ contractTest("runtime.hermetic", "ExecutionEngine canonicalizes active dev.proce
   );
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine does not treat active dev.process.read output collection as redundant retrieval pivot", async () => {
+test("ExecutionEngine does not treat active dev.process.read output collection as redundant retrieval pivot", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2264,7 +2264,7 @@ contractTest("runtime.hermetic", "ExecutionEngine does not treat active dev.proc
   assert.equal(output.errors.length, 0);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine does not persist or replay decisionTrace after emission", async () => {
+test("ExecutionEngine does not persist or replay decisionTrace after emission", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2325,7 +2325,7 @@ contractTest("runtime.hermetic", "ExecutionEngine does not persist or replay dec
   assert.equal("decisionTrace" in reactState, false);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated same-tool loop cycles", async () => {
+test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated same-tool loop cycles", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2451,14 +2451,14 @@ const assertRepeatedFilesystemInspectionLoopGuard = async (
     );
 };
 
-contractTest("runtime.hermetic", "ExecutionEngine loop-guards repeated filesystem inspection for fs.read_text", () =>
+test("ExecutionEngine loop-guards repeated filesystem inspection for fs.read_text", () =>
   assertRepeatedFilesystemInspectionLoopGuard(repeatedFilesystemInspectionCases[0]));
-contractTest("runtime.hermetic", "ExecutionEngine loop-guards repeated filesystem inspection for fs.list", () =>
+test("ExecutionEngine loop-guards repeated filesystem inspection for fs.list", () =>
   assertRepeatedFilesystemInspectionLoopGuard(repeatedFilesystemInspectionCases[1]));
-contractTest("runtime.hermetic", "ExecutionEngine loop-guards repeated filesystem inspection for fs.search_text", () =>
+test("ExecutionEngine loop-guards repeated filesystem inspection for fs.search_text", () =>
   assertRepeatedFilesystemInspectionLoopGuard(repeatedFilesystemInspectionCases[2]));
 
-contractTest("runtime.hermetic", "ExecutionEngine ignores volatile capability evidence metadata when enforcing repeated same-tool guard", async () => {
+test("ExecutionEngine ignores volatile capability evidence metadata when enforcing repeated same-tool guard", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2523,7 +2523,7 @@ contractTest("runtime.hermetic", "ExecutionEngine ignores volatile capability ev
   assert.equal(output.telemetry.stepsExecuted < 20, true);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine counts only loop decisions for repeated same-tool loop guard", async () => {
+test("ExecutionEngine counts only loop decisions for repeated same-tool loop guard", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2597,7 +2597,7 @@ contractTest("runtime.hermetic", "ExecutionEngine counts only loop decisions for
   assert.equal(output.telemetry.stepsExecuted >= 5, true);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine ignores legacy loop history entries without stepName for repeated same-tool guard", async () => {
+test("ExecutionEngine ignores legacy loop history entries without stepName for repeated same-tool guard", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2708,7 +2708,7 @@ contractTest("runtime.hermetic", "ExecutionEngine ignores legacy loop history en
   assert.equal(output.errors.length, 0);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine retains the generic exact-action guard for repeated identical extraction", async () => {
+test("ExecutionEngine retains the generic exact-action guard for repeated identical extraction", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2784,7 +2784,7 @@ contractTest("runtime.hermetic", "ExecutionEngine retains the generic exact-acti
   assert.equal(output.telemetry.stepsExecuted < 20, true);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine leaves varied extraction inputs to decision-policy admission", async () => {
+test("ExecutionEngine leaves varied extraction inputs to decision-policy admission", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2857,7 +2857,7 @@ contractTest("runtime.hermetic", "ExecutionEngine leaves varied extraction input
   assert.notEqual(output.errors[0]?.details?.guardType, "REPEATED_LOW_YIELD_WEB_EXTRACTION");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine completes with partial output instead of requesting continuation for stalled research", async () => {
+test("ExecutionEngine completes with partial output instead of requesting continuation for stalled research", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2992,7 +2992,7 @@ contractTest("runtime.hermetic", "ExecutionEngine completes with partial output 
   assert.match(String(finalOutput.message ?? ""), /low-yield retrieval/u);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine does not treat source.fetch as low-yield internet extraction churn", async () => {
+test("ExecutionEngine does not treat source.fetch as low-yield internet extraction churn", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3067,7 +3067,7 @@ contractTest("runtime.hermetic", "ExecutionEngine does not treat source.fetch as
   assert.notEqual(output.errors[0]?.details?.guardType, "REPEATED_LOW_YIELD_WEB_EXTRACTION");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine converts qualifying dispatch reuse stalls into research_stalled_partial completion", async () => {
+test("ExecutionEngine converts qualifying dispatch reuse stalls into research_stalled_partial completion", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3262,7 +3262,7 @@ contractTest("runtime.hermetic", "ExecutionEngine converts qualifying dispatch r
   assert.match(String(finalOutput.message ?? ""), /Evidence gap:/u);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine preserves dispatch stall failures when research stall thresholds are not met", async () => {
+test("ExecutionEngine preserves dispatch stall failures when research stall thresholds are not met", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3390,7 +3390,7 @@ contractTest("runtime.hermetic", "ExecutionEngine preserves dispatch stall failu
   assert.equal(output.errors[0]?.code, "REACT_DISPATCH_STALL_DETECTED");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine converts qualifying MAX_STEP_VISITS_EXCEEDED research loops into research_stalled_partial completion", async () => {
+test("ExecutionEngine converts qualifying MAX_STEP_VISITS_EXCEEDED research loops into research_stalled_partial completion", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3565,7 +3565,7 @@ contractTest("runtime.hermetic", "ExecutionEngine converts qualifying MAX_STEP_V
   assert.equal(converted?.metadata?.resolution, "research_stalled_partial");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine checkpoints repeated filesystem loop visit stalls with a concrete target", async () => {
+test("ExecutionEngine checkpoints repeated filesystem loop visit stalls with a concrete target", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3693,7 +3693,7 @@ contractTest("runtime.hermetic", "ExecutionEngine checkpoints repeated filesyste
   assert.equal(converted?.metadata?.toolName, "fs.read_text");
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine asks for narrowing on broad repeated loop visit stalls", async () => {
+test("ExecutionEngine asks for narrowing on broad repeated loop visit stalls", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3809,7 +3809,7 @@ contractTest("runtime.hermetic", "ExecutionEngine asks for narrowing on broad re
   assert.match(String(output.waitFor?.metadata?.question ?? ""), /narrower slice/u);
 });
 
-contractTest("runtime.hermetic", "ExecutionEngine preserves MAX_STEP_VISITS_EXCEEDED failures for non-research loops", async () => {
+test("ExecutionEngine preserves MAX_STEP_VISITS_EXCEEDED failures for non-research loops", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,

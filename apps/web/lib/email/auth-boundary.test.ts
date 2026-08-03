@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const authSource = fs.readFileSync(
@@ -10,7 +10,7 @@ const authSource = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "all Better Auth email flows use the centralized delivery service", () => {
+test("all Better Auth email flows use the centralized delivery service", () => {
   assert.match(authSource, /deliverTransactionalEmail/);
   for (const kind of [
     "verification",
@@ -23,7 +23,7 @@ contractTest("web.hermetic", "all Better Auth email flows use the centralized de
   assert.doesNotMatch(authSource, /new Resend|resend\.emails\.send/);
 });
 
-contractTest("web.hermetic", "auth boundary does not directly log sensitive fallback values", () => {
+test("auth boundary does not directly log sensitive fallback values", () => {
   assert.doesNotMatch(authSource, /console\.(?:log|info|warn|error)/);
   assert.doesNotMatch(authSource, /TEST_EMAIL/);
 });

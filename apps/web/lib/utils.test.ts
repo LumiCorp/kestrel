@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createAssistantFailureText,
@@ -8,9 +9,8 @@ import {
   sanitizeMessagesForModelInput,
 } from "./utils";
 import { ChatbotError } from "./errors";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
-contractTest("web.hermetic", "response errors preserve the current API error message", async () => {
+test("response errors preserve the current API error message", async () => {
   const error = await getErrorFromResponse(
     Response.json(
       {
@@ -28,7 +28,7 @@ contractTest("web.hermetic", "response errors preserve the current API error mes
   );
 });
 
-contractTest("web.hermetic", "response errors retain the legacy chatbot contract", async () => {
+test("response errors retain the legacy chatbot contract", async () => {
   const error = await getErrorFromResponse(
     Response.json(
       { code: "forbidden:chat", cause: "Thread access was denied." },
@@ -41,7 +41,7 @@ contractTest("web.hermetic", "response errors retain the legacy chatbot contract
   assert.equal(error.cause, "Thread access was denied.");
 });
 
-contractTest("web.hermetic", "response errors support nested public API errors", async () => {
+test("response errors support nested public API errors", async () => {
   const error = await getErrorFromResponse(
     Response.json(
       {
@@ -58,7 +58,7 @@ contractTest("web.hermetic", "response errors support nested public API errors",
   assert.equal(error.message, "Kestrel One is temporarily unavailable.");
 });
 
-contractTest("web.hermetic", "response errors fall back safely for invalid bodies", async () => {
+test("response errors fall back safely for invalid bodies", async () => {
   const error = await getErrorFromResponse(
     new Response("not json", { status: 502 })
   );
@@ -66,7 +66,7 @@ contractTest("web.hermetic", "response errors fall back safely for invalid bodie
   assert.equal(error.message, "Request failed with status 502.");
 });
 
-contractTest("web.hermetic", "assistant messages with approval-only tool state are persistable", () => {
+test("assistant messages with approval-only tool state are persistable", () => {
   assert.equal(
     isPersistableAssistantMessage({
       id: "msg_approval",
@@ -89,7 +89,7 @@ contractTest("web.hermetic", "assistant messages with approval-only tool state a
   );
 });
 
-contractTest("web.hermetic", "assistant messages with completed tool output are persistable", () => {
+test("assistant messages with completed tool output are persistable", () => {
   assert.equal(
     isPersistableAssistantMessage({
       id: "msg_output",
@@ -114,7 +114,7 @@ contractTest("web.hermetic", "assistant messages with completed tool output are 
   );
 });
 
-contractTest("web.hermetic", "assistant messages with in-progress tool state are persistable", () => {
+test("assistant messages with in-progress tool state are persistable", () => {
   assert.equal(
     isPersistableAssistantMessage({
       id: "msg_pending",
@@ -134,7 +134,7 @@ contractTest("web.hermetic", "assistant messages with in-progress tool state are
   );
 });
 
-contractTest("web.hermetic", "sanitizeMessagesForModelInput strips unresolved tool states", () => {
+test("sanitizeMessagesForModelInput strips unresolved tool states", () => {
   const sanitized = sanitizeMessagesForModelInput([
     {
       id: "assistant_pending",
@@ -181,7 +181,7 @@ contractTest("web.hermetic", "sanitizeMessagesForModelInput strips unresolved to
   assert.equal(sanitized[0].id, "assistant_resolved");
 });
 
-contractTest("web.hermetic", "ensureAssistantFailureVisibility appends a persisted failure note", () => {
+test("ensureAssistantFailureVisibility appends a persisted failure note", () => {
   const messages = ensureAssistantFailureVisibility(
     [
       {
@@ -216,7 +216,7 @@ contractTest("web.hermetic", "ensureAssistantFailureVisibility appends a persist
   );
 });
 
-contractTest("web.hermetic", "sanitizeMessagesForModelInput strips persisted failure notes", () => {
+test("sanitizeMessagesForModelInput strips persisted failure notes", () => {
   const sanitized = sanitizeMessagesForModelInput([
     {
       id: "assistant_failed",
@@ -233,7 +233,7 @@ contractTest("web.hermetic", "sanitizeMessagesForModelInput strips persisted fai
   assert.equal(sanitized.length, 0);
 });
 
-contractTest("web.hermetic", "ensureAssistantFailureVisibility creates an assistant failure message when needed", () => {
+test("ensureAssistantFailureVisibility creates an assistant failure message when needed", () => {
   const messages = ensureAssistantFailureVisibility(
     [
       {

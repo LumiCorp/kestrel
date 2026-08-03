@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -11,7 +12,6 @@ import {
 import { desktopHostOpenTool } from "../../tools/desktop/hostOpen.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
 import { resolveRuntimeProfileSelection } from "../../src/profile/runtimeProfile.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 class CapturingHostOpenService implements DesktopHostOpenServicePort {
@@ -22,7 +22,7 @@ class CapturingHostOpenService implements DesktopHostOpenServicePort {
   }
 }
 
-contractTest("runtime.hermetic", "desktop.host.open launches applications through the typed service", async () => {
+test("desktop.host.open launches applications through the typed service", async () => {
   const service = new CapturingHostOpenService();
   const output = await desktopHostOpenTool.createHandler({ desktopHostOpenService: service })({
     kind: "application",
@@ -33,7 +33,7 @@ contractTest("runtime.hermetic", "desktop.host.open launches applications throug
   assert.deepEqual(output, { status: "opened", kind: "application", application: "Safari" });
 });
 
-contractTest("runtime.hermetic", "desktop.host.open resolves existing workspace paths without returning absolute paths", async () => {
+test("desktop.host.open resolves existing workspace paths without returning absolute paths", async () => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-host-open-"));
   await mkdir(path.join(workspaceRoot, "reports"));
   await writeFile(path.join(workspaceRoot, "reports", "result.html"), "ok", "utf8");
@@ -62,7 +62,7 @@ contractTest("runtime.hermetic", "desktop.host.open resolves existing workspace 
   assert.doesNotMatch(JSON.stringify(output), new RegExp(workspaceRoot.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
 });
 
-contractTest("runtime.hermetic", "desktop.host.open accepts only HTTP(S) URLs", async () => {
+test("desktop.host.open accepts only HTTP(S) URLs", async () => {
   const service = new CapturingHostOpenService();
   const handler = desktopHostOpenTool.createHandler({ desktopHostOpenService: service });
 
@@ -75,7 +75,7 @@ contractTest("runtime.hermetic", "desktop.host.open accepts only HTTP(S) URLs", 
   await assert.rejects(handler({ kind: "url", url: "not a url" }), /absolute HTTP\(S\) URL/u);
 });
 
-contractTest("runtime.hermetic", "desktop.host.open rejects malformed applications and unsafe workspace paths", async () => {
+test("desktop.host.open rejects malformed applications and unsafe workspace paths", async () => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-host-open-"));
   const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-host-open-outside-"));
   await writeFile(path.join(outsideRoot, "secret.txt"), "secret", "utf8");
@@ -92,7 +92,7 @@ contractTest("runtime.hermetic", "desktop.host.open rejects malformed applicatio
   await assert.rejects(handler({ kind: "workspace_path", path: "escape.txt" }), /resolves outside/u);
 });
 
-contractTest("runtime.hermetic", "macOS host-open uses argument execution for every typed variant", async () => {
+test("macOS host-open uses argument execution for every typed variant", async () => {
   const calls: Array<{ file: string; args: readonly string[] }> = [];
   const service = new MacOsDesktopHostOpenService("darwin", async (file, args) => {
     calls.push({ file, args });
@@ -109,7 +109,7 @@ contractTest("runtime.hermetic", "macOS host-open uses argument execution for ev
   ]);
 });
 
-contractTest("runtime.hermetic", "host-open failures are typed and redact host targets", async () => {
+test("host-open failures are typed and redact host targets", async () => {
   const unsupported = new MacOsDesktopHostOpenService("linux", async () => {});
   await assert.rejects(
     unsupported.open({ kind: "application", application: "Safari" }),
@@ -133,12 +133,12 @@ contractTest("runtime.hermetic", "host-open failures are typed and redact host t
   );
 });
 
-contractTest("runtime.hermetic", "desktop.host.open is limited to Chat and Build and requires no approval", () => {
+test("desktop.host.open is limited to Chat and Build and requires no approval", () => {
   assert.deepEqual(desktopHostOpenTool.definition.capability?.allowedInteractionModes, ["chat", "build"]);
   assert.deepEqual(desktopHostOpenTool.definition.capability?.approvalCapabilities, undefined);
 });
 
-contractTest("runtime.hermetic", "Desktop Safari requests survive profile selection, catalog registration, and service dispatch", async () => {
+test("Desktop Safari requests survive profile selection, catalog registration, and service dispatch", async () => {
   const profile = resolveRuntimeProfileSelection({ shellKind: "desktop" });
   const service = new CapturingHostOpenService();
   const modelTools = defaultToolCatalog.toModelTools(profile.toolAllowlist);

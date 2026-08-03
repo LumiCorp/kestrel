@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createKestrelOneAgentResponseFromAgent,
@@ -10,7 +11,6 @@ import {
 import { writeKestrelReconnectStreamToUi } from "@/lib/agent/kestrel-reconnect-stream";
 import type { KestrelTerminalStatus } from "@kestrel-agents/ai-sdk";
 import type { Session } from "@/lib/auth-types";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const session = {
@@ -21,7 +21,7 @@ const session = {
   },
 } as Session;
 
-contractTest("web.hermetic", "Kestrel-One runtime stream proof aligns primary stream reconnect and persistence for completed runs", async () => {
+test("Kestrel-One runtime stream proof aligns primary stream reconnect and persistence for completed runs", async () => {
   const terminal = completedTerminal("Final runtime answer.", { message: "Structured runtime data." });
   const transcript: KestrelOneRunnerStreamEvent[] = [
     startedEvent(),
@@ -68,7 +68,7 @@ contractTest("web.hermetic", "Kestrel-One runtime stream proof aligns primary st
   );
 });
 
-contractTest("web.hermetic", "Kestrel-One runtime stream proof keeps failed and cancelled terminal text consistent", async () => {
+test("Kestrel-One runtime stream proof keeps failed and cancelled terminal text consistent", async () => {
   for (const scenario of [
     {
       terminal: failedTerminal("Runner failed for smoke proof."),

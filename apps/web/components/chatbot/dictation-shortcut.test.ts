@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   dictationShortcutLabel,
   isDictationShortcut,
@@ -19,7 +19,7 @@ function shortcutEvent(
   };
 }
 
-contractTest("web.hermetic", "accepts the platform primary modifier for dictation", () => {
+test("accepts the platform primary modifier for dictation", () => {
   assert.equal(
     isDictationShortcut(shortcutEvent({ metaKey: true, shiftKey: true })),
     true
@@ -30,7 +30,7 @@ contractTest("web.hermetic", "accepts the platform primary modifier for dictatio
   );
 });
 
-contractTest("web.hermetic", "rejects modified and ambiguous dictation shortcuts", () => {
+test("rejects modified and ambiguous dictation shortcuts", () => {
   assert.equal(isDictationShortcut(shortcutEvent({ ctrlKey: true })), false);
   assert.equal(
     isDictationShortcut(
@@ -46,7 +46,7 @@ contractTest("web.hermetic", "rejects modified and ambiguous dictation shortcuts
   );
 });
 
-contractTest("web.hermetic", "labels the shortcut using the current platform convention", () => {
+test("labels the shortcut using the current platform convention", () => {
   assert.equal(dictationShortcutLabel("MacIntel"), "⌘⇧M");
   assert.equal(dictationShortcutLabel("iPhone"), "⌘⇧M");
   assert.equal(dictationShortcutLabel("Win32"), "Ctrl+Shift+M");

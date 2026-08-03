@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
 
@@ -16,7 +17,6 @@ import {
   createDefaultLocalCoreRuntimeConfiguration,
   type LocalCoreRuntimeConfigurationV1,
 } from "../../src/localCore/runtimeConfiguration.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function credentialReader(
@@ -75,7 +75,7 @@ function configuredRuntime(): LocalCoreRuntimeConfigurationV1 {
   };
 }
 
-contractTest("runtime.hermetic", "inherit mode preserves inherited non-secret options independent of generation", async () => {
+test("inherit mode preserves inherited non-secret options independent of generation", async () => {
   const snapshot = await resolveLocalCoreRuntimeEnvironment({
     baseEnv: {
       OPENROUTER_BASE_URL: "http://127.0.0.1:4242/v1",
@@ -104,7 +104,7 @@ contractTest("runtime.hermetic", "inherit mode preserves inherited non-secret op
   assert.equal(snapshot.mcpEnv.TAVILY_BASE_URL, "https://legacy-tavily.example");
 });
 
-contractTest("runtime.hermetic", "replace mode removes omitted inherited non-secret options independent of generation", async () => {
+test("replace mode removes omitted inherited non-secret options independent of generation", async () => {
   const defaults = createDefaultLocalCoreRuntimeConfiguration();
   const snapshot = await resolveLocalCoreRuntimeEnvironment({
     baseEnv: {
@@ -130,7 +130,7 @@ contractTest("runtime.hermetic", "replace mode removes omitted inherited non-sec
   assert.equal(snapshot.mcpEnv.TAVILY_BASE_URL, undefined);
 });
 
-contractTest("runtime.hermetic", "Core credential values replace conflicting inherited provider and tool keys", async () => {
+test("Core credential values replace conflicting inherited provider and tool keys", async () => {
   const baseEnv: NodeJS.ProcessEnv = {
     HOME: "/tmp/kestrel-home",
     OPENROUTER_API_KEY: "inherited-openrouter",
@@ -179,7 +179,7 @@ contractTest("runtime.hermetic", "Core credential values replace conflicting inh
   });
 });
 
-contractTest("runtime.hermetic", "ambient credentials remain available while canonical options replace inherited values", async () => {
+test("ambient credentials remain available while canonical options replace inherited values", async () => {
   const inheritedOptions = Object.fromEntries(
     LOCAL_CORE_MANAGED_RUNTIME_OPTION_ENV_KEYS.map((key) => [
       key,
@@ -264,7 +264,7 @@ contractTest("runtime.hermetic", "ambient credentials remain available while can
   assert.equal(inspect(snapshot.mcpEnv).includes("[REDACTED]"), true);
 });
 
-contractTest("runtime.hermetic", "credential authority scrubs ambient secrets while retaining scoped canonical options", async () => {
+test("credential authority scrubs ambient secrets while retaining scoped canonical options", async () => {
   const snapshot = await resolveLocalCoreRuntimeEnvironment({
     baseEnv: {
       OPENROUTER_API_KEY: "ambient-openrouter",
@@ -327,7 +327,7 @@ contractTest("runtime.hermetic", "credential authority scrubs ambient secrets wh
   }
 });
 
-contractTest("runtime.hermetic", "selected provider model and URL options map to their exact environment contracts", async () => {
+test("selected provider model and URL options map to their exact environment contracts", async () => {
   const cases = [
     {
       provider: "openrouter",
@@ -391,7 +391,7 @@ contractTest("runtime.hermetic", "selected provider model and URL options map to
   }
 });
 
-contractTest("runtime.hermetic", "Core injects only the selected hosted provider credential", async () => {
+test("Core injects only the selected hosted provider credential", async () => {
   const credentials = {
     "provider.openrouter.default": "core-openrouter",
     "provider.openai.default": "core-openai",
@@ -417,7 +417,7 @@ contractTest("runtime.hermetic", "Core injects only the selected hosted provider
   assert.equal(snapshot.internetEnv.OPENAI_API_KEY, undefined);
 });
 
-contractTest("runtime.hermetic", "Core does not request or inject hosted-provider credentials for local providers", async () => {
+test("Core does not request or inject hosted-provider credentials for local providers", async () => {
   for (const modelProvider of ["ollama", "lmstudio"] as const) {
     const reads: LocalCoreCredentialId[] = [];
     const snapshot = await resolveLocalCoreRuntimeEnvironment({
@@ -451,7 +451,7 @@ contractTest("runtime.hermetic", "Core does not request or inject hosted-provide
   }
 });
 
-contractTest("runtime.hermetic", "Core captures base environment and credentials once for synchronous profile resolution", async () => {
+test("Core captures base environment and credentials once for synchronous profile resolution", async () => {
   const reads: LocalCoreCredentialId[] = [];
   const baseEnv: NodeJS.ProcessEnv = {
     HOME: "/captured/home",
@@ -494,7 +494,7 @@ contractTest("runtime.hermetic", "Core captures base environment and credentials
   assert.equal("then" in openRouter, false);
 });
 
-contractTest("runtime.hermetic", "Missing Core credentials remain absent after inherited keys are scrubbed", async () => {
+test("Missing Core credentials remain absent after inherited keys are scrubbed", async () => {
   const snapshot = await resolveLocalCoreRuntimeEnvironment({
     baseEnv: {
       OPENROUTER_API_KEY: "inherited-openrouter",
@@ -521,7 +521,7 @@ contractTest("runtime.hermetic", "Missing Core credentials remain absent after i
   }
 });
 
-contractTest("runtime.hermetic", "Core runtime snapshots are canonical, frozen, and redaction-aware", async () => {
+test("Core runtime snapshots are canonical, frozen, and redaction-aware", async () => {
   const baseEnv: NodeJS.ProcessEnv = {
     ZED: "last",
     OPENROUTER_API_KEY: "inherited-openrouter",
@@ -637,7 +637,7 @@ contractTest("runtime.hermetic", "Core runtime snapshots are canonical, frozen, 
   });
 });
 
-contractTest("runtime.hermetic", "Core runtime snapshots reject unresolved provider and model values", async () => {
+test("Core runtime snapshots reject unresolved provider and model values", async () => {
   await assert.rejects(
     resolveLocalCoreRuntimeEnvironment({
       baseEnv: {},
@@ -664,7 +664,7 @@ contractTest("runtime.hermetic", "Core runtime snapshots reject unresolved provi
   );
 });
 
-contractTest("runtime.hermetic", "Core materializes referenced MCP credentials without exposing them to other runtime views", async () => {
+test("Core materializes referenced MCP credentials without exposing them to other runtime views", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   await store.set("mcp.docs.header.default", "mcp-secret");
   const snapshot = await resolveLocalCoreRuntimeEnvironment({

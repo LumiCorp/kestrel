@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -15,7 +15,7 @@ const journal = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "Thread interactions establish one durable request ledger", () => {
+test("Thread interactions establish one durable request ledger", () => {
   assert.match(migration, /CREATE TABLE "thread_interactions"/u);
   assert.match(migration, /thread_interactions_request_idx/u);
   assert.match(migration, /thread_interactions_source_contract_check/u);
@@ -23,7 +23,7 @@ contractTest("web.hermetic", "Thread interactions establish one durable request 
   assert.match(migration, /"resumed_at" timestamp with time zone/u);
 });
 
-contractTest("web.hermetic", "existing hosted MCP checkpoints are projected into the shared ledger", () => {
+test("existing hosted MCP checkpoints are projected into the shared ledger", () => {
   assert.match(migration, /FROM "mcp_interaction_checkpoints" checkpoint/u);
   assert.match(migration, /'mcp_sampling'/u);
   assert.match(migration, /'mcp_elicitation'/u);
@@ -32,6 +32,6 @@ contractTest("web.hermetic", "existing hosted MCP checkpoints are projected into
   assert.match(migration, /ON CONFLICT \("request_id"\) DO NOTHING/u);
 });
 
-contractTest("web.hermetic", "Thread interaction migration is registered", () => {
+test("Thread interaction migration is registered", () => {
   assert.match(journal, /"tag": "0033_thread_interaction_contract"/u);
 });

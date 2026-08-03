@@ -3,7 +3,6 @@
   "mutations": [
     {
       "id": "turn-retry-lineage-loss",
-      "contractId": "web.turn-retry-lineage",
       "target": "apps/web/lib/turns/store.ts",
       "find": "sourceMessageId: input.sourceMessageId ?? null,",
       "replace": "sourceMessageId: null,",
@@ -13,7 +12,6 @@
     },
     {
       "id": "interaction-request-identity-bypass",
-      "contractId": "web.interaction-request-identity",
       "target": "apps/web/lib/turns/store.ts",
       "find": "interaction.eventType !== input.eventType",
       "replace": "interaction.eventType === input.eventType",
@@ -23,7 +21,6 @@
     },
     {
       "id": "turn-idempotency-bypass",
-      "contractId": "web.idempotency",
       "target": "apps/web/lib/turns/store.ts",
       "find": "eq(schema.threadTurns.idempotencyKey, input.idempotencyKey)",
       "replace": "eq(schema.threadTurns.idempotencyKey, `bypass-${input.idempotencyKey}`)",
@@ -33,7 +30,6 @@
     },
     {
       "id": "turn-partial-transaction-commit",
-      "contractId": "web.turn-transaction",
       "target": "apps/web/lib/turns/store.ts",
       "find": "return knowledgeDb.transaction(callback);",
       "replace": "return callback(knowledgeDb as unknown as TurnTransaction);",
@@ -43,7 +39,6 @@
     },
     {
       "id": "worker-claim-recovery-disabled",
-      "contractId": "web.worker-claim-recovery",
       "target": "apps/web/lib/turns/queue.ts",
       "find": "if (turn.status === \"running\") {",
       "replace": "if (false && turn.status === \"running\") {",
@@ -53,7 +48,6 @@
     },
     {
       "id": "runtime-replay-ordering-inversion",
-      "contractId": "runtime.replay-ordering",
       "target": "src/governance/replayBaseline.ts",
       "find": "if (nextIndex === -1) {",
       "replace": "if (nextIndex !== -1) {",
@@ -63,7 +57,6 @@
     },
     {
       "id": "cross-tenant-authorization-acceptance",
-      "contractId": "security.cross-tenant-authorization",
       "target": "cli/runner/RunnerHost.ts",
       "find": "profile.modelCredential.organizationId !== tenantId",
       "replace": "profile.modelCredential.organizationId === tenantId",
@@ -73,7 +66,6 @@
     },
     {
       "id": "stream-terminal-event-omission",
-      "contractId": "runtime.stream-terminal",
       "target": "packages/sdk/src/internal/LocalRunnerTransport.ts",
       "find": "if (streamSettled === false) {",
       "replace": "if (false) {",
@@ -83,7 +75,6 @@
     },
     {
       "id": "terminal-message-projection-omission",
-      "contractId": "runtime.terminal-message-delivery",
       "target": "apps/desktop/renderer/src/state.ts",
       "find": "if (runId !== undefined && thread.transcript.some((item) => terminalRunId(item) === runId)) {",
       "replace": "if (runId !== undefined) {",
@@ -93,7 +84,6 @@
     },
     {
       "id": "source-write-guard-fail-open",
-      "contractId": "runtime.source-write-guard",
       "target": "src/devshell/DevShellSupervisor.ts",
       "find": "if (hasUnauthorizedSourceWrites(result)) {",
       "replace": "if (false && hasUnauthorizedSourceWrites(result)) {",
@@ -103,7 +93,6 @@
     },
     {
       "id": "source-write-guard-internal-state-inclusion",
-      "contractId": "runtime.source-write-guard",
       "target": "src/devshell/DevShellSupervisor.ts",
       "find": "        join(workspaceRoot, \".kestrel\"),\n        join(workspaceRoot, \".local\", \"share\", \"kestrel\"),\n",
       "replace": "",
@@ -113,7 +102,6 @@
     },
     {
       "id": "local-core-authority-lock-theft",
-      "contractId": "local-core.authority-lock",
       "target": "src/localCore/api.ts",
       "find": "status.lock.lock.ownerPid === process.pid &&\n    status.lock.lock.authorityId === authorityId",
       "replace": "true &&\n    true",
@@ -123,7 +111,6 @@
     },
     {
       "id": "mission-control-drag-lifecycle-bypass",
-      "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
       "find": "if (action.targetPhase !== item.phase) {",
       "replace": "if (false) {",
@@ -133,7 +120,6 @@
     },
     {
       "id": "mission-control-item-version-bypass",
-      "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
       "find": "if (action.expectedItemVersion !== item.version) {",
       "replace": "if (false) {",
@@ -143,7 +129,6 @@
     },
     {
       "id": "mission-control-action-replay-bypass",
-      "contractId": "runtime.mission-control-lifecycle",
       "target": "src/missionControl/projectAuthority.ts",
       "find": "if (actualFingerprint !== expectedFingerprint) {",
       "replace": "if (false) {",
@@ -153,7 +138,6 @@
     },
     {
       "id": "mission-control-project-isolation-bypass",
-      "contractId": "runtime.mission-control-project-persistence",
       "target": "src/missionControl/projectAuthority.ts",
       "find": "if (projectId !== expectedProjectId) {",
       "replace": "if (false) {",
@@ -163,7 +147,6 @@
     },
     {
       "id": "mission-control-partial-transaction-commit",
-      "contractId": "runtime.mission-control-project-persistence",
       "target": "src/store/PostgresSessionStore.ts",
       "find": "    return this.withTransaction(operation);",
       "replace": "    return operation(this.db);",
@@ -173,7 +156,6 @@
     },
     {
       "id": "mission-control-attempt-identity-bypass",
-      "contractId": "runtime.mission-control-execution-authority",
       "target": "src/missionControl/executionAuthority.ts",
       "find": "    run.runId !== runId ||",
       "replace": "    false ||",
@@ -183,7 +165,6 @@
     },
     {
       "id": "mission-control-stale-event-bypass",
-      "contractId": "runtime.mission-control-execution-authority",
       "target": "src/missionControl/executionAuthority.ts",
       "find": "  return item.currentAttemptId !== attempt.id;",
       "replace": "  return false;",
@@ -193,7 +174,6 @@
     },
     {
       "id": "mission-control-premature-cancel-completion",
-      "contractId": "runtime.mission-control-execution-authority",
       "target": "src/missionControl/executionAuthority.ts",
       "find": "        status: \"cancelling\",",
       "replace": "        status: \"cancelled\",",
@@ -203,7 +183,6 @@
     },
     {
       "id": "mission-control-review-candidate-bypass",
-      "contractId": "runtime.mission-control-review-acceptance",
       "target": "src/missionControl/reviewAuthority.ts",
       "find": "    resolved.change.candidateFingerprint !== action.candidate.candidateFingerprint",
       "replace": "    false",
@@ -213,7 +192,6 @@
     },
     {
       "id": "mission-control-review-bundle-bypass",
-      "contractId": "runtime.mission-control-review-acceptance",
       "target": "src/missionControl/reviewAuthority.ts",
       "find": "  if (item.currentReviewBundleId !== expectedBundleId) {",
       "replace": "  if (false) {",
@@ -223,7 +201,6 @@
     },
     {
       "id": "mission-control-acceptance-record-omission",
-      "contractId": "runtime.mission-control-review-acceptance",
       "target": "src/missionControl/reviewAuthority.ts",
       "find": "        reviewDecisions: [...(item.reviewDecisions ?? []), acceptance],",
       "replace": "        reviewDecisions: item.reviewDecisions ?? [],",

@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const migration = fs.readFileSync(
@@ -13,7 +13,7 @@ const migration = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "App operation approvals bind runtime, capability, connection, resource, and payload", () => {
+test("App operation approvals bind runtime, capability, connection, resource, and payload", () => {
   assert.match(migration, /CREATE TABLE "app_operation_approvals"/u);
   for (const column of [
     "organization_id",
@@ -43,7 +43,7 @@ contractTest("web.hermetic", "App operation approvals bind runtime, capability, 
   assert.doesNotMatch(migration, /REFERENCES "organizations"|REFERENCES "users"/u);
 });
 
-contractTest("web.hermetic", "App operation approvals enforce a single-use evidence lifecycle", () => {
+test("App operation approvals enforce a single-use evidence lifecycle", () => {
   assert.match(
     migration,
     /'pending', 'approved', 'denied', 'consumed', 'expired'/u

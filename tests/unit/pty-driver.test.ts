@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.process", "pty driver abortPatterns fail fast with explicit reason", async () => {
+test("pty driver abortPatterns fail fast with explicit reason", async () => {
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const payload = {
     command: ["/bin/sh", "-lc", "printf 'boot\\n'; sleep 0.05; printf 'fatal marker\\n'; sleep 2"],
@@ -31,7 +31,7 @@ contractTest("runtime.process", "pty driver abortPatterns fail fast with explici
   assert.doesNotMatch(result.stderr, /Timed out waiting/u);
 });
 
-contractTest("runtime.process", "pty driver abortPatterns support maxMatches thresholds", async () => {
+test("pty driver abortPatterns support maxMatches thresholds", async () => {
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const payload = {
     command: ["/bin/sh", "-lc", "printf 'loop marker\\n'; sleep 0.05; printf 'loop marker\\n'; sleep 2"],
@@ -59,7 +59,7 @@ contractTest("runtime.process", "pty driver abortPatterns support maxMatches thr
   assert.match(result.stderr, /maxMatches=1/u);
 });
 
-contractTest("runtime.process", "pty driver honors readiness step timeouts", async () => {
+test("pty driver honors readiness step timeouts", async () => {
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const payload = {
     command: ["/bin/sh", "-lc", "sleep 2"],
@@ -80,7 +80,7 @@ contractTest("runtime.process", "pty driver honors readiness step timeouts", asy
   assert.match(result.stderr, /Timed out after 0\.1 seconds waiting for 'READY'/u);
 });
 
-contractTest("runtime.process", "pty driver reports readiness and rejects an unexpected child exit", async () => {
+test("pty driver reports readiness and rejects an unexpected child exit", async () => {
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const driver = startInteractivePythonDriver(driverPath, {
     command: ["/bin/sh", "-lc", "printf 'READY\\n'; sleep 0.05; exit 7"],
@@ -110,7 +110,7 @@ contractTest("runtime.process", "pty driver reports readiness and rejects an une
   assert.match(result.stderr, /TUI exited before termination was requested/u);
 });
 
-contractTest("runtime.process", "pty driver accepts explicit termination after readiness", async () => {
+test("pty driver accepts explicit termination after readiness", async () => {
   const driverPath = path.resolve(process.cwd(), "tests/ops/helpers/pty_driver.py");
   const driver = startInteractivePythonDriver(driverPath, {
     command: ["/bin/sh", "-lc", "trap '' INT; printf 'READY\\n'; while :; do sleep 1; done"],

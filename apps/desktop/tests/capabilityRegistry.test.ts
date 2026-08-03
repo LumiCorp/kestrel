@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -7,7 +8,6 @@ import {
 import { LOCAL_CORE_CREDENTIAL_IDS } from "../../../src/localCore/credentialStore.js";
 import { DEFAULT_MODEL_BY_PROVIDER } from "../../../src/profile/runtimeProfile.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
 function credentials(configured: string[] = []) {
@@ -39,7 +39,7 @@ function probes(): DesktopCapabilityProbeResults {
   };
 }
 
-contractTest("desktop.hermetic", "Desktop capability registry exposes stable coverage and honest readiness", () => {
+test("Desktop capability registry exposes stable coverage and honest readiness", () => {
   const view = resolveDesktopCapabilityView({
     settings: createDefaultDesktopSettings(),
     credentials: credentials(),
@@ -68,7 +68,7 @@ contractTest("desktop.hermetic", "Desktop capability registry exposes stable cov
   assert.equal(view.refreshedAt, "2026-07-20T12:00:00.000Z");
 });
 
-contractTest("desktop.hermetic", "Desktop capability registry reports configured families without serializing secrets", () => {
+test("Desktop capability registry reports configured families without serializing secrets", () => {
   const secret = "credential-that-must-not-cross-the-boundary";
   const settings = {
     ...createDefaultDesktopSettings(),
@@ -102,7 +102,7 @@ contractTest("desktop.hermetic", "Desktop capability registry reports configured
   );
 });
 
-contractTest("desktop.hermetic", "Desktop capability registry does not claim discovered MCP is active", () => {
+test("Desktop capability registry does not claim discovered MCP is active", () => {
   const nextProbes = probes();
   nextProbes.mcpServers = [{
     id: "example",
@@ -124,7 +124,7 @@ contractTest("desktop.hermetic", "Desktop capability registry does not claim dis
   assert.match(mcp?.detail ?? "", /available to import and verify/u);
 });
 
-contractTest("desktop.hermetic", "Desktop capability registry reports only managed verified MCP as active", () => {
+test("Desktop capability registry reports only managed verified MCP as active", () => {
   const nextProbes = probes();
   nextProbes.mcpServers = [{
     id: "managed", name: "Managed", transport: "http", url: "https://mcp.example.test",
@@ -137,7 +137,7 @@ contractTest("desktop.hermetic", "Desktop capability registry reports only manag
   assert.deepEqual(mcp?.toolNames, ["lookup"]);
 });
 
-contractTest("desktop.hermetic", "Desktop capability registry uses live local-model readiness and useful defaults", () => {
+test("Desktop capability registry uses live local-model readiness and useful defaults", () => {
   const nextProbes = probes();
   nextProbes.localModelProviders.ollama = true;
   const view = resolveDesktopCapabilityView({

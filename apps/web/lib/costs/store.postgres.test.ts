@@ -1,12 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
-contractTest(
-  "web.postgres",
+test(
   "cost pricing preserves precedence, effective dates, revisions, and retry idempotency",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");

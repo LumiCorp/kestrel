@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -15,7 +15,7 @@ const journal = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "account deletion requests require confirmation and preserve status evidence", () => {
+test("account deletion requests require confirmation and preserve status evidence", () => {
   assert.match(
     migration,
     /CREATE TABLE IF NOT EXISTS "account_deletion_requests"/u
@@ -26,6 +26,6 @@ contractTest("web.hermetic", "account deletion requests require confirmation and
   assert.match(migration, /ON DELETE cascade/u);
 });
 
-contractTest("web.hermetic", "account deletion request migration is registered", () => {
+test("account deletion request migration is registered", () => {
   assert.match(journal, /"tag": "0024_account_deletion_requests"/u);
 });

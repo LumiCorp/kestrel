@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -11,10 +12,9 @@ import {
   closeLocalCoreStore,
   ensureLocalCoreStore,
 } from "../../src/localCore/store.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Local Core protocol journal replays ordered SQL events across store recreation", async () => {
+test("Local Core protocol journal replays ordered SQL events across store recreation", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-journal-"));
   try {
     const firstHandle = await ensureLocalCoreStore({ homePath: home });
@@ -49,7 +49,7 @@ contractTest("runtime.hermetic", "Local Core protocol journal replays ordered SQ
   }
 });
 
-contractTest("runtime.hermetic", "Local Core protocol journal rejects an unknown durable cursor", async () => {
+test("Local Core protocol journal rejects an unknown durable cursor", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-journal-cursor-"));
   try {
     const handle = await ensureLocalCoreStore({ homePath: home });
@@ -75,7 +75,7 @@ contractTest("runtime.hermetic", "Local Core protocol journal rejects an unknown
   }
 });
 
-contractTest("runtime.hermetic", "Local Core protocol journal expires cursors from an older execution protocol", async () => {
+test("Local Core protocol journal expires cursors from an older execution protocol", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-journal-version-"));
   try {
     const handle = await ensureLocalCoreStore({ homePath: home });
@@ -110,7 +110,7 @@ contractTest("runtime.hermetic", "Local Core protocol journal expires cursors fr
   }
 });
 
-contractTest("runtime.hermetic", "Local Core protocol journal rejects unknown event discriminants during replay", async () => {
+test("Local Core protocol journal rejects unknown event discriminants during replay", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-journal-event-type-"));
   try {
     const handle = await ensureLocalCoreStore({ homePath: home });
@@ -134,7 +134,7 @@ contractTest("runtime.hermetic", "Local Core protocol journal rejects unknown ev
   }
 });
 
-contractTest("runtime.hermetic", "Local Core protocol journal rejects malformed event envelopes during replay", async () => {
+test("Local Core protocol journal rejects malformed event envelopes during replay", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-journal-envelope-"));
   try {
     const handle = await ensureLocalCoreStore({ homePath: home });

@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -12,7 +12,7 @@ const migration = fs.readFileSync(
 );
 const schemaSource = fs.readFileSync(path.join(root, "drizzle/schema.ts"), "utf8");
 
-contractTest("web.hermetic", "mobile v2 migration keeps queue, branch, activity, and read state durable", () => {
+test("mobile v2 migration keeps queue, branch, activity, and read state durable", () => {
   assert.match(migration, /ADD COLUMN "queue_ordinal"/u);
   assert.match(migration, /ADD COLUMN "output_message_id"/u);
   assert.match(migration, /CREATE TABLE "thread_turn_presentations"/u);
@@ -22,12 +22,12 @@ contractTest("web.hermetic", "mobile v2 migration keeps queue, branch, activity,
   assert.match(migration, /jsonb_array_length\("milestones"\) <= 8/u);
 });
 
-contractTest("web.hermetic", "mobile v2 migration is journaled atomically", () => {
+test("mobile v2 migration is journaled atomically", () => {
   const journal = fs.readFileSync(path.join(root, "lib/db/migrations/meta/_journal.json"), "utf8");
   assert.match(journal, /"tag": "0036_mobile_v2_thread_experience"/u);
 });
 
-contractTest("web.hermetic", "thread branch columns remain scoped to Threads", () => {
+test("thread branch columns remain scoped to Threads", () => {
   const projectsSchema = schemaSource.slice(
     schemaSource.indexOf("export const projects ="),
     schemaSource.indexOf("export const projectMembers =")

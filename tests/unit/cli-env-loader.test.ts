@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { loadShellAndDotEnv, parseDotEnv } from "../../cli/config/EnvLoader.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "parseDotEnv parses quoted and unquoted values", () => {
+test("parseDotEnv parses quoted and unquoted values", () => {
   const parsed = parseDotEnv([
     "OPENROUTER_MODEL=openai/gpt-5.2",
     'OPENROUTER_BASE_URL="https://openrouter.ai"',
@@ -19,7 +19,7 @@ contractTest("runtime.hermetic", "parseDotEnv parses quoted and unquoted values"
   assert.equal(parsed.OPENROUTER_SITE_URL, "https://example.test");
 });
 
-contractTest("runtime.hermetic", "loadShellAndDotEnv keeps existing shell values by default", async () => {
+test("loadShellAndDotEnv keeps existing shell values by default", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-env-loader-default-"));
   await writeFile(
     path.join(tempDir, ".env"),
@@ -45,7 +45,7 @@ contractTest("runtime.hermetic", "loadShellAndDotEnv keeps existing shell values
   }
 });
 
-contractTest("runtime.hermetic", "loadShellAndDotEnv prefers .env for selected keys", async () => {
+test("loadShellAndDotEnv prefers .env for selected keys", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-env-loader-prefer-"));
   await writeFile(
     path.join(tempDir, ".env"),

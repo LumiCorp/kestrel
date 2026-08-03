@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -12,10 +13,9 @@ import os from "node:os";
 import path from "node:path";
 import { WorkspaceBackupImportRegistry } from "../src/backup-imports.js";
 import { WorkspaceRequestError } from "../src/security.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("services.process", "chunked backup import verifies and restores an archive", async () => {
+test("chunked backup import verifies and restores an archive", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-import-test-"));
   const source = path.join(root, "source");
   const target = path.join(root, "target");
@@ -41,7 +41,7 @@ contractTest("services.process", "chunked backup import verifies and restores an
   }
 });
 
-contractTest("services.process", "chunked backup import rejects out-of-order content", async () => {
+test("chunked backup import rejects out-of-order content", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-import-test-"));
   try {
     const registry = new WorkspaceBackupImportRegistry(root);

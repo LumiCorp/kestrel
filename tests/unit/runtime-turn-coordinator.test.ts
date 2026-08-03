@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
@@ -19,10 +20,9 @@ import type {
   SubmitTurnInput,
   ThreadRuntimePort,
 } from "../../src/orchestration/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService compiles and submits ordinary thread turns", async () => {
+test("RuntimeTurnCoordinatorService compiles and submits ordinary thread turns", async () => {
   const submitted: SubmitTurnInput[] = [];
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
@@ -90,7 +90,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService compiles and sub
   ]);
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService forwards attachments on ordinary thread turns", async () => {
+test("RuntimeTurnCoordinatorService forwards attachments on ordinary thread turns", async () => {
   const submitted: SubmitTurnInput[] = [];
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
@@ -151,7 +151,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService forwards attachm
   ]);
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService delegates blocked resumes with actor and attachments", async () => {
+test("RuntimeTurnCoordinatorService delegates blocked resumes with actor and attachments", async () => {
   let resumedActor: RuntimeTurnActor | undefined;
   let resumedAttachments: ResumeBlockedTurnInput["attachments"];
   let resumedRuntimeTurn: ResumeBlockedTurnInput["runtimeTurn"];
@@ -230,7 +230,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService delegates blocke
   assert.equal(resumedRuntimeTurn?.actor?.actorId, "service-1");
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService performs exactly one supported recovery continuation", async () => {
+test("RuntimeTurnCoordinatorService performs exactly one supported recovery continuation", async () => {
   const directEvents: RuntimeTurnInput["eventType"][] = [];
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
@@ -271,7 +271,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService performs exactly
   assert.deepEqual(directEvents, ["user.message", "system.meta_reasoning"]);
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService preserves turn context for recovery continuations", async () => {
+test("RuntimeTurnCoordinatorService preserves turn context for recovery continuations", async () => {
   const events: RuntimeEvent[] = [];
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
@@ -334,7 +334,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService preserves turn c
   });
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService leaves unsupported waits waiting", async () => {
+test("RuntimeTurnCoordinatorService leaves unsupported waits waiting", async () => {
   let directRuns = 0;
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
@@ -370,7 +370,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService leaves unsupport
   assert.equal(directRuns, 1);
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService uses direct run when no thread runtime is configured", async () => {
+test("RuntimeTurnCoordinatorService uses direct run when no thread runtime is configured", async () => {
   let directEvent: RuntimeEvent | undefined;
   let directRunId: string | undefined;
   const coordinator = new RuntimeTurnCoordinatorService({
@@ -405,7 +405,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService uses direct run 
   assert.equal(directEvent?.payload.message, "hello");
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService reads finalized payload and builds operator affordance from final turn", async () => {
+test("RuntimeTurnCoordinatorService reads finalized payload and builds operator affordance from final turn", async () => {
   let affordanceTurn: RuntimeTurnInput | undefined;
   let affordanceSession: SessionRecord | undefined;
   let statusLookups = 0;
@@ -463,7 +463,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService reads finalized 
   assert.equal(statusLookups, 1);
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService preserves an explicit null finalized payload", async () => {
+test("RuntimeTurnCoordinatorService preserves an explicit null finalized payload", async () => {
   let persistedPayloadReads = 0;
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
@@ -512,7 +512,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService preserves an exp
   assert.equal(persistedPayloadReads, 0);
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService builds source-owned operator affordance by default", async () => {
+test("RuntimeTurnCoordinatorService builds source-owned operator affordance by default", async () => {
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
       defaultInteractionMode: "chat",
@@ -581,7 +581,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService builds source-ow
   assert.equal(affordance.assembly?.threadId, "thread-main");
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService lets an explicit affordance hook suppress the default", async () => {
+test("RuntimeTurnCoordinatorService lets an explicit affordance hook suppress the default", async () => {
   const coordinator = new RuntimeTurnCoordinatorService({
     defaults: {
       defaultInteractionMode: "chat",
@@ -613,7 +613,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService lets an explicit
   assert.equal(result.operatorAffordance, undefined);
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService syncs workspace scratchpad after a turn", async () => {
+test("RuntimeTurnCoordinatorService syncs workspace scratchpad after a turn", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-scratchpad-"));
   const workspaceRoot = path.join(root, "workspace");
   const scratchpadPath = path.join(workspaceRoot, ".kestrel", "memory", "current.md");
@@ -689,7 +689,7 @@ contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService syncs workspace 
   assert.match(raw, /Continue after operator approval\./u);
 });
 
-contractTest("runtime.hermetic", "RuntimeTurnCoordinatorService stores default workspace scratchpad under Kestrel home", async () => {
+test("RuntimeTurnCoordinatorService stores default workspace scratchpad under Kestrel home", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-scratchpad-home-"));
   const workspaceRoot = path.join(root, "workspace");
   const kestrelHome = path.join(root, "home");

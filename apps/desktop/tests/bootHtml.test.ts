@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { startDesktopStartup } from "../src/startupSequence.js";
 
 
@@ -10,7 +10,7 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const bootHtmlPath = path.join(testDir, "..", "static", "boot.html");
 const mainPath = path.join(testDir, "..", "src", "main.ts");
 
-contractTest("desktop.hermetic", "boot screen exposes Reset Runtime Store only for sqlite init failures", async () => {
+test("boot screen exposes Reset Runtime Store only for sqlite init failures", async () => {
   const source = await readFile(bootHtmlPath, "utf8");
 
   assert.match(source, /id="reset-store"/u);
@@ -32,15 +32,14 @@ contractTest("desktop.hermetic", "boot screen exposes Reset Runtime Store only f
   assert.doesNotMatch(source, /repair_database/u);
 });
 
-contractTest("desktop.hermetic", "Desktop creates a visible boot window before runtime startup", async () => {
+test("Desktop creates a visible boot window before runtime startup", async () => {
   const source = await readFile(mainPath, "utf8");
 
   assert.match(source, /backgroundColor:\s*"#101315",\s*show:\s*true,/su);
   assert.doesNotMatch(source, /window\.on\("ready-to-show"/u);
 });
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop shows the boot window before persisted-state startup can settle",
   async () => {
     let resolveServices: (() => void) | undefined;
@@ -67,8 +66,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "desktop.hermetic",
+test(
   "Desktop reports pre-renderer startup failures without closing the boot surface",
   async () => {
     const events: string[] = [];

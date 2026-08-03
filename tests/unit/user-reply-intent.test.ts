@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest, ModelResponse } from "../../src/kestrel/contracts/model-io.js";
@@ -9,7 +10,6 @@ import {
   readUserReplyIntent,
   renderUserReplyIntentPrompt,
 } from "../../src/runtime/userReplyIntent.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function modelIntent(output: Record<string, unknown>) {
@@ -24,7 +24,7 @@ function modelIntent(output: Record<string, unknown>) {
   });
 }
 
-contractTest("runtime.hermetic", "parseExplicitModeCommand preserves deterministic slash mode commands", () => {
+test("parseExplicitModeCommand preserves deterministic slash mode commands", () => {
   assert.deepEqual(parseExplicitModeCommand("/mode plan"), { interactionMode: "plan" });
   assert.deepEqual(parseExplicitModeCommand("/mode build"), { interactionMode: "build" });
   assert.equal(parseExplicitModeCommand("/mode build guarded"), undefined);
@@ -36,7 +36,7 @@ contractTest("runtime.hermetic", "parseExplicitModeCommand preserves determinist
   assert.equal(parseExplicitModeCommand("switch to act safe"), undefined);
 });
 
-contractTest("runtime.hermetic", "classifyUserReplyIntent returns continuation model intent for natural replies and misspellings", async () => {
+test("classifyUserReplyIntent returns continuation model intent for natural replies and misspellings", async () => {
   for (const reply of ["continue", "proceed", "contnue", "yes proceed", "go ahead with pass 1"]) {
     const intent = await classifyUserReplyIntent({
       reply,
@@ -54,7 +54,7 @@ contractTest("runtime.hermetic", "classifyUserReplyIntent returns continuation m
   }
 });
 
-contractTest("runtime.hermetic", "classifyUserReplyIntent returns model-backed mode switch intent", async () => {
+test("classifyUserReplyIntent returns model-backed mode switch intent", async () => {
   for (const reply of ["safe mode is fine", "yes switch me"]) {
     const intent = await classifyUserReplyIntent({
       reply,
@@ -75,7 +75,7 @@ contractTest("runtime.hermetic", "classifyUserReplyIntent returns model-backed m
   }
 });
 
-contractTest("runtime.hermetic", "readHighConfidenceApprovalDecision accepts only high-confidence approval decisions", () => {
+test("readHighConfidenceApprovalDecision accepts only high-confidence approval decisions", () => {
   assert.equal(
     readHighConfidenceApprovalDecision(readUserReplyIntent({
       kind: "approval_decision",
@@ -102,7 +102,7 @@ contractTest("runtime.hermetic", "readHighConfidenceApprovalDecision accepts onl
   );
 });
 
-contractTest("runtime.hermetic", "classifyUserReplyIntent sends approval wait context to the classifier model", async () => {
+test("classifyUserReplyIntent sends approval wait context to the classifier model", async () => {
   let captured: ModelRequest | undefined;
   const intent = await classifyUserReplyIntent({
     reply: "yes, approve that write",
@@ -171,7 +171,7 @@ contractTest("runtime.hermetic", "classifyUserReplyIntent sends approval wait co
   assert.match(userMessage as string, /"userReply":"yes, approve that write"/u);
 });
 
-contractTest("runtime.hermetic", "renderUserReplyIntentPrompt wraps wait context and reply in a classifier packet", () => {
+test("renderUserReplyIntentPrompt wraps wait context and reply in a classifier packet", () => {
   const prompt = renderUserReplyIntentPrompt({
     waitFor: {
       eventType: "user.reply",
@@ -192,7 +192,7 @@ contractTest("runtime.hermetic", "renderUserReplyIntentPrompt wraps wait context
   assert.match(prompt, /\}\n<\/context_json>$/u);
 });
 
-contractTest("runtime.hermetic", "classifyUserReplyIntent does not resume ambiguous replies", async () => {
+test("classifyUserReplyIntent does not resume ambiguous replies", async () => {
   for (const reply of ["maybe", "what happens next?", "not sure"]) {
     const intent = await classifyUserReplyIntent({
       reply,

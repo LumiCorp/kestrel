@@ -1,5 +1,5 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 import {
   DAILY_BACKUP_MAX_ATTEMPTS,
   DAILY_BACKUP_RETRY_LIMIT,
@@ -9,8 +9,7 @@ import {
   workspaceDailyBackupIdempotencyKey,
 } from "./daily-backup-contract";
 
-contractTest(
-  "web.hermetic",
+test(
   "daily Workspace backups have one deterministic operation identity per UTC day",
   () => {
     const morning = new Date("2026-07-24T00:00:01.000Z");
@@ -31,8 +30,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "daily Workspace backups have five total queue attempts",
   () => {
     assert.equal(DAILY_BACKUP_MAX_ATTEMPTS, 5);
@@ -46,8 +44,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "a failed daily backup remains the one terminal operation for its Workspace day",
   () => {
     assert.equal(
@@ -67,8 +64,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "daily Workspace backup identity changes at the UTC day boundary",
   () => {
     assert.notEqual(

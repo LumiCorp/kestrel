@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveLanguageModelTransport } from "./model-transport";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "tool-loop calls use chat transport for openrouter", () => {
+test("tool-loop calls use chat transport for openrouter", () => {
   assert.equal(
     resolveLanguageModelTransport({
       provider: "openrouter",
@@ -13,7 +13,7 @@ contractTest("web.hermetic", "tool-loop calls use chat transport for openrouter"
   );
 });
 
-contractTest("web.hermetic", "default calls keep responses transport for openrouter", () => {
+test("default calls keep responses transport for openrouter", () => {
   assert.equal(
     resolveLanguageModelTransport({
       provider: "openrouter",
@@ -23,7 +23,7 @@ contractTest("web.hermetic", "default calls keep responses transport for openrou
   );
 });
 
-contractTest("web.hermetic", "tool-loop calls keep responses transport for openai", () => {
+test("tool-loop calls keep responses transport for openai", () => {
   assert.equal(
     resolveLanguageModelTransport({
       provider: "openai",

@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const routeSource = fs.readFileSync(
@@ -13,7 +13,7 @@ const routeSource = fs.readFileSync(
   "utf8"
 );
 
-contractTest("web.hermetic", "email tests authenticate before provider or state access", () => {
+test("email tests authenticate before provider or state access", () => {
   const authentication = routeSource.indexOf("await requireAdmin()");
   const configurationRead = routeSource.indexOf("await resolveEmailConfig()");
   const providerAttempt = routeSource.indexOf("await sendEmailIntegrationTest");
@@ -23,14 +23,14 @@ contractTest("web.hermetic", "email tests authenticate before provider or state 
   assert.ok(authentication < providerAttempt);
 });
 
-contractTest("web.hermetic", "email test failures require authenticated delivery authority before mutation", () => {
+test("email test failures require authenticated delivery authority before mutation", () => {
   assert.match(
     routeSource,
     /actorUserId\s*&&\s*deliveryAttempted\s*&&\s*testedConfigFingerprint\s*&&\s*testedConfigRevision/
   );
 });
 
-contractTest("web.hermetic", "email test audit failure cannot turn committed readiness into failure", () => {
+test("email test audit failure cannot turn committed readiness into failure", () => {
   const resultWrite = routeSource.indexOf("await recordEmailTestResult");
   const audit = routeSource.indexOf("await logAdminEvent", resultWrite);
   const isolatedAuditFailure = routeSource.indexOf(".catch(() =>", audit);

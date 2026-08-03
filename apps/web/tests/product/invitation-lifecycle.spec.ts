@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
-import { contractTest } from "../contract-test.js";
 
 const databaseUrl = process.env.KESTREL_PRODUCT_DATABASE_URL;
 if (!databaseUrl) {
@@ -23,8 +22,7 @@ test.afterAll(async () => {
   await sql.end({ timeout: 0 });
 });
 
-contractTest(
-  "web.organization-invitations",
+test(
   "new recipients create an invited account, explicitly join, and land in the organization",
   async ({ page }) => {
     const email = uniqueEmail("new-recipient");
@@ -45,8 +43,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.organization-invitations",
+test(
   "existing invited users sign in through the invitation link before joining",
   async ({ page }) => {
     const email = uniqueEmail("existing-recipient");
@@ -77,8 +74,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.organization-invitations",
+test(
   "wrong accounts, declines, expired invitations, and revoked invitations do not create membership",
   async ({ page }) => {
     const email = uniqueEmail("recipient");

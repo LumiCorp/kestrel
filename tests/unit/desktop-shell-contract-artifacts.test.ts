@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const sourceDeclarationPath = path.join(repoRoot, "src", "desktopShell", "contracts.d.ts");
 
-contractTest("runtime.hermetic", "desktop shell source declarations include stopping runs and pending actions", async () => {
+test("desktop shell source declarations include stopping runs and pending actions", async () => {
   const sourceDeclaration = await readFile(sourceDeclarationPath, "utf8");
 
   assert.match(sourceDeclaration, /DesktopManagedProjectRunStatus = "running" \| "stopping" \| "completed" \| "failed" \| "stopped"/);

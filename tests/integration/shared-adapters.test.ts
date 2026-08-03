@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelResponse, ModelToolSpec } from "../../src/kestrel/contracts/model-io.js";
@@ -11,7 +12,6 @@ import {
   createOpenRouterModelGatewayFromEnv,
 } from "../../src/index.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const REQUIRED_TOOL: ModelToolSpec = {
@@ -58,7 +58,7 @@ const UNION_TOOL: ModelToolSpec = {
   },
 };
 
-contractTest("runtime.process", "createOpenRouterModelGatewayFromEnv validates required OPENROUTER_API_KEY", () => {
+test("createOpenRouterModelGatewayFromEnv validates required OPENROUTER_API_KEY", () => {
   assert.throws(
     () =>
       createOpenRouterModelGatewayFromEnv({
@@ -68,7 +68,7 @@ contractTest("runtime.process", "createOpenRouterModelGatewayFromEnv validates r
   );
 });
 
-contractTest("runtime.process", "createOpenRouterModelGatewayFromEnv calls chat endpoint by default", async () => {
+test("createOpenRouterModelGatewayFromEnv calls chat endpoint by default", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
 
   const gateway = createOpenRouterModelGatewayFromEnv({
@@ -116,7 +116,7 @@ contractTest("runtime.process", "createOpenRouterModelGatewayFromEnv calls chat 
   assert.equal(response.provider.requestId, "req_chat_1");
 });
 
-contractTest("runtime.process", "createOpenRouterModelGatewayFromEnv preserves required tool choice", async () => {
+test("createOpenRouterModelGatewayFromEnv preserves required tool choice", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
 
   const gateway = createOpenRouterModelGatewayFromEnv({
@@ -164,7 +164,7 @@ contractTest("runtime.process", "createOpenRouterModelGatewayFromEnv preserves r
   assert.equal(Array.isArray(requests[0]?.body.tools), true);
 });
 
-contractTest("runtime.process", "createOpenRouterModelGatewayFromEnv supports responses endpoint override", async () => {
+test("createOpenRouterModelGatewayFromEnv supports responses endpoint override", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
 
   const gateway = createOpenRouterModelGatewayFromEnv({
@@ -205,7 +205,7 @@ contractTest("runtime.process", "createOpenRouterModelGatewayFromEnv supports re
   assert.equal(response.output?.ok, true);
 });
 
-contractTest("runtime.process", "createOpenAiModelGatewayFromEnv validates required OPENAI_API_KEY", () => {
+test("createOpenAiModelGatewayFromEnv validates required OPENAI_API_KEY", () => {
   assert.throws(
     () =>
       createOpenAiModelGatewayFromEnv({
@@ -215,7 +215,7 @@ contractTest("runtime.process", "createOpenAiModelGatewayFromEnv validates requi
   );
 });
 
-contractTest("runtime.process", "createOllamaModelGatewayFromEnv calls the local OpenAI-compatible endpoint without auth", async () => {
+test("createOllamaModelGatewayFromEnv calls the local OpenAI-compatible endpoint without auth", async () => {
   const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
 
   const gateway = createOllamaModelGatewayFromEnv({
@@ -258,7 +258,7 @@ contractTest("runtime.process", "createOllamaModelGatewayFromEnv calls the local
   assert.equal(response.output?.ok, true);
 });
 
-contractTest("runtime.process", "createOllamaModelGatewayFromEnv falls back to json_object for schema-constrained JSON requests", async () => {
+test("createOllamaModelGatewayFromEnv falls back to json_object for schema-constrained JSON requests", async () => {
   const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
 
   const gateway = createOllamaModelGatewayFromEnv({
@@ -318,7 +318,7 @@ contractTest("runtime.process", "createOllamaModelGatewayFromEnv falls back to j
   assert.equal(response.output?.ok, true);
 });
 
-contractTest("runtime.process", "createLmStudioModelGatewayFromEnv uses the LM Studio default local endpoint", async () => {
+test("createLmStudioModelGatewayFromEnv uses the LM Studio default local endpoint", async () => {
   const requests: string[] = [];
 
   const gateway = createLmStudioModelGatewayFromEnv({
@@ -353,7 +353,7 @@ contractTest("runtime.process", "createLmStudioModelGatewayFromEnv uses the LM S
   assert.equal(response.output?.ok, true);
 });
 
-contractTest("runtime.process", "createOpenAiModelGatewayFromEnv calls chat completions with structured output", async () => {
+test("createOpenAiModelGatewayFromEnv calls chat completions with structured output", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
 
   const gateway = createOpenAiModelGatewayFromEnv({
@@ -450,7 +450,7 @@ contractTest("runtime.process", "createOpenAiModelGatewayFromEnv calls chat comp
   assert.equal(response.output?.ok, true);
 });
 
-contractTest("runtime.process", "createOpenAiModelGatewayFromEnv preserves required tool choice", async () => {
+test("createOpenAiModelGatewayFromEnv preserves required tool choice", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
 
   const gateway = createOpenAiModelGatewayFromEnv({
@@ -503,7 +503,7 @@ contractTest("runtime.process", "createOpenAiModelGatewayFromEnv preserves requi
   assert.equal(mappedTools?.[0]?.function?.strict, true);
 });
 
-contractTest("runtime.process", "createOpenAiModelGatewayFromEnv does not claim strict mode for optional tool schemas", async () => {
+test("createOpenAiModelGatewayFromEnv does not claim strict mode for optional tool schemas", async () => {
   let requestBody: Record<string, unknown> | undefined;
   const gateway = createOpenAiModelGatewayFromEnv({
     env: {
@@ -550,7 +550,7 @@ contractTest("runtime.process", "createOpenAiModelGatewayFromEnv does not claim 
   assert.equal(tools?.[1]?.function?.parameters?.oneOf, undefined);
 });
 
-contractTest("runtime.process", "createAnthropicModelGatewayFromEnv validates required ANTHROPIC_API_KEY", () => {
+test("createAnthropicModelGatewayFromEnv validates required ANTHROPIC_API_KEY", () => {
   assert.throws(
     () =>
       createAnthropicModelGatewayFromEnv({
@@ -560,7 +560,7 @@ contractTest("runtime.process", "createAnthropicModelGatewayFromEnv validates re
   );
 });
 
-contractTest("runtime.process", "createAnthropicModelGatewayFromEnv maps required tool choice to any", async () => {
+test("createAnthropicModelGatewayFromEnv maps required tool choice to any", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
 
   const gateway = createAnthropicModelGatewayFromEnv({
@@ -612,7 +612,7 @@ contractTest("runtime.process", "createAnthropicModelGatewayFromEnv maps require
   assert.equal(Array.isArray(requests[0]?.body.tools), true);
 });
 
-contractTest("runtime.process", "createAnthropicModelGatewayFromEnv calls messages API with structured output tool", async () => {
+test("createAnthropicModelGatewayFromEnv calls messages API with structured output tool", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
 
   const gateway = createAnthropicModelGatewayFromEnv({
@@ -681,7 +681,7 @@ contractTest("runtime.process", "createAnthropicModelGatewayFromEnv calls messag
   assert.equal(response.output?.ok, true);
 });
 
-contractTest("runtime.process", "createDefaultToolGateway resolves runtime dependencies for effect_result_lookup and FinalizeAnswer", async () => {
+test("createDefaultToolGateway resolves runtime dependencies for effect_result_lookup and FinalizeAnswer", async () => {
   const store = new InMemorySessionStore();
   await store.saveEffectResult("run_1", "session_1", {
     idempotencyKey: "key_1",

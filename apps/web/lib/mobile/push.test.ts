@@ -1,9 +1,9 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { buildMobilePushMessage } from "./push-payload";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "mobile push payloads deep-link without transcript or Project content", () => {
+test("mobile push payloads deep-link without transcript or Project content", () => {
   const message = buildMobilePushMessage({
     token: "ExponentPushToken[device]",
     kind: "attention",
@@ -35,7 +35,7 @@ contractTest("web.hermetic", "mobile push payloads deep-link without transcript 
   }
 });
 
-contractTest("web.hermetic", "completed push targets the durable answer without including its content", () => {
+test("completed push targets the durable answer without including its content", () => {
   const message = buildMobilePushMessage({
     token: "ExponentPushToken[device]",
     kind: "completed",

@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -5,10 +6,9 @@ import {
   type RuntimeTurnInput,
   resolveRuntimeRecoveryContinuation,
 } from "../../src/runtime/RuntimeTurn.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "compileRuntimeTurn builds canonical v2 payload and metadata for external turns", () => {
+test("compileRuntimeTurn builds canonical v2 payload and metadata for external turns", () => {
   const input: RuntimeTurnInput = {
     sessionId: "session-compiler",
     runId: "run-requested",
@@ -126,7 +126,7 @@ contractTest("runtime.hermetic", "compileRuntimeTurn builds canonical v2 payload
   );
 });
 
-contractTest("runtime.hermetic", "compileRuntimeTurn preserves resume and attachment payload fields", () => {
+test("compileRuntimeTurn preserves resume and attachment payload fields", () => {
   const attachments = [
     {
       attachmentId: "attachment-resume",
@@ -164,7 +164,7 @@ contractTest("runtime.hermetic", "compileRuntimeTurn preserves resume and attach
   assert.equal(compiled.metadata.actSubmode, "safe");
 });
 
-contractTest("runtime.hermetic", "compileRuntimeTurn carries hosted MCP grant context into the kernel payload", () => {
+test("compileRuntimeTurn carries hosted MCP grant context into the kernel payload", () => {
   const mcpContext = {
     gatewayUrl: "https://mcp.kestrel.example/mcp",
     grantId: "018f1f73-4ce2-7b0f-8e14-3b977e1577a5",
@@ -190,7 +190,7 @@ contractTest("runtime.hermetic", "compileRuntimeTurn carries hosted MCP grant co
   assert.equal("mcpAuthorization" in compiled.metadata, false);
 });
 
-contractTest("runtime.hermetic", "compileRuntimeTurn emits legacy migration metadata when mode system v2 is forced", () => {
+test("compileRuntimeTurn emits legacy migration metadata when mode system v2 is forced", () => {
   const compiled = compileRuntimeTurn(
     {
       sessionId: "session-legacy",
@@ -217,7 +217,7 @@ contractTest("runtime.hermetic", "compileRuntimeTurn emits legacy migration meta
   assert.equal(compiled.payload.modeSystemV2Enabled, true);
 });
 
-contractTest("runtime.hermetic", "compileRuntimeTurn applies armed auto compaction while preserving compaction fields", () => {
+test("compileRuntimeTurn applies armed auto compaction while preserving compaction fields", () => {
   const compiled = compileRuntimeTurn(
     {
       sessionId: "session-auto-compact",
@@ -245,7 +245,7 @@ contractTest("runtime.hermetic", "compileRuntimeTurn applies armed auto compacti
   });
 });
 
-contractTest("runtime.hermetic", "resolveRuntimeRecoveryContinuation selects supported meta-reasoning continuations only", async () => {
+test("resolveRuntimeRecoveryContinuation selects supported meta-reasoning continuations only", async () => {
   const supported = await resolveRuntimeRecoveryContinuation({
     output: {
       status: "WAITING",

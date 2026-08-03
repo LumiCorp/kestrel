@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { UserTerminalService } from "../../src/terminal/UserTerminalService.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "UserTerminalService runs an interactive PTY with bounded output and secret-free persisted metadata", async (context) => {
+test("UserTerminalService runs an interactive PTY with bounded output and secret-free persisted metadata", async (context) => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-user-terminal-"));
   const workspaceRoot = path.join(root, "workspace");
   const metadataPath = path.join(root, "terminal-state.json");
@@ -78,7 +78,7 @@ contractTest("runtime.hermetic", "UserTerminalService runs an interactive PTY wi
   await service.close();
 });
 
-contractTest("runtime.hermetic", "UserTerminalService rejects working directories outside the authoritative workspace", async () => {
+test("UserTerminalService rejects working directories outside the authoritative workspace", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-user-terminal-path-"));
   const workspaceRoot = path.join(root, "workspace");
   const outsideRoot = path.join(root, "outside");
@@ -103,7 +103,7 @@ contractTest("runtime.hermetic", "UserTerminalService rejects working directorie
   await service.close();
 });
 
-contractTest("runtime.hermetic", "UserTerminalService marks previously running metadata lost after Local Core relaunch", async () => {
+test("UserTerminalService marks previously running metadata lost after Local Core relaunch", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-user-terminal-recovery-"));
   const metadataPath = path.join(root, "terminal-state.json");
   const startedAt = "2026-07-20T12:00:00.000Z";

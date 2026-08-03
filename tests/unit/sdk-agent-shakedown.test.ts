@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -22,10 +23,9 @@ import {
   verifySdkAgentShakedownCodingWorkspace,
 } from "../../scripts/sdk-agent-shakedown.js";
 import type { TuiProfile } from "../../cli/contracts.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "SDK agent shake-down receives the project environment in managed worktrees", async () => {
+test("SDK agent shake-down receives the project environment in managed worktrees", async () => {
   const worktreeIncludes = (await readFile(
     new URL("../../.worktreeinclude", import.meta.url),
     "utf8",
@@ -49,7 +49,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down receives the project envi
   assert.doesNotMatch(script, /git-common-dir|resolvePrimaryCheckoutRoot/u);
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down uses the mini model and explicit core scenario matrix", () => {
+test("SDK agent shake-down uses the mini model and explicit core scenario matrix", () => {
   assert.equal(SDK_AGENT_SHAKEDOWN_DEFAULT_MODEL, "openai/gpt-5.4-mini");
   assert.deepEqual(
     SDK_AGENT_SHAKEDOWN_SCENARIOS.map((scenario) => scenario.id),
@@ -69,7 +69,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down uses the mini model and e
   );
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down profile adds scenario-required tools only inside the harness", () => {
+test("SDK agent shake-down profile adds scenario-required tools only inside the harness", () => {
   const baseProfile = buildProfile(["fs.read_text", "exec_command"]);
   const profile = buildSdkAgentShakedownProfile(baseProfile, {
     extraToolAllowlist: scenarioById("coding").requiredTools.map((tool) => tool.toolName),
@@ -87,7 +87,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down profile adds scenario-req
   );
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down requires each exact public tool contract", () => {
+test("SDK agent shake-down requires each exact public tool contract", () => {
   const scenario = readScenario();
   const tools = scenario.requiredTools.flatMap((requirement) =>
     Array.from({ length: requirement.minCount ?? 1 }, () => ({
@@ -121,7 +121,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down requires each exact publi
   );
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down distinguishes a returned running process from completion", () => {
+test("SDK agent shake-down distinguishes a returned running process from completion", () => {
   const scenario = scenarioById("exec");
   const completedOnly = scenario.requiredTools.flatMap((requirement) => {
     if (requirement.outputStatus === "running") {
@@ -143,7 +143,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down distinguishes a returned 
   assert.match(errors.join("\n"), /exec_command.*completed\/OK\/running/u);
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down rejects internal replay-compatible terminal tools", () => {
+test("SDK agent shake-down rejects internal replay-compatible terminal tools", () => {
   const scenario = readScenario();
   const errors = validateSdkAgentShakedownObservation(scenario, {
     terminalType: "run.completed",
@@ -165,7 +165,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down rejects internal replay-c
   assert.match(errors.join("\n"), /Model used internal terminal tool\(s\): dev\.shell\.run/u);
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down reads canonical result and process status from public tool events", () => {
+test("SDK agent shake-down reads canonical result and process status from public tool events", () => {
   assert.deepEqual(
     readSdkAgentShakedownToolObservation({
       type: "run.tool.completed",
@@ -208,7 +208,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down reads canonical result an
   );
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down preserves legacy wrapped tool output compatibility", () => {
+test("SDK agent shake-down preserves legacy wrapped tool output compatibility", () => {
   assert.deepEqual(
     readSdkAgentShakedownToolObservation({
       type: "run.tool.completed",
@@ -256,7 +256,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down preserves legacy wrapped 
   );
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down unwraps current effect tool results", () => {
+test("SDK agent shake-down unwraps current effect tool results", () => {
   assert.deepEqual(
     readSdkAgentShakedownToolObservation({
       type: "run.tool.completed",
@@ -297,7 +297,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down unwraps current effect to
   );
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down unwraps compiled effect tool results", () => {
+test("SDK agent shake-down unwraps compiled effect tool results", () => {
   assert.deepEqual(
     readSdkAgentShakedownToolObservation({
       type: "run.tool.completed",
@@ -346,7 +346,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down unwraps compiled effect t
   );
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down validates the ordered coding lifecycle", () => {
+test("SDK agent shake-down validates the ordered coding lifecycle", () => {
   const tools = successfulCodingLifecycle();
   assert.deepEqual(validateCodingLifecycleObservation(tools), []);
   assert.deepEqual(summarizeSdkAgentShakedownLifecycle(tools), {
@@ -361,7 +361,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down validates the ordered cod
   assert.equal(summarizeSdkAgentShakedownLifecycle(directFilesystemResults).observedMutationEvents, 2);
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down allows settled failed iterations but requires the final source repair to be targeted and validated", () => {
+test("SDK agent shake-down allows settled failed iterations but requires the final source repair to be targeted and validated", () => {
   const tools = successfulCodingLifecycle();
   const firstSourceMutationIndex = tools.findIndex((tool) => tool.toolName === "fs.replace_text");
   assert.notEqual(firstSourceMutationIndex, -1);
@@ -403,7 +403,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down allows settled failed ite
   );
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down rejects unsettled and same-step coding lifecycle evidence", () => {
+test("SDK agent shake-down rejects unsettled and same-step coding lifecycle evidence", () => {
   const sameStepRead = successfulCodingLifecycle().map((tool) =>
     tool.toolName === "fs.read_text" ? { ...tool, stepIndex: 7 } : tool
   );
@@ -440,7 +440,7 @@ contractTest("runtime.hermetic", "SDK agent shake-down rejects unsettled and sam
   assert.match(unsettledErrors, /has no later terminal continuation/u);
 });
 
-contractTest("runtime.hermetic", "SDK agent shake-down coding fixture fails before the fix and passes the hidden oracle after it", async () => {
+test("SDK agent shake-down coding fixture fails before the fix and passes the hidden oracle after it", async () => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "sdk-shakedown-coding-fixture-"));
   try {
     await seedSdkAgentShakedownWorkspace(workspaceRoot);

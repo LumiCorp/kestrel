@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -11,14 +12,12 @@ import {
   type MissionControlProjectAction,
 } from "../../src/missionControl/projectAuthority.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 const PROJECT_A = "11111111-1111-4111-8111-111111111111";
 const PROJECT_B = "22222222-2222-4222-8222-222222222222";
 const ACTION_TS = "2026-07-30T12:00:00.000Z";
 
-contractTest(
-  "runtime.mission-control-lifecycle",
+test(
   "canonical project work-item lifecycle is scoped, explicit, and replay safe",
   async () => {
     const store = new InMemorySessionStore();
@@ -211,8 +210,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.mission-control-lifecycle",
+test(
   "Needs attention returns to Ready only through its explicit lifecycle action",
   () => {
     const created = reduceMissionControlProjectAction(
@@ -253,8 +251,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "runtime.hermetic",
+test(
   "active project authority never dual-writes a session project snapshot",
   async () => {
     const store = new InMemorySessionStore();

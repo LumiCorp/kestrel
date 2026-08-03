@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -9,10 +10,9 @@ import {
   resolveLocalCorePaths,
   type LocalCorePostgresCommandInput,
 } from "../../src/localCore/index.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "managed Postgres starts from Core paths with a private socket and no localhost listener", async () => {
+test("managed Postgres starts from Core paths with a private socket and no localhost listener", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-postgres-"));
   const bundleRoot = path.join(home, "bundle");
   const paths = resolveLocalCorePaths(home);
@@ -50,7 +50,7 @@ contractTest("runtime.hermetic", "managed Postgres starts from Core paths with a
   }
 });
 
-contractTest("runtime.hermetic", "managed Postgres removes stale pid files before restart", async () => {
+test("managed Postgres removes stale pid files before restart", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-postgres-stale-"));
   const bundleRoot = path.join(home, "bundle");
   const paths = resolveLocalCorePaths(home);
@@ -95,7 +95,7 @@ contractTest("runtime.hermetic", "managed Postgres removes stale pid files befor
   }
 });
 
-contractTest("runtime.hermetic", "managed Postgres blocks when pid identity points at a different socket", async () => {
+test("managed Postgres blocks when pid identity points at a different socket", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-postgres-identity-"));
   const bundleRoot = path.join(home, "bundle");
   const paths = resolveLocalCorePaths(home);
@@ -135,7 +135,7 @@ contractTest("runtime.hermetic", "managed Postgres blocks when pid identity poin
   }
 });
 
-contractTest("runtime.hermetic", "managed Postgres reports initialization failures as blocked status", async () => {
+test("managed Postgres reports initialization failures as blocked status", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-postgres-init-fail-"));
   const bundleRoot = path.join(home, "bundle");
   const paths = resolveLocalCorePaths(home);

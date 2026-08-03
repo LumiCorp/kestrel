@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   performGuardedWorkspaceRestoreCutover,
@@ -9,7 +10,6 @@ import {
   WorkspaceRestoreCasConflictError,
   WorkspaceRestorePostCutoverError,
 } from "./restore-cutover";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 function harness(overrides: Partial<Parameters<
   typeof performGuardedWorkspaceRestoreCutover<{ version: number }>
@@ -47,7 +47,7 @@ function harness(overrides: Partial<Parameters<
   };
 }
 
-contractTest("web.hermetic", "Workspace restore prefers a recorded Fly snapshot over archive import", () => {
+test("Workspace restore prefers a recorded Fly snapshot over archive import", () => {
   assert.deepEqual(
     selectWorkspaceBackupRecoverySource({
       manifest: {
@@ -84,7 +84,7 @@ contractTest("web.hermetic", "Workspace restore prefers a recorded Fly snapshot 
   );
 });
 
-contractTest("web.hermetic", "Workspace restore verifies a recorded snapshot live before archive fallback", async () => {
+test("Workspace restore verifies a recorded snapshot live before archive fallback", async () => {
   const input = {
     manifest: {
       flySnapshotId: "vs_recorded",
@@ -113,7 +113,7 @@ contractTest("web.hermetic", "Workspace restore verifies a recorded snapshot liv
   );
 });
 
-contractTest("web.hermetic", "Workspace restore retains the recorded snapshot source volume across later cutovers", () => {
+test("Workspace restore retains the recorded snapshot source volume across later cutovers", () => {
   assert.equal(
     resolveWorkspaceBackupSnapshotSourceVolumeId({
       manifest: {
@@ -134,7 +134,7 @@ contractTest("web.hermetic", "Workspace restore retains the recorded snapshot so
   );
 });
 
-contractTest("web.hermetic", "Workspace restore validation uses the existing session command capability", () => {
+test("Workspace restore validation uses the existing session command capability", () => {
   assert.deepEqual(WORKSPACE_RESTORE_ROUTE_CAPABILITIES, [
     "workspace.backups.restore",
     "workspace.apps.read",
@@ -143,7 +143,7 @@ contractTest("web.hermetic", "Workspace restore validation uses the existing ses
   ]);
 });
 
-contractTest("web.hermetic", "Workspace restore operation results retain both resource sets", () => {
+test("Workspace restore operation results retain both resource sets", () => {
   assert.deepEqual(
     workspaceRestoreResourceIdentities({
       oldMachineId: "machine-old",
@@ -172,7 +172,7 @@ contractTest("web.hermetic", "Workspace restore operation results retain both re
   );
 });
 
-contractTest("web.hermetic", "Workspace restore validates before one CAS cutover and cleanup", async () => {
+test("Workspace restore validates before one CAS cutover and cleanup", async () => {
   const test = harness();
   const result = await performGuardedWorkspaceRestoreCutover(test.input);
   assert.deepEqual(result, {
@@ -190,7 +190,7 @@ contractTest("web.hermetic", "Workspace restore validates before one CAS cutover
   ]);
 });
 
-contractTest("web.hermetic", "Workspace restore CAS conflicts retain both resource sets", async () => {
+test("Workspace restore CAS conflicts retain both resource sets", async () => {
   const test = harness({
     casRebind: async () => {
       test.calls.push("cas-rebind");
@@ -204,7 +204,7 @@ contractTest("web.hermetic", "Workspace restore CAS conflicts retain both resour
   assert.deepEqual(test.calls, ["validate-replacement", "cas-rebind"]);
 });
 
-contractTest("web.hermetic", "Workspace restore validation failures cannot change the binding", async () => {
+test("Workspace restore validation failures cannot change the binding", async () => {
   const test = harness({
     validateReplacement: async () => {
       test.calls.push("validate-replacement");
@@ -218,7 +218,7 @@ contractTest("web.hermetic", "Workspace restore validation failures cannot chang
   assert.deepEqual(test.calls, ["validate-replacement"]);
 });
 
-contractTest("web.hermetic", "Workspace restore post-cutover failures degrade without cleanup", async () => {
+test("Workspace restore post-cutover failures degrade without cleanup", async () => {
   const test = harness({
     validateBoundRoute: async () => {
       test.calls.push("validate-bound");

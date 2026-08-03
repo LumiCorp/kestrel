@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { RuntimeEvent } from "../../src/kestrel/contracts/events.js";
@@ -5,7 +6,6 @@ import type { OutboxEventRecord } from "../../src/kestrel/contracts/store.js";
 
 import { InlineOutbox } from "../../src/events/Outbox.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 class BatchTrackingStore extends InMemorySessionStore {
@@ -31,7 +31,7 @@ class BatchTrackingStore extends InMemorySessionStore {
   }
 }
 
-contractTest("runtime.hermetic", "InlineOutbox batches delivery status updates", async () => {
+test("InlineOutbox batches delivery status updates", async () => {
   const store = new BatchTrackingStore();
 
   await store.ensureSession("session-1", "react.route");

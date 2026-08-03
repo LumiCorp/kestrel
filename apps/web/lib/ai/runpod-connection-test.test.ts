@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getRunPodValidationEvidence,
@@ -5,7 +6,6 @@ import {
   RUNPOD_VALIDATION_METADATA_KEY,
   validateRunPodToolRoundTrip,
 } from "./runpod-connection-test";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 function eventStream(events: unknown[]) {
@@ -15,7 +15,7 @@ function eventStream(events: unknown[]) {
   );
 }
 
-contractTest("web.hermetic", "RunPod validation proves streaming and a complete tool-result round trip", async () => {
+test("RunPod validation proves streaming and a complete tool-result round trip", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
   const evidence = await validateRunPodToolRoundTrip({
     apiKey: "runpod-secret",
@@ -103,7 +103,7 @@ contractTest("web.hermetic", "RunPod validation proves streaming and a complete 
   });
 });
 
-contractTest("web.hermetic", "RunPod validation rejects a non-streaming provider response safely", async () => {
+test("RunPod validation rejects a non-streaming provider response safely", async () => {
   await assert.rejects(
     validateRunPodToolRoundTrip({
       apiKey: "secret-not-in-error",
@@ -122,7 +122,7 @@ contractTest("web.hermetic", "RunPod validation rejects a non-streaming provider
   );
 });
 
-contractTest("web.hermetic", "RunPod validation explains missing OpenAI routes without assuming the cause", async () => {
+test("RunPod validation explains missing OpenAI routes without assuming the cause", async () => {
   await assert.rejects(
     validateRunPodToolRoundTrip({
       apiKey: "secret-not-in-error",
@@ -143,7 +143,7 @@ contractTest("web.hermetic", "RunPod validation explains missing OpenAI routes w
   );
 });
 
-contractTest("web.hermetic", "RunPod validation classifies cold starts and provider throttling as retryable", async () => {
+test("RunPod validation classifies cold starts and provider throttling as retryable", async () => {
   await assert.rejects(
     validateRunPodToolRoundTrip({
       apiKey: "secret",
@@ -174,7 +174,7 @@ contractTest("web.hermetic", "RunPod validation classifies cold starts and provi
   );
 });
 
-contractTest("web.hermetic", "RunPod validation retries an interrupted event stream", async () => {
+test("RunPod validation retries an interrupted event stream", async () => {
   await assert.rejects(
     validateRunPodToolRoundTrip({
       apiKey: "secret",
@@ -201,7 +201,7 @@ contractTest("web.hermetic", "RunPod validation retries an interrupted event str
   );
 });
 
-contractTest("web.hermetic", "client metadata cannot forge RunPod validation evidence", () => {
+test("client metadata cannot forge RunPod validation evidence", () => {
   const forged = {
     [RUNPOD_VALIDATION_METADATA_KEY]: {
       version: "runpod-tool-round-trip-v2",
@@ -226,7 +226,7 @@ contractTest("web.hermetic", "client metadata cannot forge RunPod validation evi
   assert.equal(sanitized.providerField, "preserved");
 });
 
-contractTest("web.hermetic", "trusted RunPod validation is preserved only for the same model and endpoint", () => {
+test("trusted RunPod validation is preserved only for the same model and endpoint", () => {
   const baseUrl = "https://api.runpod.ai/v2/endpoint_1/openai/v1";
   const storedMetadata = {
     [RUNPOD_VALIDATION_METADATA_KEY]: {

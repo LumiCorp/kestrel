@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createDefaultModelPolicy } from "../../../src/profile/modelPolicy.js";
 import { parseDesktopCapabilityConfigurationInput } from "../../../src/desktopShell/contracts.js";
 import { buildDesktopCapabilityConfigurationPlan } from "../src/capabilityConfiguration.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("desktop.hermetic", "capability configuration builds one verified hosted-model replacement", () => {
+test("capability configuration builds one verified hosted-model replacement", () => {
   const plan = buildDesktopCapabilityConfigurationPlan({
     currentSettings: createDefaultDesktopSettings(),
     currentModelPolicy: createDefaultModelPolicy(),
@@ -34,7 +34,7 @@ contractTest("desktop.hermetic", "capability configuration builds one verified h
   assert.equal(plan.restartRuntime, true);
 });
 
-contractTest("desktop.hermetic", "hosted capability changes require credential re-entry for atomic verification", () => {
+test("hosted capability changes require credential re-entry for atomic verification", () => {
   assert.throws(
     () => buildDesktopCapabilityConfigurationPlan({
       currentSettings: createDefaultDesktopSettings(),
@@ -45,7 +45,7 @@ contractTest("desktop.hermetic", "hosted capability changes require credential r
   );
 });
 
-contractTest("desktop.hermetic", "credential removal does not verify or disturb unrelated settings", () => {
+test("credential removal does not verify or disturb unrelated settings", () => {
   const settings = { ...createDefaultDesktopSettings(), tavilyBaseUrl: "https://example.test" };
   const plan = buildDesktopCapabilityConfigurationPlan({
     currentSettings: settings,
@@ -58,7 +58,7 @@ contractTest("desktop.hermetic", "credential removal does not verify or disturb 
   assert.equal(plan.settings.tavilyBaseUrl, "https://example.test");
 });
 
-contractTest("desktop.hermetic", "capability packs are toggled through registry metadata", () => {
+test("capability packs are toggled through registry metadata", () => {
   const plan = buildDesktopCapabilityConfigurationPlan({
     currentSettings: createDefaultDesktopSettings(),
     currentModelPolicy: createDefaultModelPolicy(),
@@ -67,7 +67,7 @@ contractTest("desktop.hermetic", "capability packs are toggled through registry 
   assert.equal(plan.settings.capabilityPacks.includes("sandbox_code"), false);
 });
 
-contractTest("desktop.hermetic", "external database mode requires a verified write-only connection URL", () => {
+test("external database mode requires a verified write-only connection URL", () => {
   assert.throws(
     () => buildDesktopCapabilityConfigurationPlan({
       currentSettings: createDefaultDesktopSettings(),
@@ -86,7 +86,7 @@ contractTest("desktop.hermetic", "external database mode requires a verified wri
   assert.equal(plan.requiresVerification, true);
 });
 
-contractTest("desktop.hermetic", "configuration rejects unsupported fields and disabling the active model", () => {
+test("configuration rejects unsupported fields and disabling the active model", () => {
   assert.throws(
     () => buildDesktopCapabilityConfigurationPlan({
       currentSettings: createDefaultDesktopSettings(),
@@ -105,7 +105,7 @@ contractTest("desktop.hermetic", "configuration rejects unsupported fields and d
   );
 });
 
-contractTest("desktop.hermetic", "capability configuration parser is strict at the IPC boundary", () => {
+test("capability configuration parser is strict at the IPC boundary", () => {
   assert.deepEqual(
     parseDesktopCapabilityConfigurationInput({
       capabilityId: "local.filesystem",

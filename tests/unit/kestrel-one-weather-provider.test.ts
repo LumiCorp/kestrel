@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createKestrelOneVisualCrossingWeatherAdapter } from "../../tools/free/kestrelOneWeatherProvider.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "Kestrel One Visual Crossing transport keeps provider credentials behind the App broker", async () => {
+test("Kestrel One Visual Crossing transport keeps provider credentials behind the App broker", async () => {
   let requestUrl = "";
   let authorization = "";
   let requestBody: unknown;

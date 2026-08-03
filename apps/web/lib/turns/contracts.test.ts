@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   assertThreadTurnTransition,
@@ -5,10 +6,9 @@ import {
   encodeTurnEventCursor,
   terminalQueueOutcome,
 } from "./contracts";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "durable turn transitions reject replay-unsafe state changes", () => {
+test("durable turn transitions reject replay-unsafe state changes", () => {
   assert.doesNotThrow(() => assertThreadTurnTransition("queued", "running"));
   assert.doesNotThrow(() => assertThreadTurnTransition("queued", "failed"));
   assert.doesNotThrow(() =>
@@ -30,7 +30,7 @@ contractTest("web.hermetic", "durable turn transitions reject replay-unsafe stat
   );
 });
 
-contractTest("web.hermetic", "only successful turns automatically release the next queued turn", () => {
+test("only successful turns automatically release the next queued turn", () => {
   assert.deepEqual(terminalQueueOutcome("completed"), {
     state: "running",
     pauseReason: null,
@@ -48,7 +48,7 @@ contractTest("web.hermetic", "only successful turns automatically release the ne
   });
 });
 
-contractTest("web.hermetic", "event cursors round trip without exposing database offsets", () => {
+test("event cursors round trip without exposing database offsets", () => {
   const cursor = encodeTurnEventCursor("turn:with:colons", 42);
   assert.deepEqual(decodeTurnEventCursor(cursor), {
     turnId: "turn:with:colons",

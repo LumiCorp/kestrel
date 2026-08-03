@@ -1,15 +1,15 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { DesktopRunnerEvent } from "../src/contracts.js";
 import { cancelDesktopRun } from "../src/runCancellation.js";
 import { withoutDesktopActiveRun } from "../renderer/src/cancellationState.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 const context = {
   actor: { actorId: "desktop-test", actorType: "operator" as const },
 };
 
-contractTest("desktop.hermetic", "Desktop cancellation returns the durable cancelled event", async () => {
+test("Desktop cancellation returns the durable cancelled event", async () => {
   const event = {
     id: "event-cancelled",
     type: "run.cancelled",
@@ -26,7 +26,7 @@ contractTest("desktop.hermetic", "Desktop cancellation returns the durable cance
   assert.deepEqual(result, { status: "cancelled", event });
 });
 
-contractTest("desktop.hermetic", "Desktop cancellation reconciles an already-finished run", async () => {
+test("Desktop cancellation reconciles an already-finished run", async () => {
   const error = Object.assign(new Error("No matching cancellable run was found."), {
     code: "RUN_CANCEL_NOT_FOUND",
   });
@@ -38,7 +38,7 @@ contractTest("desktop.hermetic", "Desktop cancellation reconciles an already-fin
   assert.deepEqual(result, { status: "already_stopped" });
 });
 
-contractTest("desktop.hermetic", "Desktop cancellation preserves a newer active run target", async () => {
+test("Desktop cancellation preserves a newer active run target", async () => {
   const error = Object.assign(new Error("No matching cancellable run was found."), {
     code: "RUN_CANCEL_NOT_FOUND",
     details: {
@@ -59,7 +59,7 @@ contractTest("desktop.hermetic", "Desktop cancellation preserves a newer active 
   });
 });
 
-contractTest("desktop.hermetic", "Desktop clears cached active-run authority before refresh", () => {
+test("Desktop clears cached active-run authority before refresh", () => {
   const view = {
     thread: { threadId: "thread-1", sessionId: "session-1" },
     childThreads: [],
@@ -72,7 +72,7 @@ contractTest("desktop.hermetic", "Desktop clears cached active-run authority bef
   assert.equal("activeRun" in reconciled, false);
 });
 
-contractTest("desktop.hermetic", "Desktop cancellation preserves other runtime failures", async () => {
+test("Desktop cancellation preserves other runtime failures", async () => {
   const error = Object.assign(new Error("Runner unavailable."), {
     code: "RUNNER_RUNTIME_ERROR",
   });

@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { AuthorizedMcpServer } from "../src/contracts.js";
 import { buildOciDockerRunCommand } from "../src/oci-runtime.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const server: Extract<AuthorizedMcpServer, { sourceType: "oci" }> = {
@@ -18,7 +18,7 @@ const server: Extract<AuthorizedMcpServer, { sourceType: "oci" }> = {
   credential: undefined,
 };
 
-contractTest("services.hermetic", "OCI MCP networking is full or none without proxy policy", () => {
+test("OCI MCP networking is full or none without proxy policy", () => {
   const full = buildOciDockerRunCommand({
     grantId: "grant-full",
     server,

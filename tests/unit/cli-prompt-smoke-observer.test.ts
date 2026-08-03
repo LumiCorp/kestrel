@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { RunnerEvent } from "../../packages/protocol/src/index.js";
@@ -6,10 +7,9 @@ import {
   derivePromptSmokeOutcome,
   observeDurableSessionTerminal,
 } from "../../scripts/lib/cli-prompt-smoke-observer.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "progress events never classify as durable completion", () => {
+test("progress events never classify as durable completion", () => {
   const event = {
     id: "event-progress",
     type: "job.progress",
@@ -27,7 +27,7 @@ contractTest("runtime.hermetic", "progress events never classify as durable comp
   assert.equal(classifyDurableTerminalEvent(event), undefined);
 });
 
-contractTest("runtime.hermetic", "canonical job completion, waiting, and failure remain distinct", () => {
+test("canonical job completion, waiting, and failure remain distinct", () => {
   const completed = classifyDurableTerminalEvent(terminalEvent("job.completed", "COMPLETED"));
   const waiting = classifyDurableTerminalEvent(terminalEvent("job.completed", "WAITING"));
   const failed = classifyDurableTerminalEvent(terminalEvent("job.failed", "FAILED"));
@@ -38,7 +38,7 @@ contractTest("runtime.hermetic", "canonical job completion, waiting, and failure
   assert.equal(failed?.reasonCode, "DECISION_SCHEMA_FAILED");
 });
 
-contractTest("runtime.hermetic", "canonical TUI run completion is normalized by the same observer contract", () => {
+test("canonical TUI run completion is normalized by the same observer contract", () => {
   const completed = classifyDurableTerminalEvent(runTerminalEvent("run.completed", "COMPLETED"));
   const failed = classifyDurableTerminalEvent(runTerminalEvent("run.failed", "FAILED"));
 
@@ -49,7 +49,7 @@ contractTest("runtime.hermetic", "canonical TUI run completion is normalized by 
   assert.equal(failed?.reasonCode, "DECISION_SCHEMA_FAILED");
 });
 
-contractTest("runtime.hermetic", "durable observer reconnects and follows the same session to terminal", async () => {
+test("durable observer reconnects and follows the same session to terminal", async () => {
   let connectionCount = 0;
   const terminal = terminalEvent("job.completed", "COMPLETED");
   const observed = await observeDurableSessionTerminal({
@@ -69,7 +69,7 @@ contractTest("runtime.hermetic", "durable observer reconnects and follows the sa
   assert.equal(observed.reconnectCount, 1);
 });
 
-contractTest("runtime.hermetic", "artifact success cannot override a failed or missing durable execution outcome", () => {
+test("artifact success cannot override a failed or missing durable execution outcome", () => {
   assert.deepEqual(derivePromptSmokeOutcome({
     terminalStatus: "failed",
     assertionsConfigured: true,
@@ -94,7 +94,7 @@ contractTest("runtime.hermetic", "artifact success cannot override a failed or m
   });
 });
 
-contractTest("runtime.hermetic", "prompt smoke requires completed runtime, accepted artifacts, and a healthy ready TUI", () => {
+test("prompt smoke requires completed runtime, accepted artifacts, and a healthy ready TUI", () => {
   assert.deepEqual(derivePromptSmokeOutcome({
     terminalStatus: "completed",
     assertionsConfigured: true,
@@ -109,7 +109,7 @@ contractTest("runtime.hermetic", "prompt smoke requires completed runtime, accep
   });
 });
 
-contractTest("runtime.hermetic", "nonzero PTY exit preserves runtime and artifact evidence but fails the smoke", () => {
+test("nonzero PTY exit preserves runtime and artifact evidence but fails the smoke", () => {
   assert.deepEqual(derivePromptSmokeOutcome({
     terminalStatus: "completed",
     assertionsConfigured: true,
@@ -124,7 +124,7 @@ contractTest("runtime.hermetic", "nonzero PTY exit preserves runtime and artifac
   });
 });
 
-contractTest("runtime.hermetic", "missing TUI readiness fails the smoke even after a clean PTY exit", () => {
+test("missing TUI readiness fails the smoke even after a clean PTY exit", () => {
   assert.deepEqual(derivePromptSmokeOutcome({
     terminalStatus: "completed",
     assertionsConfigured: false,

@@ -1,10 +1,10 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { MemoryLocalCoreCredentialStore } from "../../src/localCore/credentialStore.js";
 import { LocalCoreGoogleWorkspaceOAuthSessionManager } from "../../src/localCore/googleWorkspaceOAuthSessions.js";
 import { LocalCoreGoogleWorkspaceService } from "../../src/localCore/googleWorkspaceService.js";
-import { contractTest } from "../helpers/contract-test.js";
 
-contractTest("runtime.hermetic", "Google Workspace Desktop OAuth uses PKCE and stores an offline Calendar grant in Core", async () => {
+test("Google Workspace Desktop OAuth uses PKCE and stores an offline Calendar grant in Core", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   const calls: string[] = [];
   const scopes = "openid email profile https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy";
@@ -33,7 +33,7 @@ contractTest("runtime.hermetic", "Google Workspace Desktop OAuth uses PKCE and s
   } finally { await manager.close(); }
 });
 
-contractTest("runtime.hermetic", "Google Workspace Calendar refresh and API calls stay inside Local Core", async () => {
+test("Google Workspace Calendar refresh and API calls stay inside Local Core", async () => {
   const store = new MemoryLocalCoreCredentialStore();
   await store.set("mcp.standard.google_workspace.oauth.client", "google-client");
   await store.set("mcp.standard.google_workspace.oauth.tokens", JSON.stringify({ accessToken: "expired", refreshToken: "refresh-secret", expiresAt: 1, scope: "openid email profile https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy" }));
@@ -49,7 +49,7 @@ contractTest("runtime.hermetic", "Google Workspace Calendar refresh and API call
   assert.equal(requests.some((url) => url.includes("refresh-secret")), false);
 });
 
-contractTest("runtime.hermetic", "Google Workspace OAuth exchanges a callback only once", async () => {
+test("Google Workspace OAuth exchanges a callback only once", async () => {
   let releaseTokenExchange!: () => void;
   const tokenExchangeReleased = new Promise<void>((resolve) => { releaseTokenExchange = resolve; });
   let markTokenExchangeStarted!: () => void;

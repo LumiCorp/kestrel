@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest, ModelResponse, ToolGateway } from "../../src/kestrel/contracts/model-io.js";
@@ -8,7 +9,6 @@ import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/
 import { weatherForecastTool } from "../../tools/free/weatherForecast.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -84,7 +84,7 @@ function actionToolIntents(action: unknown): ModelResponse<unknown>["toolIntents
   return [];
 }
 
-contractTest("runtime.process", "reference harness uses free.weather.current for 'whats the weather in cincy'", async () => {
+test("reference harness uses free.weather.current for 'whats the weather in cincy'", async () => {
   const store = new InMemorySessionStore();
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const finalized: Record<string, unknown>[] = [];
@@ -218,7 +218,7 @@ contractTest("runtime.process", "reference harness uses free.weather.current for
   );
 });
 
-contractTest("runtime.process", "reference harness uses free.time.current for 'what time is it in utc'", async () => {
+test("reference harness uses free.time.current for 'what time is it in utc'", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-time-1",
     message: "what time is it in utc",
@@ -251,7 +251,7 @@ contractTest("runtime.process", "reference harness uses free.time.current for 'w
   );
 });
 
-contractTest("runtime.process", "reference harness uses read-only tools directly in Chat mode", async () => {
+test("reference harness uses read-only tools directly in Chat mode", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-weather-chat-1",
     message: "whats the weather in cincy",
@@ -276,7 +276,7 @@ contractTest("runtime.process", "reference harness uses read-only tools directly
   assert.equal(result.finalized[0]?.message, "Cincinnati is 12C.");
 });
 
-contractTest("runtime.process", "reference harness routes default plan-mode weather asks into tooling route", async () => {
+test("reference harness routes default plan-mode weather asks into tooling route", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-weather-plan-1",
     message: "ayy whats the weather in cincy",
@@ -308,7 +308,7 @@ contractTest("runtime.process", "reference harness routes default plan-mode weat
   assert.equal(result.toolCalls.some((entry) => entry.name === "free.weather.current"), true);
 });
 
-contractTest("runtime.process", "reference harness answers Cincinnati through Wednesday from one model-visible forecast", async () => {
+test("reference harness answers Cincinnati through Wednesday from one model-visible forecast", async () => {
   const forecastHandler = weatherForecastTool.createHandler({
     fetchImpl: async (url) => {
       const target = typeof url === "string" ? url : String(url);
@@ -384,7 +384,7 @@ contractTest("runtime.process", "reference harness answers Cincinnati through We
   );
 });
 
-contractTest("runtime.process", "reference harness uses free.exchange.rate for 'usd to eur exchange rate'", async () => {
+test("reference harness uses free.exchange.rate for 'usd to eur exchange rate'", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-fx-1",
     message: "usd to eur exchange rate",
@@ -420,7 +420,7 @@ contractTest("runtime.process", "reference harness uses free.exchange.rate for '
   );
 });
 
-contractTest("runtime.process", "reference harness uses internet.search for direct research intent", async () => {
+test("reference harness uses internet.search for direct research intent", async () => {
   const result = await runReferenceRecoveryScenario({
     sessionId: "session-search-1",
     message: "search wikipedia for Ada Lovelace",

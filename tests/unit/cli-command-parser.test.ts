@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { isInteractiveOperatorCommandDraft, parseInput } from "../../cli/app/CommandParser.js";
 import { buildTuiCommandHelp } from "../../cli/app/TuiCommandInventory.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "parseInput parses normal chat messages", () => {
+test("parseInput parses normal chat messages", () => {
   const parsed = parseInput("hello world");
   assert.deepEqual(parsed, {
     kind: "message",
@@ -13,7 +13,7 @@ contractTest("runtime.hermetic", "parseInput parses normal chat messages", () =>
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses supported command with args", () => {
+test("parseInput parses supported command with args", () => {
   const parsed = parseInput("/new research-thread");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -22,7 +22,7 @@ contractTest("runtime.hermetic", "parseInput parses supported command with args"
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses guided start command", () => {
+test("parseInput parses guided start command", () => {
   const parsed = parseInput("/start");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -31,7 +31,7 @@ contractTest("runtime.hermetic", "parseInput parses guided start command", () =>
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses mcp command with subcommand args", () => {
+test("parseInput parses mcp command with subcommand args", () => {
   const parsed = parseInput("/mcp status");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -40,7 +40,7 @@ contractTest("runtime.hermetic", "parseInput parses mcp command with subcommand 
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses mcp docker shortcut with optional profile", () => {
+test("parseInput parses mcp docker shortcut with optional profile", () => {
   const parsed = parseInput("/mcp docker default");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -49,7 +49,7 @@ contractTest("runtime.hermetic", "parseInput parses mcp docker shortcut with opt
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses code command with subcommand args", () => {
+test("parseInput parses code command with subcommand args", () => {
   const parsed = parseInput("/code status");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -58,7 +58,7 @@ contractTest("runtime.hermetic", "parseInput parses code command with subcommand
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses workspace command with subcommand args", () => {
+test("parseInput parses workspace command with subcommand args", () => {
   const parsed = parseInput("/workspace status");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -67,7 +67,7 @@ contractTest("runtime.hermetic", "parseInput parses workspace command with subco
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses workspace use command with workspace id", () => {
+test("parseInput parses workspace use command with workspace id", () => {
   const parsed = parseInput("/workspace use workspace-123");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -76,7 +76,7 @@ contractTest("runtime.hermetic", "parseInput parses workspace use command with w
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses compact command", () => {
+test("parseInput parses compact command", () => {
   const parsed = parseInput("/compact");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -85,7 +85,7 @@ contractTest("runtime.hermetic", "parseInput parses compact command", () => {
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses snapshot and restore commands", () => {
+test("parseInput parses snapshot and restore commands", () => {
   assert.deepEqual(parseInput("/snapshot before refactor"), {
     kind: "command",
     command: "snapshot",
@@ -105,7 +105,7 @@ contractTest("runtime.hermetic", "parseInput parses snapshot and restore command
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses tasks command with launch args", () => {
+test("parseInput parses tasks command with launch args", () => {
   const parsed = parseInput("/tasks launch reference-openai investigate this failure");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -114,7 +114,7 @@ contractTest("runtime.hermetic", "parseInput parses tasks command with launch ar
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses mode command with canonical args", () => {
+test("parseInput parses mode command with canonical args", () => {
   const parsed = parseInput("/mode build");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -123,7 +123,7 @@ contractTest("runtime.hermetic", "parseInput parses mode command with canonical 
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses theme command with args", () => {
+test("parseInput parses theme command with args", () => {
   const parsed = parseInput("/theme dark");
   assert.deepEqual(parsed, {
     kind: "command",
@@ -132,7 +132,7 @@ contractTest("runtime.hermetic", "parseInput parses theme command with args", ()
   });
 });
 
-contractTest("runtime.hermetic", "parseInput routes unknown command to help handler marker", () => {
+test("parseInput routes unknown command to help handler marker", () => {
   const parsed = parseInput("/wat");
   assert.equal(parsed.kind, "command");
   if (parsed.kind !== "command") {
@@ -143,7 +143,7 @@ contractTest("runtime.hermetic", "parseInput routes unknown command to help hand
   assert.deepEqual(parsed.args, ["__unknown_command__", "wat"]);
 });
 
-contractTest("runtime.hermetic", "parseInput parses operator approval and steering commands", () => {
+test("parseInput parses operator approval and steering commands", () => {
   const approve = parseInput("/approve req-123 yes");
   assert.deepEqual(approve, {
     kind: "command",
@@ -180,7 +180,7 @@ contractTest("runtime.hermetic", "parseInput parses operator approval and steeri
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses operator retry and checkpoint commands", () => {
+test("parseInput parses operator retry and checkpoint commands", () => {
   const retry = parseInput("/retry stalled run");
   assert.deepEqual(retry, {
     kind: "command",
@@ -196,7 +196,7 @@ contractTest("runtime.hermetic", "parseInput parses operator retry and checkpoin
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses focus thread command", () => {
+test("parseInput parses focus thread command", () => {
   const focus = parseInput("/focus thread-child-1");
   assert.deepEqual(focus, {
     kind: "command",
@@ -205,7 +205,7 @@ contractTest("runtime.hermetic", "parseInput parses focus thread command", () =>
   });
 });
 
-contractTest("runtime.hermetic", "parseInput parses reply, assembly, child, and fanin commands", () => {
+test("parseInput parses reply, assembly, child, and fanin commands", () => {
   assert.deepEqual(parseInput("/reply need more evidence"), {
     kind: "command",
     command: "reply",
@@ -228,7 +228,7 @@ contractTest("runtime.hermetic", "parseInput parses reply, assembly, child, and 
   });
 });
 
-contractTest("runtime.hermetic", "interactive operator draft helper only unlocks operator slash commands", () => {
+test("interactive operator draft helper only unlocks operator slash commands", () => {
   assert.equal(isInteractiveOperatorCommandDraft("/steer hold here"), true);
   assert.equal(isInteractiveOperatorCommandDraft("/deny"), true);
   assert.equal(isInteractiveOperatorCommandDraft("/stop"), true);
@@ -237,7 +237,7 @@ contractTest("runtime.hermetic", "interactive operator draft helper only unlocks
   assert.equal(isInteractiveOperatorCommandDraft("hello"), false);
 });
 
-contractTest("runtime.hermetic", "command help presents simplified recovery commands", () => {
+test("command help presents simplified recovery commands", () => {
   const help = buildTuiCommandHelp();
   assert.match(help, /\/compact/u);
   assert.match(help, /\/snapshot/u);

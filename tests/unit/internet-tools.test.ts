@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { internetCrawlTool } from "../../tools/internet/crawl.js";
@@ -11,10 +12,9 @@ import { internetSearchTool } from "../../tools/internet/search.js";
 import { internetSearchAdvancedTool } from "../../tools/internet/searchAdvanced.js";
 import { internetUsageTool } from "../../tools/internet/usage.js";
 import type { TavilySdkClient } from "../../tools/internet/client.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "internet.search normalizes Tavily web results and uses SDK search options", async () => {
+test("internet.search normalizes Tavily web results and uses SDK search options", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetSearchTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -72,7 +72,7 @@ contractTest("runtime.hermetic", "internet.search normalizes Tavily web results 
   assert.equal(result.results[0]?.source, "example.com");
 });
 
-contractTest("runtime.hermetic", "internet.search_advanced passes valid Tavily options and preserves rich result metadata", async () => {
+test("internet.search_advanced passes valid Tavily options and preserves rich result metadata", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetSearchAdvancedTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -142,7 +142,7 @@ contractTest("runtime.hermetic", "internet.search_advanced passes valid Tavily o
   assert.equal(result.results[0]?.rawContent, "Full Ada Lovelace article text.");
 });
 
-contractTest("runtime.hermetic", "internet.search_advanced canonicalizes includeRawContent true to markdown", async () => {
+test("internet.search_advanced canonicalizes includeRawContent true to markdown", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetSearchAdvancedTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -169,7 +169,7 @@ contractTest("runtime.hermetic", "internet.search_advanced canonicalizes include
   assert.equal(searchCalls[0]?.options?.includeRawContent, "markdown");
 });
 
-contractTest("runtime.hermetic", "internet.search_advanced prefers explicit dates over freshness timeRange and days", async () => {
+test("internet.search_advanced prefers explicit dates over freshness timeRange and days", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetSearchAdvancedTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -202,7 +202,7 @@ contractTest("runtime.hermetic", "internet.search_advanced prefers explicit date
   assert.equal(searchCalls[0]?.options?.endDate, "2026-05-15");
 });
 
-contractTest("runtime.hermetic", "internet.search_advanced rejects invalid explicit date strings before provider calls", async () => {
+test("internet.search_advanced rejects invalid explicit date strings before provider calls", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetSearchAdvancedTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -232,7 +232,7 @@ contractTest("runtime.hermetic", "internet.search_advanced rejects invalid expli
   assert.equal(searchCalls.length, 0);
 });
 
-contractTest("runtime.hermetic", "internet.search_advanced strips Tavily-conditional chunks and days unless prerequisites are present", async () => {
+test("internet.search_advanced strips Tavily-conditional chunks and days unless prerequisites are present", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetSearchAdvancedTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -272,7 +272,7 @@ contractTest("runtime.hermetic", "internet.search_advanced strips Tavily-conditi
   assert.equal(searchCalls[1]?.options?.days, 7);
 });
 
-contractTest("runtime.hermetic", "internet.extract and internet.crawl pass docs-supported chunksPerSource up to five", async () => {
+test("internet.extract and internet.crawl pass docs-supported chunksPerSource up to five", async () => {
   const extractCalls: Array<Record<string, unknown> | undefined> = [];
   const crawlCalls: Array<Record<string, unknown> | undefined> = [];
   const provider = createTavilyInternetProvider({
@@ -313,7 +313,7 @@ contractTest("runtime.hermetic", "internet.extract and internet.crawl pass docs-
   assert.equal(crawlCalls[0]?.chunksPerSource, 5);
 });
 
-contractTest("runtime.hermetic", "internet.extract and internet.crawl strip chunksPerSource when Tavily prerequisites are absent", async () => {
+test("internet.extract and internet.crawl strip chunksPerSource when Tavily prerequisites are absent", async () => {
   const extractCalls: Array<Record<string, unknown> | undefined> = [];
   const crawlCalls: Array<Record<string, unknown> | undefined> = [];
   const provider = createTavilyInternetProvider({
@@ -352,7 +352,7 @@ contractTest("runtime.hermetic", "internet.extract and internet.crawl strip chun
   assert.equal(Object.hasOwn(crawlCalls[0] ?? {}, "chunksPerSource"), false);
 });
 
-contractTest("runtime.hermetic", "internet.search retries recoverable 429 responses and returns degraded envelope", async () => {
+test("internet.search retries recoverable 429 responses and returns degraded envelope", async () => {
   let calls = 0;
   const handler = internetSearchTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -391,7 +391,7 @@ contractTest("runtime.hermetic", "internet.search retries recoverable 429 respon
   assert.equal(result.degraded?.recoverable, true);
 });
 
-contractTest("runtime.hermetic", "internet.search throws TOOL_PROVIDER_FAILED on non-recoverable provider response", async () => {
+test("internet.search throws TOOL_PROVIDER_FAILED on non-recoverable provider response", async () => {
   const handler = internetSearchTool.createHandler({
     internetProvider: createTavilyInternetProvider({
       client: createFakeClient({
@@ -416,7 +416,7 @@ contractTest("runtime.hermetic", "internet.search throws TOOL_PROVIDER_FAILED on
   );
 });
 
-contractTest("runtime.hermetic", "internet.search fans out oversized queries in parallel and reapplies the requested limit", async () => {
+test("internet.search fans out oversized queries in parallel and reapplies the requested limit", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   let inFlight = 0;
   let maxInFlight = 0;
@@ -494,7 +494,7 @@ contractTest("runtime.hermetic", "internet.search fans out oversized queries in 
   );
 });
 
-contractTest("runtime.hermetic", "internet.search preserves all fan-out branches beyond eight subqueries", async () => {
+test("internet.search preserves all fan-out branches beyond eight subqueries", async () => {
   const searchCalls: string[] = [];
   const handler = internetSearchTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -551,7 +551,7 @@ contractTest("runtime.hermetic", "internet.search preserves all fan-out branches
   }
 });
 
-contractTest("runtime.hermetic", "internet.search keeps unary NOT clauses bound to the negated term during fan-out", async () => {
+test("internet.search keeps unary NOT clauses bound to the negated term during fan-out", async () => {
   const searchCalls: string[] = [];
   const handler = internetSearchTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -595,7 +595,7 @@ contractTest("runtime.hermetic", "internet.search keeps unary NOT clauses bound 
   }
 });
 
-contractTest("runtime.hermetic", "internet.search degrades oversized unsplittable queries instead of truncating them", async () => {
+test("internet.search degrades oversized unsplittable queries instead of truncating them", async () => {
   let calls = 0;
   const handler = internetSearchTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -638,7 +638,7 @@ contractTest("runtime.hermetic", "internet.search degrades oversized unsplittabl
   assert.equal(result.degraded?.message?.includes("could not be split without truncation"), true);
 });
 
-contractTest("runtime.hermetic", "internet.news handles headline-style queries through the news tool", async () => {
+test("internet.news handles headline-style queries through the news tool", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetNewsTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -678,7 +678,7 @@ contractTest("runtime.hermetic", "internet.news handles headline-style queries t
   assert.equal(result.results[0]?.title, "US headline");
 });
 
-contractTest("runtime.hermetic", "internet.research submits and polls for source inventory", async () => {
+test("internet.research submits and polls for source inventory", async () => {
   const handler = internetResearchTool.createHandler({
     internetProvider: createTavilyInternetProvider({
       client: createFakeClient({
@@ -721,7 +721,7 @@ contractTest("runtime.hermetic", "internet.research submits and polls for source
   assert.equal(result.sources?.length, 1);
 });
 
-contractTest("runtime.hermetic", "internet.research omits empty outputSchema when submitting to Tavily", async () => {
+test("internet.research omits empty outputSchema when submitting to Tavily", async () => {
   const researchCalls: Array<{ input: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetResearchTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -757,7 +757,7 @@ contractTest("runtime.hermetic", "internet.research omits empty outputSchema whe
   });
 });
 
-contractTest("runtime.hermetic", "internet.news normalizes Tavily news results without passing unsupported country hints", async () => {
+test("internet.news normalizes Tavily news results without passing unsupported country hints", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetNewsTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -812,7 +812,7 @@ contractTest("runtime.hermetic", "internet.news normalizes Tavily news results w
   assert.equal(result.results[0]?.publishedAt, "2026-03-12T12:00:00Z");
 });
 
-contractTest("runtime.hermetic", "internet.search_advanced strips unsupported country hints for fast search depth", async () => {
+test("internet.search_advanced strips unsupported country hints for fast search depth", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetSearchAdvancedTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -860,7 +860,7 @@ contractTest("runtime.hermetic", "internet.search_advanced strips unsupported co
   assert.equal(result.results[0]?.title, "Markets react to latest tech earnings");
 });
 
-contractTest("runtime.hermetic", "internet.search overfetches and prunes low-value non-article endpoints", async () => {
+test("internet.search overfetches and prunes low-value non-article endpoints", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetSearchTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -918,7 +918,7 @@ contractTest("runtime.hermetic", "internet.search overfetches and prunes low-val
   ]);
 });
 
-contractTest("runtime.hermetic", "internet.news fans out oversized queries before calling Tavily", async () => {
+test("internet.news fans out oversized queries before calling Tavily", async () => {
   const searchCalls: Array<{ query: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetNewsTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -959,7 +959,7 @@ contractTest("runtime.hermetic", "internet.news fans out oversized queries befor
   assert.equal(result.attempts, searchCalls.length);
 });
 
-contractTest("runtime.hermetic", "internet.news degrades oversized unsplittable queries instead of truncating them", async () => {
+test("internet.news degrades oversized unsplittable queries instead of truncating them", async () => {
   let calls = 0;
   const handler = internetNewsTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -1002,7 +1002,7 @@ contractTest("runtime.hermetic", "internet.news degrades oversized unsplittable 
   assert.equal(result.degraded?.recoverable, true);
 });
 
-contractTest("runtime.hermetic", "internet.images normalizes Tavily image results", async () => {
+test("internet.images normalizes Tavily image results", async () => {
   const handler = internetImagesTool.createHandler({
     internetProvider: createTavilyInternetProvider({
       client: createFakeClient({
@@ -1045,7 +1045,7 @@ contractTest("runtime.hermetic", "internet.images normalizes Tavily image result
   assert.equal(result.results[0]?.source, "example.com");
 });
 
-contractTest("runtime.hermetic", "internet.extract normalizes extracted fetch payload", async () => {
+test("internet.extract normalizes extracted fetch payload", async () => {
   const handler = internetExtractTool.createHandler({
     internetProvider: createTavilyInternetProvider({
       client: createFakeClient({
@@ -1095,7 +1095,7 @@ contractTest("runtime.hermetic", "internet.extract normalizes extracted fetch pa
   assert.equal(result.attempts, 1);
 });
 
-contractTest("runtime.hermetic", "internet.extract supports batched URLs and failed results", async () => {
+test("internet.extract supports batched URLs and failed results", async () => {
   const extractCalls: Array<{ urls: string[]; options: Record<string, unknown> | undefined }> = [];
   const handler = internetExtractTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -1154,7 +1154,7 @@ contractTest("runtime.hermetic", "internet.extract supports batched URLs and fai
   assert.deepEqual(result.failedResults, [{ url: "https://example.com/missing", error: "not found" }]);
 });
 
-contractTest("runtime.hermetic", "internet.extract ignores unsupported selector-shaped input and returns extracted content", async () => {
+test("internet.extract ignores unsupported selector-shaped input and returns extracted content", async () => {
   const handler = internetExtractTool.createHandler({
     internetProvider: createTavilyInternetProvider({
       client: createFakeClient({
@@ -1200,7 +1200,7 @@ contractTest("runtime.hermetic", "internet.extract ignores unsupported selector-
   assert.equal(result.contentIssues, undefined);
 });
 
-contractTest("runtime.hermetic", "internet.extract labels truncated boilerplate-heavy extracts as low quality", async () => {
+test("internet.extract labels truncated boilerplate-heavy extracts as low quality", async () => {
   const handler = internetExtractTool.createHandler({
     internetProvider: createTavilyInternetProvider({
       client: createFakeClient({
@@ -1241,7 +1241,7 @@ contractTest("runtime.hermetic", "internet.extract labels truncated boilerplate-
   assert.equal(result.contentIssues?.includes("boilerplate_heavy"), false);
 });
 
-contractTest("runtime.hermetic", "internet.extract strips navigation blocks before rating quality", async () => {
+test("internet.extract strips navigation blocks before rating quality", async () => {
   const paragraphs = [
     "Breaking: Major weather system sweeps across coastal cities while officials coordinate shelters.",
     "Officials warn of flash flooding, but evacuation orders remain localized to low-lying districts.",
@@ -1298,7 +1298,7 @@ contractTest("runtime.hermetic", "internet.extract strips navigation blocks befo
   assert.equal(hasBoilerplate, false);
 });
 
-contractTest("runtime.hermetic", "internet.extract returns degraded envelope on recoverable provider failures", async () => {
+test("internet.extract returns degraded envelope on recoverable provider failures", async () => {
   let calls = 0;
   const handler = internetExtractTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -1336,7 +1336,7 @@ contractTest("runtime.hermetic", "internet.extract returns degraded envelope on 
   assert.equal(result.degraded?.recoverable, true);
 });
 
-contractTest("runtime.hermetic", "internet.crawl passes Tavily crawl options and normalizes page content", async () => {
+test("internet.crawl passes Tavily crawl options and normalizes page content", async () => {
   const crawlCalls: Array<{ url: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetCrawlTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -1386,7 +1386,7 @@ contractTest("runtime.hermetic", "internet.crawl passes Tavily crawl options and
   assert.equal(result.usage?.credits, 1);
 });
 
-contractTest("runtime.hermetic", "internet.map passes Tavily map options and returns discovered URLs", async () => {
+test("internet.map passes Tavily map options and returns discovered URLs", async () => {
   const mapCalls: Array<{ url: string; options: Record<string, unknown> | undefined }> = [];
   const handler = internetMapTool.createHandler({
     internetProvider: createTavilyInternetProvider({
@@ -1426,7 +1426,7 @@ contractTest("runtime.hermetic", "internet.map passes Tavily map options and ret
   assert.equal(result.usage?.credits, 1);
 });
 
-contractTest("runtime.hermetic", "internet.usage maps Tavily usage diagnostics", async () => {
+test("internet.usage maps Tavily usage diagnostics", async () => {
   const requests: Array<{ url: string; authorization?: string }> = [];
   const handler = internetUsageTool.createHandler({
     internetProvider: createTavilyInternetProvider({

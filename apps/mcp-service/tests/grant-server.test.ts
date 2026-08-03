@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -8,10 +9,9 @@ import type {
   InvocationIdentity,
 } from "../src/invocation-audit.js";
 import type { McpUpstreamProvider } from "../src/upstream.js";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 
 
-contractTest("services.hermetic", "grant MCP server exposes namespaced tools and proxies authorized calls", async () => {
+test("grant MCP server exposes namespaced tools and proxies authorized calls", async () => {
   const calls: unknown[] = [];
   const audited: InvocationIdentity[] = [];
   const upstreams: McpUpstreamProvider = {
@@ -72,7 +72,7 @@ contractTest("services.hermetic", "grant MCP server exposes namespaced tools and
   await server.close();
 });
 
-contractTest("services.hermetic", "ask-mode MCP capabilities persist a wait before rejecting execution", async () => {
+test("ask-mode MCP capabilities persist a wait before rejecting execution", async () => {
   let upstreamRequested = false;
   let waitingIdentity: InvocationIdentity | undefined;
   const upstreams: McpUpstreamProvider = {
@@ -114,7 +114,7 @@ contractTest("services.hermetic", "ask-mode MCP capabilities persist a wait befo
   await server.close();
 });
 
-contractTest("services.hermetic", "ask-mode MCP capabilities execute after a persisted Thread approval", async () => {
+test("ask-mode MCP capabilities execute after a persisted Thread approval", async () => {
   let executed = false;
   const upstreams: McpUpstreamProvider = {
     async get() {

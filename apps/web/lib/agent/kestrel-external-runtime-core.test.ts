@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type {
   KestrelAgent,
@@ -8,7 +9,6 @@ import {
   createProfileBoundExternalReplyAgent,
   generateKestrelOneExternalReplyFromAgent,
 } from "@/lib/agent/kestrel-external-runtime-core";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 const context: KestrelRequestContext = {
@@ -21,7 +21,7 @@ const context: KestrelRequestContext = {
   tenantId: "org_123",
 };
 
-contractTest("web.hermetic", "external replies use the hosted chat id and canonical SDK context", async () => {
+test("external replies use the hosted chat id and canonical SDK context", async () => {
   let capturedTurn: KestrelAgentTurnInput | undefined;
   let capturedContext: KestrelRequestContext | undefined;
   const agent: Pick<KestrelAgent, "run"> = {
@@ -113,7 +113,7 @@ contractTest("web.hermetic", "external replies use the hosted chat id and canoni
   });
 });
 
-contractTest("web.hermetic", "external replies surface canonical runner failures", async () => {
+test("external replies surface canonical runner failures", async () => {
   const agent: Pick<KestrelAgent, "run"> = {
     async run(turn) {
       return {
@@ -163,7 +163,7 @@ contractTest("web.hermetic", "external replies surface canonical runner failures
   );
 });
 
-contractTest("web.hermetic", "external bot replies submit the gateway-managed inline profile", async () => {
+test("external bot replies submit the gateway-managed inline profile", async () => {
   let captured: unknown;
   const profile = {
     id: "kestrel-one:model:approved-model",

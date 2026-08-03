@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import React from "react";
 
 import { BubbleMessage } from "../../cli/ink/components/BubbleMessage.js";
 import { theme } from "../../cli/ink/theme/tokens.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "BubbleMessage renders user headers with neutral emphasis", () => {
+test("BubbleMessage renders user headers with neutral emphasis", () => {
   const user = BubbleMessage({
     role: "user",
     lines: ["hello"],
@@ -23,7 +23,7 @@ contractTest("runtime.hermetic", "BubbleMessage renders user headers with neutra
   assert.equal(children[0]?.props.color, theme.text);
 });
 
-contractTest("runtime.hermetic", "BubbleMessage renders selected assistant headers with neutral emphasis", () => {
+test("BubbleMessage renders selected assistant headers with neutral emphasis", () => {
   const assistant = BubbleMessage({
     role: "assistant",
     lines: ["hi"],
@@ -39,7 +39,7 @@ contractTest("runtime.hermetic", "BubbleMessage renders selected assistant heade
   assert.equal(children[0]?.props.color, theme.text);
 });
 
-contractTest("runtime.hermetic", "BubbleMessage keeps system cards muted", () => {
+test("BubbleMessage keeps system cards muted", () => {
   const system = BubbleMessage({
     role: "system",
     lines: ["notice"],
@@ -55,7 +55,7 @@ contractTest("runtime.hermetic", "BubbleMessage keeps system cards muted", () =>
   assert.equal(children[1]?.props.color, theme.muted);
 });
 
-contractTest("runtime.hermetic", "BubbleMessage renders attention system rows with warning emphasis", () => {
+test("BubbleMessage renders attention system rows with warning emphasis", () => {
   const system = BubbleMessage({
     role: "system",
     lines: ["Waiting for your reply.", "Which workspace should I inspect?"],
@@ -72,7 +72,7 @@ contractTest("runtime.hermetic", "BubbleMessage renders attention system rows wi
   assert.equal(children[2]?.props.color, theme.warn);
 });
 
-contractTest("runtime.hermetic", "BubbleMessage renders assistant reasoning rows as muted entries", () => {
+test("BubbleMessage renders assistant reasoning rows as muted entries", () => {
   const reasoning = BubbleMessage({
     role: "assistant",
     lines: ["Evaluating next best tool."],

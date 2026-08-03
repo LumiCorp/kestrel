@@ -1,11 +1,11 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createTavilyClient } from "../../tools/internet/client.js";
 import type { TavilySdkClient } from "../../tools/internet/client.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "createTavilyClient wires SDK config from explicit options", async () => {
+test("createTavilyClient wires SDK config from explicit options", async () => {
   let captured:
     | {
         apiKey?: string;
@@ -41,7 +41,7 @@ contractTest("runtime.hermetic", "createTavilyClient wires SDK config from expli
   });
 });
 
-contractTest("runtime.hermetic", "createTavilyClient throws structured error when api key is missing", async () => {
+test("createTavilyClient throws structured error when api key is missing", async () => {
   const previous = process.env.TAVILY_API_KEY;
   delete process.env.TAVILY_API_KEY;
 
@@ -68,7 +68,7 @@ contractTest("runtime.hermetic", "createTavilyClient throws structured error whe
   }
 });
 
-contractTest("runtime.hermetic", "createTavilyClient treats an explicit environment as authoritative", () => {
+test("createTavilyClient treats an explicit environment as authoritative", () => {
   const previous = process.env.TAVILY_API_KEY;
   process.env.TAVILY_API_KEY = "global-key-must-not-leak";
   let capturedApiKey: string | undefined;

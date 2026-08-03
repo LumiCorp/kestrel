@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -10,7 +11,6 @@ import type { TuiProfile } from "../../cli/contracts.js";
 import type { Kestrel, ProductTaskGraphStore, ThreadRuntime } from "../../src/index.js";
 import { LocalDevShellService } from "../../src/devshell/LocalDevShellService.js";
 import { TerminalBenchDevShellService } from "../../src/devshell/TerminalBenchDevShellService.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const profileWithDevShell: TuiProfile = {
@@ -24,7 +24,7 @@ const profileWithDevShell: TuiProfile = {
   },
 };
 
-contractTest("runtime.hermetic", "resolveDevShellServiceForProfile prefers the Terminal-Bench bridge when configured", () => {
+test("resolveDevShellServiceForProfile prefers the Terminal-Bench bridge when configured", () => {
   const service = resolveDevShellServiceForProfile(profileWithDevShell, {
     ...process.env,
     KESTREL_DEV_SHELL_BRIDGE_URL: "http://127.0.0.1:43123",
@@ -34,7 +34,7 @@ contractTest("runtime.hermetic", "resolveDevShellServiceForProfile prefers the T
   assert.ok(service instanceof TerminalBenchDevShellService);
 });
 
-contractTest("runtime.hermetic", "resolveDevShellServiceForProfile falls back to the local dev shell service when no bridge is configured", () => {
+test("resolveDevShellServiceForProfile falls back to the local dev shell service when no bridge is configured", () => {
   const service = resolveDevShellServiceForProfile(profileWithDevShell, {
     ...process.env,
     KESTREL_DEV_SHELL_BRIDGE_URL: "",
@@ -43,7 +43,7 @@ contractTest("runtime.hermetic", "resolveDevShellServiceForProfile falls back to
   assert.ok(service instanceof LocalDevShellService);
 });
 
-contractTest("runtime.hermetic", "resolveDevShellServiceForProfile returns undefined when dev shell tools are disabled", () => {
+test("resolveDevShellServiceForProfile returns undefined when dev shell tools are disabled", () => {
   const service = resolveDevShellServiceForProfile({
     ...profileWithDevShell,
     devShell: {
@@ -55,7 +55,7 @@ contractTest("runtime.hermetic", "resolveDevShellServiceForProfile returns undef
   assert.equal(service, undefined);
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime injects active task graph id into ordinary thread turn metadata", async () => {
+test("KestrelChatRuntime injects active task graph id into ordinary thread turn metadata", async () => {
   const submittedTurns: Array<{ metadata?: Record<string, unknown> | undefined }> = [];
   const runtime = new KestrelChatRuntime(profileWithDevShell, createRuntimeFactory({
     activeTaskId: "task-active",
@@ -71,7 +71,7 @@ contractTest("runtime.hermetic", "KestrelChatRuntime injects active task graph i
   assert.equal(submittedTurns[0]?.metadata?.activeTaskId, "task-active");
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime preserves explicit lineage activeTaskId over task graph activeTaskId", async () => {
+test("KestrelChatRuntime preserves explicit lineage activeTaskId over task graph activeTaskId", async () => {
   const submittedTurns: Array<{ metadata?: Record<string, unknown> | undefined }> = [];
   const runtime = new KestrelChatRuntime(profileWithDevShell, createRuntimeFactory({
     activeTaskId: "task-active",
@@ -95,7 +95,7 @@ contractTest("runtime.hermetic", "KestrelChatRuntime preserves explicit lineage 
   assert.equal(submittedTurns[0]?.metadata?.parentTaskId, "task-parent");
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime marks build-mode source workspaces as source workspace authority", async () => {
+test("KestrelChatRuntime marks build-mode source workspaces as source workspace authority", async () => {
   const submittedTurns: SubmittedRuntimeTurn[] = [];
   const runtime = new KestrelChatRuntime(profileWithDevShell, createRuntimeFactory({
     activeTaskId: "task-active",
@@ -128,7 +128,7 @@ contractTest("runtime.hermetic", "KestrelChatRuntime marks build-mode source wor
   });
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime forces the Environment-managed Workspace when configured", async () => {
+test("KestrelChatRuntime forces the Environment-managed Workspace when configured", async () => {
   const submittedTurns: SubmittedRuntimeTurn[] = [];
   const original = {
     required: process.env.KESTREL_REQUIRE_MANAGED_WORKTREE,
@@ -168,7 +168,7 @@ contractTest("runtime.hermetic", "KestrelChatRuntime forces the Environment-mana
   }
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime leaves plan-mode source workspaces read-only", async () => {
+test("KestrelChatRuntime leaves plan-mode source workspaces read-only", async () => {
   const submittedTurns: Array<{ metadata?: Record<string, unknown> | undefined }> = [];
   const runtime = new KestrelChatRuntime(profileWithDevShell, createRuntimeFactory({
     activeTaskId: "task-active",
@@ -198,7 +198,7 @@ contractTest("runtime.hermetic", "KestrelChatRuntime leaves plan-mode source wor
   });
 });
 
-contractTest("runtime.hermetic", "KestrelChatRuntime preserves explicit non-managed build workspaces as source authority", async () => {
+test("KestrelChatRuntime preserves explicit non-managed build workspaces as source authority", async () => {
   const submittedTurns: Array<{ metadata?: Record<string, unknown> | undefined }> = [];
   const runtime = new KestrelChatRuntime(profileWithDevShell, createRuntimeFactory({
     activeTaskId: "task-active",

@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type { UIMessage } from "ai";
 import {
   applySubmittedToolApproval,
   findSubmittedToolApproval,
 } from "./tool-approval-response";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
-contractTest("web.hermetic", "approval response must correspond to a persisted pending request", () => {
+test("approval response must correspond to a persisted pending request", () => {
   const persisted = message("approval-requested", { id: "approval-1" }, [
     { type: "text", text: "Trusted persisted content" },
   ]);
@@ -48,8 +48,7 @@ contractTest("web.hermetic", "approval response must correspond to a persisted p
   );
 });
 
-contractTest(
-  "web.hermetic",
+test(
   "compact approval submissions retain only decision identity",
   () => {
     const responded = message(

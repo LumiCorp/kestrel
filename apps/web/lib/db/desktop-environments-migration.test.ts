@@ -1,8 +1,8 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const migration = fs.readFileSync(
@@ -26,8 +26,7 @@ const workspacePreviewLeaseSchema = schema.slice(
   schema.indexOf("export const workspacePreviewAccessTokens"),
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "Desktop Environments extend the provider boundary without weakening Fly identity",
   () => {
     assert.match(

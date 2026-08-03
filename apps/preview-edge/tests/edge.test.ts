@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import {
@@ -9,7 +10,6 @@ import { connect } from "node:net";
 import {
   PREVIEW_EDGE_AUTHORIZATION_HEADER,
 } from "@lumi/kestrel-environment-auth";
-import { contractTest } from "../../../tests/helpers/contract-test.js";
 import { PreviewEdge } from "../src/edge.js";
 import {
   PreviewEdgeRouteError,
@@ -26,8 +26,7 @@ const route: PreviewEdgeRoute = {
   expiresAt: Date.now() + 300_000,
 };
 
-contractTest(
-  "services.process",
+test(
   "Preview Edge streams HTTP and owns its routing headers without reserving application paths",
   async () => {
     const observed: Array<{
@@ -164,8 +163,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "services.process",
+test(
   "Preview Edge returns stable failures without consulting routes for invalid hosts",
   async () => {
     let resolutions = 0;
@@ -208,8 +206,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "services.process",
+test(
   "Preview Edge reports an unavailable Environment Router as a bounded bad gateway",
   async () => {
     const unavailable = createServer();
@@ -256,8 +253,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "services.process",
+test(
   "Preview Edge streams WebSocket upgrades with server-owned route authorization",
   async () => {
     let observedRouteAuthorization: string | undefined;
@@ -329,8 +325,7 @@ contractTest(
   }
 );
 
-contractTest(
-  "services.process",
+test(
   "Preview Edge waits for fragmented WebSocket response headers and bounds silent upstreams",
   async () => {
     const fragmentedUpstream = createServer();

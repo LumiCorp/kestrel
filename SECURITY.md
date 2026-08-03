@@ -3,7 +3,7 @@ id: security-root
 domain: ops
 status: active
 owner: kestrel-security
-last_verified_at: 2026-07-20
+last_verified_at: 2026-07-31
 depends_on:
   - ARCHITECTURE.md
   - docs/references/architecture-rules.json
@@ -78,6 +78,27 @@ Provider keys, runner tokens, signing material, database credentials, and MCP
 secrets belong in server-side, Local Core, or operating-system-backed
 configuration. They do not belong in browser bundles, source control, public
 logs, or readable API responses.
+
+## User-enabled MCP servers
+
+Kestrel trusts administrators to select the OCI MCP servers they install and
+enable. Those servers receive full outbound networking by default because MCP
+integrations commonly require destinations that cannot be predicted at install
+time. `none` remains an explicit option for servers designed to run offline.
+
+Container isolation protects the host and limits filesystem access to explicit
+read-only mounts. It is not an outbound-network security boundary. An enabled
+OCI MCP server can contact arbitrary network destinations and can use only the
+credentials and mounted data explicitly configured for it. Kestrel communicates
+this authority when the server is installed.
+
+The architecture audit's default-deny egress zero is an accepted product risk,
+not unfinished implementation. Destination allowlists, egress brokers, and
+per-destination grants are intentionally outside the supported contract.
+
+Workspace path checks prevent known static symlink escapes. Descriptor-relative
+TOCTOU hardening is deferred until mutually untrusted writers sharing one
+workspace enter Kestrel's supported threat model.
 
 ## Stored evidence and sharing
 

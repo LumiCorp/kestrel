@@ -1,3 +1,4 @@
+import test from "node:test";
 import "../../scripts/register-server-only.mjs";
 
 import assert from "node:assert/strict";
@@ -10,10 +11,8 @@ import {
   getKestrelOneHostedAgentId,
   resolveHostedKestrelExecutionProfile,
 } from "./kestrel-runtime";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-contractTest(
-  "web.hermetic",
+test(
   "hosted Kestrel keeps product agent identity separate from policy profile id",
   () => {
     const previous = process.env.KESTREL_ONE_AGENT_ID;
@@ -32,8 +31,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "hosted Kestrel resolves a registered profile before execution",
   async () => {
     const calls: Array<{
@@ -133,8 +131,7 @@ contractTest(
   },
 );
 
-contractTest(
-  "web.hermetic",
+test(
   "hosted Kestrel resolves desktop-local model profiles without hosted credentials",
   async () => {
     const calls: Array<{

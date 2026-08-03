@@ -1,7 +1,7 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import { checkToolBatchChunkPolicyGate } from "../../agents/reference-react/src/steps/acter/policyGates.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
 const base = {
@@ -15,7 +15,7 @@ const base = {
   executionPolicy: undefined,
 };
 
-contractTest("runtime.hermetic", "execution defense blocks Build-only mutations in Chat even with a widening override", () => {
+test("execution defense blocks Build-only mutations in Chat even with a widening override", () => {
   const result = checkToolBatchChunkPolicyGate({
     ...base,
     items: [{ name: "fs.write_text", input: { path: "a", content: "b" } }],
@@ -27,7 +27,7 @@ contractTest("runtime.hermetic", "execution defense blocks Build-only mutations 
   assert.equal(result.kind, "blocked");
 });
 
-contractTest("runtime.hermetic", "execution defense allows an explicitly Chat-enabled authorized app action", () => {
+test("execution defense allows an explicitly Chat-enabled authorized app action", () => {
   const result = checkToolBatchChunkPolicyGate({
     ...base,
     items: [{ name: "calendar.create", input: {} }],

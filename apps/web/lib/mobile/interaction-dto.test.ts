@@ -1,7 +1,7 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import type { schema } from "@/lib/knowledge/db";
 import { mobileInteractionDto } from "./dto";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
 
 type Checkpoint = typeof schema.mcpInteractionCheckpoints.$inferSelect;
@@ -29,7 +29,7 @@ function checkpoint(overrides: Partial<Checkpoint>): Checkpoint {
   };
 }
 
-contractTest("web.hermetic", "mobile interaction DTO exposes bounded question fields, not raw envelopes", () => {
+test("mobile interaction DTO exposes bounded question fields, not raw envelopes", () => {
   const dto = mobileInteractionDto(
     checkpoint({
       requestEnvelope: {
@@ -61,7 +61,7 @@ contractTest("web.hermetic", "mobile interaction DTO exposes bounded question fi
   assert.doesNotMatch(JSON.stringify(dto), /secret|credential/iu);
 });
 
-contractTest("web.hermetic", "sampling approval hides prompts, tools, and provider data", () => {
+test("sampling approval hides prompts, tools, and provider data", () => {
   const dto = mobileInteractionDto(
     checkpoint({
       kind: "sampling",

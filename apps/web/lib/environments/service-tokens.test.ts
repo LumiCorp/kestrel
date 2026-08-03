@@ -1,12 +1,12 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createEnvironmentServiceToken,
   hashEnvironmentServiceToken,
   verifyEnvironmentServiceToken,
 } from "./service-tokens";
-import { contractTest } from "../../../../tests/helpers/contract-test.js";
 
-contractTest("web.hermetic", "Environment service identities store only a one-way token hash", () => {
+test("Environment service identities store only a one-way token hash", () => {
   const token = createEnvironmentServiceToken();
   const hash = hashEnvironmentServiceToken(token);
   assert.match(token, /^[A-Za-z0-9_-]{43}$/u);

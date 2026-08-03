@@ -1,3 +1,4 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -29,7 +30,6 @@ import {
   KESTREL_COMPACTION_SUFFICIENCY_SCHEMA,
   shouldCompactKestrelAgentContext,
 } from "../../src/runtime/KestrelAgentContextBuilder.js";
-import { contractTest } from "../helpers/contract-test.js";
 import {
   estimateModelTranscriptItemsTokens,
   planTokenBudgetedModelTranscriptCompaction,
@@ -37,7 +37,7 @@ import {
 } from "../../src/runtime/modelTranscript.js";
 
 
-contractTest("runtime.hermetic", "Kestrel agent context builder preserves the compatibility request output", () => {
+test("Kestrel agent context builder preserves the compatibility request output", () => {
   const input = {
     reactState: {
       visibleTodos: {
@@ -81,7 +81,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder preserves the co
   assert.equal(direct.metadata.builder, "kestrel-agent-context");
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder records deterministic section order", () => {
+test("Kestrel agent context builder records deterministic section order", () => {
   const context = buildKestrelAgentContext({
     reactState: {},
     eventPayload: {
@@ -135,7 +135,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder records determin
   );
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder uses fresh user message when no active task state remains", () => {
+test("Kestrel agent context builder uses fresh user message when no active task state remains", () => {
   const originalTask = "Build Chirp, a text-only microblogging app with auth and CRUD posts.";
   const followUp = "you can use your tools to scaffold a project";
   const context = buildKestrelAgentContext({
@@ -178,7 +178,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder uses fresh user 
   assert.equal(items.at(-1)?.content, followUp);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder does not reuse cwd task for a fresh plan question", () => {
+test("Kestrel agent context builder does not reuse cwd task for a fresh plan question", () => {
   const cwdQuestion = "ok whats your cwd?";
   const planQuestion = "ok now what is the current PLAN.md say? where are we at in terms of progress?";
   const context = buildKestrelAgentContext({
@@ -222,7 +222,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder does not reuse c
   assert.match(JSON.stringify(context.contextMessages), /current PLAN\.md/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder seeds original task before bootstrapped replies", () => {
+test("Kestrel agent context builder seeds original task before bootstrapped replies", () => {
   const originalTask = "Build Chirp, a text-only microblogging app with auth and CRUD posts.";
   const reply = "lets do Vite instead of Nextjs... SQLite db via prisma is fine";
   const context = buildKestrelAgentContext({
@@ -258,7 +258,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder seeds original t
   assert.equal(nextContext.modelInput.taskInstruction, "keep going");
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder promotes active exec_command process evidence", () => {
+test("Kestrel agent context builder promotes active exec_command process evidence", () => {
   const context = buildKestrelAgentContext({
     reactState: {
       lastActionResult: {
@@ -314,7 +314,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder promotes active 
   assert.equal(context.metadata.sections.find((section) => section.id === "activeProcessEvidence")?.rendered, true);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder promotes active exec_command evidence from transcript", () => {
+test("Kestrel agent context builder promotes active exec_command evidence from transcript", () => {
   const context = buildKestrelAgentContext({
     reactState: {
       modelTranscript: {
@@ -363,7 +363,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder promotes active 
   assert.equal(context.metadata.sections.find((section) => section.id === "activeProcessEvidence")?.rendered, true);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder clears transcript process evidence after terminal settlement", () => {
+test("Kestrel agent context builder clears transcript process evidence after terminal settlement", () => {
   const context = buildKestrelAgentContext({
     reactState: {
       modelTranscript: {
@@ -401,7 +401,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder clears transcrip
   assert.equal(context.metadata.sections.find((section) => section.id === "activeProcessEvidence")?.rendered, false);
 });
 
-contractTest("runtime.hermetic", "workspace status is rederived from the ledger after compaction and clears when fresh", () => {
+test("workspace status is rederived from the ledger after compaction and clears when fresh", () => {
   const mutation = {
     id: "mutation-1",
     version: "v1",
@@ -456,7 +456,7 @@ contractTest("runtime.hermetic", "workspace status is rederived from the ledger 
   assert.doesNotMatch(String(fresh.contextMessages[0]?.content ?? ""), /Workspace status:/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder owns deliberator system message placement", () => {
+test("Kestrel agent context builder owns deliberator system message placement", () => {
   const context = buildKestrelAgentContext({
     reactState: {},
     eventPayload: {
@@ -480,7 +480,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder owns deliberator
   assert.equal(context.metadata.sections.find((section) => section.id === "systemPrompt")?.rendered, true);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder renders sectioned runtime context and submode", () => {
+test("Kestrel agent context builder renders sectioned runtime context and submode", () => {
   const context = buildKestrelAgentContext({
     reactState: {
       visibleTodos: {
@@ -508,7 +508,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder renders sectione
   assert.doesNotMatch(runtimeContext, /Context priority:/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel deliberator system prompt keeps context and build-loop contracts explicit", () => {
+test("Kestrel deliberator system prompt keeps context and build-loop contracts explicit", () => {
   const context = buildKestrelAgentContext({
     reactState: {},
     eventPayload: {
@@ -546,7 +546,7 @@ contractTest("runtime.hermetic", "Kestrel deliberator system prompt keeps contex
   assert.match(systemPrompt, /truthfully describes that exact selected action/u);
 });
 
-contractTest("runtime.hermetic", "V2 compaction prompt and schema contain semantic text only", () => {
+test("V2 compaction prompt and schema contain semantic text only", () => {
   const sourceItems = [
     {
       id: "old-user-id",
@@ -628,7 +628,7 @@ contractTest("runtime.hermetic", "V2 compaction prompt and schema contain semant
   ]);
 });
 
-contractTest("runtime.hermetic", "token pressure triggers compaction in observe and enforce modes", () => {
+test("token pressure triggers compaction in observe and enforce modes", () => {
   const transcript = { version: 1 as const, windowId: 1, items: [] };
   const profile = {
     version: 1,
@@ -669,7 +669,7 @@ contractTest("runtime.hermetic", "token pressure triggers compaction in observe 
   }
 });
 
-contractTest("runtime.hermetic", "token-budgeted plans keep the active task and tool pairs atomic", () => {
+test("token-budgeted plans keep the active task and tool pairs atomic", () => {
   const transcript = {
     version: 1 as const,
     windowId: 1,
@@ -696,7 +696,7 @@ contractTest("runtime.hermetic", "token-budgeted plans keep the active task and 
   assert.equal(plan.retainedItems.some((item) => item.id === "tail"), true);
 });
 
-contractTest("runtime.hermetic", "maintenance source preserves orphan tool-result evidence", () => {
+test("maintenance source preserves orphan tool-result evidence", () => {
   const units = buildKestrelCompactionSourceUnits([
     {
       id: "orphan-result",
@@ -727,7 +727,7 @@ contractTest("runtime.hermetic", "maintenance source preserves orphan tool-resul
   assert.doesNotMatch(JSON.stringify(units), /orphan-result|createdAt/u);
 });
 
-contractTest("runtime.hermetic", "maintenance chunks use compact rendered-source tokens while retained tails use raw tokens", () => {
+test("maintenance chunks use compact rendered-source tokens while retained tails use raw tokens", () => {
   const writeContent = `${"const value = 1;\n".repeat(1_000)}end`;
   const historicalItems = Array.from({ length: 2 }, (_, index) => [
     {
@@ -804,7 +804,7 @@ contractTest("runtime.hermetic", "maintenance chunks use compact rendered-source
   );
 });
 
-contractTest("runtime.hermetic", "explicit partial compaction preserves middle history and durable fallback lineage", () => {
+test("explicit partial compaction preserves middle history and durable fallback lineage", () => {
   const transcript = {
     version: 1 as const,
     windowId: 1,
@@ -847,7 +847,7 @@ contractTest("runtime.hermetic", "explicit partial compaction preserves middle h
   assert.equal(typeof record?.summaryHash, "string");
 });
 
-contractTest("runtime.hermetic", "V2 compaction phase uses at least 50 percent fewer input tokens than the old protocol", () => {
+test("V2 compaction phase uses at least 50 percent fewer input tokens than the old protocol", () => {
   const activeTask = {
     id: "active-task",
     createdAt: "2026-07-29T12:00:00.000Z",
@@ -1059,7 +1059,7 @@ contractTest("runtime.hermetic", "V2 compaction phase uses at least 50 percent f
   assert.match(renderedCompacted, /Run pnpm validate/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder owns the provider-facing tool surface", () => {
+test("Kestrel agent context builder owns the provider-facing tool surface", () => {
   const workspaceTools = [
     {
       name: "dev.shell.run",
@@ -1108,7 +1108,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder owns the provide
   );
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder owns tool-result summaries and model context", () => {
+test("Kestrel agent context builder owns tool-result summaries and model context", () => {
   assert.equal(
     buildKestrelAgentToolResultSummary({
       toolName: "fs.search_text",
@@ -1147,7 +1147,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder owns tool-result
   assert.equal(genericContext.text.match(/- status:/gu)?.length, 1);
 });
 
-contractTest("runtime.hermetic", "Workspace preview results keep complete public URLs model-visible", () => {
+test("Workspace preview results keep complete public URLs model-visible", () => {
   const publicUrl =
     "https://p-f8b2b1d3e4a5968778695a4b3c2d1e0f.preview.kestrelagents.dev";
   const context = buildKestrelAgentToolModelContext({
@@ -1184,7 +1184,7 @@ contractTest("runtime.hermetic", "Workspace preview results keep complete public
   assert.match(context.text, /port: 5173/u);
 });
 
-contractTest("runtime.hermetic", "agent evidence resolves relative process cwd from the recorded workspace root", () => {
+test("agent evidence resolves relative process cwd from the recorded workspace root", () => {
   const runningResult = {
     kind: "tool",
     name: "exec_command",
@@ -1217,7 +1217,7 @@ contractTest("runtime.hermetic", "agent evidence resolves relative process cwd f
   assert.doesNotMatch(recentEvidence?.[0] ?? "", /outside-active-workspace/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder keeps bounded weather facts model-visible", () => {
+test("Kestrel agent context builder keeps bounded weather facts model-visible", () => {
   const currentContext = buildKestrelAgentToolModelContext({
     toolName: "free.weather.current",
     toolInput: { city: "Cincinnati, OH" },
@@ -1292,7 +1292,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder keeps bounded we
   assert.ok(forecastContext.text.length <= 12_000);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder promotes recent failed tool results as compact evidence", () => {
+test("Kestrel agent context builder promotes recent failed tool results as compact evidence", () => {
   const failedToolText = [
     "Tool result: dev.shell.run",
     "",
@@ -1373,7 +1373,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder promotes recent 
   );
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder presents the latest successful result before older failures", () => {
+test("Kestrel agent context builder presents the latest successful result before older failures", () => {
   const context = buildKestrelAgentContext({
     reactState: {
       lastActionResult: {
@@ -1482,7 +1482,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder presents the lat
   assert.match(runtimeContext, /Treat the latest observed result as authoritative/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder preserves running and partial latest tool results", () => {
+test("Kestrel agent context builder preserves running and partial latest tool results", () => {
   for (const status of ["running", "partial"] as const) {
     const context = buildKestrelAgentContext({
       reactState: {
@@ -1518,7 +1518,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder preserves runnin
   }
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder renders structured validation and repair prompts", () => {
+test("Kestrel agent context builder renders structured validation and repair prompts", () => {
   const validation = buildKestrelAgentValidationFeedbackMessage({
     code: "DECISION_SCHEMA_FAILED",
     message: "Missing tool call.",
@@ -1545,7 +1545,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder renders structur
   assert.match(repairPrompt, /# Evidence/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder renders exec_command lifecycle correction", () => {
+test("Kestrel agent context builder renders exec_command lifecycle correction", () => {
   const feedback = buildKestrelAgentValidationFeedbackMessage({
     code: "DECISION_SCHEMA_FAILED",
     message: "exec_command input mixed start-process fields with continuation fields.",
@@ -1593,7 +1593,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder renders exec_com
   assert.doesNotMatch(providerText, /Correction: The previous action was rejected by validation/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder renders the exact rejected structured response for contract repair", () => {
+test("Kestrel agent context builder renders the exact rejected structured response for contract repair", () => {
   const context = buildKestrelAgentContext({
     reactState: {},
     retryContext: {
@@ -1628,7 +1628,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder renders the exac
   assert.match(providerText, /package\.json/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder gives exact legacy finalize data recovery", () => {
+test("Kestrel agent context builder gives exact legacy finalize data recovery", () => {
   const requiredCorrection =
     "Call kestrel_finalize again with the same status and user-facing message, but omit changedFiles, checksRun, and checksFailed from data. The runtime derives changed files and validation evidence from observed tool results.";
   const feedback = buildKestrelAgentValidationFeedbackMessage({
@@ -1680,7 +1680,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder gives exact lega
   assert.match(providerText, /Previous rejected structured response/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder gives an exact visible todo continuation action", () => {
+test("Kestrel agent context builder gives an exact visible todo continuation action", () => {
   const context = buildKestrelAgentContext({
     reactState: {},
     retryContext: {
@@ -1720,7 +1720,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder gives an exact v
   assert.match(providerText, /Run the focused regression test/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder renders duplicate exec_command start correction", () => {
+test("Kestrel agent context builder renders duplicate exec_command start correction", () => {
   const feedback = buildKestrelAgentValidationFeedbackMessage({
     code: "DECISION_POLICY_FAILED",
     message: "Cannot start the same command while that command already has a live process.",
@@ -1740,7 +1740,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder renders duplicat
   assert.match(feedback, /Use fresh command only when intentionally resetting or starting unrelated work/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder renders plan document handoff correction", () => {
+test("Kestrel agent context builder renders plan document handoff correction", () => {
   const context = buildKestrelAgentContext({
     reactState: {},
     retryContext: {
@@ -1776,7 +1776,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder renders plan doc
   assert.match(providerText, /planning\.write_document/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder does not duplicate persisted validation feedback", () => {
+test("Kestrel agent context builder does not duplicate persisted validation feedback", () => {
   const feedback = buildKestrelAgentValidationFeedbackMessage({
     code: "DECISION_SCHEMA_FAILED",
     message: "Missing tool call.",
@@ -1829,7 +1829,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder does not duplica
   assert.doesNotMatch(providerText, /Correction: The previous action was rejected by validation/u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder keeps unrelated correction history visible", () => {
+test("Kestrel agent context builder keeps unrelated correction history visible", () => {
   const activeFeedback = buildKestrelAgentValidationFeedbackMessage({
     code: "DECISION_SCHEMA_FAILED",
     message: "Missing tool call.",
@@ -1888,7 +1888,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder keeps unrelated 
   assert.match(providerText, /Correction: Earlier correction that should stay visible\./u);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder renders structured SWE Verified benchmark context", () => {
+test("Kestrel agent context builder renders structured SWE Verified benchmark context", () => {
   const context = buildKestrelAgentContext({
     reactState: {},
     eventPayload: {
@@ -1923,7 +1923,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder renders structur
   assert.equal(context.metadata.sections.find((section) => section.id === "benchmarkContext")?.rendered, true);
 });
 
-contractTest("runtime.hermetic", "Kestrel agent context builder renders structured Terminal-Bench benchmark context", () => {
+test("Kestrel agent context builder renders structured Terminal-Bench benchmark context", () => {
   const context = buildKestrelAgentContext({
     reactState: {},
     eventPayload: {
@@ -1955,7 +1955,7 @@ contractTest("runtime.hermetic", "Kestrel agent context builder renders structur
   assert.doesNotMatch(String(context.modelInput.taskInstruction), /dev\.process\.read/u);
 });
 
-contractTest("runtime.hermetic", "deliberator model requests use builder-rendered system messages", () => {
+test("deliberator model requests use builder-rendered system messages", () => {
   const source = readFileSync(
     path.join(process.cwd(), "agents/reference-react/src/steps/deliberator.ts"),
     "utf8",
@@ -1971,7 +1971,7 @@ contractTest("runtime.hermetic", "deliberator model requests use builder-rendere
   assert.match(source, /buildKestrelAgentCompactedTranscript/u);
 });
 
-contractTest("runtime.hermetic", "model tool action parsing delegates provider-facing tool rendering to the builder", () => {
+test("model tool action parsing delegates provider-facing tool rendering to the builder", () => {
   const source = readFileSync(
     path.join(process.cwd(), "agents/reference-react/src/modelToolCallActions.ts"),
     "utf8",
@@ -1983,7 +1983,7 @@ contractTest("runtime.hermetic", "model tool action parsing delegates provider-f
   assert.doesNotMatch(source, /name\.replace\(/u);
 });
 
-contractTest("runtime.hermetic", "tool-result and benchmark repair renderers delegate model-visible text to the builder", () => {
+test("tool-result and benchmark repair renderers delegate model-visible text to the builder", () => {
   const toolResultSource = readFileSync(
     path.join(process.cwd(), "tools/toolResult.ts"),
     "utf8",

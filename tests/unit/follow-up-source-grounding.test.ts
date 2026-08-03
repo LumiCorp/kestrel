@@ -1,13 +1,13 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   applyFollowUpSourceGrounding,
   collectPriorSources,
 } from "../../agents/reference-react/src/followUpSourceGrounding.js";
-import { contractTest } from "../helpers/contract-test.js";
 
 
-contractTest("runtime.hermetic", "collectPriorSources extracts latest-first deduped prior internet sources", () => {
+test("collectPriorSources extracts latest-first deduped prior internet sources", () => {
   const priorSources = collectPriorSources({
     reactState: {
       lastActionResult: {
@@ -55,7 +55,7 @@ contractTest("runtime.hermetic", "collectPriorSources extracts latest-first dedu
   assert.equal(priorSources[1]?.url, "https://example.com/transit");
 });
 
-contractTest("runtime.hermetic", "collectPriorSources keeps candidate ids stable when descriptive fields change", () => {
+test("collectPriorSources keeps candidate ids stable when descriptive fields change", () => {
   const first = collectPriorSources({
     reactState: {
       postToolVerification: {
@@ -104,7 +104,7 @@ contractTest("runtime.hermetic", "collectPriorSources keeps candidate ids stable
   assert.equal(second[0]?.summary, "Updated retained summary.");
 });
 
-contractTest("runtime.hermetic", "applyFollowUpSourceGrounding applies explicit prior-source selection by candidate id", () => {
+test("applyFollowUpSourceGrounding applies explicit prior-source selection by candidate id", () => {
   const priorSourceId = "source-crosby";
   const result = applyFollowUpSourceGrounding({
     userMessage: "tell me more about the Corsby deal falling through",
@@ -167,7 +167,7 @@ contractTest("runtime.hermetic", "applyFollowUpSourceGrounding applies explicit 
   assert.equal(result.executionIntent?.inputHints?.urlSource, "prior_result_grounding");
 });
 
-contractTest("runtime.hermetic", "applyFollowUpSourceGrounding applies explicit search pivot", () => {
+test("applyFollowUpSourceGrounding applies explicit search pivot", () => {
   const result = applyFollowUpSourceGrounding({
     userMessage: "tell me more about that one",
     toolIntent: {
@@ -237,7 +237,7 @@ contractTest("runtime.hermetic", "applyFollowUpSourceGrounding applies explicit 
   assert.equal(result.executionIntent?.inputHints?.query, "Cincinnati budget debate intensifies");
 });
 
-contractTest("runtime.hermetic", "applyFollowUpSourceGrounding fails closed when a fetch follow-up omits explicit selection", () => {
+test("applyFollowUpSourceGrounding fails closed when a fetch follow-up omits explicit selection", () => {
   const result = applyFollowUpSourceGrounding({
     userMessage: "tell me more about that article",
     toolIntent: {
@@ -283,7 +283,7 @@ contractTest("runtime.hermetic", "applyFollowUpSourceGrounding fails closed when
   assert.equal(result.executionIntent?.inputHints?.url, undefined);
 });
 
-contractTest("runtime.hermetic", "collectPriorSources keeps retained source memory unbounded and latest-first", () => {
+test("collectPriorSources keeps retained source memory unbounded and latest-first", () => {
   const priorSources = collectPriorSources({
     reactState: {
       goal: "Research the top current U.S. business and technology stories.",
