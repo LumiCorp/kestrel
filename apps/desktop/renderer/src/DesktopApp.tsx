@@ -1004,6 +1004,71 @@ export function DesktopApp() {
     }
   }
 
+  async function submitRecoveryOption(optionId: string): Promise<void> {
+    if (
+      state === undefined ||
+      activeThread === undefined ||
+      composerPolicy.mode !== "select_recovery_option"
+    ) {
+      return;
+    }
+    const { item } = composerPolicy;
+    const message = `Selected recovery option: ${optionId}`;
+    const submittedAt = new Date().toISOString();
+    const threadId = activeThread.id;
+    clearThreadError(threadId);
+    pendingTurnSubmissionsRef.current[activeThread.sessionId] = {
+      threadId,
+      message,
+      submittedAt,
+      projectPath: activeThread.projectPath,
+    };
+    setOperatorActionPending((current) => ({ ...current, [item.itemId]: true }));
+    setThreadActivity(threadId, "Submitting recovery choice");
+    try {
+      const controlResult = await window.kestrelDesktop.submitOperatorControl({
+        action: "reply",
+        threadId: localCoreThreadId(activeThread.sessionId),
+        completionMode: "accepted",
+        requestId: item.requestId,
+        recoveryOptionId: optionId,
+        message,
+        interactionMode: activeThread.mode,
+        ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
+      });
+      setThreadViews((current) => ({
+        ...current,
+        [threadId]: controlResult.view,
+      }));
+      if (pendingTurnSubmissionsRef.current[activeThread.sessionId] !== undefined) {
+        delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
+        setState((current) => {
+          if (current === undefined) return current;
+          return updateRendererThread(
+            appendRendererTranscript(current, threadId, {
+              role: "user",
+              text: message,
+              timestamp: submittedAt,
+            }),
+            threadId,
+            (thread) => ({ ...thread, pendingWaitEventType: undefined }),
+          );
+        });
+      }
+      projectOperatorControlResult(threadId, controlResult);
+      setThreadActivity(threadId, "Recovery choice submitted");
+    } catch (cause) {
+      delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
+      setThreadFailure(threadId, "Recovery choice not submitted", errorMessage(cause));
+      void refreshThreadAuthority(activeThread).catch(() => {
+        // Preserve the recovery submission error; the next authority refresh can retry.
+      });
+    } finally {
+      acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
+      setOperatorActionPending((current) => ({ ...current, [item.itemId]: false }));
+    }
+  }
+
   async function cancelActiveRun(): Promise<void> {
     if (activeRun === undefined || activeThread === undefined) {
       return;
@@ -1787,7 +1852,30 @@ export function DesktopApp() {
             )}
           />
 
-          {archivedThreadSelected ? null : <form
+          {archivedThreadSelected ? null : composerPolicy.mode === "select_recovery_option" ? (
+            <section className="composer recovery-option-composer" aria-label="Recovery options">
+              <div className="recovery-option-copy">
+                <strong>Recovery is exhausted</strong>
+                <span>Choose one allowed recovery option.</span>
+                {composerPolicy.triggeringFailureCode !== undefined ? (
+                  <code>{composerPolicy.triggeringFailureCode}</code>
+                ) : null}
+              </div>
+              <div className="recovery-option-actions">
+                {composerPolicy.allowedOptionIds.map((optionId) => (
+                  <button
+                    className="primary-button"
+                    key={optionId}
+                    type="button"
+                    disabled={operatorActionPending[composerPolicy.item.itemId] === true}
+                    onClick={() => void submitRecoveryOption(optionId)}
+                  >
+                    {recoveryOptionLabel(optionId)}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : <form
             className={`composer ${composerFocused || activeThread.draft.trim().length > 0 || activeThread.draftAttachmentIds.length > 0 ? "composer-expanded" : ""}`}
             onBlur={(event) => {
               if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
@@ -2156,6 +2244,12 @@ export function DesktopApp() {
 
     </div>
   );
+}
+
+function recoveryOptionLabel(optionId: string): string {
+  if (optionId === "retry.primary") return "Retry";
+  if (optionId === "terminal.fail") return "End run";
+  return optionId;
 }
 
 function QueuedFollowUpCard({

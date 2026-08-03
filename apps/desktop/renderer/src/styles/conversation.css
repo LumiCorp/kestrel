@@ -291,6 +291,40 @@
   opacity: 0.55;
 }
 
+.recovery-option-composer {
+  display: flex;
+  min-height: 0;
+  padding: var(--space-3);
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  overflow: visible;
+}
+
+.recovery-option-copy {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.recovery-option-copy strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.recovery-option-copy code {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.recovery-option-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 :root[data-theme="dark"] .composer {
   background-color: var(--bg-control) !important;
 }

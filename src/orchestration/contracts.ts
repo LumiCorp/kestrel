@@ -172,6 +172,7 @@ export interface SubmitTurnInput {
   executionPolicy?: ExecutionPolicyOverride | undefined;
   stepAgent?: string | undefined;
   resumeBlockedRun?: boolean | undefined;
+  recoveryOptionId?: string | undefined;
   signal?: AbortSignal | undefined;
   actor?: RuntimeTurnActor | undefined;
   manualCompaction?: boolean | undefined;
@@ -205,6 +206,7 @@ export interface ReplyToRequestInput {
   threadId: string;
   requestId: string;
   message: string;
+  recoveryOptionId?: string | undefined;
   interactionMode?: InteractionMode | undefined;
   actSubmode?: ActSubmode | undefined;
   executionPolicy?: ExecutionPolicyOverride | undefined;

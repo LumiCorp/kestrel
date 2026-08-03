@@ -908,6 +908,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
         threadId: input.threadId,
         requestId: resolved.request.requestId,
         kind: resolved.request.kind,
+        ...(input.recoveryOptionId !== undefined
+          ? { recoveryOptionId: input.recoveryOptionId }
+          : {}),
         ...(resolved.request.delegationId !== undefined ? { delegationId: resolved.request.delegationId } : {}),
       },
     });
@@ -936,6 +939,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
       message: input.message,
       eventType: resolved.request.eventType,
       ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+      ...(input.recoveryOptionId !== undefined
+        ? { recoveryOptionId: input.recoveryOptionId }
+        : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
       ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
@@ -946,7 +952,20 @@ export class ThreadRuntime implements ThreadRuntimePort {
         ...(resolved.grant !== undefined ? { grantId: resolved.grant.grantId } : {}),
         ...(resolved.request.delegationId !== undefined ? { delegationId: resolved.request.delegationId } : {}),
       },
-      ...(input.runtimeTurn !== undefined ? { runtimeTurn: input.runtimeTurn } : {}),
+      ...(input.runtimeTurn !== undefined || input.recoveryOptionId !== undefined
+        ? {
+            runtimeTurn: {
+              ...(input.runtimeTurn ?? {
+                sessionId: thread.sessionId,
+                message: input.message,
+                eventType: resolved.request.eventType,
+              }),
+              ...(input.recoveryOptionId !== undefined
+                ? { recoveryOptionId: input.recoveryOptionId }
+                : {}),
+            },
+          }
+        : {}),
       actor: effectiveInput.actor,
     });
     if (queueWasWaiting && result.output.status === "COMPLETED") {
@@ -2297,6 +2316,7 @@ function buildTurnExecutionIdentity(
     | "actSubmode"
     | "executionPolicy"
     | "stepAgent"
+    | "recoveryOptionId"
     | "manualCompaction"
     | "autoCompaction"
   >,
@@ -2315,6 +2335,7 @@ function buildTurnExecutionIdentity(
     actSubmode: input.actSubmode,
     executionPolicy: input.executionPolicy,
     stepAgent: input.stepAgent,
+    recoveryOptionId: input.recoveryOptionId,
     manualCompaction: input.manualCompaction,
     autoCompaction: input.autoCompaction,
   };

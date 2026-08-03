@@ -845,6 +845,7 @@ export interface OperatorControlCommandPayload {
   threadId: string;
   completionMode?: "terminal" | "accepted" | undefined;
   requestId?: string | undefined;
+  recoveryOptionId?: string | undefined;
   proposalId?: string | undefined;
   checkpointId?: string | undefined;
   delegationId?: string | undefined;
@@ -2122,6 +2123,7 @@ function parseRunnerCommandPayloadV2(
         "threadId",
         "completionMode",
         "requestId",
+        "recoveryOptionId",
         "proposalId",
         "checkpointId",
         "delegationId",
@@ -2160,6 +2162,7 @@ function parseRunnerCommandPayloadV2(
       validateOptionalEnum(payload.completionMode, `${label}.completionMode`, ["terminal", "accepted"]);
       for (const field of [
         "requestId",
+        "recoveryOptionId",
         "proposalId",
         "checkpointId",
         "delegationId",
@@ -2170,6 +2173,11 @@ function parseRunnerCommandPayloadV2(
         "model",
       ] as const) {
         validateOptionalNonEmptyString(payload[field], `${label}.${field}`);
+      }
+      if (payload.recoveryOptionId !== undefined && payload.action !== "reply") {
+        throw new RunnerProtocolContractError(
+          `${label}.recoveryOptionId is supported only for reply actions`,
+        );
       }
       validateOptionalString(payload.message, `${label}.message`);
       validateOptionalEnum(payload.actionValue, `${label}.actionValue`, [

@@ -21,6 +21,7 @@ import {
   type TurnExecutor,
 } from "../../src/orchestration/index.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { RECOVERY_REVIEW_BINDING_VERSION } from "../../src/kestrel/contracts/recovery.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 
 
@@ -270,6 +271,147 @@ test("InteractionManager rejects changed, expired, or unbound executable authori
   assert.equal(decision.grant, undefined);
 });
 
+test("InteractionManager validates exact recovery choices before consuming the request", async () => {
+  const store = new InMemorySessionStore();
+  const manager = new InteractionManager(store);
+  const actor = {
+    actorType: "operator" as const,
+    actorId: "operator-1",
+    tenantId: "tenant-1",
+  };
+  const request = await manager.syncWaitState({
+    threadId: "thread-recovery",
+    runId: "run-recovery",
+    actor,
+    waitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      metadata: {
+        reason: "recovery_review",
+        recoveryReviewBinding: {
+          version: RECOVERY_REVIEW_BINDING_VERSION,
+          bindingId: "binding-recovery",
+          decisionId: "decision-recovery",
+          threadId: "thread-recovery",
+          runId: "run-recovery",
+          executionProfileFingerprint: "a".repeat(64),
+          policyRevision: `sha256:${"b".repeat(64)}`,
+          allowedOptionIds: ["retry.primary", "terminal.fail"],
+          requestedAt: new Date(Date.now() - 1_000).toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+        allowedOptionIds: ["retry.primary", "terminal.fail"],
+      },
+    },
+  });
+  assert.ok(request);
+
+  await assert.rejects(
+    () => manager.resolveRequest({
+      threadId: "thread-recovery",
+      requestId: request.requestId,
+      message: "retry",
+      actor,
+    }),
+    { code: "RECOVERY_RESUME_INVALID" },
+  );
+  assert.equal((await store.getInteractionRequest(request.requestId))?.status, "PENDING");
+
+  await assert.rejects(
+    () => manager.resolveRequest({
+      threadId: "thread-recovery",
+      requestId: request.requestId,
+      message: "invalid",
+      recoveryOptionId: "retry.unknown",
+      actor,
+    }),
+    { code: "RECOVERY_OPTION_NOT_ALLOWED" },
+  );
+  assert.equal((await store.getInteractionRequest(request.requestId))?.status, "PENDING");
+
+  const resolved = await manager.resolveRequest({
+    threadId: "thread-recovery",
+    requestId: request.requestId,
+    message: "Selected recovery option: retry.primary",
+    recoveryOptionId: "retry.primary",
+    actor,
+  });
+  assert.equal(resolved.request.status, "RESOLVED");
+  assert.equal(resolved.request.response?.recoveryOptionId, "retry.primary");
+});
+
+test("InteractionManager invalidates expired recovery reviews but preserves actor failures", async () => {
+  const expiredStore = new InMemorySessionStore();
+  const expiredManager = new InteractionManager(expiredStore);
+  const expiredRequest = await expiredManager.syncWaitState({
+    threadId: "thread-expired-recovery",
+    runId: "run-expired-recovery",
+    actor: { actorType: "operator", actorId: "operator-1", tenantId: "tenant-1" },
+    waitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      metadata: {
+        reason: "recovery_review",
+        recoveryReviewBinding: buildRecoveryReviewBinding({
+          threadId: "thread-expired-recovery",
+          runId: "run-expired-recovery",
+          requestedAt: new Date(Date.now() - 120_000),
+          expiresAt: new Date(Date.now() - 60_000),
+        }),
+      },
+    },
+  });
+  assert.ok(expiredRequest);
+  await assert.rejects(
+    () => expiredManager.resolveRequest({
+      threadId: "thread-expired-recovery",
+      requestId: expiredRequest.requestId,
+      message: "Selected recovery option: retry.primary",
+      recoveryOptionId: "retry.primary",
+      actor: { actorType: "operator", actorId: "operator-1", tenantId: "tenant-1" },
+    }),
+    { code: "RECOVERY_WAIT_EXPIRED" },
+  );
+  assert.equal(
+    (await expiredStore.getInteractionRequest(expiredRequest.requestId))?.status,
+    "CANCELLED",
+  );
+
+  const actorStore = new InMemorySessionStore();
+  const actorManager = new InteractionManager(actorStore);
+  const actorRequest = await actorManager.syncWaitState({
+    threadId: "thread-actor-recovery",
+    runId: "run-actor-recovery",
+    actor: { actorType: "operator", actorId: "operator-1", tenantId: "tenant-1" },
+    waitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      metadata: {
+        reason: "recovery_review",
+        recoveryReviewBinding: buildRecoveryReviewBinding({
+          threadId: "thread-actor-recovery",
+          runId: "run-actor-recovery",
+        }),
+      },
+    },
+  });
+  assert.ok(actorRequest);
+  await assert.rejects(
+    () => actorManager.resolveRequest({
+      threadId: "thread-actor-recovery",
+      requestId: actorRequest.requestId,
+      message: "Selected recovery option: retry.primary",
+      recoveryOptionId: "retry.primary",
+      actor: { actorType: "service", actorId: "service-1", tenantId: "tenant-1" },
+    }),
+    { code: "RECOVERY_ACTOR_INVALID" },
+  );
+  assert.equal(
+    (await actorStore.getInteractionRequest(actorRequest.requestId))?.status,
+    "PENDING",
+  );
+});
+
 function buildApprovalBinding(input: {
   approvalId: string;
   threadId: string;
@@ -294,6 +436,28 @@ function buildApprovalBinding(input: {
     capabilities: ["external.invoke"],
     authorityKind: "runtime_policy" as const,
     authorityRevision: `sha256:${"c".repeat(64)}`,
+    requestedAt: requestedAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+  };
+}
+
+function buildRecoveryReviewBinding(input: {
+  threadId: string;
+  runId: string;
+  requestedAt?: Date;
+  expiresAt?: Date;
+}) {
+  const requestedAt = input.requestedAt ?? new Date(Date.now() - 1_000);
+  const expiresAt = input.expiresAt ?? new Date(Date.now() + 60_000);
+  return {
+    version: RECOVERY_REVIEW_BINDING_VERSION,
+    bindingId: `binding-${input.runId}`,
+    decisionId: `decision-${input.runId}`,
+    threadId: input.threadId,
+    runId: input.runId,
+    executionProfileFingerprint: "a".repeat(64),
+    policyRevision: `sha256:${"b".repeat(64)}`,
+    allowedOptionIds: ["retry.primary", "terminal.fail"],
     requestedAt: requestedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
   };

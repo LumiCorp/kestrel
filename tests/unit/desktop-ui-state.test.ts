@@ -22,6 +22,7 @@ test("Desktop bridge v7 exposes update, workspace, attachment, and operator-cont
     action: "reply",
     threadId: "thread-1",
     requestId: "request-1",
+    recoveryOptionId: "retry.primary",
     message: "Use these files",
     attachmentIds: ["attachment-1"],
     completionMode: "accepted",
@@ -31,6 +32,7 @@ test("Desktop bridge v7 exposes update, workspace, attachment, and operator-cont
     action: "reply",
     threadId: "thread-1",
     requestId: "request-1",
+    recoveryOptionId: "retry.primary",
     message: "Use these files",
     attachmentIds: ["attachment-1"],
     completionMode: "accepted",
@@ -38,6 +40,14 @@ test("Desktop bridge v7 exposes update, workspace, attachment, and operator-cont
     actSubmode: "safe",
   });
   assert.equal(parseDesktopOperatorControlRequest({ action: "continue_waiting", threadId: "thread-1" }).action, "continue_waiting");
+  assert.throws(
+    () => parseDesktopOperatorControlRequest({
+      action: "retry",
+      threadId: "thread-1",
+      recoveryOptionId: "retry.primary",
+    }),
+    /supported only for reply/u,
+  );
 });
 
 test("Desktop UI state accepts only the versioned legacy storage contract", () => {

@@ -26,3 +26,11 @@ test("Desktop forwards runner events from one centralized transport observer", a
   assert.match(source, /onEvent\(\) \{\}/u);
   assert.doesNotMatch(source, /event\.sender\.send\("desktop:runner-event"/u);
 });
+
+test("Desktop reconnects the Local Core project-run stream after an unexpected disconnect", async () => {
+  const source = await readFile(mainPath, "utf8");
+
+  assert.match(source, /manager\.invalidate\(activeClient\)/u);
+  assert.match(source, /manager\.ensureConnected\(\)\.catch/u);
+  assert.match(source, /phase:\s*"reconnect_failed"/u);
+});

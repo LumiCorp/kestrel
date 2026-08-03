@@ -1457,14 +1457,16 @@ test("KestrelChatRuntime forwards attachments when replying to a typed operator 
   let capturedAttachments: unknown;
   let capturedInteractionMode: unknown;
   let capturedActSubmode: unknown;
+  let capturedRecoveryOptionId: unknown;
   const fakeFactory: RuntimeFactory = {
     create: () => {
       const threadRuntime = {
         getThreadStatus: async () => ({ openRequests: [{ requestId: "request-1" }] }),
-        replyToRequest: async (input: { attachments?: unknown; interactionMode?: unknown; actSubmode?: unknown }) => {
+        replyToRequest: async (input: { attachments?: unknown; interactionMode?: unknown; actSubmode?: unknown; recoveryOptionId?: unknown }) => {
           capturedAttachments = input.attachments;
           capturedInteractionMode = input.interactionMode;
           capturedActSubmode = input.actSubmode;
+          capturedRecoveryOptionId = input.recoveryOptionId;
           return {
             thread: { threadId: "thread-reply", sessionId: "session-reply", title: "Reply", status: "COMPLETED", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
             output: { status: "COMPLETED", runId: "run-reply", sessionId: "session-reply", quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 }, errors: [], telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 } },
@@ -1487,10 +1489,11 @@ test("KestrelChatRuntime forwards attachments when replying to a typed operator 
   };
   const runtime = new KestrelChatRuntime(profile, fakeFactory);
   const attachments = [{ attachmentId: "attachment-1", threadId: "thread-reply", filename: "context.txt", mimeType: "text/plain", sizeBytes: 7, sha256: "a".repeat(64), kind: "text" as const, createdAt: new Date().toISOString(), text: "context" }];
-  await runtime.performOperatorAction({ action: "reply", threadId: "thread-reply", requestId: "request-1", message: "Continue", attachments, interactionMode: "build", actSubmode: "safe" });
+  await runtime.performOperatorAction({ action: "reply", threadId: "thread-reply", requestId: "request-1", message: "Selected recovery option: retry.primary", recoveryOptionId: "retry.primary", attachments, interactionMode: "build", actSubmode: "safe" });
   assert.deepEqual(capturedAttachments, attachments);
   assert.equal(capturedInteractionMode, "build");
   assert.equal(capturedActSubmode, "safe");
+  assert.equal(capturedRecoveryOptionId, "retry.primary");
   await runtime.close();
 });
 
@@ -1507,6 +1510,7 @@ test("KestrelChatRuntime acknowledges an accepted reply before its resumed turn 
   let capturedMode: unknown;
   let capturedSubmode: unknown;
   let capturedRunId: string | undefined;
+  let capturedRecoveryOptionId: unknown;
   const now = new Date().toISOString();
   const thread = { threadId: "thread-accepted", sessionId: "session-accepted", title: "Accepted", status: "COMPLETED" as const, createdAt: now, updatedAt: now };
   const runtime = new KestrelChatRuntime(profile, {
@@ -1521,10 +1525,12 @@ test("KestrelChatRuntime acknowledges an accepted reply before its resumed turn 
           threadListener = listener;
           return { unsubscribe() {} };
         },
-        replyToRequest: (input: { interactionMode?: unknown; actSubmode?: unknown; runtimeTurn?: { runId?: string } }) => {
+        replyToRequest: (input: { interactionMode?: unknown; actSubmode?: unknown; recoveryOptionId?: unknown; runtimeTurn?: { runId?: string; recoveryOptionId?: unknown } }) => {
           capturedMode = input.interactionMode;
           capturedSubmode = input.actSubmode;
           capturedRunId = input.runtimeTurn?.runId;
+          capturedRecoveryOptionId = input.recoveryOptionId;
+          assert.equal(input.runtimeTurn?.recoveryOptionId, "retry.primary");
           threadListener?.({ type: "thread.turn_submitted", threadId: thread.threadId, timestamp: now, payload: {} });
           return completion;
         },
@@ -1540,7 +1546,8 @@ test("KestrelChatRuntime acknowledges an accepted reply before its resumed turn 
     action: "reply",
     threadId: thread.threadId,
     requestId: "request-accepted",
-    message: "Let's build it",
+    message: "Selected recovery option: retry.primary",
+    recoveryOptionId: "retry.primary",
     interactionMode: "build",
     actSubmode: "safe",
   });
@@ -1551,6 +1558,7 @@ test("KestrelChatRuntime acknowledges an accepted reply before its resumed turn 
   assert.equal(typeof capturedRunId, "string");
   assert.equal(capturedMode, "build");
   assert.equal(capturedSubmode, "safe");
+  assert.equal(capturedRecoveryOptionId, "retry.primary");
 
   resolveCompletion({
     thread,

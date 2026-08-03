@@ -10,6 +10,7 @@ import {
   interactionRequestThreadMismatchFailure,
   createRuntimeFailure,
 } from "../runtime/RuntimeFailure.js";
+import { parseRecoveryReviewBindingV1 } from "../kestrel/contracts/recovery.js";
 import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
 import type {
   ApprovalGrantRecord,
@@ -143,6 +144,33 @@ export class InteractionManager {
     }
 
     const actor = normalizeTrustedActor(input.actor);
+    try {
+      validateRecoveryReviewReply({ request, input, actor });
+    } catch (error) {
+      const code =
+        typeof error === "object" && error !== null &&
+        typeof (error as { code?: unknown }).code === "string"
+          ? (error as { code: string }).code
+          : undefined;
+      if (code === "RECOVERY_REVIEW_STALE" || code === "RECOVERY_WAIT_EXPIRED") {
+        const resolvedAt = new Date().toISOString();
+        await this.store.upsertInteractionRequest({
+          ...request,
+          status: "CANCELLED",
+          response: { validationErrorCode: code },
+          resolvedAt,
+        });
+        const thread = await this.store.getThread(request.threadId);
+        if (thread?.currentRequestId === request.requestId) {
+          await this.store.upsertThread({
+            ...thread,
+            currentRequestId: undefined,
+            updatedAt: resolvedAt,
+          });
+        }
+      }
+      throw error;
+    }
     const binding =
       request.kind === "approval" && input.approve !== false
         ? readExternalApprovalBinding(request.metadata)
@@ -161,6 +189,9 @@ export class InteractionManager {
       response: {
         message: input.message,
         approve: input.approve !== false,
+        ...(input.recoveryOptionId !== undefined
+          ? { recoveryOptionId: input.recoveryOptionId }
+          : {}),
         ...(actor !== undefined ? { actor } : {}),
         ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
       },
@@ -214,6 +245,88 @@ export class InteractionManager {
         expiresAt: new Date().toISOString(),
       });
     }
+  }
+}
+
+function validateRecoveryReviewReply(input: {
+  request: InteractionRequestRecord;
+  input: ReplyToRequestInput;
+  actor: RuntimeTurnActor | undefined;
+}): void {
+  const isRecoveryReview = input.request.metadata?.reason === "recovery_review";
+  if (!isRecoveryReview) {
+    if (input.input.recoveryOptionId !== undefined) {
+      throw createRuntimeFailure(
+        "RECOVERY_OPTION_UNEXPECTED",
+        "A recovery option can only resolve a recovery review request.",
+      );
+    }
+    return;
+  }
+
+  const optionId = readNonEmptyString(input.input.recoveryOptionId);
+  if (optionId === undefined) {
+    throw createRuntimeFailure(
+      "RECOVERY_RESUME_INVALID",
+      "Recovery review resume requires an exact recoveryOptionId.",
+    );
+  }
+  if (
+    input.actor === undefined ||
+    (input.actor.actorType !== "operator" && input.actor.actorType !== "end_user")
+  ) {
+    throw createRuntimeFailure(
+      "RECOVERY_ACTOR_INVALID",
+      "Recovery review must be decided by an authenticated operator or end user.",
+    );
+  }
+
+  let binding;
+  try {
+    binding = parseRecoveryReviewBindingV1(
+      input.request.metadata?.recoveryReviewBinding,
+    );
+  } catch {
+    throw createRuntimeFailure(
+      "RECOVERY_REVIEW_STALE",
+      "Recovery review binding is missing or invalid.",
+    );
+  }
+  if (
+    binding.threadId !== input.request.threadId ||
+    (input.request.runId !== undefined && binding.runId !== input.request.runId)
+  ) {
+    throw createRuntimeFailure(
+      "RECOVERY_REVIEW_STALE",
+      "Recovery review binding no longer matches the pending request.",
+    );
+  }
+  if (binding.allowedOptionIds.includes(optionId) === false) {
+    throw createRuntimeFailure(
+      "RECOVERY_OPTION_NOT_ALLOWED",
+      `Recovery option '${optionId}' is not allowed for this review.`,
+    );
+  }
+  if (
+    binding.expiresAt !== undefined &&
+    Date.parse(binding.expiresAt) <= Date.now()
+  ) {
+    throw createRuntimeFailure(
+      "RECOVERY_WAIT_EXPIRED",
+      "Recovery review has expired.",
+    );
+  }
+  const trustedRequestActor = normalizeTrustedActor(
+    input.request.metadata?.trustedRequestActor as RuntimeTurnActor | undefined,
+  );
+  if (
+    trustedRequestActor?.tenantId !== undefined &&
+    trustedRequestActor.tenantId !== input.actor.tenantId
+  ) {
+    throw createRuntimeFailure(
+      "RECOVERY_TENANT_MISMATCH",
+      "Recovery review actor does not belong to the requesting tenant.",
+    );
   }
 }
 

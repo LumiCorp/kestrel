@@ -26,6 +26,34 @@ test("Desktop composer answers the exact pending user-input request", () => {
   });
 });
 
+test("Desktop composer exposes exact recovery options instead of free text", () => {
+  const request = {
+    itemId: "request:recovery-1",
+    kind: "user_input_request",
+    threadId: "thread-main:session-1",
+    sessionId: "session-1",
+    title: "Recovery is exhausted. Choose exactly one allowed recovery option.",
+    actionable: true,
+    requestId: "recovery-1",
+    createdAt: "2026-08-03T12:00:00.000Z",
+    metadata: {
+      reason: "recovery_review",
+      allowedOptionIds: ["retry.primary", "terminal.fail"],
+      triggeringFailureCode: "RECOVERY_EXHAUSTED",
+    },
+  } satisfies DesktopOperatorInboxItem;
+
+  assert.deepEqual(getDesktopComposerSubmissionPolicy({
+    inboxItems: [request],
+    runActive: false,
+  }), {
+    mode: "select_recovery_option",
+    item: request,
+    allowedOptionIds: ["retry.primary", "terminal.fail"],
+    triggeringFailureCode: "RECOVERY_EXHAUSTED",
+  });
+});
+
 test("Desktop composer ignores resolved user-input requests", () => {
   const request = {
     itemId: "request:request-1",
