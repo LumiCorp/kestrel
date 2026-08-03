@@ -2081,6 +2081,7 @@ export class KestrelChatRuntime {
     threadId: string;
     followUpId?: string | undefined;
     requestId?: string | undefined;
+    recoveryOptionId?: string | undefined;
     proposalId?: string | undefined;
     checkpointId?: string | undefined;
     delegationId?: string | undefined;
@@ -2169,6 +2170,9 @@ export class KestrelChatRuntime {
           (input.action === "reject" ? "Rejected." : "Approved."),
         actor: operatorActor,
         approve: input.action !== "reject",
+        ...(input.recoveryOptionId !== undefined
+          ? { recoveryOptionId: input.recoveryOptionId }
+          : {}),
         ...(input.interactionMode !== undefined
           ? { interactionMode: input.interactionMode }
           : {}),
@@ -2427,6 +2431,7 @@ export class KestrelChatRuntime {
     action: "approve" | "reject" | "reply" | "retry";
     threadId: string;
     requestId?: string | undefined;
+    recoveryOptionId?: string | undefined;
     message?: string | undefined;
     attachments?: RunTurnAttachment[] | undefined;
     interactionMode?: "chat" | "plan" | "build" | undefined;
@@ -2570,6 +2575,9 @@ export class KestrelChatRuntime {
         displayName: "Local Kestrel Operator",
       },
       approve: input.action !== "reject",
+      ...(input.recoveryOptionId !== undefined
+        ? { recoveryOptionId: input.recoveryOptionId }
+        : {}),
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
       ...(input.interactionMode !== undefined
         ? { interactionMode: input.interactionMode }
@@ -2585,6 +2593,9 @@ export class KestrelChatRuntime {
         runId,
         message,
         eventType: request.eventType,
+        ...(input.recoveryOptionId !== undefined
+          ? { recoveryOptionId: input.recoveryOptionId }
+          : {}),
         ...(input.missionControl !== undefined
           ? { missionControl: input.missionControl }
           : {}),

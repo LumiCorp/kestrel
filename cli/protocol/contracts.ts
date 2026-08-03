@@ -235,6 +235,7 @@ export interface OperatorControlCommandPayload {
   completionMode?: "terminal" | "accepted" | undefined;
   followUpId?: string | undefined;
   requestId?: string | undefined;
+  recoveryOptionId?: string | undefined;
   proposalId?: string | undefined;
   checkpointId?: string | undefined;
   delegationId?: string | undefined;

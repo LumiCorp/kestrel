@@ -144,6 +144,7 @@ test("compileRuntimeTurn preserves resume and attachment payload fields", () => 
       message: "approved",
       eventType: "user.message",
       resumeBlockedRun: true,
+      recoveryOptionId: "retry.primary",
       attachments,
       interactionMode: "build",
       actSubmode: "safe",
@@ -157,6 +158,7 @@ test("compileRuntimeTurn preserves resume and attachment payload fields", () => 
   );
 
   assert.equal(compiled.payload.resumeBlockedRun, true);
+  assert.equal(compiled.payload.recoveryOptionId, "retry.primary");
   assert.deepEqual(compiled.payload.attachments, attachments);
   assert.equal(compiled.input.resumeBlockedRun, true);
   assert.equal(compiled.resolvedMode.interactionMode, "build");

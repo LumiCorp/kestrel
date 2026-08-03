@@ -197,6 +197,85 @@ test("Local Core project run subscriptions report daemon shutdown as a stale con
   }
 });
 
+test("Local Core project run stream recovery reconnects once and receives a fresh snapshot", async () => {
+  const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+  const home = await mkdtemp(path.join(tempRoot, "kestrel-core-stream-recover-"));
+  let server: LocalCoreApiServer | undefined = await startServer(home);
+  const firstClient = createClient(server);
+  let reconnects = 0;
+  let snapshots = 0;
+  let unsubscribe: (() => void) | undefined;
+  let resolveRecovered: (() => void) | undefined;
+  let allowReconnect: (() => void) | undefined;
+  const reconnectAllowed = new Promise<void>((resolve) => {
+    allowReconnect = resolve;
+  });
+  const recovered = new Promise<void>((resolve) => {
+    resolveRecovered = resolve;
+  });
+  const manager = new LocalCoreConnectionManager({
+    initialConnection: { status: server.status, client: firstClient },
+    connect: async () => {
+      await reconnectAllowed;
+      reconnects += 1;
+      server = await startServer(home);
+      return { status: server.status, client: createClient(server) };
+    },
+    onConnected(connection) {
+      unsubscribe?.();
+      unsubscribe = connection.client.subscribeDesktopProjectRuns({
+        onRuns() {
+          snapshots += 1;
+          resolveRecovered?.();
+        },
+      });
+    },
+  });
+  unsubscribe = firstClient.subscribeDesktopProjectRuns({
+    onRuns() {},
+    onError() {
+      manager.invalidate(firstClient);
+      void manager.ensureConnected();
+    },
+  });
+
+  try {
+    await server.close();
+    server = undefined;
+    allowReconnect?.();
+    await withTimeout(recovered);
+    assert.equal(reconnects, 1);
+    assert.equal(snapshots, 1);
+  } finally {
+    unsubscribe?.();
+    await server?.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("intentional Local Core project run unsubscribe is silent", async () => {
+  const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+  const home = await mkdtemp(path.join(tempRoot, "kestrel-core-stream-unsubscribe-"));
+  const server = await startServer(home);
+  const client = createClient(server);
+  let reportedError: Error | undefined;
+  const unsubscribe = client.subscribeDesktopProjectRuns({
+    onRuns() {},
+    onError(error) {
+      reportedError = error;
+    },
+  });
+
+  try {
+    unsubscribe();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(reportedError, undefined);
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 async function startServer(home: string): Promise<LocalCoreApiServer> {
   return await startLocalCoreApiServer({
     env: { KESTREL_CORE_HOME: home },

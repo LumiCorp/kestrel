@@ -299,6 +299,7 @@ export interface DesktopOperatorControlRequest {
   completionMode?: "terminal" | "accepted" | undefined;
   followUpId?: string | undefined;
   requestId?: string | undefined;
+  recoveryOptionId?: string | undefined;
   proposalId?: string | undefined;
   checkpointId?: string | undefined;
   delegationId?: string | undefined;
@@ -398,6 +399,7 @@ export function parseDesktopOperatorControlRequest(
   for (const field of [
     "followUpId",
     "requestId",
+    "recoveryOptionId",
     "proposalId",
     "checkpointId",
     "delegationId",
@@ -405,6 +407,9 @@ export function parseDesktopOperatorControlRequest(
   ] as const) {
     if (input[field] !== undefined)
       result[field] = parseRequiredDesktopString(input[field], field);
+  }
+  if (result.recoveryOptionId !== undefined && action !== "reply") {
+    throw new Error("Desktop operator control recoveryOptionId is supported only for reply actions.");
   }
   const actionValue = input.actionValue;
   if (actionValue !== undefined) {

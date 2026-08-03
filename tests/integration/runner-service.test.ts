@@ -1413,12 +1413,14 @@ test("runner service acknowledges accepted operator replies before streaming the
   const completion = new Promise<Awaited<ReturnType<NonNullable<RunnerRuntime["runTurn"]>>>>((resolve) => {
     resolveCompletion = resolve;
   });
+  let acceptedRecoveryOptionId: string | undefined;
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({
       runTurn: async () => {
         throw new Error("runTurn is not used by accepted operator controls");
       },
       performAcceptedOperatorAction: async (input) => {
+        acceptedRecoveryOptionId = input.recoveryOptionId;
         markAccepted();
         return {
           accepted: {
@@ -1450,7 +1452,8 @@ test("runner service acknowledges accepted operator replies before streaming the
           action: "reply",
           threadId: "thread-accepted",
           requestId: "request-accepted",
-          message: "Let's build it",
+          recoveryOptionId: "retry.primary",
+          message: "Selected recovery option: retry.primary",
           interactionMode: "build",
           actSubmode: "safe",
           completionMode: "accepted",
@@ -1463,6 +1466,7 @@ test("runner service acknowledges accepted operator replies before streaming the
     void responsePromise.then(() => { settled = true; });
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(settled, false);
+    assert.equal(acceptedRecoveryOptionId, "retry.primary");
 
     resolveCompletion({
       assistantText: "Built it.",

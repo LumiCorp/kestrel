@@ -314,6 +314,13 @@ test("TuiRunController startActiveTurn forwards blocked-run resume and terminal 
     pendingWaitFor: {
       kind: "user",
       eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId: "request-resume-1",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+      },
     },
   });
 
@@ -333,6 +340,7 @@ test("TuiRunController startActiveTurn forwards blocked-run resume and terminal 
   assert.equal(turn.message, "continue");
   assert.equal(turn.eventType, "user.reply");
   assert.equal(turn.resumeBlockedRun, true);
+  assert.equal(turn.resumeRequestId, "request-resume-1");
   assert.equal(turn.manualCompaction, true);
   assert.deepEqual(
     (turn.history as Array<{ role: string; text: string }>).map((line) => line.role),
@@ -343,6 +351,28 @@ test("TuiRunController startActiveTurn forwards blocked-run resume and terminal 
   assert.ok(harness.diagnostics.some((entry) => entry.scope === "terminal_handoff.tui_response_received"));
   assert.ok(harness.diagnostics.some((entry) => entry.scope === "terminal_handoff.persist_completed"));
   assert.equal(harness.uiStore.getState().running, false);
+});
+
+test("TuiRunController preserves a blocked wait when its request identity is missing", async () => {
+  const pendingWaitFor = {
+    kind: "user" as const,
+    eventType: "user.reply",
+  };
+  const harness = createRunHarness({ pendingWaitFor });
+
+  await assert.rejects(
+    () => harness.controller.startActiveTurn({
+      submittedMessage: "continue",
+      resumeBlockedRun: true,
+    }),
+    /pending request ID is missing/u,
+  );
+
+  assert.equal(harness.commands.length, 0);
+  assert.deepEqual(
+    harness.uiStore.getState().activeSession.pendingWaitFor,
+    pendingWaitFor,
+  );
 });
 
 test("TuiRunController emits an explicit terminal marker for scripted completion", async () => {
@@ -450,6 +480,13 @@ test("TuiRunController clears submitted wait state while blocked resume is in fl
     pendingWaitFor: {
       kind: "user",
       eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId: "request-mode-blocked",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Choose a mode.",
+      },
       metadata: {
         reason: "route_mode_blocked",
       },
@@ -494,6 +531,13 @@ test("TuiRunController forceFreshTurn sends user.message and clears pending wait
   const submittedWait: TuiSessionMeta["pendingWaitFor"] = {
     kind: "user",
     eventType: "user.reply",
+    interaction: {
+      version: "v1",
+      requestId: "request-mode-dispatch",
+      kind: "user_input",
+      eventType: "user.reply",
+      prompt: "Choose a mode.",
+    },
     metadata: {
       reason: "loop_visit_stall",
       resumeReply: "continue",
@@ -521,6 +565,13 @@ test("TuiRunController restores submitted wait state when blocked resume dispatc
   const submittedWait: TuiSessionMeta["pendingWaitFor"] = {
     kind: "user",
     eventType: "user.reply",
+    interaction: {
+      version: "v1",
+      requestId: "request-mode-dispatch-failure",
+      kind: "user_input",
+      eventType: "user.reply",
+      prompt: "Choose a mode.",
+    },
     metadata: {
       reason: "route_mode_blocked",
     },
@@ -574,6 +625,13 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
   const pendingWait: TuiSessionMeta["pendingWaitFor"] = {
     kind: "user",
     eventType: "user.approval",
+    interaction: {
+      version: "v1",
+      requestId: "request-approval-checkpoint",
+      kind: "approval",
+      eventType: "user.approval",
+      prompt: "Approve?",
+    },
     metadata: {
       approvalId: "approval-1",
     },

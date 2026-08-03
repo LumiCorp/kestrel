@@ -198,6 +198,9 @@ function buildCanonicalRuntimeTurn(input: {
     ...(input.input.actSubmode !== undefined ? { actSubmode: input.input.actSubmode } : {}),
     ...(input.input.executionPolicy !== undefined ? { executionPolicy: input.input.executionPolicy } : {}),
     ...(input.input.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
+    ...(input.input.recoveryOptionId !== undefined
+      ? { recoveryOptionId: input.input.recoveryOptionId }
+      : {}),
     ...(input.manualCompaction || input.input.manualCompaction === true ? { manualCompaction: true } : {}),
     ...(input.input.autoCompaction !== undefined ? { autoCompaction: input.input.autoCompaction } : {}),
     ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),

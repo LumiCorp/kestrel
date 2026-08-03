@@ -2,6 +2,12 @@ import type { DesktopOperatorInboxItem } from "../../src/contracts";
 
 export type DesktopComposerSubmissionPolicy =
   | {
+      mode: "select_recovery_option";
+      item: DesktopOperatorInboxItem & { requestId: string };
+      allowedOptionIds: string[];
+      triggeringFailureCode?: string | undefined;
+    }
+  | {
       mode: "reply_to_request";
       item: DesktopOperatorInboxItem & { requestId: string };
     }
@@ -24,6 +30,26 @@ export function getDesktopComposerSubmissionPolicy(input: {
       && item.requestId !== undefined,
   );
   if (request !== undefined) {
+    const metadata = request.metadata;
+    if (metadata?.reason === "recovery_review") {
+      const allowedOptionIds = Array.isArray(metadata.allowedOptionIds)
+        ? metadata.allowedOptionIds.filter(
+            (value): value is string =>
+              typeof value === "string" && value.trim().length > 0,
+          )
+        : [];
+      const triggeringFailureCode =
+        typeof metadata.triggeringFailureCode === "string" &&
+        metadata.triggeringFailureCode.trim().length > 0
+          ? metadata.triggeringFailureCode
+          : undefined;
+      return {
+        mode: "select_recovery_option",
+        item: request,
+        allowedOptionIds,
+        ...(triggeringFailureCode !== undefined ? { triggeringFailureCode } : {}),
+      };
+    }
     return { mode: "reply_to_request", item: request };
   }
   return input.runActive ? { mode: "queue_follow_up" } : { mode: "start_turn" };

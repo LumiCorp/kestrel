@@ -61,6 +61,7 @@ export interface RuntimeTurnInput {
   attachments?: RunTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
+  recoveryOptionId?: string | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: InteractionMode | undefined;
@@ -240,6 +241,9 @@ export function materializeCompiledRuntimeTurn(
       : {}),
     ...(prepared.input.resumeRequestId !== undefined
       ? { resumeRequestId: prepared.input.resumeRequestId }
+      : {}),
+    ...(prepared.input.recoveryOptionId !== undefined
+      ? { recoveryOptionId: prepared.input.recoveryOptionId }
       : {}),
     metadata: prepared.metadata,
     orchestration: {

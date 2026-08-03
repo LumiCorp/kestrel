@@ -3286,9 +3286,11 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
       id: "cmd-operator-control",
       type: "operator.control",
       payload: {
-        action: "retry",
+        action: "reply",
         threadId: "thread-main",
-        message: "retry",
+        requestId: "request-recovery",
+        recoveryOptionId: "retry.primary",
+        message: "Selected recovery option: retry.primary",
       },
     })
   );
@@ -3385,6 +3387,7 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
   assert.equal(runView?.version, "operator-run-v1");
   assert.equal(runView?.run?.runId, "run-main");
   assert.equal(runView?.timeline?.[0]?.label, "run started");
+  assert.equal(performedActions[0]?.recoveryOptionId, "retry.primary");
   assert.equal(performedActions[2]?.action, "supersede_child_thread");
   assert.equal(performedActions[2]?.delegationId, "delegation-2");
   assert.equal(performedActions[3]?.action, "resolve_fan_in_checkpoint");

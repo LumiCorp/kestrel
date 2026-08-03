@@ -4414,9 +4414,9 @@ interface ConversationTurnRow {
   terminal_run_id: string | null;
   terminal_status: TransitionStatus | null;
   metadata_json: Record<string, unknown> | null;
-  started_at: string;
-  updated_at: string;
-  completed_at: string | null;
+  started_at: string | Date;
+  updated_at: string | Date;
+  completed_at: string | Date | null;
 }
 
 interface ConversationTurnSegmentRow {
@@ -4473,9 +4473,11 @@ function mapConversationTurnRow(row: ConversationTurnRow): ConversationTurnRecor
     ...(row.active_run_id !== null ? { activeRunId: row.active_run_id } : {}),
     ...(row.terminal_run_id !== null ? { terminalRunId: row.terminal_run_id } : {}),
     ...(row.terminal_status !== null ? { terminalStatus: row.terminal_status } : {}),
-    startedAt: row.started_at,
-    updatedAt: row.updated_at,
-    ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
+    startedAt: normalizeTimestampString(row.started_at),
+    updatedAt: normalizeTimestampString(row.updated_at),
+    ...(row.completed_at !== null
+      ? { completedAt: normalizeTimestampString(row.completed_at) }
+      : {}),
     ...(row.metadata_json !== null ? { metadata: row.metadata_json } : {}),
   };
 }

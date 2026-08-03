@@ -89,6 +89,14 @@ export class TuiRunController {
     const state = this.context.uiStore.getState();
     const submittedPendingWait = state.activeSession.pendingWaitFor;
     const pendingWait = input.forceFreshTurn === true ? undefined : submittedPendingWait;
+    const resumeRequestId = input.resumeBlockedRun === true
+      ? pendingWait?.interaction?.requestId?.trim()
+      : undefined;
+    if (input.resumeBlockedRun === true && !resumeRequestId) {
+      throw new Error(
+        "Cannot resume the blocked run because its pending request ID is missing.",
+      );
+    }
     const eventType = pendingWait?.eventType ?? "user.message";
     const stepAgent = pendingWait !== undefined ? undefined : getEntryStepAgent(state.activeProfile);
     const effectiveProfile = state.activeProfile;
@@ -156,6 +164,7 @@ export class TuiRunController {
           message: input.submittedMessage,
           eventType,
           ...(input.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
+          ...(resumeRequestId !== undefined ? { resumeRequestId } : {}),
           modeSystemV2Enabled: state.activeProfile.modeSystemV2Enabled === true,
           interactionMode: modeResolution.interactionMode,
           ...(modeResolution.actSubmode !== undefined ? { actSubmode: modeResolution.actSubmode } : {}),
