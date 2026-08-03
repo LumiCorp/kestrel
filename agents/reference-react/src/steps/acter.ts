@@ -125,6 +125,9 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
     const toolApprovalCapabilitiesByName = Object.fromEntries(
       capabilityManifest.map((tool) => [tool.name, tool.approvalCapabilities ?? []]),
     );
+    const toolApprovalAuthorityByName = Object.fromEntries(
+      capabilityManifest.map((tool) => [tool.name, tool.approvalAuthority]),
+    );
     const toolExecutionClassByName = Object.fromEntries(
       capabilityManifest.map((tool) => [tool.name, tool.executionClass ?? "read_only"]),
     );
@@ -181,6 +184,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       capabilityManifest,
       toolCapabilityClassesByName,
       toolApprovalCapabilitiesByName,
+      toolApprovalAuthorityByName,
       toolExecutionClassByName,
       toolAllowedInteractionModesByName,
       reactState,
@@ -314,6 +318,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         toolClass,
         allowedInteractionModes: toolAllowedInteractionModesByName[actionForDispatch.name],
         requiredApprovalCapabilities: toolApprovalCapabilitiesByName[actionForDispatch.name],
+        approvalAuthority: toolApprovalAuthorityByName[actionForDispatch.name],
         interactionMode: toCanonicalInteractionMode(modeResolution.interactionMode),
         actSubmode: modeResolution.actSubmode,
         modeSystemV2Enabled,

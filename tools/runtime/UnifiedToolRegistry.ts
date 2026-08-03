@@ -375,6 +375,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     const allowlist = scopedContext.allowlist;
     const activeBuiltInContext = scopedContext.builtInContext;
     const mcpStatus = this.resolveMcpSnapshot(options.runContext);
+    const hostedMcpGrantId = readHostedMcpGrantId(options.runContext?.payload);
 
     for (const name of allowlist) {
       const builtIn = this.builtInCapabilities.get(name);
@@ -429,6 +430,14 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           mcpTool.presentation.approvalMode === "auto"
             ? []
             : [...(MCP_DEFAULT_CAPABILITY.approvalCapabilities ?? [])],
+        ...(mcpTool.serverId === "kestrel-one-hosted" && hostedMcpGrantId !== undefined
+          ? {
+              approvalAuthority: {
+                kind: "hosted_mcp_grant" as const,
+                revision: hostedMcpGrantId,
+              },
+            }
+          : {}),
         displayName: mcpTool.presentation.displayName,
         aliases: [...mcpTool.presentation.aliases],
         keywords: [...mcpTool.presentation.keywords],

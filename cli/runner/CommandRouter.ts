@@ -5,7 +5,6 @@ import {
 } from "../../src/mcp/hosted-contracts.js";
 import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
 import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
-import { parseOperatorControlPolicyFields } from "../../src/orchestration/OperatorControlValidation.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
 import { parseJobInputV1 } from "../job/contracts.js";
@@ -2249,12 +2248,10 @@ function validateOperatorControlPayload(
       "operator.control payload.allowApprovalInheritance must be a boolean when present"
     );
   }
-  const operatorPolicy = parseOperatorControlPolicyFields({
-    allowToolClasses: record.allowToolClasses,
-    allowCapabilities: record.allowCapabilities,
-  });
-  if (operatorPolicy.ok === false) {
-    throw new Error(`operator.control payload.${operatorPolicy.message}`);
+  if ("allowToolClasses" in record || "allowCapabilities" in record) {
+    throw new Error(
+      "operator.control payload cannot select approval tool classes or capabilities",
+    );
   }
   return value as OperatorControlCommandPayload;
 }

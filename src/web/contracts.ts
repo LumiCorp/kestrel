@@ -163,8 +163,6 @@ export type WebControlCommand =
       maxTurns?: number | undefined;
       maxRuntimeMs?: number | undefined;
       allowApprovalInheritance?: boolean | undefined;
-      allowToolClasses?: ToolExecutionClass[] | undefined;
-      allowCapabilities?: string[] | undefined;
     }
   | {
       type: "task.graph.get";

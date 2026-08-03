@@ -60,6 +60,11 @@ export interface ToolCapabilityMetadata {
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: ApprovalCapabilityClass[] | undefined;
+  /** Trusted runtime authority. This field must never be rendered to the model. */
+  approvalAuthority?: {
+    kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
+    revision: string;
+  } | undefined;
   requires?: string[] | undefined;
   suitability?: ToolCapabilitySuitability | undefined;
 }

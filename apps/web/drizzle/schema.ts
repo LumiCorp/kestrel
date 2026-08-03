@@ -27,6 +27,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { KNOWLEDGE_EMBEDDING_DIMENSIONS } from "@/lib/knowledge/documents/constants";
+import type { RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
 
 /** =========================
  *  Better Auth Tables
@@ -2974,6 +2975,8 @@ export const appOperationApprovals = pgTable(
     runtimeApprovalId: text("runtime_approval_id").notNull(),
     payloadHash: text("payload_hash").notNull(),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    externalApprovalBinding: jsonb("external_approval_binding").$type<RunnerExternalApprovalBindingV1>(),
+    authorityRevision: text("authority_revision"),
     status: text("status", {
       enum: ["pending", "approved", "denied", "consumed", "expired"],
     })

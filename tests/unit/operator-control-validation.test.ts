@@ -1,44 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
 
-import { parseOperatorControlPolicyFields } from "../../src/orchestration/OperatorControlValidation.js";
-
-
-test("parseOperatorControlPolicyFields accepts shared operator policy fields", () => {
-  const parsed = parseOperatorControlPolicyFields({
-    allowToolClasses: ["read_only", "sandboxed_only"],
-    allowCapabilities: ["workspace.read"],
-  });
-
-  assert.deepEqual(parsed, {
-      ok: true,
-      value: {
-      allowToolClasses: ["read_only", "sandboxed_only"],
-      allowCapabilities: ["workspace.read"],
-    },
-  });
-});
-
-test("parseOperatorControlPolicyFields rejects invalid tool classes with field evidence", () => {
-  const parsed = parseOperatorControlPolicyFields({
-    allowToolClasses: ["read_only", "network"],
-  });
-
-  assert.deepEqual(parsed, {
-    ok: false,
-    field: "allowToolClasses",
-    message: "allowToolClasses contains an invalid tool class",
-  });
-});
-
-test("parseOperatorControlPolicyFields rejects blank capability entries with field evidence", () => {
-  const parsed = parseOperatorControlPolicyFields({
-    allowCapabilities: ["workspace.read", " "],
-  });
-
-  assert.deepEqual(parsed, {
-    ok: false,
-    field: "allowCapabilities",
-    message: "allowCapabilities must contain non-empty strings",
-  });
+test("operator approval replies cannot select grant classes or capabilities", () => {
+  for (const legacyAuthority of [
+    { allowToolClasses: ["external_side_effect"] },
+    { allowCapabilities: ["mcp.invoke"] },
+  ]) {
+    assert.throws(
+      () =>
+        parseRunnerCommandV2({
+          id: "operator-approval-authority",
+          type: "operator.control",
+          payload: {
+            action: "approve",
+            threadId: "thread-1",
+            ...legacyAuthority,
+          },
+        }),
+      /is not supported/u,
+    );
+  }
 });

@@ -9,13 +9,15 @@ import type {
   WaitForMatcher,
 } from "./execution.js";
 import type { HarnessEconomicsPolicyV1 } from "../../economics/contracts.js";
+import type { RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import type { RuntimeTurnActor } from "../../runtime/RuntimeTurn.js";
 
 export type ThreadStatus = "IDLE" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
 export type DelegationStatus = "PENDING" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | "CANCELLED";
 export type InteractionRequestKind = "approval" | "user_input";
 export type InteractionRequestStatus = "PENDING" | "RESOLVED" | "CANCELLED";
 export type ApprovalScope = "turn" | "delegation_turn";
-export type ApprovalGrantStatus = "ACTIVE" | "EXPIRED" | "REVOKED";
+export type ApprovalGrantStatus = "ACTIVE" | "CONSUMED" | "EXPIRED" | "REVOKED";
 export type ContextCheckpointStatus = "PENDING" | "ACCEPTED" | "DEFERRED" | "REJECTED";
 export type ContextCheckpointAction =
   | "continue"
@@ -196,7 +198,10 @@ export interface ApprovalGrantRecord {
   allowedToolClasses: string[];
   allowedCapabilities: string[];
   expiresAt?: string | undefined;
-  issuedBy: string;
+  binding?: RunnerExternalApprovalBindingV1 | undefined;
+  decisionActor?: RuntimeTurnActor | undefined;
+  authorityRevision?: string | undefined;
+  consumedAt?: string | undefined;
   issuedAt: string;
   metadata?: Record<string, unknown> | undefined;
 }

@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { serializeCanonicalApprovalPayload } from "@kestrel-agents/protocol";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
 import type { PersistedRunRecord, SessionRecord } from "../../src/kestrel/contracts/store.js";
@@ -582,7 +584,7 @@ test("ThreadRuntime skips side-band reply events when the active run row is stal
     threadId: "thread-stale-reply",
     requestId: "request-stale-reply",
     message: "continue",
-    issuedBy: "operator",
+    actor: { actorType: "operator", actorId: "operator" },
   });
 
   assert.equal(result.output.status, "FAILED");
@@ -1270,9 +1272,26 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
     threadId: "thread-approval",
     message: "change files",
     eventType: "user.message",
+    actor: { actorType: "operator", actorId: "operator" },
   });
   const requestId = waiting.wait?.request?.requestId;
   assert.ok(requestId);
+  assert.ok(waiting.wait?.request);
+  await sessionStore.upsertInteractionRequest({
+    ...waiting.wait.request,
+    metadata: {
+      ...(waiting.wait.request.metadata ?? {}),
+      approvalId: "approval-thread-runtime",
+      toolName: "hosted.tool",
+      toolInput: {},
+      externalApprovalBinding: buildExternalApprovalBinding({
+        approvalId: "approval-thread-runtime",
+        threadId: "thread-approval",
+        runId: waiting.output.runId,
+        capabilities: ["filesystem.read"],
+      }),
+    },
+  });
 
   const resumed = await runtime.replyToRequest({
     threadId: "thread-approval",
@@ -1286,9 +1305,7 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
       },
     },
     approve: true,
-    issuedBy: "operator",
-    allowedToolClasses: ["read_only"],
-    allowedCapabilities: ["filesystem.read"],
+    actor: { actorType: "operator", actorId: "operator" },
   });
 
   assert.equal(resumed.output.status, "COMPLETED");
@@ -1359,7 +1376,22 @@ test("ThreadRuntime resumes the active blocked request and derives approval gran
     eventType: "user.approval",
     status: "PENDING",
     createdAt: "2026-05-22T12:01:00.000Z",
-    metadata: {},
+    metadata: {
+      approvalId: "approval-resume-active",
+      toolName: "hosted.tool",
+      toolInput: {},
+      trustedRequestActor: {
+        actorType: "end_user",
+        actorId: "user-1",
+        displayName: "User One",
+      },
+      externalApprovalBinding: buildExternalApprovalBinding({
+        approvalId: "approval-resume-active",
+        threadId: "thread-resume-active",
+        runId: "run-waiting",
+        capabilities: ["workspace.write"],
+      }),
+    },
   });
   await sessionStore.upsertThread({
     ...(await runtime.getThreadStatus("thread-resume-active"))!.thread,
@@ -1399,12 +1431,8 @@ test("ThreadRuntime resumes the active blocked request and derives approval gran
   });
   assert.equal(grants.length, 1);
   assert.equal(grants[0]?.requestId, "request-current");
-  assert.equal(grants[0]?.issuedBy, "user-1");
-  assert.deepEqual(grants[0]?.allowedToolClasses, [
-    "read_only",
-    "sandboxed_only",
-    "external_side_effect",
-  ]);
+  assert.equal(grants[0]?.decisionActor?.actorId, "user-1");
+  assert.deepEqual(grants[0]?.allowedToolClasses, ["external_side_effect"]);
   assert.deepEqual(grants[0]?.allowedCapabilities, ["workspace.write"]);
 });
 
@@ -4631,6 +4659,31 @@ function buildOutput(input: {
       modelCalls: 0,
       durationMs: 1,
     },
+  };
+}
+
+function buildExternalApprovalBinding(input: {
+  approvalId: string;
+  threadId: string;
+  runId: string;
+  capabilities: string[];
+}) {
+  const requestedAt = new Date(Date.now() - 1_000).toISOString();
+  return {
+    version: "runner_external_approval_binding_v1" as const,
+    approvalId: input.approvalId,
+    threadId: input.threadId,
+    runId: input.runId,
+    actionKey: "hosted.tool",
+    payloadHash: `sha256:${createHash("sha256")
+      .update(serializeCanonicalApprovalPayload({}))
+      .digest("hex")}`,
+    toolClass: "external_side_effect" as const,
+    capabilities: [...input.capabilities].sort(),
+    authorityKind: "runtime_policy" as const,
+    authorityRevision: `sha256:${"b".repeat(64)}`,
+    requestedAt,
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
   };
 }
 

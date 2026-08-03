@@ -393,6 +393,13 @@
       "when": 1785513600000,
       "tag": "0055_mcp_network_access",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1785772800000,
+      "tag": "0056_external_approval_bindings",
+      "breakpoints": true
     }
   ]
 }

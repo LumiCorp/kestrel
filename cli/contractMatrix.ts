@@ -227,8 +227,6 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
         flags: [
           "--thread-id",
           "--request-id",
-          "--allow-tool-class",
-          "--allow-capability",
           "--delegation-id",
           "--run-id",
           "--out",

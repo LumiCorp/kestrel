@@ -673,17 +673,13 @@ async function runOperatorCommand(
   if (subcommand === "approve") {
     const threadId = readRequiredFlag(rest, "--thread-id");
     const requestId = readRequiredFlag(rest, "--request-id");
-    const allowToolClasses = parseToolClasses(readMultiFlag(rest, "--allow-tool-class"));
-    const allowCapabilities = readMultiFlag(rest, "--allow-capability");
     const result = await sendOperatorControl({
       action: "approve",
       threadId,
       requestId,
-      ...(allowToolClasses.length > 0 ? { allowToolClasses } : {}),
-      ...(allowCapabilities.length > 0 ? { allowCapabilities } : {}),
     });
     process.stdout.write(
-      `approve dispatched thread=${threadId} request=${requestId} toolClasses=${allowToolClasses.length} capabilities=${allowCapabilities.length}\n`,
+      `approve dispatched thread=${threadId} request=${requestId}\n`,
     );
     printOperatorTerminalResult(result);
     return;
@@ -929,25 +925,6 @@ function readMultiFlag(args: string[], name: string): string[] {
     values.push(value);
   }
   return values;
-}
-
-function parseToolClasses(values: string[]): ToolExecutionClass[] {
-  const out: ToolExecutionClass[] = [];
-  for (const value of values) {
-    if (
-      value === "read_only" ||
-      value === "planning_write" ||
-      value === "sandboxed_only" ||
-      value === "external_side_effect"
-    ) {
-      out.push(value);
-      continue;
-    }
-    throw new Error(
-      `Unsupported tool class '${value}'. Expected read_only|planning_write|sandboxed_only|external_side_effect.`,
-    );
-  }
-  return out;
 }
 
 function readOptionalInteger(value: string | undefined): number | undefined {

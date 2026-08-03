@@ -24,6 +24,10 @@ export interface ActerStepConfig {
     freshnessClass?: "live" | "volatile" | "static" | "runtime" | "snapshot" | undefined;
     capabilityClasses: string[];
     approvalCapabilities?: string[] | undefined;
+    approvalAuthority?: {
+      kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
+      revision: string;
+    } | undefined;
     executionClass?: ToolExecutionClass | undefined;
     allowedInteractionModes?: CanonicalInteractionMode[] | undefined;
   }>;
@@ -41,6 +45,10 @@ export interface ExecutionActionContext {
   capabilityManifest: ReturnType<ActerStepConfig["capabilityManifestProvider"]>;
   toolCapabilityClassesByName: Record<string, string[]>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
+  toolApprovalAuthorityByName: Record<string, {
+    kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
+    revision: string;
+  } | undefined>;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
   toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   reactState: Record<string, unknown>;

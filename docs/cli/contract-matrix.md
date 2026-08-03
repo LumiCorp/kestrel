@@ -30,7 +30,7 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 | `workspace` | `kestrel workspace <status|list>` | - |
 | `web` | `kestrel web ...` | - |
 | `job` | `kestrel job run --json-in <file> --json-out <file> [--profile <id>]` | `--json-in`, `--json-out`, `--profile` |
-| `operator` | `kestrel operator <resume-wait|approve|retry-delegation|doctor-export> ...` | `--thread-id`, `--request-id`, `--allow-tool-class`, `--allow-capability`, `--delegation-id`, `--run-id`, `--out`, `--reason` |
+| `operator` | `kestrel operator <resume-wait|approve|retry-delegation|doctor-export> ...` | `--thread-id`, `--request-id`, `--delegation-id`, `--run-id`, `--out`, `--reason` |
 | `runtime` | `kestrel runtime <replay|doctor> <query> [--json]; kestrel runtime bundle <query> --out <file>` | `--run-id`, `--session-id`, `--thread-id`, `--delegation-id`, `--out`, `--limit`, `--json` |
 | `setup` | `kestrel setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]` | `--profile`, `--approval-pack`, `--full` |
 | `uninstall` | `kestrel uninstall; kestrel uninstall plan --scope current|software|complete; kestrel uninstall apply --plan <file> --confirm <plan-id>` | `--scope`, `--disconnect-kestrel-one`, `--export-worktrees`, `--discard-worktrees`, `--json`, `--out`, `--plan`, `--confirm`, `--delete-data`, `--discard-confirm` |

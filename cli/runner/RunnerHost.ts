@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import {
   encodeConversationMessageCursor,
   parseConversationMessageCursor,
+  type RunnerActorMetadata,
 } from "@kestrel-agents/protocol";
 
 import {
@@ -274,7 +275,7 @@ export interface RunnerRuntime {
   getProviderReasoningVaultStatus?: (() => { ready: boolean; keyVersion: number; keySource: string }) | undefined;
   performOperatorAction?:
     | ((
-        input: OperatorControlCommandPayload & { issuedBy?: string | undefined }
+        input: OperatorControlCommandPayload & { actor?: RunnerActorMetadata | undefined }
       ) => Promise<{
         sessionId?: string | undefined;
         threadId: string;
@@ -290,7 +291,7 @@ export interface RunnerRuntime {
   performAcceptedOperatorAction?:
     | ((input: OperatorControlCommandPayload & {
         action: "approve" | "reject" | "reply" | "retry";
-        issuedBy?: string | undefined;
+        actor?: RunnerActorMetadata | undefined;
         signal?: AbortSignal | undefined;
       }) => Promise<{
         accepted: {
@@ -1671,12 +1672,12 @@ export class RunnerHost {
           }, { commandId, threadId: payload.threadId });
           return;
         }
-        const issuedBy = resolveIssuedBy(metadata);
+        const actor = metadata?.actor;
         const abortController = new AbortController();
         const execution = await runtime.performAcceptedOperatorAction({
           ...payload,
           action: payload.action,
-          ...(issuedBy !== undefined ? { issuedBy } : {}),
+          ...(actor !== undefined ? { actor } : {}),
           signal: abortController.signal,
         });
         const sessionId = execution.accepted.sessionId;
@@ -1784,10 +1785,10 @@ export class RunnerHost {
         return;
       }
       if (typeof runtime.performOperatorAction === "function") {
-        const issuedBy = resolveIssuedBy(metadata);
+        const actor = metadata?.actor;
         const result = await runtime.performOperatorAction({
           ...payload,
-          ...(issuedBy !== undefined ? { issuedBy } : {}),
+          ...(actor !== undefined ? { actor } : {}),
         });
         this.writer.emit("operator.controlled", { ...result, disposition: "completed" }, {
           commandId,
@@ -3344,21 +3345,6 @@ function isMcpStatusSnapshot(value: unknown): value is McpStatusSnapshot {
     Array.isArray(record.servers) &&
     Array.isArray(record.tools)
   );
-}
-
-function resolveIssuedBy(
-  metadata: RunnerCommandMetadata | undefined
-): string | undefined {
-  const actor = metadata?.actor;
-  if (actor === undefined) {
-    return;
-  }
-  const displayName = actor.displayName?.trim();
-  if (displayName !== undefined && displayName.length > 0) {
-    return displayName;
-  }
-  const actorId = actor.actorId.trim();
-  return actorId.length > 0 ? actorId : undefined;
 }
 
 function createDefaultProfileProvider(): RunnerProfileProvider {

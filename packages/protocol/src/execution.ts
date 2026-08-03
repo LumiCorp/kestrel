@@ -859,8 +859,6 @@ export interface OperatorControlCommandPayload {
   maxTurns?: number | undefined;
   maxRuntimeMs?: number | undefined;
   allowApprovalInheritance?: boolean | undefined;
-  allowToolClasses?: RunnerToolExecutionClass[] | undefined;
-  allowCapabilities?: string[] | undefined;
   missionControl?: RunnerMissionControlExecution | undefined;
 }
 
@@ -2118,6 +2116,31 @@ function parseRunnerCommandPayloadV2(
       validateOptionalEnum(payload.action, `${label}.action`, ["read", "delete"]);
       break;
     case "operator.control":
+      rejectUnknownFields(payload, label, [
+        "action",
+        "threadId",
+        "completionMode",
+        "requestId",
+        "proposalId",
+        "checkpointId",
+        "delegationId",
+        "actionValue",
+        "message",
+        "attachments",
+        "attachmentIds",
+        "interactionMode",
+        "actSubmode",
+        "title",
+        "rolePrompt",
+        "goal",
+        "profileId",
+        "provider",
+        "model",
+        "maxTurns",
+        "maxRuntimeMs",
+        "allowApprovalInheritance",
+        "missionControl",
+      ]);
       validateEnum(payload.action, `${label}.action`, [
         "approve",
         "reject",
@@ -2172,13 +2195,6 @@ function parseRunnerCommandPayloadV2(
         payload.allowApprovalInheritance,
         `${label}.allowApprovalInheritance`,
       );
-      validateOptionalEnumArray(payload.allowToolClasses, `${label}.allowToolClasses`, [
-        "read_only",
-        "planning_write",
-        "sandboxed_only",
-        "external_side_effect",
-      ]);
-      validateOptionalStringArray(payload.allowCapabilities, `${label}.allowCapabilities`);
       validateOptionalMissionControlExecution(
         payload.missionControl,
         `${label}.missionControl`,

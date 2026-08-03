@@ -748,7 +748,10 @@ export class OperatorControlPlane {
       threadId: input.threadId,
       requestId: request.requestId,
       message: input.reason ?? "Approved runtime assembly change.",
-      issuedBy: input.issuedBy ?? "operator",
+      actor: {
+        actorType: "operator",
+        actorId: input.issuedBy ?? "kestrel-local-operator",
+      },
       approve: true,
     });
   }
@@ -778,7 +781,10 @@ export class OperatorControlPlane {
       threadId: input.threadId,
       requestId: request.requestId,
       message: input.reason ?? "Rejected runtime assembly change.",
-      issuedBy: input.issuedBy ?? "operator",
+      actor: {
+        actorType: "operator",
+        actorId: input.issuedBy ?? "kestrel-local-operator",
+      },
       approve: false,
     });
     return this.requireThreadStatus(input.threadId);

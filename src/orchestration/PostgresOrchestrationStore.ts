@@ -1,4 +1,5 @@
 import type { SqlExecutor } from "../store/PostgresSessionStore.js";
+import { parseRunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
 import { parseHarnessEconomicsPolicyV1 } from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
@@ -345,13 +346,28 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
     await this.ensureSchema();
     await this.db.query(
       `INSERT INTO orchestration_approval_grants
-        (grant_id, thread_id, request_id, delegation_id, scope, status, allowed_tool_classes_json, allowed_capabilities_json, expires_at, issued_by, issued_at, metadata_json)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::timestamptz, $10, $11::timestamptz, $12::jsonb)
+        (grant_id, thread_id, request_id, delegation_id, scope, status,
+         allowed_tool_classes_json, allowed_capabilities_json, expires_at,
+         issued_by, issued_at, metadata_json, approval_id, action_key,
+         payload_hash, tool_class, authority_kind, authority_revision,
+         binding_json, decision_actor_json, consumed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::timestamptz,
+               $10, $11::timestamptz, $12::jsonb, $13, $14, $15, $16, $17,
+               $18, $19::jsonb, $20::jsonb, $21::timestamptz)
        ON CONFLICT (grant_id) DO UPDATE
          SET status = EXCLUDED.status,
              allowed_tool_classes_json = EXCLUDED.allowed_tool_classes_json,
              allowed_capabilities_json = EXCLUDED.allowed_capabilities_json,
              expires_at = EXCLUDED.expires_at,
+             approval_id = EXCLUDED.approval_id,
+             action_key = EXCLUDED.action_key,
+             payload_hash = EXCLUDED.payload_hash,
+             tool_class = EXCLUDED.tool_class,
+             authority_kind = EXCLUDED.authority_kind,
+             authority_revision = EXCLUDED.authority_revision,
+             binding_json = EXCLUDED.binding_json,
+             decision_actor_json = EXCLUDED.decision_actor_json,
+             consumed_at = EXCLUDED.consumed_at,
              metadata_json = EXCLUDED.metadata_json`,
       [
         record.grantId,
@@ -363,9 +379,18 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
         stringifySanitizedJson(record.allowedToolClasses),
         stringifySanitizedJson(record.allowedCapabilities),
         normalizeOptionalTimestampString(record.expiresAt) ?? null,
-        record.issuedBy,
+        record.decisionActor?.actorId ?? "legacy-operator",
         normalizeTimestampString(record.issuedAt),
         stringifySanitizedJson(record.metadata ?? null),
+        record.binding?.approvalId ?? null,
+        record.binding?.actionKey ?? null,
+        record.binding?.payloadHash ?? null,
+        record.binding?.toolClass ?? null,
+        record.binding?.authorityKind ?? null,
+        record.authorityRevision ?? record.binding?.authorityRevision ?? null,
+        stringifySanitizedJson(record.binding ?? null),
+        stringifySanitizedJson(record.decisionActor ?? null),
+        normalizeOptionalTimestampString(record.consumedAt) ?? null,
       ],
     );
   }
@@ -392,7 +417,10 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const result = await this.db.query<Record<string, unknown>>(
-      `SELECT grant_id, thread_id, request_id, delegation_id, scope, status, allowed_tool_classes_json, allowed_capabilities_json, expires_at, issued_by, issued_at, metadata_json
+      `SELECT grant_id, thread_id, request_id, delegation_id, scope, status,
+              allowed_tool_classes_json, allowed_capabilities_json, expires_at,
+              issued_at, metadata_json, binding_json, decision_actor_json,
+              authority_revision, consumed_at
          FROM orchestration_approval_grants
          ${where}
         ORDER BY issued_at DESC`,
@@ -1075,6 +1103,25 @@ function mapInteractionRequestRow(row: Record<string, unknown>): InteractionRequ
 }
 
 function mapApprovalGrantRow(row: Record<string, unknown>): ApprovalGrantRecord {
+  const binding = row.binding_json === null || row.binding_json === undefined
+    ? undefined
+    : parseRunnerExternalApprovalBindingV1(row.binding_json);
+  const decisionActor: ApprovalGrantRecord["decisionActor"] = isRecord(row.decision_actor_json) &&
+    (row.decision_actor_json.actorType === "end_user" ||
+      row.decision_actor_json.actorType === "operator" ||
+      row.decision_actor_json.actorType === "service") &&
+    typeof row.decision_actor_json.actorId === "string"
+      ? {
+          actorType: row.decision_actor_json.actorType,
+          actorId: row.decision_actor_json.actorId,
+          ...(typeof row.decision_actor_json.displayName === "string"
+            ? { displayName: row.decision_actor_json.displayName }
+            : {}),
+          ...(typeof row.decision_actor_json.tenantId === "string"
+            ? { tenantId: row.decision_actor_json.tenantId }
+            : {}),
+        }
+      : undefined;
   return {
     grantId: String(row.grant_id),
     threadId: String(row.thread_id),
@@ -1089,7 +1136,14 @@ function mapApprovalGrantRow(row: Record<string, unknown>): ApprovalGrantRecord 
       ? row.allowed_capabilities_json as string[]
       : [],
     ...(typeof row.expires_at === "string" ? { expiresAt: row.expires_at } : {}),
-    issuedBy: String(row.issued_by),
+    ...(binding !== undefined ? { binding } : {}),
+    ...(decisionActor !== undefined ? { decisionActor } : {}),
+    ...(typeof row.authority_revision === "string"
+      ? { authorityRevision: row.authority_revision }
+      : {}),
+    ...(typeof row.consumed_at === "string"
+      ? { consumedAt: row.consumed_at }
+      : {}),
     issuedAt: String(row.issued_at),
     ...(isRecord(row.metadata_json) ? { metadata: row.metadata_json } : {}),
   };

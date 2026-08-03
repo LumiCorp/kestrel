@@ -173,6 +173,7 @@ export interface SubmitTurnInput {
   stepAgent?: string | undefined;
   resumeBlockedRun?: boolean | undefined;
   signal?: AbortSignal | undefined;
+  actor?: RuntimeTurnActor | undefined;
   manualCompaction?: boolean | undefined;
   autoCompaction?:
     | {
@@ -208,9 +209,7 @@ export interface ReplyToRequestInput {
   actSubmode?: ActSubmode | undefined;
   executionPolicy?: ExecutionPolicyOverride | undefined;
   signal?: AbortSignal | undefined;
-  issuedBy?: string | undefined;
-  allowedToolClasses?: ToolExecutionClass[] | undefined;
-  allowedCapabilities?: string[] | undefined;
+  actor?: RuntimeTurnActor | undefined;
   approve?: boolean | undefined;
   attachments?: RunTurnAttachment[] | undefined;
   runtimeTurn?: RuntimeTurnInput | undefined;

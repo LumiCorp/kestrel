@@ -1305,8 +1305,6 @@ test("web adapter forwards control commands", async () => {
     action: "spawn_child_thread",
     threadId: "thread-main",
     message: "Investigate policy propagation.",
-    allowToolClasses: ["read_only", "sandboxed_only"],
-    allowCapabilities: ["workspace.read"],
   });
   assert.equal(controlled.type, "operator.controlled");
 
@@ -1398,8 +1396,8 @@ test("web adapter forwards control commands", async () => {
       item.type === "operator.control" &&
       (item.payload as Record<string, unknown>).action === "spawn_child_thread",
   )?.payload as Record<string, unknown> | undefined;
-  assert.deepEqual(policyControl?.allowToolClasses, ["read_only", "sandboxed_only"]);
-  assert.deepEqual(policyControl?.allowCapabilities, ["workspace.read"]);
+  assert.equal("allowToolClasses" in (policyControl ?? {}), false);
+  assert.equal("allowCapabilities" in (policyControl ?? {}), false);
   const recentControls = transport.sent
     .filter((item) => item.type === "operator.control")
     .slice(-2)

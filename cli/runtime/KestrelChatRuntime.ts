@@ -2103,10 +2103,8 @@ export class KestrelChatRuntime {
     maxTurns?: number | undefined;
     maxRuntimeMs?: number | undefined;
     allowApprovalInheritance?: boolean | undefined;
-    allowToolClasses?: ToolExecutionClass[] | undefined;
-    allowCapabilities?: string[] | undefined;
     missionControl?: RuntimeTurnInput["missionControl"] | undefined;
-    issuedBy?: string | undefined;
+    actor?: RuntimeTurnInput["actor"] | undefined;
     completionMode?: "terminal" | "accepted" | undefined;
   }): Promise<{
     sessionId?: string | undefined;
@@ -2126,7 +2124,12 @@ export class KestrelChatRuntime {
         "Thread runtime is not configured.",
       );
     }
-    const operatorIssuedBy = input.issuedBy ?? "operator";
+    const operatorActor = input.actor ?? {
+      actorType: "operator" as const,
+      actorId: "kestrel-local-operator",
+      displayName: "Local Kestrel Operator",
+    };
+    const operatorIssuedBy = operatorActor.displayName ?? operatorActor.actorId;
     let result: RunTurnResult | undefined;
     if (
       input.action === "approve" ||
@@ -2153,7 +2156,7 @@ export class KestrelChatRuntime {
         message:
           input.message ??
           (input.action === "reject" ? "Rejected." : "Approved."),
-        issuedBy: operatorIssuedBy,
+        actor: operatorActor,
         approve: input.action !== "reject",
         ...(input.interactionMode !== undefined
           ? { interactionMode: input.interactionMode }
@@ -2163,12 +2166,6 @@ export class KestrelChatRuntime {
           : {}),
         ...(input.attachments !== undefined
           ? { attachments: input.attachments }
-          : {}),
-        ...(input.allowToolClasses !== undefined
-          ? { allowedToolClasses: input.allowToolClasses }
-          : {}),
-        ...(input.allowCapabilities !== undefined
-          ? { allowedCapabilities: input.allowCapabilities }
           : {}),
       });
     } else if (input.action === "steer") {
@@ -2264,19 +2261,6 @@ export class KestrelChatRuntime {
                   : {}),
                 ...(input.allowApprovalInheritance !== undefined
                   ? { allowApprovalInheritance: input.allowApprovalInheritance }
-                  : {}),
-              },
-            }
-          : {}),
-        ...(input.allowToolClasses !== undefined ||
-        input.allowCapabilities !== undefined
-          ? {
-              policy: {
-                ...(input.allowToolClasses !== undefined
-                  ? { allowedToolClasses: input.allowToolClasses }
-                  : {}),
-                ...(input.allowCapabilities !== undefined
-                  ? { allowedCapabilities: input.allowCapabilities }
                   : {}),
               },
             }
@@ -2436,10 +2420,8 @@ export class KestrelChatRuntime {
     attachments?: RunTurnAttachment[] | undefined;
     interactionMode?: "chat" | "plan" | "build" | undefined;
     actSubmode?: "strict" | "safe" | "full_auto" | undefined;
-    allowToolClasses?: ToolExecutionClass[] | undefined;
-    allowCapabilities?: string[] | undefined;
     missionControl?: RuntimeTurnInput["missionControl"] | undefined;
-    issuedBy?: string | undefined;
+    actor?: RuntimeTurnInput["actor"] | undefined;
     signal?: AbortSignal | undefined;
   }): Promise<{
     accepted: {
@@ -2571,7 +2553,11 @@ export class KestrelChatRuntime {
       threadId: input.threadId,
       requestId,
       message,
-      issuedBy: input.issuedBy ?? "operator",
+      actor: input.actor ?? {
+        actorType: "operator",
+        actorId: "kestrel-local-operator",
+        displayName: "Local Kestrel Operator",
+      },
       approve: input.action !== "reject",
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
       ...(input.interactionMode !== undefined
@@ -2582,12 +2568,6 @@ export class KestrelChatRuntime {
         : {}),
       ...(input.attachments !== undefined
         ? { attachments: input.attachments }
-        : {}),
-      ...(input.allowToolClasses !== undefined
-        ? { allowedToolClasses: input.allowToolClasses }
-        : {}),
-      ...(input.allowCapabilities !== undefined
-        ? { allowedCapabilities: input.allowCapabilities }
         : {}),
       runtimeTurn: {
         sessionId: status.thread.sessionId,

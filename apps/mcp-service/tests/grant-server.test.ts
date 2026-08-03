@@ -145,7 +145,7 @@ test("ask-mode MCP capabilities execute after a persisted Thread approval", asyn
     grant: makeGrant("ask"),
     upstreams,
     audit,
-    approvalAuthorizer: { async isApproved() { return true; } },
+    approvalAuthorizer: { async consume() { return true; } },
   });
   const client = new Client({ name: "test-client", version: "1.0.0" });
   const [clientTransport, serverTransport] =
