@@ -346,8 +346,8 @@
     {
       "id": "execution-boundary-model-action-interception-removal",
       "target": "src/engine/RuntimeIO.ts",
-      "find": "      const result = responseBoundary.value;",
-      "replace": "      const result = rawResult;",
+      "find": "      let result = responseBoundary.value;",
+      "replace": "      let result = rawResult;",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=persists provider-boundary decisions and redacts requests", "tests/unit/runtime-io-cancellation.test.ts"],
       "testFiles": ["tests/unit/runtime-io-cancellation.test.ts"]
