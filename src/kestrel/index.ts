@@ -124,12 +124,14 @@ export {
   digestCanonicalValue,
   fingerprintExecutionBoundaryPolicyV1,
   parseBoundaryContentProvenanceV1,
+  parseExecutionBoundaryDecisionEvidenceV1,
   parseExecutionBoundaryDecisionV1,
   parseExecutionBoundaryPolicyV1,
   parseSensitiveValueReferenceV1,
 } from "./contracts/execution-boundary-policy.js";
 export type {
   BoundaryContentProvenanceV1,
+  ExecutionBoundaryDecisionExpectationV1,
   ExecutionBoundaryDecisionV1,
   ExecutionBoundaryOutcomeV1,
   ExecutionBoundaryPolicyV1,

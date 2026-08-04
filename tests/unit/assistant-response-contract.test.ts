@@ -115,6 +115,30 @@ test("assistant response boundary redacts registered values before durable outpu
   assert.equal(JSON.stringify(persisted).includes("assistant-secret"), false);
 });
 
+test("assistant output does not settle before its boundary decision persists", async () => {
+  const runtime = new ExecutionBoundaryPolicyRuntime();
+  let releasePersistence: (() => void) | undefined;
+  const persistenceGate = new Promise<void>((resolve) => {
+    releasePersistence = resolve;
+  });
+  let settled = false;
+  const pending = enforceRuntimeAssistantResponseBoundary({
+    output: output("COMPLETED"),
+    assistantText: "Safe response.",
+    executionBoundaryRuntime: runtime,
+    persist: () => persistenceGate,
+  }).then((result) => {
+    settled = true;
+    return result;
+  });
+
+  await Promise.resolve();
+  assert.equal(settled, false);
+  releasePersistence?.();
+  await pending;
+  assert.equal(settled, true);
+});
+
 function output(
   status: NormalizedOutput["status"],
   overrides: Partial<NormalizedOutput> = {},

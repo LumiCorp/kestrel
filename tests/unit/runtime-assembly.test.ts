@@ -279,6 +279,22 @@ test("AssemblyPolicyEvaluator rejects unknown bundles and requires approval for 
   });
   assert.equal(unknownDecision.result, "REJECTED");
 
+  const stalePolicyDecision = evaluator.evaluate({
+    thread,
+    proposal: {
+      proposalId: "proposal-stale-policy",
+      threadId: thread.threadId,
+      proposedBy: "operator",
+      metadata: {
+        executionBoundaryPolicyRevision: `sha256:${"0".repeat(64)}`,
+      },
+      status: "PENDING",
+      createdAt: "2026-03-16T12:00:00.000Z",
+    },
+  });
+  assert.equal(stalePolicyDecision.result, "REJECTED");
+  assert.match(stalePolicyDecision.reason, /missing or stale/u);
+
   const wideningDecision = evaluator.evaluate({
     thread,
     currentBundle: {

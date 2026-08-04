@@ -302,7 +302,6 @@ export class RuntimeIO {
       trust: "data",
       sourceId: `model-request:${callId}`,
       value: providerRequest,
-      handling: "redact",
       persist: (decision) => this.persistBoundaryDecision(decision),
     });
     providerRequest = providerBoundary.value;
@@ -502,7 +501,6 @@ export class RuntimeIO {
         trust: "data",
         sourceId: `model-response:${callId}`,
         value: rawResult,
-        handling: "redact",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       const result = responseBoundary.value;
@@ -604,7 +602,6 @@ export class RuntimeIO {
         trust: "data",
         sourceId: `model-error:${callId}`,
         value: this.options.mapError(error),
-        handling: "redact",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       const mappedError = mappedErrorBoundary.value;
@@ -962,7 +959,6 @@ export class RuntimeIO {
         trust: "data",
         sourceId: streamKey,
         value: event.delta,
-        handling: "redact",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       const redactor = this.modelReasoningRedactors.get(streamKey) ??
@@ -1067,7 +1063,6 @@ export class RuntimeIO {
         trust: "data",
         sourceId: `tool-request:${toolCallId}:${name}`,
         value: budgetedToolInput.input,
-        handling: "quarantine",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       if (inputBoundary.decision.outcome === "QUARANTINE") {
@@ -1149,7 +1144,6 @@ export class RuntimeIO {
             trust: "data",
             sourceId: `tool-stream:${toolCallId}:${name}`,
             value: text,
-            handling: "redact",
             persist: (decision) => this.persistBoundaryDecision(decision),
           });
           return consoleRedactor.push(text);
@@ -1291,7 +1285,6 @@ export class RuntimeIO {
         trust: "data",
         sourceId: `tool-result:${toolCallId}:${name}`,
         value: result,
-        handling: "redact",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       if (resultBoundary.decision.outcome === "REDACT") {
@@ -1439,7 +1432,6 @@ export class RuntimeIO {
           input: recoverySourceInput,
           error: this.options.mapError(error),
         },
-        handling: "redact",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       const mappedError = failureBoundary.value.error;
