@@ -17,6 +17,7 @@ import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { buildAgentToolSuccessResult, rawOutputRefFor, unwrapAgentToolOutput } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 const execFileAsync = promisify(execFile);
@@ -32,9 +33,9 @@ function createRuntime(
 ) {
   return new Kestrel({
     store,
-    toolGateway: options.toolGateway ?? {
+    toolGateway: options.toolGateway ?? adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     ...(options.workspaceCheckpointService !== undefined
       ? { workspaceCheckpointService: options.workspaceCheckpointService }
       : {}),
@@ -130,7 +131,7 @@ test("managed mutation tools capture pre/post workspace checkpoints and expose c
   };
   const kestrel = createRuntime(store, {}, {
     workspaceCheckpointService: checkpointService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => buildAgentToolSuccessResult({
         toolName: "dev.shell.run",
         input: {
@@ -139,7 +140,7 @@ test("managed mutation tools capture pre/post workspace checkpoints and expose c
         },
         output: { status: "completed" },
       }),
-    },
+    }),
   });
 
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
@@ -260,7 +261,7 @@ test("managed mutation tools fail fast when dev shell guard falls back to source
   };
   const kestrel = createRuntime(store, {}, {
     workspaceCheckpointService: checkpointService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => buildAgentToolSuccessResult({
         toolName: "dev.shell.run",
         input: {
@@ -277,7 +278,7 @@ test("managed mutation tools fail fast when dev shell guard falls back to source
           },
         },
       }),
-    },
+    }),
   });
 
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
@@ -351,13 +352,13 @@ test("spoofed managed worktree payload does not enable checkpoint wrapping witho
   };
   const kestrel = createRuntime(store, {}, {
     workspaceCheckpointService: checkpointService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async <T>(name: string, input: unknown) => buildAgentToolSuccessResult({
         toolName: name,
         input,
         output: { status: "completed" },
       }) as T,
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const output = await io.useTool!("dev.shell.run", {
@@ -443,7 +444,7 @@ test("managed worktree approval binds resumed mutation runs before tool context 
   const toolCalls: string[] = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
       },
@@ -451,7 +452,7 @@ test("managed worktree approval binds resumed mutation runs before tool context 
         toolCalls.push(name);
         return buildAgentToolSuccessResult({ toolName: name, input, output: { ok: true } }) as T;
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const result = await io.useTool!("fs.write_text", {
@@ -536,7 +537,7 @@ test("filesystem mutation tools auto-provision managed worktree before tool cont
   const toolCalls: string[] = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService: new ManagedTaskWorktreeService({ homeDir: home }),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
         const agent = (context.session.state.agent ?? {}) as Record<string, unknown>;
@@ -547,7 +548,7 @@ test("filesystem mutation tools auto-provision managed worktree before tool cont
         toolCalls.push(name);
         return buildAgentToolSuccessResult({ toolName: name, input, output: { ok: true } }) as T;
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const result = await io.useTool!("fs.write_text", {
@@ -663,7 +664,7 @@ test("filesystem mutation batches auto-provision managed worktree before tool co
   const toolCalls: string[] = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService: new ManagedTaskWorktreeService({ homeDir: home }),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
         const agent = (context.session.state.agent ?? {}) as Record<string, unknown>;
@@ -674,7 +675,7 @@ test("filesystem mutation batches auto-provision managed worktree before tool co
         toolCalls.push(name);
         return buildAgentToolSuccessResult({ toolName: name, input, output: { ok: true } }) as T;
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const result = await io.useTool!("fs.write_text", {
@@ -756,7 +757,7 @@ test("dev shell tools auto-provision managed worktree before tool context is sco
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService: new ManagedTaskWorktreeService({ homeDir: home }),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
         const agent = (context.session.state.agent ?? {}) as Record<string, unknown>;
@@ -767,7 +768,7 @@ test("dev shell tools auto-provision managed worktree before tool context is sco
         toolCalls.push({ name, input });
         return buildAgentToolSuccessResult({ toolName: name, input, output: { stdout: "/managed/worktree\n" } }) as T;
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const result = await io.useTool!("dev.shell.run", {
@@ -965,13 +966,13 @@ test("terminal managed worktree runs emit fan-in candidates for changed files", 
 
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService: new ManagedTaskWorktreeService({ homeDir: home }),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async <T>(name: string, input: unknown) => buildAgentToolSuccessResult({
         toolName: name,
         input,
         output: { stdout: "ok\n" },
       }) as T,
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (ctx, io) => {
     const workspace = (ctx.event.payload.workspace ?? {}) as Record<string, unknown>;
@@ -1023,13 +1024,13 @@ test("managed worktree auto-provision uses session isolation when requested", as
   const managedTaskWorktreeService = new ManagedTaskWorktreeService({ homeDir: home });
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async <T>(name: string, input: unknown) => buildAgentToolSuccessResult({
         toolName: name,
         input,
         output: { stdout: "ok\n" },
       }) as T,
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     await io.useTool!("dev.shell.run", {
@@ -1104,7 +1105,7 @@ test("dev shell tools do not auto-provision managed worktrees unless requested",
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService: new ManagedTaskWorktreeService({ homeDir: home }),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
       },
@@ -1112,7 +1113,7 @@ test("dev shell tools do not auto-provision managed worktrees unless requested",
         toolCalls.push({ name, input });
         return buildAgentToolSuccessResult({ toolName: name, input, output: { stdout: `${repo}\n` } }) as T;
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const result = await io.useTool!("dev.shell.run", {
@@ -1163,7 +1164,7 @@ test("dev shell auto-provision reuses workspace-scoped worktrees across new sess
   const preRunWorkspaces: Array<Record<string, unknown> | undefined> = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
       },
@@ -1172,7 +1173,7 @@ test("dev shell auto-provision reuses workspace-scoped worktrees across new sess
         input,
         output: { stdout: "ok\n" },
       }) as T,
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const result = await io.useTool!("dev.shell.run", {
@@ -1267,7 +1268,7 @@ test("dev process tools auto-provision managed worktree before tool context is s
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService: new ManagedTaskWorktreeService({ homeDir: home }),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
         const agent = (context.session.state.agent ?? {}) as Record<string, unknown>;
@@ -1282,7 +1283,7 @@ test("dev process tools auto-provision managed worktree before tool context is s
           output: { processId: "proc-1", status: "running" },
         }) as T;
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const result = await io.useTool!("dev.process.start", {
@@ -1383,7 +1384,7 @@ test("dev shell tools reuse valid persisted managed worktree bindings without au
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       preRun: async (context) => {
         preRunWorkspaces.push((context.event.payload.workspace ?? undefined) as Record<string, unknown> | undefined);
       },
@@ -1395,7 +1396,7 @@ test("dev shell tools reuse valid persisted managed worktree bindings without au
           output: { stdout: `${provisioned.binding.worktreeRoot}\n` },
         }) as T;
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const result = await io.useTool!("dev.shell.run", {
@@ -1475,12 +1476,12 @@ test("successful finalization leaves an intentionally retained exec_command sess
   });
   const cleanupCalls: Array<{ name: string; input: unknown }> = [];
   const kestrel = createRuntime(store, {}, {
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async (name, input) => {
         cleanupCalls.push({ name, input });
         return buildAgentToolSuccessResult({ toolName: name, input, output: { status: "stopped" } });
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.finalize", async (context) => ({
     status: "COMPLETED",
@@ -1553,7 +1554,7 @@ test("cancelActiveRun releases persisted managed worktree leases and records ter
   const cleanupCalls: Array<{ name: string; input: unknown }> = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async (name, input) => {
         cleanupCalls.push({ name, input });
         return buildAgentToolSuccessResult({
@@ -1567,7 +1568,7 @@ test("cancelActiveRun releases persisted managed worktree leases and records ter
           },
         });
       },
-    },
+    }),
   });
 
   const result = await kestrel.cancelActiveRun("cancel-managed-session");
@@ -1633,7 +1634,7 @@ test("dev shell tools clear missing persisted managed worktree bindings before a
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       preRun: async (context) => {
         const agent = (context.session.state.agent ?? {}) as Record<string, unknown>;
         const exec = (agent.exec ?? {}) as Record<string, unknown>;
@@ -1647,7 +1648,7 @@ test("dev shell tools clear missing persisted managed worktree bindings before a
           output: { stdout: `${provisioned.binding.worktreeRoot}\n` },
         }) as T;
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     const result = await io.useTool!("dev.shell.run", {
@@ -1741,11 +1742,11 @@ test("auto-provisioned dev tools block on invalid deterministic worktree collisi
 
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => {
         throw new Error("tool should not run after managed worktree collision");
       },
-    },
+    }),
   });
   let executed = false;
   kestrel.registerStep("agent.exec.dispatch", async () => {
@@ -1828,7 +1829,7 @@ test("auto-provisioned dev tools reclaim orphaned deterministic worktrees", asyn
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async <T>(name: string, input: unknown) => {
         toolCalls.push({ name, input });
         return buildAgentToolSuccessResult({
@@ -1837,7 +1838,7 @@ test("auto-provisioned dev tools reclaim orphaned deterministic worktrees", asyn
           output: { stdout: `${provisioned.binding.worktreeRoot}\n` },
         }) as T;
       },
-    },
+    }),
   });
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {
     await io.useTool!("dev.shell.run", {
@@ -1929,11 +1930,11 @@ test("auto-provisioned dev tools block orphan reclaim while the previous run lea
 
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => {
         throw new Error("tool should not run while the previous orphan lease owner is still active");
       },
-    },
+    }),
   });
   let executed = false;
   kestrel.registerStep("agent.exec.dispatch", async () => {
@@ -2120,12 +2121,12 @@ test("reference-react registration uses source filesystem mutations from runtime
   let toolCalled = false;
   const kestrel = createRuntime(store, {}, {
     managedTaskWorktreeService: new ManagedTaskWorktreeService({ homeDir: home }),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async <T>(name: string, input: unknown) => {
         toolCalled = true;
         return buildAgentToolSuccessResult({ toolName: name, input, output: { ok: true } }) as T;
       },
-    },
+    }),
   });
   registerAgentReferenceRuntime(kestrel);
 
@@ -2208,11 +2209,11 @@ test("managed failed mutation tools roll back changed files to the pre-action ch
   };
   const kestrel = createRuntime(store, {}, {
     workspaceCheckpointService: checkpointService,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => {
         throw new Error("parse error near &&");
       },
-    },
+    }),
   });
 
   kestrel.registerStep("agent.exec.dispatch", async (_ctx, io) => {

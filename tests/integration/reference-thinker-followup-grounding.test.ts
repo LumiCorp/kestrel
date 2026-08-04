@@ -8,6 +8,10 @@ import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import {
+  adaptLegacyTestToolGateway,
+  createLegacyTestToolDescriptorRef,
+} from "../helpers/createTestToolGateway.js";
 
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -91,7 +95,7 @@ test("reference thinker avoids ungrounded fetch actions when follow-up grounding
     },
   });
 
-  const toolGateway: ToolGateway = {
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     async call<T>(name: string, input: unknown): Promise<T> {
       toolCalls.push({ name, input });
       if (name === "internet.search") {
@@ -125,7 +129,7 @@ test("reference thinker avoids ungrounded fetch actions when follow-up grounding
     async preRun(): Promise<void> {
       // no-op
     },
-  };
+  });
 
   const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
     const schemaName = request.providerOptions?.openrouter?.responseSchemaName;
@@ -208,6 +212,7 @@ test("reference thinker avoids ungrounded fetch actions when follow-up grounding
     capabilityManifestProvider: () => [
       {
         name: "internet.search",
+        descriptorRef: createLegacyTestToolDescriptorRef("internet.search"),
         description: "Search the web",
         freshnessClass: "live",
         latencyClass: "medium",
@@ -217,6 +222,7 @@ test("reference thinker avoids ungrounded fetch actions when follow-up grounding
       },
       {
         name: "internet.extract",
+        descriptorRef: createLegacyTestToolDescriptorRef("internet.extract"),
         description: "Fetch a URL",
         freshnessClass: "live",
         latencyClass: "medium",

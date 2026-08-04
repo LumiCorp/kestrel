@@ -8,18 +8,19 @@ import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 test("Kestrel.run invokes toolGateway.preRun on every run", async () => {
   const store = new InMemorySessionStore();
   let preRunCalls = 0;
 
-  const toolGateway: ToolGateway = {
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     call: async () => null as never,
     preRun: async () => {
       preRunCalls += 1;
     },
-  };
+  });
 
   const kestrel = new Kestrel({
     store,
@@ -52,7 +53,7 @@ test("Kestrel.run returns FAILED with preserved preRun error code/details", asyn
   const store = new InMemorySessionStore();
   let stepCalls = 0;
 
-  const toolGateway: ToolGateway = {
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     call: async () => null as never,
     preRun: async () => {
       const error = new Error("MCP preflight failed for server(s): remote") as Error & {
@@ -65,7 +66,7 @@ test("Kestrel.run returns FAILED with preserved preRun error code/details", asyn
       };
       throw error;
     },
-  };
+  });
 
   const kestrel = new Kestrel({
     store,
@@ -99,9 +100,9 @@ test("Kestrel tool runtime status defaults to healthy empty providers", async ()
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>(_request: ModelRequest) => ({} as T)),
   });
 
@@ -121,7 +122,7 @@ test("Kestrel delegates tool runtime status hooks when gateway implements them",
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
       getRuntimeStatus: async () => {
         getCalls += 1;
@@ -143,7 +144,7 @@ test("Kestrel delegates tool runtime status hooks when gateway implements them",
           },
         };
       },
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>(_request: ModelRequest) => ({} as T)),
   });
 
@@ -166,9 +167,9 @@ test("Kestrel rejects overlapping runs for the same session with SESSION_BUSY", 
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>(_request: ModelRequest) => ({} as T)),
   });
 
@@ -214,9 +215,9 @@ test("Kestrel returns RUN_CANCELLED when aborted during a model call", async () 
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(
       async <T>(_request: ModelRequest) =>
         await new Promise<T>((resolve) => {
@@ -270,9 +271,9 @@ test("Kestrel runtime IO forwards runtime budget metadata into model calls", asy
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>(request: ModelRequest) => {
       seenRequests.push(structuredClone(request));
       return { ok: true } as T;
@@ -328,7 +329,7 @@ test("Kestrel runtime IO streams dev-shell console updates through the console l
     runEventListener: (event) => {
       runEvents.push(structuredClone(event));
     },
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async <T>(_name: string, _input: unknown, options?: ToolGatewayCallOptions) => {
         await options?.console?.({
           status: "chunk",
@@ -354,7 +355,7 @@ test("Kestrel runtime IO streams dev-shell console updates through the console l
           },
         }) as T;
       },
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>(_request: ModelRequest) => ({ ok: true } as T)),
   });
 

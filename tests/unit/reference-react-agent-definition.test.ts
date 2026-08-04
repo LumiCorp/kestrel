@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 import { AGENT_STEP_IDS } from "../../agents/reference-react/src/constants.js";
 import {
   createAgentInstance,
@@ -43,9 +44,9 @@ test("reference-react agent instance adapts canonical definition into Kestrel st
   const instance = createAgentInstance(definition);
   const kestrel = new Kestrel({
     store: new InMemorySessionStore(),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({} as T)),
   });
 

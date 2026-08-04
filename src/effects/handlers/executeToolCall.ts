@@ -1,13 +1,12 @@
-import { randomUUID } from "node:crypto";
-
 import type { AgentToolResult, ToolGateway } from "../../kestrel/contracts/model-io.js";
-import type {
-  PersistedEffect,
-  SessionRecord,
-} from "../../kestrel/contracts/store.js";
+import {
+  parseAgentToolResultV2,
+  parsePreparedToolCallV1,
+  type AgentToolResultV2,
+} from "../../kestrel/contracts/tool-invocation.js";
+import type { PersistedEffect } from "../../kestrel/contracts/store.js";
 import type { EffectExecutionContext } from "../EffectRegistry.js";
 import { createEffectPayloadError } from "../errors.js";
-import { applyExternalDeadlineToolBudget } from "../../engine/ExecutionEngineSupport.js";
 import type { RecoveryToolAdapterRegistry } from "../../engine/recovery/RecoveryRegistries.js";
 
 export function createExecuteToolCallHandler(
@@ -22,47 +21,23 @@ export function createExecuteToolCallHandler(
       typeof effect.payload === "object" && effect.payload !== null && Array.isArray(effect.payload) === false
         ? (effect.payload as Record<string, unknown>)
         : undefined;
-    const toolName = typeof payload?.toolName === "string" ? payload.toolName : undefined;
-    const toolInput =
-      typeof payload?.toolInput === "object" && payload.toolInput !== null && Array.isArray(payload.toolInput) === false
-        ? (payload.toolInput as Record<string, unknown>)
-        : undefined;
+    let preparedToolCall;
+    try {
+      preparedToolCall = parsePreparedToolCallV1(payload?.preparedToolCall);
+    } catch (error) {
+      throw createEffectPayloadError(
+        effect.type,
+        "execute_tool_call requires payload.preparedToolCall V1 evidence.",
+        {
+          payloadKeys: payload === undefined ? [] : Object.keys(payload),
+          cause: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
     const runtimePayload =
       typeof payload?.runtimePayload === "object" && payload.runtimePayload !== null && Array.isArray(payload.runtimePayload) === false
         ? (payload.runtimePayload as Record<string, unknown>)
         : undefined;
-
-    if (toolName === undefined || toolInput === undefined) {
-      throw createEffectPayloadError(
-        effect.type,
-        "execute_tool_call requires payload.toolName and payload.toolInput object fields.",
-        {
-          payloadKeys: payload === undefined ? [] : Object.keys(payload),
-          toolNamePresent: toolName !== undefined,
-          toolInputPresent: toolInput !== undefined,
-        },
-      );
-    }
-
-    if (toolGateway.preRun !== undefined) {
-      const session: SessionRecord = context.session ?? {
-        sessionId: context.sessionId,
-        version: 0,
-        state: {},
-        updatedAt: new Date().toISOString(),
-      };
-      await toolGateway.preRun({
-        runId: context.runId,
-        event: {
-          id: `effect-tool-execute:${context.runId}:${randomUUID()}`,
-          type: effect.type,
-          sessionId: context.sessionId,
-          payload: runtimePayload ?? {},
-          ...(session.currentStepAgent !== undefined ? { stepAgent: session.currentStepAgent } : {}),
-        },
-        session,
-      });
-    }
 
     const runContext = {
       runId: context.runId,
@@ -70,33 +45,13 @@ export function createExecuteToolCallHandler(
       payload: runtimePayload ?? {},
       sessionState: context.session?.state ?? {},
     };
-    const validatedToolInput = toolGateway.validateInput === undefined
-      ? toolInput
-      : await toolGateway.validateInput(toolName, toolInput, {
-          signal: context.signal,
-          runContext,
-        });
-    const budgetedToolInput = context.runtimeBudgetRemainingMs === undefined
-      ? { input: validatedToolInput, shortCircuitResult: undefined }
-      : applyExternalDeadlineToolBudget({
-          toolName,
-          input: validatedToolInput,
-          runtimeBudgetRemainingMs: context.runtimeBudgetRemainingMs,
-        });
-    let result: AgentToolResult;
-    if (budgetedToolInput.shortCircuitResult !== undefined) {
-      const { buildAgentToolSuccessResult } = await import("../../../tools/toolResult.js");
-      result = buildAgentToolSuccessResult({
-        toolName,
-        input: budgetedToolInput.input,
-        output: budgetedToolInput.shortCircuitResult,
-      });
-    } else {
-      result = await toolGateway.call(toolName, budgetedToolInput.input, {
+    const result: AgentToolResultV2 = await toolGateway.executePreparedToolCall(
+      preparedToolCall,
+      {
         signal: context.signal,
         runContext,
-      });
-    }
+      },
+    );
     const recoveryAdapterId = typeof payload?.recoveryAdapterId === "string"
       ? payload.recoveryAdapterId
       : undefined;
@@ -113,7 +68,7 @@ export function createExecuteToolCallHandler(
     const adapter = recoveryToolAdapterRegistry.resolve({
       adapterId: recoveryAdapterId,
       sourceToolId: recoverySourceToolId,
-      targetToolId: toolName,
+      targetToolId: preparedToolCall.activation.descriptor.toolId,
     });
     if (adapter === undefined) {
       throw createEffectPayloadError(
@@ -124,12 +79,28 @@ export function createExecuteToolCallHandler(
     const decision = typeof payload?.recoveryDecision === "object" && payload.recoveryDecision !== null
       ? payload.recoveryDecision as Record<string, unknown>
       : undefined;
-    return adapter.normalizeResult(result, {
+    const normalized = adapter.normalizeResult(result, {
       runId: context.runId,
       sessionId: context.sessionId,
       sourceToolId: recoverySourceToolId,
-      targetToolId: toolName,
+      targetToolId: preparedToolCall.activation.descriptor.toolId,
       ...(typeof decision?.callId === "string" ? { sourceCallId: decision.callId } : {}),
+    });
+    if (
+      normalized.toolName !== result.toolName ||
+      normalized.status !== result.status
+    ) {
+      throw createEffectPayloadError(
+        effect.type,
+        `Recovery tool adapter '${recoveryAdapterId}' attempted to replace gateway-owned result identity.`,
+      );
+    }
+    return parseAgentToolResultV2({
+      ...normalized,
+      version: result.version,
+      toolCallId: result.toolCallId,
+      activation: result.activation,
+      outcome: result.outcome,
     });
   };
 }

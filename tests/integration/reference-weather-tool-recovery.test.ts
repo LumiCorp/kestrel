@@ -9,6 +9,10 @@ import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/
 import { weatherForecastTool } from "../../tools/free/weatherForecast.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import {
+  adaptLegacyTestToolGateway,
+  createLegacyTestToolDescriptorRef,
+} from "../helpers/createTestToolGateway.js";
 
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -89,7 +93,7 @@ test("reference harness uses free.weather.current for 'whats the weather in cinc
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const finalized: Record<string, unknown>[] = [];
 
-  const toolGateway: ToolGateway = {
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     async call<T>(name: string, input: unknown): Promise<T> {
       toolCalls.push({ name, input });
       if (name === "free.weather.current") {
@@ -114,7 +118,7 @@ test("reference harness uses free.weather.current for 'whats the weather in cinc
     async preRun(): Promise<void> {
       // no-op
     },
-  };
+  });
 
   const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
     const schemaName = request.providerOptions?.openrouter?.responseSchemaName;
@@ -169,6 +173,7 @@ test("reference harness uses free.weather.current for 'whats the weather in cinc
     capabilityManifestProvider: () => [
       {
         name: "free.weather.current",
+        descriptorRef: createLegacyTestToolDescriptorRef("free.weather.current"),
         description: "Current weather",
         freshnessClass: "live",
         latencyClass: "medium",
@@ -494,7 +499,7 @@ async function runReferenceRecoveryScenario(input: {
   const finalized: Record<string, unknown>[] = [];
   let observedLoopEvidence = false;
 
-  const toolGateway: ToolGateway = {
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     async call<T>(name: string, payload: unknown): Promise<T> {
       toolCalls.push({ name, input: payload });
       if (name === input.toolName) {
@@ -519,7 +524,7 @@ async function runReferenceRecoveryScenario(input: {
     async preRun(): Promise<void> {
       // no-op
     },
-  };
+  });
 
   const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
     const schemaName = request.providerOptions?.openrouter?.responseSchemaName;
@@ -580,6 +585,7 @@ async function runReferenceRecoveryScenario(input: {
     capabilityManifestProvider: () => [
       {
         name: input.toolName,
+        descriptorRef: createLegacyTestToolDescriptorRef(input.toolName),
         description: input.toolName,
         freshnessClass: "live",
         latencyClass: "medium",

@@ -7,6 +7,7 @@ import {
   providerToolAliasForCanonicalName,
 } from "../../agents/reference-react/src/modelToolCallActions.js";
 import type { ModelToolSpec } from "../../src/kestrel/contracts/model-io.js";
+import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 const workspaceTools: ModelToolSpec[] = [
@@ -65,6 +66,10 @@ test("provider aliases are transport-only and canonical tool names stay dotted",
 
   assert.equal(providerToolAliasForCanonicalName("exec_command"), "exec_command");
   assert.equal(registry.byProviderName.get("exec_command")?.canonicalName, "exec_command");
+  assert.equal(
+    registry.requestTools.find((tool) => tool.name === "fs_read_text")?.runtimeName,
+    "fs.read_text",
+  );
   assert.match(
     registry.requestTools.find((tool) => tool.name === "exec_command")?.description ?? "",
     /^Run terminal work\. Include assistantProgress: one concise sentence that truthfully describes this exact accepted action/u,
@@ -96,6 +101,7 @@ test("provider aliases are transport-only and canonical tool names stay dotted",
     kind: "tool",
     name: "exec_command",
     input: { command: "pnpm create vite@latest app -- --template react-ts" },
+    toolCallId: "call_1",
   });
   assert.deepEqual(normalized.provenance, {
     providerToolCallIds: ["call_1"],
@@ -123,6 +129,29 @@ test("missing assistant progress does not reject an otherwise valid action", () 
     input: { path: "package.json" },
   });
   assert.equal(normalized.assistantProgress, "I’m continuing the requested work.");
+});
+
+test("model tool actions retain the exact activation from their request snapshot", async () => {
+  const gateway = createTestToolGateway({
+    "fs.read_text": async () => ({ content: "ok" }),
+  });
+  const snapshot = await gateway.createToolSurfaceSnapshot({
+    toolNames: ["fs.read_text"],
+  });
+  const normalized = normalizeModelToolCallsToAgentTurn({
+    aliasRegistry: buildModelToolAliasRegistry(workspaceTools),
+    sourceRunId: "run_1",
+    toolIntents: [{
+      id: "call_snapshot",
+      name: "fs_read_text",
+      input: { path: "package.json" },
+      toolSurfaceSnapshot: snapshot,
+    }],
+  });
+  assert.deepEqual(
+    normalized.action?.kind === "tool" ? normalized.action.activation : undefined,
+    snapshot.tools[0],
+  );
 });
 
 test("finalize control tool description stays prose closeout guidance", () => {

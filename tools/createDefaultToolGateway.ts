@@ -9,18 +9,22 @@ export interface CreateDefaultToolGatewayOptions {
 }
 
 export function createDefaultToolGateway(options: CreateDefaultToolGatewayOptions): AllowlistedToolGateway {
-  const handlers = defaultToolCatalog.createHandlers(
+  const handlers = defaultToolCatalog.createRawHandlers(
     options.allowlist,
     withDefaultFileSystemPolicy(options.context),
+  );
+  const normalizers = defaultToolCatalog.createResultNormalizers(
+    options.allowlist,
   );
   return new AllowlistedToolGateway(
     options.allowlist.map((name) => {
       const descriptor = defaultToolCatalog.getDescriptor(name);
       const handler = handlers[name];
-      if (descriptor === undefined || handler === undefined) {
+      const normalizer = normalizers[name];
+      if (descriptor === undefined || handler === undefined || normalizer === undefined) {
         throw new Error(`Tool '${name}' is missing its compiled registration.`);
       }
-      return { descriptor, handler };
+      return { descriptor, handler, normalizer };
     }),
   );
 }

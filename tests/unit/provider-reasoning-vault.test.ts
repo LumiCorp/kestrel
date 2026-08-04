@@ -12,6 +12,7 @@ import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import type { ProviderReasoningEncryptedRecord, RuntimeStore } from "../../src/kestrel/contracts/store.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 function memoryReasoningStore() {
@@ -241,7 +242,7 @@ test("the engine purges exact provider continuation state when the active turn e
       },
       provider: { name: "openai", model: "gpt-5.2", endpoint: "responses" },
     } as T)),
-    toolGateway: { async call<T>() { return {} as T; } },
+    toolGateway: adaptLegacyTestToolGateway({ async call<T>() { return {} as T; } }),
   });
   kestrel.registerStep("finish", async (_context, io) => {
     await io.useModel({

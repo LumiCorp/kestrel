@@ -9,11 +9,11 @@ import type {
 import type { DesktopHostOpenServicePort } from "../src/desktopShell/hostOpen.js";
 import type {
   AgentToolResult,
+  AgentToolPresentation,
   ModelToolContract,
   ModelToolSpec,
   ToolConsoleSink,
   ToolGateway,
-  ToolGatewayCallOptions,
   ToolRunContext,
   ToolRuntimeStatus,
 } from "../src/kestrel/contracts/model-io.js";
@@ -69,6 +69,8 @@ export interface ToolCapabilityMetadata {
     kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
     revision: string;
   } | undefined;
+  /** Exact immutable descriptor used by runtime approval and execution checks. */
+  descriptorRef?: ToolDescriptorRefV1 | undefined;
   requires?: string[] | undefined;
   suitability?: ToolCapabilitySuitability | undefined;
 }
@@ -78,6 +80,7 @@ export interface SharedToolDefinition {
   description: string;
   inputSchema: Record<string, unknown>;
   outputContract?: ModelToolContract | undefined;
+  resultNormalizerId?: string | undefined;
   capability: ToolCapabilityMetadata;
   presentation: ToolPresentationMetadata;
 }
@@ -250,6 +253,16 @@ export type SharedToolHandler = (input: unknown) => Promise<AgentToolResult>;
 export interface SharedToolModule {
   definition: SharedToolDefinition;
   createHandler(context: SharedToolContext): SharedToolRawHandler;
+  normalizeResult?(output: unknown, input: unknown): SharedToolNormalizedResult;
+}
+
+export interface SharedToolNormalizedResult {
+  output: unknown;
+  presentation?: AgentToolPresentation | undefined;
+  partial?: {
+    normalizedFailureCode: string;
+    retryable: boolean;
+  } | undefined;
 }
 
 export interface ToolCatalog {
@@ -273,6 +286,13 @@ export interface ToolCatalog {
     names: string[],
     context: SharedToolContext
   ): Record<string, SharedToolHandler>;
+  createRawHandlers(
+    names: string[],
+    context: SharedToolContext
+  ): Record<string, SharedToolRawHandler>;
+  createResultNormalizers(
+    names: string[],
+  ): Record<string, (output: unknown, input: unknown) => SharedToolNormalizedResult>;
 }
 
 export interface ToolRegistryListOptions {
@@ -296,11 +316,6 @@ export interface ToolRegistry extends ToolGateway {
       toolFamily: string;
     }
   >;
-  validateInput?(
-    name: string,
-    input: unknown,
-    options?: ToolGatewayCallOptions
-  ): Promise<unknown>;
   getRuntimeStatus?(): Promise<ToolRuntimeStatus>;
   refreshRuntime?(): Promise<ToolRuntimeStatus>;
   ensureReadyForRun(): Promise<void>;

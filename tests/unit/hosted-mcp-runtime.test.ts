@@ -15,6 +15,16 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
+import { executeTestToolCall } from "../helpers/createTestToolGateway.js";
+
+async function callTool(
+  registry: UnifiedToolRegistry,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  options?: Parameters<typeof executeTestToolCall>[0]["options"],
+) {
+  return executeTestToolCall({ gateway: registry, toolName, toolInput, options });
+}
 
 
 const GRANT_ID = "018f1f73-4ce2-7b0f-8e14-3b977e1577a5";
@@ -42,7 +52,11 @@ test("hosted MCP tools are scoped to a run grant and use only gateway authorizat
           {
             name: "github.issues.list",
             description: "List approved issues",
-            inputSchema: { type: "object" },
+            inputSchema: {
+              type: "object",
+              properties: { state: { type: "string" } },
+              additionalProperties: false,
+            },
             _meta: { "kestrel/approvalMode": "auto" },
           },
         ],
@@ -121,7 +135,11 @@ test("hosted MCP tools are scoped to a run grant and use only gateway authorizat
       turn,
       { includeGrantedMcpTools: true }
     );
-    assert.equal(allowlist.includes("github.issues.list"), true);
+    assert.equal(
+      allowlist.includes("github.issues.list"),
+      true,
+      JSON.stringify({ allowlist, tools: mcpStatus.tools }),
+    );
     const resourceTools = mcpStatus.tools.filter(
       (tool) => tool.protocolKind === "resource"
     ).map((tool) => tool.namespacedToolName);
@@ -153,14 +171,14 @@ test("hosted MCP tools are scoped to a run grant and use only gateway authorizat
       registry.getCapabilityManifest({ runContext })[0]?.approvalCapabilities,
       []
     );
-    const result = await registry.call(
+    const result = await callTool(registry,
       "github.issues.list",
       { state: "open" },
       { runContext }
     );
     assert.equal(result.status, "OK");
-    assert.equal((await registry.call(resourceTool, {}, { runContext })).status, "OK");
-    assert.equal((await registry.call(promptTool, { path: "README.md" }, { runContext })).status, "OK");
+    assert.equal((await callTool(registry, resourceTool, {}, { runContext })).status, "OK");
+    assert.equal((await callTool(registry, promptTool, { path: "README.md" }, { runContext })).status, "OK");
     assert.ok(seenHeaders.length >= 2);
     for (const headers of seenHeaders) {
       assert.equal(headers.authorization, "Bearer signed-run-ticket");

@@ -1,7 +1,7 @@
 import type {
   AgentToolAuditRecord,
-  AgentToolModelContext,
   AgentToolPresentation,
+  AgentToolResult,
 } from "./model-io.js";
 import type { RunToolPhase } from "./events.js";
 import {
@@ -47,6 +47,11 @@ export interface PreparedToolApprovalAuthorityV1 {
   recoveryAdapterId?: string | undefined;
 }
 
+export interface PreparedToolInputAdapterV1 {
+  adapterId: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface PreparedToolCallV1 {
   version: typeof PREPARED_TOOL_CALL_VERSION;
   runId: string;
@@ -55,6 +60,7 @@ export interface PreparedToolCallV1 {
   activation: ToolActivationRefV1;
   origin: PreparedToolCallOriginV1;
   effectiveInput: Record<string, unknown>;
+  inputAdapters: PreparedToolInputAdapterV1[];
   policy: PreparedToolPolicyDispositionV1;
   approval?: PreparedToolApprovalAuthorityV1 | undefined;
   preparedAt: string;
@@ -98,22 +104,11 @@ export type ToolExecutionOutcomeV1 =
       retryable: false;
     });
 
-export interface AgentToolResultV2 {
+export interface AgentToolResultV2 extends AgentToolResult {
   version: typeof AGENT_TOOL_RESULT_VERSION;
-  toolName: string;
   toolCallId: string;
   activation: ToolActivationRefV1;
   outcome: ToolExecutionOutcomeV1;
-  modelContext: AgentToolModelContext;
-  auditRecord: AgentToolAuditRecord;
-  projections?: {
-    rawReceived: { sha256: string; bytes: number; tokens: number };
-    durableRawArtifactRef?: string | undefined;
-    persistedOutput: unknown;
-    verificationOutput: unknown;
-    modelVisibleOutput: unknown;
-  } | undefined;
-  presentation?: AgentToolPresentation | undefined;
 }
 
 export interface RunToolUpdateV2 {
@@ -126,6 +121,11 @@ export interface RunToolUpdateV2 {
   toolName: string;
   activation: ToolActivationRefV1;
   phase: RunToolPhase;
+  stepIndex?: number | undefined;
+  stepAgent?: string | undefined;
+  displayName?: string | undefined;
+  toolFamily?: string | undefined;
+  provider?: string | undefined;
   outcome?: ToolExecutionOutcomeV1 | undefined;
   input?: unknown;
   output?: unknown;
@@ -146,6 +146,7 @@ const PREPARED_KEYS = new Set([
   "activation",
   "origin",
   "effectiveInput",
+  "inputAdapters",
   "policy",
   "approval",
   "preparedAt",
@@ -167,6 +168,7 @@ const APPROVAL_KEYS = new Set([
   "approvalId",
   "recoveryAdapterId",
 ]);
+const INPUT_ADAPTER_KEYS = new Set(["adapterId", "metadata"]);
 const OUTCOME_KEYS = new Set([
   "version",
   "callId",
@@ -184,6 +186,7 @@ const ERROR_KEYS = new Set(["message", "details"]);
 const AGENT_RESULT_KEYS = new Set([
   "version",
   "toolName",
+  "status",
   "toolCallId",
   "activation",
   "outcome",
@@ -213,6 +216,11 @@ const RUN_UPDATE_KEYS = new Set([
   "toolName",
   "activation",
   "phase",
+  "stepIndex",
+  "stepAgent",
+  "displayName",
+  "toolFamily",
+  "provider",
   "outcome",
   "input",
   "output",
@@ -282,6 +290,33 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
   const approval = input.approval === undefined
     ? undefined
     : parseApproval(input.approval);
+  if (input.inputAdapters !== undefined && !Array.isArray(input.inputAdapters)) {
+    throw new Error("prepared tool call.inputAdapters must be an array");
+  }
+  const seenAdapterIds = new Set<string>();
+  const inputAdapters = (input.inputAdapters ?? []).map((value, index) => {
+    const adapter = record(value, `prepared tool call.inputAdapters[${index}]`);
+    rejectUnknown(
+      adapter,
+      INPUT_ADAPTER_KEYS,
+      `prepared tool call.inputAdapters[${index}]`,
+    );
+    const adapterId = stringValue(
+      adapter.adapterId,
+      `prepared tool call.inputAdapters[${index}].adapterId`,
+    );
+    if (seenAdapterIds.has(adapterId)) {
+      throw new Error(`prepared tool call.inputAdapters contains duplicate adapter '${adapterId}'`);
+    }
+    seenAdapterIds.add(adapterId);
+    return {
+      adapterId,
+      metadata: jsonRecord(
+        adapter.metadata,
+        `prepared tool call.inputAdapters[${index}].metadata`,
+      ),
+    };
+  });
   return freeze({
     version: PREPARED_TOOL_CALL_VERSION,
     runId: stringValue(input.runId, "prepared tool call.runId"),
@@ -293,6 +328,7 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
       input.effectiveInput,
       "prepared tool call.effectiveInput",
     ),
+    inputAdapters,
     policy,
     ...(approval === undefined ? {} : { approval }),
     preparedAt: timestamp(input.preparedAt, "prepared tool call.preparedAt"),
@@ -425,9 +461,14 @@ export function parseAgentToolResultV2(value: unknown): AgentToolResultV2 {
   if (auditInput.status !== "OK" && auditInput.status !== "FAILED") {
     throw new Error("agent tool result v2.auditRecord.status is invalid");
   }
+  if (input.status !== auditInput.status) {
+    throw new Error("agent tool result v2.status does not agree");
+  }
+  const status = auditInput.status;
   const result = {
     version: AGENT_TOOL_RESULT_VERSION,
     toolName,
+    status,
     toolCallId,
     activation,
     outcome,
@@ -491,6 +532,21 @@ export function parseRunToolUpdateV2(value: unknown): RunToolUpdateV2 {
     toolName,
     activation,
     phase: input.phase,
+    ...(input.stepIndex === undefined
+      ? {}
+      : { stepIndex: nonNegativeInteger(input.stepIndex, "run tool update v2.stepIndex") }),
+    ...(input.stepAgent === undefined
+      ? {}
+      : { stepAgent: stringValue(input.stepAgent, "run tool update v2.stepAgent") }),
+    ...(input.displayName === undefined
+      ? {}
+      : { displayName: stringValue(input.displayName, "run tool update v2.displayName") }),
+    ...(input.toolFamily === undefined
+      ? {}
+      : { toolFamily: stringValue(input.toolFamily, "run tool update v2.toolFamily") }),
+    ...(input.provider === undefined
+      ? {}
+      : { provider: stringValue(input.provider, "run tool update v2.provider") }),
     ...(outcome === undefined ? {} : { outcome }),
     ...(Object.hasOwn(input, "input") ? { input: json(input.input) } : {}),
     ...(Object.hasOwn(input, "output") ? { output: json(input.output) } : {}),

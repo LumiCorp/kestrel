@@ -20,6 +20,7 @@ import {
 } from "../../../src/runtime/visibleTodos.js";
 import { asRecord, asString } from "../../shared/valueAccess.js";
 import type { ReactAction } from "./types.js";
+import type { ToolActivationRefV1 } from "../../../src/kestrel/contracts/tool-contract.js";
 
 export type ModelToolActionKind = KestrelAgentToolActionKind;
 
@@ -31,7 +32,13 @@ export interface NormalizedModelToolTurn {
   action?: ReactAction | undefined;
   assistantProgress?: string | undefined;
   visibleTodos?: VisibleTodoState | undefined;
-  transcriptToolCalls: Array<{ name: string; input: Record<string, unknown>; id?: string | undefined }>;
+  transcriptToolCalls: Array<{
+    name: string;
+    input: Record<string, unknown>;
+    id?: string | undefined;
+    toolSurfaceSnapshot?: ModelToolIntent["toolSurfaceSnapshot"] | undefined;
+    activation?: ToolActivationRefV1 | undefined;
+  }>;
   provenance: {
     providerToolCallIds: string[];
     providerNames: string[];
@@ -87,8 +94,14 @@ export function normalizeModelToolCallsToAgentTurn(input: {
   const providerToolCallIds = input.toolIntents.flatMap((intent) => intent.id !== undefined ? [intent.id] : []);
   const providerNames = input.toolIntents.map((intent) => intent.name);
   const canonicalNames: string[] = [];
-  const transcriptToolCalls: Array<{ name: string; input: Record<string, unknown>; id?: string | undefined }> = [];
-  const workspaceActions: Array<{ name: string; input: Record<string, unknown> }> = [];
+  const transcriptToolCalls: NormalizedModelToolTurn["transcriptToolCalls"] = [];
+  const workspaceActions: Array<{
+    name: string;
+    input: Record<string, unknown>;
+    toolCallId?: string | undefined;
+    toolSurfaceSnapshot?: ModelToolIntent["toolSurfaceSnapshot"] | undefined;
+    activation?: ToolActivationRefV1 | undefined;
+  }> = [];
   const terminalActions: ReactAction[] = [];
   let visibleTodos: VisibleTodoState | undefined;
   let assistantProgress: string | undefined;
@@ -109,6 +122,19 @@ export function normalizeModelToolCallsToAgentTurn(input: {
       entry.canonicalName !== "kestrel.ask_user" &&
       entry.canonicalName !== "kestrel.switch_mode";
     const { assistantProgress: _assistantProgress, ...toolInput } = intent.input;
+    const activation = intent.toolSurfaceSnapshot?.tools.find(
+      (candidate) => candidate.descriptor.toolId === entry.canonicalName,
+    );
+    if (
+      entry.kind === "workspace" &&
+      intent.toolSurfaceSnapshot !== undefined &&
+      activation === undefined
+    ) {
+      throw new ModelToolCallActionError(
+        `Model tool '${entry.canonicalName}' is absent from its persisted tool snapshot.`,
+        { reason: "tool_snapshot_activation_missing", index },
+      );
+    }
     if (
       assistantProgress === undefined &&
       requiresAssistantProgress &&
@@ -122,11 +148,20 @@ export function normalizeModelToolCallsToAgentTurn(input: {
       name: entry.canonicalName,
       input: toolInput,
       ...(intent.id !== undefined ? { id: intent.id } : {}),
+      ...(intent.toolSurfaceSnapshot !== undefined
+        ? { toolSurfaceSnapshot: intent.toolSurfaceSnapshot }
+        : {}),
+      ...(activation === undefined ? {} : { activation }),
     });
     if (entry.kind === "workspace") {
       workspaceActions.push({
         name: entry.canonicalName,
         input: toolInput,
+        ...(intent.id !== undefined ? { toolCallId: intent.id } : {}),
+        ...(intent.toolSurfaceSnapshot !== undefined
+          ? { toolSurfaceSnapshot: intent.toolSurfaceSnapshot }
+          : {}),
+        ...(activation === undefined ? {} : { activation }),
       });
       continue;
     }
@@ -173,12 +208,28 @@ export function normalizeModelToolCallsToAgentTurn(input: {
             kind: "tool" as const,
             name: singleWorkspaceAction.name,
             input: singleWorkspaceAction.input,
+            ...(singleWorkspaceAction.toolCallId !== undefined
+              ? { toolCallId: singleWorkspaceAction.toolCallId }
+              : {}),
+            ...(singleWorkspaceAction.toolSurfaceSnapshot !== undefined
+              ? { toolSurfaceSnapshot: singleWorkspaceAction.toolSurfaceSnapshot }
+              : {}),
+            ...(singleWorkspaceAction.activation === undefined
+              ? {}
+              : { activation: singleWorkspaceAction.activation }),
           }
         : {
             kind: "tool_batch" as const,
             items: workspaceActions.map((item) => ({
               name: item.name,
               input: item.input,
+              ...(item.toolCallId !== undefined
+                ? { toolCallId: item.toolCallId }
+                : {}),
+              ...(item.toolSurfaceSnapshot !== undefined
+                ? { toolSurfaceSnapshot: item.toolSurfaceSnapshot }
+                : {}),
+              ...(item.activation === undefined ? {} : { activation: item.activation }),
             })),
           });
   if (action === undefined && visibleTodos === undefined) {

@@ -13,7 +13,10 @@ import { RuntimeHeapDiagnostics } from "../../src/runtime/heapDiagnostics.js";
 import { appendModelTranscriptItems, appendToolResultToTranscript, appendUserTurnToTranscript, makeModelTranscriptItem } from "../../src/runtime/modelTranscript.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
+import {
+  adaptLegacyTestToolGateway,
+  createTestToolGateway,
+} from "../helpers/createTestToolGateway.js";
 
 
 test("RuntimeHeapDiagnostics writes summary samples and near-limit reports without payload content", async () => {
@@ -173,7 +176,7 @@ test("heap guard compact mode exposes compacted state to tool validation and exe
   await seedLargeTranscript(store, session.sessionId, session.version);
 
   const observedStates: string[] = [];
-  const toolGateway: ToolGateway = {
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     async validateInput(_name: string, input: unknown, options?: ToolGatewayCallOptions): Promise<unknown> {
       observedStates.push(JSON.stringify(options?.runContext?.sessionState));
       return input;
@@ -186,7 +189,7 @@ test("heap guard compact mode exposes compacted state to tool validation and exe
         output: { ok: true },
       }) as T;
     },
-  };
+  });
   const kestrel = new Kestrel({
     store,
     toolGateway,
