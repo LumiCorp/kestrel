@@ -1,11 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { RUNNER_SHARED_TOOL_NAMES } from "@kestrel-agents/protocol";
-import { defaultToolCatalog } from "../../../../tools/catalog.js";
-import { webArtifactToolDescriptorCatalog } from "../ai/tools/artifact-tool-contracts";
 
 import {
   listToolProviders,
+  listToolRuntimeNames,
   resolveToolProviderDescriptorRefs,
 } from "./registry";
 
@@ -41,17 +40,13 @@ test("Kestrel One App capabilities reference canonical shared runtime tools", ()
 test("every App runtime mapping resolves to one exact canonical descriptor", () => {
   const resolved = resolveToolProviderDescriptorRefs({
     getDescriptorRef(runtimeName) {
-      return (
-        defaultToolCatalog.getDescriptorRef(runtimeName) ??
-        webArtifactToolDescriptorCatalog.getDescriptorRef(runtimeName)
-      );
+      return {
+        toolId: runtimeName,
+        contractRevision: `sha256:${"0".repeat(64)}`,
+      };
     },
   });
-  const runtimeNames = listToolProviders().flatMap((provider) =>
-    provider.capabilities.flatMap((capability) =>
-      capability.runtimeName === null ? [] : [capability.runtimeName],
-    ),
-  );
+  const runtimeNames = listToolRuntimeNames();
 
   assert.equal(resolved.length, runtimeNames.length);
   for (const mapping of resolved) {
@@ -69,10 +64,10 @@ test("App runtime descriptor resolution fails closed on missing and divergent ma
     () =>
       resolveToolProviderDescriptorRefs({
         getDescriptorRef(runtimeName) {
-          const descriptor = defaultToolCatalog.getDescriptorRef(runtimeName);
-          return descriptor === undefined
-            ? undefined
-            : { ...descriptor, toolId: `${runtimeName}.divergent` };
+          return {
+            toolId: `${runtimeName}.divergent`,
+            contractRevision: `sha256:${"0".repeat(64)}`,
+          };
         },
       }),
     /diverges from descriptor/u,

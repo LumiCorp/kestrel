@@ -1,11 +1,3 @@
-import {
-  TOOL_DESCRIPTOR_VERSION,
-  createToolDescriptorV1,
-  toToolDescriptorRefV1,
-  type ToolDescriptorRefV1,
-  type ToolDescriptorV1,
-} from "../../../../../src/kestrel/contracts/tool-contract";
-
 export const ARTIFACT_KINDS = [
   "text",
   "code",
@@ -65,8 +57,8 @@ function createArtifactDescriptor(input: {
   outputSchema: Record<string, unknown>;
   executionClass: "read_only" | "external_side_effect";
 }) {
-  return createToolDescriptorV1({
-    version: TOOL_DESCRIPTOR_VERSION,
+  return Object.freeze({
+    version: "v1" as const,
     toolId: input.toolId,
     source: {
       kind: "builtin",
@@ -156,7 +148,7 @@ export const WEB_ARTIFACT_TOOL_DESCRIPTORS = Object.freeze([
     outputSchema: SUGGESTION_RESULT_SCHEMA,
     executionClass: "external_side_effect",
   }),
-] satisfies readonly ToolDescriptorV1[]);
+] as const);
 
 const descriptorsByName = new Map(
   WEB_ARTIFACT_TOOL_DESCRIPTORS.map((descriptor) => [
@@ -166,11 +158,7 @@ const descriptorsByName = new Map(
 );
 
 export const webArtifactToolDescriptorCatalog = Object.freeze({
-  getDescriptor(toolId: string): ToolDescriptorV1 | undefined {
+  getDescriptor(toolId: string) {
     return descriptorsByName.get(toolId);
-  },
-  getDescriptorRef(toolId: string): ToolDescriptorRefV1 | undefined {
-    const descriptor = descriptorsByName.get(toolId);
-    return descriptor === undefined ? undefined : toToolDescriptorRefV1(descriptor);
   },
 });

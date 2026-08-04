@@ -7,9 +7,7 @@ import type {
   ToolCapabilityPolicy,
   ToolProviderDefinition,
   ToolProviderKey,
-} from "./types";
-import type { ToolDescriptorRefV1 } from "../../../../src/kestrel/contracts/tool-contract";
-
+} from "./types.js";
 function createDefaultPolicy(
   overrides: Partial<ToolCapabilityPolicy>,
 ): ToolCapabilityPolicy {
@@ -980,14 +978,21 @@ export function listToolRuntimeNames() {
 }
 
 export interface ToolDescriptorRefResolverV1 {
-  getDescriptorRef(runtimeName: string): ToolDescriptorRefV1 | undefined;
+  getDescriptorRef(
+    runtimeName: string,
+  ): ToolDescriptorReferenceLikeV1 | undefined;
+}
+
+export interface ToolDescriptorReferenceLikeV1 {
+  toolId: string;
+  contractRevision: string;
 }
 
 export interface ResolvedToolProviderDescriptorV1 {
   providerKey: ToolProviderKey;
   capabilityKey: string;
   runtimeName: string;
-  descriptorRef: ToolDescriptorRefV1;
+  descriptorRef: ToolDescriptorReferenceLikeV1;
 }
 
 /**
