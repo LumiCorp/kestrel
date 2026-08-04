@@ -129,6 +129,7 @@
     "scorecard:generate": "node --import tsx scripts/generate-quality-scorecard.ts",
     "governance:check": "pnpm run check:agents && pnpm run check:docs && pnpm run check:architecture && pnpm run check:public-boundary && pnpm run check:invariants && pnpm run check:desktop-resources",
     "ruhroh:validate": "node --import tsx scripts/validate-ruhroh-evals.ts",
+    "calibrate:runtime-evaluator": "node --import tsx scripts/calibrate-runtime-evaluator.ts",
     "runtime:graph": "node --import tsx cli/runtime.ts graph",
     "runtime:replay": "node --import tsx cli/runtime.ts replay",
     "runtime:doctor": "node --import tsx cli/runtime.ts doctor",

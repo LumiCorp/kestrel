@@ -14,12 +14,13 @@ import {
 } from "../../src/evaluation/index.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { bindTestRuntimeEvaluationCalibration } from "../helpers/runtimeEvaluationCalibration.js";
 
 const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
 
 function policy() {
-  return createRuntimeEvaluationPolicyV1({
+  const policy = createRuntimeEvaluationPolicyV1({
     policyId: "evaluation:coordinator-test",
     evaluator: {
       evaluatorId: "completion-evidence",
@@ -64,6 +65,11 @@ function policy() {
       ],
     },
   });
+  return bindTestRuntimeEvaluationCalibration(policy).policy;
+}
+
+function calibrationRecord() {
+  return bindTestRuntimeEvaluationCalibration(policy()).calibrationRecord;
 }
 
 function judgeOutput(input: {
@@ -71,20 +77,23 @@ function judgeOutput(input: {
   confidence?: number;
   repairable?: boolean;
   integrityPassed?: boolean;
+  assertionsPassed?: boolean;
 } = {}) {
+  const assertionsPassed = input.assertionsPassed ??
+    (input.score ?? 0.95) >= 0.8;
   return {
     score: input.score ?? 0.95,
     confidence: input.confidence ?? 0.9,
     assertions: [
       {
         assertionId: "outcome_complete",
-        passed: (input.score ?? 0.95) >= 0.8,
+        passed: assertionsPassed,
         rationale: "Outcome assertion.",
         evidenceRefs: ["final-last-action-result"],
       },
       {
         assertionId: "evidence_consistent",
-        passed: (input.score ?? 0.95) >= 0.8,
+        passed: assertionsPassed,
         rationale: "Evidence assertion.",
         evidenceRefs: ["final-last-action-result"],
       },
@@ -114,6 +123,7 @@ function coordinator(
   let calls = 0;
   const runtime = new RuntimeEvaluationCoordinator({
     policy: policy(),
+    calibrationRecord: calibrationRecord(),
     executionProfileFingerprint: "c".repeat(64),
     evaluatorRegistry: createDefaultRuntimeEvaluatorRegistry(),
     store,
@@ -200,6 +210,46 @@ test("blocking runtime evaluation maps repairable failure, low confidence, and i
   assert.equal(integrity?.decision.reasonCode, "EVALUATION_QUARANTINED");
 });
 
+test("blocking evaluation independently enforces score, confidence, and every required assertion", async () => {
+  const lowScore = await coordinator(
+    judgeOutput({ score: 0.79, assertionsPassed: true }),
+  ).runtime.evaluateHook(finalInput());
+  assert.equal(lowScore?.decision.disposition, "review");
+
+  const failedRequiredAssertion = await coordinator(
+    judgeOutput({ score: 0.95, assertionsPassed: false }),
+  ).runtime.evaluateHook(finalInput());
+  assert.equal(failedRequiredAssertion?.decision.disposition, "review");
+
+  const lowConfidence = await coordinator(
+    judgeOutput({ score: 0.95, confidence: 0.69, assertionsPassed: true }),
+  ).runtime.evaluateHook(finalInput());
+  assert.equal(lowConfidence?.decision.disposition, "review");
+});
+
+test("runtime opt-in rejects a calibration record for another observed model revision", () => {
+  const exact = bindTestRuntimeEvaluationCalibration(policy());
+  const stale = bindTestRuntimeEvaluationCalibration(
+    policy(),
+    "gpt-5.4-stale-revision",
+  );
+  assert.throws(
+    () => new RuntimeEvaluationCoordinator({
+      policy: exact.policy,
+      calibrationRecord: stale.calibrationRecord,
+      executionProfileFingerprint: "c".repeat(64),
+      evaluatorRegistry: createDefaultRuntimeEvaluatorRegistry(),
+      store: new InMemorySessionStore(),
+      executionBoundaryRuntime: new ExecutionBoundaryPolicyRuntime(),
+      appendLifecycleEvent: async () => {},
+      invokeJudge: async () => {
+        throw new Error("Judge must not be reached.");
+      },
+    }),
+    /passing calibration record matching/u,
+  );
+});
+
 test("intermediate runtime evaluation is advisory and reserves both final slots", async () => {
   const harness = coordinator(judgeOutput({ score: 0.2, repairable: true }));
   for (let stepIndex = 1; stepIndex <= 3; stepIndex += 1) {
@@ -233,6 +283,7 @@ test("evaluator outage enters final review and advisory evaluation continues", a
   const store = new InMemorySessionStore();
   const runtime = new RuntimeEvaluationCoordinator({
     policy: policy(),
+    calibrationRecord: calibrationRecord(),
     executionProfileFingerprint: "d".repeat(64),
     evaluatorRegistry: createDefaultRuntimeEvaluatorRegistry(),
     store,
@@ -264,6 +315,7 @@ test("evaluator outage enters final review and advisory evaluation continues", a
 
   const untypedRuntime = new RuntimeEvaluationCoordinator({
     policy: policy(),
+    calibrationRecord: calibrationRecord(),
     executionProfileFingerprint: "f".repeat(64),
     evaluatorRegistry: createDefaultRuntimeEvaluatorRegistry(),
     store: new InMemorySessionStore(),
@@ -299,6 +351,7 @@ test("an uncertain persisted judge attempt enters review instead of calling agai
   const store = new InMemorySessionStore();
   const firstRuntime = new RuntimeEvaluationCoordinator({
     policy: policy(),
+    calibrationRecord: calibrationRecord(),
     executionProfileFingerprint: "e".repeat(64),
     evaluatorRegistry: createDefaultRuntimeEvaluatorRegistry(),
     store,
@@ -325,6 +378,7 @@ test("an uncertain persisted judge attempt enters review instead of calling agai
   let resumedCalls = 0;
   const resumedRuntime = new RuntimeEvaluationCoordinator({
     policy: policy(),
+    calibrationRecord: calibrationRecord(),
     executionProfileFingerprint: "e".repeat(64),
     evaluatorRegistry: createDefaultRuntimeEvaluatorRegistry(),
     store,
