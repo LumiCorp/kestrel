@@ -19,6 +19,10 @@ import {
   type RuntimePlanDocumentSnapshot,
   type RuntimePlanState,
 } from "./planDocument.js";
+import {
+  readActiveTurnIntent,
+  type ActiveTurnIntentV1,
+} from "./turnObjective.js";
 
 export const CURRENT_RUNTIME_STATE_SCHEMA_VERSION = 2;
 
@@ -81,6 +85,7 @@ export interface RuntimeAgentState extends Record<string, unknown> {
   planDocument?: RuntimePlanDocumentSnapshot | undefined;
   visibleTodos?: VisibleTodoState | undefined;
   modelTranscript?: ModelTranscript | undefined;
+  activeTurnIntent?: ActiveTurnIntentV1 | undefined;
 }
 
 export interface DecodedRuntimeSessionState extends Record<string, unknown> {
@@ -469,6 +474,15 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
         },
       };
     }
+  }
+  if (agent.activeTurnIntent !== undefined && readActiveTurnIntent(agent) === undefined) {
+    return {
+      code: "RUNTIME_STATE_INVALID",
+      message: "state.agent.activeTurnIntent must be a valid v1 active turn intent",
+      details: {
+        path: "state.agent.activeTurnIntent",
+      },
+    };
   }
   if (state.evidenceLedger !== undefined && Array.isArray(state.evidenceLedger) === false) {
     return {

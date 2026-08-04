@@ -10,6 +10,7 @@ import {
   compactModelTranscript,
   normalizeModelTranscript,
   readActiveTaskGoalFromTranscript,
+  rebaseModelTranscriptForFreshTask,
   rebaseModelTranscriptAfterCompaction,
   renderModelTranscriptMessages,
 } from "../../src/runtime/modelTranscript.js";
@@ -462,6 +463,86 @@ test("re-appending same user task after tool results does not duplicate transcri
   const userItems = transcript.items.filter((item) => item.kind === "user");
   assert.equal(userItems.length, 2);
   assert.equal(userItems[1]?.content, "Now fix the other bug.");
+});
+
+test("user transcript deduplicates by source event identity, not repeated content", () => {
+  let transcript = appendUserTurnToTranscript({
+    transcript: undefined,
+    message: "continue",
+    sourceEventId: "event-1",
+  });
+  transcript = appendUserTurnToTranscript({
+    transcript,
+    message: "continue",
+    sourceEventId: "event-1",
+  });
+  transcript = appendUserTurnToTranscript({
+    transcript,
+    message: "continue",
+    sourceEventId: "event-2",
+  });
+
+  const userItems = transcript.items.filter((item) => item.kind === "user");
+  assert.equal(userItems.length, 2);
+  assert.deepEqual(userItems.map((item) => item.sourceEventId), ["event-1", "event-2"]);
+});
+
+test("fresh task transcript rebasing preserves conversation but drops execution evidence", () => {
+  let transcript = appendUserTurnToTranscript({
+    transcript: undefined,
+    message: "Inspect the workspace",
+    sourceEventId: "event-1",
+  });
+  transcript = appendAssistantToolCallsToTranscript({
+    transcript,
+    toolCalls: [{ id: "call-1", name: "fs.read_text", input: { path: "README.md" } }],
+  });
+  transcript = appendToolResultToTranscript({
+    transcript,
+    toolName: "fs.read_text",
+    toolInput: { path: "README.md" },
+    toolOutput: { content: "old evidence" },
+    toolCallId: "call-1",
+  });
+  transcript = appendModelTranscriptItems(transcript, [
+    {
+      id: "pending_assistant_text_x",
+      createdAt: "2026-08-04T00:00:00.000Z",
+      kind: "assistant_text",
+      content: "This workspace is Kestrel.",
+    },
+  ]);
+  transcript = appendCorrectionToTranscript({ transcript, message: "Retry the read." });
+
+  const rebased = rebaseModelTranscriptForFreshTask(transcript);
+
+  assert.deepEqual(rebased.items.map((item) => item.kind), ["user", "assistant_text"]);
+  assert.equal(rebased.items[0]?.content, "Inspect the workspace");
+  assert.equal(rebased.items[1]?.content, "This workspace is Kestrel.");
+});
+
+test("compaction protects the explicitly active user item", () => {
+  let transcript = appendUserTurnToTranscript({
+    transcript: undefined,
+    message: "Old task",
+    sourceEventId: "event-old",
+  });
+  transcript = appendUserTurnToTranscript({
+    transcript,
+    message: "Current task",
+    sourceEventId: "event-current",
+  });
+  const activeTaskItemId = transcript.items[1]!.id;
+
+  const compacted = compactModelTranscript({
+    transcript,
+    summary: "Prior conversation summary.",
+    retainedTailItems: 0,
+    activeTaskItemId,
+  });
+
+  assert.equal(readActiveTaskGoalFromTranscript(compacted, activeTaskItemId), "Current task");
+  assert.equal(compacted.items.some((item) => item.id === activeTaskItemId), true);
 });
 
 test("transcript append preserves all valid history and the original active task", () => {

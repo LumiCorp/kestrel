@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { MemorySnapshot } from "../../../../src/kestrel/contracts/events.js";
-import { readActiveTaskGoalFromTranscript } from "../../../../src/runtime/modelTranscript.js";
+import { readActiveTaskGoalFromState } from "../../../../src/runtime/turnObjective.js";
 
 import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
 import type {
@@ -26,7 +26,7 @@ export function buildMemoryRecall(input: {
   const memoryWorking = asRecord(input.memory?.working) ?? {};
   const recalls: MemoryRecallEntry[] = [];
 
-  const workingGoal = readActiveTaskGoalFromTranscript(input.reactState.modelTranscript);
+  const workingGoal = readActiveTaskGoalFromState(input.reactState);
   if (workingGoal !== undefined && workingGoal.trim().length > 0) {
     recalls.push({
       kind: "working",

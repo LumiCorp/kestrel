@@ -4,8 +4,8 @@ import {
   appendModelTranscriptItems,
   appendToolResultToTranscript,
   makeModelTranscriptItem,
-  readActiveTaskGoalFromTranscript,
 } from "../../../../../src/runtime/modelTranscript.js";
+import { readActiveTaskGoalFromState } from "../../../../../src/runtime/turnObjective.js";
 import { createReferenceReactFinalizeCheckpoint } from "../../commandProcessor.js";
 import {
   createReferenceReactAssistantTextPatch,
@@ -105,7 +105,7 @@ export async function handleCannotSatisfyAction(input: {
   stepIndex: number;
   io: StepIO;
 }): Promise<Transition> {
-  const activeGoal = readActiveTaskGoalFromTranscript(input.reactState.modelTranscript);
+  const activeGoal = readActiveTaskGoalFromState(input.reactState);
   const finalToolResult = await input.io.useTool!(input.config.finalizeToolName, {
     message: input.action.message,
     data: {

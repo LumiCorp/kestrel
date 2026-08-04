@@ -3,7 +3,7 @@ import {
   type BlockedReplyActSubmode,
   type BlockedReplyInteractionMode,
 } from "../../../src/runtime/blockedWaitModeReply.js";
-import { readActiveTaskGoalFromTranscript } from "../../../src/runtime/modelTranscript.js";
+import { readActiveTaskGoalFromState } from "../../../src/runtime/turnObjective.js";
 import {
   isHighConfidenceContinuation,
   readUserReplyIntent,
@@ -30,7 +30,7 @@ export function resolveBlockedResumeRequest(
   const waitFor = readActiveWaitState(reactState);
   const blockedModeReply =
     isUserReply === true ? resolveBlockedWaitModeReply(waitFor, currentMessage, payload?.userReplyIntent) : undefined;
-  const transcriptGoal = readActiveTaskGoalFromTranscript(reactState.modelTranscript)?.trim();
+  const transcriptGoal = readActiveTaskGoalFromState(reactState)?.trim();
   if (
     isBlockedModeResumeSignal(reactState, event.type, payload) === false &&
     blockedModeReply === undefined

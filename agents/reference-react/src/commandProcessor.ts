@@ -699,6 +699,9 @@ export function buildReferenceReactCommandBatchFromAction(input: {
       planningSummary: input.planningSummary ?? "switch_mode",
     };
   }
+  if (action.kind === "request_mode_switch") {
+    throw new Error("request_mode_switch must be compiled into a user wait before command dispatch.");
+  }
   return {
     batchId,
     commands: [

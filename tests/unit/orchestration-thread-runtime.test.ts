@@ -321,6 +321,8 @@ test("ThreadRuntime makes the explicit turn mode authoritative over stale thread
   assert.equal(executor.inputs[0]?.interactionMode, "build");
   assert.equal(executor.inputs[0]?.metadata?.interactionMode, "build");
   assert.equal(executor.inputs[0]?.metadata?.actSubmode, "safe");
+  assert.equal(executor.inputs[0]?.metadata?.turnId, "turn-authoritative-build");
+  assert.equal(executor.inputs[0]?.metadata?.submissionKind, "initial");
 
   const status = await runtime.getThreadStatus("thread-authoritative-build");
   assert.equal(status?.thread.metadata?.interactionMode, "build");

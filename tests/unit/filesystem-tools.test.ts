@@ -144,6 +144,32 @@ test("filesystem read_text pages a large file without losing mutation authority"
   assert.match(second.content, /setup\(\)/u);
 });
 
+test("filesystem read_text enforces first-page and continuation revision contracts", async () => {
+  const { handlers, policyRoots } = await createFsHarness();
+  await writeFile(path.join(policyRoots.workspaceRoot, "paged.txt"), "abcdefghij", "utf8");
+
+  const firstPageRevision = await failedToolResult(handlers["fs.read_text"]({
+    path: "paged.txt",
+    offsetBytes: 0,
+    maxBytes: 5,
+    expectedRevision: "initial",
+  }));
+  assert.match(
+    String((firstPageRevision.auditRecord.error as { message?: unknown }).message),
+    /first page.*omit expectedRevision/iu,
+  );
+
+  const missingContinuationRevision = await failedToolResult(handlers["fs.read_text"]({
+    path: "paged.txt",
+    offsetBytes: 5,
+    maxBytes: 5,
+  }));
+  assert.match(
+    String((missingContinuationRevision.auditRecord.error as { message?: unknown }).message),
+    /continuation.*requires expectedRevision/iu,
+  );
+});
+
 test("structured text tools reject collisions, ambiguity, and stale revisions", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await handlers["fs.create_text"]({ path: "source.txt", content: "alpha alpha\n" });

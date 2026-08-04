@@ -18,7 +18,7 @@ const MAX_FILE_PAGE_BYTES = 8 * 1024;
 export const fsReadTextTool: SharedToolModule = {
   definition: {
     name: "fs.read_text",
-    description: "Read an exact, revisioned UTF-8 page from a file. If complete is false, continue from nextOffsetBytes. A page is mutation evidence only for the returned revision and range.",
+    description: "Read an exact, revisioned UTF-8 page from a file. On the first page (offsetBytes omitted or 0), omit expectedRevision. If complete is false, continue from nextOffsetBytes and copy the exact returned revision into expectedRevision. A page is mutation evidence only for the returned revision and range.",
     inputSchema: {
       type: "object",
       properties: {
@@ -28,7 +28,7 @@ export const fsReadTextTool: SharedToolModule = {
         expectedRevision: {
           type: "string",
           minLength: 1,
-          description: "For continuation pages only, copy the exact revision returned by the first fs.read_text page. Do not use placeholders such as \"latest\".",
+          description: "Continuation pages only: when offsetBytes is greater than 0, copy the exact revision returned by the first fs.read_text page. Omit this field when offsetBytes is omitted or 0. Do not use placeholders such as \"latest\" or \"initial\".",
         },
       },
       required: ["path"],
@@ -47,6 +47,21 @@ export const fsReadTextTool: SharedToolModule = {
       const targetPath = readRequiredPath(body, "path", "fs.read_text");
       const maxBytes = clampPositiveInt(readOptionalPositiveInt(body, "maxBytes") ?? DEFAULT_FILE_PAGE_BYTES, MAX_FILE_PAGE_BYTES);
       const offsetBytes = Math.max(0, Math.trunc(readNumber(body, "offsetBytes") ?? 0));
+      const expectedRevision = readString(body, "expectedRevision");
+      if (offsetBytes === 0 && expectedRevision !== undefined) {
+        throw createToolInputError(
+          "fs.read_text",
+          "The first page (offsetBytes omitted or 0) must omit expectedRevision.",
+          { path: targetPath, offsetBytes, nextSuggestedAction: "Retry at offsetBytes 0 without expectedRevision." },
+        );
+      }
+      if (offsetBytes > 0 && expectedRevision === undefined) {
+        throw createToolInputError(
+          "fs.read_text",
+          "A continuation page (offsetBytes greater than 0) requires expectedRevision.",
+          { path: targetPath, offsetBytes, nextSuggestedAction: "Copy the exact revision returned by the first page." },
+        );
+      }
       const resolved = await resolveExistingFileSystemPath(targetPath, context.fileSystem);
       if (resolved.stat.isFile() === false) {
         throw createToolInputError("fs.read_text", `Path is not a file: ${resolved.displayPath}`, { path: resolved.displayPath });
@@ -66,7 +81,6 @@ export const fsReadTextTool: SharedToolModule = {
         });
       }
       const revision = textRevision(buffer);
-      const expectedRevision = readString(body, "expectedRevision");
       if (expectedRevision !== undefined && expectedRevision !== revision) {
         throw createToolInputError("fs.read_text", `File revision changed before continuation: ${resolved.displayPath}`, {
           path: resolved.displayPath,

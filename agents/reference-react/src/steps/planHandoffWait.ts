@@ -13,8 +13,8 @@ import {
   appendModelTranscriptItems,
   appendToolResultToTranscript,
   makeModelTranscriptItem,
-  readActiveTaskGoalFromTranscript,
 } from "../../../../src/runtime/modelTranscript.js";
+import { readActiveTaskGoalFromState } from "../../../../src/runtime/turnObjective.js";
 import { createReferenceReactWaitCheckpoint } from "../commandProcessor.js";
 
 export interface PlanHandoffWaitConfig {
@@ -38,7 +38,7 @@ export function createContinuationHandoffWaitTransition(input: {
   const data = asRecord(action.data);
   const activePlan = normalizeRuntimePlanState(input.reactState.plan);
   const activePlanDocument = normalizeRuntimePlanDocumentSnapshot(input.reactState.planDocument);
-  const transcriptGoal = readActiveTaskGoalFromTranscript(input.reactState.modelTranscript)?.trim();
+  const transcriptGoal = readActiveTaskGoalFromState(input.reactState)?.trim();
   const objective = transcriptGoal ??
     message;
   const proposedNextMode = "build";
