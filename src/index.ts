@@ -1,4 +1,5 @@
 export * from "./kestrel/index.js";
+export * from "./budget/index.js";
 export { ExecutionEngine } from "./engine/ExecutionEngine.js";
 export { InMemoryStepContractRegistry } from "./engine/StepContractRegistry.js";
 export { InMemoryStepRegistry } from "./steps/StepRegistry.js";
