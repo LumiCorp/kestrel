@@ -16,6 +16,7 @@ const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
 const REMOVED_CLI_NAMES = ["kwork", "kchat", "kcode"] as const;
 const REQUIRED_LIBEXEC_PATHS = [
   "package.json",
+  "tsconfig.json",
   "cli/tui.ts",
   "cli/kcron.ts",
   "cli/client/ProtocolClient.ts",
@@ -153,6 +154,9 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
     }
     if (!(launcherSource.includes("libexecRoot") && launcherSource.includes("\"libexec\""))) {
       errors.push(`artifact launcher bin/${name} must resolve ../libexec`);
+    }
+    if (!launcherSource.includes("TSX_TSCONFIG_PATH: path.join(libexecRoot, \"tsconfig.json\")")) {
+      errors.push(`artifact launcher bin/${name} must pin the bundled TSX config`);
     }
   }
   for (const name of REMOVED_CLI_NAMES) {

@@ -509,6 +509,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
           ...mergedMetadata,
           turnId,
           activeTurnId: turnId,
+          submissionKind,
           ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
           runtimeAssembly: {
           bundleId: assembly.record.bundleId,

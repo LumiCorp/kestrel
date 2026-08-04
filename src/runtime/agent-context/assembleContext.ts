@@ -33,6 +33,7 @@ import {
   normalizeVisibleTodoState,
 } from "../visibleTodos.js";
 import {
+  readSubmissionKind,
   resolveKestrelTurnObjective,
 } from "../turnObjective.js";
 import {
@@ -157,7 +158,15 @@ export function buildKestrelAgentContext(
     goal: activeTaskGoal,
     benchmarkContext,
   });
-  const userMessage = readUserMessage(input.eventPayload) ?? input.goal;
+  const explicitUserMessage = readUserMessage(input.eventPayload);
+  const userMessage = explicitUserMessage ?? input.goal;
+  const eventMetadata = asRecord(input.eventPayload.metadata);
+  const submissionKind = readSubmissionKind(input.eventPayload);
+  const hasCanonicalFreshMessage = submissionKind === "initial" || submissionKind === "follow_up";
+  const sourceEventId = explicitUserMessage !== undefined || hasCanonicalFreshMessage
+    ? asString(eventMetadata?.sourceEventId)
+    : undefined;
+  const sourceTurnId = asString(eventMetadata?.turnId);
   const seedTaskMessage = shouldSeedInitialTaskMessage({
     transcript: existingTranscript,
     goal: input.goal,
@@ -170,9 +179,13 @@ export function buildKestrelAgentContext(
           transcript: existingTranscript,
           message: seedTaskMessage,
           stepIndex: input.stepIndex,
+          ...(sourceEventId !== undefined ? { sourceEventId: `${sourceEventId}:seed` } : {}),
+          ...(sourceTurnId !== undefined ? { sourceTurnId } : {}),
         }),
     message: userMessage,
     stepIndex: input.stepIndex,
+    ...(sourceEventId !== undefined ? { sourceEventId } : {}),
+    ...(sourceTurnId !== undefined ? { sourceTurnId } : {}),
   });
   const correction = readCorrection(input.retryContext);
   if (correction !== undefined) {

@@ -4,8 +4,8 @@ import {
   appendModelTranscriptItems,
   appendToolResultToTranscript,
   makeModelTranscriptItem,
-  readActiveTaskGoalFromTranscript,
 } from "../../../../../src/runtime/modelTranscript.js";
+import { readActiveTaskGoalFromState } from "../../../../../src/runtime/turnObjective.js";
 import { asRecord, asString } from "../../../../shared/valueAccess.js";
 import {
   createReferenceReactEffectCollectCheckpoint,
@@ -37,7 +37,7 @@ export function handleAskUserAction(input: {
   const waitingEventType = asString(waitingForUser?.eventType);
 
   if (waitingEventType !== undefined && input.eventType === waitingEventType) {
-    const resumeGoal = readActiveTaskGoalFromTranscript(input.reactState.modelTranscript);
+    const resumeGoal = readActiveTaskGoalFromState(input.reactState);
     const lastActionResult = {
       ok: true,
       kind: "user_reply",

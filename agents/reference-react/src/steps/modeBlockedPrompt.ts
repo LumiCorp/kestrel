@@ -14,6 +14,7 @@ export function buildModeBlockedWaitGuidance(input: {
   interactionMode: "chat" | "plan" | "build";
   actSubmode: "strict" | "safe" | "full_auto" | undefined;
   requiredToolClass: ModeBlockedToolClass;
+  reason?: string | undefined;
 }): ModeBlockedWaitGuidance {
   const requiredMode = modeForToolClass(input.requiredToolClass);
   const resumeCommand = formatModeSwitchCommand(requiredMode);
@@ -33,6 +34,7 @@ export function buildModeBlockedWaitGuidance(input: {
   const question =
     `You're in '${currentMode}'. Can I switch to '${requiredModeLabel}' so I can use ${toolClassLabel}?`;
   const prompt = [
+    ...(input.reason !== undefined ? [input.reason.trim(), ""] : []),
     `Question: ${question}`,
     `Reply naturally to approve the switch, name the mode, or run: \`${resumeCommand}\``,
     "The run will resume automatically.",

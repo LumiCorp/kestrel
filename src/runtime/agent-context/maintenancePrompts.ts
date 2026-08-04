@@ -160,6 +160,7 @@ export function buildKestrelCompactionSummarySchema(): Record<string, unknown> {
 
 export function planKestrelAgentCompaction(
   transcriptInput: unknown,
+  activeTaskItemId?: string | undefined,
 ): KestrelAgentCompactionPlan {
   const transcript = normalizeModelTranscript(transcriptInput);
   if (transcript === undefined) {
@@ -171,13 +172,14 @@ export function planKestrelAgentCompaction(
   const plan = planModelTranscriptCompaction({
     transcript,
     retainedTailItems: MODEL_TRANSCRIPT_RETAINED_TAIL_ITEMS,
+    ...(activeTaskItemId !== undefined ? { activeTaskItemId } : {}),
   });
   return {
     transcript,
     plan,
-    ...(readActiveTaskItemIdFromTranscript(transcript) !== undefined
+    ...(readActiveTaskItemIdFromTranscript(transcript, activeTaskItemId) !== undefined
       ? {
-          activeTaskItemId: readActiveTaskItemIdFromTranscript(transcript),
+          activeTaskItemId: readActiveTaskItemIdFromTranscript(transcript, activeTaskItemId),
         }
       : {}),
     retainedItemIds: plan.retainedItems.map((item) => item.id),

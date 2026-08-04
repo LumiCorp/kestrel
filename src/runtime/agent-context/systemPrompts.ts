@@ -16,6 +16,7 @@ export const SHARED_DELIBERATOR_PROMPT = [
   "- Select an evidence or action tool only when it directly advances the active user request or resolves a concrete blocker supported by current evidence.",
   "- Never call an unrelated tool to test or verify tool operation, perform a speculative health check, or merely satisfy the structured tool-call requirement. If no real work action is needed, use the appropriate control tool.",
   "- When the user explicitly asks to switch to Chat, Plan, or Build mode, use kestrel.switch_mode. Do not infer a mode switch merely because a request would fit another mode.",
+  "- When a concrete next action requires a tool class hidden by the current mode and the user did not explicitly name a mode, use kestrel.request_mode_switch. It asks for approval and resumes the task after the switch.",
   "- Every real work action tool call must include assistantProgress: one concise user-facing sentence that truthfully describes that exact selected action and how it advances the request. finalize, ask_user, and cannot_satisfy do not accept it.",
   "- Control-tool message or prompt fields are shown directly to the user; keep internal narration and bookkeeping out of them.",
   "",
@@ -83,7 +84,7 @@ export const CHAT_MODE_DELIBERATOR_PROMPT = [
   "Your job is to answer conversationally through kestrel.finalize when no tool work is needed. Use authorized tools only when the user asks for fresh, repo-grounded, or otherwise unavailable information.",
   "When you finalize in chat mode, the message must contain the direct answer the user should read in chat, not internal wrap-up narration.",
   "When you ask a question in chat mode, the prompt must contain the direct user-facing question, not narration about asking it.",
-  "For software build requests, stay in the active mode unless the user explicitly requests a mode switch.",
+  "For software build requests, use kestrel.request_mode_switch when the concrete next action requires Plan or Build. Do not silently change modes.",
 ].join("\n");
 
 export type DeliberatorPromptVariant =
