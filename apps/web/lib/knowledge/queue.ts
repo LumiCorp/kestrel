@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { ENVIRONMENT_RECONCILE_CRON } from "@/lib/environments/reconcile-schedule";
 import {
@@ -13,6 +13,7 @@ import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
 const ENVIRONMENT_OPERATION_QUEUE = "environment.operation";
 const ORGANIZATION_DELETION_QUEUE = "organization.deletion";
 const ENVIRONMENT_RECONCILE_QUEUE = "environment.reconcile";
+const FLY_IMAGE_RELEASE_QUEUE = "fly-image.release";
 const COST_PRICING_QUEUE = "costs.price";
 const COST_ACCRUAL_QUEUE = "costs.accrue-fixed";
 const COST_FLY_METERING_QUEUE = "costs.meter-fly";
@@ -77,6 +78,11 @@ async function createBoss() {
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
   });
   await boss.createQueue(ENVIRONMENT_RECONCILE_QUEUE);
+  await boss.createQueue(FLY_IMAGE_RELEASE_QUEUE, {
+    policy: "singleton",
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
   await boss.schedule(
     ENVIRONMENT_RECONCILE_QUEUE,
     ENVIRONMENT_RECONCILE_CRON,
@@ -214,6 +220,28 @@ export async function enqueueEnvironmentOperation(
     if (replacementJobId) return;
   }
   throw new Error("The Environment operation queue rejected the job.");
+}
+
+export async function enqueueFlyImageRelease(
+  releaseId: string,
+  options: { delaySeconds?: number } = {},
+) {
+  const boss = await getKnowledgeBossProducer();
+  const delaySeconds = options.delaySeconds ?? 0;
+  const jobId = await boss.send(
+    FLY_IMAGE_RELEASE_QUEUE,
+    { releaseId },
+    {
+      retryLimit: 0,
+      expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+      heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+      singletonKey: releaseId,
+      ...(delaySeconds > 0
+        ? { startAfter: new Date(Date.now() + delaySeconds * 1000) }
+        : {}),
+    },
+  );
+  if (!jobId) throw new Error("The Fly image release queue rejected the job.");
 }
 
 async function deferEnvironmentOperation(
@@ -395,6 +423,22 @@ export async function startEnvironmentLifecycleWorker() {
     },
   );
   await boss.work(
+    FLY_IMAGE_RELEASE_QUEUE,
+    { batchSize: 1 },
+    async (jobs: Array<{ data?: { releaseId?: unknown } }>) => {
+      const { processFlyImageRelease } = await import("@/lib/releases/runtime");
+      for (const job of jobs) {
+        if (typeof job.data?.releaseId !== "string") continue;
+        const result = await processFlyImageRelease(job.data.releaseId);
+        if (result === "deferred") {
+          await enqueueFlyImageRelease(job.data.releaseId, {
+            delaySeconds: 15,
+          });
+        }
+      }
+    },
+  );
+  await boss.work(
     ORGANIZATION_DELETION_QUEUE,
     async (jobs: Array<{ data?: { operationId?: unknown } }>) => {
       const { processOrganizationDeletion } =
@@ -410,6 +454,13 @@ export async function startEnvironmentLifecycleWorker() {
       await import("@/lib/environments/reconcile-schedule");
     await runScheduledEnvironmentReconciliation();
   });
+  const activeReleases = await knowledgeDb.query.flyImageReleases.findMany({
+    where: inArray(schema.flyImageReleases.status, ["approved", "deploying"]),
+    columns: { id: true },
+  });
+  for (const release of activeReleases) {
+    await enqueueFlyImageRelease(release.id);
+  }
   await boss.work(
     COST_PRICING_QUEUE,
     async (jobs: Array<{ data?: CostPricingJobData }>) => {

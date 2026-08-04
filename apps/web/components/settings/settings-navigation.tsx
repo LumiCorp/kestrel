@@ -111,7 +111,12 @@ const platformItems: SettingsItem[] = [
     icon: Mail,
     label: "System email",
   },
-  { href: "/admin", icon: ShieldCheck, label: "Operations" },
+  {
+    href: "/admin/environments",
+    icon: ShieldCheck,
+    label: "Operations",
+  },
+  { href: "/admin/releases", icon: Server, label: "Releases" },
 ];
 
 function isItemActive(pathname: string, href: string) {

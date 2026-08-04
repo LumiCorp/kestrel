@@ -6,7 +6,8 @@ import {
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { ReasoningPolicyForm } from "@/app/(workspace)/settings/environments/[id]/reasoning-policy-form";
-import { RuntimeImageForm } from "@/app/(workspace)/settings/environments/[id]/runtime/runtime-image-form";
+import { Badge } from "@/components/ui/badge";
+import { getEnvironmentFlyImageReleaseStatus } from "@/lib/releases/store";
 
 export default async function EnvironmentRuntimePage({
   params,
@@ -15,24 +16,38 @@ export default async function EnvironmentRuntimePage({
 }) {
   const { organizationId } = await requireOrganizationAdmin();
   const { id } = await params;
-  const environment = await getOrganizationEnvironment({
-    organizationId,
-    environmentId: id,
-  });
+  const [environment, releaseStatus] = await Promise.all([
+    getOrganizationEnvironment({
+      organizationId,
+      environmentId: id,
+    }),
+    getEnvironmentFlyImageReleaseStatus(id),
+  ]);
   if (!environment) return null;
 
   return (
     <div>
       <SettingsSection
-        description="Choose the immutable image used when Kestrel builds or rebuilds Workspaces."
+        description="Fly runtime images are managed as coordinated, validated platform releases. Stopped Workspaces are configured without starting and verified on their next activation."
         title="Workspace runtime"
       >
         <SettingsRows>
-          <SettingsRow label="Runtime image">
-            <RuntimeImageForm
-              environmentId={environment.id}
-              initialRuntimeImage={environment.runtimeImage ?? ""}
-            />
+          <SettingsRow label="Applied image">
+            <span className="break-all font-mono text-xs">
+              {environment.runtimeImage ?? "Not provisioned"}
+            </span>
+          </SettingsRow>
+          <SettingsRow label="Stable release image">
+            <span className="break-all font-mono text-xs">
+              {releaseStatus.desiredRuntimeImage ??
+                "Bootstrap configuration (no stable release yet)"}
+            </span>
+          </SettingsRow>
+          <SettingsRow label="Release status">
+            <Badge variant="outline">
+              {releaseStatus.rolloutStatus ??
+                (releaseStatus.stableReleaseId ? "stable" : "bootstrap")}
+            </Badge>
           </SettingsRow>
           <SettingsRow label="Runtime template">
             {environment.runtimeTemplate}

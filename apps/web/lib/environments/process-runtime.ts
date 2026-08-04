@@ -39,11 +39,20 @@ export async function processEnvironmentOperation(
             }),
         });
       }
+      const { getStableFlyEnvironmentImages } =
+        await import("@/lib/releases/store");
+      const stableImages = await getStableFlyEnvironmentImages();
       const provisioner = new EnvironmentProvisioner({
         repository: databaseEnvironmentProvisioningRepository,
         provider: await createFlyProviderClient(operation.organizationId),
-        runtimeImage: process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ?? "",
-        routerImage: process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ?? "",
+        runtimeImage:
+          stableImages?.runtimeImage ??
+          process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ??
+          "",
+        routerImage:
+          stableImages?.routerImage ??
+          process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ??
+          "",
         ticketPublicKey:
           process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
         controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
