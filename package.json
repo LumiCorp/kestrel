@@ -41,6 +41,7 @@
     "!cli/**/*.spec.*"
   ],
   "bundledDependencies": [
+    "@kestrel-agents/memory",
     "@lumi/kestrel-environment-auth"
   ],
   "scripts": {
@@ -48,7 +49,7 @@
     "demo:apps": "node --import tsx scripts/demo-apps.ts",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
     "build": "pnpm run build:shared && pnpm run build:self",
-    "build:shared": "pnpm -r --workspace-concurrency=4 --filter @lumi/kestrel-environment-auth --filter @kestrel/mcp-security --filter @kestrel-agents/protocol --filter @kestrel-agents/sdk --filter @kestrel-agents/ai-sdk --filter @kestrel-agents/next --filter @kestrel-agents/observability --filter @kestrel-agents/workspace-skills run build:self",
+    "build:shared": "pnpm -r --workspace-concurrency=4 --filter @lumi/kestrel-environment-auth --filter @kestrel/mcp-security --filter @kestrel-agents/protocol --filter @kestrel-agents/sdk --filter @kestrel-agents/ai-sdk --filter @kestrel-agents/next --filter @kestrel-agents/observability --filter @kestrel-agents/workspace-skills --filter @kestrel-agents/memory run build:self",
     "build:self": "pnpm run clean && tsc -p tsconfig.json",
     "tui:build": "tsc -p tsconfig.json",
     "typecheck": "pnpm run typecheck:self",
@@ -68,7 +69,7 @@
     "test": "pnpm validate",
     "test:unit": "node scripts/validate.mjs --leaf hermetic .",
     "test:integration": "node scripts/validate.mjs --leaf process .",
-    "web:prepare": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm --filter @kestrel-agents/workspace-skills build && pnpm run ai-sdk:build && pnpm run next:build",
+    "web:prepare": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm --filter @kestrel-agents/workspace-skills build && pnpm --filter @kestrel-agents/memory build && pnpm run ai-sdk:build && pnpm run next:build",
     "web:dev": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one dev",
     "web:build": "pnpm run web:prepare && pnpm --filter @kestrel/kestrel-one preflight:vercel:production && pnpm --filter @kestrel/kestrel-one build",
     "web:start": "pnpm --filter @kestrel/kestrel-one start",
@@ -221,6 +222,7 @@
   "packageManager": "pnpm@9.12.2+sha512.22721b3a11f81661ae1ec68ce1a7b879425a1ca5b991c975b074ac220b187ce56c708fe5db69f4c962c989452eee76c82877f4ee80f474cebd61ee13461b6228",
   "dependencies": {
     "@electric-sql/pglite": "^0.4.6",
+    "@kestrel-agents/memory": "workspace:*",
     "@kestrel-agents/protocol": "workspace:*",
     "@kestrel-agents/workspace-skills": "workspace:*",
     "@lumi/kestrel-environment-auth": "workspace:^",

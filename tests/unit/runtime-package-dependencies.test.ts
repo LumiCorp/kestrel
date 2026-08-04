@@ -19,6 +19,7 @@ test("runtime package manifests replace workspace links with exact packed versio
       dependencies: {
         "@kestrel-agents/protocol": "workspace:*",
         "@kestrel-agents/workspace-skills": "workspace:*",
+        "@kestrel-agents/memory": "workspace:*",
         "@lumi/kestrel-environment-auth": "workspace:^",
         pg: "^8.18.0",
       },
@@ -27,6 +28,7 @@ test("runtime package manifests replace workspace links with exact packed versio
     {
       "@kestrel-agents/protocol": "0.5.1",
       "@kestrel-agents/workspace-skills": "0.5.1",
+      "@kestrel-agents/memory": "0.5.1",
       "@lumi/kestrel-environment-auth": "0.0.0",
       pg: "^8.18.0",
       tsx: "^4.19.3",
@@ -52,6 +54,7 @@ test("runtime package manifests reject protocol and runtime version drift", asyn
       dependencies: {
         "@kestrel-agents/protocol": "workspace:*",
         "@kestrel-agents/workspace-skills": "workspace:*",
+        "@kestrel-agents/memory": "workspace:*",
         "@lumi/kestrel-environment-auth": "workspace:^",
       },
     }),
@@ -66,6 +69,7 @@ async function writeWorkspaceManifests(
   for (const [directory, name, packageVersion] of [
     ["protocol", "@kestrel-agents/protocol", version],
     ["workspace-skills", "@kestrel-agents/workspace-skills", version],
+    ["memory", "@kestrel-agents/memory", version],
     ["environment-auth", "@lumi/kestrel-environment-auth", "0.0.0"],
   ] as const) {
     const packageDir = path.join(repoRoot, "packages", directory);

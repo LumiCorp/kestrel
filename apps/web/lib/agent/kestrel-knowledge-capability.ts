@@ -3,7 +3,7 @@ import type {
   MemoryReadBindingV1,
   MemoryReadContextV1,
   MemoryScopeV1,
-} from "@kestrel-agents/kestrel";
+} from "@kestrel-agents/memory";
 import { searchKnowledgeDocuments } from "@/lib/knowledge/documents/retrieval";
 
 export const searchKnowledgeDocumentsCapabilityInputSchema = z

@@ -29,8 +29,10 @@ const forbiddenPrefixes = [
   "coding-agent-review/",
 ] as const;
 
-const allowedBundledDependencyPrefix =
-  "node_modules/@lumi/kestrel-environment-auth/";
+const bundledDependencyPrefixes = [
+  "node_modules/@kestrel-agents/memory/",
+  "node_modules/@lumi/kestrel-environment-auth/",
+] as const;
 
 const requiredFiles = [
   "package.json",
@@ -82,7 +84,7 @@ try {
   for (const filePath of filePaths) {
     if (filePath.startsWith("node_modules/")) {
       assert.ok(
-        filePath.startsWith(allowedBundledDependencyPrefix),
+        bundledDependencyPrefixes.some((prefix) => filePath.startsWith(prefix)),
         `runtime package contains unexpected bundled dependency '${filePath}'`,
       );
       continue;
@@ -103,11 +105,11 @@ try {
     assert.ok(filePaths.has(requiredFile), `runtime package is missing '${requiredFile}'`);
   }
   assert.ok(
-    filePaths.has(`${allowedBundledDependencyPrefix}dist/index.js`),
+    filePaths.has("node_modules/@lumi/kestrel-environment-auth/dist/index.js"),
     "runtime package is missing the bundled environment-auth runtime",
   );
   assert.ok(
-    filePaths.has(`${allowedBundledDependencyPrefix}package.json`),
+    filePaths.has("node_modules/@lumi/kestrel-environment-auth/package.json"),
     "runtime package is missing the bundled environment-auth manifest",
   );
 
@@ -123,7 +125,18 @@ try {
   assert.equal(manifest.types, "dist/src/index.d.ts");
   assert.equal(manifest.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
   assert.equal(manifest.dependencies?.["@kestrel-agents/workspace-skills"], "workspace:*");
-  assert.deepEqual(manifest.bundledDependencies, ["@lumi/kestrel-environment-auth"]);
+  assert.ok(
+    filePaths.has("node_modules/@kestrel-agents/memory/dist/index.js"),
+    "runtime package is missing the bundled memory runtime",
+  );
+  assert.ok(
+    filePaths.has("node_modules/@kestrel-agents/memory/package.json"),
+    "runtime package is missing the bundled memory manifest",
+  );
+  assert.deepEqual(manifest.bundledDependencies, [
+    "@kestrel-agents/memory",
+    "@lumi/kestrel-environment-auth",
+  ]);
   assert.ok(filePaths.has(manifest.main), `runtime package main '${manifest.main}' is not packed`);
   assert.ok(filePaths.has(manifest.types), `runtime package types '${manifest.types}' are not packed`);
 
@@ -151,6 +164,11 @@ try {
     packedManifest.dependencies?.["@kestrel-agents/workspace-skills"],
     packedManifest.version,
     "packed runtime must depend on the exact matching workspace-skills version",
+  );
+  assert.equal(
+    packedManifest.dependencies?.["@kestrel-agents/memory"],
+    packedManifest.version,
+    "packed runtime must depend on the exact matching memory version",
   );
 
   console.log(`runtime release-check passed (${filePaths.size} files)`);

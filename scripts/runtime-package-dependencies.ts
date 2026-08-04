@@ -15,6 +15,11 @@ const RUNTIME_WORKSPACE_PACKAGES = [
     tarballPrefix: "kestrel-agents-workspace-skills-",
   },
   {
+    name: "@kestrel-agents/memory",
+    directory: "packages/memory",
+    tarballPrefix: "kestrel-agents-memory-",
+  },
+  {
     name: "@lumi/kestrel-environment-auth",
     directory: "packages/environment-auth",
     tarballPrefix: "lumi-kestrel-environment-auth-",

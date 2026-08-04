@@ -8,7 +8,7 @@ import {
   MemoryGateway,
   parseMemoryReadBindingV1,
   type MemoryBackendAdapterV1,
-} from "@kestrel-agents/kestrel";
+} from "@kestrel-agents/memory";
 import { HostedKnowledgeMemoryBackend } from "./retrieval";
 
 const POLICY_REVISION = `sha256:${"a".repeat(64)}`;

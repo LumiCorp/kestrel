@@ -12,7 +12,7 @@ import {
   type MemoryReadBindingV1,
   type MemoryReadContextV1,
   type MemoryScopeV1,
-} from "@kestrel-agents/kestrel";
+} from "@kestrel-agents/memory";
 import { sql } from "drizzle-orm";
 import { embedKnowledgeTexts, getKnowledgeEmbeddingRuntime } from "./embed";
 import type { SemanticEmbeddingProvenance } from "./embedding-provenance";

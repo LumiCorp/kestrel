@@ -7,7 +7,7 @@ import {
   type MemoryReadBindingV1,
   type MemoryReadContextV1,
   type MemoryScopeV1,
-} from "@kestrel-agents/kestrel";
+} from "@kestrel-agents/memory";
 
 export const HOSTED_KNOWLEDGE_LIFECYCLE_POLICY =
   createMemoryLifecyclePolicyV1({
