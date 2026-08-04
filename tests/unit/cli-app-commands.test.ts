@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import os from "node:os";
@@ -396,9 +397,12 @@ test("bootstrapTuiApp carries a custom home's resolved Core transport into the A
   const server = await startLocalCoreApiServer({
     env: { KESTREL_HOME: home },
     platform: "darwin",
-    coreVersion: "0.5.1",
+    coreVersion: "0.7.0",
     idleTimeoutMs: 0,
   });
+  let initialServerClosed = false;
+  let bootstrap: Awaited<ReturnType<typeof bootstrapTuiApp>> | undefined;
+  let client: ReturnType<typeof createConfiguredCliProtocolClient> | undefined;
   const previousDirect = process.env.KESTREL_LOCAL_CORE_DIRECT;
   const previousSocket = process.env.KESTREL_LOCAL_CORE_API_SOCKET;
   const previousToken = process.env.KESTREL_LOCAL_CORE_API_TOKEN;
@@ -407,17 +411,31 @@ test("bootstrapTuiApp carries a custom home's resolved Core transport into the A
   delete process.env.KESTREL_LOCAL_CORE_API_TOKEN;
 
   try {
-    const bootstrap = await bootstrapTuiApp({ cwd, kestrelHome: home, scripted: true });
+    bootstrap = await bootstrapTuiApp({ cwd, kestrelHome: home, scripted: true });
     assert.equal(bootstrap.runnerTransportEnv.KESTREL_LOCAL_CORE_API_SOCKET, server.socketPath);
     assert.equal(bootstrap.runnerTransportEnv.KESTREL_LOCAL_CORE_API_TOKEN, server.token);
-    const client = createConfiguredCliProtocolClient(bootstrap.runnerTransportEnv);
-    try {
-      const pong = await client.sendCommand("runner.ping", { nonce: "custom-home" });
-      assert.equal(pong.type, "runner.pong");
-    } finally {
-      await client.close();
-    }
+    assert.equal(bootstrap.localCoreConnectionManager.current()?.client, bootstrap.localCoreStatus.client);
+    client = createConfiguredCliProtocolClient(bootstrap.runnerTransportEnv, {
+      beforeSend: bootstrap.prepareRunnerSend,
+    });
+    const firstPong = await client.sendCommand("runner.ping", { nonce: "custom-home" });
+    assert.equal(firstPong.type, "runner.pong");
+
+    await server.close();
+    initialServerClosed = true;
+    assert.equal(existsSync(server.socketPath), false);
+
+    const recoveredPong = await client.sendCommand("runner.ping", { nonce: "custom-home-recovered" });
+    assert.equal(recoveredPong.type, "runner.pong");
+    assert.equal(existsSync(server.socketPath), true);
+    assert.notEqual(
+      bootstrap.localCoreConnectionManager.current()?.client,
+      bootstrap.localCoreStatus.client,
+    );
   } finally {
+    await client?.close();
+    await bootstrap?.localCoreConnectionManager.current()?.client.shutdownForUninstall().catch(() => {});
+    await waitFor(() => existsSync(server.socketPath) === false, 5000).catch(() => {});
     if (previousDirect === undefined) {
       delete process.env.KESTREL_LOCAL_CORE_DIRECT;
     } else {
@@ -433,6 +451,33 @@ test("bootstrapTuiApp carries a custom home's resolved Core transport into the A
     } else {
       process.env.KESTREL_LOCAL_CORE_API_TOKEN = previousToken;
     }
+    if (initialServerClosed === false) {
+      await server.close();
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bootstrapTuiApp does not prepare Local Core before remote runner commands", async () => {
+  const root = await mkdtemp(path.join("/tmp", "kestrel-remote-runner-core-"));
+  const cwd = path.join(root, "cwd");
+  const home = path.join(root, "home");
+  await mkdir(cwd, { recursive: true });
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.7.0",
+    idleTimeoutMs: 0,
+  });
+  const previousRunnerServiceUrl = process.env.KESTREL_RUNNER_SERVICE_URL;
+  process.env.KESTREL_RUNNER_SERVICE_URL = "https://runner.example.test";
+
+  try {
+    const bootstrap = await bootstrapTuiApp({ cwd, kestrelHome: home, scripted: true });
+    assert.equal(bootstrap.runnerTransportEnv.KESTREL_RUNNER_SERVICE_URL, "https://runner.example.test");
+    assert.equal(bootstrap.prepareRunnerSend, undefined);
+  } finally {
+    restoreProcessEnv("KESTREL_RUNNER_SERVICE_URL", previousRunnerServiceUrl);
     await server.close();
     await rm(root, { recursive: true, force: true });
   }

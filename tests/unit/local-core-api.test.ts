@@ -2273,6 +2273,36 @@ test("Local Core API owns Desktop project runs and streams changes", async () =>
 
 });
 
+test("Local Core API idle timeout resets after admitted request activity", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kestrel-core-idle-activity-"));
+  const idleTimeoutMs = 1_000;
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs,
+  });
+  const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+
+  try {
+    for (let index = 0; index < 4; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.deepEqual(await client.health(), { ok: true });
+    }
+
+    assert.equal(
+      existsSync(server.socketPath),
+      true,
+      "request activity should extend the daemon lifetime beyond the startup deadline",
+    );
+
+    await waitFor(() => existsSync(server.socketPath) === false);
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {

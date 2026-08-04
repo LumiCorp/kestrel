@@ -45,6 +45,7 @@ import {
 import type { TuiAppOptions } from "./TuiAppContext.js";
 import { shouldKeepEnvironmentDatabaseUrl } from "../localCoreEnv.js";
 import { ensureCliLocalCoreReady, type CliLocalCoreStatus } from "../localCoreShell.js";
+import { LocalCoreConnectionManager } from "../../src/localCore/connectionManager.js";
 
 const PREFERRED_DOT_ENV_KEYS = [
   "DATABASE_URL",
@@ -87,7 +88,9 @@ export interface TuiBootstrapResult {
   uiStore: UiStore;
   startupNotices: string[];
   localCoreStatus: CliLocalCoreStatus;
+  localCoreConnectionManager: LocalCoreConnectionManager;
   runnerTransportEnv: NodeJS.ProcessEnv;
+  prepareRunnerSend?: (() => Promise<void>) | undefined;
 }
 
 export async function bootstrapTuiApp(options: TuiAppOptions): Promise<TuiBootstrapResult> {
@@ -103,6 +106,26 @@ export async function bootstrapTuiApp(options: TuiAppOptions): Promise<TuiBootst
       }
     : process.env;
   const localCoreStatus = await ensureCliLocalCoreReady({ env: localCoreEnv });
+  const localCoreConnectionManager = new LocalCoreConnectionManager({
+    ...(localCoreStatus.client !== undefined
+      ? {
+          initialConnection: {
+            status: localCoreStatus,
+            client: localCoreStatus.client,
+          },
+        }
+      : {}),
+    connect: async () => {
+      const next = await ensureCliLocalCoreReady({ env: localCoreEnv });
+      if (next.client === undefined) {
+        throw new Error(`Kestrel Local Core API is unavailable: ${next.summary}`);
+      }
+      return {
+        status: next,
+        client: next.client,
+      };
+    },
+  });
   const home = options.kestrelHome ?? localCoreStatus.home.homePath ?? resolveKestrelHomePath();
   const profileStore = new ProfileStore(home);
   const sessionStore = new SessionStore(home);
@@ -170,6 +193,15 @@ export async function bootstrapTuiApp(options: TuiAppOptions): Promise<TuiBootst
     }),
   );
 
+  const runnerTransportEnv = pickRunnerTransportEnvironment(localCoreEnv);
+  const prepareRunnerSend = usesLocalCoreRunnerTransport(runnerTransportEnv)
+    ? async (): Promise<void> => {
+        await localCoreConnectionManager.executeIdempotent(
+          async (client) => await client.health(),
+        );
+      }
+    : undefined;
+
   return {
     home,
     profileStore,
@@ -190,8 +222,19 @@ export async function bootstrapTuiApp(options: TuiAppOptions): Promise<TuiBootst
     uiStore,
     startupNotices,
     localCoreStatus,
-    runnerTransportEnv: pickRunnerTransportEnvironment(localCoreEnv),
+    localCoreConnectionManager,
+    runnerTransportEnv,
+    ...(prepareRunnerSend !== undefined ? { prepareRunnerSend } : {}),
   };
+}
+
+function usesLocalCoreRunnerTransport(env: NodeJS.ProcessEnv): boolean {
+  const remoteUrl = env.KESTREL_RUNNER_SERVICE_URL?.trim();
+  return (remoteUrl === undefined || remoteUrl.length === 0)
+    && typeof env.KESTREL_LOCAL_CORE_API_SOCKET === "string"
+    && env.KESTREL_LOCAL_CORE_API_SOCKET.trim().length > 0
+    && typeof env.KESTREL_LOCAL_CORE_API_TOKEN === "string"
+    && env.KESTREL_LOCAL_CORE_API_TOKEN.trim().length > 0;
 }
 
 function pickRunnerTransportEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

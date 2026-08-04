@@ -227,6 +227,7 @@ export async function startLocalCoreApiServer(
   let server: http.Server | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
   let idleTimeout: NodeJS.Timeout | undefined;
+  let refreshIdleTimeout = (): void => {};
   let maintenanceOperation: LocalCoreMaintenanceOperation | undefined;
   let activeRuntimeStoreRequests = 0;
   let activeRuntimeConfigurationMutations = 0;
@@ -654,6 +655,7 @@ export async function startLocalCoreApiServer(
         );
         return;
       }
+      refreshIdleTimeout();
       if (isRuntimeV2Request(request.url)) {
         const activeExecution = executionBundle;
         if (
@@ -757,10 +759,20 @@ export async function startLocalCoreApiServer(
     };
 
     const scheduleIdleTimeout = () => {
-      if (options.idleTimeoutMs === undefined || options.idleTimeoutMs <= 0) {
+      if (idleTimeout !== undefined) {
+        clearTimeout(idleTimeout);
+        idleTimeout = undefined;
+      }
+      if (
+        options.idleTimeoutMs === undefined
+        || options.idleTimeoutMs <= 0
+        || closePromise !== undefined
+        || admissionClosed
+      ) {
         return;
       }
       idleTimeout = setTimeout(() => {
+        idleTimeout = undefined;
         if (
           projectRunRegistry?.hasActiveRuns() === true ||
           executionBundle?.handler.hasActiveExecutions() === true ||
@@ -776,6 +788,7 @@ export async function startLocalCoreApiServer(
       }, options.idleTimeoutMs);
       idleTimeout.unref();
     };
+    refreshIdleTimeout = scheduleIdleTimeout;
     scheduleIdleTimeout();
 
     return {

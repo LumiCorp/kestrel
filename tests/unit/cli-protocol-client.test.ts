@@ -316,6 +316,63 @@ test("ProtocolClient resolves runner.ping command", async () => {
   await client.close();
 });
 
+test("ProtocolClient prepares the transport before sending a command", async () => {
+  const transport = new MockTransport();
+  let releasePreparation: (() => void) | undefined;
+  const preparationCanFinish = new Promise<void>((resolve) => {
+    releasePreparation = resolve;
+  });
+  let preparationCalls = 0;
+  const client = new ProtocolClient(transport, {
+    beforeSend: async () => {
+      preparationCalls += 1;
+      await preparationCanFinish;
+    },
+  });
+
+  const pending = client.sendCommand("runner.ping", { nonce: "abc" });
+  await tick();
+  assert.equal(preparationCalls, 1);
+  assert.equal(transport.sent.length, 0);
+
+  releasePreparation?.();
+  const response = await pending;
+  assert.equal(response.type, "runner.pong");
+  assert.equal(transport.sent.length, 1);
+  await client.close();
+});
+
+test("ProtocolClient does not retry a command after transport invocation", async () => {
+  const transport = new RejectingCaptureTransport();
+  let preparationCalls = 0;
+  const client = new ProtocolClient(transport, {
+    beforeSend: async () => {
+      preparationCalls += 1;
+    },
+  });
+
+  await assert.rejects(
+    client.sendCommand("run.start", {
+      profile: {
+        id: "reference",
+        label: "Reference",
+        agent: "reference-react",
+        sessionPrefix: "reference",
+      },
+      turn: {
+        sessionId: "session-no-retry",
+        message: "run once",
+        eventType: "user.message",
+        stepAgent: "react.deliberate",
+      },
+    }),
+    /captured command/u,
+  );
+  assert.equal(preparationCalls, 1);
+  assert.equal(transport.sent.length, 1);
+  await client.close();
+});
+
 test("ProtocolClient resolves run.start command with completed response", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport);

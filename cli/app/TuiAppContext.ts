@@ -42,6 +42,7 @@ export interface TuiAppContext {
   readonly selectors: ReturnType<typeof createUiDerivedSelectors>;
   getRuntimeSettings(): RuntimeSettingsFile;
   getLocalCoreClient?(): LocalCoreClient | undefined;
+  prepareLocalCoreClient?(): Promise<LocalCoreClient | undefined>;
   getSessionsFile(): SessionsFile;
   setSessionsFile(sessionsFile: SessionsFile): void;
   getActiveWorkspace(): ResolvedWorkspace | undefined;
