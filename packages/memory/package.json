@@ -1,7 +1,6 @@
 {
   "name": "@kestrel-agents/memory",
   "version": "0.7.0",
-  "private": true,
   "description": "Governed memory contracts and retrieval gateway for Kestrel agents",
   "license": "MIT",
   "repository": {
@@ -9,6 +8,18 @@
     "url": "git+https://github.com/LumiCorp/kestrel.git",
     "directory": "packages/memory"
   },
+  "homepage": "https://github.com/LumiCorp/kestrel/tree/main/packages/memory",
+  "bugs": {
+    "url": "https://github.com/LumiCorp/kestrel/issues"
+  },
+  "keywords": [
+    "kestrel",
+    "agents",
+    "memory",
+    "retrieval",
+    "typescript",
+    "sdk"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,9 +30,14 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -30,7 +46,9 @@
     "build": "pnpm run build:self",
     "build:self": "pnpm run clean && tsc -p tsconfig.json",
     "typecheck": "pnpm run typecheck:self",
-    "typecheck:self": "tsc -p tsconfig.json --noEmit"
+    "typecheck:self": "tsc -p tsconfig.json --noEmit",
+    "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ MemoryGateway, InMemoryMemoryBackend, parseMemoryQueryV1 }) => { void MemoryGateway; void InMemoryMemoryBackend; void parseMemoryQueryV1; })\"",
+    "release:check": "pnpm run build && pnpm run smoke:import && node --import tsx scripts/release-check.ts"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
