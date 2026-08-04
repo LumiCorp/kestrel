@@ -91,7 +91,7 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
       sessions: [{
         name: `${label}-session`,
         sessionId: `${label}-session-id`,
-        profileId: "reference",
+        profileId: "kestrel",
         createdAt: "2026-06-17T00:00:00.000Z",
         updatedAt: "2026-06-17T00:00:00.000Z",
         started: true,

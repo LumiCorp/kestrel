@@ -141,15 +141,15 @@ test("deliberator prompt exposes typed host actions only for Desktop Chat and Bu
 });
 
 test("deliberator prompt resolver selects real mode prompts", () => {
-  assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "plan" }), "reference-react:plan");
-  assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "build" }), "reference-react:build");
-  assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "chat" }), "reference-react:chat");
+  assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "plan" }), "kestrel:plan");
+  assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "build" }), "kestrel:build");
+  assert.equal(resolveDeliberatorPromptVariant({ interactionMode: "chat" }), "kestrel:chat");
   assert.equal(
     resolveDeliberatorPromptVariant({
       interactionMode: "build",
       promptVariant: "reference-react:plan",
     }),
-    "reference-react:build",
+    "kestrel:build",
   );
 
   const plan = buildDeliberatorSystemPrompt({ interactionMode: "plan" });

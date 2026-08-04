@@ -53,7 +53,7 @@ docker run --rm \
     const { ProfileStore } = await import("/app/dist/cli/config/ProfileStore.js");
     const store = new ProfileStore("/tmp/kestrel-profile-smoke");
     const profiles = await store.load();
-    const profile = store.findById(profiles, "kestrel-one");
+    const profile = store.findById(profiles, "kestrel");
     const collaborationTools = (profile?.toolAllowlist ?? []).filter(
       (toolName) => toolName.startsWith("dialog.") || toolName.startsWith("delegate.") || toolName === "agent.spawn",
     );
@@ -66,7 +66,7 @@ docker run --rm \
       profile?.toolAllowlist?.includes("desktop.host.open") === true ||
       JSON.stringify(collaborationTools) !== JSON.stringify(expected)
     ) {
-      throw new Error(`Workspace Runtime Kestrel-One profile is invalid: ${JSON.stringify({ agentProfileId: profile?.agentProfileId, presetId: profile?.presetId, delegation: profile?.delegation, collaborationTools })}`);
+      throw new Error(`Workspace Runtime Kestrel profile is invalid: ${JSON.stringify({ agentProfileId: profile?.agentProfileId, presetId: profile?.presetId, delegation: profile?.delegation, collaborationTools })}`);
     }
   '
 

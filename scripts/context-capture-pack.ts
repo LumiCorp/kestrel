@@ -114,7 +114,7 @@ function buildScenarios(validationFeedback: string): CaptureScenario[] {
         goal: "Implement CSV export for the report view and verify the downloaded file includes the selected columns.",
         eventType: "job.run",
         interactionMode: "build",
-        promptVariant: "reference-react:build",
+        promptVariant: "kestrel:build",
         activeWorkspace: workspaceContext("/repo/kestrel-app", "Kestrel app"),
       }),
     },
@@ -139,7 +139,7 @@ function buildScenarios(validationFeedback: string): CaptureScenario[] {
         goal: "Create a short implementation plan for consolidating duplicated settings validation.",
         eventType: "user.message",
         interactionMode: "plan",
-        promptVariant: "reference-react:plan",
+        promptVariant: "kestrel:plan",
         activeWorkspace: workspaceContext("/repo/kestrel-app", "Kestrel app"),
       }),
     },
@@ -164,7 +164,7 @@ function buildScenarios(validationFeedback: string): CaptureScenario[] {
         goal: "Continue the failing build task and choose a valid next tool action.",
         eventType: "job.run",
         interactionMode: "build",
-        promptVariant: "reference-react:build",
+        promptVariant: "kestrel:build",
         retryContext: {
           failure: {
             code: "DECISION_SCHEMA_FAILED",
@@ -205,7 +205,7 @@ function buildScenarios(validationFeedback: string): CaptureScenario[] {
         goal: "Finish the error-boundary fix and verify the existing regression test still passes.",
         eventType: "job.run",
         interactionMode: "build",
-        promptVariant: "reference-react:build",
+        promptVariant: "kestrel:build",
         reactState: {
           visibleTodos: {
             objective: "Fix error boundary regression.",
@@ -244,7 +244,7 @@ function buildScenarios(validationFeedback: string): CaptureScenario[] {
         goal: "Resolve SWE-bench Verified instance sphinx-doc__sphinx-10466 in this checked-out repository.",
         eventType: "job.run",
         interactionMode: "build",
-        promptVariant: "reference-react:build",
+        promptVariant: "kestrel:build",
         activeWorkspace: workspaceContext("/testbed", "SWE-bench testbed"),
         eventPayload: {
           message: "Resolve SWE-bench Verified instance sphinx-doc__sphinx-10466 in this checked-out repository.",
@@ -286,7 +286,7 @@ function buildScenarios(validationFeedback: string): CaptureScenario[] {
         goal: "Create /app/result.txt containing exactly the checksum printed by the public helper.",
         eventType: "job.run",
         interactionMode: "build",
-        promptVariant: "reference-react:build",
+        promptVariant: "kestrel:build",
         activeWorkspace: workspaceContext("/app", "Terminal-Bench task container"),
         eventPayload: {
           message: "Create /app/result.txt containing exactly the checksum printed by the public helper.",
@@ -325,7 +325,7 @@ function buildScenarios(validationFeedback: string): CaptureScenario[] {
         goal: "Continue from the gathered evidence and patch the failing route test.",
         eventType: "job.run",
         interactionMode: "build",
-        promptVariant: "reference-react:build",
+        promptVariant: "kestrel:build",
         reactState: {
           modelTranscript: transcript([
             userItem("mt_1_0001_user", "Patch the failing route test."),
@@ -456,7 +456,7 @@ function baseInput(input: {
     ...(input.activeWorkspace !== undefined ? { activeWorkspace: input.activeWorkspace } : {}),
     ...(input.retryContext !== undefined ? { retryContext: input.retryContext } : {}),
     systemPrompt: {
-      kind: "reference-react-deliberator",
+      kind: "kestrel-deliberator",
       interactionMode: input.interactionMode,
       promptVariant: input.promptVariant,
     },

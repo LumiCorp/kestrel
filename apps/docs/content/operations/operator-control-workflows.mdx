@@ -47,7 +47,7 @@ const context = {
   tenantId: "acme",
 };
 
-const inbox = await client.getOperatorInbox({ sessionId: "reference-session-001" }, context);
+const inbox = await client.getOperatorInbox({ sessionId: "kestrel-session-001" }, context);
 const view = await client.getOperatorThread("thread-main", context);
 
 const controlled = await client.controlOperator(

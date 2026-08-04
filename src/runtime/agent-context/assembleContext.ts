@@ -105,7 +105,7 @@ export interface KestrelAgentContextBuildInput {
 
 export type KestrelAgentSystemPromptInput =
   & {
-    kind: "reference-react-deliberator";
+    kind: "kestrel-deliberator";
   }
   & DeliberatorPromptInput;
 
@@ -441,7 +441,7 @@ function renderSystemPromptMessage(systemPrompt: KestrelAgentSystemPromptInput |
   if (systemPrompt === undefined) {
     return ;
   }
-  if (systemPrompt.kind === "reference-react-deliberator") {
+  if (systemPrompt.kind === "kestrel-deliberator") {
     return {
       role: "system",
       content: buildDeliberatorSystemPrompt(systemPrompt),

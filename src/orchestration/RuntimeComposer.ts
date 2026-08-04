@@ -543,9 +543,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function resolveAgent(metadata: unknown): "reference-react" {
+function resolveAgent(metadata: unknown): "kestrel" | "reference-react" {
   const record = asRecord(metadata);
-  return record?.agent === "reference-react" ? record.agent : "reference-react";
+  return record?.agent === "reference-react" || record?.agent === "kestrel"
+    ? record.agent
+    : "kestrel";
 }
 
 function resolveInteractionMode(metadata: unknown): "chat" | "plan" | "build" {

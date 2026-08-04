@@ -37,7 +37,7 @@ export type LocalCoreExecutionProfileResolveRequest =
       profileId: string;
     }
   | {
-      client: "reference_web";
+      client: "web";
       profileId: string;
     };
 
@@ -80,7 +80,7 @@ export function parseLocalCoreExecutionProfileResolveRequest(
       selection: parseDesktopExecutionSelection(record.selection),
     };
   }
-  if (record.client === "cli" || record.client === "reference_web") {
+  if (record.client === "cli" || record.client === "web") {
     rejectUnknownLocalCoreFields(
       record,
       new Set(["client", "profileId"]),
@@ -95,7 +95,7 @@ export function parseLocalCoreExecutionProfileResolveRequest(
     };
   }
   throw new Error(
-    "Local Core execution profile resolve request.client must be 'desktop', 'cli', or 'reference_web'.",
+    "Local Core execution profile resolve request.client must be 'desktop', 'cli', or 'web'.",
   );
 }
 
@@ -193,7 +193,7 @@ export function parseLocalCoreExecutionProfileResolution(
     profile.id !== profileId ||
     typeof profile.label !== "string" ||
     profile.label.trim().length === 0 ||
-    profile.agent !== "reference-react"
+    profile.agent !== "kestrel"
   ) {
     throw new Error(
       "Local Core execution profile resolution.resolvedProfile is invalid.",
@@ -462,7 +462,7 @@ export function parseLocalCoreRuntimeStoreResetResult(
 export interface LocalCoreDesktopProfileSnapshot {
   id: string;
   label: string;
-  agent: "reference-react";
+  agent: "kestrel";
   shellKind: "desktop";
   presetId: "desktop_safe_local" | "desktop_dev_local";
   modelProvider: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
@@ -534,8 +534,8 @@ export function parseLocalCoreDesktopExecutionConfig(
     profile.label,
     "Desktop execution config.resolvedProfile.label",
   );
-  if (profile.agent !== "reference-react") {
-    throw new Error("Local Core Desktop execution config resolvedProfile.agent must be 'reference-react'.");
+  if (profile.agent !== "kestrel") {
+    throw new Error("Local Core Desktop execution config resolvedProfile.agent must be 'kestrel'.");
   }
   if (profile.shellKind !== "desktop") {
     throw new Error("Local Core Desktop execution config resolvedProfile must target the Desktop shell.");
@@ -583,7 +583,7 @@ export function parseLocalCoreDesktopExecutionConfig(
     resolvedProfile: {
       id: record.profileId,
       label,
-      agent: "reference-react",
+      agent: "kestrel",
       shellKind: "desktop",
       presetId: profile.presetId,
       modelProvider: profile.modelProvider,

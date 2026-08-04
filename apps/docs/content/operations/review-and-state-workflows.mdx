@@ -42,7 +42,7 @@ The Kestrel One can use the control route to move through the full inspection pa
 ```ts
 const inbox = await sendRunnerControl({
   command: "operator.inbox",
-  sessionId: "reference-session-001",
+  sessionId: "kestrel-session-001",
 });
 
 const thread = await sendRunnerControl({
@@ -52,18 +52,18 @@ const thread = await sendRunnerControl({
 
 const graph = await sendRunnerControl({
   command: "task.graph.get",
-  sessionId: "reference-session-001",
+  sessionId: "kestrel-session-001",
   threadId: "thread-main",
 });
 
 const snapshot = await sendRunnerControl({
   command: "project.snapshot.get",
-  sessionId: "reference-session-001",
+  sessionId: "kestrel-session-001",
 });
 
 const review = await sendRunnerControl({
   command: "project.review.get",
-  sessionId: "reference-session-001",
+  sessionId: "kestrel-session-001",
   reviewTarget: {
     taskId: "task:thread:thread-main",
     filePath: "src/project/workspace.ts",
@@ -80,10 +80,10 @@ When an operator wants to leave or apply a review action, the control route acce
 ```json
 {
   "command": "project.review.action",
-  "sessionId": "reference-session-001",
+  "sessionId": "kestrel-session-001",
   "reviewAction": {
     "type": "review.comment.create",
-    "sessionId": "reference-session-001",
+    "sessionId": "kestrel-session-001",
     "target": {
       "taskId": "task:thread:thread-main",
       "pullRequestNumber": 42,
@@ -126,20 +126,20 @@ const context = {
 
 const graph = await client.getTaskGraph(
   {
-    sessionId: "reference-session-001",
+    sessionId: "kestrel-session-001",
     threadId: "thread-main",
   },
   context,
 );
 
 const snapshot = await client.getProjectSnapshot(
-  { sessionId: "reference-session-001" },
+  { sessionId: "kestrel-session-001" },
   context,
 );
 
 const detail = await client.getProjectReview(
   {
-    sessionId: "reference-session-001",
+    sessionId: "kestrel-session-001",
     target: {
       taskId: "task:thread:thread-main",
       filePath: "src/project/workspace.ts",
@@ -156,7 +156,7 @@ Reading the surfaces is only half the workflow. The same client can update them 
 ```ts
 await client.updateTaskGraph(
   {
-    sessionId: "reference-session-001",
+    sessionId: "kestrel-session-001",
     threadId: "thread-main",
     graph: {
       tasks: {
@@ -173,7 +173,7 @@ await client.updateTaskGraph(
 await client.runProjectAction(
   {
     type: "branch.create",
-    sessionId: "reference-session-001",
+    sessionId: "kestrel-session-001",
     branchName: "docs/search-hardening",
   },
   context,
@@ -187,7 +187,7 @@ Task graph response:
 ```json
 {
   "type": "task.graph",
-  "sessionId": "reference-session-001",
+  "sessionId": "kestrel-session-001",
   "threadId": "thread-main",
   "graph": {
     "taskId": "task:thread:thread-main",
@@ -202,7 +202,7 @@ Project snapshot response:
 ```json
 {
   "type": "project.snapshot",
-  "sessionId": "reference-session-001",
+  "sessionId": "kestrel-session-001",
   "snapshot": {
     "branch": "docs/search-hardening",
     "focus": "review-state and search behavior",

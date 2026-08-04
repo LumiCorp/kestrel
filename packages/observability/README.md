@@ -52,7 +52,7 @@ import { createAgent } from "@kestrel-agents/sdk";
 
 const agent = createAgent({
   id: "support-agent",
-  profileId: "reference",
+  profileId: "kestrel",
   target: {
     kind: "remote",
     baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,

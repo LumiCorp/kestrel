@@ -275,7 +275,7 @@ test("canonical composition rebinds evaluation and recovery to one exact route",
     },
   });
   const definition = createKestrelProfileDefinitionV1({
-    agent: "reference-react",
+    agent: "kestrel",
     interaction: structuredClone(KESTREL_PROFILE_DEFINITION.interaction),
     evaluationPolicy: authoredEvaluation,
     reasoning: structuredClone(KESTREL_PROFILE_DEFINITION.reasoning),

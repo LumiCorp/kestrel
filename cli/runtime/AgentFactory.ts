@@ -31,7 +31,7 @@ export function registerAgent(
   agent: SupportedAgent,
   options?: RegisterAgentOptions,
 ): { entryStepAgent: string } {
-  if (agent === "reference-react") {
+  if (agent === "kestrel" || agent === "reference-react") {
     return registerAgentReferenceRuntime(kestrel, {
       ...(options?.agentProvider !== undefined ? { agentProvider: options.agentProvider } : {}),
       ...(options?.thinkerTools !== undefined ? { thinkerTools: options.thinkerTools } : {}),
