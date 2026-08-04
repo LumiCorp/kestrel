@@ -2,6 +2,15 @@ import { createHash } from "node:crypto";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import type { RecoveryModelCandidateV1 } from "../kestrel/contracts/recovery.js";
+import {
+  createKestrelEnvironmentBindingV1,
+  createKestrelProfileDefinitionV1,
+  parseKestrelEnvironmentBindingV1,
+  parseKestrelProfileDefinitionV1,
+  type KestrelEnvironmentBindingV1,
+  type KestrelProfileDefinitionV1,
+} from "../kestrel/contracts/profile.js";
+import { createRuntimeEvaluationPolicyV1 } from "../kestrel/contracts/evaluation.js";
 import type { HarnessEconomicsControlV1 } from "../economics/contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
@@ -13,7 +22,10 @@ import {
   type ShellKind,
   type ShellPresetId,
 } from "./runtimeProfile.js";
-import { resolveProfileWithRecoveryPolicy } from "./recoveryPolicy.js";
+import {
+  rebindRecoveryPolicyPrimaryModel,
+  resolveProfileWithRecoveryPolicy,
+} from "./recoveryPolicy.js";
 import { resolveProfileWithEvaluationPolicy } from "./evaluationPolicy.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
 
@@ -61,6 +73,28 @@ export const KESTREL_ONE_POLICY: Readonly<KestrelOnePolicyDefinition> =
   });
 
 export const KESTREL_POLICY = KESTREL_ONE_POLICY;
+
+export const KESTREL_PROFILE_DEFINITION: Readonly<KestrelProfileDefinitionV1> =
+  deepFreeze(
+    createKestrelProfileDefinitionV1({
+      agent: "reference-react",
+      interaction: {
+        modeSystemV2Enabled: true,
+        defaultInteractionMode: DEFAULT_INTERACTION_MODE,
+        defaultActSubmode: DEFAULT_ACT_SUBMODE,
+      },
+      reasoning: {
+        request: { mode: "provider_visible" },
+        retention: { mode: "live_only", days: 7 },
+      },
+      delegation: {
+        allowAgentSpawn: true,
+        allowNestedCollaborators: false,
+        maxConcurrentChildSessions: 2,
+        maxDepth: 2,
+      },
+    }),
+  );
 
 export const KESTREL_ONE_INTERNAL_DELEGATION_TOOL_NAMES = Object.freeze([
   "agent.spawn",
@@ -246,7 +280,22 @@ export interface ComposedKestrelOneProfile {
   provenance: KestrelOnePolicyProvenance;
 }
 
+export interface ComposeKestrelProfileInput {
+  definition: KestrelProfileDefinitionV1;
+  environmentBinding: KestrelEnvironmentBindingV1;
+  resolvedProfileId?: string | undefined;
+}
+
+export type ComposedKestrelProfile = ComposedKestrelOneProfile;
+
+/** @deprecated Use composeKestrelProfile with a canonical definition and binding. */
 export function composeKestrelOneProfile(
+  input: ComposeKestrelOneProfileInput,
+): ComposedKestrelOneProfile {
+  return composeKestrelProfile(input);
+}
+
+function composeLegacyKestrelOneProfile(
   input: ComposeKestrelOneProfileInput,
 ): ComposedKestrelOneProfile {
   assertNoPolicyControlledOverlay(input.overlay);
@@ -396,7 +445,310 @@ export function composeKestrelOneProfile(
   };
 }
 
-export const composeKestrelProfile = composeKestrelOneProfile;
+export function composeKestrelProfile(
+  input: ComposeKestrelProfileInput | ComposeKestrelOneProfileInput,
+): ComposedKestrelProfile {
+  if ("environmentPresetId" in input) {
+    return composeLegacyKestrelOneProfile(input);
+  }
+  const definition = parseKestrelProfileDefinitionV1(input.definition);
+  const binding = parseKestrelEnvironmentBindingV1(input.environmentBinding);
+  const resolvedEnvironment = resolveRuntimeProfileSelection({
+    shellKind: binding.shellKind,
+    presetId: binding.presetId,
+    codeMode: binding.sandbox.codeMode,
+    devShell: binding.sandbox.devShell,
+  });
+  if (
+    JSON.stringify(resolvedEnvironment.capabilityPacks) !==
+    JSON.stringify(binding.capabilityPacks)
+  ) {
+    throw new Error(
+      `Kestrel environment '${binding.bindingId}' capability packs do not match its preset.`,
+    );
+  }
+  const runtimeIdentity = buildRuntimeIdentityMetadata({
+    agentProfileId: KESTREL_POLICY_ID,
+    agentProfileLabel: KESTREL_POLICY_LABEL,
+    shellKind: binding.shellKind,
+    presetId: binding.presetId,
+    capabilityPacks: binding.capabilityPacks,
+  });
+  const toolAllowlist = normalizeKestrelOneToolAllowlist([
+    ...resolvedEnvironment.toolAllowlist,
+    ...binding.tools.additionalToolNames,
+    ...KESTREL_ONE_DIALOG_TOOL_NAMES,
+  ]);
+  assertRequiredKestrelOneTools(toolAllowlist);
+  const fingerprint = fingerprintKestrelOneComposition({
+    profileDefinitionRevision: definition.revision,
+    environmentBindingRevision: binding.revision,
+    toolAllowlist,
+  });
+  const profile: TuiProfile = {
+    id:
+      input.resolvedProfileId ??
+      `${KESTREL_POLICY_ID}:${binding.presetId}:${fingerprint}`,
+    label: definition.label,
+    agent: definition.agent,
+    sessionPrefix: KESTREL_POLICY_ID,
+    agentProfileId: runtimeIdentity.agentProfileId,
+    agentProfileLabel: runtimeIdentity.agentProfileLabel,
+    shellKind: binding.shellKind,
+    presetId: binding.presetId,
+    capabilityPacks: [...binding.capabilityPacks],
+    environmentShellKind: runtimeIdentity.environmentShellKind,
+    environmentPresetId: runtimeIdentity.environmentPresetId,
+    environmentCapabilityPackIds: [
+      ...runtimeIdentity.environmentCapabilityPackIds,
+    ],
+    ...(binding.modelRoute.kind === "pinned"
+      ? {
+          modelProvider: binding.modelRoute.provider,
+          model: binding.modelRoute.model,
+          modelCredential: binding.modelRoute.credentialReference,
+          modelCapabilities: {
+            visionInputEnabled:
+              binding.modelRoute.capabilities.visionInputEnabled,
+          },
+          agentStageConfig: {
+            modelByStage: { "agent.loop": binding.modelRoute.model },
+          },
+        }
+      : { modelProvider: "openrouter" as const }),
+    harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
+    storeDriver: binding.storage.driver,
+    approvalPolicyPackId: binding.approvals.policyPackId,
+    modeSystemV2Enabled: definition.interaction.modeSystemV2Enabled,
+    defaultInteractionMode: definition.interaction.defaultInteractionMode,
+    defaultActSubmode: definition.interaction.defaultActSubmode,
+    toolAllowlist,
+    kestrelOneAppApprovalModes: structuredClone(binding.apps.approvalModes),
+    mcpServers: structuredClone(binding.tools.mcpServers),
+    ociMcpEgressBindings: structuredClone(
+      binding.tools.ociMcpEgressBindings,
+    ) as TuiProfile["ociMcpEgressBindings"],
+    toolQueue: { ...DEFAULT_TOOL_QUEUE, ...binding.queues.tool },
+    guardrails: { maxStepVisits: 80 },
+    codeMode: resolvedEnvironment.codeMode,
+    devShell: resolvedEnvironment.devShell,
+    delegation: {
+      allowAgentSpawn: definition.delegation.allowAgentSpawn,
+      maxConcurrentChildSessions:
+        definition.delegation.maxConcurrentChildSessions,
+      maxDepth: definition.delegation.maxDepth,
+    },
+    reasoning: structuredClone(definition.reasoning),
+  };
+  const routeBound = bindDefinitionPoliciesToEnvironment(
+    profile,
+    definition,
+    binding,
+  );
+  return {
+    profile: routeBound,
+    provenance: {
+      policyId: KESTREL_POLICY_ID,
+      policyVersion: KESTREL_POLICY_VERSION,
+      promptPolicyId: KESTREL_PROMPT_POLICY_ID,
+      environmentPresetId: binding.presetId,
+      environmentPresetVersion:
+        KESTREL_ONE_ENVIRONMENT_PRESETS[binding.presetId].version,
+      fingerprint,
+    },
+  };
+}
+
+export function createKestrelEnvironmentBindingFromOverlay(input: {
+  environmentPresetId: ComposeKestrelOneProfileInput["environmentPresetId"];
+  overlay?: KestrelOneProfileOverlay | undefined;
+  bindingId?: string | undefined;
+  modelRegistrationRevision?: string | undefined;
+  tenant?: KestrelEnvironmentBindingV1["tenant"] | undefined;
+}): KestrelEnvironmentBindingV1 {
+  assertNoPolicyControlledOverlay(input.overlay);
+  const shellKind = shellKindForPreset(input.environmentPresetId);
+  const resolved = resolveRuntimeProfileSelection({
+    shellKind,
+    presetId: input.environmentPresetId,
+    codeMode: input.overlay?.codeMode,
+    devShell: input.overlay?.devShell,
+  });
+  const modelRoute: KestrelEnvironmentBindingV1["modelRoute"] =
+    input.overlay?.model !== undefined &&
+    input.overlay.modelProvider !== undefined
+      ? {
+          kind: "pinned",
+          provider: input.overlay.modelProvider,
+          model: input.overlay.model,
+          modelRegistrationRevision:
+            input.modelRegistrationRevision ?? "legacy-overlay:v1",
+          capabilities: {
+            visionInputEnabled:
+              input.overlay.modelCapabilities?.visionInputEnabled === true,
+            toolCallingEnabled: true,
+            structuredOutputEnabled: true,
+            reasoningModes:
+              input.overlay.modelProvider === "ollama" ||
+              input.overlay.modelProvider === "lmstudio"
+                ? ["off", "summary"]
+                : ["off", "summary", "provider_visible"],
+          },
+          ...(input.overlay.modelCredential !== undefined
+            ? { credentialReference: input.overlay.modelCredential }
+            : {}),
+        }
+      : {
+          kind: "runtime_configuration",
+          registrationSource:
+            input.environmentPresetId === "workspace_hosted"
+              ? "hosted_control_plane"
+              : "local_core",
+        };
+  return createKestrelEnvironmentBindingV1({
+    bindingId:
+      input.bindingId ?? `kestrel:${input.environmentPresetId}:binding`,
+    presetId: input.environmentPresetId,
+    shellKind,
+    capabilityPacks: [...resolved.capabilityPacks],
+    modelRoute,
+    recoveryModelCandidates: structuredClone(
+      input.overlay?.recoveryModelCandidates ?? [],
+    ),
+    sandbox: {
+      ...(input.overlay?.codeMode !== undefined
+        ? { codeMode: structuredClone(input.overlay.codeMode) }
+        : {}),
+      ...(input.overlay?.devShell !== undefined
+        ? { devShell: structuredClone(input.overlay.devShell) }
+        : {}),
+    },
+    apps: {
+      approvalModes: structuredClone(
+        input.overlay?.kestrelOneAppApprovalModes ?? {},
+      ),
+    },
+    tools: {
+      additionalToolNames: normalizeKestrelOneToolAllowlist(
+        input.overlay?.additionalToolNames ?? [],
+      ),
+      mcpServers: structuredClone(input.overlay?.mcpServers ?? []),
+      ociMcpEgressBindings: structuredClone(
+        input.overlay?.ociMcpEgressBindings ?? [],
+      ) as Array<Record<string, unknown>>,
+    },
+    approvals: {
+      policyPackId: input.overlay?.approvalPolicyPackId ?? "dev",
+    },
+    storage: { driver: input.overlay?.storeDriver ?? "auto" },
+    queues: { tool: { ...(input.overlay?.toolQueue ?? {}) } },
+    tenant:
+      input.tenant ??
+      (input.environmentPresetId === "workspace_hosted"
+        ? input.overlay?.modelCredential !== undefined
+          ? {
+              scope: "hosted",
+              organizationId:
+                input.overlay.modelCredential.organizationId,
+              environmentId: input.overlay.modelCredential.environmentId,
+            }
+          : {
+              scope: "hosted_runtime",
+              authoritySource: "trusted_host_context",
+            }
+        : { scope: "local" }),
+  });
+}
+
+export function createKestrelProfileDefinitionFromOverlay(
+  overlay: KestrelOneProfileOverlay | undefined,
+): KestrelProfileDefinitionV1 {
+  assertNoPolicyControlledOverlay(overlay);
+  return createKestrelProfileDefinitionV1({
+    agent: "reference-react",
+    interaction: {
+      modeSystemV2Enabled: true,
+      defaultInteractionMode: DEFAULT_INTERACTION_MODE,
+      defaultActSubmode: DEFAULT_ACT_SUBMODE,
+    },
+    ...(overlay?.recoveryPolicy !== undefined
+      ? { recoveryPolicy: structuredClone(overlay.recoveryPolicy) }
+      : {}),
+    ...(overlay?.evaluationPolicy !== undefined
+      ? { evaluationPolicy: structuredClone(overlay.evaluationPolicy) }
+      : {}),
+    reasoning: structuredClone(
+      overlay?.reasoning ?? KESTREL_PROFILE_DEFINITION.reasoning,
+    ),
+    delegation: {
+      allowAgentSpawn: true,
+      allowNestedCollaborators: false,
+      maxConcurrentChildSessions: normalizePositiveInteger(
+        overlay?.delegationLimits?.maxConcurrentChildSessions,
+        KESTREL_PROFILE_DEFINITION.delegation.maxConcurrentChildSessions,
+      ),
+      maxDepth: normalizePositiveInteger(
+        overlay?.delegationLimits?.maxDepth,
+        KESTREL_PROFILE_DEFINITION.delegation.maxDepth,
+      ),
+    },
+  });
+}
+
+function bindDefinitionPoliciesToEnvironment(
+  profile: TuiProfile,
+  definition: KestrelProfileDefinitionV1,
+  binding: KestrelEnvironmentBindingV1,
+): TuiProfile {
+  if (binding.modelRoute.kind !== "pinned") {
+    if (
+      definition.recoveryPolicy !== undefined ||
+      definition.evaluationPolicy !== undefined
+    ) {
+      throw new Error(
+        "Route-bound Kestrel recovery and evaluation policies require a pinned environment model route.",
+      );
+    }
+    return profile;
+  }
+  const recovered =
+    definition.recoveryPolicy === undefined
+      ? resolveProfileWithRecoveryPolicy(profile, {
+          alternateModels: binding.recoveryModelCandidates,
+        })
+      : {
+          ...profile,
+          recoveryPolicy: rebindRecoveryPolicyPrimaryModel(
+            profile,
+            definition.recoveryPolicy,
+          ),
+        };
+  if (definition.evaluationPolicy === undefined) {
+    return recovered;
+  }
+  const evaluationPolicy = createRuntimeEvaluationPolicyV1({
+    ...structuredClone(definition.evaluationPolicy),
+    judge: {
+      ...structuredClone(definition.evaluationPolicy.judge),
+      provider: binding.modelRoute.provider,
+      model: binding.modelRoute.model,
+      modelRegistrationRevision:
+        binding.modelRoute.modelRegistrationRevision,
+      capabilities: structuredClone(binding.modelRoute.capabilities),
+      ...(binding.modelRoute.credentialReference !== undefined
+        ? {
+            credentialReference: structuredClone(
+              binding.modelRoute.credentialReference,
+            ),
+          }
+        : { credentialReference: undefined }),
+    },
+  });
+  return resolveProfileWithEvaluationPolicy({
+    ...recovered,
+    evaluationPolicy,
+  });
+}
 
 export function normalizeKestrelOneToolAllowlist(
   toolNames: readonly string[],
@@ -511,4 +863,14 @@ function normalizePositiveInteger(
   return typeof value === "number" && Number.isFinite(value)
     ? Math.max(1, Math.trunc(value))
     : fallback;
+}
+
+function deepFreeze<T>(value: T): Readonly<T> {
+  if (value !== null && typeof value === "object") {
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      deepFreeze(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
 }
