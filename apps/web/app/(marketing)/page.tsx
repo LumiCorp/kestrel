@@ -10,10 +10,10 @@ import { auth } from "../(auth)/auth";
 
 export const metadata = createMetadata({
   title: {
-    absolute: "Kestrel — Build with Kestrel",
+    absolute: "Kestrel — Open a project and put an agent to work",
   },
   description:
-    "Run real agent work without giving up control. Use Kestrel Desktop, collaborate in Kestrel One, or build with the open Kestrel runtime.",
+    "Open a project, choose a model, and ask Kestrel to build software, research questions, analyze data, and produce reports, spreadsheets, presentations, and other files.",
   alternates: {
     canonical: "/",
   },

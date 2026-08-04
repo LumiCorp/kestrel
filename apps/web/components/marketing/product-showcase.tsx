@@ -19,13 +19,13 @@ const products = {
     image: "/product/desktop/checkout-result.png",
     imageAlt:
       "Kestrel Desktop showing a completed checkout fix, regression coverage, and passing tests",
-    heading: "Work locally, with the project in front of you.",
+    heading: "Work directly in the project on your computer.",
     description:
-      "Open a repository, folder, research collection, or blank project. Kestrel can inspect the material, use approved tools, produce artifacts, and keep the session ready for your next return.",
+      "Open a repository, folder, research collection, or blank project. Kestrel can inspect the material, use approved tools, change files, and produce the result beside the work.",
     points: [
-      "Local projects and model choice",
-      "Visible runtime and tool state",
-      "Durable sessions and artifacts",
+      "Project files, tools, and model choice",
+      "Changes, activity, and results in one place",
+      "Sessions and artifacts ready when you return",
     ],
     href: "https://docs.kestrelagents.dev/desktop/install",
     action: "Download Desktop Beta",
@@ -36,13 +36,13 @@ const products = {
     image: "/product/kestrel-one/knowledge.png",
     imageAlt:
       "Kestrel One Knowledge workspace for adding shared files and sources",
-    heading: "Give the team one source of context.",
+    heading: "Bring the team into the same work.",
     description:
-      "Connect files and shared sources once, then make that context available to the people, Projects, and Threads that need it.",
+      "Give a Project the members, instructions, files, Knowledge, Apps, and execution Environment it needs. Teammates can work from that shared context in the same Threads.",
     points: [
-      "Shared Knowledge and files",
-      "Durable Projects and Threads",
-      "Approved Apps and execution Environments",
+      "People and context organized by Project",
+      "Threads with shared history and artifacts",
+      "Approved Apps and execution capabilities",
     ],
     href: "https://docs.kestrelagents.dev/kestrel-one/getting-started",
     action: "Explore Kestrel One Beta",

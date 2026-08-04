@@ -4,15 +4,12 @@ import {
   BookOpen,
   Braces,
   Check,
-  CirclePause,
   Code2,
+  Database,
   Download,
+  FileText,
   Github,
-  History,
   Laptop,
-  RotateCcw,
-  SearchCheck,
-  TerminalSquare,
   Users,
 } from "lucide-react";
 import Image from "next/image";
@@ -38,7 +35,7 @@ const productPaths = [
     status: "Beta",
     title: "Kestrel Desktop",
     description:
-      "Work locally with repositories, folders, research, data, and the artifacts Kestrel produces with you.",
+      "Start with the files and tools in a project on your computer. Choose a model, describe the outcome, and work with Kestrel in the same place.",
     action: "Download Desktop Beta",
     href: "https://docs.kestrelagents.dev/desktop/install",
     icon: Laptop,
@@ -48,7 +45,7 @@ const productPaths = [
     status: "Beta",
     title: "Kestrel One",
     description:
-      "Continue durable agent work across people, Projects, organizational Knowledge, Apps, and execution Environments.",
+      "Bring people, shared context, and connected capabilities into the work with Projects, Threads, Knowledge, Apps, and execution Environments.",
     action: "Explore Kestrel One Beta",
     href: "https://docs.kestrelagents.dev/kestrel-one/getting-started",
     icon: Users,
@@ -58,7 +55,7 @@ const productPaths = [
     status: "0.7",
     title: "Build with Kestrel",
     description:
-      "Use the runtime, CLI, SDK, framework adapters, and Execution Protocol inside products and operating systems you already own.",
+      "Work directly from the CLI/TUI or use the TypeScript SDK to start, stream, resume, and inspect runs in your own application.",
     action: "Build your first agent",
     href: "https://docs.kestrelagents.dev/build/building-your-first-agent",
     icon: Braces,
@@ -68,39 +65,39 @@ const productPaths = [
 const capabilities = [
   {
     number: "01",
-    title: "Continue",
+    title: "Change a codebase",
     description:
-      "Sessions and context remain available when you close the window or return later.",
-    icon: History,
+      "Inspect the repository, edit files, run tests, and leave the result ready for review.",
+    icon: Code2,
   },
   {
     number: "02",
-    title: "Supervise",
+    title: "Research a question",
     description:
-      "Review progress, answer questions, approve important actions, and redirect the work.",
-    icon: CirclePause,
+      "Find sources, compare the evidence, and turn the findings into a useful answer.",
+    icon: BookOpen,
   },
   {
     number: "03",
-    title: "Recover",
+    title: "Work through data",
     description:
-      "Interrupted or failed work leaves enough state and evidence to understand what happened.",
-    icon: RotateCcw,
+      "Inspect a dataset or spreadsheet, perform the analysis, and produce a usable output.",
+    icon: Database,
   },
   {
     number: "04",
-    title: "Inspect",
+    title: "Create the deliverable",
     description:
-      "Runs preserve tool outcomes, checkpoints, artifacts, and explicit terminal results.",
-    icon: SearchCheck,
+      "Build the report, workbook, presentation, or other file the project requires.",
+    icon: FileText,
   },
 ] as const;
 
 const betaNotes = [
-  "Desktop and Kestrel One are actively evolving Beta products.",
-  "Capabilities and availability may change as the products mature.",
-  "Release status and known limitations stay documented publicly.",
-  "Reproducible issues and product feedback directly inform development.",
+  "Desktop and Kestrel One release independently as Beta products.",
+  "Capabilities and availability can change as each product matures.",
+  "Current release status and known limitations remain public.",
+  "Reproducible issues and specific feedback guide what ships next.",
 ] as const;
 
 const footerLinkClass =
@@ -181,8 +178,8 @@ function MarketingFooter() {
             Kestrel
           </Link>
           <p className="max-w-md text-muted-foreground text-sm leading-6">
-            An open agent platform for durable work across local, hosted, and
-            embedded environments.
+            Open-source agent platform for software, research, data, and
+            document work.
           </p>
           <p className="font-mono text-muted-foreground text-xs">
             Kestrel Desktop and Kestrel One are Beta products.
@@ -258,20 +255,23 @@ export function LandingPage() {
             <div className="space-y-8">
               <div className="space-y-5">
                 <div className="flex flex-wrap items-center gap-3 font-mono text-muted-foreground text-xs uppercase tracking-[0.18em]">
-                  <span>Open agent platform</span>
+                  <span>Kestrel Desktop</span>
                   <span aria-hidden="true">·</span>
                   <span>Beta</span>
                 </div>
                 <h1 className="text-balance font-semibold text-5xl tracking-[-0.055em] sm:text-6xl lg:text-7xl">
-                  Build with Kestrel.
+                  Open a project. Choose a model. Ask Kestrel to do the work.
                 </h1>
                 <p className="text-balance font-medium text-2xl tracking-tight sm:text-3xl">
-                  Run real agent work without giving up control.
+                  Kestrel is an open-source agent platform for building
+                  software, researching questions, analyzing data, and
+                  producing reports, spreadsheets, presentations, and other
+                  files.
                 </p>
                 <p className="max-w-xl text-pretty text-lg text-muted-foreground leading-8">
-                  Give agents the durable runtime to carry work through—and
-                  keep the context, decisions, tools, and evidence you need to
-                  trust the result.
+                  Start on your computer with Kestrel Desktop. Bring the same
+                  work into Kestrel One, the terminal, or your own TypeScript
+                  application when you need to go further.
                 </p>
               </div>
 
@@ -302,11 +302,11 @@ export function LandingPage() {
                 </span>
                 <span className="inline-flex items-center gap-2">
                   <Check className="size-4 text-accent" />
-                  Local or hosted
+                  Work with project files and tools
                 </span>
                 <span className="inline-flex items-center gap-2">
                   <Check className="size-4 text-accent" />
-                  Open source runtime
+                  Keep the result with the project
                 </span>
               </div>
             </div>
@@ -338,12 +338,49 @@ export function LandingPage() {
           </div>
         </section>
 
+        <section className="border-b py-20 sm:py-24">
+          <div className="mx-auto max-w-7xl space-y-14 px-4 sm:px-6 lg:px-8">
+            <SectionIntro
+              description="Kestrel can take on the technical, analytical, and document work inside a real project, along with the other work your business needs an agent to handle."
+              eyebrow="What Kestrel can do"
+              title="From the first question to the finished file."
+            />
+
+            <ol className="grid border-y sm:grid-cols-2 lg:grid-cols-4">
+              {capabilities.map((capability, index) => (
+                <li
+                  className="relative flex min-h-64 flex-col justify-between gap-8 border-b p-6 last:border-b-0 lg:border-r lg:border-b-0 lg:last:border-r-0 sm:[&:nth-child(3)]:border-b-0 sm:[&:nth-child(odd)]:border-r"
+                  key={capability.title}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-muted-foreground text-xs">
+                      {capability.number}
+                    </span>
+                    <capability.icon className="size-5 text-accent" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-xl tracking-tight">
+                      {capability.title}
+                    </h3>
+                    <p className="mt-3 text-muted-foreground text-sm leading-6">
+                      {capability.description}
+                    </p>
+                  </div>
+                  {index < capabilities.length - 1 ? (
+                    <ArrowRight className="-right-3 absolute top-1/2 z-10 hidden size-6 rounded-full border bg-background p-1 text-muted-foreground lg:block" />
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
         <section className="border-b py-20 sm:py-24" id="products">
           <div className="mx-auto max-w-7xl space-y-12 px-4 sm:px-6 lg:px-8">
             <SectionIntro
-              description="Start locally, collaborate with a team, or bring the runtime into a product you already own."
-              eyebrow="Choose your path"
-              title="One platform. Three ways in."
+              description="Desktop gives you the complete local application. Kestrel One adds a shared workspace, while the CLI/TUI and SDK give you direct access to the platform."
+              eyebrow="Desktop · Kestrel One · Developers"
+              title="Start on your computer. Add a team or integration when you need it."
             />
 
             <div className="grid gap-4 lg:grid-cols-3">
@@ -391,57 +428,20 @@ export function LandingPage() {
         <section className="border-b bg-surface py-20 sm:py-24">
           <div className="mx-auto max-w-7xl space-y-12 px-4 sm:px-6 lg:px-8">
             <SectionIntro
-              description="The product surfaces are different because the work is different. The underlying model for durable agent execution stays consistent."
-              eyebrow="See Kestrel at work"
-              title="The product is the proof."
+              description="Desktop keeps the conversation, files, activity, and result beside the local project. Kestrel One gives a team shared Projects and Threads shaped by the context they need."
+              eyebrow="Kestrel Desktop · Kestrel One"
+              title="Work in the project, then bring in the team."
             />
             <ProductShowcase />
-          </div>
-        </section>
-
-        <section className="border-b py-20 sm:py-24">
-          <div className="mx-auto max-w-7xl space-y-14 px-4 sm:px-6 lg:px-8">
-            <SectionIntro
-              description="Kestrel treats agent execution as durable work rather than a disposable request. People remain part of the operating loop."
-              eyebrow="Durable work · visible control"
-              title="Stay oriented while the work moves."
-            />
-
-            <ol className="grid border-y sm:grid-cols-2 lg:grid-cols-4">
-              {capabilities.map((capability, index) => (
-                <li
-                  className="relative flex min-h-64 flex-col justify-between gap-8 border-b p-6 last:border-b-0 lg:border-r lg:border-b-0 lg:last:border-r-0 sm:[&:nth-child(3)]:border-b-0 sm:[&:nth-child(odd)]:border-r"
-                  key={capability.title}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-muted-foreground text-xs">
-                      {capability.number}
-                    </span>
-                    <capability.icon className="size-5 text-accent" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-xl tracking-tight">
-                      {capability.title}
-                    </h3>
-                    <p className="mt-3 text-muted-foreground text-sm leading-6">
-                      {capability.description}
-                    </p>
-                  </div>
-                  {index < capabilities.length - 1 ? (
-                    <ArrowRight className="-right-3 absolute top-1/2 z-10 hidden size-6 rounded-full border bg-background p-1 text-muted-foreground lg:block" />
-                  ) : null}
-                </li>
-              ))}
-            </ol>
           </div>
         </section>
 
         <section className="border-b bg-card py-20 sm:py-24">
           <div className="mx-auto max-w-7xl space-y-12 px-4 sm:px-6 lg:px-8">
             <SectionIntro
-              description="Desktop, CLI, Kestrel One, and server applications use the same execution architecture and explicit result contracts."
-              eyebrow="One runtime · two deployment forms"
-              title="Run locally or remotely without changing the model of the work."
+              description="Model steps, tool calls, files, questions, approvals, interruptions, artifacts, and final outcomes remain attached to the recorded run that produced them."
+              eyebrow="Kestrel Runtime"
+              title="See the run, not just the answer."
             />
             <RuntimeMap />
           </div>
@@ -454,9 +454,9 @@ export function LandingPage() {
           <div className="mx-auto grid max-w-7xl gap-12 px-4 sm:px-6 lg:grid-cols-[minmax(0,0.72fr)_minmax(30rem,1.28fr)] lg:items-center lg:gap-16 lg:px-8">
             <div className="space-y-6">
               <SectionIntro
-                description="Use Kestrel from the terminal or connect a trusted Node.js application to Local Core or a hosted runner service."
-                eyebrow="Open platform"
-                title="Build on explicit contracts."
+                description="Use the CLI/TUI for direct work and automation. Use the SDK to start, stream, resume, and inspect local or remote runs from your own application."
+                eyebrow="CLI/TUI · TypeScript SDK"
+                title="Use the same runtime from the terminal or TypeScript."
               />
               <div className="flex flex-wrap gap-3">
                 <Button asChild>
@@ -498,12 +498,12 @@ export function LandingPage() {
                     Beta
                   </Badge>
                   <h2 className="text-balance font-semibold text-4xl tracking-[-0.035em]">
-                    Help shape what Kestrel becomes.
+                    Help shape Kestrel in Beta.
                   </h2>
                   <p className="mt-4 text-pretty text-muted-foreground leading-7">
-                    Beta is a product stage, not a hidden program. We document
-                    the current state, ship in public, and use real feedback to
-                    improve the products.
+                    Desktop and Kestrel One are evolving in public. We document
+                    current availability and limitations, and use reproducible
+                    feedback to guide what ships next.
                   </p>
                 </div>
                 <Button asChild className="w-fit" variant="outline">
@@ -532,14 +532,13 @@ export function LandingPage() {
           <div className="mx-auto max-w-5xl space-y-8 px-4 text-center sm:px-6 lg:px-8">
             <div className="space-y-4">
               <p className="font-mono text-muted-foreground text-xs uppercase tracking-[0.2em]">
-                Start where the work is
+                Kestrel Desktop
               </p>
               <h2 className="text-balance font-semibold text-4xl tracking-[-0.04em] sm:text-6xl">
-                Build something useful with Kestrel.
+                Start with a project you already know.
               </h2>
               <p className="mx-auto max-w-2xl text-pretty text-lg text-muted-foreground leading-8">
-                Work locally in Desktop, move together in Kestrel One, or bring
-                the runtime into your own application.
+                Choose your model and give Kestrel something useful to do.
               </p>
             </div>
             <div className="flex flex-col justify-center gap-3 sm:flex-row">
@@ -555,20 +554,9 @@ export function LandingPage() {
                 size="lg"
                 variant="outline"
               >
-                <Link href="https://docs.kestrelagents.dev/kestrel-one/getting-started">
-                  <Users />
-                  Explore Kestrel One Beta
-                </Link>
-              </Button>
-              <Button
-                asChild
-                className="h-11 px-5"
-                size="lg"
-                variant="ghost"
-              >
-                <Link href="https://docs.kestrelagents.dev/build/building-your-first-agent">
-                  <TerminalSquare />
-                  Build with the SDK
+                <Link href="https://docs.kestrelagents.dev/desktop">
+                  <BookOpen />
+                  Read the Desktop guide
                 </Link>
               </Button>
             </div>

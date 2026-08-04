@@ -1,23 +1,29 @@
 <p align="center">
-  <img src="apps/docs/public/brand/kestrel-mark.png" alt="Kestrel" width="168" />
+  <img src="apps/docs/public/brand/kestrel-mark.png" alt="Kestrel" width="104" />
 </p>
 
 <h1 align="center">Kestrel</h1>
 
 <p align="center">
-  <strong>Build with Kestrel.</strong>
+  <strong>Open a project. Choose a model. Ask Kestrel to do the work.</strong>
 </p>
 
 <p align="center">
-  Kestrel is an open agent platform led by Kestrel Desktop. Choose your model
-  and use it to build software, conduct research, work with data, and create
-  reports, spreadsheets, presentations, and more.
+  Kestrel is an open-source agent platform for building software, researching
+  questions, analyzing data, and producing reports, spreadsheets,
+  presentations, and other files.
+</p>
+
+<p align="center">
+  Start with Kestrel Desktop and the files and tools in a project on your
+  computer. Bring the same work into Kestrel One, the CLI/TUI, or your own
+  TypeScript application when you need a team, automation, or an integration.
 </p>
 
 <p align="center">
   <a href="https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0">Download Kestrel Desktop</a> ·
-  <a href="https://docs.kestrelagents.dev">Explore the docs</a> ·
-  <a href="CONTRIBUTING.md">Contribute</a>
+  <a href="https://docs.kestrelagents.dev">Read the docs</a> ·
+  <a href="https://github.com/LumiCorp/kestrel">View on GitHub</a>
 </p>
 
 <p align="center">
