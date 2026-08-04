@@ -52,6 +52,11 @@ const MAX_TOOL_DIGEST_SCALAR_PREVIEW_CHARS = 140;
 const MAX_TOOL_DIGEST_DEPTH = 5;
 const MAX_TOOL_DIGEST_ARRAY_SAMPLE_ITEMS = 3;
 const MAX_OBSERVATION_TEXT_PREVIEW_CHARS = 500;
+const MAX_REPOSITORY_COMPACT_SEEDS = 16;
+const MAX_REPOSITORY_COMPACT_GROUPS = 16;
+const MAX_REPOSITORY_COMPACT_MATCHES_PER_GROUP = 2;
+const MAX_REPOSITORY_COMPACT_SEARCH_MATCHES = 24;
+const MAX_REPOSITORY_COMPACT_PREVIEW_CHARS = 240;
 const INTERACTIVE_DEV_SHELL_TIMEOUT_GUIDANCE =
   "This command is interactive. Restart it with dev.process.start, then use dev.process.write/dev.process.read.";
 
@@ -839,9 +844,124 @@ function compactToolOutputForStorage(
   toolName: string,
   output: unknown,
 ): Record<string, unknown> | undefined {
-  return compactArtifactVerificationToolOutput(toolName, output) ??
+  return compactRepositoryInspectionToolOutput(toolName, output) ??
+    compactArtifactVerificationToolOutput(toolName, output) ??
     compactInternetToolOutput(toolName, output) ??
     compactDevShellToolOutput(toolName, output);
+}
+
+function compactRepositoryInspectionToolOutput(
+  toolName: string,
+  output: unknown,
+): Record<string, unknown> | undefined {
+  const record = asRecord(output);
+  if (record === undefined) {
+    return undefined;
+  }
+  if (toolName === "repo.trace") {
+    const seeds = asArray(record.seeds)
+      .map((item) => asString(item))
+      .filter((item): item is string => item !== undefined);
+    const groups = asArray(record.groups)
+      .map((item) => asRecord(item))
+      .filter((item): item is Record<string, unknown> => item !== undefined);
+    const compactGroups = groups
+      .slice(0, MAX_REPOSITORY_COMPACT_GROUPS)
+      .map(compactRepoTraceGroup);
+    return {
+      ...(asString(record.path) !== undefined ? { path: asString(record.path) } : {}),
+      seeds: seeds.slice(0, MAX_REPOSITORY_COMPACT_SEEDS),
+      seedCount: seeds.length,
+      ...(finiteNumber(record.searchedFileCount) !== undefined
+        ? { searchedFileCount: finiteNumber(record.searchedFileCount) }
+        : {}),
+      ...(finiteNumber(record.matchedFileCount) !== undefined
+        ? { matchedFileCount: finiteNumber(record.matchedFileCount) }
+        : {}),
+      ...(finiteNumber(record.resultCount) !== undefined
+        ? { resultCount: finiteNumber(record.resultCount) }
+        : {}),
+      ...(typeof record.truncated === "boolean" ? { sourceTruncated: record.truncated } : {}),
+      groupCount: groups.length,
+      groups: compactGroups,
+      ...(groups.length > compactGroups.length
+        ? { omittedGroupCount: groups.length - compactGroups.length }
+        : {}),
+    };
+  }
+  if (toolName === "fs.search_text") {
+    const matches = asArray(record.matches)
+      .map((item) => asRecord(item))
+      .filter((item): item is Record<string, unknown> => item !== undefined);
+    const compactMatches = matches
+      .slice(0, MAX_REPOSITORY_COMPACT_SEARCH_MATCHES)
+      .map(compactSearchTextMatch);
+    return {
+      ...(asString(record.path) !== undefined ? { path: asString(record.path) } : {}),
+      ...(asString(record.query) !== undefined ? { query: asString(record.query) } : {}),
+      ...(finiteNumber(record.matchCount) !== undefined
+        ? { matchCount: finiteNumber(record.matchCount) }
+        : {}),
+      ...(finiteNumber(record.returnedMatchCount) !== undefined
+        ? { returnedMatchCount: finiteNumber(record.returnedMatchCount) }
+        : {}),
+      ...(typeof record.truncated === "boolean" ? { sourceTruncated: record.truncated } : {}),
+      ...(finiteNumber(record.previewTruncatedCount) !== undefined
+        ? { previewTruncatedCount: finiteNumber(record.previewTruncatedCount) }
+        : {}),
+      ...(finiteNumber(record.totalPreviewChars) !== undefined
+        ? { totalPreviewChars: finiteNumber(record.totalPreviewChars) }
+        : {}),
+      matches: compactMatches,
+      ...(matches.length > compactMatches.length
+        ? { omittedMatchCount: matches.length - compactMatches.length }
+        : {}),
+    };
+  }
+  return undefined;
+}
+
+function compactRepoTraceGroup(group: Record<string, unknown>): Record<string, unknown> {
+  const matches = asArray(group.matches)
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => item !== undefined);
+  const compactMatches = matches
+    .slice(0, MAX_REPOSITORY_COMPACT_MATCHES_PER_GROUP)
+    .map((match) => ({
+      ...(asString(match.seed) !== undefined ? { seed: asString(match.seed) } : {}),
+      ...(finiteNumber(match.line) !== undefined ? { line: finiteNumber(match.line) } : {}),
+      ...(finiteNumber(match.column) !== undefined ? { column: finiteNumber(match.column) } : {}),
+      ...(asString(match.preview) !== undefined
+        ? { preview: summarizeText(asString(match.preview) ?? "", MAX_REPOSITORY_COMPACT_PREVIEW_CHARS) }
+        : {}),
+    }));
+  return {
+    ...(asString(group.path) !== undefined ? { path: asString(group.path) } : {}),
+    matchCount: matches.length,
+    matches: compactMatches,
+    ...(matches.length > compactMatches.length
+      ? { omittedMatchCount: matches.length - compactMatches.length }
+      : {}),
+  };
+}
+
+function compactSearchTextMatch(match: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...(asString(match.path) !== undefined ? { path: asString(match.path) } : {}),
+    ...(finiteNumber(match.line) !== undefined ? { line: finiteNumber(match.line) } : {}),
+    ...(finiteNumber(match.column) !== undefined ? { column: finiteNumber(match.column) } : {}),
+    ...(asString(match.preview) !== undefined
+      ? { preview: summarizeText(asString(match.preview) ?? "", MAX_REPOSITORY_COMPACT_PREVIEW_CHARS) }
+      : asString(match.text) !== undefined
+        ? { text: summarizeText(asString(match.text) ?? "", MAX_REPOSITORY_COMPACT_PREVIEW_CHARS) }
+        : {}),
+  };
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.trunc(value)
+    : undefined;
 }
 
 function compactArtifactVerificationToolOutput(

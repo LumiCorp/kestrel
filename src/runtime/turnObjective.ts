@@ -93,13 +93,17 @@ export function shouldStartFreshUserMessageTaskEpoch(input: KestrelTurnObjective
 
 export function shouldPreserveTranscriptTaskForTurn(input: KestrelTurnObjectiveInput): boolean {
   const submissionKind = readSubmissionKind(input.eventPayload);
-  if (submissionKind === "initial" || submissionKind === "follow_up") return false;
+  const activeIntent = readActiveTurnIntent(input.reactState);
+  if (submissionKind === "initial" || submissionKind === "follow_up") {
+    return activeIntent !== undefined &&
+      input.eventId !== undefined &&
+      activeIntent.rootEventId === input.eventId;
+  }
   if (submissionKind === "resume" || submissionKind === "steer") return true;
   if (input.eventPayload.resumeBlockedRun === true || input.eventType === "user.reply") return true;
   if (input.eventType !== "user.message") return true;
-  const activeIntent = readActiveTurnIntent(input.reactState);
   if (activeIntent !== undefined && input.eventId !== undefined) {
-    return activeIntent.turnId === input.eventId;
+    return activeIntent.rootEventId === input.eventId || activeIntent.turnId === input.eventId;
   }
   return hasLegacyActiveTaskState(input.reactState);
 }

@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveKestrelTurnObjective } from "../../src/runtime/turnObjective.js";
+import {
+  resolveKestrelTurnObjective,
+  shouldPreserveTranscriptTaskForTurn,
+  shouldStartFreshUserMessageTaskEpoch,
+} from "../../src/runtime/turnObjective.js";
 
 
 test("resume objective uses fallback goal instead of acknowledgement message", () => {
@@ -120,6 +124,67 @@ test("canonical initial submission starts a fresh objective despite stale execut
   assert.equal(result.goal, "Document our plan and start working");
   assert.equal(result.source, "fresh-user-message");
   assert.equal(result.preservesTranscriptTask, false);
+});
+
+test("canonical fresh submissions preserve the active task after their root event is initialized", () => {
+  for (const submissionKind of ["initial", "follow_up"] as const) {
+    const input = {
+      reactState: {
+        activeTurnIntent: {
+          version: "v1",
+          turnId: `turn-${submissionKind}`,
+          rootEventId: `event-${submissionKind}`,
+          objective: "Explain the like feature",
+          activeTranscriptItemId: `user-${submissionKind}`,
+        },
+        observations: [{ summary: "Found src/app/components/LikeButton.tsx" }],
+      },
+      eventType: "user.message",
+      eventId: `event-${submissionKind}`,
+      eventPayload: {
+        message: "Explain the like feature",
+        metadata: {
+          turnId: `turn-${submissionKind}`,
+          submissionKind,
+        },
+      },
+    };
+
+    assert.equal(shouldPreserveTranscriptTaskForTurn(input), true);
+    assert.equal(shouldStartFreshUserMessageTaskEpoch(input), false);
+    assert.deepEqual(resolveKestrelTurnObjective(input), {
+      goal: "Explain the like feature",
+      source: "active-turn-intent",
+      preservesTranscriptTask: true,
+    });
+  }
+});
+
+test("canonical initial submission remains fresh when only the turn id is reused", () => {
+  const input = {
+    reactState: {
+      activeTurnIntent: {
+        version: "v1",
+        turnId: "turn-reused",
+        rootEventId: "event-old",
+        objective: "Old objective",
+        activeTranscriptItemId: "user-old",
+      },
+    },
+    eventType: "user.message",
+    eventId: "event-new",
+    eventPayload: {
+      message: "New objective",
+      metadata: {
+        turnId: "turn-reused",
+        submissionKind: "initial" as const,
+      },
+    },
+  };
+
+  assert.equal(shouldPreserveTranscriptTaskForTurn(input), false);
+  assert.equal(shouldStartFreshUserMessageTaskEpoch(input), true);
+  assert.equal(resolveKestrelTurnObjective(input).goal, "New objective");
 });
 
 test("canonical follow-up starts a fresh task while resume and steer preserve it", () => {

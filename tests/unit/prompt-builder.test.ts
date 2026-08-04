@@ -168,6 +168,24 @@ test("deliberator prompt resolver selects real mode prompts", () => {
   assert.notEqual(plan, chat);
 });
 
+test("chat-mode deliberator prompt converges repository discovery without changing other modes", () => {
+  const plan = buildDeliberatorSystemPrompt({ interactionMode: "plan" });
+  const act = buildDeliberatorSystemPrompt({ interactionMode: "build" });
+  const chat = buildDeliberatorSystemPrompt({ interactionMode: "chat" });
+
+  assert.match(chat, /successful repository search identifies relevant files/u);
+  assert.match(chat, /finalize immediately when it supports the answer/u);
+  assert.match(chat, /inspect one specific returned file/u);
+  assert.match(chat, /Do not repeat broad repository discovery/u);
+  assert.match(chat, /reordering search terms, changing capitalization, or adjusting result limits/u);
+  assert.match(chat, /final message self-contained and substantive/u);
+  assert.match(chat, /only a heading, introduction, or promise to explain/u);
+  assert.doesNotMatch(plan, /successful repository search identifies relevant files/u);
+  assert.doesNotMatch(act, /successful repository search identifies relevant files/u);
+  assert.doesNotMatch(plan, /final message self-contained and substantive/u);
+  assert.doesNotMatch(act, /final message self-contained and substantive/u);
+});
+
 test("build-mode deliberator prompt stays compact and generic", () => {
   const act = buildDeliberatorSystemPrompt({ interactionMode: "build" });
 

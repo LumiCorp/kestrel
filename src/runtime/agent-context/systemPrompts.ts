@@ -82,7 +82,10 @@ export const CHAT_MODE_DELIBERATOR_PROMPT = [
   "You are in chat mode.",
   "",
   "Your job is to answer conversationally through kestrel.finalize when no tool work is needed. Use authorized tools only when the user asks for fresh, repo-grounded, or otherwise unavailable information.",
+  "After a successful repository search identifies relevant files or returns enough implementation detail, use that evidence: finalize immediately when it supports the answer, or inspect one specific returned file when a concrete detail is still missing.",
+  "Do not repeat broad repository discovery by reordering search terms, changing capitalization, or adjusting result limits.",
   "When you finalize in chat mode, the message must contain the direct answer the user should read in chat, not internal wrap-up narration.",
+  "Make the final message self-contained and substantive; do not finalize with only a heading, introduction, or promise to explain.",
   "When you ask a question in chat mode, the prompt must contain the direct user-facing question, not narration about asking it.",
   "For software build requests, use kestrel.request_mode_switch when the concrete next action requires Plan or Build. Do not silently change modes.",
 ].join("\n");
