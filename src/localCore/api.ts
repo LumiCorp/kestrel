@@ -122,6 +122,12 @@ import { verifyAndStoreLocalCoreExternalDatabase } from "./externalDatabaseVerif
 import { detectLocalCoreMigrationState } from "./legacyState.js";
 import { releaseCoreLock, writeCoreLockHeartbeat } from "./lock.js";
 import { LocalCoreProtocolEventJournal } from "./protocolEventJournal.js";
+import type {
+  LocalCoreManagedCredentialReadiness,
+  LocalCoreProviderReadiness,
+  LocalCoreProviderReadinessResponse,
+  LocalCoreToolReadiness,
+} from "./providerReadiness.js";
 import { createLocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.js";
 import {
   LocalCoreRuntimeConfigurationError,
@@ -179,7 +185,13 @@ interface LocalCoreExecutionBundle {
   handler: RunnerServiceHttpHandler;
   store: RuntimeSessionStore;
   runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
+  credentialReadiness: LocalCoreRuntimeCredentialReadiness;
 }
+
+type LocalCoreRuntimeCredentialReadiness = Pick<
+  LocalCoreProviderReadinessResponse,
+  "providerReadiness" | "toolReadiness"
+>;
 
 interface LocalCoreMaintenanceOperation {
   kind: "restart" | "runtime_store_reset" | "runtime_configuration_update";
@@ -690,6 +702,8 @@ export async function startLocalCoreApiServer(
           restartExecution,
           resetRuntimeStore,
           getSystemLifecycle,
+          getRuntimeCredentialReadiness: () =>
+            executionBundle?.credentialReadiness,
           requestSystemShutdown,
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
@@ -843,6 +857,10 @@ async function createExecutionBundle(input: {
   const runtimeConfiguration =
     input.runtimeConfiguration ??
     (await input.runtimeConfigurationStore.read());
+  const credentialReadiness = await runtimeCredentialReadiness(
+    input.options.env ?? process.env,
+    input.options.credentialStore,
+  );
   const repoRoot = normalizeString(input.options.repoRoot);
   const storeHandle = await ensureLocalCoreStore({
     homePath: input.status.home.homePath,
@@ -903,6 +921,7 @@ async function createExecutionBundle(input: {
       handler,
       store: storeHandle.store,
       runtimeConfiguration,
+      credentialReadiness,
     };
   } catch (error) {
     await handler.close({ abortActiveRuns: true }).catch(() => {});
@@ -1159,6 +1178,9 @@ async function handleRequest(input: {
   restartExecution(): Promise<LocalCoreStatus>;
   resetRuntimeStore(): Promise<LocalCoreRuntimeStoreResetResult>;
   getSystemLifecycle(): LocalCoreSystemLifecycle;
+  getRuntimeCredentialReadiness():
+    | LocalCoreRuntimeCredentialReadiness
+    | undefined;
   requestSystemShutdown(
     reason: LocalCoreSystemShutdownRequest["reason"],
   ): LocalCoreSystemShutdownResult;
@@ -2050,12 +2072,17 @@ async function handleRequest(input: {
       return;
     }
     if (method === "GET" && url.pathname === "/v1/provider-readiness") {
+      const readiness = input.getRuntimeCredentialReadiness();
+      if (readiness === undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+          "Local Core credential readiness is unavailable until execution is healthy.",
+        );
+      }
       writeJson(input.response, 200, {
         ok: true,
-        providerReadiness: await providerReadiness(
-          input.ensureOptions.env ?? process.env,
-          input.ensureOptions.credentialStore,
-        ),
+        ...readiness,
       });
       return;
     }
@@ -3116,15 +3143,18 @@ async function readDesktopDeveloperEnvironmentOptions(
   };
 }
 
-async function providerReadiness(
+async function runtimeCredentialReadiness(
   env: NodeJS.ProcessEnv,
   credentialStore?: LocalCoreCredentialStore | undefined,
-): Promise<Record<string, unknown>> {
+): Promise<{
+  providerReadiness: LocalCoreProviderReadiness;
+  toolReadiness: LocalCoreToolReadiness;
+}> {
   const credentialStatus =
     credentialStore === undefined
       ? undefined
       : await readLocalCoreCredentialStoreStatus(credentialStore);
-  return {
+  const providerReadiness: LocalCoreProviderReadiness = {
     openrouter: providerCredentialReadiness({
       configured:
         credentialStatus === undefined
@@ -3163,19 +3193,28 @@ async function providerReadiness(
       beta: true,
     },
   };
+  const toolReadiness: LocalCoreToolReadiness = {
+    tavily: providerCredentialReadiness({
+      configured:
+        credentialStatus === undefined
+          ? normalizeString(env.TAVILY_API_KEY) !== undefined
+          : isCredentialConfigured(credentialStatus, "tool.tavily.default"),
+      available: credentialStatus?.available ?? true,
+    }),
+  };
+  return { providerReadiness, toolReadiness };
 }
 
 function providerCredentialReadiness(input: {
   configured: boolean;
   available: boolean;
-}): { ready: boolean; credential: "configured" | "missing" | "unavailable" } {
+}): LocalCoreManagedCredentialReadiness {
+  if (input.configured) {
+    return { ready: true, credential: "configured" };
+  }
   return {
-    ready: input.configured,
-    credential: input.configured
-      ? "configured"
-      : input.available
-        ? "missing"
-        : "unavailable",
+    ready: false,
+    credential: input.available ? "missing" : "unavailable",
   };
 }
 

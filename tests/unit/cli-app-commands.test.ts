@@ -3350,6 +3350,184 @@ test("splash dismissal stays blocked until pre-flight reaches ready", async () =
   assert.equal(uiStore.getState().splashVisible, false);
 });
 
+test("splash preflight trusts Local Core provider readiness over the TUI environment", async () => {
+  const { app } = await createAppHarness({ scripted: true });
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const previousOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  let providerReadinessCalls = 0;
+
+  process.env.OPENROUTER_API_KEY = "tui-only-openrouter-key";
+  uiStore.patch({
+    splashVisible: true,
+    splashPreflight: {
+      phase: "running",
+      summary: "starting pre-flight",
+      checks: [
+        { id: "profiles", label: "profiles", state: "ok", detail: "reference" },
+        { id: "session", label: "session", state: "ok", detail: "default" },
+        { id: "theme", label: "theme", state: "ok", detail: "system" },
+        { id: "runner", label: "runner", state: "pending", detail: "waiting" },
+        { id: "handshake", label: "handshake", state: "pending", detail: "session-1" },
+        { id: "database", label: "database", state: "pending", detail: "waiting" },
+        { id: "provider", label: "credentials", state: "pending", detail: "openrouter" },
+        { id: "mcp", label: "mcp", state: "pending", detail: "waiting" },
+      ],
+    },
+  });
+  appState.client = {
+    start: () => {},
+    sendCommand: async (type: string) => {
+      assert.equal(type, "session.describe");
+      return {
+        type: "session.described",
+        payload: {
+          sessionId: "session-1",
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    },
+  };
+  const localCoreStatus = appState.localCoreStatus as {
+    client: Record<string, unknown>;
+  };
+  appState.runnerUsesLocalCore = true;
+  localCoreStatus.client.providerReadiness = async () => {
+    providerReadinessCalls += 1;
+    return {
+      ok: true,
+      providerReadiness: {
+        openrouter: { ready: false, credential: "missing" },
+        openai: { ready: true, credential: "configured" },
+        anthropic: { ready: false, credential: "missing" },
+        ollama: { ready: true, credential: "not_required", beta: true },
+        lmstudio: { ready: true, credential: "not_required", beta: true },
+      },
+      toolReadiness: {
+        tavily: { ready: true, credential: "configured" },
+      },
+    };
+  };
+
+  try {
+    await (appState.runSplashPreflight as () => Promise<void>)();
+
+    const next = uiStore.getState();
+    assert.equal(providerReadinessCalls, 1);
+    assert.equal(next.splashPreflight.phase, "failed");
+    assert.match(next.splashPreflight.summary, /Local Core.*openrouter.*missing/iu);
+    assert.equal(
+      next.splashPreflight.checks.find((check) => check.id === "provider")?.state,
+      "fail",
+    );
+  } finally {
+    restoreProcessEnv("OPENROUTER_API_KEY", previousOpenRouterApiKey);
+  }
+});
+
+test("splash preflight trusts Local Core Tavily readiness over the TUI environment in both directions", async () => {
+  const { app } = await createAppHarness({ scripted: true });
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const previousTavilyApiKey = process.env.TAVILY_API_KEY;
+  let providerReadinessCalls = 0;
+  let tavilyReady = false;
+
+  process.env.TAVILY_API_KEY = "tui-only-tavily-key";
+  uiStore.patch({
+    splashVisible: true,
+    splashPreflight: {
+      phase: "running",
+      summary: "starting pre-flight",
+      checks: [
+        { id: "profiles", label: "profiles", state: "ok", detail: "reference" },
+        { id: "session", label: "session", state: "ok", detail: "default" },
+        { id: "theme", label: "theme", state: "ok", detail: "system" },
+        { id: "runner", label: "runner", state: "pending", detail: "waiting" },
+        { id: "handshake", label: "handshake", state: "pending", detail: "session-1" },
+        { id: "database", label: "database", state: "pending", detail: "waiting" },
+        { id: "provider", label: "credentials", state: "pending", detail: "openrouter" },
+        { id: "mcp", label: "mcp", state: "pending", detail: "waiting" },
+      ],
+    },
+  });
+  appState.client = {
+    start: () => {},
+    sendCommand: async () => ({
+      type: "session.described",
+      payload: {
+        sessionId: "session-1",
+        updatedAt: new Date().toISOString(),
+      },
+    }),
+  };
+  appState.runnerUsesLocalCore = true;
+  appState.runSplashDatabaseCheck = async () => {};
+  appState.runSplashMcpCheck = async () => {};
+  const localCoreStatus = appState.localCoreStatus as {
+    client: Record<string, unknown>;
+  };
+  localCoreStatus.client.providerReadiness = async () => {
+    providerReadinessCalls += 1;
+    return {
+      ok: true,
+      providerReadiness: {
+        openrouter: { ready: true, credential: "configured" },
+        openai: { ready: false, credential: "missing" },
+        anthropic: { ready: false, credential: "missing" },
+        ollama: { ready: true, credential: "not_required", beta: true },
+        lmstudio: { ready: true, credential: "not_required", beta: true },
+      },
+      toolReadiness: {
+        tavily: tavilyReady
+          ? { ready: true, credential: "configured" }
+          : { ready: false, credential: "missing" },
+      },
+    };
+  };
+
+  try {
+    await (appState.runSplashPreflight as () => Promise<void>)();
+
+    const next = uiStore.getState();
+    assert.equal(providerReadinessCalls, 1);
+    assert.equal(next.splashPreflight.phase, "failed");
+    assert.match(next.splashPreflight.summary, /Local Core.*Tavily.*missing/iu);
+    assert.equal(
+      next.splashPreflight.checks.find((check) => check.id === "provider")?.state,
+      "fail",
+    );
+
+    delete process.env.TAVILY_API_KEY;
+    tavilyReady = true;
+    uiStore.patch({
+      splashVisible: true,
+      splashPreflight: {
+        ...next.splashPreflight,
+        phase: "running",
+        summary: "starting pre-flight",
+        checks: next.splashPreflight.checks.map((check) =>
+          check.id === "provider"
+            ? { ...check, state: "pending", detail: "openrouter" }
+            : check
+        ),
+      },
+    });
+
+    await (appState.runSplashPreflight as () => Promise<void>)();
+
+    const ready = uiStore.getState();
+    assert.equal(providerReadinessCalls, 2);
+    assert.equal(ready.splashPreflight.phase, "ready");
+    assert.equal(
+      ready.splashPreflight.checks.find((check) => check.id === "provider")?.state,
+      "ok",
+    );
+  } finally {
+    restoreProcessEnv("TAVILY_API_KEY", previousTavilyApiKey);
+  }
+});
+
 test("scripted mode auto-dismisses splash when pre-flight reaches ready", async () => {
   const { app } = await createAppHarness({ scripted: true });
   const appState = app as unknown as Record<string, unknown>;

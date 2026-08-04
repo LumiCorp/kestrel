@@ -118,6 +118,102 @@ test("LocalCoreClient strictly parses nested runtime configuration and credentia
   }
 });
 
+test("LocalCoreClient parses provider readiness at the API boundary", async () => {
+  const fixture = await startStaticLocalCore(() => ({
+    ok: true,
+    providerReadiness: {
+      openrouter: { ready: false, credential: "missing" },
+      openai: { ready: true, credential: "configured" },
+      anthropic: { ready: false, credential: "unavailable" },
+      ollama: { ready: true, credential: "not_required", beta: true },
+      lmstudio: { ready: true, credential: "not_required", beta: true },
+    },
+    toolReadiness: {
+      tavily: { ready: false, credential: "missing" },
+    },
+  }));
+  try {
+    const client = new LocalCoreClient({
+      socketPath: fixture.socketPath,
+      token: "test-token",
+    });
+
+    assert.deepEqual(await client.providerReadiness(), {
+      ok: true,
+      providerReadiness: {
+        openrouter: { ready: false, credential: "missing" },
+        openai: { ready: true, credential: "configured" },
+        anthropic: { ready: false, credential: "unavailable" },
+        ollama: { ready: true, credential: "not_required", beta: true },
+        lmstudio: { ready: true, credential: "not_required", beta: true },
+      },
+      toolReadiness: {
+        tavily: { ready: false, credential: "missing" },
+      },
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("LocalCoreClient rejects inconsistent provider readiness", async () => {
+  const fixture = await startStaticLocalCore(() => ({
+    ok: true,
+    providerReadiness: {
+      openrouter: { ready: true, credential: "missing" },
+      openai: { ready: true, credential: "configured" },
+      anthropic: { ready: false, credential: "missing" },
+      ollama: { ready: true, credential: "not_required", beta: true },
+      lmstudio: { ready: true, credential: "not_required", beta: true },
+    },
+    toolReadiness: {
+      tavily: { ready: false, credential: "missing" },
+    },
+  }));
+  try {
+    const client = new LocalCoreClient({
+      socketPath: fixture.socketPath,
+      token: "test-token",
+    });
+
+    await assert.rejects(
+      () => client.providerReadiness(),
+      /provider readiness 'openrouter' is inconsistent/u,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("LocalCoreClient rejects inconsistent tool readiness", async () => {
+  const fixture = await startStaticLocalCore(() => ({
+    ok: true,
+    providerReadiness: {
+      openrouter: { ready: true, credential: "configured" },
+      openai: { ready: false, credential: "missing" },
+      anthropic: { ready: false, credential: "missing" },
+      ollama: { ready: true, credential: "not_required", beta: true },
+      lmstudio: { ready: true, credential: "not_required", beta: true },
+    },
+    toolReadiness: {
+      tavily: { ready: true, credential: "missing" },
+    },
+  }));
+  try {
+    const client = new LocalCoreClient({
+      socketPath: fixture.socketPath,
+      token: "test-token",
+    });
+
+    await assert.rejects(
+      () => client.providerReadiness(),
+      /tool readiness 'tavily' is inconsistent/u,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 async function startDelayedLocalCore(responseDelayMs: number): Promise<{
   socketPath: string;
   close(): Promise<void>;

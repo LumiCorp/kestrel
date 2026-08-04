@@ -1084,6 +1084,7 @@ test("Local Core provider readiness follows the authoritative credential store",
       KESTREL_CORE_HOME: home,
       OPENAI_API_KEY: "ambient-openai-key-must-not-count",
       ANTHROPIC_API_KEY: "ambient-anthropic-key-must-not-count",
+      TAVILY_API_KEY: "ambient-tavily-key-must-not-count",
     },
     platform: "darwin",
     coreVersion: "0.6.0",
@@ -1112,21 +1113,44 @@ test("Local Core provider readiness follows the authoritative credential store",
     assert.equal(serializedRuntimeConfiguration.includes("stored-openrouter-key"), false);
     assert.equal(serializedRuntimeConfiguration.includes("ambient-openai-key-must-not-count"), false);
     assert.equal(serializedRuntimeConfiguration.includes("ambient-anthropic-key-must-not-count"), false);
-    const response = await client.providerReadiness() as {
-      providerReadiness?: Record<string, { ready?: boolean; credential?: string }>;
-    };
-    assert.deepEqual(response.providerReadiness?.openrouter, {
+    const response = await client.providerReadiness();
+    assert.deepEqual(response.providerReadiness.openrouter, {
       ready: true,
       credential: "configured",
     });
-    assert.deepEqual(response.providerReadiness?.openai, {
+    assert.deepEqual(response.providerReadiness.openai, {
       ready: false,
       credential: "missing",
     });
-    assert.deepEqual(response.providerReadiness?.anthropic, {
+    assert.deepEqual(response.providerReadiness.anthropic, {
       ready: false,
       credential: "missing",
     });
+    assert.deepEqual(response.toolReadiness.tavily, {
+      ready: false,
+      credential: "missing",
+    });
+
+    await client.setCredential(
+      "tool.tavily.default",
+      "stored-tavily-key",
+    );
+    assert.deepEqual(
+      (await client.providerReadiness()).toolReadiness.tavily,
+      {
+        ready: false,
+        credential: "missing",
+      },
+    );
+
+    await client.restart();
+    assert.deepEqual(
+      (await client.providerReadiness()).toolReadiness.tavily,
+      {
+        ready: true,
+        credential: "configured",
+      },
+    );
   } finally {
     await server.close();
     await rm(home, { recursive: true, force: true });
