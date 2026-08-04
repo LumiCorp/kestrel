@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
-import { AllowlistedToolGateway } from "../../src/io/ToolGateway.js";
 import { createRecoveryPolicyV1, type RecoveryModelCandidateV1 } from "../../src/kestrel/contracts/recovery.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
 import {
@@ -14,6 +13,7 @@ import {
   registerDefaultRecoveryWorkflowHandlers,
 } from "../../src/engine/recovery/RecoveryRegistries.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 test("runtime persists recovery evidence and routes to the first compatible pinned model", async () => {
   const primary = modelCandidate("primary", "openai", "primary-model");
@@ -69,7 +69,7 @@ test("runtime persists recovery evidence and routes to the first compatible pinn
   const kestrel = new Kestrel({
     store,
     modelGateway: primaryGateway,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     runEventListener: (event) => {
       events.push(event.type);
     },
@@ -165,7 +165,7 @@ test("alternate tools are committed as typed effects and traverse normal gateway
   });
   let sourceCalls = 0;
   let targetCalls = 0;
-  const toolGateway = new AllowlistedToolGateway({
+  const toolGateway = createTestToolGateway({
     "code.execute": async () => {
       sourceCalls += 1;
       if (sourceCalls === 1) return { status: "runtime_unavailable" };
@@ -283,7 +283,7 @@ test("external-effect recovery waits for a fresh exact approval before committin
   const kestrel = new Kestrel({
     store,
     modelGateway: gateway,
-    toolGateway: new AllowlistedToolGateway({
+    toolGateway: createTestToolGateway({
       "code.execute": async () => ({ status: "runtime_unavailable" }),
       "deploy.execute": async () => {
         targetCalls += 1;
@@ -375,7 +375,7 @@ test("managed recovery review waits durably and exact decline settles RECOVERY_D
   const kestrel = new Kestrel({
     store,
     modelGateway: gateway,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     recoveryRuntime: {
       policy,
       executionProfileFingerprint: "c".repeat(64),

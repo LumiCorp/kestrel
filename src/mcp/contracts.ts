@@ -1,4 +1,5 @@
 import type { InteractionMode } from "../mode/contracts.js";
+import type { ToolDescriptorV1 } from "../kestrel/contracts/tool-contract.js";
 
 export type McpServerTransport = "stdio" | "http" | "sse";
 
@@ -52,7 +53,10 @@ export interface McpDiscoveredTool {
   namespacedToolName: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown> | undefined;
   presentation?: McpToolPresentationMetadata | undefined;
+  descriptor?: ToolDescriptorV1 | undefined;
+  registrationError?: McpToolRegistrationDiagnosticV1 | undefined;
   allowlisted?: boolean | undefined;
   protocolKind?:
     | "tool"
@@ -61,6 +65,13 @@ export interface McpDiscoveredTool {
     | "prompt"
     | undefined;
   protocolTarget?: string | undefined;
+}
+
+export interface McpToolRegistrationDiagnosticV1 {
+  code:
+    | "MCP_TOOL_PRESENTATION_MISSING"
+    | "MCP_TOOL_DESCRIPTOR_INVALID";
+  message: string;
 }
 
 export interface McpServerStatus {

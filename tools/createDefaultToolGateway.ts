@@ -13,7 +13,16 @@ export function createDefaultToolGateway(options: CreateDefaultToolGatewayOption
     options.allowlist,
     withDefaultFileSystemPolicy(options.context),
   );
-  return new AllowlistedToolGateway(handlers);
+  return new AllowlistedToolGateway(
+    options.allowlist.map((name) => {
+      const descriptor = defaultToolCatalog.getDescriptor(name);
+      const handler = handlers[name];
+      if (descriptor === undefined || handler === undefined) {
+        throw new Error(`Tool '${name}' is missing its compiled registration.`);
+      }
+      return { descriptor, handler };
+    }),
+  );
 }
 
 export const DEFAULT_BALANCED_TOOL_ALLOWLIST: string[] = [...BALANCED_STARTER_TOOL_NAMES];

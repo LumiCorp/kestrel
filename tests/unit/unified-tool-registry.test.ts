@@ -296,6 +296,11 @@ test("UnifiedToolRegistry includes allowlisted MCP tools in model specs and capa
         description: "Lookup via MCP",
         inputSchema: {
           type: "object",
+          properties: {
+            q: { type: "string" },
+          },
+          required: ["q"],
+          additionalProperties: false,
         },
         presentation: {
           displayName: "Remote lookup",
@@ -2262,7 +2267,7 @@ test("UnifiedToolRegistry scopes allowlists per run context", async () => {
           toolName: "lookup",
           namespacedToolName: "mcp.remote.lookup",
           description: "Lookup via MCP",
-          inputSchema: { type: "object" },
+          inputSchema: { type: "object", additionalProperties: false },
           presentation: {
             displayName: "Remote lookup",
             aliases: ["lookup", "mcp.remote.lookup"],

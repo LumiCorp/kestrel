@@ -1,5 +1,4 @@
-import { tool, type UIMessageStreamWriter } from "ai";
-import { z } from "zod";
+import { jsonSchema, tool, type UIMessageStreamWriter } from "ai";
 import type { AuthSession } from "@/app/(auth)/auth";
 import {
   artifactKinds,
@@ -7,6 +6,7 @@ import {
 } from "@/lib/artifacts/server";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
+import { webArtifactToolDescriptorCatalog } from "./artifact-tool-contracts";
 
 type CreateDocumentProps = {
   session: AuthSession | null;
@@ -24,12 +24,11 @@ export const createDocument = ({
   modelId,
 }: CreateDocumentProps) =>
   tool({
-    description:
-      "Create a document for a writing or content creation activities. This tool will call other functions that will generate the contents of the document based on the title and kind.",
-    inputSchema: z.object({
-      title: z.string(),
-      kind: z.enum(artifactKinds),
-    }),
+    description: createDocumentDescriptor.description,
+    inputSchema: jsonSchema<{
+      title: string;
+      kind: (typeof artifactKinds)[number];
+    }>(createDocumentDescriptor.inputSchema),
     execute: async ({ title, kind }) => {
       if (!session?.user?.id) {
         throw createToolExecutionError("UNAUTHORIZED", "Unauthorized");
@@ -91,3 +90,11 @@ export const createDocument = ({
       };
     },
   });
+
+const createDocumentDescriptor = requiredDescriptor("createDocument");
+
+function requiredDescriptor(toolId: string) {
+  const descriptor = webArtifactToolDescriptorCatalog.getDescriptor(toolId);
+  if (descriptor === undefined) throw new Error(`Missing descriptor '${toolId}'`);
+  return descriptor;
+}

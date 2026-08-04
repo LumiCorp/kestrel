@@ -24,6 +24,10 @@ import type {
   InteractionMode,
   ToolExecutionClass,
 } from "../src/mode/contracts.js";
+import type {
+  ToolDescriptorRefV1,
+  ToolDescriptorV1,
+} from "../src/kestrel/contracts/tool-contract.js";
 import type { MissionControlProjectStateRecord } from "../src/missionControl/projectAuthority.js";
 import type { ManagedTaskWorktreeService } from "../src/workspace/ManagedTaskWorktreeService.js";
 import type { TavilyInternetProvider } from "./internet/contracts.js";
@@ -250,6 +254,9 @@ export interface SharedToolModule {
 
 export interface ToolCatalog {
   list(): SharedToolDefinition[];
+  listDescriptors(): ToolDescriptorV1[];
+  getDescriptor(name: string): ToolDescriptorV1 | undefined;
+  getDescriptorRef(name: string): ToolDescriptorRefV1 | undefined;
   toModelTools(names: string[]): ModelToolSpec[];
   toCapabilityManifest(names: string[]): Array<
     ToolCapabilityMetadata & {
@@ -273,6 +280,10 @@ export interface ToolRegistryListOptions {
 }
 
 export interface ToolRegistry extends ToolGateway {
+  getDescriptor(
+    name: string,
+    options?: ToolRegistryListOptions,
+  ): ToolDescriptorV1 | undefined;
   getModelTools(options?: ToolRegistryListOptions): ModelToolSpec[];
   getCapabilityManifest(options?: ToolRegistryListOptions): Array<
     ToolCapabilityMetadata & {

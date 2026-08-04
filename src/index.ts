@@ -2,7 +2,12 @@ export * from "./kestrel/index.js";
 export { ExecutionEngine } from "./engine/ExecutionEngine.js";
 export { InMemoryStepContractRegistry } from "./engine/StepContractRegistry.js";
 export { InMemoryStepRegistry } from "./steps/StepRegistry.js";
-export { AllowlistedToolGateway } from "./io/ToolGateway.js";
+export {
+  AllowlistedToolGateway,
+  createEmbeddedToolModuleV1,
+  type EmbeddedToolModuleAuthoringV1,
+  type RegisteredToolModuleV1,
+} from "./io/ToolGateway.js";
 export { RetryingModelGateway } from "./io/ModelGateway.js";
 export {
   DEFAULT_MODEL_TIMING_POLICY,

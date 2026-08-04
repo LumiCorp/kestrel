@@ -21,6 +21,10 @@ export type {
   ToolPresentationMetadata,
 } from "./contracts.js";
 export type {
+  ToolDescriptorRefV1,
+  ToolDescriptorV1,
+} from "../src/kestrel/contracts/tool-contract.js";
+export type {
   CreateToolProviderRuntimeConfigurationInput,
   ToolProviderConfigurationResolver,
   ToolProviderRuntimeConfiguration,

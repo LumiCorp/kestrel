@@ -80,6 +80,7 @@ Use the [Plans index](PLANS.md) as the canonical current delivery inventory.
 
 - [Architecture rules](references/architecture-rules.json)
 - [Heuristic hotspots](references/heuristic-hotspots.md)
+- [Tool Gateway 0.7 registration migration](references/tool-gateway-0.7-migration.md)
 
 ## Documentation Ownership
 

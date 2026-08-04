@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
-import { AllowlistedToolGateway } from "../../src/io/ToolGateway.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { readRequestedModelProvider } from "../../src/engine/ExecutionEngineSupport.js";
 import type { RuntimeEvent } from "../../src/kestrel/contracts/events.js";
@@ -10,6 +9,7 @@ import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import type { CommitStepInput, CommitStepResult, OutboxEventRecord } from "../../src/kestrel/contracts/store.js";
 
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 class RecordingDispatcher {
@@ -64,7 +64,7 @@ test("runtime simplification characterization pins run lifecycle ordering", asyn
     runLogListener: (entry) => {
       runLogEvents.push(entry.eventName);
     },
-    toolGateway: new AllowlistedToolGateway({
+    toolGateway: createTestToolGateway({
       lookup: async (input) => {
         toolCalls.push({ name: "lookup", input });
         return { found: true };
@@ -186,7 +186,7 @@ test("runtime simplification characterization pins wait resume target", async ()
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
@@ -241,7 +241,7 @@ test("runtime simplification characterization pins direct tool and model events"
     progressListener: (update) => {
       progressCodes.push(update.code);
     },
-    toolGateway: new AllowlistedToolGateway({
+    toolGateway: createTestToolGateway({
       lookup: async () => ({ value: 42 }),
     }),
     modelGateway: new RetryingModelGateway(async <T>(request: ModelRequest) => {

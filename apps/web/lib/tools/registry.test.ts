@@ -89,7 +89,7 @@ test("runtime names expose current chat tools", () => {
   assert.ok(runtimeNames.includes("free.time.current"));
   assert.ok(runtimeNames.includes("free.geocode.lookup"));
   assert.ok(runtimeNames.includes("free.exchange.rate"));
-  assert.ok(runtimeNames.includes("searchKnowledgeDocuments"));
+  assert.ok(runtimeNames.includes("kestrel_one.search_knowledge_documents"));
   assert.ok(runtimeNames.includes("createDocument"));
 });
 
