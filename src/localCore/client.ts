@@ -132,6 +132,13 @@ export class LocalCoreClient {
     });
   }
 
+  async shutdownForDesktopRestart(): Promise<LocalCoreSystemShutdownResult> {
+    return await this.requestSystemShutdown({
+      reason: "desktop_restart",
+      confirm: "shutdown-local-core-for-desktop-restart",
+    });
+  }
+
   private async requestSystemShutdown(
     input: LocalCoreSystemShutdownRequest,
   ): Promise<LocalCoreSystemShutdownResult> {

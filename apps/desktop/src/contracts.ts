@@ -79,6 +79,7 @@ import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
 import type { MissionControlProjectStateRecord } from "../../../src/missionControl/projectAuthority.js";
 import type { MissionControlCompletionContract } from "../../../src/missionControl/reviewContracts.js";
 import type { DesktopEnvironmentStatusProjection } from "../../../src/localCore/desktopEnvironmentConnector.js";
+import type { LocalCoreSystemLifecycleBlocker } from "../../../src/localCore/contracts.js";
 import type {
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
@@ -313,6 +314,18 @@ export interface DesktopRuntimeStoreResetResult extends DesktopRuntimeStoreReset
   runtimeStatus: DesktopRuntimeStatus;
 }
 
+export interface DesktopRestartKestrelInput {
+  force: boolean;
+}
+
+export type DesktopRestartKestrelResult =
+  | { status: "restarting" }
+  | {
+      status: "blocked";
+      blockers: LocalCoreSystemLifecycleBlocker[];
+      forceAvailable: boolean;
+    };
+
 export type DesktopShellCommand =
   | "add-project"
   | "new-thread"
@@ -444,6 +457,9 @@ export interface DesktopBridge {
   restartRuntime(): Promise<DesktopRuntimeStatus>;
   requestMicrophoneAccess(): Promise<DesktopMicrophoneAccess>;
   resetRuntimeStore(): Promise<DesktopRuntimeStoreResetResult>;
+  restartKestrel(
+    input: DesktopRestartKestrelInput,
+  ): Promise<DesktopRestartKestrelResult>;
   restartApp(): Promise<void>;
   getUpdateState(): Promise<DesktopUpdateState>;
   checkForUpdates(): Promise<DesktopUpdateState>;

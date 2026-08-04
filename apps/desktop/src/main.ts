@@ -154,6 +154,12 @@ import {
   type DesktopRunnerControlTransport,
 } from "./localCoreRunnerTransport.js";
 import {
+  createDesktopLocalCoreRecoveryOperations,
+  createDesktopStartupRecoveryCoordinator,
+  parseDesktopRestartKestrelInput,
+  type DesktopStartupRecoveryCoordinator,
+} from "./localCoreRecovery.js";
+import {
   createDefaultDesktopSettings,
   normalizeDesktopSettings,
   preserveDesktopProjectRegistrationIds,
@@ -383,6 +389,7 @@ const preloadPath = path.join(currentDir, "preload.js");
 const { autoUpdater } = electronUpdater;
 let desktopUpdateCoordinator: DesktopUpdateCoordinator | undefined;
 let desktopShutdownPreparation: DesktopShutdownPreparation | undefined;
+let desktopStartupRecoveryCoordinator: DesktopStartupRecoveryCoordinator | undefined;
 
 async function main(): Promise<void> {
   await app.whenReady();
@@ -424,6 +431,20 @@ async function main(): Promise<void> {
 
   configureEmbeddedPreviewSecurity();
   desktopShutdownPreparation = createMainDesktopShutdownPreparation();
+  desktopStartupRecoveryCoordinator = createDesktopStartupRecoveryCoordinator({
+    operations: createDesktopLocalCoreRecoveryOperations(localCoreHome.homePath),
+    prepareDesktop: async () => {
+      await requireDesktopShutdownPreparation().prepare({
+        cancelActiveWork: false,
+      });
+    },
+    relaunchDesktop() {
+      setImmediate(() => {
+        app.relaunch();
+        app.exit(0);
+      });
+    },
+  });
   desktopUpdateCoordinator = createMainDesktopUpdateCoordinator(
     desktopShutdownPreparation,
   );
@@ -644,6 +665,26 @@ function requireDesktopUpdateCoordinator(): DesktopUpdateCoordinator {
     });
   }
   return desktopUpdateCoordinator;
+}
+
+function requireDesktopShutdownPreparation(): DesktopShutdownPreparation {
+  if (desktopShutdownPreparation === undefined) {
+    throw createDesktopError({
+      code: "desktop.shutdown_preparation_unavailable",
+      message: "Desktop shutdown preparation is not initialized.",
+    });
+  }
+  return desktopShutdownPreparation;
+}
+
+function requireDesktopStartupRecoveryCoordinator(): DesktopStartupRecoveryCoordinator {
+  if (desktopStartupRecoveryCoordinator === undefined) {
+    throw createDesktopError({
+      code: "desktop.startup_recovery_unavailable",
+      message: "Desktop startup recovery is not initialized.",
+    });
+  }
+  return desktopStartupRecoveryCoordinator;
 }
 
 if (shouldStartDesktopMain) {
@@ -1041,6 +1082,37 @@ function registerBootIpcHandlers(): void {
     app.relaunch();
     app.exit(0);
   });
+  ipcMain.handle(
+    "desktop:restart-kestrel",
+    async (_event, value: unknown) => {
+      const request = parseDesktopRestartKestrelInput(value);
+      updateBootState(
+        {
+          phase: "starting_runtime",
+          message: request.force
+            ? "Force restarting Kestrel…"
+            : "Restarting Kestrel…",
+        },
+        mainWindow?.webContents,
+      );
+      const result = await requireDesktopStartupRecoveryCoordinator().restart(
+        request,
+      );
+      if (result.status === "blocked") {
+        updateBootState(
+          {
+            phase: "failed",
+            message: "Kestrel restart needs confirmation.",
+            details: result.blockers
+              .map((blocker) => blocker.message)
+              .join("\n"),
+          },
+          mainWindow?.webContents,
+        );
+      }
+      return result;
+    },
+  );
   ipcMain.handle("desktop:get-update-state", () =>
     requireDesktopUpdateCoordinator().state(),
   );

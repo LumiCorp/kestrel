@@ -347,8 +347,11 @@
       const checklist = document.getElementById("checklist");
       const timeline = document.getElementById("timeline");
       const desktopBridge = window.kestrelDesktop;
+      let latestBootState;
+      let restartRequiresForce = false;
 
       function render(state) {
+        latestBootState = state;
         document.body.dataset.bootPhase = state.phase;
         const display = summarizeBootState(state);
         phase.textContent = display.badge;
@@ -422,7 +425,11 @@
         quickActions.replaceChildren(...actions.slice(0, 2).map((item) => {
           const action = document.createElement("button");
           action.type = "button";
-          action.textContent = item.label;
+          action.textContent = item.command === "restart_runtime"
+            ? restartRequiresForce
+              ? "Force Restart Kestrel"
+              : "Restart Kestrel"
+            : item.label;
           action.addEventListener("click", () => {
             void runReadinessAction(item.command);
           });
@@ -561,10 +568,30 @@
             details.textContent = "Desktop bridge is not available in this preview.";
             return;
           }
-          details.textContent = "Restarting Kestrel…";
-          await desktopBridge.restartApp();
+          restart.disabled = true;
+          details.textContent = restartRequiresForce
+            ? "Force restarting Kestrel…"
+            : "Restarting Kestrel…";
+          const result = await desktopBridge.restartKestrel({ force: restartRequiresForce });
+          if (result.status === "blocked") {
+            restartRequiresForce = result.forceAvailable;
+            restart.textContent = restartRequiresForce
+              ? "Force Restart Kestrel"
+              : "Restart Kestrel";
+            details.textContent = result.blockers
+              .map((blocker) => blocker.message)
+              .join("\n");
+            if (latestBootState !== undefined) {
+              renderQuickActions(
+                latestBootState,
+                latestBootState.readiness?.items ?? fallbackItems(latestBootState),
+              );
+            }
+          }
         } catch (error) {
           details.textContent = error instanceof Error ? error.message : String(error);
+        } finally {
+          restart.disabled = false;
         }
       }
 

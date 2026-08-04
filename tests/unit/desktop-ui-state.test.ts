@@ -13,8 +13,8 @@ import {
 } from "../../src/desktopShell/contracts.js";
 
 
-test("Desktop bridge v7 exposes update, workspace, attachment, and operator-control contracts", () => {
-  assert.equal(DESKTOP_BRIDGE_VERSION, "7");
+test("Desktop bridge v8 exposes update, workspace, attachment, and operator-control contracts", () => {
+  assert.equal(DESKTOP_BRIDGE_VERSION, "8");
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("updates"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("attachments"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("operator_control"), true);

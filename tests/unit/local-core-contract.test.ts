@@ -12,6 +12,8 @@ import {
   parseLocalCoreRuntimeStoreReset,
   parseLocalCoreRuntimeStoreResetRequest,
   parseLocalCoreRuntimeStoreResetResult,
+  parseLocalCoreSystemShutdownRequest,
+  parseLocalCoreSystemShutdownResult,
   parseLocalCoreStatus,
   readCoreLock,
   readCoreManifest,
@@ -93,6 +95,57 @@ function canonicalLocalCoreStatus(): Record<string, unknown> {
     logsPath: paths.logsPath,
   };
 }
+
+test("Local Core accepts the exact Desktop restart shutdown contract", () => {
+  assert.deepEqual(
+    parseLocalCoreSystemShutdownRequest({
+      reason: "desktop_restart",
+      confirm: "shutdown-local-core-for-desktop-restart",
+    }),
+    {
+      reason: "desktop_restart",
+      confirm: "shutdown-local-core-for-desktop-restart",
+    },
+  );
+  assert.deepEqual(
+    parseLocalCoreSystemShutdownResult({
+      status: "accepted",
+      reason: "desktop_restart",
+      lifecycle: {
+        state: "idle",
+        owner: { pid: 42, executable: "/opt/kestrel/daemonMain.js" },
+        blockers: [],
+      },
+    }),
+    {
+      status: "accepted",
+      reason: "desktop_restart",
+      lifecycle: {
+        state: "idle",
+        owner: { pid: 42, executable: "/opt/kestrel/daemonMain.js" },
+        blockers: [],
+      },
+    },
+  );
+});
+
+test("Local Core rejects malformed Desktop restart shutdown payloads", () => {
+  assert.throws(
+    () => parseLocalCoreSystemShutdownRequest({
+      reason: "desktop_restart",
+      confirm: "shutdown-local-core-for-desktop-update",
+    }),
+    /exact uninstall, Desktop update, or Desktop restart confirmation payload/u,
+  );
+  assert.throws(
+    () => parseLocalCoreSystemShutdownRequest({
+      reason: "desktop_restart",
+      confirm: "shutdown-local-core-for-desktop-restart",
+      force: true,
+    }),
+    /unsupported field 'force'/u,
+  );
+});
 
 test("resolveKestrelCoreHome isolates the default macOS product root in the 0.6 state epoch", () => {
   const resolved = resolveKestrelCoreHome({}, "darwin");

@@ -1237,7 +1237,7 @@ async function handleRequest(input: {
         throw new LocalCoreApiRequestError(
           400,
           "LOCAL_CORE_SHUTDOWN_INVALID",
-          "Local Core shutdown requires an exact uninstall or Desktop update confirmation payload.",
+          "Local Core shutdown requires an exact uninstall, Desktop update, or Desktop restart confirmation payload.",
         );
       }
       const shutdown = input.requestSystemShutdown(shutdownRequest.reason);

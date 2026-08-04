@@ -265,6 +265,10 @@ export type LocalCoreSystemShutdownRequest =
   | {
       reason: "desktop_update";
       confirm: "shutdown-local-core-for-desktop-update";
+    }
+  | {
+      reason: "desktop_restart";
+      confirm: "shutdown-local-core-for-desktop-restart";
     };
 
 export type LocalCoreSystemShutdownResult =
@@ -370,8 +374,17 @@ export function parseLocalCoreSystemShutdownRequest(
       confirm: "shutdown-local-core-for-desktop-update",
     };
   }
+  if (
+    record.reason === "desktop_restart" &&
+    record.confirm === "shutdown-local-core-for-desktop-restart"
+  ) {
+    return {
+      reason: "desktop_restart",
+      confirm: "shutdown-local-core-for-desktop-restart",
+    };
+  }
   throw new Error(
-    "Local Core shutdown requires an exact uninstall or Desktop update confirmation payload.",
+    "Local Core shutdown requires an exact uninstall, Desktop update, or Desktop restart confirmation payload.",
   );
 }
 
@@ -387,7 +400,11 @@ export function parseLocalCoreSystemShutdownResult(
   if (record.status !== "accepted" && record.status !== "blocked") {
     throw new Error("Local Core system shutdown result.status is invalid.");
   }
-  if (record.reason !== "uninstall" && record.reason !== "desktop_update") {
+  if (
+    record.reason !== "uninstall" &&
+    record.reason !== "desktop_update" &&
+    record.reason !== "desktop_restart"
+  ) {
     throw new Error("Local Core system shutdown result.reason is invalid.");
   }
   return {
