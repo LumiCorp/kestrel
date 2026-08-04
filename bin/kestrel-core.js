@@ -17,7 +17,10 @@ const child = spawn(
   ["--import", tsxImport, entrypoint, ...process.argv.slice(2)],
   {
     stdio: "inherit",
-    env: process.env,
+    env: {
+      ...process.env,
+      TSX_TSCONFIG_PATH: path.join(repoRoot, "tsconfig.json"),
+    },
   },
 );
 

@@ -26,6 +26,7 @@ const child = spawn(
     stdio: "inherit",
     env: {
       ...childEnv,
+      TSX_TSCONFIG_PATH: path.join(repoRoot, "tsconfig.json"),
       KESTREL_ENTRYPOINT_ALIAS: invokedAs,
     },
   },
