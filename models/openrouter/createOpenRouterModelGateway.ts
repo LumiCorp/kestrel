@@ -7,6 +7,7 @@ import type {
 import type { OpenRouterEnvConfig } from "../contracts.js";
 import { loadOpenRouterEnv } from "./OpenRouterEnv.js";
 import { createOpenRouterInvoker } from "./OpenRouterInvoker.js";
+import { createVersionedProviderInvokerV1 } from "../VersionedModelBoundary.js";
 
 export interface OpenRouterGatewayFactoryOptions {
   env?: NodeJS.ProcessEnv | undefined;
@@ -33,12 +34,12 @@ export function createOpenRouterModelGatewayFromEnv(
     baseUrl: options.envConfig?.baseUrl ?? loaded.baseUrl,
   };
 
-  const invoker = createOpenRouterInvoker({
+  const invoker = createVersionedProviderInvokerV1(createOpenRouterInvoker({
     env: config,
     ...(options.fetchImpl !== undefined
       ? { fetchImpl: options.fetchImpl }
       : {}),
-  });
+  }));
 
   return new RetryingModelGateway(
     async <T>(request: ModelRequest, callOptions?: ModelGatewayCallOptions) =>

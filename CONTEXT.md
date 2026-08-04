@@ -89,6 +89,9 @@ Model-authored progress narration retained as working memory for collaboration a
 **Provenance Hash**
 A hash-only identity for model-call audit data. It identifies the provider payload or Kestrel prompt components without retaining rendered prompt text.
 
+**Model Registration**
+A versioned, fingerprinted binding between one exact provider identity, one pinned model, its declared capabilities, and its secret-free runtime configuration. Registrations are trusted static inputs; they do not discover, rank, or select models.
+
 ## Relationships
 
 - A **Project** owns exactly one **Board**.
