@@ -39,7 +39,7 @@ export function MarketingHeader() {
 
         <nav
           aria-label="Primary navigation"
-          className="hidden items-center gap-1 md:flex"
+          className="hidden items-center gap-1 lg:flex"
         >
           {navigation.map((item) => (
             <Button asChild key={item.href} variant="ghost">
@@ -48,7 +48,7 @@ export function MarketingHeader() {
           ))}
         </nav>
 
-        <div className="hidden items-center gap-2 md:flex">
+        <div className="hidden items-center gap-2 lg:flex">
           <Button asChild variant="ghost">
             <Link href="/sign-in">Sign in</Link>
           </Button>
@@ -63,7 +63,7 @@ export function MarketingHeader() {
           <SheetTrigger asChild>
             <Button
               aria-label="Open navigation"
-              className="size-11 md:hidden"
+              className="size-11 lg:hidden"
               size="icon"
               variant="outline"
             >
