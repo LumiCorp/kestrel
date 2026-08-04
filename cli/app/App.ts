@@ -142,6 +142,8 @@ import {
   buildWaitingSystemText,
   extractWaitPrompt,
   isModeBlockedWait,
+  readExactReviewOptionIds,
+  resolveExactReviewOptionId,
   resolveBlockedWaitModeReply,
 } from "./waitForPrompt.js";
 import {
@@ -2262,12 +2264,27 @@ export class App {
     this.uiStore.patch({ chatDraft: "" });
 
     const initialState = this.uiStore.getState();
+    const exactReviewOptionId = resolveExactReviewOptionId(
+      initialState.activeSession.pendingWaitFor,
+      rawLine,
+    );
+    const exactReviewOptionIds = readExactReviewOptionIds(
+      initialState.activeSession.pendingWaitFor,
+    );
+    if (exactReviewOptionIds.length > 0 && exactReviewOptionId === undefined) {
+      await this.appendHistoryLine(
+        "system",
+        `Choose one exact option: ${exactReviewOptionIds.join(", ")}`,
+      );
+      return;
+    }
     const blockedModeReply = resolveBlockedWaitModeReply(
       initialState.activeSession.pendingWaitFor,
       rawLine,
     );
     const shouldResumeBlockedRun =
       blockedModeReply?.resumeBlockedRun === true ||
+      exactReviewOptionId !== undefined ||
       this.isPendingApprovalWaitReply(initialState.activeSession.pendingWaitFor) ||
       this.isBlockedRunResumeReply(initialState.activeSession.pendingWaitFor, rawLine);
     const shouldUsePendingWait =

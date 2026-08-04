@@ -1,10 +1,12 @@
 import {
   COMPLETION_EVIDENCE_EVALUATOR_ID,
   COMPLETION_EVIDENCE_EVALUATOR_VERSION,
+  LEAN_RUNTIME_EVALUATION_BUDGET_V1,
   RUNTIME_EVALUATION_VERDICT_VERSION,
   parseRuntimeEvaluationRequestV1,
   parseRuntimeEvaluationVerdictV1,
   type RuntimeEvaluationAssertionV1,
+  type RuntimeEvaluationRequestV1,
 } from "../kestrel/contracts/evaluation.js";
 import {
   COMPLETION_EVIDENCE_ASSERTIONS_V1,
@@ -17,7 +19,10 @@ import type {
   RuntimeEvaluator,
   RuntimeEvaluatorContextV1,
 } from "./RuntimeEvaluatorRegistry.js";
-import { RuntimeEvaluatorRegistry } from "./RuntimeEvaluatorRegistry.js";
+import {
+  RuntimeEvaluationFailure,
+  RuntimeEvaluatorRegistry,
+} from "./RuntimeEvaluatorRegistry.js";
 
 export class CompletionEvidenceEvaluator implements RuntimeEvaluator {
   readonly evaluatorId = COMPLETION_EVIDENCE_EVALUATOR_ID;
@@ -37,6 +42,7 @@ export class CompletionEvidenceEvaluator implements RuntimeEvaluator {
         "Completion-evidence evaluator request identity is stale.",
       );
     }
+    const providerOptions = evaluationProviderOptions(request.judge.provider);
     const result = await context.invokeJudge({
       model: request.judge.model,
       input: {
@@ -59,6 +65,7 @@ export class CompletionEvidenceEvaluator implements RuntimeEvaluator {
         unknown
       >,
       responseFormat: "json",
+      ...(providerOptions !== undefined ? { providerOptions } : {}),
       reasoning: { mode: "off" },
       metadata: {
         purpose: "runtime_evaluation",
@@ -83,6 +90,29 @@ export class CompletionEvidenceEvaluator implements RuntimeEvaluator {
       inputTokens: nonNegativeInteger(result.usage.inputTokens),
       outputTokens: nonNegativeInteger(result.usage.outputTokens),
     };
+    const totalTokens = usage.inputTokens + usage.outputTokens;
+    const costUsd = calculateCostUsd(usage, request);
+    if (
+      usage.inputTokens >
+        LEAN_RUNTIME_EVALUATION_BUDGET_V1.maxInputTokensPerEvaluation ||
+      usage.outputTokens >
+        LEAN_RUNTIME_EVALUATION_BUDGET_V1.maxOutputTokensPerEvaluation ||
+      request.budget.totalTokensUsed + totalTokens >
+        LEAN_RUNTIME_EVALUATION_BUDGET_V1.maxTotalTokens ||
+      request.budget.totalCostUsd + costUsd >
+        LEAN_RUNTIME_EVALUATION_BUDGET_V1.maxTotalCostUsd
+    ) {
+      throw new RuntimeEvaluationFailure(
+        "EVALUATION_BUDGET_EXCEEDED",
+        "Completion-evidence evaluation exceeded its exact token or spend budget.",
+      );
+    }
+    if (result.latencyMs > LEAN_RUNTIME_EVALUATION_BUDGET_V1.timeoutMs) {
+      throw new RuntimeEvaluationFailure(
+        "EVALUATION_TIMEOUT",
+        "Completion-evidence evaluation exceeded its exact latency budget.",
+      );
+    }
     return parseRuntimeEvaluationVerdictV1({
       version: RUNTIME_EVALUATION_VERDICT_VERSION,
       verdictId: `evaluation-verdict:${request.requestId}`,
@@ -102,13 +132,23 @@ export class CompletionEvidenceEvaluator implements RuntimeEvaluator {
       repairable: output.repairable,
       usage: {
         ...usage,
-        totalTokens: usage.inputTokens + usage.outputTokens,
-        costUsd: calculateCostUsd(usage, request),
+        totalTokens,
+        costUsd,
       },
       latencyMs: result.latencyMs,
       createdAt: new Date().toISOString(),
     });
   }
+}
+
+function evaluationProviderOptions(
+  provider: RuntimeEvaluationRequestV1["judge"]["provider"],
+) {
+  const maxTokens = 500;
+  if (provider === "openai") return { openai: { maxTokens } };
+  if (provider === "openrouter") return { openrouter: { maxTokens } };
+  if (provider === "anthropic") return { anthropic: { maxTokens } };
+  return undefined;
 }
 
 export function createDefaultRuntimeEvaluatorRegistry(): RuntimeEvaluatorRegistry {

@@ -284,6 +284,22 @@ interface StepRunnerDependencies {
     stepAgent?: string | undefined;
     reason?: string | undefined;
   }) => Promise<HeapPressureSample | undefined>;
+  runtimeEvaluationEnabled: boolean;
+  evaluateRuntimeTransition: (input: {
+    runId: string;
+    event: RuntimeEvent;
+    session: SessionRecord;
+    stepName: string;
+    stepIndex: number;
+    transition: StepTransition;
+    statePatch: Record<string, unknown> | undefined;
+    guardrails: Guardrails;
+    signal?: AbortSignal | undefined;
+  }) => Promise<{
+    transition: StepTransition;
+    statePatch: Record<string, unknown> | undefined;
+    disposition?: "continue" | "revise" | "review" | "quarantine" | undefined;
+  }>;
 }
 
 export class StepRunner {
@@ -832,6 +848,67 @@ export class StepRunner {
           runtimeError,
         });
       }
+    }
+
+    if (
+      this.deps.runtimeEvaluationEnabled &&
+      transition.status === "COMPLETED"
+    ) {
+      input.state.progressSeq = await this.deps.emitProgress({
+        runId: input.runId,
+        sessionId: input.state.session.sessionId,
+        seq: input.state.progressSeq,
+        kind: "stage",
+        phase: "engine",
+        code: "EVALUATION_CHECKING",
+        message: "Checking result…",
+        stepIndex: input.state.stepIndex,
+        stepAgent: stepName,
+        persist: true,
+      });
+    }
+    const evaluatedTransition = await this.deps.evaluateRuntimeTransition({
+      runId: input.runId,
+      event: input.state.event,
+      session: input.state.session,
+      stepName,
+      stepIndex: input.state.stepIndex,
+      transition,
+      statePatch,
+      guardrails: input.guardrails,
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
+    });
+    transition = evaluatedTransition.transition;
+    statePatch = evaluatedTransition.statePatch;
+    if (evaluatedTransition.disposition === "revise") {
+      input.state.progressSeq = await this.deps.emitProgress({
+        runId: input.runId,
+        sessionId: input.state.session.sessionId,
+        seq: input.state.progressSeq,
+        kind: "stage",
+        phase: "engine",
+        code: "EVALUATION_REVISING",
+        message: "Revising result…",
+        stepIndex: input.state.stepIndex,
+        stepAgent: stepName,
+        persist: true,
+      });
+    } else if (
+      evaluatedTransition.disposition === "review" ||
+      evaluatedTransition.disposition === "quarantine"
+    ) {
+      input.state.progressSeq = await this.deps.emitProgress({
+        runId: input.runId,
+        sessionId: input.state.session.sessionId,
+        seq: input.state.progressSeq,
+        kind: "waiting",
+        phase: "engine",
+        code: "EVALUATION_REVIEW_REQUIRED",
+        message: "Result requires review.",
+        stepIndex: input.state.stepIndex,
+        stepAgent: stepName,
+        persist: true,
+      });
     }
 
     await this.deps.sampleHeap({

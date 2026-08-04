@@ -11,7 +11,10 @@ import { theme } from "../theme/tokens.js";
 import { formatRole, formatTimestamp, truncate } from "../ui/format.js";
 import { BubbleMessage } from "../components/BubbleMessage.js";
 import { ThemedTextInput } from "../components/ThemedTextInput.js";
-import { extractWaitPrompt } from "../../app/waitForPrompt.js";
+import {
+  extractWaitPrompt,
+  formatExactReviewPrompt,
+} from "../../app/waitForPrompt.js";
 import { buildChatVisualRows, buildChatWindow, type ChatVisualRow } from "./chatRows.js";
 import { resolveChatComposerInputRows, resolveChatLayoutBudget } from "./chatLayout.js";
 import type { ViewScrollState } from "../../contracts.js";
@@ -47,7 +50,10 @@ interface MessageCard {
 
 export function ChatView(props: ChatViewProps): React.JSX.Element {
   const pendingWait = props.session.pendingWaitFor;
-  const waitPrompt = extractWaitPrompt(pendingWait);
+  const waitPrompt = formatExactReviewPrompt(
+    pendingWait,
+    extractWaitPrompt(pendingWait),
+  );
   const waitingForInput = pendingWait?.kind === "user";
   const provisionalLayout = resolveChatLayoutBudget({
     viewportColumns: props.viewportColumns,

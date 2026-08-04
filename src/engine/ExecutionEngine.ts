@@ -5,7 +5,7 @@ import path from "node:path";
 
 import type { RunEventType, RuntimeError, TransitionStatus } from "../kestrel/contracts/base.js";
 import type { MemorySnapshot, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
-import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, Transition } from "../kestrel/contracts/execution.js";
+import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, StepTransition, Transition } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
 import type { AgentToolResultV2 } from "../kestrel/contracts/tool-invocation.js";
 import { parseRecoveryDecisionV1, parseRecoveryReviewBindingV1 } from "../kestrel/contracts/recovery.js";
@@ -102,11 +102,26 @@ import {
 } from "./ExecutionEngineSupport.js";
 import { RuntimeIO } from "./RuntimeIO.js";
 import { RecoveryCoordinator, normalizeRecoveryFailureCode } from "./recovery/RecoveryCoordinator.js";
+import {
+  RuntimeEvaluationCoordinator,
+  type RuntimeEvaluationEvidenceInputV1,
+  type RuntimeEvaluationHookResultV1,
+} from "../evaluation/RuntimeEvaluationCoordinator.js";
+import {
+  parseRuntimeEvaluationDecisionV1,
+  parseRuntimeEvaluationRequestV1,
+  parseRuntimeEvaluationVerdictV1,
+} from "../kestrel/contracts/evaluation.js";
+import {
+  digestCanonicalValue as digestBoundaryValue,
+  parseExecutionBoundaryDecisionV1,
+} from "../kestrel/contracts/execution-boundary-policy.js";
 import { resolveKestrelHomePath } from "../runtime/kestrelHome.js";
 import { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 import {
   buildPersistedRuntimeEventFromProgressUpdate,
 } from "../events/RuntimeEventProjections.js";
+import { resolveKestrelTurnObjective } from "../runtime/turnObjective.js";
 
 export { readModelRequestSchemaName } from "./ExecutionEngineSupport.js";
 
@@ -145,6 +160,85 @@ interface RunLifecycleObservabilityFrame {
   sessionId: string;
   runLogs: RunLogEntry[];
   runEvents: RunEvent[];
+}
+
+function buildFinalEvaluationEvidence(input: {
+  agent: Record<string, unknown>;
+  transition: StepTransition;
+}): RuntimeEvaluationEvidenceInputV1[] {
+  const evidence: RuntimeEvaluationEvidenceInputV1[] = [];
+  if (input.agent.lastActionResult !== undefined) {
+    evidence.push({
+      evidenceId: "final-last-action-result",
+      kind: "tool",
+      value: input.agent.lastActionResult,
+    });
+  }
+  if ((input.transition.claims?.length ?? 0) > 0) {
+    evidence.push({
+      evidenceId: "final-transition-claims",
+      kind: "claim",
+      value: input.transition.claims,
+    });
+  }
+  if ((input.transition.artifacts?.length ?? 0) > 0) {
+    evidence.push({
+      evidenceId: "final-transition-artifacts",
+      kind: "artifact",
+      value: input.transition.artifacts,
+    });
+  }
+  return evidence;
+}
+
+function buildEvaluationRevisionContext(input: {
+  candidate: string;
+  result: RuntimeEvaluationHookResultV1;
+}): Record<string, unknown> {
+  const verdict = input.result.verdict;
+  return {
+    failure: {
+      code: input.result.decision.reasonCode,
+      message: "The previous candidate did not pass the configured delivery evaluation.",
+    },
+    requiredCorrection: {
+      evaluation: {
+        action: "revise_final_output",
+        decisionId: input.result.decision.decisionId,
+        rationale: verdict?.rationale ?? input.result.decision.reasonCode,
+        reasonCodes: verdict?.reasonCodes ?? [input.result.decision.reasonCode],
+        assertions: verdict?.assertions.map((assertion) => ({
+          assertionId: assertion.assertionId,
+          passed: assertion.passed,
+          rationale: assertion.rationale,
+          evidenceRefs: assertion.evidenceRefs,
+        })) ?? [],
+        evidenceReferences: verdict?.assertions.flatMap(
+          (assertion) => assertion.evidenceRefs,
+        ) ?? [],
+      },
+    },
+    previousResponse: input.candidate,
+  };
+}
+
+function evaluationRecoveryFailureCode(
+  decision: ReturnType<typeof parseRuntimeEvaluationDecisionV1>,
+): string {
+  switch (decision.reasonCode) {
+    case "EVALUATION_QUARANTINED":
+      return "EVALUATION_QUARANTINED";
+    case "EVALUATION_LOW_CONFIDENCE":
+      return "EVALUATION_LOW_CONFIDENCE";
+    case "EVALUATION_REJECTED_AFTER_REVISION":
+      return "EVALUATION_REJECTED_AFTER_REVISION";
+    default:
+      return "EVALUATION_UNAVAILABLE";
+  }
+}
+
+function digestEvaluationCandidate(candidate: string): string {
+  return `sha256:${createHash("sha256").update(candidate).digest("hex")}`;
 }
 
 function readPendingToolApproval(
@@ -216,6 +310,7 @@ export class ExecutionEngine {
   private readonly progressPersistGranularity: ProgressPersistGranularity;
   private readonly loggedHeapPressureKeys = new Set<string>();
   private readonly recoveryCoordinator: RecoveryCoordinator | undefined;
+  private readonly evaluationCoordinator: RuntimeEvaluationCoordinator | undefined;
   private readonly executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
 
   constructor(deps: RuntimeDependencies, guardrailConfig?: Partial<GuardrailConfig>) {
@@ -249,6 +344,24 @@ export class ExecutionEngine {
           ...(recoveryRuntime.validateCredential !== undefined
             ? { validateCredential: recoveryRuntime.validateCredential }
             : {}),
+        });
+    const evaluationRuntime = this.deps.evaluationRuntime;
+    this.evaluationCoordinator = evaluationRuntime === undefined
+      ? undefined
+      : new RuntimeEvaluationCoordinator({
+          ...evaluationRuntime,
+          store: this.deps.store,
+          executionBoundaryRuntime: this.executionBoundaryRuntime,
+          appendLifecycleEvent: (event) =>
+            this.appendRunEvent(
+              event.runId,
+              event.sessionId,
+              event.type,
+              event.level,
+              event.metadata,
+              event.stepIndex,
+              { bypassBuffer: true },
+            ),
         });
     this.regionScheduler = new RegionScheduler({
       store: this.deps.store,
@@ -497,9 +610,23 @@ export class ExecutionEngine {
         }
       },
       sampleHeap: (input) => this.sampleHeap(input),
+      runtimeEvaluationEnabled: this.evaluationCoordinator !== undefined,
+      evaluateRuntimeTransition: (input) =>
+        this.evaluateRuntimeTransition(input),
     });
     this.stepFrameBufferEnabled = this.resolveStepFrameBufferEnabled();
     this.progressPersistGranularity = this.resolveProgressPersistGranularity();
+  }
+
+  async evaluateAdvisoryRuntimeHook(
+    input: import("../evaluation/RuntimeEvaluationCoordinator.js").RuntimeEvaluationHookInputV1,
+  ): Promise<RuntimeEvaluationHookResultV1 | undefined> {
+    if (input.hookKind === "pre_delivery") {
+      throw new Error(
+        "The blocking pre-delivery hook may only run through StepRunner.",
+      );
+    }
+    return this.evaluationCoordinator?.evaluateHook(input);
   }
 
   async run(
@@ -541,6 +668,20 @@ export class ExecutionEngine {
         lastStepAgent = runStart.lastStepAgent ?? lastStepAgent;
         runStarted = true;
         progressSeq = runStart.progressSeq;
+
+        const evaluationReviewResume = await this.maybeHandleEvaluationReviewResume({
+          runId,
+          event,
+          session,
+          guardrails,
+          progressSeq,
+        });
+        if (evaluationReviewResume?.output !== undefined) {
+          return evaluationReviewResume.output;
+        }
+        if (evaluationReviewResume?.session !== undefined) {
+          session = evaluationReviewResume.session;
+        }
 
         const recoveryReviewResume = await this.maybeHandleRecoveryReviewResume({
           runId,
@@ -1305,6 +1446,507 @@ export class ExecutionEngine {
     );
   }
 
+  private async evaluateRuntimeTransition(input: {
+    runId: string;
+    event: RuntimeEvent;
+    session: SessionRecord;
+    stepName: string;
+    stepIndex: number;
+    transition: StepTransition;
+    statePatch: Record<string, unknown> | undefined;
+    guardrails: Guardrails;
+    signal?: AbortSignal | undefined;
+  }): Promise<{
+    transition: StepTransition;
+    statePatch: Record<string, unknown> | undefined;
+    disposition?: "continue" | "revise" | "review" | "quarantine" | undefined;
+  }> {
+    const coordinator = this.evaluationCoordinator;
+    if (coordinator === undefined) {
+      return { transition: input.transition, statePatch: input.statePatch };
+    }
+    this.throwIfAborted(input.signal);
+    const sessionAgent = this.asRecord(input.session.state.agent) ?? {};
+    const patchAgent = this.asRecord(input.statePatch?.agent) ?? {};
+    const mergedAgent = { ...sessionAgent, ...patchAgent };
+    const sessionExec = this.asRecord(sessionAgent.exec) ?? {};
+    const patchExec = this.asRecord(patchAgent.exec) ?? {};
+    const mergedExec = { ...sessionExec, ...patchExec };
+    const eventMetadata = this.asRecord(input.event.payload.metadata);
+    const threadId =
+      this.asString(eventMetadata?.threadId ?? input.event.payload.threadId) ??
+      input.session.sessionId;
+    const objective =
+      resolveKestrelTurnObjective({
+        reactState: mergedAgent,
+        eventType: input.event.type,
+        eventPayload: input.event.payload,
+        fallbackGoal: this.asString(input.event.payload.goal),
+      }).goal ?? "Complete the active user request.";
+    const stateNodeId = input.transition.stateNode === undefined
+      ? undefined
+      : `${input.transition.stateNode.parent}/${input.transition.stateNode.child}${input.transition.stateNode.region === undefined ? "" : `:${input.transition.stateNode.region}`}`;
+
+    if (
+      stateNodeId !== undefined &&
+      coordinator.matchesHook("milestone", stateNodeId)
+    ) {
+      await coordinator.evaluateHook({
+        runId: input.runId,
+        sessionId: input.session.sessionId,
+        threadId,
+        stepIndex: input.stepIndex,
+        hookKind: "milestone",
+        sourceId: stateNodeId,
+        objective,
+        evidence: [{
+          evidenceId: `milestone-${input.stepIndex}`,
+          kind: "milestone",
+          value: {
+            stateNode: input.transition.stateNode,
+            status: input.transition.status,
+            statePatch: input.statePatch ?? {},
+          },
+        }],
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
+      });
+    }
+
+    if (input.transition.status !== "COMPLETED") {
+      return { transition: input.transition, statePatch: input.statePatch };
+    }
+    if ((input.transition.effects?.length ?? 0) > 0) {
+      throw createRuntimeFailure(
+        "EVALUATION_UNRESOLVED_EFFECTS",
+        "An evaluation-enabled completion must settle effects before proposing delivery.",
+        { runId: input.runId, stepIndex: input.stepIndex },
+      );
+    }
+    const candidate = this.asString(mergedAgent.assistantText);
+    if (candidate === undefined) {
+      throw createRuntimeFailure(
+        "EVALUATION_CANDIDATE_MISSING",
+        "An evaluation-enabled completion must provide a candidate assistant result.",
+        { runId: input.runId, stepIndex: input.stepIndex },
+      );
+    }
+    const priorEvaluation = this.asRecord(mergedExec.evaluation);
+    const finalRevisionsUsed = Math.max(
+      0,
+      Math.trunc(readMaybeNumber(priorEvaluation?.finalRevisionsUsed) ?? 0),
+    );
+    const result = await coordinator.evaluateHook({
+      runId: input.runId,
+      sessionId: input.session.sessionId,
+      threadId,
+      stepIndex: input.stepIndex,
+      hookKind: "pre_delivery",
+      sourceId: "pre_delivery",
+      objective,
+      candidateOutput: candidate,
+      finalRevisionsUsed,
+      evidence: buildFinalEvaluationEvidence({
+        agent: mergedAgent,
+        transition: input.transition,
+      }),
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
+    });
+    if (result === undefined) {
+      throw createRuntimeFailure(
+        "EVALUATOR_UNAVAILABLE",
+        "The configured pre-delivery evaluator hook could not be resolved.",
+      );
+    }
+    const sanitizedCandidate = result.sanitizedCandidate;
+    if (sanitizedCandidate === undefined) {
+      throw createRuntimeFailure(
+        "EVALUATION_CANDIDATE_MISSING",
+        "The pre-delivery evaluator did not preserve a sanitized candidate.",
+      );
+    }
+    if (result.decision.disposition === "continue") {
+      return {
+        transition: input.transition,
+        statePatch: {
+          ...(input.statePatch ?? {}),
+          agent: {
+            ...patchAgent,
+            assistantText: sanitizedCandidate,
+            finalOutput: sanitizedCandidate,
+            exec: {
+              ...patchExec,
+              evaluation: {
+                status: "passed",
+                finalRevisionsUsed,
+                requestId: result.request.requestId,
+                decision: structuredClone(result.decision),
+                ...(result.verdict !== undefined
+                  ? { verdict: structuredClone(result.verdict) }
+                  : {}),
+                ...(result.assistantOutputBoundaryDecision !== undefined
+                  ? {
+                      assistantOutputBoundaryDecision: structuredClone(
+                        result.assistantOutputBoundaryDecision,
+                      ),
+                    }
+                  : {}),
+              },
+            },
+          },
+        },
+        disposition: "continue",
+      };
+    }
+    if (result.decision.disposition === "revise") {
+      return this.buildEvaluationRevisionTransition({
+        ...input,
+        result,
+        sanitizedCandidate,
+        patchAgent,
+        patchExec,
+        threadId,
+        finalRevisionsUsed,
+      });
+    }
+    if (
+      result.decision.disposition === "review" ||
+      result.decision.disposition === "quarantine"
+    ) {
+      return this.buildEvaluationReviewTransition({
+        ...input,
+        result,
+        sanitizedCandidate,
+        patchAgent,
+        patchExec,
+        threadId,
+        finalRevisionsUsed,
+      });
+    }
+    throw createRuntimeFailure(
+      "EVALUATION_DISPOSITION_INVALID",
+      `Blocking evaluation produced unsupported disposition '${result.decision.disposition}'.`,
+    );
+  }
+
+  private async buildEvaluationRevisionTransition(input: {
+    runId: string;
+    event: RuntimeEvent;
+    session: SessionRecord;
+    stepName: string;
+    stepIndex: number;
+    transition: StepTransition;
+    statePatch: Record<string, unknown> | undefined;
+    guardrails: Guardrails;
+    signal?: AbortSignal | undefined;
+    result: RuntimeEvaluationHookResultV1;
+    sanitizedCandidate: string;
+    patchAgent: Record<string, unknown>;
+    patchExec: Record<string, unknown>;
+    threadId: string;
+    finalRevisionsUsed: number;
+  }): Promise<{
+    transition: StepTransition;
+    statePatch: Record<string, unknown>;
+    disposition: "revise";
+  }> {
+    const recovery = await this.selectEvaluationRecovery({
+      runId: input.runId,
+      sessionId: input.session.sessionId,
+      threadId: input.threadId,
+      stepIndex: input.stepIndex,
+      guardrails: input.guardrails,
+      failureCode: "EVALUATION_REJECTED",
+      requestedWorkflowHandlerId: "evaluation.revise",
+    });
+    if (
+      recovery.decision.outcome.status !== "selected" ||
+      recovery.decision.outcome.action !== "deterministic_workflow" ||
+      recovery.decision.outcome.candidateId !== "evaluation.revise"
+    ) {
+      throw createRuntimeFailure(
+        "EVALUATION_REVISION_UNAVAILABLE",
+        "The exact evaluation revision workflow was not authorized.",
+      );
+    }
+    const evaluationDecision = await this.evaluationCoordinator!.bindRecoveryDecision({
+      decision: input.result.decision,
+      recoveryDecisionId: recovery.decision.decisionId,
+      stepIndex: input.stepIndex,
+    });
+    const handler = this.deps.recoveryRuntime?.workflowHandlerRegistry.resolve(
+      "evaluation.revise",
+    );
+    if (handler === undefined || this.recoveryCoordinator === undefined) {
+      throw createRuntimeFailure(
+        "EVALUATION_REVISION_UNAVAILABLE",
+        "The exact evaluation revision workflow is not registered.",
+      );
+    }
+    await this.recoveryCoordinator.markActionStarted(recovery.decision);
+    try {
+      await handler({
+        runId: input.runId,
+        sessionId: input.session.sessionId,
+        failureCode: "EVALUATION_REJECTED",
+        stepIndex: input.stepIndex,
+        execute: async () => undefined,
+      });
+      await this.recoveryCoordinator.markActionCompleted(recovery.decision);
+    } catch (error) {
+      await this.recoveryCoordinator.markActionFailed(
+        recovery.decision,
+        this.mapError(error).code,
+      );
+      throw error;
+    }
+    return {
+      transition: {
+        ...input.transition,
+        status: "RUNNING",
+        nextStepAgent: "agent.loop",
+        effects: [],
+        waitFor: undefined,
+      },
+      statePatch: {
+        ...(input.statePatch ?? {}),
+        agent: {
+          ...input.patchAgent,
+          assistantText: null,
+          finalOutput: undefined,
+          retryContext: buildEvaluationRevisionContext({
+            candidate: input.sanitizedCandidate,
+            result: { ...input.result, decision: evaluationDecision },
+          }),
+          exec: {
+            ...input.patchExec,
+            pendingEvaluation: undefined,
+            evaluation: {
+              status: "revising",
+              finalRevisionsUsed: input.finalRevisionsUsed + 1,
+              evaluationDecision: structuredClone(evaluationDecision),
+              recoveryDecision: structuredClone(recovery.decision),
+            },
+          },
+        },
+      },
+      disposition: "revise",
+    };
+  }
+
+  private async buildEvaluationReviewTransition(input: {
+    runId: string;
+    event: RuntimeEvent;
+    session: SessionRecord;
+    stepName: string;
+    stepIndex: number;
+    transition: StepTransition;
+    statePatch: Record<string, unknown> | undefined;
+    guardrails: Guardrails;
+    signal?: AbortSignal | undefined;
+    result: RuntimeEvaluationHookResultV1;
+    sanitizedCandidate: string;
+    patchAgent: Record<string, unknown>;
+    patchExec: Record<string, unknown>;
+    threadId: string;
+    finalRevisionsUsed: number;
+  }): Promise<{
+    transition: StepTransition;
+    statePatch: Record<string, unknown>;
+    disposition: "review" | "quarantine";
+  }> {
+    const failureCode = evaluationRecoveryFailureCode(input.result.decision);
+    const allowedOptionIds = [
+      "evaluation.accept_once",
+      ...(input.finalRevisionsUsed < this.evaluationCoordinator!.policy.budget.maxFinalRevisions
+        ? ["evaluation.revise"]
+        : []),
+      "terminal.fail",
+    ];
+    const recovery = await this.selectEvaluationRecovery({
+      runId: input.runId,
+      sessionId: input.session.sessionId,
+      threadId: input.threadId,
+      stepIndex: input.stepIndex,
+      guardrails: input.guardrails,
+      failureCode,
+      allowedReviewOptionIds: allowedOptionIds,
+    });
+    if (
+      recovery.decision.outcome.status !== "waiting" ||
+      recovery.reviewBinding === undefined
+    ) {
+      throw createRuntimeFailure(
+        "EVALUATION_REVIEW_UNAVAILABLE",
+        "The exact evaluation review action was not authorized.",
+      );
+    }
+    const evaluationDecision = await this.evaluationCoordinator!.bindRecoveryDecision({
+      decision: input.result.decision,
+      recoveryDecisionId: recovery.decision.decisionId,
+      stepIndex: input.stepIndex,
+    });
+    const actor = this.asRecord(
+      this.asRecord(input.event.payload.metadata)?.actor ??
+        input.event.payload.actor,
+    );
+    const tenantId = this.asString(actor?.tenantId);
+    const technicalDisclosure = {
+      candidate: input.sanitizedCandidate,
+      ...(input.result.verdict !== undefined
+        ? {
+            score: input.result.verdict.score,
+            confidence: input.result.verdict.confidence,
+            assertions: structuredClone(input.result.verdict.assertions),
+            rationale: input.result.verdict.rationale,
+            evidenceReferences: input.result.verdict.assertions.flatMap(
+              (assertion) => assertion.evidenceRefs,
+            ),
+          }
+        : {
+            reasonCode: input.result.decision.reasonCode,
+            assertions: [],
+            evidenceReferences: [],
+          }),
+    };
+    const waitFor = {
+      kind: "user" as const,
+      eventType: "user.reply",
+      metadata: {
+        reason: "evaluation_review",
+        prompt: "Result requires review.",
+        decisionId: evaluationDecision.decisionId,
+        recoveryDecisionId: recovery.decision.decisionId,
+        recoveryReviewBinding: structuredClone(recovery.reviewBinding),
+        allowedOptionIds: [...recovery.reviewBinding.allowedOptionIds],
+        evaluationTechnicalDisclosure: technicalDisclosure,
+      },
+      interaction: {
+        version: "v1" as const,
+        requestId: recovery.reviewBinding.bindingId,
+        kind: "user_input" as const,
+        eventType: "user.reply",
+        prompt: "Result requires review.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["recoveryOptionId"],
+          properties: {
+            recoveryOptionId: {
+              type: "string",
+              enum: [...recovery.reviewBinding.allowedOptionIds],
+            },
+          },
+        },
+        metadata: {
+          reason: "evaluation_review",
+          allowedOptionIds: [...recovery.reviewBinding.allowedOptionIds],
+          evaluationTechnicalDisclosure: technicalDisclosure,
+        },
+      },
+    };
+    const pendingEvaluation = {
+      status: input.result.decision.disposition === "quarantine"
+        ? "quarantined"
+        : "review",
+      candidate: input.sanitizedCandidate,
+      candidateDigest: digestEvaluationCandidate(input.sanitizedCandidate),
+      finalOutput: input.sanitizedCandidate,
+      evaluationDecision: structuredClone(evaluationDecision),
+      ...(input.result.verdict !== undefined
+        ? { verdict: structuredClone(input.result.verdict) }
+        : {}),
+      request: structuredClone(input.result.request),
+      recoveryDecision: structuredClone(recovery.decision),
+      recoveryReviewBinding: structuredClone(recovery.reviewBinding),
+      threadId: input.threadId,
+      policyRevision: this.evaluationCoordinator!.policy.revision,
+      profileFingerprint: this.evaluationCoordinator!.executionProfileFingerprint,
+      allowedOptionIds: [...recovery.reviewBinding.allowedOptionIds],
+      finalRevisionsUsed: input.finalRevisionsUsed,
+      ...(tenantId !== undefined ? { tenantId } : {}),
+      ...(input.result.assistantOutputBoundaryDecision !== undefined
+        ? {
+            assistantOutputBoundaryDecision: structuredClone(
+              input.result.assistantOutputBoundaryDecision,
+            ),
+          }
+        : {}),
+    };
+    return {
+      transition: {
+        ...input.transition,
+        status: "WAITING",
+        nextStepAgent: input.stepName,
+        effects: [],
+        waitFor,
+      },
+      statePatch: {
+        ...(input.statePatch ?? {}),
+        agent: {
+          ...input.patchAgent,
+          assistantText: null,
+          finalOutput: undefined,
+          waitingFor: this.waitResumeCoordinator.buildWaitingFor({
+            waitFor,
+            resumeStepAgent: input.stepName,
+            reason: "evaluation_review",
+            resumeInstruction: "Choose one exact evaluation option.",
+          }),
+          exec: {
+            ...input.patchExec,
+            pendingEvaluation,
+          },
+        },
+      },
+      disposition:
+        input.result.decision.disposition === "quarantine"
+          ? "quarantine"
+          : "review",
+    };
+  }
+
+  private async selectEvaluationRecovery(input: {
+    runId: string;
+    sessionId: string;
+    threadId: string;
+    stepIndex: number;
+    guardrails: Guardrails;
+    failureCode: string;
+    requestedWorkflowHandlerId?: string | undefined;
+    allowedReviewOptionIds?: string[] | undefined;
+  }) {
+    const coordinator = this.recoveryCoordinator;
+    if (coordinator === undefined) {
+      throw createRuntimeFailure(
+        "EVALUATION_RECOVERY_UNAVAILABLE",
+        "Runtime evaluation requires the recovery coordinator.",
+      );
+    }
+    const telemetry = input.guardrails.telemetry();
+    const budget = input.guardrails.budgetSnapshot();
+    return coordinator.decide({
+      runId: input.runId,
+      sessionId: input.sessionId,
+      threadId: input.threadId,
+      scope: "run",
+      failureCode: input.failureCode,
+      visibleOutputStarted: false,
+      budget: {
+        remainingMs: Math.max(0, budget.remainingMs),
+        tokensUsed: Math.max(0, telemetry.totalTokens ?? 0),
+        toolCallsUsed: Math.max(0, telemetry.toolCalls),
+      },
+      stepIndex: input.stepIndex,
+      expectedPolicyRevision: coordinator.policy.revision,
+      ...(input.requestedWorkflowHandlerId !== undefined
+        ? { requestedWorkflowHandlerId: input.requestedWorkflowHandlerId }
+        : {}),
+      ...(input.allowedReviewOptionIds !== undefined
+        ? { allowedReviewOptionIds: input.allowedReviewOptionIds }
+        : {}),
+    });
+  }
+
   private createStepIO(
     guardrails: Guardrails,
     progress: {
@@ -1367,6 +2009,9 @@ export class ExecutionEngine {
         : {}),
       ...(this.deps.recoveryRuntime !== undefined
         ? { recoveryRuntime: this.deps.recoveryRuntime }
+        : {}),
+      ...(this.evaluationCoordinator !== undefined
+        ? { evaluationCoordinator: this.evaluationCoordinator }
         : {}),
       executionBoundaryRuntime: this.executionBoundaryRuntime,
     });
@@ -3192,6 +3837,290 @@ export class ExecutionEngine {
       progressSeq: input.progressSeq,
       stepIndex: input.stepIndex,
     });
+  }
+
+  private async maybeHandleEvaluationReviewResume(input: {
+    runId: string;
+    event: RuntimeEvent;
+    session: SessionRecord;
+    guardrails: Guardrails;
+    progressSeq: number;
+  }): Promise<{
+    session?: SessionRecord | undefined;
+    output?: NormalizedOutput | undefined;
+  } | undefined> {
+    const evaluationCoordinator = this.evaluationCoordinator;
+    const recoveryCoordinator = this.recoveryCoordinator;
+    if (
+      evaluationCoordinator === undefined ||
+      recoveryCoordinator === undefined ||
+      input.event.type !== "user.reply"
+    ) {
+      return;
+    }
+    const agent = this.asRecord(input.session.state.agent);
+    const exec = this.asRecord(agent?.exec);
+    const pending = this.asRecord(exec?.pendingEvaluation);
+    if (pending === undefined) return;
+
+    const evaluationDecision = parseRuntimeEvaluationDecisionV1(
+      pending.evaluationDecision,
+    );
+    const recoveryDecision = parseRecoveryDecisionV1(pending.recoveryDecision);
+    const binding = parseRecoveryReviewBindingV1(
+      pending.recoveryReviewBinding,
+    );
+    const request = parseRuntimeEvaluationRequestV1(pending.request);
+    const verdict = pending.verdict === undefined
+      ? undefined
+      : parseRuntimeEvaluationVerdictV1(pending.verdict);
+    const metadata = this.asRecord(input.event.payload.metadata);
+    const actor = this.asRecord(metadata?.actor ?? input.event.payload.actor);
+    const actorId = this.asString(actor?.actorId);
+    const actorType = this.asString(actor?.actorType);
+    const optionId = this.asString(input.event.payload.recoveryOptionId);
+    const threadId =
+      this.asString(metadata?.threadId ?? input.event.payload.threadId) ??
+      input.session.sessionId;
+    const candidate = this.asString(pending.candidate);
+    const boundaryDecision = parseExecutionBoundaryDecisionV1(
+      pending.assistantOutputBoundaryDecision,
+    );
+    if (
+      actorId === undefined ||
+      (actorType !== "end_user" && actorType !== "operator") ||
+      optionId === undefined ||
+      candidate === undefined
+    ) {
+      throw createRuntimeFailure(
+        "EVALUATION_RESUME_INVALID",
+        "Evaluation review resume requires trusted actor metadata and one exact option.",
+      );
+    }
+    if (
+      pending.threadId !== threadId ||
+      pending.policyRevision !== evaluationCoordinator.policy.revision ||
+      pending.profileFingerprint !==
+        evaluationCoordinator.executionProfileFingerprint ||
+      evaluationDecision.policyRevision !==
+        evaluationCoordinator.policy.revision ||
+      evaluationDecision.profileFingerprint !==
+        evaluationCoordinator.executionProfileFingerprint ||
+      request.requestId !== evaluationDecision.requestId ||
+      pending.candidateDigest !== digestEvaluationCandidate(candidate) ||
+      boundaryDecision.policyRevision !==
+        this.executionBoundaryRuntime.policy.revision ||
+      boundaryDecision.outputDigest !==
+        digestBoundaryValue({ assistantText: candidate })
+    ) {
+      throw createRuntimeFailure(
+        "EVALUATION_REVIEW_STALE",
+        "Evaluation review evidence no longer matches the exact pending candidate and policy.",
+      );
+    }
+    let disposition: "approved" | "declined";
+    try {
+      disposition = recoveryCoordinator.validateReviewResume({
+        binding,
+        decision: recoveryDecision,
+        threadId,
+        runId: binding.runId,
+        optionId,
+        actor: {
+          actorId,
+          actorType,
+          ...(this.asString(actor?.tenantId) !== undefined
+            ? { tenantId: this.asString(actor?.tenantId) }
+            : {}),
+        },
+        ...(this.asString(pending.tenantId) !== undefined
+          ? { expectedTenantId: this.asString(pending.tenantId) }
+          : {}),
+      });
+    } catch (error) {
+      const code = error instanceof Error
+        ? error.message === "RECOVERY_WAIT_EXPIRED"
+          ? "EVALUATION_REVIEW_EXPIRED"
+          : error.message
+        : "EVALUATION_RESUME_INVALID";
+      throw createRuntimeFailure(code, "Evaluation review resume validation failed.");
+    }
+    await this.appendRunEvent(
+      input.runId,
+      input.session.sessionId,
+      "interaction.resolved",
+      "INFO",
+      {
+        kind: "evaluation_review",
+        evaluationDecisionId: evaluationDecision.decisionId,
+        recoveryDecisionId: recoveryDecision.decisionId,
+        optionId,
+        actorId,
+      },
+      undefined,
+      { bypassBuffer: true },
+    );
+    await this.appendRunEvent(
+      input.runId,
+      input.session.sessionId,
+      "evaluation.action.selected",
+      optionId === "terminal.fail" ? "WARN" : "INFO",
+      {
+        requestId: request.requestId,
+        evaluationDecisionId: evaluationDecision.decisionId,
+        recoveryDecisionId: recoveryDecision.decisionId,
+        optionId,
+        actorId,
+      },
+      undefined,
+      { bypassBuffer: true },
+    );
+
+    if (disposition === "declined" || optionId === "terminal.fail") {
+      await recoveryCoordinator.markActionFailed(
+        recoveryDecision,
+        "EVALUATION_DECLINED",
+      );
+      return {
+        output: await this.runLifecycleController.returnTerminal({
+          runId: input.runId,
+          sessionId: input.session.sessionId,
+          currentStep: input.session.currentStepAgent,
+          transition: {
+            status: "FAILED",
+            nextStepAgent: input.session.currentStepAgent ?? "agent.loop",
+          },
+          errors: [{
+            code: "EVALUATION_DECLINED",
+            message: "The operator declined the evaluated result.",
+          }],
+          guardrails: input.guardrails,
+          progressSeq: input.progressSeq,
+        }),
+      };
+    }
+    if (this.deps.store.patchSessionState === undefined) {
+      throw createRuntimeFailure(
+        "EVALUATION_RESUME_UNAVAILABLE",
+        "Evaluation review resume requires durable session patch support.",
+      );
+    }
+    const nextAgent = { ...(agent ?? {}) };
+    const nextExec = { ...(exec ?? {}) };
+    delete nextExec.pendingEvaluation;
+    delete nextAgent.waitingFor;
+    delete nextAgent.terminal;
+
+    if (optionId === "evaluation.accept_once") {
+      nextAgent.assistantText = candidate;
+      nextAgent.finalOutput = candidate;
+      nextExec.evaluation = {
+        status: "accepted_once",
+        finalRevisionsUsed: Math.max(
+          0,
+          Math.trunc(readMaybeNumber(pending.finalRevisionsUsed) ?? 0),
+        ),
+        evaluationDecision: structuredClone(evaluationDecision),
+        recoveryDecision: structuredClone(recoveryDecision),
+        assistantOutputBoundaryDecision: structuredClone(boundaryDecision),
+      };
+      nextAgent.exec = nextExec;
+      const session = await this.deps.store.patchSessionState({
+        sessionId: input.session.sessionId,
+        expectedVersion: input.session.version,
+        nextStepAgent: input.session.currentStepAgent,
+        reason: "evaluation_accept_once",
+        statePatch: { agent: nextAgent },
+      });
+      await recoveryCoordinator.markActionCompleted(recoveryDecision);
+      return {
+        session,
+        output: await this.runLifecycleController.returnTerminal({
+          runId: input.runId,
+          sessionId: input.session.sessionId,
+          currentStep: input.session.currentStepAgent,
+          transition: {
+            status: "COMPLETED",
+            nextStepAgent: input.session.currentStepAgent ?? "agent.loop",
+          },
+          errors: [],
+          guardrails: input.guardrails,
+          progressSeq: input.progressSeq,
+        }),
+      };
+    }
+
+    if (optionId !== "evaluation.revise") {
+      throw createRuntimeFailure(
+        "EVALUATION_OPTION_NOT_ALLOWED",
+        "The selected evaluation option is not implemented.",
+      );
+    }
+    const finalRevisionsUsed = Math.max(
+      0,
+      Math.trunc(readMaybeNumber(pending.finalRevisionsUsed) ?? 0),
+    );
+    if (
+      finalRevisionsUsed >=
+      evaluationCoordinator.policy.budget.maxFinalRevisions
+    ) {
+      throw createRuntimeFailure(
+        "EVALUATION_REVISION_BOUND_REACHED",
+        "The final-output evaluation revision bound has been reached.",
+      );
+    }
+    const handler = this.deps.recoveryRuntime?.workflowHandlerRegistry.resolve(
+      "evaluation.revise",
+    );
+    if (handler === undefined) {
+      throw createRuntimeFailure(
+        "EVALUATION_REVISION_UNAVAILABLE",
+        "The exact evaluation revision workflow is not registered.",
+      );
+    }
+    await recoveryCoordinator.markActionStarted(recoveryDecision);
+    try {
+      await handler({
+        runId: input.runId,
+        sessionId: input.session.sessionId,
+        failureCode: "EVALUATION_REJECTED",
+        execute: async () => undefined,
+      });
+      await recoveryCoordinator.markActionCompleted(recoveryDecision);
+    } catch (error) {
+      await recoveryCoordinator.markActionFailed(
+        recoveryDecision,
+        this.mapError(error).code,
+      );
+      throw error;
+    }
+    nextAgent.assistantText = null;
+    nextAgent.finalOutput = undefined;
+    nextAgent.retryContext = buildEvaluationRevisionContext({
+      candidate,
+      result: {
+        request,
+        ...(verdict !== undefined ? { verdict } : {}),
+        decision: evaluationDecision,
+        sanitizedCandidate: candidate,
+        assistantOutputBoundaryDecision: boundaryDecision,
+      },
+    });
+    nextExec.evaluation = {
+      status: "revising",
+      finalRevisionsUsed: finalRevisionsUsed + 1,
+      evaluationDecision: structuredClone(evaluationDecision),
+      recoveryDecision: structuredClone(recoveryDecision),
+    };
+    nextAgent.exec = nextExec;
+    const session = await this.deps.store.patchSessionState({
+      sessionId: input.session.sessionId,
+      expectedVersion: input.session.version,
+      nextStepAgent: "agent.loop",
+      reason: "evaluation_review_revision",
+      statePatch: { agent: nextAgent },
+    });
+    return { session };
   }
 
   private async maybeHandleRecoveryReviewResume(input: {

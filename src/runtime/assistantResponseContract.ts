@@ -4,9 +4,18 @@ import type {
   WaitForMatcher,
 } from "../kestrel/contracts/execution.js";
 import type { InteractionRequestRecord } from "../kestrel/contracts/orchestration.js";
+import {
+  digestCanonicalValue,
+  parseExecutionBoundaryDecisionV1,
+  parseExecutionBoundaryDecisionEvidenceV1,
+  type ExecutionBoundaryDecisionV1,
+} from "../kestrel/contracts/execution-boundary-policy.js";
+import type {
+  ExecutionBoundaryDecisionSink,
+  ExecutionBoundaryPolicyRuntime,
+} from "../security/ExecutionBoundaryPolicy.js";
 import { createRuntimeFailure } from "./RuntimeFailure.js";
 import { extractUserReplyQuestion, extractWaitPrompt } from "./waitForPrompt.js";
-import type { ExecutionBoundaryDecisionSink, ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   waitFor: T,
@@ -110,10 +119,39 @@ export async function enforceRuntimeAssistantResponseBoundary(input: {
   output: NormalizedOutput;
   assistantText: string | null | undefined;
   request?: InteractionRequestRecord | undefined;
+  persistedAssistantOutputDecision?: ExecutionBoundaryDecisionV1 | undefined;
   executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
   persist: ExecutionBoundaryDecisionSink;
 }): Promise<{ output: NormalizedOutput; assistantText: string | null }> {
   const canonical = finalizeRuntimeAssistantResponse(input);
+  const boundaryValue = {
+    assistantText: canonical.assistantText,
+    ...(canonical.output.waitFor !== undefined
+      ? { waitFor: canonical.output.waitFor }
+      : {}),
+  };
+  if (input.persistedAssistantOutputDecision !== undefined) {
+    try {
+      parseExecutionBoundaryDecisionEvidenceV1(
+        [input.persistedAssistantOutputDecision],
+        {
+          runId: canonical.output.runId,
+          sessionId: canonical.output.sessionId,
+          policyId: input.executionBoundaryRuntime.policy.policyId,
+          policyRevision: input.executionBoundaryRuntime.policy.revision,
+          boundary: "assistant_output",
+          outputDigest: digestCanonicalValue(boundaryValue),
+        },
+      );
+      return {
+        output: canonical.output,
+        assistantText: canonical.assistantText,
+      };
+    } catch {
+      // A stale or content-mismatched decision is never reused. The current
+      // boundary is evaluated and persisted below before delivery.
+    }
+  }
   const evaluated = await input.executionBoundaryRuntime.evaluateAndPersist({
     boundary: "assistant_output",
     identity: {
@@ -123,10 +161,7 @@ export async function enforceRuntimeAssistantResponseBoundary(input: {
     source: "runtime",
     trust: "data",
     sourceId: `assistant-output:${canonical.output.runId}`,
-    value: {
-      assistantText: canonical.assistantText,
-      waitFor: canonical.output.waitFor,
-    },
+    value: boundaryValue,
     persist: input.persist,
   });
   return {
@@ -135,6 +170,24 @@ export async function enforceRuntimeAssistantResponseBoundary(input: {
       : { ...canonical.output, waitFor: evaluated.value.waitFor },
     assistantText: evaluated.value.assistantText,
   };
+}
+
+export function readPersistedAssistantOutputDecision(
+  session: unknown,
+): ExecutionBoundaryDecisionV1 | undefined {
+  const sessionRecord = asRecord(session);
+  const state = asRecord(sessionRecord?.state);
+  const agent = asRecord(state?.agent);
+  const exec = asRecord(agent?.exec);
+  const evaluation = asRecord(exec?.evaluation);
+  if (evaluation?.assistantOutputBoundaryDecision === undefined) return;
+  try {
+    return parseExecutionBoundaryDecisionV1(
+      evaluation.assistantOutputBoundaryDecision,
+    );
+  } catch {
+    return;
+  }
 }
 
 export function isUserFacingWait(waitFor: WaitForMatcher | undefined): boolean {

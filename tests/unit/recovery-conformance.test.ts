@@ -101,6 +101,7 @@ test("registered recovery models, tools, normalizers, and workflows pass one con
     "context.compaction",
     "run.continuation",
     "run.loop_recovery",
+    "evaluation.revise",
   ]);
 });
 

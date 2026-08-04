@@ -137,6 +137,12 @@ export const KNOWN_RUN_EVENT_TYPES = new Set<RunEventType>([
   "loop.stall_resumed",
   "migration.session_archived",
   "migration.session_migrated",
+  "evaluation.requested",
+  "evaluation.started",
+  "evaluation.completed",
+  "evaluation.failed",
+  "evaluation.skipped",
+  "evaluation.action.selected",
 ]);
 
 export function buildContinuationNextActions(

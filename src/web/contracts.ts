@@ -58,6 +58,7 @@ export interface WebRunTurnRequest {
   resumeFromWait?: boolean | undefined;
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
+  recoveryOptionId?: string | undefined;
   workspace?: WorkspaceRuntimeContext | undefined;
   attachments?: RunTurnAttachment[] | undefined;
   metadata?: Record<string, unknown> | undefined;

@@ -34,6 +34,7 @@ export const threadTurnBodySchema = z
         message: z.string().trim().min(1).max(20_000),
         approved: z.boolean().optional(),
         reason: z.string().trim().max(2000).optional(),
+        recoveryOptionId: z.string().trim().min(1).max(200).optional(),
         messageId: routeIdSchema.optional(),
       })
       .strict()

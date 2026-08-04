@@ -1115,6 +1115,9 @@ function buildRunStartPayload(
       ...(request.metadata !== undefined ? { metadata: request.metadata } : {}),
       ...(request.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
       ...(request.resumeRequestId !== undefined ? { resumeRequestId: request.resumeRequestId } : {}),
+      ...(request.recoveryOptionId !== undefined
+        ? { recoveryOptionId: request.recoveryOptionId }
+        : {}),
       ...(actor !== undefined ? { actor } : {}),
       history: normalizeSubmittedHistory(request.history),
       ...(request.resumeFromWait === true ? {} : { stepAgent: getEntryStepAgent(profile) }),

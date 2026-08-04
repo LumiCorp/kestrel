@@ -56,6 +56,7 @@ import {
   normalizeRecoveryFailureCode,
   type RecoveryRuntimeConfiguration,
 } from "./recovery/RecoveryCoordinator.js";
+import type { RuntimeEvaluationCoordinator } from "../evaluation/RuntimeEvaluationCoordinator.js";
 import {
   DeterministicStreamingRedactor,
   ExecutionBoundaryPolicyRuntime,
@@ -195,6 +196,7 @@ interface RuntimeIOOptions {
   isRetryableToolError: (error: unknown) => boolean;
   recoveryCoordinator?: RecoveryCoordinator | undefined;
   recoveryRuntime?: RecoveryRuntimeConfiguration | undefined;
+  evaluationCoordinator?: RuntimeEvaluationCoordinator | undefined;
   executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
 }
 
@@ -1420,6 +1422,43 @@ export class RuntimeIO {
         result,
         sessionState,
       });
+      if (
+        this.options.evaluationCoordinator?.matchesHook("after_tool", name) ===
+        true
+      ) {
+        const evaluationState = asPlainRecord(
+          asPlainRecord(asPlainRecord(sessionState.agent)?.exec)?.evaluation,
+        );
+        await this.options.evaluationCoordinator.evaluateHook({
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          threadId:
+            asString(asPlainRecord(this.options.runtimeMetadata)?.threadId) ??
+            progress.sessionId,
+          stepIndex: progress.stepIndex,
+          hookKind: "after_tool",
+          sourceId: name,
+          objective: readRuntimeEvaluationObjective(
+            this.options.runtimePayload,
+            sessionState,
+          ),
+          evidence: [{
+            evidenceId: `tool-${progress.stepIndex}-${hashCanonical(toolCallId).slice(7, 23)}`,
+            kind: "tool",
+            value: {
+              toolId: name,
+              toolCallId,
+              status: result.status,
+              output: result.auditRecord.output,
+            },
+          }],
+          finalRevisionsUsed: Math.max(
+            0,
+            Math.trunc(asFiniteNumber(evaluationState?.finalRevisionsUsed) ?? 0),
+          ),
+          ...(progress.signal !== undefined ? { signal: progress.signal } : {}),
+        });
+      }
       await this.appendEconomicsEvent({
         kind: "tool_result.recorded",
         callId: toolCallId,
@@ -2369,4 +2408,28 @@ function isModelResponse(value: unknown): value is ModelResponse<unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const provider = (value as Record<string, unknown>).provider;
   return typeof provider === "object" && provider !== null && !Array.isArray(provider);
+}
+
+function readRuntimeEvaluationObjective(
+  runtimePayload: Record<string, unknown> | undefined,
+  sessionState: Record<string, unknown>,
+): string {
+  const payloadObjective = asString(runtimePayload?.message) ??
+    asString(runtimePayload?.goal);
+  if (payloadObjective !== undefined) return payloadObjective;
+  const agent = asPlainRecord(sessionState.agent);
+  const visibleTodos = asPlainRecord(agent?.visibleTodos);
+  return asString(visibleTodos?.objective) ?? "Complete the active user request.";
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
