@@ -5,11 +5,20 @@ import {
   AllowlistedToolGateway,
   createEmbeddedToolModuleV1,
 } from "../../src/io/ToolGateway.js";
-import { hashCanonical } from "../../src/kestrel/contracts/tool-contract.js";
+import {
+  createToolActivationRefV1,
+  hashCanonical,
+  toToolDescriptorRefV1,
+} from "../../src/kestrel/contracts/tool-contract.js";
 import type {
   PreparedToolCallV1,
   ResolvedModelToolIntentV1,
 } from "../../src/kestrel/contracts/tool-invocation.js";
+import {
+  parseAgentToolResultV2,
+  parsePreparedToolCallV1,
+} from "../../src/kestrel/contracts/tool-invocation.js";
+import { createPreparedToolCallV1 } from "../../src/io/ToolInvocationSupport.js";
 import type { McpStatusSnapshot } from "../../src/mcp/contracts.js";
 import {
   RuntimeFailure,
@@ -138,6 +147,45 @@ test("model snapshot, preparation, and execution retain one exact MCP activation
   assert.equal(provider.references, 1);
   await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
   assert.equal(provider.references, 0);
+});
+
+test("interruption resumes one persisted MCP action without generation substitution", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  await registry.refresh();
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+  });
+  const intent = registry.resolveModelToolIntent({
+    snapshot,
+    toolCall: { id: "call-interrupted", name: TOOL_ID, input: { query: "old" } },
+  });
+  const prepared = await prepareModelIntent(registry, intent);
+  const persisted = parsePreparedToolCallV1(
+    JSON.parse(JSON.stringify(prepared)) as unknown,
+  );
+
+  provider.version = "v2";
+  await registry.refresh();
+  const result = await registry.executePreparedToolCall(persisted);
+  assert.equal(result.status, "OK");
+  assert.equal(
+    ((result.auditRecord.output as { content: Array<{ text: string }> }).content[0]?.text),
+    "v1",
+  );
+  assert.deepEqual(result.activation, persisted.activation);
+
+  await assert.rejects(
+    () => registry.executePreparedToolCall(persisted),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+  await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
+  await registry.close();
 });
 
 test("terminal continuation cleanup releases snapshots retained by the waiting run", async () => {
@@ -353,6 +401,235 @@ test("preparation rejects a forged descriptor reference under a valid revision",
     (error) =>
       error instanceof RuntimeFailure && error.code === "TOOL_ACTIVATION_STALE",
   );
+});
+
+test("model input must pass the exposed schema before preparation", async () => {
+  const module = createEmbeddedToolModuleV1({
+    ownerId: "kestrel.tests",
+    toolId: "test.model-input",
+    description: "Strict model input test",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    capability: capability("read_only"),
+    presentation: presentation("Model input"),
+    handlerId: "test:model-input:handler:v1",
+    resultNormalizerId: "test:model-input:normalizer:v1",
+    handler: async () => ({}),
+  });
+  const gateway = new AllowlistedToolGateway([module]);
+  const snapshot = await gateway.createToolSurfaceSnapshot();
+  const intent = gateway.resolveModelToolIntent({
+    snapshot,
+    toolCall: {
+      id: "call-invalid-model-input",
+      name: "test.model-input",
+      input: { query: 42 },
+    },
+  });
+
+  await assert.rejects(
+    () => gateway.prepareToolCall({
+      runId: "run-invalid-model-input",
+      sessionId: "session-invalid-model-input",
+      callId: intent.modelToolCallId,
+      activation: intent.activation,
+      origin: {
+        kind: "model",
+        snapshotId: intent.snapshotId,
+        modelToolCallId: intent.modelToolCallId,
+      },
+      rawInput: intent.rawInput,
+      policy: {
+        decision: "allow",
+        policyRevision: hashCanonical({ source: "model-input-test" }),
+      },
+    }),
+    (error) =>
+      error instanceof RuntimeFailure && error.code === "TOOL_INPUT_SCHEMA_FAILED",
+  );
+});
+
+test("model input validation never strips unsupported fields", async () => {
+  const module = createEmbeddedToolModuleV1({
+    ownerId: "kestrel.tests",
+    toolId: "test.model-fields",
+    description: "Unsupported model field test",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    capability: capability("read_only"),
+    presentation: presentation("Model fields"),
+    handlerId: "test:model-fields:handler:v1",
+    resultNormalizerId: "test:model-fields:normalizer:v1",
+    handler: async () => ({}),
+  });
+  const gateway = new AllowlistedToolGateway([module]);
+  const snapshot = await gateway.createToolSurfaceSnapshot();
+  const intent = gateway.resolveModelToolIntent({
+    snapshot,
+    toolCall: {
+      id: "call-extra-model-field",
+      name: "test.model-fields",
+      input: { query: "exact", unsupported: true },
+    },
+  });
+
+  await assert.rejects(
+    () => gateway.prepareToolCall({
+      runId: "run-extra-model-field",
+      sessionId: "session-extra-model-field",
+      callId: intent.modelToolCallId,
+      activation: intent.activation,
+      origin: {
+        kind: "model",
+        snapshotId: intent.snapshotId,
+        modelToolCallId: intent.modelToolCallId,
+      },
+      rawInput: intent.rawInput,
+      policy: {
+        decision: "allow",
+        policyRevision: hashCanonical({ source: "model-field-test" }),
+      },
+    }),
+    (error) =>
+      error instanceof RuntimeFailure && error.code === "TOOL_INPUT_SCHEMA_FAILED",
+  );
+  assert.deepEqual(intent.rawInput, { query: "exact", unsupported: true });
+});
+
+test("preparation rejects a stale runtime scope fingerprint", async () => {
+  const module = createEmbeddedToolModuleV1({
+    ownerId: "kestrel.tests",
+    toolId: "test.scope",
+    description: "Scope binding test",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    capability: capability("read_only"),
+    presentation: presentation("Scope"),
+    handlerId: "test:scope:handler:v1",
+    resultNormalizerId: "test:scope:normalizer:v1",
+    handler: async () => ({}),
+  });
+  const gateway = new AllowlistedToolGateway([module]);
+  const originalContext = {
+    runId: "run-scope-original",
+    sessionId: "session-scope",
+    payload: { workspace: { workspaceRoot: "/workspace/original" } },
+    sessionState: {},
+  };
+  const snapshot = await gateway.createToolSurfaceSnapshot({
+    runContext: originalContext,
+  });
+
+  await assert.rejects(
+    () => gateway.prepareToolCall({
+      runId: "run-scope-original",
+      sessionId: "session-scope",
+      callId: "call-stale-scope",
+      activation: snapshot.tools[0]!,
+      origin: {
+        kind: "trusted_runtime",
+        producerId: "test:v1",
+        adapterId: "test:v1",
+      },
+      rawInput: {},
+      policy: {
+        decision: "allow",
+        policyRevision: hashCanonical({ source: "scope-test" }),
+      },
+    }, {
+      runContext: {
+        ...originalContext,
+        payload: { workspace: { workspaceRoot: "/workspace/substituted" } },
+      },
+    }),
+    (error) =>
+      error instanceof RuntimeFailure && error.code === "TOOL_ACTIVATION_STALE",
+  );
+});
+
+test("approval authority includes the exact descriptor revision", () => {
+  const first = createEmbeddedToolModuleV1({
+    ownerId: "kestrel.tests",
+    toolId: "test.approval-revision",
+    description: "Approval revision one",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    capability: capability("external_side_effect"),
+    presentation: presentation("Approval revision"),
+    handlerId: "test:approval-revision:handler:v1",
+    resultNormalizerId: "test:approval-revision:normalizer:v1",
+    handler: async () => ({}),
+  }).descriptor;
+  const second = createEmbeddedToolModuleV1({
+    ownerId: "kestrel.tests",
+    toolId: "test.approval-revision",
+    description: "Approval revision two",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    capability: capability("external_side_effect"),
+    presentation: presentation("Approval revision"),
+    handlerId: "test:approval-revision:handler:v1",
+    resultNormalizerId: "test:approval-revision:normalizer:v1",
+    handler: async () => ({}),
+  }).descriptor;
+  const buildPrepared = (descriptor: typeof first) => createPreparedToolCallV1({
+    runId: "run-approval-revision",
+    sessionId: "session-approval-revision",
+    callId: "call-approval-revision",
+    activation: createToolActivationRefV1({
+      descriptor: toToolDescriptorRefV1(descriptor),
+      registryGeneration: hashCanonical({ generation: "fixed" }),
+      scopeFingerprint: hashCanonical({ scope: "fixed" }),
+    }),
+    origin: {
+      kind: "trusted_runtime",
+      producerId: "test:v1",
+      adapterId: "test:v1",
+    },
+    effectiveInput: {},
+    policy: {
+      decision: "approval_required",
+      policyRevision: hashCanonical({ policy: "fixed" }),
+    },
+    approval: {
+      approvalId: "approval-revision",
+      authorityRevision: hashCanonical({ upstream: "fixed" }),
+    },
+    preparedAt: "2026-08-03T00:00:00.000Z",
+  });
+
+  assert.notEqual(first.contractRevision, second.contractRevision);
+  assert.notEqual(
+    buildPrepared(first).approval?.authorityRevision,
+    buildPrepared(second).approval?.authorityRevision,
+  );
+});
+
+test("successful tool results require exact descriptor evidence", async () => {
+  const module = createEmbeddedToolModuleV1({
+    ownerId: "kestrel.tests",
+    toolId: "test.result-evidence",
+    description: "Result evidence test",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    capability: capability("read_only"),
+    presentation: presentation("Result evidence"),
+    handlerId: "test:result-evidence:handler:v1",
+    resultNormalizerId: "test:result-evidence:normalizer:v1",
+    handler: async () => ({ recorded: true }),
+  });
+  const result = await executeTestToolCall({
+    gateway: new AllowlistedToolGateway([module]),
+    toolName: "test.result-evidence",
+    toolInput: {},
+  });
+  const parsed = parseAgentToolResultV2(result);
+  assert.deepEqual(parsed.activation, parsed.outcome.activation);
+  assert.match(parsed.activation.descriptor.contractRevision, /^sha256:[0-9a-f]{64}$/u);
 });
 
 test("allowlisted terminal cleanup releases session-owned snapshots", async () => {

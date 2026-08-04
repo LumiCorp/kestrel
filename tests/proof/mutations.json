@@ -450,6 +450,96 @@
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
       "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
+    },
+    {
+      "id": "tool-input-schema-validation-bypass",
+      "target": "src/io/ToolGateway.ts",
+      "find": "if (validator(input.rawInput) !== true) {",
+      "replace": "if (false && validator(input.rawInput) !== true) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=model input must pass the exposed schema before preparation", "tests/unit/tool-invocation-integrity.test.ts"],
+      "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
+    },
+    {
+      "id": "tool-model-field-stripping-acceptance",
+      "target": "src/kestrel/contracts/tool-contract.ts",
+      "find": "  removeAdditional: false,",
+      "replace": "  removeAdditional: \"all\",",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=model input validation never strips unsupported fields", "tests/unit/tool-invocation-integrity.test.ts"],
+      "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
+    },
+    {
+      "id": "tool-stale-scope-acceptance",
+      "target": "src/io/ToolGateway.ts",
+      "find": "      input.activation.scopeFingerprint !==\n        fingerprintToolRunScopeV1(options.runContext)",
+      "replace": "      false && input.activation.scopeFingerprint !==\n        fingerprintToolRunScopeV1(options.runContext)",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=preparation rejects a stale runtime scope fingerprint", "tests/unit/tool-invocation-integrity.test.ts"],
+      "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
+    },
+    {
+      "id": "tool-cross-source-collision-fail-open",
+      "target": "src/kestrel/contracts/tool-registry.ts",
+      "find": "      if (existing !== undefined) {",
+      "replace": "      if (false && existing !== undefined) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=chaos rejects a cross-source identity collision", "tests/unit/tool-registry-chaos.test.ts"],
+      "testFiles": ["tests/unit/tool-registry-chaos.test.ts"]
+    },
+    {
+      "id": "tool-inflight-generation-name-switch",
+      "target": "tools/runtime/UnifiedToolRegistry.ts",
+      "find": "        (toolInput: unknown) => pinnedHandle.call(toolInput),",
+      "replace": "        (toolInput: unknown) => manager.callTool(descriptor.toolId, toolInput),",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=model snapshot, preparation, and execution retain one exact MCP activation", "tests/unit/tool-invocation-integrity.test.ts"],
+      "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
+    },
+    {
+      "id": "tool-missing-result-normalizer-fail-open",
+      "target": "src/kestrel/contracts/tool-registry.ts",
+      "find": "      if (\n        !adapter.hasResultNormalizer(\n          descriptor.execution.resultNormalizerId,\n        )\n      ) {",
+      "replace": "      if (\n        false && !adapter.hasResultNormalizer(\n          descriptor.execution.resultNormalizerId,\n        )\n      ) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=registry compilation fails closed on missing bindings", "tests/unit/tool-contract-v1.test.ts"],
+      "testFiles": ["tests/unit/tool-contract-v1.test.ts"]
+    },
+    {
+      "id": "tool-descriptor-evidence-omission",
+      "target": "src/io/ToolInvocationSupport.ts",
+      "find": "    toolCallId: prepared.callId,\n    activation: prepared.activation,\n    outcome,",
+      "replace": "    toolCallId: prepared.callId,\n    activation: undefined as never,\n    outcome,",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=successful tool results require exact descriptor evidence", "tests/unit/tool-invocation-integrity.test.ts"],
+      "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
+    },
+    {
+      "id": "tool-app-overlay-divergence-acceptance",
+      "target": "apps/web/lib/tools/registry.ts",
+      "find": "      if (descriptorRef.toolId !== capability.runtimeName) {",
+      "replace": "      if (false && descriptorRef.toolId !== capability.runtimeName) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=chaos rejects App overlay divergence", "tests/unit/tool-registry-chaos.test.ts"],
+      "testFiles": ["tests/unit/tool-registry-chaos.test.ts"]
+    },
+    {
+      "id": "tool-approval-descriptor-revision-omission",
+      "target": "src/io/ToolInvocationSupport.ts",
+      "find": "          version: \"prepared-tool-approval-authority-v1\",\n          activation: input.activation,\n          effectiveInput: input.effectiveInput,",
+      "replace": "          version: \"prepared-tool-approval-authority-v1\",\n          activation: { ...input.activation, descriptor: { ...input.activation.descriptor, contractRevision: `sha256:${\"0\".repeat(64)}` } },\n          effectiveInput: input.effectiveInput,",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=approval authority includes the exact descriptor revision", "tests/unit/tool-invocation-integrity.test.ts"],
+      "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
+    },
+    {
+      "id": "tool-handler-result-envelope-acceptance",
+      "target": "src/io/ToolInvocationSupport.ts",
+      "find": "  if (isAgentToolResult(rawOutput)) {",
+      "replace": "  if (false && isAgentToolResult(rawOutput)) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=handlers cannot replace the gateway-owned result envelope", "tests/unit/tool-invocation-integrity.test.ts"],
+      "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
     }
   ]
 }
