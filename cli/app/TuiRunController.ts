@@ -104,7 +104,9 @@ export class TuiRunController {
     const eventType = pendingWait?.eventType ?? "user.message";
     const stepAgent = pendingWait !== undefined ? undefined : getEntryStepAgent(state.activeProfile);
     const effectiveProfile = state.activeProfile;
-    const core = this.context.getLocalCoreClient?.();
+    const core = this.context.prepareLocalCoreClient !== undefined
+      ? await this.context.prepareLocalCoreClient()
+      : this.context.getLocalCoreClient?.();
     if (core === undefined) {
       throw new Error(
         "Kestrel Local Core is required to resolve the active execution profile.",

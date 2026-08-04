@@ -1,5 +1,5 @@
 import type { RunnerActorMetadata } from "../protocol/contracts.js";
-import { ProtocolClient } from "./ProtocolClient.js";
+import { ProtocolClient, type ProtocolClientOptions } from "./ProtocolClient.js";
 import { createConfiguredRunnerTransport } from "./configuredTransport.js";
 
 export const CLI_ACTOR_METADATA = {
@@ -10,11 +10,13 @@ export const CLI_ACTOR_METADATA = {
 
 export function createConfiguredCliProtocolClient(
   env: NodeJS.ProcessEnv = process.env,
+  options: Pick<ProtocolClientOptions, "beforeSend"> = {},
 ): ProtocolClient {
   return new ProtocolClient(createConfiguredRunnerTransport(env), {
     defaultMetadata: {
       actor: CLI_ACTOR_METADATA,
     },
     defaultExecutionDurability: "continue_on_disconnect",
+    beforeSend: options.beforeSend,
   });
 }

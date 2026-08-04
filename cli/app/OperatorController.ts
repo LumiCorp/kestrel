@@ -169,7 +169,9 @@ export class OperatorController {
         );
         return;
       }
-      const core = this.context.getLocalCoreClient?.();
+      const core = this.context.prepareLocalCoreClient !== undefined
+        ? await this.context.prepareLocalCoreClient()
+        : this.context.getLocalCoreClient?.();
       if (core === undefined) {
         throw new Error("Doctor export requires the authenticated Local Core API.");
       }

@@ -85,6 +85,7 @@ import { TuiRunController, resolveRunFailureSummary as resolveRunFailureSummaryF
 import { WorkspaceController, type WorkspaceSelection } from "./WorkspaceController.js";
 import type { ProtocolClient } from "../client/ProtocolClient.js";
 import { createConfiguredCliProtocolClient } from "../client/configuredClient.js";
+import type { LocalCoreConnectionManager } from "../../src/localCore/connectionManager.js";
 import {
   buildModelCatalogStatusLine,
   buildModelSearchResultBlock,
@@ -252,6 +253,7 @@ export class App {
   private localCoreStatus:
     | import("../localCoreShell.js").CliLocalCoreStatus
     | undefined;
+  private localCoreConnectionManager: LocalCoreConnectionManager | undefined;
   private missionControlReporter: MissionControlRuntimeReporter | undefined;
   private runtimeSettings: RuntimeSettingsFile = {
     version: 1,
@@ -283,7 +285,8 @@ export class App {
       uiStore: this.uiStore,
       selectors: this.selectors,
       getRuntimeSettings: () => this.runtimeSettings,
-      getLocalCoreClient: () => this.localCoreStatus?.client,
+      getLocalCoreClient: () => this.getCurrentLocalCoreClient(),
+      prepareLocalCoreClient: async () => await this.prepareLocalCoreClient(),
       getSessionsFile: () => this.sessionsFile,
       setSessionsFile: (sessionsFile) => {
         this.sessionsFile = sessionsFile;
@@ -313,6 +316,19 @@ export class App {
     };
   }
 
+  private getCurrentLocalCoreClient(): import("../../src/localCore/client.js").LocalCoreClient | undefined {
+    return this.localCoreConnectionManager?.current()?.client ?? this.localCoreStatus?.client;
+  }
+
+  private async prepareLocalCoreClient(): Promise<import("../../src/localCore/client.js").LocalCoreClient | undefined> {
+    if (this.localCoreConnectionManager !== undefined) {
+      await this.localCoreConnectionManager.executeIdempotent(
+        async (client) => await client.health(),
+      );
+    }
+    return this.getCurrentLocalCoreClient();
+  }
+
   private getActiveRunnerMetadata(): RunnerCommandMetadata {
     return {};
   }
@@ -331,6 +347,7 @@ export class App {
     this.activeWorkspace = bootstrap.activeWorkspace;
     this.uiStore = bootstrap.uiStore;
     this.localCoreStatus = bootstrap.localCoreStatus;
+    this.localCoreConnectionManager = bootstrap.localCoreConnectionManager;
     this.missionControlReporter = new MissionControlRuntimeReporter({
       cwd: this.options.cwd,
       workspace: this.activeWorkspace,
@@ -348,7 +365,9 @@ export class App {
       await this.appendHistoryLine("system", notice);
     }
 
-    this.client = createConfiguredCliProtocolClient(bootstrap.runnerTransportEnv);
+    this.client = createConfiguredCliProtocolClient(bootstrap.runnerTransportEnv, {
+      beforeSend: bootstrap.prepareRunnerSend,
+    });
     this.client.onEvent((event) => {
       this.onRunnerEvent(event);
     });
@@ -3012,7 +3031,7 @@ export class App {
       await this.appendHistoryLine("system", `Launched background task '${delegatedSession.name}'.`);
 
       const effectiveProfile = profile;
-      const core = this.localCoreStatus?.client;
+      const core = await this.prepareLocalCoreClient();
       if (core === undefined) {
         throw new Error(
           "Kestrel Local Core is required to resolve background execution profiles.",
@@ -3435,7 +3454,7 @@ export class App {
 
   private async fetchMcpStatus(refresh: boolean): Promise<McpStatusSnapshot> {
     const state = this.uiStore.getState();
-    const core = this.localCoreStatus?.client;
+    const core = await this.prepareLocalCoreClient();
     if (core === undefined) {
       throw new Error(
         "Kestrel Local Core is required to resolve the active MCP profile.",

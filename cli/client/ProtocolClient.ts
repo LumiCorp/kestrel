@@ -32,6 +32,7 @@ export interface RunnerExitDiagnostics {
 export interface ProtocolClientOptions {
   defaultMetadata?: RunnerCommandMetadata | undefined;
   defaultExecutionDurability?: RunnerCommandMetadata["durability"] | undefined;
+  beforeSend?: (() => Promise<void>) | undefined;
 }
 
 interface ProtocolClientRunnerError extends Error {
@@ -53,6 +54,7 @@ export class ProtocolClient {
   private readonly transport: ProtocolTransport;
   private readonly defaultMetadata: RunnerCommandMetadata | undefined;
   private readonly defaultExecutionDurability: RunnerCommandMetadata["durability"] | undefined;
+  private readonly beforeSend: (() => Promise<void>) | undefined;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly listeners = new Set<(event: RunnerEvent) => void>();
   private readonly recentStderr: string[] = [];
@@ -67,6 +69,7 @@ export class ProtocolClient {
     this.transport = transport;
     this.defaultMetadata = options.defaultMetadata;
     this.defaultExecutionDurability = options.defaultExecutionDurability;
+    this.beforeSend = options.beforeSend;
   }
 
   start(): void {
@@ -110,6 +113,10 @@ export class ProtocolClient {
     payload: RunnerCommandPayloadByType[TType],
     metadata?: RunnerCommandMetadata,
   ): Promise<RunnerEvent> {
+    if (this.closed) {
+      throw new Error("Protocol client is closed");
+    }
+    await this.beforeSend?.();
     if (this.closed) {
       throw new Error("Protocol client is closed");
     }
