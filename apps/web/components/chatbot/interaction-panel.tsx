@@ -6,6 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { parseUrlElicitation } from "@/lib/mcp/interaction-protocol";
 import type { ThreadInteractionView } from "@/lib/turns/client-contract";
+import {
+  evaluationOptionLabel,
+  readEvaluationReview,
+} from "./evaluation-review";
 
 export type RuntimeInteractionResponse = {
   requestId: string;
@@ -13,6 +17,7 @@ export type RuntimeInteractionResponse = {
   message: string;
   approved?: boolean | undefined;
   reason?: string | undefined;
+  recoveryOptionId?: string | undefined;
 };
 
 export function InteractionPanel({
@@ -39,11 +44,14 @@ export function InteractionPanel({
 
   async function resolveRuntime(
     interaction: ThreadInteractionView,
-    decision?: boolean
+    decision?: boolean,
+    recoveryOptionId?: string
   ) {
     const answer = content[interaction.requestId]?.trim();
     const message =
-      interaction.kind === "approval"
+      recoveryOptionId !== undefined
+        ? evaluationOptionLabel(recoveryOptionId)
+        : interaction.kind === "approval"
         ? decision
           ? "Approved"
           : "Denied"
@@ -60,6 +68,7 @@ export function InteractionPanel({
         eventType: interaction.eventType,
         message,
         ...(interaction.kind === "approval" ? { approved: decision } : {}),
+        ...(recoveryOptionId !== undefined ? { recoveryOptionId } : {}),
       });
       await onResolved();
     } catch (caught) {
@@ -125,7 +134,11 @@ export function InteractionPanel({
 
   const visibleInteractions = interactions.filter(
     (interaction) =>
-      !(interaction.source === "runtime" && interaction.kind === "user_input")
+      !(
+        interaction.source === "runtime" &&
+        interaction.kind === "user_input" &&
+        readEvaluationReview(interaction) === null
+      )
   );
 
   if (visibleInteractions.length === 0) return null;
@@ -143,17 +156,22 @@ export function InteractionPanel({
         Agent requests that need your response
       </h2>
       {visibleInteractions.map((interaction, index) => {
+        const evaluationReview = readEvaluationReview(interaction);
         const urlElicitation =
           interaction.kind === "mcp_elicitation"
             ? parseUrlElicitation(interaction.requestEnvelope)
             : null;
         const isRuntimeQuestion =
-          interaction.source === "runtime" && interaction.kind === "user_input";
+          interaction.source === "runtime" &&
+          interaction.kind === "user_input" &&
+          evaluationReview === null;
         return (
           <Card key={interaction.requestId}>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">
-                {interaction.kind === "approval" ||
+                {evaluationReview !== null
+                  ? "Result requires review"
+                  : interaction.kind === "approval" ||
                 interaction.kind === "mcp_sampling"
                   ? "Approval required"
                   : "The agent needs your response"}
@@ -161,6 +179,49 @@ export function InteractionPanel({
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm">{interaction.prompt}</p>
+              {evaluationReview !== null ? (
+                <details className="rounded-md border p-3 text-sm">
+                  <summary className="cursor-pointer font-medium">
+                    Technical details
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <p className="font-medium">Candidate</p>
+                      <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted p-2">
+                        {evaluationReview.candidate}
+                      </pre>
+                    </div>
+                    {evaluationReview.score !== undefined ? (
+                      <p>
+                        Score: {evaluationReview.score.toFixed(2)}
+                        {evaluationReview.confidence !== undefined
+                          ? ` · Confidence: ${evaluationReview.confidence.toFixed(2)}`
+                          : ""}
+                      </p>
+                    ) : null}
+                    {evaluationReview.rationale !== undefined ? (
+                      <p>{evaluationReview.rationale}</p>
+                    ) : null}
+                    {evaluationReview.assertions.length > 0 ? (
+                      <ul className="list-disc space-y-1 pl-5">
+                        {evaluationReview.assertions.map((assertion) => (
+                          <li key={assertion.assertionId}>
+                            {assertion.passed ? "Passed" : "Failed"}: {assertion.assertionId}
+                            {assertion.rationale !== undefined
+                              ? ` — ${assertion.rationale}`
+                              : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {evaluationReview.evidenceReferences.length > 0 ? (
+                      <p>
+                        Evidence: {evaluationReview.evidenceReferences.join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                </details>
+              ) : null}
               {isRuntimeQuestion ? (
                 <Textarea
                   aria-label="Response to the agent"
@@ -212,7 +273,21 @@ export function InteractionPanel({
               ) : null}
               <div className="flex justify-end gap-2">
                 {interaction.source === "runtime" ? (
-                  interaction.kind === "approval" ? (
+                  evaluationReview !== null ? (
+                    evaluationReview.allowedOptionIds.map((optionId) => (
+                      <Button
+                        disabled={busy !== null}
+                        key={optionId}
+                        onClick={() =>
+                          void resolveRuntime(interaction, undefined, optionId)
+                        }
+                        size="sm"
+                        variant={optionId === "terminal.fail" ? "outline" : "default"}
+                      >
+                        {evaluationOptionLabel(optionId)}
+                      </Button>
+                    ))
+                  ) : interaction.kind === "approval" ? (
                     <>
                       <Button
                         disabled={busy !== null}

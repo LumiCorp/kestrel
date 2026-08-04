@@ -477,6 +477,7 @@ export interface RunnerTurnInput {
   attachments?: RunnerTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
+  recoveryOptionId?: string | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: RunnerInteractionMode | undefined;
@@ -549,6 +550,7 @@ export interface RunnerInteractionRequestV1 extends Record<string, unknown> {
   eventType: string;
   prompt: string;
   inputSchema?: Record<string, unknown> | undefined;
+  metadata?: Record<string, unknown> | undefined;
   approval?: {
     toolCallId: string;
     toolName: string;
@@ -1263,6 +1265,9 @@ export type RunnerProgressCode =
   | "TOOL_CALL_STARTED"
   | "TOOL_CALL_DONE"
   | "TOOL_CALL_FAILED"
+  | "EVALUATION_CHECKING"
+  | "EVALUATION_REVISING"
+  | "EVALUATION_REVIEW_REQUIRED"
   | "WAITING_FOR_EVENT"
   | "RUN_STILL_ACTIVE";
 
@@ -2805,9 +2810,18 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalAttachments(turn.attachments, `${label}.attachments`);
   validateOptionalBoolean(turn.resumeBlockedRun, `${label}.resumeBlockedRun`);
   validateOptionalNonEmptyString(turn.resumeRequestId, `${label}.resumeRequestId`);
+  validateOptionalNonEmptyString(turn.recoveryOptionId, `${label}.recoveryOptionId`);
   if (turn.resumeBlockedRun === true && turn.resumeRequestId === undefined) {
     throw new RunnerProtocolContractError(
       `${label}.resumeRequestId is required when resumeBlockedRun is true`,
+    );
+  }
+  if (
+    turn.recoveryOptionId !== undefined &&
+    turn.resumeBlockedRun !== true
+  ) {
+    throw new RunnerProtocolContractError(
+      `${label}.recoveryOptionId requires resumeBlockedRun to be true`,
     );
   }
   validateOptionalNonEmptyString(turn.stepAgent, `${label}.stepAgent`);
@@ -3609,6 +3623,8 @@ function validateRunnerProgressUpdate(value: unknown, label: string): void {
     "RUN_FAILED", "MODEL_CALL_STARTED", "MODEL_ATTEMPT_STARTED",
     "MODEL_ATTEMPT_RETRYING", "MODEL_CALL_DONE", "MODEL_CALL_FAILED",
     "TOOL_CALL_STARTED", "TOOL_CALL_DONE", "TOOL_CALL_FAILED",
+    "EVALUATION_CHECKING", "EVALUATION_REVISING",
+    "EVALUATION_REVIEW_REQUIRED",
     "WAITING_FOR_EVENT", "RUN_STILL_ACTIVE",
   ]);
   requireNonEmptyString(update.message, `${label}.message`);

@@ -56,6 +56,7 @@ export interface RuntimeInteractionRequestV1 extends Record<string, unknown> {
   eventType: string;
   prompt: string;
   inputSchema?: Record<string, unknown> | undefined;
+  metadata?: Record<string, unknown> | undefined;
   approval?: {
     toolCallId: string;
     toolName: string;
@@ -312,6 +313,7 @@ export interface RuntimeDependencies {
   runEventListener?: ((event: PersistedRuntimeEvent) => void | Promise<void>) | undefined;
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
   recoveryRuntime?: import("../../engine/recovery/RecoveryCoordinator.js").RecoveryRuntimeConfiguration | undefined;
+  evaluationRuntime?: import("../../evaluation/RuntimeEvaluationCoordinator.js").RuntimeEvaluationRuntimeConfiguration | undefined;
   executionBoundaryRuntime?: import("../../security/ExecutionBoundaryPolicy.js").ExecutionBoundaryPolicyRuntime | undefined;
 }
 

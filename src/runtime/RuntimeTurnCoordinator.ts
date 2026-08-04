@@ -21,7 +21,10 @@ import {
   toOperatorAssemblySummary,
 } from "../orchestration/OperatorSessionProjection.js";
 import { createRuntimeFailure } from "./RuntimeFailure.js";
-import { enforceRuntimeAssistantResponseBoundary } from "./assistantResponseContract.js";
+import {
+  enforceRuntimeAssistantResponseBoundary,
+  readPersistedAssistantOutputDecision,
+} from "./assistantResponseContract.js";
 import {
   ExecutionBoundaryPolicyRuntime,
   type ExecutionBoundaryDecisionSink,
@@ -129,6 +132,8 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
         ? await this.readFinalizedPayload?.(input.sessionId)
         : undefined;
     const session = result.session ?? await this.getSession?.(input.sessionId);
+    const persistedAssistantOutputDecision =
+      readPersistedAssistantOutputDecision(session);
     const canonicalInput = {
       output: result.output,
       assistantText:
@@ -136,6 +141,9 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
           ? result.assistantText
           : readAssistantText(asRecord(session?.state.agent)?.assistantText),
       request: selectCurrentInteractionRequest(result.threadStatus),
+      ...(persistedAssistantOutputDecision !== undefined
+        ? { persistedAssistantOutputDecision }
+        : {}),
     };
     const canonicalResponse = await enforceRuntimeAssistantResponseBoundary({
       ...canonicalInput,

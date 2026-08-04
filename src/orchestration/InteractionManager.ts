@@ -253,7 +253,9 @@ function validateRecoveryReviewReply(input: {
   input: ReplyToRequestInput;
   actor: RuntimeTurnActor | undefined;
 }): void {
-  const isRecoveryReview = input.request.metadata?.reason === "recovery_review";
+  const isRecoveryReview =
+    input.request.metadata?.reason === "recovery_review" ||
+    input.request.metadata?.reason === "evaluation_review";
   if (!isRecoveryReview) {
     if (input.input.recoveryOptionId !== undefined) {
       throw createRuntimeFailure(

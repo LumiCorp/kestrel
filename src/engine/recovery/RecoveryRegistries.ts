@@ -146,6 +146,7 @@ export function registerDefaultRecoveryWorkflowHandlers(
     "context.compaction",
     "run.continuation",
     "run.loop_recovery",
+    "evaluation.revise",
   ]) {
     if (registry.resolve(handlerId) !== undefined) continue;
     registry.register(handlerId, async (context) => {

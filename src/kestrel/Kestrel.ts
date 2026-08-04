@@ -56,6 +56,7 @@ export interface KestrelOptions {
   stepContractRegistry?: StepContractRegistry;
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
   recoveryRuntime?: import("../engine/recovery/RecoveryCoordinator.js").RecoveryRuntimeConfiguration | undefined;
+  evaluationRuntime?: import("../evaluation/RuntimeEvaluationCoordinator.js").RuntimeEvaluationRuntimeConfiguration | undefined;
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
 }
 
@@ -138,6 +139,7 @@ export class Kestrel {
         ...(options.runEventListener !== undefined ? { runEventListener: options.runEventListener } : {}),
         ...(options.heapDiagnostics !== undefined ? { heapDiagnostics: options.heapDiagnostics } : {}),
         ...(options.recoveryRuntime !== undefined ? { recoveryRuntime: options.recoveryRuntime } : {}),
+        ...(options.evaluationRuntime !== undefined ? { evaluationRuntime: options.evaluationRuntime } : {}),
         ...(options.executionBoundaryRuntime !== undefined
           ? { executionBoundaryRuntime: options.executionBoundaryRuntime }
           : {}),
@@ -164,6 +166,12 @@ export class Kestrel {
     } = {},
   ): Promise<NormalizedOutput> {
     return this.engine.run(event, options);
+  }
+
+  async evaluateAdvisoryRuntimeHook(
+    input: import("../evaluation/RuntimeEvaluationCoordinator.js").RuntimeEvaluationHookInputV1,
+  ) {
+    return this.engine.evaluateAdvisoryRuntimeHook(input);
   }
 
   async getSession(sessionId: string) {

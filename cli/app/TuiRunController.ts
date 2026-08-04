@@ -10,6 +10,7 @@ import type { RunnerEvent } from "../protocol/contracts.js";
 import {
   buildWaitingSystemText,
   extractWaitPrompt,
+  resolveExactReviewOptionId,
 } from "./waitForPrompt.js";
 import type { TuiAppContext } from "./TuiAppContext.js";
 import {
@@ -92,6 +93,9 @@ export class TuiRunController {
     const resumeRequestId = input.resumeBlockedRun === true
       ? pendingWait?.interaction?.requestId?.trim()
       : undefined;
+    const recoveryOptionId = input.resumeBlockedRun === true
+      ? resolveExactReviewOptionId(pendingWait, input.submittedMessage)
+      : undefined;
     if (input.resumeBlockedRun === true && !resumeRequestId) {
       throw new Error(
         "Cannot resume the blocked run because its pending request ID is missing.",
@@ -165,6 +169,7 @@ export class TuiRunController {
           eventType,
           ...(input.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
           ...(resumeRequestId !== undefined ? { resumeRequestId } : {}),
+          ...(recoveryOptionId !== undefined ? { recoveryOptionId } : {}),
           modeSystemV2Enabled: state.activeProfile.modeSystemV2Enabled === true,
           interactionMode: modeResolution.interactionMode,
           ...(modeResolution.actSubmode !== undefined ? { actSubmode: modeResolution.actSubmode } : {}),

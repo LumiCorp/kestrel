@@ -163,6 +163,7 @@ export async function POST(
         message: body.interactionResponse.message,
         approved: body.interactionResponse.approved,
         reason: body.interactionResponse.reason,
+        recoveryOptionId: body.interactionResponse.recoveryOptionId,
         messageId: body.interactionResponse.messageId ?? crypto.randomUUID(),
         source: "web",
       });

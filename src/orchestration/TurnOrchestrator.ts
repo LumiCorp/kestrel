@@ -14,7 +14,10 @@ import type {
   TurnExecutor,
 } from "./contracts.js";
 import type { RuntimeTurnInput } from "../runtime/RuntimeTurn.js";
-import { enforceRuntimeAssistantResponseBoundary } from "../runtime/assistantResponseContract.js";
+import {
+  enforceRuntimeAssistantResponseBoundary,
+  readPersistedAssistantOutputDecision,
+} from "../runtime/assistantResponseContract.js";
 import { normalizeSubmittedHistory } from "../runtime/submittedHistory.js";
 import { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
@@ -114,10 +117,15 @@ export class TurnOrchestrator {
       ...(delegation !== null ? { delegationId: delegation.delegationId } : {}),
       waitFor: execution.output.waitFor,
     });
+    const persistedAssistantOutputDecision =
+      readPersistedAssistantOutputDecision(execution.session);
     const canonicalInput = {
       output: execution.output,
       assistantText: execution.assistantText,
       ...(request !== undefined ? { request } : {}),
+      ...(persistedAssistantOutputDecision !== undefined
+        ? { persistedAssistantOutputDecision }
+        : {}),
     };
     const canonicalResponse = await enforceRuntimeAssistantResponseBoundary({
       ...canonicalInput,

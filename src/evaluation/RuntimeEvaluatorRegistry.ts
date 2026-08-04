@@ -30,6 +30,21 @@ export interface RuntimeEvaluator {
   ): Promise<RuntimeEvaluationVerdictV1>;
 }
 
+export type RuntimeEvaluationFailureCode =
+  | "EVALUATION_TIMEOUT"
+  | "EVALUATOR_UNAVAILABLE"
+  | "EVALUATION_BUDGET_EXCEEDED";
+
+export class RuntimeEvaluationFailure extends Error {
+  readonly code: RuntimeEvaluationFailureCode;
+
+  constructor(code: RuntimeEvaluationFailureCode, message: string) {
+    super(message);
+    this.name = "RuntimeEvaluationFailure";
+    this.code = code;
+  }
+}
+
 export class RuntimeEvaluatorRegistry {
   private readonly evaluators = new Map<string, RuntimeEvaluator>();
 
@@ -61,7 +76,8 @@ export class RuntimeEvaluatorRegistry {
   }): RuntimeEvaluator {
     const evaluator = this.resolve(input);
     if (evaluator === undefined) {
-      throw new Error(
+      throw new RuntimeEvaluationFailure(
+        "EVALUATOR_UNAVAILABLE",
         `Runtime evaluator '${input.evaluatorId}@${input.evaluatorVersion}' is not registered.`,
       );
     }

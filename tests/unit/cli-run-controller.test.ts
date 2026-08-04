@@ -353,6 +353,45 @@ test("TuiRunController startActiveTurn forwards blocked-run resume and terminal 
   assert.equal(harness.uiStore.getState().running, false);
 });
 
+test("TuiRunController forwards an exact evaluation review option", async () => {
+  const harness = createRunHarness({
+    pendingWaitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      metadata: {
+        reason: "evaluation_review",
+        allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
+      },
+      interaction: {
+        version: "v1",
+        requestId: "evaluation-review-1",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Result requires review.",
+        inputSchema: {
+          type: "object",
+          required: ["recoveryOptionId"],
+          properties: {
+            recoveryOptionId: {
+              type: "string",
+              enum: ["evaluation.accept_once", "terminal.fail"],
+            },
+          },
+        },
+      },
+    },
+  });
+
+  await harness.controller.startActiveTurn({
+    submittedMessage: "evaluation.accept_once",
+    resumeBlockedRun: true,
+  });
+
+  const turn = harness.commands[0]?.payload.turn as Record<string, unknown>;
+  assert.equal(turn.resumeRequestId, "evaluation-review-1");
+  assert.equal(turn.recoveryOptionId, "evaluation.accept_once");
+});
+
 test("TuiRunController preserves a blocked wait when its request identity is missing", async () => {
   const pendingWaitFor = {
     kind: "user" as const,
