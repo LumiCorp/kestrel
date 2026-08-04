@@ -22,9 +22,14 @@ test("Fly image release automation covers every managed image and authenticates 
   }
   assert.match(workflow, /cron: "0 14 \* \* 1"/u);
   assert.match(workflow, /id-token: write/u);
+  assert.match(workflow, /publish-candidate:\n\s+environment: Production/u);
   assert.match(workflow, /pnpm validate/u);
+  assert.match(workflow, /run: flyctl auth docker/u);
+  assert.doesNotMatch(workflow, /run: fly auth docker/u);
   assert.match(publisher, /--build-only/u);
   assert.match(publisher, /--push/u);
+  assert.match(publisher, /await run\("flyctl", \[/u);
+  assert.doesNotMatch(publisher, /await run\("fly", \[/u);
   assert.match(publisher, /"image",\s*"inspect"/u);
   assert.doesNotMatch(publisher, /"image", "show"/u);
   assert.match(publisher, /EXPECTED_GIT_SHA/u);

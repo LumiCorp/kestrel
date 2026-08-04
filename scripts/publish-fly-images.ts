@@ -49,7 +49,7 @@ const trackedPaths = (await git(["ls-files"]))
 const components = [];
 for (const image of impacted) {
   const label = `${image.role}-${revision.slice(0, 12)}`;
-  await run("fly", [
+  await run("flyctl", [
     "deploy",
     ".",
     "--app",

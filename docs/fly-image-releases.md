@@ -23,11 +23,14 @@ earlier main-branch change.
 
 ## Required configuration
 
-Configure the GitHub repository with:
+Configure the GitHub `Production` environment with:
 
 - secret `FLY_API_TOKEN`, authorized to build and push all catalog apps;
 - variable `KESTREL_RELEASE_PUBLISH_URL`, set to the deployed Kestrel One
   `/api/runtime/releases/candidates` URL.
+
+The `publish-candidate` job must remain attached to that environment so GitHub
+Actions makes the release secret and URL available to the workflow.
 
 The Kestrel One worker that processes promotions requires `FLY_API_TOKEN` and
 `KESTREL_FLY_ORGANIZATION_SLUG` so it can update the three platform Fly Apps.
