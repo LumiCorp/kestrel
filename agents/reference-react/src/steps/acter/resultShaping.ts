@@ -21,7 +21,7 @@ import {
   isDevShellLifecycleTool,
   normalizeDevShellLifecycle,
 } from "../../../../../src/runtime/devshellLifecycle.js";
-import { readActiveTaskGoalFromTranscript } from "../../../../../src/runtime/modelTranscript.js";
+import { readActiveTaskGoalFromState } from "../../../../../src/runtime/turnObjective.js";
 import { asArray, asRecord, asString } from "../../../../shared/valueAccess.js";
 import type { ReadOnlyResultDuplicateLedgerEntry } from "../../types.js";
 
@@ -1326,7 +1326,7 @@ export function buildPostToolVerification(input: {
 }
 
 function readActiveTaskGoal(reactState: Record<string, unknown>): string | undefined {
-  return readActiveTaskGoalFromTranscript(reactState.modelTranscript);
+  return readActiveTaskGoalFromState(reactState);
 }
 
 function readDevShellVerificationDiagnostics(

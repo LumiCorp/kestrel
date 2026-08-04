@@ -120,6 +120,7 @@ export function normalizeModelToolCallsToAgentTurn(input: {
     const requiresAssistantProgress = entry.canonicalName !== "kestrel.finalize" &&
       entry.canonicalName !== "kestrel.cannot_satisfy" &&
       entry.canonicalName !== "kestrel.ask_user" &&
+      entry.canonicalName !== "kestrel.request_mode_switch" &&
       entry.canonicalName !== "kestrel.switch_mode";
     const { assistantProgress: _assistantProgress, ...toolInput } = intent.input;
     const activation = intent.toolSurfaceSnapshot?.tools.find(
@@ -363,6 +364,21 @@ function normalizeControlToolCall(input: {
       kind: "switch_mode",
       mode,
     };
+  }
+  if (input.canonicalName === "kestrel.request_mode_switch") {
+    const requiredToolClass = asString(input.input.requiredToolClass);
+    const reason = asString(input.input.reason)?.trim();
+    if (
+      requiredToolClass !== "planning_write" &&
+      requiredToolClass !== "sandboxed_only" &&
+      requiredToolClass !== "external_side_effect"
+    ) {
+      throw invalidControlInput(input, "kestrel.request_mode_switch requiredToolClass is invalid.", "requiredToolClass");
+    }
+    if (reason === undefined || reason.length === 0) {
+      throw invalidControlInput(input, "kestrel.request_mode_switch requires a non-empty reason.", "reason");
+    }
+    return { kind: "request_mode_switch", requiredToolClass, reason };
   }
   throw new ModelToolCallActionError(`Unsupported control tool '${input.canonicalName}'.`, {
     reason: "unsupported_control_tool",

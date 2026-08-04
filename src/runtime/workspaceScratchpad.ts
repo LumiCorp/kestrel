@@ -1,6 +1,6 @@
 import type { NormalizedOutput } from "../kestrel/contracts/execution.js";
 import type { SessionRecord } from "../kestrel/contracts/store.js";
-import { readActiveTaskGoalFromTranscript } from "./modelTranscript.js";
+import { readActiveTaskGoalFromState } from "./turnObjective.js";
 
 export const WORKSPACE_SCRATCHPAD_RELATIVE_PATH = "workspaces";
 
@@ -128,7 +128,7 @@ export function buildManagedScratchpadFromRuntime(input: {
   );
   const decisionSummary = summarizeDecision(nextAction);
   const lastActionSummary = summarizeLastAction(asRecord(reactState.lastActionResult));
-  const transcriptGoal = readActiveTaskGoalFromTranscript(reactState.modelTranscript);
+  const transcriptGoal = readActiveTaskGoalFromState(reactState);
 
   return normalizeManagedScratchpad({
     goal:

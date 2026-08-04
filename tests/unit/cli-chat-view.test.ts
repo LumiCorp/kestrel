@@ -296,3 +296,57 @@ test("ChatView wraps long composer drafts without the old fixed row cap", () => 
   assert.match(longDraft, /second paragraph remains visible/);
   assert.match(longDraft, /distant-tail-token/);
 });
+
+test("ChatView makes transcript scroll controls visible at the live tail and in history", () => {
+  const now = new Date().toISOString();
+  const transcript = Array.from({ length: 20 }, (_, index) => ({
+    role: "assistant" as const,
+    text: `Long response section ${index + 1}.`,
+    timestamp: now,
+  }));
+  const baseProps = {
+    session: {
+      name: "scrollback-thread",
+      sessionId: "session-1",
+      profileId: "reference",
+      createdAt: now,
+      updatedAt: now,
+      started: true,
+    },
+    transcript,
+    runLogs: [],
+    statusLine: "completed",
+    draft: "",
+    running: false,
+    composerFocused: true,
+    viewportColumns: 80,
+    viewportRows: 18,
+    unreadCount: 0,
+    onDraftChange: () => {},
+    onSubmit: () => {},
+  };
+
+  const liveTail = renderToString(
+    React.createElement(ChatView, {
+      ...baseProps,
+      scroll: {
+        offset: 0,
+        cursor: transcript.length - 1,
+        tailLocked: true,
+      },
+    }),
+  );
+  const history = renderToString(
+    React.createElement(ChatView, {
+      ...baseProps,
+      scroll: {
+        offset: 0,
+        cursor: 0,
+        tailLocked: false,
+      },
+    }),
+  );
+
+  assert.match(liveTail, /↑\/↓ scroll · Shift\+↑\/↓ page/u);
+  assert.match(history, /Browsing history · ↑\/↓ scroll/u);
+});

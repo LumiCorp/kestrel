@@ -57,6 +57,7 @@ mkdirSync(outDir, { recursive: true });
 
 writeCliRuntimeManifest();
 copyCliRuntimeResources();
+copyCliRuntimeTsconfig();
 if (TARGET_PLATFORM === "darwin") {
   prepareCliPostgresBundle();
   copyCliPostgresBundle();
@@ -148,6 +149,10 @@ function copyCliRuntimeResources(): void {
       filter: shouldCopyCliRuntimeResourceEntry,
     });
   }
+}
+
+function copyCliRuntimeTsconfig(): void {
+  cpSync(path.join(repoRoot, "tsconfig.json"), path.join(libexecDir, "tsconfig.json"));
 }
 
 function shouldCopyCliRuntimeResourceEntry(entry: string): boolean {
@@ -244,6 +249,7 @@ const child = spawn(process.execPath, ["--import", tsxImport, entrypoint, ...pro
   env: {
     ...process.env,
     KESTREL_CLI_LIBEXEC: libexecRoot,${aliasLine}
+    TSX_TSCONFIG_PATH: path.join(libexecRoot, "tsconfig.json"),
   },
 });
 

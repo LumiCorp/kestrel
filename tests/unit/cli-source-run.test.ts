@@ -1,10 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+test("source launchers pin the repository TSX config", async () => {
+  for (const launcherName of ["kestrel.js", "kcron.js", "kestrel-core.js"]) {
+    const launcher = await readFile(path.join(process.cwd(), "bin", launcherName), "utf8");
+
+    assert.match(launcher, /TSX_TSCONFIG_PATH:\s*path\.join\(repoRoot, "tsconfig\.json"\)/u);
+  }
+});
 
 
 test("AppRoot source-run JSX uses the repository config from an external workspace", async () => {

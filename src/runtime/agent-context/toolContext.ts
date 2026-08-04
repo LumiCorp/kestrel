@@ -162,6 +162,26 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
     },
   },
   {
+    name: "kestrel.request_mode_switch",
+    description: "Ask the user to approve the mode required for the next concrete action. Use this when the needed tool class exists but is unavailable in the current mode. This tool does not switch modes by itself. Use kestrel.switch_mode instead only when the user explicitly named the target mode.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        requiredToolClass: {
+          type: "string",
+          enum: ["planning_write", "sandboxed_only", "external_side_effect"],
+        },
+        reason: {
+          type: "string",
+          minLength: 1,
+          description: "Concise user-facing explanation of the concrete action that requires the mode change.",
+        },
+      },
+      required: ["requiredToolClass", "reason"],
+    },
+  },
+  {
     name: "kestrel.switch_mode",
     description: "Switch the conversation to the mode explicitly requested by the user. Use this only when the user directly asks to switch to Chat, Plan, or Build mode; do not infer a mode change from the kind of work they requested. The selected mode applies to the next turn.",
     inputSchema: {
@@ -230,6 +250,7 @@ function withAgentProgressContract(
     entry.canonicalName === "kestrel.finalize" ||
     entry.canonicalName === "kestrel.ask_user" ||
     entry.canonicalName === "kestrel.cannot_satisfy" ||
+    entry.canonicalName === "kestrel.request_mode_switch" ||
     entry.canonicalName === "kestrel.switch_mode"
   ) {
     return entry;

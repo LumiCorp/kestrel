@@ -3,7 +3,13 @@ import type {
   ReactAction,
   ToolCapabilityManifestItem,
 } from "../types.js";
-import type { InteractionMode } from "../../../../src/mode/contracts.js";
+import {
+  isToolEligibleForInteractionMode,
+  readBlockedApprovalCapability,
+  type ExecutionPolicyOverride,
+  type InteractionMode,
+} from "../../../../src/mode/contracts.js";
+import type { ModelToolSpec } from "../../../../src/kestrel/contracts/model-io.js";
 import { findUserVisibleTextViolation } from "../userVisibleTextPolicy.js";
 import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
 import type {
@@ -78,6 +84,8 @@ export interface DecisionPolicyContext {
   activeExecCommandSessions?: WorkspaceFreshnessEvidenceRef[] | undefined;
   hasOpenVisibleTodos?: boolean | undefined;
   capabilityManifest: ToolCapabilityManifestItem[];
+  availableTools?: ModelToolSpec[] | undefined;
+  executionPolicy?: ExecutionPolicyOverride | undefined;
   executionIntent?: DecisionContextExecutionIntent | undefined;
   interactionMode?: InteractionMode | undefined;
   goalSatisfiedCloseoutReadiness?: GoalSatisfiedCloseoutReadiness | undefined;
@@ -128,14 +136,20 @@ export function validateDecisionPolicy(context: DecisionPolicyContext): string[]
     validateAskUserActionPolicy(context.action);
     checksPassed.push("ask_user_prompt_valid");
   }
+  if (context.action.kind === "request_mode_switch") {
+    validateModeSwitchRequestPolicy(context);
+    checksPassed.push("mode_switch_request_valid");
+  }
   if (context.action.kind === "cannot_satisfy") {
     validateCannotSatisfyUserVisibleMessage(context.action);
     validateCannotSatisfyActionPolicy(
       context.action,
       context.requiredCapabilities,
       context.capabilityManifest,
+      context.availableTools ?? [],
       context.executionIntent,
       context.interactionMode,
+      context.executionPolicy,
     );
     checksPassed.push("cannot_satisfy_capability_consistency");
   }
@@ -145,6 +159,58 @@ export function validateDecisionPolicy(context: DecisionPolicyContext): string[]
     checksPassed.push("tool_allowlist_valid");
   }
   return checksPassed;
+}
+
+function validateModeSwitchRequestPolicy(context: DecisionPolicyContext): void {
+  if (context.action.kind !== "request_mode_switch") return;
+  const requiredToolClass = context.action.requiredToolClass;
+  const matchingManifestTools = context.capabilityManifest.filter(
+    (tool) => tool.executionClass === requiredToolClass,
+  );
+  if (matchingManifestTools.length === 0) {
+    throw decisionPolicyError(
+      `No configured tool uses requiredToolClass='${requiredToolClass}'. Report the concrete missing capability instead.`,
+      "DECISION_CAPABILITY_UNAVAILABLE",
+      { requiredAction: "report_concrete_missing_capability" },
+    );
+  }
+  const availableNames = new Set((context.availableTools ?? []).map((tool) => tool.name));
+  if (matchingManifestTools.some((tool) => availableNames.has(tool.name))) {
+    throw decisionPolicyError(
+      `requiredToolClass='${requiredToolClass}' is already available in the current tool surface. Use the available tool.`,
+      "DECISION_POLICY_FAILED",
+      { requiredAction: "choose_available_tool" },
+    );
+  }
+  const modeHiddenTools = matchingManifestTools.filter((tool) =>
+    isToolEligibleForInteractionMode({
+      interactionMode: context.interactionMode ?? "chat",
+      toolClass: requiredToolClass,
+      allowedInteractionModes: tool.allowedInteractionModes,
+      requiredCapabilities: tool.approvalCapabilities,
+    }) === false
+  );
+  if (modeHiddenTools.length === 0) {
+    throw decisionPolicyError(
+      `requiredToolClass='${requiredToolClass}' is permitted by the current mode but unavailable from the model tool surface. Request the relevant policy or capability change.`,
+      "DECISION_CAPABILITY_UNAVAILABLE",
+      { requiredAction: "request_policy_or_approval_change" },
+    );
+  }
+  const allModeHiddenToolsPolicyBlocked = modeHiddenTools.every((tool) =>
+    context.executionPolicy?.toolClassPolicy?.[requiredToolClass] === false ||
+    readBlockedApprovalCapability({
+      executionPolicy: context.executionPolicy,
+      requiredCapabilities: tool.approvalCapabilities,
+    }) !== undefined
+  );
+  if (allModeHiddenToolsPolicyBlocked) {
+    throw decisionPolicyError(
+      `requiredToolClass='${requiredToolClass}' is blocked by execution policy. Request the required policy or approval change instead of a mode switch.`,
+      "DECISION_CAPABILITY_UNAVAILABLE",
+      { requiredAction: "request_policy_or_approval_change" },
+    );
+  }
 }
 
 function validateBuildModeGoalSatisfiedEvidence(context: DecisionPolicyContext): void {
@@ -434,20 +500,44 @@ function validateCannotSatisfyActionPolicy(
   action: Extract<ReactAction, { kind: "cannot_satisfy" }>,
   requiredCapabilities: string[],
   capabilityManifest: ToolCapabilityManifestItem[],
+  availableTools: ModelToolSpec[],
   executionIntent?: DecisionContextExecutionIntent | undefined,
   interactionMode?: InteractionMode | undefined,
+  executionPolicy?: ExecutionPolicyOverride | undefined,
 ): void {
   const missingRequiredCapabilities = computeMissingRequiredCapabilities(
     requiredCapabilities,
     capabilityManifest,
   );
-  const availableExecutionToolHints = collectAvailableExecutionToolHints(capabilityManifest);
+  const availableToolNames = new Set(availableTools.map((tool) => tool.name));
+  const availableCapabilityManifest = capabilityManifest.filter((tool) =>
+    availableToolNames.has(tool.name)
+  );
+  const currentlyUnavailableCapabilities = computeMissingRequiredCapabilities(
+    requiredCapabilities,
+    availableCapabilityManifest,
+  );
+  const availableExecutionToolHints = collectAvailableExecutionToolHints(availableCapabilityManifest);
   const knownToolNames = new Set(capabilityManifest.map((tool) => normalizeCapabilityToken(tool.name)));
+  const availableToolNamesNormalized = new Set(
+    availableTools.map((tool) => normalizeCapabilityToken(tool.name)),
+  );
+  const hiddenCandidateTools = Array.from(
+    new Set(
+      (executionIntent?.candidateTools ?? [])
+        .map((toolName) => normalizeCapabilityToken(toolName))
+        .filter((toolName) =>
+          toolName.length > 0 &&
+          knownToolNames.has(toolName) &&
+          availableToolNamesNormalized.has(toolName) === false
+        ),
+    ),
+  );
   const availableCandidateTools = Array.from(
     new Set(
       (executionIntent?.candidateTools ?? [])
         .map((toolName) => normalizeCapabilityToken(toolName))
-        .filter((toolName) => toolName.length > 0 && knownToolNames.has(toolName)),
+        .filter((toolName) => toolName.length > 0 && availableToolNamesNormalized.has(toolName)),
     ),
   );
 
@@ -480,6 +570,23 @@ function validateCannotSatisfyActionPolicy(
     if (missingRequiredCapabilities.length > 0) {
       return;
     }
+    if (currentlyUnavailableCapabilities.length > 0) {
+      throw decisionPolicyError(
+        "The required capability is configured but unavailable in the current tool surface. Request the required mode instead of reporting it absent.",
+        "DECISION_CAPABILITY_UNAVAILABLE",
+        {
+          reasonCode: action.reasonCode,
+          requiredCapabilities,
+          currentlyUnavailableCapabilities,
+          availableToolHints: availableExecutionToolHints,
+          requiredAction: policyBlocksCapabilities({
+            capabilities: currentlyUnavailableCapabilities,
+            capabilityManifest,
+            executionPolicy,
+          }) ? "request_policy_or_approval_change" : "request_mode_switch",
+        },
+      );
+    }
     throw decisionPolicyError(
       "cannot_satisfy reasonCode='missing_required_capability' is invalid when all requiredCapabilities exist in capabilityManifest.",
       "DECISION_CAPABILITY_UNAVAILABLE",
@@ -507,6 +614,22 @@ function validateCannotSatisfyActionPolicy(
       },
     );
   }
+  if (action.reasonCode === "unsatisfied_by_available_tools" && hiddenCandidateTools.length > 0) {
+    throw decisionPolicyError(
+      "A candidate tool is configured but unavailable in the current tool surface. Request the required mode instead of reporting the task unsatisfiable.",
+      "DECISION_CAPABILITY_UNAVAILABLE",
+      {
+        reasonCode: action.reasonCode,
+        objective: executionIntent?.objective,
+        availableToolHints: availableExecutionToolHints,
+        requiredAction: policyBlocksAnyTools({
+          toolNames: hiddenCandidateTools,
+          capabilityManifest,
+          executionPolicy,
+        }) ? "request_policy_or_approval_change" : "request_mode_switch",
+      },
+    );
+  }
   if (action.reasonCode === "unsatisfied_by_available_tools" && interactionMode === "build") {
     throw decisionPolicyError(
       "cannot_satisfy reasonCode='unsatisfied_by_available_tools' is invalid in build mode. Use missing_required_capability or requested_tool_unavailable with concrete evidence, choose an available tool, or ask the user.",
@@ -530,6 +653,26 @@ function validateCannotSatisfyActionPolicy(
       knownToolNames.has(normalizeCapabilityToken(requestedTool)) === false
     ) {
       return;
+    }
+    if (
+      typeof requestedTool === "string" &&
+      requestedTool.trim().length > 0 &&
+      availableToolNamesNormalized.has(normalizeCapabilityToken(requestedTool)) === false
+    ) {
+      const normalizedRequestedTool = normalizeCapabilityToken(requestedTool);
+      throw decisionPolicyError(
+        "The requested tool is configured but unavailable in the current tool surface.",
+        "DECISION_CAPABILITY_UNAVAILABLE",
+        {
+          reasonCode: action.reasonCode,
+          availableToolHints: availableExecutionToolHints,
+          requiredAction: policyBlocksAnyTools({
+            toolNames: [normalizedRequestedTool],
+            capabilityManifest,
+            executionPolicy,
+          }) ? "request_policy_or_approval_change" : "request_mode_switch",
+        },
+      );
     }
     throw decisionPolicyError(
       "cannot_satisfy reasonCode='requested_tool_unavailable' is invalid when all requiredCapabilities exist in capabilityManifest.",
@@ -610,6 +753,42 @@ function collectKnownCapabilityClasses(
     }
   }
   return [...classes].sort();
+}
+
+function policyBlocksAnyTools(input: {
+  toolNames: string[];
+  capabilityManifest: ToolCapabilityManifestItem[];
+  executionPolicy?: ExecutionPolicyOverride | undefined;
+}): boolean {
+  const names = new Set(input.toolNames.map(normalizeCapabilityToken));
+  return input.capabilityManifest.some((tool) => {
+    if (names.has(normalizeCapabilityToken(tool.name)) === false) return false;
+    const executionClass = tool.executionClass ?? "read_only";
+    return input.executionPolicy?.toolClassPolicy?.[executionClass] === false ||
+      readBlockedApprovalCapability({
+        executionPolicy: input.executionPolicy,
+        requiredCapabilities: tool.approvalCapabilities,
+      }) !== undefined;
+  });
+}
+
+function policyBlocksCapabilities(input: {
+  capabilities: string[];
+  capabilityManifest: ToolCapabilityManifestItem[];
+  executionPolicy?: ExecutionPolicyOverride | undefined;
+}): boolean {
+  const required = new Set(input.capabilities.map(normalizeCapabilityToken));
+  const matchingToolNames = input.capabilityManifest
+    .filter((tool) =>
+      required.has(normalizeCapabilityToken(tool.name)) ||
+      tool.capabilityClasses.some((capability) => required.has(normalizeCapabilityToken(capability)))
+    )
+    .map((tool) => tool.name);
+  return policyBlocksAnyTools({
+    toolNames: matchingToolNames,
+    capabilityManifest: input.capabilityManifest,
+    executionPolicy: input.executionPolicy,
+  });
 }
 
 function collectAvailableExecutionToolHints(

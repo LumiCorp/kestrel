@@ -287,6 +287,12 @@ export interface SwitchModeAction {
   mode: "chat" | "plan" | "build";
 }
 
+export interface RequestModeSwitchAction {
+  kind: "request_mode_switch";
+  requiredToolClass: "planning_write" | "sandboxed_only" | "external_side_effect";
+  reason: string;
+}
+
 export type CommandExecutionRole =
   | "source_inspection"
   | "source_authoring"
@@ -358,12 +364,13 @@ export type ReactAction = ReactActionCommon & (
     }
   | HandoffToBuildAction
   | SwitchModeAction
+  | RequestModeSwitchAction
   | RuntimeFinalizeAction
 );
 
 export type AgentAction = Extract<
   ReactAction,
-  { kind: "tool" | "tool_batch" | "ask_user" | "finalize" | "cannot_satisfy" | "handoff_to_build" | "switch_mode" }
+  { kind: "tool" | "tool_batch" | "ask_user" | "finalize" | "cannot_satisfy" | "handoff_to_build" | "switch_mode" | "request_mode_switch" }
 >;
 
 export interface ArtifactExpectation {

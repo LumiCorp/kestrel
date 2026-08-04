@@ -3417,6 +3417,11 @@ test("compileIntent rejects generic build blocker when executable tools are avai
             executionClass: "external_side_effect",
           },
         ],
+        availableTools: [{
+          name: "dev.shell.run",
+          description: "Run a shell command.",
+          inputSchema: { type: "object" },
+        }],
       }),
     (error) => {
       const cast = error as Error & { code?: string; details?: Record<string, unknown> };
@@ -3506,4 +3511,126 @@ test("compileIntent keeps non-build insufficient_horizon compatibility", () => {
   });
 
   assert.equal(compiled.action?.kind, "cannot_satisfy");
+});
+
+test("mode switch requests compile only for configured mode-hidden tool classes", () => {
+  const manifest = [{
+    name: "plan.write",
+    description: "Persist the current plan.",
+    capabilityClasses: ["plan.write"],
+    executionClass: "planning_write" as const,
+  }];
+  const action = {
+    kind: "request_mode_switch" as const,
+    requiredToolClass: "planning_write" as const,
+    reason: "I need Plan mode to document the plan.",
+  };
+
+  const compiled = compileAgentAction({
+    phase: "deliberator",
+    interactionMode: "chat",
+    action,
+    observedCapabilities: [],
+    capabilityManifest: manifest,
+    availableTools: [],
+  });
+  assert.equal(compiled.action?.kind, "request_mode_switch");
+
+  assert.throws(
+    () => compileAgentAction({
+      phase: "deliberator",
+      interactionMode: "chat",
+      action,
+      observedCapabilities: [],
+      capabilityManifest: manifest,
+      availableTools: [{
+        name: "plan.write",
+        description: "Persist the current plan.",
+        inputSchema: { type: "object" },
+      }],
+    }),
+    (error) => {
+      const cast = error as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "DECISION_POLICY_FAILED");
+      assert.equal(cast.details?.requiredAction, "choose_available_tool");
+      return true;
+    },
+  );
+});
+
+test("mode switch requests distinguish policy-hidden and absent tool classes", () => {
+  const action = {
+    kind: "request_mode_switch" as const,
+    requiredToolClass: "sandboxed_only" as const,
+    reason: "I need Build mode to edit the workspace.",
+  };
+  assert.throws(
+    () => compileAgentAction({
+      phase: "deliberator",
+      interactionMode: "chat",
+      action,
+      observedCapabilities: [],
+      capabilityManifest: [{
+        name: "fs.write_text",
+        description: "Write a text file.",
+        capabilityClasses: ["filesystem.write"],
+        executionClass: "sandboxed_only",
+      }],
+      availableTools: [],
+      executionPolicy: { toolClassPolicy: { sandboxed_only: false } },
+    }),
+    (error) => {
+      const cast = error as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "DECISION_CAPABILITY_UNAVAILABLE");
+      assert.equal(cast.details?.requiredAction, "request_policy_or_approval_change");
+      return true;
+    },
+  );
+  assert.throws(
+    () => compileAgentAction({
+      phase: "deliberator",
+      interactionMode: "chat",
+      action,
+      observedCapabilities: [],
+      capabilityManifest: [],
+      availableTools: [],
+    }),
+    (error) => {
+      const cast = error as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "DECISION_CAPABILITY_UNAVAILABLE");
+      assert.equal(cast.details?.requiredAction, "report_concrete_missing_capability");
+      return true;
+    },
+  );
+});
+
+test("capability retry hints never expose mode-hidden tools", () => {
+  assert.throws(
+    () => compileAgentAction({
+      phase: "deliberator",
+      interactionMode: "chat",
+      action: {
+        kind: "cannot_satisfy",
+        reasonCode: "requested_tool_unavailable",
+        message: "I cannot edit the requested file in this mode.",
+        details: { requestedTool: "fs.write_text" },
+      },
+      observedCapabilities: [],
+      capabilityManifest: [{
+        name: "fs.write_text",
+        description: "Write a text file.",
+        capabilityClasses: ["filesystem.write"],
+        executionClass: "sandboxed_only",
+      }],
+      availableTools: [],
+    }),
+    (error) => {
+      const cast = error as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(cast.code, "DECISION_CAPABILITY_UNAVAILABLE");
+      assert.equal(cast.details?.requiredAction, "request_mode_switch");
+      assert.deepEqual(cast.details?.availableToolHints, []);
+      assert.doesNotMatch(JSON.stringify(cast.details), /fs\.write_text/u);
+      return true;
+    },
+  );
 });

@@ -323,6 +323,30 @@ test("switch_mode preserves the explicit requested mode without assistant progre
   assert.equal(normalized.assistantProgress, undefined);
 });
 
+test("request_mode_switch preserves the required class and user-facing reason", () => {
+  const registry = buildModelToolAliasRegistry(workspaceTools, {
+    controlToolNames: ["kestrel.request_mode_switch"],
+  });
+  const normalized = normalizeModelToolCallsToAgentTurn({
+    aliasRegistry: registry,
+    sourceRunId: "run_1",
+    toolIntents: [{
+      name: "kestrel_request_mode_switch",
+      input: {
+        requiredToolClass: "planning_write",
+        reason: "I need to write the agreed session plan before implementation.",
+      },
+    }],
+  });
+
+  assert.deepEqual(normalized.action, {
+    kind: "request_mode_switch",
+    requiredToolClass: "planning_write",
+    reason: "I need to write the agreed session plan before implementation.",
+  });
+  assert.equal(normalized.assistantProgress, undefined);
+});
+
 test("todo update description explains code-change notes without benchmark policy", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
   const todoTool = registry.requestTools.find((tool) => tool.name === "kestrel_todo_update");

@@ -31,6 +31,8 @@ export interface ModelTranscriptItem {
   toolCallId?: string | undefined;
   rawOutputRef?: string | undefined;
   truncated?: boolean | undefined;
+  sourceEventId?: string | undefined;
+  sourceTurnId?: string | undefined;
 }
 
 export interface ModelTranscript {
@@ -102,20 +104,26 @@ export function validateModelTranscript(value: unknown): ModelTranscriptValidati
   return { ok: true, value: transcript };
 }
 
-export function readActiveTaskGoalFromTranscript(value: unknown): string | undefined {
+export function readActiveTaskGoalFromTranscript(
+  value: unknown,
+  activeTaskItemId?: string | undefined,
+): string | undefined {
   const transcript = normalizeModelTranscript(value);
   if (transcript === undefined) {
     return ;
   }
-  return readActiveTaskItemFromTranscript(transcript)?.content?.trim();
+  return readActiveTaskItemFromTranscript(transcript, activeTaskItemId)?.content?.trim();
 }
 
-export function readActiveTaskItemIdFromTranscript(value: unknown): string | undefined {
+export function readActiveTaskItemIdFromTranscript(
+  value: unknown,
+  activeTaskItemId?: string | undefined,
+): string | undefined {
   const transcript = normalizeModelTranscript(value);
   if (transcript === undefined) {
     return ;
   }
-  return readActiveTaskItemFromTranscript(transcript)?.id;
+  return readActiveTaskItemFromTranscript(transcript, activeTaskItemId)?.id;
 }
 
 export function appendModelTranscriptItems(
@@ -151,6 +159,8 @@ export function appendUserTurnToTranscript(input: {
   transcript: unknown;
   message: string;
   stepIndex?: number | undefined;
+  sourceEventId?: string | undefined;
+  sourceTurnId?: string | undefined;
 }): ModelTranscript {
   const message = input.message.trim();
   if (message.length === 0) {
@@ -159,7 +169,13 @@ export function appendUserTurnToTranscript(input: {
   const current = normalizeModelTranscript(input.transcript);
   if (
     current !== undefined &&
-    current.items.some((item) => item.kind === "user" && item.content?.trim() === message)
+    current.items.some((item) =>
+      item.kind === "user" && (
+        input.sourceEventId !== undefined
+          ? item.sourceEventId === input.sourceEventId
+          : item.sourceEventId === undefined && item.content?.trim() === message
+      )
+    )
   ) {
     return current;
   }
@@ -167,6 +183,8 @@ export function appendUserTurnToTranscript(input: {
     makeModelTranscriptItem("user", {
       content: message,
       stepIndex: input.stepIndex,
+      ...(input.sourceEventId !== undefined ? { sourceEventId: input.sourceEventId } : {}),
+      ...(input.sourceTurnId !== undefined ? { sourceTurnId: input.sourceTurnId } : {}),
     }),
   ]);
 }
@@ -253,6 +271,7 @@ export function compactModelTranscript(input: {
   categoryCoverage?: Record<string, number> | undefined;
   summarySource?: "model" | "runtime_fallback" | undefined;
   failureCode?: string | undefined;
+  activeTaskItemId?: string | undefined;
 }): ModelTranscript {
   const transcript = normalizeModelTranscript(input.transcript) ?? {
     version: 1,
@@ -264,6 +283,7 @@ export function compactModelTranscript(input: {
     planModelTranscriptCompaction({
       transcript,
       retainedTailItems: input.retainedTailItems,
+      activeTaskItemId: input.activeTaskItemId,
     });
   validateExplicitCompactionPlan(transcript, plan);
   const retainedItems = plan.retainedItems;
@@ -307,11 +327,12 @@ function hashTranscriptValue(value: unknown): string {
 export function planModelTranscriptCompaction(input: {
   transcript: unknown;
   retainedTailItems?: number | undefined;
+  activeTaskItemId?: string | undefined;
 }): ModelTranscriptCompactionPlan {
   const transcript = normalizeModelTranscript(input.transcript) ?? { version: 1, windowId: 1, items: [] };
   const retainedTailItems = Math.max(0, Math.trunc(input.retainedTailItems ?? 24));
   const tail = retainedTailItems > 0 ? selectProviderValidTail(transcript.items, retainedTailItems) : [];
-  const activeTaskItem = readActiveTaskItemFromTranscript(transcript);
+  const activeTaskItem = readActiveTaskItemFromTranscript(transcript, input.activeTaskItemId);
   const retainedItems = dedupeTranscriptItemsById([
     ...(activeTaskItem !== undefined ? [activeTaskItem] : []),
     ...tail,
@@ -331,13 +352,14 @@ export function planTokenBudgetedModelTranscriptCompaction(input: {
   estimateReplacedItemsTokens?:
     | ModelTranscriptItemsTokenEstimator
     | undefined;
+  activeTaskItemId?: string | undefined;
 }): ModelTranscriptCompactionPlan {
   const transcript = normalizeModelTranscript(input.transcript) ?? {
     version: 1,
     windowId: 1,
     items: [],
   };
-  const activeTaskItem = readActiveTaskItemFromTranscript(transcript);
+  const activeTaskItem = readActiveTaskItemFromTranscript(transcript, input.activeTaskItemId);
   const retainedTail = selectProviderValidTailByTokenBudget(
     transcript.items.filter((item) => item.id !== activeTaskItem?.id),
     input.retainedTailTokenBudget,
@@ -396,12 +418,42 @@ export function estimateModelTranscriptItemsTokens(
 
 function readActiveTaskItemFromTranscript(
   transcript: ModelTranscript,
+  activeTaskItemId?: string | undefined,
 ): ModelTranscriptItem | undefined {
+  if (activeTaskItemId !== undefined) {
+    const active = transcript.items.find((item) =>
+      item.id === activeTaskItemId && item.kind === "user" && item.content?.trim()
+    );
+    if (active !== undefined) {
+      return active;
+    }
+  }
   return transcript.items.find((item) => {
     if (item.kind !== "user") return false;
     const content = item.content?.trim();
     return content !== undefined && content.length > 0;
   });
+}
+
+export function findUserTranscriptItemIdBySourceEvent(
+  value: unknown,
+  sourceEventId: string,
+): string | undefined {
+  const transcript = normalizeModelTranscript(value);
+  return transcript?.items.find((item) =>
+    item.kind === "user" && item.sourceEventId === sourceEventId
+  )?.id;
+}
+
+export function rebaseModelTranscriptForFreshTask(value: unknown): ModelTranscript {
+  const transcript = normalizeModelTranscript(value) ?? { version: 1, windowId: 1, items: [] };
+  return {
+    version: transcript.version,
+    windowId: transcript.windowId,
+    items: transcript.items.filter((item) =>
+      item.kind === "user" || item.kind === "assistant_text"
+    ),
+  };
 }
 
 export function rebaseModelTranscriptAfterCompaction(input: {
@@ -835,6 +887,8 @@ function normalizeTranscriptItem(value: unknown): ModelTranscriptItem | undefine
     ...(asString(record.toolCallId) !== undefined ? { toolCallId: asString(record.toolCallId) } : {}),
     ...(asString(record.rawOutputRef) !== undefined ? { rawOutputRef: asString(record.rawOutputRef) } : {}),
     ...(typeof record.truncated === "boolean" ? { truncated: record.truncated } : {}),
+    ...(asString(record.sourceEventId) !== undefined ? { sourceEventId: asString(record.sourceEventId) } : {}),
+    ...(asString(record.sourceTurnId) !== undefined ? { sourceTurnId: asString(record.sourceTurnId) } : {}),
   };
 }
 

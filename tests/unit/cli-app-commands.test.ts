@@ -3459,6 +3459,57 @@ test("assistant replies keep tail-following when tail lock is true but cursor dr
   assert.equal(next.scroll.chat.cursor, Math.max(0, totalAfter - 1));
 });
 
+test("chat paging leaves the live tail and preserves the reading position during new output", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const controller = (appState.buildController as () => InkAppController)();
+
+  uiStore.patch({
+    activeView: "chat",
+    activeRegion: "composer",
+    transcript: [
+      {
+        role: "assistant",
+        text: Array.from(
+          { length: 80 },
+          (_, index) => `long-output-section-${index + 1}`,
+        ).join(" "),
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  });
+  controller.updateViewport(80, 20);
+
+  controller.pageActiveSelection("up");
+
+  const browsing = uiStore.getState();
+  const visualCountBeforeAppend = (
+    appState.getChatVisualRowCount as (state: ReturnType<UiStore["getState"]>) => number
+  )(browsing);
+  assert.equal(browsing.scroll.chat.cursor < visualCountBeforeAppend - 1, true);
+  assert.equal(browsing.scroll.chat.tailLocked, false);
+  const readingCursor = browsing.scroll.chat.cursor;
+
+  await (appState.appendHistoryLine as (
+    role: "assistant" | "user" | "system",
+    text: string,
+  ) => Promise<void>)("assistant", "New output arrived while the operator was reading history.");
+
+  const appended = uiStore.getState();
+  assert.equal(appended.scroll.chat.tailLocked, false);
+  assert.equal(appended.scroll.chat.cursor, readingCursor);
+
+  controller.jumpActiveSelection("end");
+
+  const caughtUp = uiStore.getState();
+  const visualCountAfterAppend = (
+    appState.getChatVisualRowCount as (state: ReturnType<UiStore["getState"]>) => number
+  )(caughtUp);
+  assert.equal(caughtUp.scroll.chat.tailLocked, true);
+  assert.equal(caughtUp.scroll.chat.cursor, visualCountAfterAppend - 1);
+});
+
 test("natural-language mode switches are forwarded for runtime intent classification", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;

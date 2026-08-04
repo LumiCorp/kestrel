@@ -76,10 +76,11 @@ import {
   appendToolResultToTranscript,
   appendTodoUpdateToTranscript,
   estimateModelTranscriptItemsTokens,
+  findUserTranscriptItemIdBySourceEvent,
   planTokenBudgetedModelTranscriptCompaction,
-  readActiveTaskGoalFromTranscript,
   readActiveTaskItemIdFromTranscript,
   normalizeModelTranscript,
+  rebaseModelTranscriptForFreshTask,
   type ModelTranscript,
   type ModelTranscriptCompactionPlan,
 } from "../../../../src/runtime/modelTranscript.js";
@@ -148,7 +149,15 @@ import {
 } from "../../../../src/runtime/agent-context/evidenceContext.js";
 import {
   resolveKestrelTurnObjective,
+  readActiveTaskGoalFromState,
+  readActiveTaskItemIdFromState,
+  readActiveTurnIntent,
+  readSubmissionKind,
+  readTurnPayloadInstruction,
+  shouldPreserveTranscriptTaskForTurn,
   shouldStartFreshUserMessageTaskEpoch,
+  type ActiveTurnIntentV1,
+  type ConversationSubmissionKind,
 } from "../../../../src/runtime/turnObjective.js";
 import { buildModeBlockedWaitGuidance } from "./modeBlockedPrompt.js";
 
@@ -171,12 +180,14 @@ const EXECUTION_MODE_CONTROL_TOOL_NAMES = [
   "kestrel.finalize",
   "kestrel.ask_user",
   "kestrel.cannot_satisfy",
+  "kestrel.request_mode_switch",
   "kestrel.switch_mode",
   "kestrel.todo_update",
 ] as const;
 const NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES = [
   "kestrel.finalize",
   "kestrel.cannot_satisfy",
+  "kestrel.request_mode_switch",
   "kestrel.switch_mode",
   "kestrel.todo_update",
 ] as const;
@@ -196,21 +207,28 @@ function controlToolNamesForInteractionMode(input: {
   eventType: string;
   eventPayload: Record<string, unknown>;
   executableWorkspaceToolsAvailable: boolean;
+  modeSwitchRequestAvailable: boolean;
 }): readonly string[] {
+  const withAvailableModeRequest = (names: readonly string[]) =>
+    input.modeSwitchRequestAvailable
+      ? names
+      : names.filter((name) => name !== "kestrel.request_mode_switch");
   if (input.interactionMode === "build" && input.executableWorkspaceToolsAvailable) {
     const buildControlTools = isNoninteractiveExecutionContext(input.eventType, input.eventPayload)
       ? NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES
       : EXECUTION_MODE_CONTROL_TOOL_NAMES;
-    return buildControlTools.filter((name) => name !== "kestrel.cannot_satisfy");
+    return withAvailableModeRequest(
+      buildControlTools.filter((name) => name !== "kestrel.cannot_satisfy"),
+    );
   }
   if (isNoninteractiveExecutionContext(input.eventType, input.eventPayload)) {
-    return input.interactionMode === "plan"
+    return withAvailableModeRequest(input.interactionMode === "plan"
       ? PLAN_MODE_CONTROL_TOOL_NAMES.filter((name) => name !== "kestrel.ask_user")
-      : NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES;
+      : NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES);
   }
-  return input.interactionMode === "plan"
+  return withAvailableModeRequest(input.interactionMode === "plan"
     ? PLAN_MODE_CONTROL_TOOL_NAMES
-    : EXECUTION_MODE_CONTROL_TOOL_NAMES;
+    : EXECUTION_MODE_CONTROL_TOOL_NAMES);
 }
 
 function finalizeStatusesForInteractionMode(input: {
@@ -251,6 +269,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const capabilityManifest = config.capabilityManifestProvider(ctx);
     let reactState = getAgentStateFromRuntimeState(ctx.session.state);
     let eventPayload = asRecord(ctx.event.payload) ?? {};
+    const eventIdentity = ctx.event.id ?? ctx.runId;
     const inferredContinuationResume = await shouldTreatUserReplyAsContinuationResume({
       eventType: ctx.event.type,
       eventPayload,
@@ -264,7 +283,14 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         resumeBlockedRun: true,
       };
     }
+    eventPayload = attachTurnIdentityMetadata({
+      eventId: eventIdentity,
+      eventType: ctx.event.type,
+      eventPayload,
+      reactState,
+    });
     reactState = resetTaskScopedStateForFreshUserMessageEpoch({
+      eventId: eventIdentity,
       eventType: ctx.event.type,
       eventPayload,
       reactState,
@@ -285,6 +311,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       eventType: ctx.event.type,
       eventPayload,
       fallbackGoal,
+      eventId: eventIdentity,
     }).goal ?? config.defaultGoal;
     if (resumeRequest.applyEventOverride === true) {
       eventPayload = {
@@ -451,6 +478,17 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       stepIndex: ctx.stepIndex,
       ...(tokenCounter !== undefined ? { tokenCounter } : {}),
     });
+    const activeTurnIntent = resolveActiveTurnIntentForContext({
+      reactState,
+      eventId: eventIdentity,
+      eventPayload,
+      goal,
+      transcript: contextRequest.transcript,
+    });
+    reactState = {
+      ...reactState,
+      ...(activeTurnIntent !== undefined ? { activeTurnIntent } : {}),
+    };
     const observedCapabilities =
       extractObservedCapabilitiesFromFeedback(reactState);
     const canonicalIntentContext = readCanonicalIntentContextFromState(
@@ -484,6 +522,13 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       eventType: ctx.event.type,
       eventPayload,
       executableWorkspaceToolsAvailable,
+      modeSwitchRequestAvailable: hasModeHiddenWorkspaceTool({
+        allTools: deliberatorTools,
+        modeScopedTools: modeScopedDeliberatorTools,
+        capabilityManifest,
+        modeResolution,
+        executionPolicy,
+      }),
     });
     const modeScopedControlToolNames = closeoutOnly
       ? ["kestrel.finalize"] as const
@@ -533,9 +578,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       activeSkillPack: activeSkillPackContext,
       stepIndex: ctx.stepIndex,
     });
-    goal = readActiveTaskGoalFromContextRequest({
-      contextRequest,
-    }) ?? goal;
+    goal = activeTurnIntent?.objective ?? goal;
 
     let activeReactState: Record<string, unknown> = {
       ...reactState,
@@ -795,13 +838,8 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
   };
 }
 
-function readActiveTaskGoalFromContextRequest(input: {
-  contextRequest: ReturnType<typeof buildContextRequest>;
-}): string | undefined {
-  return readActiveTaskGoalFromTranscript(input.contextRequest.transcript);
-}
-
 function resetTaskScopedStateForFreshUserMessageEpoch(input: {
+  eventId: string;
   eventType: string;
   eventPayload: Record<string, unknown>;
   reactState: ReferenceReactAgentState;
@@ -812,7 +850,7 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
   return {
     ...input.reactState,
     goal: undefined,
-    modelTranscript: undefined,
+    modelTranscript: rebaseModelTranscriptForFreshTask(input.reactState.modelTranscript),
     retryContext: undefined,
     lastAction: undefined,
     lastActionResult: undefined,
@@ -823,6 +861,10 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
     postToolVerification: undefined,
     decisionVerification: undefined,
     nextAction: undefined,
+    waitingFor: undefined,
+    activeContinuation: undefined,
+    pendingContinuationOffer: undefined,
+    exec: {},
     decisionReason: undefined,
     decisionTrace: undefined,
     loopGuard: undefined,
@@ -834,6 +876,70 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
     activeTurnIntent: undefined,
     phase: undefined,
   } as ReferenceReactAgentState;
+}
+
+function attachTurnIdentityMetadata(input: {
+  eventId: string;
+  eventType: string;
+  eventPayload: Record<string, unknown>;
+  reactState: Record<string, unknown>;
+}): Record<string, unknown> {
+  const metadata = asRecord(input.eventPayload.metadata) ?? {};
+  const explicitSubmissionKind = readSubmissionKind(input.eventPayload);
+  const submissionKind: ConversationSubmissionKind = explicitSubmissionKind ?? (
+    input.eventPayload.resumeBlockedRun === true || input.eventType === "user.reply"
+      ? "resume"
+      : input.eventType === "user.message"
+        ? readTurnPayloadInstruction(input.eventPayload) === undefined || shouldPreserveTranscriptTaskForTurn({
+            reactState: input.reactState,
+            eventType: input.eventType,
+            eventPayload: input.eventPayload,
+            eventId: input.eventId,
+          }) ? "resume" : "initial"
+        : "resume"
+  );
+  const activeIntent = readActiveTurnIntent(input.reactState);
+  const turnId = asString(metadata.turnId)?.trim() || (
+    submissionKind === "resume" || submissionKind === "steer"
+      ? activeIntent?.turnId ?? input.eventId
+      : input.eventId
+  );
+  return {
+    ...input.eventPayload,
+    metadata: {
+      ...metadata,
+      turnId,
+      submissionKind,
+      sourceEventId: input.eventId,
+    },
+  };
+}
+
+function resolveActiveTurnIntentForContext(input: {
+  reactState: Record<string, unknown>;
+  eventId: string;
+  eventPayload: Record<string, unknown>;
+  goal: string;
+  transcript: ModelTranscript;
+}): ActiveTurnIntentV1 | undefined {
+  const existing = readActiveTurnIntent(input.reactState);
+  const submissionKind = readSubmissionKind(input.eventPayload);
+  const fresh = submissionKind === "initial" || submissionKind === "follow_up";
+  if (fresh === false && existing !== undefined) return existing;
+  const metadata = asRecord(input.eventPayload.metadata) ?? {};
+  const turnId = asString(metadata.turnId)?.trim() || input.eventId;
+  const activeTranscriptItemId = fresh
+    ? findUserTranscriptItemIdBySourceEvent(input.transcript, input.eventId)
+    : readActiveTaskItemIdFromState({ ...input.reactState, modelTranscript: input.transcript });
+  const objective = fresh ? input.goal : readActiveTaskGoalFromState(input.reactState) ?? input.goal;
+  if (activeTranscriptItemId === undefined || objective.trim().length === 0) return existing;
+  return {
+    version: "v1",
+    turnId,
+    rootEventId: fresh ? input.eventId : existing?.rootEventId ?? input.eventId,
+    objective: objective.trim(),
+    activeTranscriptItemId,
+  };
 }
 
 function buildAgentLoopStatePatch(agentPatch: Record<string, unknown>): Record<string, unknown> {
@@ -883,6 +989,34 @@ function filterDeliberatorToolsForMode(input: {
       requiredCapabilities: toolApprovalCapabilitiesByName.get(tool.name),
     })
   );
+}
+
+function hasModeHiddenWorkspaceTool(input: {
+  allTools: ModelToolSpec[];
+  modeScopedTools: ModelToolSpec[];
+  capabilityManifest: ToolCapabilityManifestItem[];
+  modeResolution: { interactionMode: InteractionMode; actSubmode?: ActSubmode | undefined };
+  executionPolicy: ExecutionPolicyOverride | undefined;
+}): boolean {
+  const configuredByName = new Map(input.capabilityManifest.map((tool) => [tool.name, tool] as const));
+  const visibleNames = new Set(input.modeScopedTools.map((tool) => tool.name));
+  return input.allTools.some((tool) => {
+    const configured = configuredByName.get(tool.name);
+    if (configured === undefined || visibleNames.has(tool.name)) return false;
+    const executionClass = configured.executionClass ?? "read_only";
+    if (input.executionPolicy?.toolClassPolicy?.[executionClass] === false) return false;
+    if (readBlockedApprovalCapability({
+      executionPolicy: input.executionPolicy,
+      requiredCapabilities: configured.approvalCapabilities,
+    }) !== undefined) return false;
+    return isToolEligibleForInteractionMode({
+      interactionMode: input.modeResolution.interactionMode,
+      actSubmode: input.modeResolution.actSubmode,
+      toolClass: executionClass,
+      allowedInteractionModes: configured.allowedInteractionModes,
+      requiredCapabilities: configured.approvalCapabilities,
+    }) === false;
+  });
 }
 
 function hasExecutableWorkspaceTools(input: {
@@ -1046,6 +1180,7 @@ function runDeliberatorCompileAttempt(input: {
     input.reactState.lastActionResult,
     input.runId,
     input.interactionMode,
+    input.executionPolicy,
     prepared.canonicalIntentContext,
     input.workspaceRoot,
     input.decisionContext.plan,
@@ -1268,6 +1403,7 @@ async function compactContextRequestTokenAware(
     if (compactionSource === undefined) {
       throw new Error("Compaction requires a valid model transcript.");
     }
+    const activeTaskItemId = readActiveTaskItemIdFromState(input.reactState);
     const budget = buildCompactionBudget({
       contextRequest,
       transcript: compactionSource,
@@ -1279,12 +1415,14 @@ async function compactContextRequestTokenAware(
       providerOverheadTokens,
       actionTokenCounter,
       maintenanceTokenCounter,
+      ...(activeTaskItemId !== undefined ? { activeTaskItemId } : {}),
     });
     const plan = buildRuntimeCompactionPlan({
       transcript: compactionSource,
       budget,
       tailTokenCounter: actionTokenCounter,
       maintenanceTokenCounter,
+      ...(activeTaskItemId !== undefined ? { activeTaskItemId } : {}),
     });
     if (plan.replacedItems.length === 0) {
       throwRequiredContextBudgetFailure(contextTokens, toolSchemaTokens);
@@ -1534,6 +1672,7 @@ function buildCompactionBudget(input: {
   providerOverheadTokens: number;
   actionTokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
   maintenanceTokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
+  activeTaskItemId?: string | undefined;
 }): CompactionBudget {
   if (input.policy === undefined || input.actionProfile === undefined) {
     return {
@@ -1558,7 +1697,10 @@ function buildCompactionBudget(input: {
     input.policy.context.outputReserveTokens,
     minimumRuntimeFallbackSummaryTokens(input.actionTokenCounter),
   );
-  const activeTaskItemId = readActiveTaskItemIdFromTranscript(input.transcript);
+  const activeTaskItemId = readActiveTaskItemIdFromTranscript(
+    input.transcript,
+    input.activeTaskItemId,
+  );
   const activeTaskTokens = estimateModelTranscriptItemsTokens(
     input.transcript.items.filter((item) => item.id === activeTaskItemId),
     input.actionTokenCounter,
@@ -1594,9 +1736,13 @@ function buildRuntimeCompactionPlan(input: {
   budget: CompactionBudget;
   tailTokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
   maintenanceTokenCounter?: ReturnType<typeof resolveModelTokenCounter>;
+  activeTaskItemId?: string | undefined;
 }): ModelTranscriptCompactionPlan {
   if (input.budget.legacy) {
-    const legacyPlan = planKestrelAgentCompaction(input.transcript).plan;
+    const legacyPlan = planKestrelAgentCompaction(
+      input.transcript,
+      input.activeTaskItemId,
+    ).plan;
     const legacySourceTokens = estimateKestrelCompactionSourceTokens(
       legacyPlan.replacedItems,
       input.maintenanceTokenCounter,
@@ -1606,6 +1752,7 @@ function buildRuntimeCompactionPlan(input: {
     }
     const activeTaskItemId = readActiveTaskItemIdFromTranscript(
       input.transcript,
+      input.activeTaskItemId,
     );
     return planTokenBudgetedModelTranscriptCompaction({
       transcript: input.transcript,
@@ -1622,6 +1769,7 @@ function buildRuntimeCompactionPlan(input: {
           items,
           input.maintenanceTokenCounter,
         ),
+      ...(activeTaskItemId !== undefined ? { activeTaskItemId } : {}),
     });
   }
   return planTokenBudgetedModelTranscriptCompaction({
@@ -1634,6 +1782,7 @@ function buildRuntimeCompactionPlan(input: {
         items,
         input.maintenanceTokenCounter,
       ),
+    ...(input.activeTaskItemId !== undefined ? { activeTaskItemId: input.activeTaskItemId } : {}),
   });
 }
 
@@ -1684,6 +1833,10 @@ function buildRuntimeFallbackCompactionSummary(
   maxTokens: number,
   tokenCounter?: ReturnType<typeof resolveModelTokenCounter>,
 ): KestrelCompactionSummaryV2 {
+  const activeTaskGoal = readActiveTaskGoalFromState({
+    ...reactState,
+    modelTranscript: transcript,
+  });
   const plan =
     asRecord(reactState.planDocument) ??
     asRecord(reactState.plan) ??
@@ -1695,8 +1848,8 @@ function buildRuntimeFallbackCompactionSummary(
   return fitRuntimeFallbackSummaryToTokenBudget({
     summary: {
       decisions: boundedStrings([
-        readActiveTaskGoalFromTranscript(transcript) !== undefined
-          ? `Active task: ${readActiveTaskGoalFromTranscript(transcript)}`
+        activeTaskGoal !== undefined
+          ? `Active task: ${activeTaskGoal}`
           : undefined,
         asString(reactState.decisionReason),
         asString(asRecord(reactState.decision)?.reason),
@@ -2259,6 +2412,7 @@ function tryCompileAgentAction(
   lastActionResult: unknown,
   runId: string,
   interactionMode?: InteractionMode,
+  executionPolicy?: ExecutionPolicyOverride,
   canonicalIntentContext?: CanonicalIntentContext,
   workspaceRoot?: string | undefined,
   activePlan?: InternalDecisionContext["plan"],
@@ -2310,6 +2464,7 @@ function tryCompileAgentAction(
       visibleTodos,
       lastActionResult,
       interactionMode,
+      executionPolicy,
       workspaceRoot,
       activePlan,
       ...(canonicalIntentContext?.compiledIntent !== undefined
@@ -2461,6 +2616,25 @@ function toAgentLoopActionTransition(
   const action = compiled.action;
   if (action === undefined) {
     throw new Error("Agent loop compiled decision is missing next action.");
+  }
+  if (action.kind === "request_mode_switch") {
+    const modelTranscript = appendAssistantToolCallsToTranscript({
+      transcript: reactState.modelTranscript,
+      toolCalls: modelToolCalls,
+      stepIndex,
+    });
+    return toPlannerModeBlockedTransition({
+      stepIndex,
+      loopStepId,
+      execDispatchStepId,
+      reactState: { ...reactState, modelTranscript },
+      goal,
+      interactionMode: modeResolution.interactionMode,
+      actSubmode: modeResolution.actSubmode,
+      requiredToolClass: action.requiredToolClass,
+      blockedActionKind: "mode_switch_request",
+      requestReason: action.reason,
+    });
   }
   const targetStep = execDispatchStepId;
   const traces = [...compiled.trace];
@@ -3355,15 +3529,17 @@ function toPlannerModeBlockedTransition(input: {
   blockedActionKind: string;
   blockedActionId?: string | undefined;
   activeContinuation?: RuntimeContinuationStateV1 | undefined;
+  requestReason?: string | undefined;
 }): Transition {
   const guidance = buildModeBlockedWaitGuidance({
     interactionMode: input.interactionMode,
     actSubmode: input.actSubmode,
     requiredToolClass: input.requiredToolClass,
+    ...(input.requestReason !== undefined ? { reason: input.requestReason } : {}),
   });
   const currentMode = formatModeLabel(input.interactionMode, input.actSubmode);
   const requiredMode = requiredModeForToolClass(input.requiredToolClass);
-  const decisionReason = `The selected ${describeBlockedActionKind(input.blockedActionKind)} requires ${requiredMode}, but the run is currently in ${currentMode}.`;
+  const decisionReason = input.requestReason ?? `The selected ${describeBlockedActionKind(input.blockedActionKind)} requires ${requiredMode}, but the run is currently in ${currentMode}.`;
   const waitFor: UserWaitForMatcher = {
     kind: "user",
     eventType: "user.reply",
@@ -3530,7 +3706,7 @@ function buildContinuationInvalidationPrompt(
 }
 
 function requiredModeForToolClass(toolClass: ToolExecutionClass): string {
-  if (toolClass === "read_only") {
+  if (toolClass === "read_only" || toolClass === "planning_write") {
     return "Plan";
   }
   return "Build";

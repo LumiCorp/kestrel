@@ -795,7 +795,10 @@ export class App {
           this.uiStore.patch({
             scroll: {
               ...state.scroll,
-              chat: next,
+              chat: {
+                ...next,
+                tailLocked: atEnd,
+              },
             },
             chatUnreadCount: atEnd ? 0 : state.chatUnreadCount,
           });
@@ -894,7 +897,10 @@ export class App {
           this.uiStore.patch({
             scroll: {
               ...state.scroll,
-              chat: next,
+              chat: {
+                ...next,
+                tailLocked: atEnd,
+              },
             },
             chatUnreadCount: atEnd ? 0 : state.chatUnreadCount,
           });
@@ -988,7 +994,10 @@ export class App {
           this.uiStore.patch({
             scroll: {
               ...state.scroll,
-              chat: next,
+              chat: {
+                ...next,
+                tailLocked: to === "end",
+              },
             },
             chatUnreadCount: to === "end" ? 0 : state.chatUnreadCount,
           });

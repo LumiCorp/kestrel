@@ -29,7 +29,7 @@ import {
   sanitizeUtf16String,
   stringifySanitizedJson,
 } from "../../../../src/runtime/jsonSanitizer.js";
-import { readActiveTaskGoalFromTranscript } from "../../../../src/runtime/modelTranscript.js";
+import { readActiveTaskGoalFromState } from "../../../../src/runtime/turnObjective.js";
 import {
   isDevShellLifecycleTool,
   normalizeDevShellLifecycle,
@@ -1000,6 +1000,18 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         stepIndex: ctx.stepIndex,
         io,
       });
+    }
+    if (action.kind === "request_mode_switch") {
+      throw createRuntimeFailure(
+        "AGENT_MODE_SWITCH_REQUEST_REACHED_EXEC_DISPATCH",
+        "request_mode_switch must be converted into a mode-blocked wait before execution dispatch.",
+        {
+          subsystem: "react",
+          step: "agent.exec.finalize",
+          classification: "state",
+          recoverable: false,
+        },
+      );
     }
 
     return handleFinalizeAction({
@@ -2389,7 +2401,7 @@ function normalizeAutonomyLevel(value: string): AutonomyPolicy["level"] {
 
 function collectAutonomyEvidence(reactState: Record<string, unknown>): string[] {
   const evidence = new Set<string>();
-  const transcriptGoal = readActiveTaskGoalFromTranscript(reactState.modelTranscript);
+  const transcriptGoal = readActiveTaskGoalFromState(reactState);
   if (transcriptGoal !== undefined) {
     evidence.add("goal");
   }

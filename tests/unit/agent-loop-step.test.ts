@@ -437,7 +437,7 @@ function buildStep(input?: {
       description: string;
       capabilityClasses: string[];
       approvalCapabilities?: string[];
-      executionClass: "read_only" | "sandboxed_only" | "external_side_effect";
+      executionClass: "read_only" | "planning_write" | "sandboxed_only" | "external_side_effect";
       allowedInteractionModes?: Array<"chat" | "plan" | "build">;
       toolFamily?: string;
   }>;
@@ -738,6 +738,16 @@ function modelToolIntentsFromLegacyTestAction(
         ...(record.data !== undefined ? { data: record.data } : {}),
       },
     });
+    return intents;
+  }
+  if (kind === "request_mode_switch") {
+    intents.push({
+      name: "kestrel_request_mode_switch",
+      input: {
+        requiredToolClass: record.requiredToolClass,
+        reason: record.reason,
+      },
+    });
   }
   return intents;
 }
@@ -866,7 +876,15 @@ test("plan-mode clarification replies preserve the transcript task as task instr
   assert.equal(input.taskInstruction, buildRequest);
   const agentPatch = transition.statePatch?.agent as Record<string, unknown>;
   assert.equal(agentPatch.goal, undefined);
-  assert.equal(readActiveTaskGoalFromTranscript(agentPatch.modelTranscript), buildRequest);
+  const activeTurnIntent = agentPatch.activeTurnIntent as Record<string, unknown>;
+  assert.equal(activeTurnIntent.objective, buildRequest);
+  assert.equal(
+    readActiveTaskGoalFromTranscript(
+      agentPatch.modelTranscript,
+      String(activeTurnIntent.activeTranscriptItemId),
+    ),
+    buildRequest,
+  );
   const transcript = input.transcript as Record<string, unknown>;
   const items = transcript.items as Array<Record<string, unknown>>;
   assert.deepEqual(
@@ -1056,7 +1074,15 @@ test("build-mode fresh user messages replace transcript task when no active task
   assert.equal(items.at(-1)?.content, followUp);
   const agentPatch = transition.statePatch?.agent as Record<string, unknown>;
   assert.equal(agentPatch.goal, undefined);
-  assert.equal(readActiveTaskGoalFromTranscript(agentPatch.modelTranscript), followUp);
+  const activeTurnIntent = agentPatch.activeTurnIntent as Record<string, unknown>;
+  assert.equal(activeTurnIntent.objective, followUp);
+  assert.equal(
+    readActiveTaskGoalFromTranscript(
+      agentPatch.modelTranscript,
+      String(activeTurnIntent.activeTranscriptItemId),
+    ),
+    followUp,
+  );
 });
 
 test("mode-switch finalization followed by an ordinary user message starts a fresh task epoch", async () => {
@@ -1186,11 +1212,17 @@ test("mode-switch finalization followed by an ordinary user message starts a fre
   const items = transcript.items as Array<Record<string, unknown>>;
   assert.deepEqual(
     items.filter((item) => item.kind === "user").map((item) => item.content),
-    [buildRequest],
+    [oldTask, buildRequest],
   );
   const agentPatch = transition.statePatch?.agent as Record<string, unknown>;
   assert.equal(agentPatch.goal, undefined);
-  assert.equal(readActiveTaskGoalFromTranscript(agentPatch.modelTranscript), buildRequest);
+  assert.equal(
+    readActiveTaskGoalFromTranscript(
+      agentPatch.modelTranscript,
+      (agentPatch.activeTurnIntent as Record<string, unknown>).activeTranscriptItemId as string,
+    ),
+    buildRequest,
+  );
   assert.equal(agentPatch.retryContext, undefined);
   assert.equal(agentPatch.lastActionResult, undefined);
   assert.equal(agentPatch.visibleTodos, undefined);
@@ -1326,7 +1358,7 @@ test("build-mode fresh user messages start a new task before live reply", async 
   const items = transcript.items as Array<Record<string, unknown>>;
   assert.deepEqual(
     items.filter((item) => item.kind === "user").map((item) => item.content),
-    [followUp],
+    [buildRequest, followUp],
   );
 });
 
@@ -1426,7 +1458,7 @@ test("fresh payload message replaces transcript task and ignores stale payload g
   const items = transcript.items as Array<Record<string, unknown>>;
   assert.deepEqual(
     items.filter((item) => item.kind === "user").map((item) => item.content),
-    [followUp],
+    [buildRequest, followUp],
   );
 });
 
@@ -5468,6 +5500,65 @@ test("agent loop mode-blocked transition does not restamp stale goal when transc
   assert.equal(metadata.reason, "planner_mode_blocked");
 });
 
+test("agent loop compiles a mode switch request into one resumable user wait", async () => {
+  const chatContext = context();
+  chatContext.event = {
+    id: "event-document-plan",
+    type: "user.message",
+    sessionId: "session-1",
+    payload: {
+      message: "Document our plan and start working",
+      interactionMode: "chat",
+      metadata: { turnId: "turn-document-plan", submissionKind: "initial" },
+    },
+  };
+  chatContext.session.state.agent = {
+    interactionMode: "chat",
+    modelTranscript: transcriptForTask("Tell me about this workspace"),
+    observations: [{ summary: "stale inspection" }],
+  };
+
+  let requestToolNames: string[] = [];
+  const transition = await buildStep({
+    tools: [WRITE_TEXT_TOOL],
+    capabilityManifest: [{
+      name: "fs.write_text",
+      description: "Write a planning document",
+      capabilityClasses: ["filesystem.write"],
+      executionClass: "planning_write",
+    }],
+  })(chatContext, {
+    useModel: async (request: ModelRequest) => {
+      requestToolNames = (request.tools ?? []).map((tool) => tool.name);
+      assert.equal((request.input as Record<string, unknown>).taskInstruction, "Document our plan and start working");
+      return modelResponse({
+        reason: "The plan must be written before implementation can begin.",
+        nextAction: {
+          kind: "request_mode_switch",
+          requiredToolClass: "planning_write",
+          reason: "I need to write the agreed session plan before implementation.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  const nextAction = agent.nextAction as Record<string, unknown>;
+  const waitFor = nextAction.waitFor as Record<string, unknown>;
+  const metadata = waitFor.metadata as Record<string, unknown>;
+  const activeTurnIntent = agent.activeTurnIntent as Record<string, unknown>;
+  assert.equal(requestToolNames.includes("kestrel_request_mode_switch"), true);
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  assert.equal(nextAction.kind, "ask_user");
+  assert.equal(metadata.reason, "planner_mode_blocked");
+  assert.equal(metadata.requiredMode, "Plan");
+  assert.match(String(nextAction.prompt), /write the agreed session plan/u);
+  assert.match(String(nextAction.prompt), /\/mode plan/u);
+  assert.equal(activeTurnIntent.turnId, "turn-document-plan");
+  assert.equal(activeTurnIntent.objective, "Document our plan and start working");
+  assert.doesNotMatch(JSON.stringify(agent), /stale inspection/u);
+});
+
 test("agent loop accepts missing assistantProgress with a neutral fallback", async () => {
   let modelCallCount = 0;
   let retryRequest: ModelRequest | undefined;
@@ -5689,7 +5780,7 @@ test("agent loop rejects plan-mode external side-effect choices instead of askin
   const failure = retryContext.failure as Record<string, unknown>;
   const failureDetails = failure.details as Record<string, unknown>;
   const lastActionResult = agent.lastActionResult as Record<string, unknown>;
-  assert.deepEqual(requestToolNames, ["fs_read_text", "kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_switch_mode", "kestrel_todo_update"]);
+  assert.deepEqual(requestToolNames, ["fs_read_text", "kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_request_mode_switch", "kestrel_switch_mode", "kestrel_todo_update"]);
   assert.equal(transition.status, "RUNNING");
   assert.equal(transition.nextStepAgent, "agent.loop");
   assert.equal(agent.nextAction, undefined);
@@ -6638,7 +6729,7 @@ test("agent loop rejects hidden sandboxed tool dispatch selected while still in 
   const retryContext = agent.retryContext as Record<string, unknown>;
   const failure = retryContext.failure as Record<string, unknown>;
   const failureDetails = failure.details as Record<string, unknown>;
-  assert.deepEqual(requestToolNames, ["kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_switch_mode", "kestrel_todo_update"]);
+  assert.deepEqual(requestToolNames, ["kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy", "kestrel_handoff_to_build", "kestrel_request_mode_switch", "kestrel_switch_mode", "kestrel_todo_update"]);
   assert.equal(transition.status, "RUNNING");
   assert.equal(transition.nextStepAgent, "agent.loop");
   assert.equal(agent.nextAction, undefined);

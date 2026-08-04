@@ -92,3 +92,91 @@ test("fresh user message still starts a fresh objective from message text", () =
   assert.equal(result.source, "fresh-user-message");
   assert.equal(result.preservesTranscriptTask, false);
 });
+
+test("canonical initial submission starts a fresh objective despite stale execution state", () => {
+  const result = resolveKestrelTurnObjective({
+    reactState: {
+      activeTurnIntent: {
+        version: "v1",
+        turnId: "turn-old",
+        rootEventId: "event-old",
+        objective: "Tell me about this workspace",
+        activeTranscriptItemId: "u-old",
+      },
+      observations: [{ stale: true }],
+      retryContext: { attempt: 2 },
+    },
+    eventType: "user.message",
+    eventId: "event-new",
+    eventPayload: {
+      message: "Document our plan and start working",
+      metadata: {
+        turnId: "turn-new",
+        submissionKind: "initial",
+      },
+    },
+  });
+
+  assert.equal(result.goal, "Document our plan and start working");
+  assert.equal(result.source, "fresh-user-message");
+  assert.equal(result.preservesTranscriptTask, false);
+});
+
+test("canonical follow-up starts a fresh task while resume and steer preserve it", () => {
+  const reactState = {
+    activeTurnIntent: {
+      version: "v1",
+      turnId: "turn-current",
+      rootEventId: "event-current",
+      objective: "Implement the approved plan",
+      activeTranscriptItemId: "u-current",
+    },
+  };
+
+  const followUp = resolveKestrelTurnObjective({
+    reactState,
+    eventType: "user.follow_up",
+    eventId: "event-follow-up",
+    eventPayload: {
+      message: "Also update the changelog",
+      metadata: { turnId: "turn-follow-up", submissionKind: "follow_up" },
+    },
+  });
+  assert.equal(followUp.goal, "Also update the changelog");
+  assert.equal(followUp.preservesTranscriptTask, false);
+
+  for (const submissionKind of ["resume", "steer"] as const) {
+    const continuation = resolveKestrelTurnObjective({
+      reactState,
+      eventType: "user.reply",
+      eventId: `event-${submissionKind}`,
+      eventPayload: {
+        message: submissionKind === "resume" ? "yes" : "Use the smaller API",
+        metadata: { turnId: "turn-current", submissionKind },
+      },
+    });
+    assert.equal(continuation.goal, "Implement the approved plan");
+    assert.equal(continuation.source, "active-turn-intent");
+    assert.equal(continuation.preservesTranscriptTask, true);
+  }
+});
+
+test("legacy direct events use event identity as a fresh task epoch", () => {
+  const result = resolveKestrelTurnObjective({
+    reactState: {
+      activeTurnIntent: {
+        version: "v1",
+        turnId: "event-old",
+        rootEventId: "event-old",
+        objective: "Old objective",
+        activeTranscriptItemId: "u-old",
+      },
+    },
+    eventType: "user.message",
+    eventId: "event-new",
+    eventPayload: { message: "New objective" },
+  });
+
+  assert.equal(result.goal, "New objective");
+  assert.equal(result.preservesTranscriptTask, false);
+});

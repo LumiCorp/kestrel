@@ -15,7 +15,7 @@ import {
   isDevShellLifecycleTool,
   normalizeDevShellLifecycle,
 } from "../../../../../src/runtime/devshellLifecycle.js";
-import { readActiveTaskGoalFromTranscript } from "../../../../../src/runtime/modelTranscript.js";
+import { readActiveTaskGoalFromState } from "../../../../../src/runtime/turnObjective.js";
 import { asArray, asRecord, asString } from "../../../../shared/valueAccess.js";
 import {
   buildEvidenceCompletionSummary,
@@ -180,7 +180,7 @@ export function buildFinalizePayload(
   } = inputData;
   const data: Record<string, unknown> = {
     ...inputDataRest,
-    goal: readActiveTaskGoalFromTranscript(reactState.modelTranscript),
+    goal: readActiveTaskGoalFromState(reactState),
     plan: reactState.plan,
     ...(decisionVerification !== undefined ? { decisionVerification } : {}),
     ...(ledgerArtifactVerification !== undefined

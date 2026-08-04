@@ -2,8 +2,11 @@ import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 
 import type { BudgetSnapshot } from "../../../../src/kestrel/contracts/events.js";
 import type { ModelToolSpec } from "../../../../src/kestrel/contracts/model-io.js";
-
-import type { InteractionMode, ToolExecutionClass } from "../../../../src/mode/contracts.js";
+import type {
+  ExecutionPolicyOverride,
+  InteractionMode,
+  ToolExecutionClass,
+} from "../../../../src/mode/contracts.js";
 import {
   analyzeVisibleTodosCompletion,
   normalizeVisibleTodoState,
@@ -91,6 +94,7 @@ export interface CompileAgentActionInput {
   observedCapabilities: string[];
   capabilityManifest: ToolCapabilityManifestItem[];
   availableTools?: ModelToolSpec[] | undefined;
+  executionPolicy?: ExecutionPolicyOverride | undefined;
   compiledIntent?: CompiledIntent | undefined;
   executionIntent?: DecisionContextExecutionIntent | undefined;
   intentMetadata?: DecisionContextIntentMetadata | undefined;
@@ -293,6 +297,8 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
     activeExecCommandSessions,
     hasOpenVisibleTodos,
     capabilityManifest: input.capabilityManifest,
+    availableTools: input.availableTools ?? [],
+    executionPolicy: input.executionPolicy,
     ...(compatibilityExecutionIntent !== undefined ? { executionIntent: compatibilityExecutionIntent } : {}),
     ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
     goalSatisfiedCloseoutReadiness,
