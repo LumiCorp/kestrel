@@ -9,6 +9,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { verifyLocalCoreWorkspacePackagePayloads } from "../src/localCore/buildIdentity.js";
+
 const repoRoot = resolveRepoRoot(process.cwd());
 const desktopDir = path.join(repoRoot, "apps", "desktop");
 const stageDir = path.join(desktopDir, ".desktop-package");
@@ -30,6 +32,10 @@ rmSync(stageDir, { recursive: true, force: true });
 rmSync(runtimeDir, { recursive: true, force: true });
 deploy("@kestrel/desktop", stageDir);
 deploy("@kestrel/desktop-runtime", runtimeDir);
+verifyLocalCoreWorkspacePackagePayloads({
+  sourceRoot: repoRoot,
+  dependencyRoot: runtimeDir,
+});
 pruneNonArm64NativePayload(stageDir);
 pruneNonArm64NativePayload(runtimeDir);
 writeElectronBuilderStageManifest();

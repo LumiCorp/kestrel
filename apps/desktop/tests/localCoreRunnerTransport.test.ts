@@ -20,7 +20,7 @@ test("LocalCoreRunnerTransport sends Desktop protocol commands through Local Cor
         payload: { nonce: command.payload.nonce },
       }));
     },
-    async restart(): Promise<Record<string, never>> {
+    async restartExecutionBundle(): Promise<Record<string, never>> {
       restartCalls += 1;
       return {};
     },

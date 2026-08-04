@@ -5,6 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { shouldCopyDesktopResourceEntry } from "./prepare-desktop-resources.js";
 import {
+  copyLocalCoreBuildInputs,
+  verifyLocalCoreWorkspacePackagePayloads,
+  writePackagedLocalCoreBuildIdentity,
+} from "../src/localCore/buildIdentity.js";
+import type { LocalCoreBuildIdentityV1 } from "../src/localCore/contracts.js";
+import {
   packRuntimeWorkspacePackages,
   resolveRuntimePackageDependencies,
   resolveRuntimeDependencyInstallArgs,
@@ -17,7 +23,17 @@ import {
 const TARGET_PLATFORM = process.env.KESTREL_CLI_PACKAGE_PLATFORM?.trim() || process.platform;
 const TARGET_ARCH = process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch;
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
-const CLI_RESOURCE_DIRECTORIES = ["cli", "src", "agents", "tools", "db", "scripts", "models", "bin"] as const;
+const CLI_RESOURCE_DIRECTORIES = [
+  "cli",
+  "src",
+  "agents",
+  "tools",
+  "db",
+  "scripts",
+  "models",
+  "bin",
+  "packages/mcp-security",
+] as const;
 const CLI_EXCLUDED_RUNTIME_PATHS = [
   "cli/client/InProcessRunnerTransport.ts",
   "cli/client/RunnerProcess.ts",
@@ -34,6 +50,7 @@ const outDir = path.join(cliDir, "out");
 const npmCacheDir = path.join(cliDir, ".npm-cache");
 const artifactName = `kestrel-cli-${rootPackageJson.version}-${TARGET_PLATFORM}-${TARGET_ARCH}.tar.gz`;
 const artifactPath = path.join(outDir, artifactName);
+const sourceCommit = process.env.KESTREL_SOURCE_COMMIT?.trim() || readSourceCommit();
 const excludedRuntimePaths = new Set(
   CLI_EXCLUDED_RUNTIME_PATHS.map((relativePath) => path.resolve(repoRoot, relativePath)),
 );
@@ -63,8 +80,22 @@ if (TARGET_PLATFORM === "darwin") {
   copyCliPostgresBundle();
 }
 installRuntimeDependenciesWithPackedProtocol();
+verifyLocalCoreWorkspacePackagePayloads({
+  sourceRoot: repoRoot,
+  dependencyRoot: libexecDir,
+});
+copyLocalCoreBuildInputs({
+  sourceRoot: repoRoot,
+  targetRoot: libexecDir,
+});
+const coreBuildIdentity = writePackagedLocalCoreBuildIdentity({
+  sourceRoot: repoRoot,
+  targetRoot: libexecDir,
+  suiteVersion: rootPackageJson.version,
+  sourceCommit,
+});
 writeLaunchers();
-writeBundleManifest();
+writeBundleManifest(coreBuildIdentity);
 
 rmSync(artifactPath, { force: true });
 execFileSync("tar", ["-czf", artifactPath, "-C", stageDir, "."], {
@@ -75,8 +106,7 @@ writeArtifactDigest();
 
 console.log(`[cli] packaged ${artifactPath}`);
 
-function writeBundleManifest(): void {
-  const sourceCommit = process.env.KESTREL_SOURCE_COMMIT?.trim() || readSourceCommit();
+function writeBundleManifest(coreBuildIdentity: LocalCoreBuildIdentityV1): void {
   writeFileSync(
     path.join(stageDir, "kestrel-bundle.json"),
     `${JSON.stringify({
@@ -84,6 +114,8 @@ function writeBundleManifest(): void {
       package: rootPackageJson.name,
       packageVersion: rootPackageJson.version,
       sourceCommit,
+      coreBuildId: coreBuildIdentity.buildId,
+      coreBuildManifest: "libexec/kestrel-core-build.json",
       platform: TARGET_PLATFORM,
       arch: TARGET_ARCH,
       nodeRequirement: rootPackageJson.engines?.node ?? null,
@@ -249,6 +281,7 @@ const child = spawn(process.execPath, ["--import", tsxImport, entrypoint, ...pro
   env: {
     ...process.env,
     KESTREL_CLI_LIBEXEC: libexecRoot,${aliasLine}
+    KESTREL_CORE_BUILD_MANIFEST_REQUIRED: "1",
     TSX_TSCONFIG_PATH: path.join(libexecRoot, "tsconfig.json"),
   },
 });

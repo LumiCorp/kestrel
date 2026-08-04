@@ -1,6 +1,6 @@
 {
   "version": "cli_contract_matrix_v1",
-  "generatedAt": "2026-07-31T07:21:51.121Z",
+  "generatedAt": "2026-08-04T15:41:57.189Z",
   "executables": [
     {
       "name": "kestrel",
@@ -25,6 +25,13 @@
       "command": "status",
       "usage": "kestrel status",
       "flags": []
+    },
+    {
+      "command": "core",
+      "usage": "kestrel core status; kestrel core restart [--wait]",
+      "flags": [
+        "--wait"
+      ]
     },
     {
       "command": "workspace",
@@ -142,6 +149,7 @@
       "session.state",
       "operator.inbox",
       "operator.thread",
+      "conversation.messages.list",
       "operator.runs",
       "operator.run",
       "operator.run.reasoning",
@@ -221,6 +229,7 @@
       "session.state",
       "operator.inbox",
       "operator.thread",
+      "conversation.messages",
       "operator.runs",
       "operator.run",
       "operator.run.reasoning",

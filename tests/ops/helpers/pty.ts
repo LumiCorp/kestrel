@@ -115,7 +115,7 @@ export async function runTuiScenarioWithSession(input: {
         ? ["--new-session", input.freshSessionName]
         : ["--session", input.sessionName]),
       "--profile",
-      "reference",
+      "kestrel",
     ],
     env: tuiEnvironment,
     steps: input.steps.map((step) => ({

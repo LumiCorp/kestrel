@@ -23,6 +23,7 @@ export interface CliContractMatrixV1 {
 export const COMMAND_MODE_COMMANDS = [
   "model",
   "status",
+  "core",
   "workspace",
   "web",
   "job",
@@ -205,6 +206,11 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
         command: "status",
         usage: "kestrel status",
         flags: [],
+      },
+      {
+        command: "core",
+        usage: "kestrel core status; kestrel core restart [--wait]",
+        flags: ["--wait"],
       },
       {
         command: "workspace",

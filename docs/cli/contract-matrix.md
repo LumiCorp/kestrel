@@ -3,7 +3,7 @@ id: cli-contract-matrix
 domain: cli
 status: active
 owner: kestrel-cli
-last_verified_at: 2026-07-31
+last_verified_at: 2026-08-04
 depends_on:
   - ./kchat.md
   - ./kchat-protocol.md
@@ -27,6 +27,7 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 | --- | --- | --- |
 | `model` | `kestrel model <show|search|set-provider|set> ...` | - |
 | `status` | `kestrel status` | - |
+| `core` | `kestrel core status; kestrel core restart [--wait]` | `--wait` |
 | `workspace` | `kestrel workspace <status|list>` | - |
 | `web` | `kestrel web ...` | - |
 | `job` | `kestrel job run --json-in <file> --json-out <file> [--profile <id>]` | `--json-in`, `--json-out`, `--profile` |
@@ -82,6 +83,7 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 - `session.state`
 - `operator.inbox`
 - `operator.thread`
+- `conversation.messages.list`
 - `operator.runs`
 - `operator.run`
 - `operator.run.reasoning`
@@ -162,6 +164,7 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 - `session.state`
 - `operator.inbox`
 - `operator.thread`
+- `conversation.messages`
 - `operator.runs`
 - `operator.run`
 - `operator.run.reasoning`

@@ -12,6 +12,7 @@ import {
   shouldRunCommandMode,
 } from "../../cli/commandMode.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
+import { formatCliLocalCoreDaemonInspection } from "../../cli/localCoreShell.js";
 import { resolveDefaultDevShellBaseDir } from "../../src/devshell/paths.js";
 
 
@@ -19,6 +20,7 @@ test("shouldRunCommandMode recognizes command-mode entry commands", () => {
   assert.equal(shouldRunCommandMode(["model", "show"]), true);
   assert.equal(shouldRunCommandMode(["workspace", "status"]), true);
   assert.equal(shouldRunCommandMode(["status"]), true);
+  assert.equal(shouldRunCommandMode(["core", "status"]), true);
   assert.equal(shouldRunCommandMode(["run", "workspace"]), false);
   assert.equal(shouldRunCommandMode(["web", "--port", "43102"]), true);
   assert.equal(shouldRunCommandMode(["job", "run"]), true);
@@ -27,6 +29,56 @@ test("shouldRunCommandMode recognizes command-mode entry commands", () => {
   assert.equal(shouldRunCommandMode(["setup"]), true);
   assert.equal(shouldRunCommandMode(["uninstall", "plan"]), true);
   assert.equal(shouldRunCommandMode(["--session", "default"]), false);
+});
+
+test("command mode core status inspects without starting Local Core", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-core-status-"));
+  const originalCoreHome = process.env.KESTREL_CORE_HOME;
+  const originalHome = process.env.KESTREL_HOME;
+  process.env.KESTREL_CORE_HOME = root;
+  delete process.env.KESTREL_HOME;
+  try {
+    const output = await captureStdout(async () => {
+      await runCliCommand(["core", "status"], root);
+    });
+    assert.match(output, /Kestrel Local Core: stopped/u);
+    assert.match(output, /Build state: unknown/u);
+    assert.match(output, /Expected build: sha256:[a-f0-9]{64}/u);
+    assert.match(output, /run 'kestrel core restart' to start/u);
+    await assert.rejects(readFile(path.join(root, "state", "0.6", "core", "lock.json")), /ENOENT/u);
+  } finally {
+    if (originalCoreHome === undefined) delete process.env.KESTREL_CORE_HOME;
+    else process.env.KESTREL_CORE_HOME = originalCoreHome;
+    if (originalHome === undefined) delete process.env.KESTREL_HOME;
+    else process.env.KESTREL_HOME = originalHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("core status renders actionable busy and legacy guidance", () => {
+  const expectedBuildIdentity = {
+    version: "local_core_build_identity_v1" as const,
+    buildId: `sha256:${"a".repeat(64)}` as const,
+    suiteVersion: "0.7.0",
+    source: "source_tree" as const,
+  };
+  const busy = formatCliLocalCoreDaemonInspection({
+    state: "running",
+    compatibility: "outdated",
+    expectedBuildIdentity,
+    lifecycle: {
+      state: "busy",
+      owner: { pid: 42, executable: "/fake/core" },
+      blockers: [{ code: "ACTIVE", message: "Work is active.", count: 1 }],
+    },
+  });
+  assert.match(busy, /kestrel core restart --wait/u);
+  const legacy = formatCliLocalCoreDaemonInspection({
+    state: "running",
+    compatibility: "legacy",
+    expectedBuildIdentity,
+  });
+  assert.match(legacy, /stop Core manually/u);
 });
 
 test("command mode status reports Local Core home and lock state", async () => {

@@ -34,6 +34,10 @@ Workspace setup and scheduling guide: [docs/cli/workspaces.md](https://github.co
 The v0.5 beta release path is a separate macOS ARM64 tarball shaped for future Homebrew installation. It contains `bin/` launchers and a bundled `libexec/` runtime, uses the system Node runtime, and does not require a repo checkout or repo `.env`.
 
 `pnpm run install:cli` remains a contributor convenience. It installs source-backed shims over the current checkout and should not be described as the external release install path.
+The shims fingerprint the executable Local Core inputs on every new CLI process.
+If the running daemon has a different build, an idle daemon is replaced
+gracefully. Active work is never cancelled; the CLI reports the lifecycle
+blockers and directs the operator to the waiting restart command.
 
 Optional flags:
 
@@ -42,9 +46,16 @@ Optional flags:
 
 Command mode:
 
+- `kestrel core status` inspects the daemon and build identity without starting it
+- `kestrel core restart` restarts an idle daemon or starts a stopped daemon
+- `kestrel core restart --wait` waits until active work completes, then restarts
 - `kestrel workspace status|list`
 - `kestrel web [--host <host>] [--port <port>] [--token <token>]`
 - `kcron start|stop|status|run-once|install|uninstall` (beta local automation in v0.5)
+
+An already-open TUI is not hot-reloaded after a source edit. Build reconciliation
+runs on a new CLI invocation, a Desktop connection or reconnection, or an
+explicit `kestrel core restart`.
 
 Release checks:
 

@@ -639,7 +639,7 @@ test("runner service http exposes OpenAI-compatible models and chat streaming", 
     });
     const models = (await modelsResponse.json()) as { data: Array<{ id: string }> };
     assert.equal(modelsResponse.status, 200);
-    assert.equal(models.data[0]?.id, "reference-react");
+    assert.equal(models.data[0]?.id, "kestrel");
 
     const completionResponse = await fetch(`${server.url}/v1/chat/completions`, {
       method: "POST",
@@ -648,7 +648,7 @@ test("runner service http exposes OpenAI-compatible models and chat streaming", 
         authorization: "Bearer secret-token",
       },
       body: JSON.stringify({
-        model: "reference-react",
+        model: "kestrel",
         stream: true,
         messages: [
           {
@@ -711,7 +711,7 @@ test("runner service http cancels OpenAI-compatible streaming runs when the clie
         authorization: "Bearer secret-token",
       },
       body: JSON.stringify({
-        model: "reference-react",
+        model: "kestrel",
         stream: true,
         messages: [
           {
@@ -799,7 +799,7 @@ test("runner service http tolerates OpenAI-compatible disconnect after progress 
         authorization: "Bearer secret-token",
       },
       body: JSON.stringify({
-        model: "reference-react",
+        model: "kestrel",
         stream: true,
         messages: [
           {

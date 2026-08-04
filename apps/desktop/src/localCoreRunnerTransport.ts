@@ -87,7 +87,9 @@ export class LocalCoreRunnerTransport implements DesktopRunnerControlTransport {
 
   async restart(): Promise<DesktopRuntimeStatus> {
     this.abortActiveRequests();
-    await this.connectionManager.executeOnce(async (client) => await client.restart());
+    await this.connectionManager.executeOnce(
+      async (client) => await client.restartExecutionBundle(),
+    );
     this.started = true;
     return this.getStatus();
   }

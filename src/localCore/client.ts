@@ -20,12 +20,14 @@ import type {
 import type { RuntimeReplayBundleV1 } from "../replay/RuntimeReplayBundle.js";
 import {
   parseLocalCoreDesktopExecutionConfig,
+  parseLocalCoreBuildIdentity,
   parseLocalCoreExecutionProfileResolution,
   parseLocalCoreRuntimeStoreResetResult,
   parseLocalCoreSystemLifecycle,
   parseLocalCoreSystemShutdownResult,
   parseLocalCoreStatus,
   type LocalCoreDesktopExecutionConfig,
+  type LocalCoreBuildIdentityV1,
   type LocalCoreExecutionProfileResolution,
   type LocalCoreExecutionProfileResolveRequest,
   type LocalCoreRuntimeStoreResetResult,
@@ -118,6 +120,16 @@ export class LocalCoreClient {
     );
   }
 
+  async buildIdentity(): Promise<LocalCoreBuildIdentityV1> {
+    return parseLocalCoreBuildIdentity(
+      readObjectField<Record<string, unknown>>(
+        await this.get("/v1/system/build-identity"),
+        "buildIdentity",
+        "build identity",
+      ),
+    );
+  }
+
   async shutdownForUninstall(): Promise<LocalCoreSystemShutdownResult> {
     return await this.requestSystemShutdown({
       reason: "uninstall",
@@ -136,6 +148,13 @@ export class LocalCoreClient {
     return await this.requestSystemShutdown({
       reason: "desktop_restart",
       confirm: "shutdown-local-core-for-desktop-restart",
+    });
+  }
+
+  async shutdownForCodeUpdate(): Promise<LocalCoreSystemShutdownResult> {
+    return await this.requestSystemShutdown({
+      reason: "code_update",
+      confirm: "shutdown-local-core-for-code-update",
     });
   }
 
@@ -1000,7 +1019,7 @@ export class LocalCoreClient {
     return await this.post("/v1/support-bundle", {});
   }
 
-  async restart(): Promise<LocalCoreStatus> {
+  async restartExecutionBundle(): Promise<LocalCoreStatus> {
     return parseLocalCoreStatus(
       readObjectField<Record<string, unknown>>(
         await this.post("/v1/restart", {}),
@@ -1008,6 +1027,11 @@ export class LocalCoreClient {
         "restart",
       ),
     );
+  }
+
+  /** @deprecated Use restartExecutionBundle(); this does not restart the daemon process. */
+  async restart(): Promise<LocalCoreStatus> {
+    return await this.restartExecutionBundle();
   }
 
   async repair(): Promise<LocalCoreStatus> {

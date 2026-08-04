@@ -33,6 +33,14 @@ import { runWebCommand } from "./webCommand.js";
 import { WorkspaceStore } from "./workspace/WorkspaceStore.js";
 import { resolveWorkspaceFromCwd } from "./workspace/WorkspaceResolver.js";
 import { ensureCliLocalCoreReady, formatCliLocalCoreStatus } from "./localCoreShell.js";
+import {
+  formatCliLocalCoreDaemonInspection,
+  resolveCliLocalCoreDaemonOptions,
+} from "./localCoreShell.js";
+import {
+  inspectLocalCoreDaemon,
+  restartLocalCoreDaemon,
+} from "../src/localCore/daemon.js";
 import { resolveLocalCoreStoreClient } from "./localCoreStoreClient.js";
 import type { ResolvedModelPolicy } from "../src/profile/modelPolicy.js";
 import {
@@ -68,6 +76,10 @@ export async function runCliCommand(args: string[], cwd = process.cwd()): Promis
   }
   if (command === "status") {
     await runStatusCommand();
+    return;
+  }
+  if (command === "core") {
+    await runCoreCommand(rest);
     return;
   }
   if (command === "web") {
@@ -110,6 +122,35 @@ export function shouldRunCommandMode(args: string[]): boolean {
 async function runStatusCommand(): Promise<void> {
   const status = await ensureCliLocalCoreReady();
   process.stdout.write(formatCliLocalCoreStatus(status));
+}
+
+async function runCoreCommand(args: string[]): Promise<void> {
+  const [subcommand = "status", ...rest] = args;
+  const options = resolveCliLocalCoreDaemonOptions();
+  if (subcommand === "status") {
+    if (rest.length > 0) {
+      throw new Error("Usage: kestrel core status");
+    }
+    process.stdout.write(
+      formatCliLocalCoreDaemonInspection(await inspectLocalCoreDaemon(options)),
+    );
+    return;
+  }
+  if (subcommand === "restart") {
+    const waitForIdle = rest.length === 1 && rest[0] === "--wait";
+    if (rest.length > 0 && waitForIdle === false) {
+      throw new Error("Usage: kestrel core restart [--wait]");
+    }
+    const before = await inspectLocalCoreDaemon(options);
+    const ready = await restartLocalCoreDaemon({ ...options, waitForIdle });
+    process.stdout.write(
+      `${before.state === "stopped" ? "Started" : "Restarted"} Kestrel Local Core pid=${
+        ready.status.lock.state === "live" ? ready.status.lock.lock.ownerPid : "unknown"
+      } build=${(await ready.client?.buildIdentity())?.buildId ?? "unknown"}.\n`,
+    );
+    return;
+  }
+  throw new Error("Usage: kestrel core <status|restart> [--wait]");
 }
 
 async function runUninstallCommand(args: string[]): Promise<void> {

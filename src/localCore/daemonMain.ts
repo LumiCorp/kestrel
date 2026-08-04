@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { startLocalCoreApiServer } from "./api.js";
+import { resolveLocalCoreBuildIdentity } from "./buildIdentity.js";
 import { LOCAL_CORE_SCHEMA_VERSION } from "./contracts.js";
 import { MacosKeychainCredentialStore } from "./macosKeychainCredentialStore.js";
 import { parseLocalCorePlatform } from "./platform.js";
@@ -10,10 +11,27 @@ const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 
 export async function runLocalCoreDaemon(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const platform = parseLocalCorePlatform(env.KESTREL_CORE_PLATFORM) ?? process.platform;
+  const coreVersion = readRequiredEnv(env, "KESTREL_CORE_VERSION");
+  const expectedBuildId = normalizeString(env.KESTREL_CORE_BUILD_ID);
+  const runtimeRoot = resolveRuntimeRoot(env);
+  const buildIdentity = resolveLocalCoreBuildIdentity({
+    runtimeRoot,
+    suiteVersion: coreVersion,
+    manifestRequired: env.KESTREL_CORE_BUILD_MANIFEST_REQUIRED === "1",
+    ...(env.KESTREL_SOURCE_COMMIT !== undefined
+      ? { sourceCommit: env.KESTREL_SOURCE_COMMIT }
+      : {}),
+  });
+  if (expectedBuildId !== undefined && buildIdentity.buildId !== expectedBuildId) {
+    throw new Error(
+      `Local Core build changed during startup: expected ${expectedBuildId}, resolved ${buildIdentity.buildId}.`,
+    );
+  }
   const server = await startLocalCoreApiServer({
     env,
     platform,
-    coreVersion: readRequiredEnv(env, "KESTREL_CORE_VERSION"),
+    coreVersion,
+    buildIdentity,
     schemaVersion: parseInteger(env.KESTREL_CORE_SCHEMA_VERSION) ?? LOCAL_CORE_SCHEMA_VERSION,
     ownerExecutable: env.KESTREL_CORE_OWNER_EXECUTABLE ?? process.execPath,
     databaseMode: env.KESTREL_CORE_DATABASE_MODE === "external" ? "external" : "pglite",
@@ -39,12 +57,22 @@ export async function runLocalCoreDaemon(env: NodeJS.ProcessEnv = process.env): 
   });
 }
 
+function resolveRuntimeRoot(env: NodeJS.ProcessEnv): string {
+  const explicit = env.KESTREL_CLI_LIBEXEC?.trim() || env.KESTREL_CORE_REPO_ROOT?.trim();
+  return explicit ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+}
+
 function readRequiredEnv(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
   if (value === undefined || value.length === 0) {
     throw new Error(`${key} is required to start Kestrel Local Core.`);
   }
   return value;
+}
+
+function normalizeString(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized !== undefined && normalized.length > 0 ? normalized : undefined;
 }
 
 function parseInteger(value: string | undefined): number | undefined {

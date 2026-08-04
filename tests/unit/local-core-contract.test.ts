@@ -135,7 +135,7 @@ test("Local Core rejects malformed Desktop restart shutdown payloads", () => {
       reason: "desktop_restart",
       confirm: "shutdown-local-core-for-desktop-update",
     }),
-    /exact uninstall, Desktop update, or Desktop restart confirmation payload/u,
+    /exact uninstall, Desktop update, Desktop restart, or code update confirmation payload/u,
   );
   assert.throws(
     () => parseLocalCoreSystemShutdownRequest({

@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { ensureLocalCoreDaemonReady } from "../src/localCore/daemon.js";
+import {
+  ensureLocalCoreDaemonReady,
+  type EnsureLocalCoreDaemonReadyOptions,
+  type LocalCoreDaemonInspection,
+} from "../src/localCore/daemon.js";
 import type { LocalCoreClient } from "../src/localCore/client.js";
 import type { LocalCoreStatus } from "../src/localCore/contracts.js";
 import { parseLocalCorePlatform } from "../src/localCore/platform.js";
@@ -17,7 +21,21 @@ export async function ensureCliLocalCoreReady(input: {
   ownerExecutable?: string | undefined;
 } = {}): Promise<CliLocalCoreStatus> {
   const env = input.env ?? process.env;
-  const ready = await ensureLocalCoreDaemonReady({
+  const ready = await ensureLocalCoreDaemonReady(
+    resolveCliLocalCoreDaemonOptions(input),
+  );
+  const status: CliLocalCoreStatus = Object.assign(ready.status, ready.client !== undefined ? { client: ready.client } : {});
+  applyLocalCoreShellEnvironment(status, env, ready.client);
+  return status;
+}
+
+export function resolveCliLocalCoreDaemonOptions(input: {
+  env?: NodeJS.ProcessEnv | undefined;
+  platform?: NodeJS.Platform | undefined;
+  ownerExecutable?: string | undefined;
+} = {}): EnsureLocalCoreDaemonReadyOptions {
+  const env = input.env ?? process.env;
+  return {
     env,
     platform:
       input.platform
@@ -28,10 +46,53 @@ export async function ensureCliLocalCoreReady(input: {
     runMigrations: true,
     repoRoot: resolveCliRuntimeRoot(env),
     ...resolvePackagedCliPostgresBundle(env),
-  });
-  const status: CliLocalCoreStatus = Object.assign(ready.status, ready.client !== undefined ? { client: ready.client } : {});
-  applyLocalCoreShellEnvironment(status, env, ready.client);
-  return status;
+  };
+}
+
+export function formatCliLocalCoreDaemonInspection(
+  inspection: LocalCoreDaemonInspection,
+): string {
+  return [
+    `Kestrel Local Core: ${inspection.state}`,
+    `Build state: ${inspection.compatibility}`,
+    `Expected build: ${inspection.expectedBuildIdentity.buildId}`,
+    `Expected version: ${inspection.expectedBuildIdentity.suiteVersion}`,
+    ...(inspection.runningBuildIdentity !== undefined
+      ? [`Running build: ${inspection.runningBuildIdentity.buildId}`]
+      : inspection.state === "running"
+        ? ["Running build: unavailable (legacy Core)"]
+        : []),
+    ...(inspection.coreVersion !== undefined ? [`Running version: ${inspection.coreVersion}`] : []),
+    ...(inspection.ownerPid !== undefined ? [`Owner PID: ${inspection.ownerPid}`] : []),
+    ...(inspection.lifecycle !== undefined
+      ? [
+          `Lifecycle: ${inspection.lifecycle.state}`,
+          ...inspection.lifecycle.blockers.map(
+            (blocker) => `Blocker: ${blocker.code} (${blocker.count}) — ${blocker.message}`,
+          ),
+        ]
+      : []),
+    ...(inspection.reason !== undefined ? [`Detail: ${inspection.reason}`] : []),
+    `Action: ${formatLocalCoreInspectionAction(inspection)}`,
+  ].join("\n") + "\n";
+}
+
+function formatLocalCoreInspectionAction(inspection: LocalCoreDaemonInspection): string {
+  if (inspection.state === "stopped") {
+    return "run 'kestrel core restart' to start the expected build.";
+  }
+  if (inspection.state === "unreachable" || inspection.state === "repair_required") {
+    return "inspect the reported detail and stop Core manually if its lifecycle cannot be verified.";
+  }
+  if (inspection.compatibility === "current") {
+    return "none; the running build matches this installation.";
+  }
+  if (inspection.lifecycle === undefined) {
+    return "lifecycle safety is unavailable; stop Core manually before replacing it.";
+  }
+  return inspection.lifecycle.state === "busy"
+    ? "run 'kestrel core restart --wait' to preserve active work and restart when idle."
+    : "run 'kestrel core restart' to replace the daemon now.";
 }
 
 export function applyLocalCoreShellEnvironment(

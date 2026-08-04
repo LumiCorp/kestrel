@@ -1,4 +1,4 @@
-import { existsSync, watch, type FSWatcher } from "node:fs";
+import { existsSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
@@ -42,6 +42,8 @@ import { resolveKestrelCoreHome } from "../../../src/localCore/home.js";
 import type { LocalCoreClient } from "../../../src/localCore/client.js";
 import { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
+import { parseLocalCoreBuildIdentity } from "../../../src/localCore/contracts.js";
+import { LOCAL_CORE_BUILD_MANIFEST_NAME } from "../../../src/localCore/buildIdentity.js";
 import type { LocalCoreCredentialId } from "../../../src/localCore/credentialStore.js";
 import { listMcpOAuthCredentialIds } from "../../../src/localCore/mcpOAuthProvider.js";
 import {
@@ -427,6 +429,9 @@ async function main(): Promise<void> {
   });
   if (desktopLibexecRoot !== undefined) {
     process.env.KESTREL_CLI_LIBEXEC = desktopLibexecRoot;
+  }
+  if (desktopConfig.isPackaged) {
+    process.env.KESTREL_CORE_BUILD_MANIFEST_REQUIRED = "1";
   }
 
   configureEmbeddedPreviewSecurity();
@@ -5340,7 +5345,7 @@ async function prepareDesktopUpdateInstallation(
 
 async function restartLocalCoreForDatabaseSettingsChange(): Promise<void> {
   localCoreStatus = await requireLocalCoreConnectionManager().executeOnce(
-    async (client) => await client.restart(),
+    async (client) => await client.restartExecutionBundle(),
   );
   currentDatabaseUrl = localCoreStatus.databaseUrl;
 }
@@ -5497,7 +5502,7 @@ async function ensureDesktopLocalCoreReady(
   const ready = await ensureLocalCoreDaemonReady({
     env: process.env,
     platform: process.platform,
-    coreVersion: app.getVersion(),
+    coreVersion: resolveDesktopLocalCoreSuiteVersion(config.repoRoot),
     ownerExecutable: process.execPath,
     databaseMode: "pglite",
     repoRoot: config.repoRoot,
@@ -5514,6 +5519,22 @@ async function ensureDesktopLocalCoreReady(
     ...ready,
     client: ready.client,
   };
+}
+
+function resolveDesktopLocalCoreSuiteVersion(runtimeRoot: string): string {
+  const buildManifestPath = path.join(runtimeRoot, LOCAL_CORE_BUILD_MANIFEST_NAME);
+  if (existsSync(buildManifestPath)) {
+    return parseLocalCoreBuildIdentity(
+      JSON.parse(readFileSync(buildManifestPath, "utf8")),
+    ).suiteVersion;
+  }
+  const packageManifest = JSON.parse(
+    readFileSync(path.join(runtimeRoot, "package.json"), "utf8"),
+  ) as { version?: unknown };
+  if (typeof packageManifest.version !== "string" || packageManifest.version.trim().length === 0) {
+    throw new Error("Kestrel Desktop could not resolve its Local Core runtime suite version.");
+  }
+  return packageManifest.version.trim();
 }
 
 function createAppDatabaseController(
