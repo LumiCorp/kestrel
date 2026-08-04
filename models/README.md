@@ -7,8 +7,16 @@ This directory contains the provider-specific env loaders, request mappers, tran
 - OpenRouter via `createOpenRouterModelGatewayFromEnv`
 - OpenAI via `createOpenAiModelGatewayFromEnv`
 - Anthropic via `createAnthropicModelGatewayFromEnv`
+- Ollama via `createOllamaModelGatewayFromEnv`
+- LM Studio via `createLmStudioModelGatewayFromEnv`
+- Lumi via `createLumiModelGateway`
+- RunPod via `createRunPodModelGateway`
 
-The public exports are collected in [models/index.ts](https://github.com/LumiCorp/kestrel/blob/main/models/index.ts).
+The exact static identities, protocols, factories, capability declarations, and
+conformance fixtures are collected in
+[models/ProviderRegistry.ts](https://github.com/LumiCorp/kestrel/blob/main/models/ProviderRegistry.ts).
+The public exports are collected in
+[models/index.ts](https://github.com/LumiCorp/kestrel/blob/main/models/index.ts).
 
 ## Environment Contracts
 
@@ -36,6 +44,10 @@ The public exports are collected in [models/index.ts](https://github.com/LumiCor
 - Request building and response mapping live in provider-specific `*Mapper.ts` files.
 - Transport and provider errors are normalized by provider-specific `*Errors.ts` files.
 - Gateway factories are the canonical integration surface for runtime code.
+- Gateway factories upgrade legacy internal requests into the strict V1 model
+  boundary; an explicitly unknown request or response version fails closed.
+- Shared OpenAI-compatible transport does not merge OpenAI, Ollama, LM Studio,
+  Lumi, or RunPod provider identities.
 
 ## OpenRouter Endpoint Notes
 

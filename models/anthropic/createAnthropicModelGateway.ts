@@ -7,6 +7,7 @@ import type {
 import type { AnthropicEnvConfig } from "../contracts.js";
 import { loadAnthropicEnv } from "./AnthropicEnv.js";
 import { createAnthropicInvoker } from "./AnthropicInvoker.js";
+import { createVersionedProviderInvokerV1 } from "../VersionedModelBoundary.js";
 
 export interface AnthropicGatewayFactoryOptions {
   env?: NodeJS.ProcessEnv | undefined;
@@ -34,12 +35,12 @@ export function createAnthropicModelGatewayFromEnv(
     version: options.envConfig?.version ?? loaded.version,
   };
 
-  const invoker = createAnthropicInvoker({
+  const invoker = createVersionedProviderInvokerV1(createAnthropicInvoker({
     env: config,
     ...(options.fetchImpl !== undefined
       ? { fetchImpl: options.fetchImpl }
       : {}),
-  });
+  }));
 
   return new RetryingModelGateway(
     async <T>(request: ModelRequest, callOptions?: ModelGatewayCallOptions) =>

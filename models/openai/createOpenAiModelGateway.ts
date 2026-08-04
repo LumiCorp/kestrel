@@ -11,6 +11,7 @@ import {
   loadOpenAiEnv,
 } from "./OpenAiEnv.js";
 import { createOpenAiInvoker } from "./OpenAiInvoker.js";
+import { createVersionedProviderInvokerV1 } from "../VersionedModelBoundary.js";
 
 export interface OpenAiGatewayFactoryOptions {
   env?: NodeJS.ProcessEnv | undefined;
@@ -47,12 +48,12 @@ export function createOpenAiModelGatewayFromEnv(
       options.envConfig?.providerLabel ?? loaded?.providerLabel ?? "OpenAI",
   };
 
-  const invoker = createOpenAiInvoker({
+  const invoker = createVersionedProviderInvokerV1(createOpenAiInvoker({
     env: config,
     ...(options.fetchImpl !== undefined
       ? { fetchImpl: options.fetchImpl }
       : {}),
-  });
+  }));
 
   return new RetryingModelGateway(
     async <T>(request: ModelRequest, callOptions?: ModelGatewayCallOptions) =>

@@ -37,6 +37,8 @@ export type ModelContentPart =
   | { type: "image"; mimeType: string; data: string };
 
 export interface ModelRequest {
+  /** Present after the explicit legacy-to-V1 provider boundary adapter. */
+  version?: "model_request_v1" | undefined;
   model?: string | undefined;
   input: unknown;
   messages?: ModelMessage[] | undefined;
@@ -308,6 +310,8 @@ export interface AnthropicProviderOptions {
 }
 
 export interface ModelResponse<TOutput = unknown> {
+  /** Present on responses returned through a shipped provider gateway. */
+  version?: "model_response_v1" | undefined;
   output?: TOutput | undefined;
   text?: string | undefined;
   toolIntents: ModelToolIntent[];
