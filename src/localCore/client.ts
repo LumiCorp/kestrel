@@ -72,6 +72,10 @@ import type {
 } from "./kestrelOneAccount.js";
 import type { Microsoft365Pack } from "../apps/microsoft365.js";
 import type { GoogleWorkspacePack } from "../apps/googleWorkspace.js";
+import {
+  parseLocalCoreProviderReadinessResponse,
+  type LocalCoreProviderReadinessResponse,
+} from "./providerReadiness.js";
 
 export interface LocalCoreClientOptions {
   socketPath: string;
@@ -851,8 +855,10 @@ export class LocalCoreClient {
     };
   }
 
-  async providerReadiness(): Promise<unknown> {
-    return await this.get("/v1/provider-readiness");
+  async providerReadiness(): Promise<LocalCoreProviderReadinessResponse> {
+    return parseLocalCoreProviderReadinessResponse(
+      await this.get("/v1/provider-readiness"),
+    );
   }
 
   async workspaces(): Promise<unknown> {

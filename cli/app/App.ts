@@ -254,6 +254,7 @@ export class App {
     | import("../localCoreShell.js").CliLocalCoreStatus
     | undefined;
   private localCoreConnectionManager: LocalCoreConnectionManager | undefined;
+  private runnerUsesLocalCore = false;
   private missionControlReporter: MissionControlRuntimeReporter | undefined;
   private runtimeSettings: RuntimeSettingsFile = {
     version: 1,
@@ -348,6 +349,9 @@ export class App {
     this.uiStore = bootstrap.uiStore;
     this.localCoreStatus = bootstrap.localCoreStatus;
     this.localCoreConnectionManager = bootstrap.localCoreConnectionManager;
+    this.runnerUsesLocalCore = usesLocalCoreRunnerTransport(
+      bootstrap.runnerTransportEnv,
+    );
     this.missionControlReporter = new MissionControlRuntimeReporter({
       cwd: this.options.cwd,
       workspace: this.activeWorkspace,
@@ -433,10 +437,74 @@ export class App {
       this.setSplashPreflightSummary("verifying credentials");
       this.updateSplashPreflightCheck("provider", {
         state: "running",
-        detail: "checking env",
+        detail: "checking runtime",
       });
-      const requiredEnv = resolveRequiredPreflightEnvVars(state.activeProfile, state.activeSession);
-      const missingEnv = requiredEnv.filter((envName) => readEnvValue(envName).length === 0);
+      const provider = state.activeProfile.modelProvider ?? "openrouter";
+      const core = this.runnerUsesLocalCore
+        ? await this.prepareLocalCoreClient()
+        : undefined;
+      const coreReadiness = core === undefined
+        ? undefined
+        : await core.providerReadiness();
+      if (core !== undefined) {
+        const readiness = coreReadiness?.providerReadiness[provider];
+        if (readiness === undefined) {
+          throw new Error(`Local Core did not report readiness for provider '${provider}'.`);
+        }
+        if (readiness.ready === false) {
+          const credentialName = resolveProviderCredentialEnvVar(provider);
+          const credentialDetail = readiness.credential === "missing" && credentialName !== undefined
+            ? `missing ${credentialName}`
+            : `credential ${readiness.credential}`;
+          const message = [
+            `Local Core provider '${provider}' is ${credentialDetail}.`,
+            "Restart Local Core from this environment or configure the provider credential.",
+          ].join(" ");
+          this.updateSplashPreflightCheck("provider", {
+            state: "fail",
+            detail: message,
+          });
+          await this.handleStartupFailure({
+            summary: message,
+            scope: "startup.credentials",
+            details: message,
+          });
+          return;
+        }
+        if (usesTavilyTools(state.activeProfile)) {
+          const tavilyReadiness = coreReadiness?.toolReadiness.tavily;
+          if (tavilyReadiness === undefined) {
+            throw new Error("Local Core did not report readiness for Tavily.");
+          }
+          if (tavilyReadiness.ready === false) {
+            const credentialDetail = tavilyReadiness.credential === "missing"
+              ? "missing TAVILY_API_KEY"
+              : `credential ${tavilyReadiness.credential}`;
+            const message = [
+              `Local Core tool 'Tavily' is ${credentialDetail}.`,
+              "Restart Local Core from this environment or configure the tool credential.",
+            ].join(" ");
+            this.updateSplashPreflightCheck("provider", {
+              state: "fail",
+              detail: message,
+            });
+            await this.handleStartupFailure({
+              summary: message,
+              scope: "startup.credentials",
+              details: message,
+            });
+            return;
+          }
+        }
+      }
+      const requiredEnv = resolveRequiredPreflightEnvVars(
+        state.activeProfile,
+        state.activeSession,
+        core === undefined,
+      );
+      const missingEnv = requiredEnv.filter(
+        (envName) => readEnvValue(envName).length === 0,
+      );
       if (missingEnv.length > 0) {
         const message = `missing ${missingEnv.join(", ")}`;
         this.updateSplashPreflightCheck("provider", {
@@ -452,7 +520,9 @@ export class App {
       }
       this.updateSplashPreflightCheck("provider", {
         state: "ok",
-        detail: requiredEnv.join(", "),
+        detail: core !== undefined
+          ? `${provider} ready in Local Core`
+          : requiredEnv.join(", "),
       });
 
       await this.runSplashDatabaseCheck();
@@ -5442,25 +5512,55 @@ function buildSplashPreflightState(input: {
   };
 }
 
-function resolveRequiredPreflightEnvVars(profile: TuiProfile, _session: TuiSessionMeta): string[] {
-  const required = new Set<string>();
-  const provider = profile.modelProvider ?? "openrouter";
+function resolveProviderCredentialEnvVar(
+  provider: TuiProfile["modelProvider"],
+): string | undefined {
   if (provider === "openai") {
-    required.add("OPENAI_API_KEY");
-  } else if (provider === "anthropic") {
-    required.add("ANTHROPIC_API_KEY");
-  } else if (provider === "ollama" || provider === "lmstudio") {
-    // Local OpenAI-compatible providers do not require API credentials by default.
-  } else {
-    required.add("OPENROUTER_API_KEY");
+    return "OPENAI_API_KEY";
   }
+  if (provider === "anthropic") {
+    return "ANTHROPIC_API_KEY";
+  }
+  if (provider === "ollama" || provider === "lmstudio") {
+    return;
+  }
+  return "OPENROUTER_API_KEY";
+}
 
-  const usesInternet = (profile.toolAllowlist ?? []).some((toolName) => toolName.startsWith("internet."));
-  if (usesInternet) {
-    required.add("TAVILY_API_KEY");
+function usesLocalCoreRunnerTransport(env: NodeJS.ProcessEnv): boolean {
+  const remoteUrl = env.KESTREL_RUNNER_SERVICE_URL?.trim();
+  return (remoteUrl === undefined || remoteUrl.length === 0)
+    && typeof env.KESTREL_LOCAL_CORE_API_SOCKET === "string"
+    && env.KESTREL_LOCAL_CORE_API_SOCKET.trim().length > 0
+    && typeof env.KESTREL_LOCAL_CORE_API_TOKEN === "string"
+    && env.KESTREL_LOCAL_CORE_API_TOKEN.trim().length > 0;
+}
+
+function resolveRequiredPreflightEnvVars(
+  profile: TuiProfile,
+  _session: TuiSessionMeta,
+  includeRuntimeCredentials = true,
+): string[] {
+  const required = new Set<string>();
+  if (includeRuntimeCredentials) {
+    const providerCredential = resolveProviderCredentialEnvVar(
+      profile.modelProvider ?? "openrouter",
+    );
+    if (providerCredential !== undefined) {
+      required.add(providerCredential);
+    }
+    if (usesTavilyTools(profile)) {
+      required.add("TAVILY_API_KEY");
+    }
   }
 
   return [...required];
+}
+
+function usesTavilyTools(profile: TuiProfile): boolean {
+  return (profile.toolAllowlist ?? []).some((toolName) =>
+    toolName.startsWith("internet.")
+  );
 }
 
 function readEnvValue(name: string): string {
