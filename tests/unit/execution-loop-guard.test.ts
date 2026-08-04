@@ -15,6 +15,7 @@ import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 interface ReactActionFlowRow {
@@ -117,9 +118,9 @@ function createLoopStallResumeRuntime(
 ): Kestrel {
   return new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>(request: ModelRequest) => {
       const metadata = request.metadata as Record<string, unknown> | undefined;
       if (metadata?.modelRole === "user_reply_intent") {
@@ -242,9 +243,9 @@ test("ExecutionEngine persists step-start telemetry while a buffered step is sti
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 40,
@@ -303,9 +304,9 @@ test("ExecutionEngine logs compact React state handoff for every committed step"
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
@@ -387,9 +388,9 @@ test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated id
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 40,
@@ -438,9 +439,9 @@ test("ExecutionEngine keeps repeated validation feedback loop details mechanical
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 40,
@@ -508,9 +509,9 @@ test("ExecutionEngine treats appended duplicate audit rows as unchanged semantic
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 40,
@@ -577,9 +578,9 @@ test("ExecutionEngine completes visible-todo finalize loops with documented resi
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -701,9 +702,9 @@ test("ExecutionEngine does not complete residual-gap finalize loops on partial p
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -792,9 +793,9 @@ test("ExecutionEngine pauses and asks for operator guidance on missing filesyste
   const store = new WaitSettlementCapturingStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 100,
@@ -1048,9 +1049,9 @@ test("ExecutionEngine loop-guards repeated validation loops when a concrete targ
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 100,
@@ -1106,9 +1107,9 @@ test("ExecutionEngine checkpoints repeated no-progress dispatch control states",
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 50,
@@ -1230,9 +1231,9 @@ test("ExecutionEngine does not treat pending tool batch advancement as no-progre
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -1303,9 +1304,9 @@ test("ExecutionEngine treats deliberator policy retries as distinct reasoning pr
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -1384,9 +1385,9 @@ test("ExecutionEngine treats deliberator work item updates as no-action reasonin
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -1474,9 +1475,9 @@ test("ExecutionEngine allows repeated identical react.route states until max-ste
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 2,
@@ -1531,7 +1532,7 @@ test("ExecutionEngine records normalized tool input in run events", async () => 
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       validateInput: async (_name, input) => ({
         ...(input as Record<string, unknown>),
         domainAllow: ["local12.com", "fox19.com"],
@@ -1541,7 +1542,7 @@ test("ExecutionEngine records normalized tool input in run events", async () => 
         input,
         output: { ok: true },
       }),
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
@@ -1583,9 +1584,9 @@ test("ExecutionEngine records decision model request telemetry with requested mo
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() =>
       ({
         output: { ok: true },
@@ -1681,9 +1682,9 @@ test("ExecutionEngine writes full model prompt dumps to disk when enabled", asyn
     const store = new InMemorySessionStore();
     const kestrel = new Kestrel({
       store,
-      toolGateway: {
+      toolGateway: adaptLegacyTestToolGateway({
         call: async () => null as never,
-      },
+      }),
       modelGateway: new RetryingModelGateway(async <T>() =>
         ({
           output: { ok: true },
@@ -1791,9 +1792,9 @@ test("ExecutionEngine excludes maintenance model calls from the action model-cal
   let modelCalls = 0;
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => {
       modelCalls += 1;
       return { ok: true } as T;
@@ -1853,9 +1854,9 @@ test("ExecutionEngine refuses too-late deliberator model calls before emitting m
   let modelCalls = 0;
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => {
       modelCalls += 1;
       return { ok: true } as T;
@@ -1925,7 +1926,7 @@ test("ExecutionEngine clamps dev.shell.run timeout to preserve external closeout
   let seenInput: Record<string, unknown> | undefined;
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async <T>(_name: string, input: unknown) => {
         seenInput = input as Record<string, unknown>;
         return buildAgentToolSuccessResult({
@@ -1940,7 +1941,7 @@ test("ExecutionEngine clamps dev.shell.run timeout to preserve external closeout
           },
         }) as T;
       },
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -1997,12 +1998,12 @@ test("ExecutionEngine returns dev.shell.run deadline exhaustion as tool evidence
   let observedResult: Record<string, unknown> | undefined;
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => {
         toolCalls += 1;
         return null as never;
       },
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -2053,9 +2054,9 @@ test("ExecutionEngine canonicalizes active dev.process.write process identity fo
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 10,
@@ -2116,9 +2117,9 @@ test("ExecutionEngine does not treat active dev.process.read output collection a
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 4,
@@ -2268,9 +2269,9 @@ test("ExecutionEngine does not persist or replay decisionTrace after emission", 
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
@@ -2329,9 +2330,9 @@ test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated sa
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -2405,9 +2406,9 @@ const assertRepeatedFilesystemInspectionLoopGuard = async (
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 5,
@@ -2462,9 +2463,9 @@ test("ExecutionEngine ignores volatile capability evidence metadata when enforci
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -2527,9 +2528,9 @@ test("ExecutionEngine counts only loop decisions for repeated same-tool loop gua
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => ({ ok: true }) as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 10,
@@ -2601,9 +2602,9 @@ test("ExecutionEngine ignores legacy loop history entries without stepName for r
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => ({ ok: true }) as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 4,
@@ -2712,9 +2713,9 @@ test("ExecutionEngine retains the generic exact-action guard for repeated identi
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -2788,9 +2789,9 @@ test("ExecutionEngine leaves varied extraction inputs to decision-policy admissi
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 4,
@@ -2861,9 +2862,9 @@ test("ExecutionEngine completes with partial output instead of requesting contin
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 5,
@@ -2996,9 +2997,9 @@ test("ExecutionEngine does not treat source.fetch as low-yield internet extracti
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 4,
@@ -3071,9 +3072,9 @@ test("ExecutionEngine converts qualifying dispatch reuse stalls into research_st
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -3266,9 +3267,9 @@ test("ExecutionEngine preserves dispatch stall failures when research stall thre
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -3394,9 +3395,9 @@ test("ExecutionEngine converts qualifying MAX_STEP_VISITS_EXCEEDED research loop
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -3569,9 +3570,9 @@ test("ExecutionEngine checkpoints repeated filesystem loop visit stalls with a c
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -3697,9 +3698,9 @@ test("ExecutionEngine asks for narrowing on broad repeated loop visit stalls", a
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -3813,9 +3814,9 @@ test("ExecutionEngine preserves MAX_STEP_VISITS_EXCEEDED failures for non-resear
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,

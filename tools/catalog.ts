@@ -19,6 +19,7 @@ import type {
   SharedToolDefinition,
   SharedToolHandler,
   SharedToolModule,
+  SharedToolNormalizedResult,
   ToolCatalog,
 } from "./contracts.js";
 import { createRuntimeFailure } from "../src/runtime/RuntimeFailure.js";
@@ -213,7 +214,7 @@ const DEFAULT_MODULES: SharedToolModule[] = [
 ];
 
 const BUILT_IN_RESULT_NORMALIZER_ID =
-  "kestrel.agent-tool-result-envelope:v1";
+  "kestrel.strict-json-schema:v1";
 
 export const BALANCED_STARTER_TOOL_NAMES = [
   ...RUNNER_BUILT_IN_TOOL_NAMES,
@@ -271,7 +272,10 @@ export function createToolCatalog(
           (name) => handlerId === `builtin:${name}:handler:v1`,
         ),
       hasResultNormalizer: (normalizerId) =>
-        normalizerId === BUILT_IN_RESULT_NORMALIZER_ID,
+        normalizerId === BUILT_IN_RESULT_NORMALIZER_ID ||
+        [...map.values()].some(
+          (module) => module.definition.resultNormalizerId === normalizerId,
+        ),
     },
   ]);
   descriptors.clear();
@@ -397,6 +401,44 @@ export function createToolCatalog(
     return handlers;
   };
 
+  const createRawHandlers = (
+    names: string[],
+    context: SharedToolContext,
+  ): Record<string, import("./contracts.js").SharedToolRawHandler> => {
+    const handlers: Record<
+      string,
+      import("./contracts.js").SharedToolRawHandler
+    > = {};
+    for (const name of names) {
+      const module = map.get(name);
+      if (module === undefined) {
+        throw createUnknownToolError(name, "handlers");
+      }
+      handlers[name] = module.createHandler(context);
+    }
+    return handlers;
+  };
+
+  const createResultNormalizers = (
+    names: string[],
+  ): Record<
+    string,
+    (output: unknown, input: unknown) => SharedToolNormalizedResult
+  > => {
+    const normalizers: Record<
+      string,
+      (output: unknown, input: unknown) => SharedToolNormalizedResult
+    > = {};
+    for (const name of names) {
+      const module = map.get(name);
+      if (module === undefined) {
+        throw createUnknownToolError(name, "result normalizers");
+      }
+      normalizers[name] = module.normalizeResult ?? ((output) => ({ output }));
+    }
+    return normalizers;
+  };
+
   return {
     list,
     listDescriptors,
@@ -405,6 +447,8 @@ export function createToolCatalog(
     toModelTools,
     toCapabilityManifest,
     createHandlers,
+    createRawHandlers,
+    createResultNormalizers,
   };
 }
 
@@ -449,7 +493,8 @@ function createBuiltInToolDescriptor(
     presentation,
     execution: {
       handlerId: `builtin:${definition.name}:handler:v1`,
-      resultNormalizerId: BUILT_IN_RESULT_NORMALIZER_ID,
+      resultNormalizerId:
+        definition.resultNormalizerId ?? BUILT_IN_RESULT_NORMALIZER_ID,
     },
   });
 }
@@ -572,7 +617,7 @@ function createToolCatalogError(
 
 function createUnknownToolError(
   name: string,
-  surface: "modelTools" | "capabilityManifest" | "handlers",
+  surface: "modelTools" | "capabilityManifest" | "handlers" | "result normalizers",
 ) {
   return createToolCatalogError(
     "TOOL_LOOKUP_FAILED",

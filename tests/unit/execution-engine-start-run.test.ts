@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 class StartRunFailureStore extends InMemorySessionStore {
@@ -29,9 +30,9 @@ test("ExecutionEngine preserves startRun failures without flushing lifecycle buf
   const store = new StartRunFailureStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,

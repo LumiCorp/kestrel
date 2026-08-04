@@ -1,7 +1,6 @@
 import type { ValidateFunction } from "ajv";
 
 import type {
-  AgentToolResult,
   ModelToolContract,
   ToolGateway,
   ToolGatewayCallOptions,
@@ -11,19 +10,45 @@ import {
   TOOL_DESCRIPTOR_VERSION,
   compileToolJsonSchemaV1,
   createToolDescriptorV1,
+  hashCanonical,
   parseToolDescriptorV1,
+  toToolDescriptorRefV1,
+  type ToolSurfaceSnapshotV1,
   type ToolCapabilityContractV1,
   type ToolDescriptorV1,
   type ToolPresentationContractV1,
 } from "../kestrel/contracts/tool-contract.js";
+import type {
+  AgentToolResultV2,
+  PreparedToolCallV1,
+  ResolvedModelToolIntentV1,
+} from "../kestrel/contracts/tool-invocation.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
-import { runAgentTool } from "../../tools/toolResult.js";
+import {
+  createPreparedToolCallV1,
+  createToolSurfaceForDescriptorsV1,
+  executePinnedToolCallV1,
+  fingerprintToolRunScopeV1,
+  resolveModelToolIntentV1,
+} from "./ToolInvocationSupport.js";
 
 export type ToolHandler = (input: unknown) => Promise<unknown>;
+export type ToolResultNormalizer = (
+  output: unknown,
+  input: unknown,
+) => {
+  output: unknown;
+  presentation?: import("../kestrel/contracts/model-io.js").AgentToolPresentation | undefined;
+  partial?: {
+    normalizedFailureCode: string;
+    retryable: boolean;
+  } | undefined;
+};
 
 export interface RegisteredToolModuleV1 {
   descriptor: ToolDescriptorV1;
   handler: ToolHandler;
+  normalizer: ToolResultNormalizer;
 }
 
 export interface EmbeddedToolModuleAuthoringV1 {
@@ -71,6 +96,7 @@ export function createEmbeddedToolModuleV1(
       },
     }),
     handler: input.handler,
+    normalizer: (output) => ({ output }),
   };
 }
 
@@ -93,7 +119,11 @@ function validateAllowlistedToolName(name: string): string {
 
 export class AllowlistedToolGateway implements ToolGateway {
   private readonly modules = new Map<string, RegisteredToolModuleV1>();
-  private readonly validators = new Map<string, ValidateFunction>();
+  private readonly inputValidators = new Map<string, ValidateFunction>();
+  private readonly outputValidators = new Map<string, ValidateFunction>();
+  private readonly snapshots = new Map<string, ToolSurfaceSnapshotV1>();
+  private readonly snapshotSessions = new Map<string, string>();
+  private readonly registryGeneration: string;
 
   constructor(modules: readonly RegisteredToolModuleV1[]) {
     for (const module of modules) {
@@ -119,12 +149,33 @@ export class AllowlistedToolGateway implements ToolGateway {
           { toolName: descriptor.toolId, recoverable: false },
         );
       }
-      this.modules.set(descriptor.toolId, { descriptor, handler: module.handler });
-      this.validators.set(
+      if (typeof module.normalizer !== "function") {
+        throw createRuntimeFailure(
+          "IO_TOOL_RESULT_NORMALIZER_MISSING",
+          `Allowlisted tool '${descriptor.toolId}' is missing its result normalizer.`,
+          { toolName: descriptor.toolId, recoverable: false },
+        );
+      }
+      this.modules.set(descriptor.toolId, {
+        descriptor,
+        handler: module.handler,
+        normalizer: module.normalizer,
+      });
+      this.inputValidators.set(
         descriptor.toolId,
         compileToolJsonSchemaV1(descriptor.inputSchema, { surface: "input" }),
       );
+      this.outputValidators.set(
+        descriptor.toolId,
+        compileToolJsonSchemaV1(descriptor.runtimeOutput.schema, {
+          surface: "output",
+        }),
+      );
     }
+    this.registryGeneration = hashCanonical({
+      source: "allowlisted",
+      descriptors: this.listDescriptors().map(toToolDescriptorRefV1),
+    });
   }
 
   listDescriptors(): ToolDescriptorV1[] {
@@ -135,22 +186,90 @@ export class AllowlistedToolGateway implements ToolGateway {
     return this.modules.get(name)?.descriptor;
   }
 
-  async validateInput(name: string, input: unknown): Promise<unknown> {
-    const normalizedName = validateAllowlistedToolName(name);
-    const validator = this.validators.get(normalizedName);
-    if (validator === undefined) {
+  async createToolSurfaceSnapshot(
+    options: ToolGatewayCallOptions = {},
+  ): Promise<ToolSurfaceSnapshotV1> {
+    const requestedNames = options.toolNames === undefined
+      ? undefined
+      : new Set(options.toolNames);
+    const snapshot = createToolSurfaceForDescriptorsV1({
+      descriptors: this.listDescriptors().filter(
+        (descriptor) => requestedNames?.has(descriptor.toolId) ?? true,
+      ),
+      registryGeneration: this.registryGeneration,
+      runContext: options.runContext,
+    });
+    this.snapshots.set(snapshot.snapshotId, snapshot);
+    if (options.runContext !== undefined) {
+      this.snapshotSessions.set(
+        snapshot.snapshotId,
+        options.runContext.sessionId,
+      );
+    }
+    return snapshot;
+  }
+
+  resolveModelToolIntent(input: {
+    snapshot: ToolSurfaceSnapshotV1;
+    toolCall: { id: string; name: string; input: Record<string, unknown> };
+  }): ResolvedModelToolIntentV1 {
+    const known = this.snapshots.get(input.snapshot.snapshotId);
+    if (known === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_SNAPSHOT_STALE",
+        `Tool surface snapshot '${input.snapshot.snapshotId}' is not active.`,
+        { recoverable: false },
+      );
+    }
+    return resolveModelToolIntentV1({ snapshot: known, toolCall: input.toolCall });
+  }
+
+  async prepareToolCall(
+    input: Parameters<ToolGateway["prepareToolCall"]>[0],
+    options: ToolGatewayCallOptions = {},
+  ): Promise<PreparedToolCallV1> {
+    const normalizedName = validateAllowlistedToolName(
+      input.activation.descriptor.toolId,
+    );
+    const module = this.modules.get(normalizedName);
+    const validator = this.inputValidators.get(normalizedName);
+    if (module === undefined || validator === undefined) {
       throw createRuntimeFailure(
         "IO_TOOL_NOT_ALLOWLISTED",
         `Tool '${normalizedName}' is not allowlisted.`,
-        {
-          subsystem: "runtime",
-          classification: "configuration",
-          recoverable: false,
-          toolName: normalizedName,
-        },
+        { recoverable: false, toolName: normalizedName },
       );
     }
-    if (validator(input) !== true) {
+    const expectedRef = toToolDescriptorRefV1(module.descriptor);
+    if (
+      input.activation.registryGeneration !== this.registryGeneration ||
+      hashCanonical(input.activation.descriptor) !== hashCanonical(expectedRef) ||
+      input.activation.scopeFingerprint !==
+        fingerprintToolRunScopeV1(options.runContext)
+    ) {
+      throw createRuntimeFailure(
+        "TOOL_ACTIVATION_STALE",
+        `Tool '${normalizedName}' activation is stale or divergent.`,
+        { recoverable: false, toolName: normalizedName },
+      );
+    }
+    if (input.origin.kind === "model") {
+      const snapshot = this.snapshots.get(input.origin.snapshotId);
+      const exposed = snapshot?.tools.find(
+        (candidate) => candidate.descriptor.toolId === normalizedName,
+      );
+      if (
+        exposed === undefined ||
+        hashCanonical(exposed) !== hashCanonical(input.activation)
+      ) {
+        throw createRuntimeFailure(
+          "TOOL_SNAPSHOT_LOOKUP_FAILED",
+          `Tool '${normalizedName}' was not exposed by the referenced model snapshot.`,
+          { recoverable: false, toolName: normalizedName },
+        );
+      }
+    }
+    if (validator(input.rawInput) !== true) {
       throw createRuntimeFailure(
         "TOOL_INPUT_SCHEMA_FAILED",
         `Tool '${normalizedName}' input failed schema validation.`,
@@ -163,33 +282,50 @@ export class AllowlistedToolGateway implements ToolGateway {
         },
       );
     }
-    return input;
-  }
-
-  async call(
-    name: string,
-    input: unknown,
-    _options?: ToolGatewayCallOptions,
-  ): Promise<AgentToolResult> {
-    const normalizedName = validateAllowlistedToolName(name);
-    const module = this.modules.get(normalizedName);
-    if (module === undefined) {
-      throw createRuntimeFailure(
-        "IO_TOOL_NOT_ALLOWLISTED",
-        `Tool '${normalizedName}' is not allowlisted.`,
-        {
-          subsystem: "runtime",
-          classification: "configuration",
-          recoverable: false,
-          toolName: normalizedName,
-        },
-      );
-    }
-    const validatedInput = await this.validateInput(normalizedName, input);
-    return runAgentTool({
-      toolName: normalizedName,
-      toolInput: validatedInput,
-      handler: module.handler,
+    return createPreparedToolCallV1({
+      ...input,
+      effectiveInput: input.rawInput,
     });
   }
+
+  async executePreparedToolCall(
+    prepared: PreparedToolCallV1,
+    options: ToolGatewayCallOptions = {},
+  ): Promise<AgentToolResultV2> {
+    const toolName = prepared.activation.descriptor.toolId;
+    const module = this.modules.get(toolName);
+    const validator = this.outputValidators.get(toolName);
+    if (module === undefined || validator === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_PINNED_HANDLER_UNAVAILABLE",
+        `Pinned handler for tool '${toolName}' is unavailable.`,
+        { recoverable: false, toolName },
+      );
+    }
+    return executePinnedToolCallV1({
+      prepared,
+      pinned: {
+        descriptor: module.descriptor,
+        activation: prepared.activation,
+        validator,
+        handler: module.handler,
+        normalizer: module.normalizer,
+      },
+      signal: options.signal,
+    });
+  }
+
+  releaseToolSurfaceSnapshot(snapshotId: string): void {
+    this.snapshots.delete(snapshotId);
+    this.snapshotSessions.delete(snapshotId);
+  }
+
+  releaseToolRun(_runId: string, sessionId: string): void {
+    for (const [snapshotId, ownerSessionId] of this.snapshotSessions) {
+      if (ownerSessionId === sessionId) {
+        this.releaseToolSurfaceSnapshot(snapshotId);
+      }
+    }
+  }
+
 }

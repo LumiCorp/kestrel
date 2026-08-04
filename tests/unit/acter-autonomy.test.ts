@@ -29,6 +29,7 @@ import { buildFilesystemInspectionActionKey } from "../../agents/reference-react
 import { detectReadOnlyResultDuplicate } from "../../src/runtime/readOnlyResultDuplicates.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 
@@ -147,9 +148,9 @@ function stalePolicyRetryContext(): Record<string, unknown> {
 function assertReferenceWaitEffectContractAccepts(transition: Transition, context = buildContext()): void {
   const kestrel = new Kestrel({
     store: new InMemorySessionStore(),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({} as T)),
   });
   registerAgentReferenceRuntime(kestrel);
@@ -166,9 +167,9 @@ function assertReferenceWaitEffectContractAccepts(transition: Transition, contex
 function assertReferenceFinalizeContractAccepts(transition: Transition, context = buildContext()): void {
   const kestrel = new Kestrel({
     store: new InMemorySessionStore(),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({} as T)),
   });
   registerAgentReferenceRuntime(kestrel);
@@ -185,9 +186,9 @@ function assertReferenceFinalizeContractAccepts(transition: Transition, context 
 function assertReferenceFinalizeContractRejects(transition: Transition, context = buildContext()): void {
   const kestrel = new Kestrel({
     store: new InMemorySessionStore(),
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({} as T)),
   });
   registerAgentReferenceRuntime(kestrel);
@@ -972,6 +973,43 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
   );
   assert.match(binding.payloadHash, /^sha256:[0-9a-f]{64}$/u);
   assert.deepEqual(pendingApproval.externalApprovalBinding, binding);
+
+  const staleAgent = structuredClone(waitingAgent);
+  const staleExec = staleAgent.exec as Record<string, unknown>;
+  const stalePending = staleExec.pendingApproval as Record<string, unknown>;
+  stalePending.externalApprovalBinding = {
+    ...binding,
+    authorityRevision: `sha256:${"a".repeat(64)}`,
+  };
+  const staleResume = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: staleAgent },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-stale-approval",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          message: "approve",
+          approvalId: pendingApproval.approvalId,
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      useTool: async () => {
+        throw new Error("stale approval must not execute the mutation");
+      },
+    },
+  );
+  assert.equal(staleResume.status, "WAITING");
+  assert.equal(staleResume.waitFor?.eventType, "user.approval");
 
   const resumed = await waitApprovalStep(
     buildContext({

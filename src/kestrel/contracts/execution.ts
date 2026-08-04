@@ -33,6 +33,7 @@ import type {
   ModelResponse,
   ToolGateway,
 } from "./model-io.js";
+import type { ToolSurfaceSnapshotV1 } from "./tool-contract.js";
 import type {
   PersistedEffect,
   RuntimeStore,
@@ -208,7 +209,14 @@ export interface StepContext {
 
 export interface StepIO {
   useModel<T>(request: ModelRequest): Promise<T | ModelResponse<unknown>>;
-  useTool?(name: string, input: unknown): Promise<AgentToolResult>;
+  useTool?(
+    name: string,
+    input: unknown,
+    intent?: {
+      modelToolCallId?: string | undefined;
+      toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
+    },
+  ): Promise<AgentToolResult>;
 }
 
 export interface StepCommit {
@@ -344,6 +352,8 @@ export interface EffectRunner {
         output?: unknown;
         error?: RuntimeError | undefined;
         durationMs?: number | undefined;
+        activation?: import("./tool-contract.js").ToolActivationRefV1 | undefined;
+        outcome?: import("./tool-invocation.js").ToolExecutionOutcomeV1 | undefined;
       }) => Promise<void>) | undefined;
     },
   ): Promise<{

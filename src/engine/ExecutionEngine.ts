@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,9 +7,18 @@ import type { RunEventType, RuntimeError, TransitionStatus } from "../kestrel/co
 import type { MemorySnapshot, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, Transition } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
+import type { AgentToolResultV2 } from "../kestrel/contracts/tool-invocation.js";
 import { parseRecoveryDecisionV1, parseRecoveryReviewBindingV1 } from "../kestrel/contracts/recovery.js";
+import {
+  hashCanonical,
+  parseToolSurfaceSnapshotV1,
+} from "../kestrel/contracts/tool-contract.js";
 import type { SessionRecord } from "../kestrel/contracts/store.js";
 import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
+import {
+  parseRunnerExternalApprovalBindingV1,
+  serializeCanonicalApprovalPayload,
+} from "@kestrel-agents/protocol";
 
 import { GuardrailViolationError, Guardrails } from "./Guardrails.js";
 import { ToolJobQueue } from "./ToolJobQueue.js";
@@ -136,6 +145,23 @@ interface RunLifecycleObservabilityFrame {
   sessionId: string;
   runLogs: RunLogEntry[];
   runEvents: RunEvent[];
+}
+
+function readPendingToolApproval(
+  state: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const record = (value: unknown): Record<string, unknown> | undefined =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined;
+  return record(record(record(state.agent)?.exec)?.pendingApproval) ??
+    record(record(record(state.react)?.exec)?.pendingApproval);
+}
+
+function digestExternalApprovalPayload(value: unknown): string {
+  return `sha256:${createHash("sha256")
+    .update(serializeCanonicalApprovalPayload(value))
+    .digest("hex")}`;
 }
 
 interface RunEventAppendOptions {
@@ -426,8 +452,21 @@ export class ExecutionEngine {
         this.applyRuntimeStateGuards(stepName, sessionState, statePatch, transition),
       mergeStatePatchWithRegionLaneCursor: (sessionState, statePatch, laneCursor) =>
         this.mergeStatePatchWithRegionLaneCursor(sessionState, statePatch, laneCursor),
-      resolveEffects: (effects, runId, stepIndex, runtimePayload) =>
-        this.resolveEffects(effects, runId, stepIndex, runtimePayload),
+      resolveEffects: (
+        effects,
+        runId,
+        stepIndex,
+        runtimePayload,
+        session,
+        runtimeBudgetRemainingMs,
+      ) => this.resolveEffects(
+        effects,
+        runId,
+        stepIndex,
+        runtimePayload,
+        session,
+        runtimeBudgetRemainingMs,
+      ),
       resolveTransitionMemory: (sessionState, statePatch, fallback) =>
         this.resolveTransitionMemory(sessionState, statePatch, fallback),
       handleRegionMergeConflict: (input) => this.handleRegionMergeConflict(input),
@@ -1236,6 +1275,9 @@ export class ExecutionEngine {
     terminalStatus: TransitionStatus = "FAILED",
   ): Promise<void> {
     await this.workspaceLifecycleCoordinator.releaseManagedWorktreeLeaseForRun(runId, session, terminalStatus);
+    if (terminalStatus !== "WAITING") {
+      await this.deps.toolGateway.releaseToolRun?.(runId, session.sessionId);
+    }
   }
 
   private readManagedWorktreeBindingFromState(state: Record<string, unknown>): ManagedTaskWorktreeBinding | undefined {
@@ -1597,8 +1639,7 @@ export class ExecutionEngine {
   }
 
   private async callToolWithWorkspaceCheckpoint(input: {
-    name: string;
-    input: unknown;
+    preparedToolCall: import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1;
     sessionId: string;
     runId: string;
     stepIndex: number;
@@ -1610,6 +1651,7 @@ export class ExecutionEngine {
     signal?: AbortSignal | undefined;
     console?: ToolConsoleSink | undefined;
   }) {
+    const toolName = input.preparedToolCall.activation.descriptor.toolId;
     if (this.deps.toolGateway.preRun !== undefined) {
       await this.deps.toolGateway.preRun({
         runId: input.runId,
@@ -1630,7 +1672,7 @@ export class ExecutionEngine {
       });
     }
     const checkpointContext = this.resolveMutationCheckpointContext(
-      input.name,
+      toolName,
       input.runtimeMetadata,
       input.trustedManagedWorktreeBinding,
     );
@@ -1641,7 +1683,7 @@ export class ExecutionEngine {
       sessionState: input.sessionState,
     };
     if (checkpointContext === undefined) {
-      return this.deps.toolGateway.call(input.name, input.input, {
+      return this.deps.toolGateway.executePreparedToolCall(input.preparedToolCall, {
         signal: input.signal,
         runContext: toolRunContext,
         ...(input.console !== undefined ? { console: input.console } : {}),
@@ -1652,8 +1694,8 @@ export class ExecutionEngine {
       sessionId: input.sessionId,
       setup: checkpointContext.setup,
       kind: "pre_mutation",
-      label: `pre:${input.name}:${input.stepIndex}`,
-      reason: `Pre-action checkpoint for ${input.name}`,
+      label: `pre:${toolName}:${input.stepIndex}`,
+      reason: `Pre-action checkpoint for ${toolName}`,
       runId: input.runId,
       taskId: checkpointContext.taskId,
       createdBy: "runtime",
@@ -1664,12 +1706,34 @@ export class ExecutionEngine {
     };
 
     try {
-      const result = await this.deps.toolGateway.call(input.name, input.input, {
+      const result = await this.deps.toolGateway.executePreparedToolCall(input.preparedToolCall, {
         signal: input.signal,
         runContext: toolRunContext,
         ...(input.console !== undefined ? { console: input.console } : {}),
       });
-      this.assertManagedWorktreeSourceWriteGuardMode(input.name, result.auditRecord.output);
+      if (result.status === "FAILED") {
+        if (result.outcome.kind === "cancellation") {
+          throw new RunCancelledError();
+        }
+        const outcomeError = result.outcome.kind === "failure"
+          ? result.outcome.error
+          : undefined;
+        throw createRuntimeFailure(
+          result.outcome.kind === "failure"
+            ? result.outcome.normalizedFailureCode
+            : "TOOL_EXECUTION_FAILED",
+          outcomeError?.message ?? `Tool '${toolName}' failed.`,
+          {
+            recoverable: result.outcome.kind === "failure"
+              ? result.outcome.retryable
+              : false,
+            toolName,
+            effectState: result.outcome.effectState,
+            ...(outcomeError?.details ?? {}),
+          },
+        );
+      }
+      this.assertManagedWorktreeSourceWriteGuardMode(toolName, result.auditRecord.output);
       const diff = await this.deps.workspaceCheckpointService!.diff({
         sessionId: input.sessionId,
         setup: checkpointContext.setup,
@@ -1686,15 +1750,15 @@ export class ExecutionEngine {
             sessionId: input.sessionId,
             setup: checkpointContext.setup,
             kind: "pre_mutation",
-            label: `post:${input.name}:${input.stepIndex}`,
-            reason: `Post-action checkpoint for ${input.name}`,
+            label: `post:${toolName}:${input.stepIndex}`,
+            reason: `Post-action checkpoint for ${toolName}`,
             runId: input.runId,
             taskId: checkpointContext.taskId,
             createdBy: "runtime",
             baseCheckpointId: preAction.checkpoint.checkpointId,
           });
       return this.attachWorkspaceCheckpointEvidence(result, {
-        toolName: input.name,
+        toolName,
         changedFiles,
         preActionCheckpointId: observationBaseline.checkpointId,
         preActionGitRef: observationBaseline.gitRef,
@@ -1717,14 +1781,14 @@ export class ExecutionEngine {
           sessionId: input.sessionId,
           setup: checkpointContext.setup,
           checkpointId: preAction.checkpoint.checkpointId,
-          reason: `Rollback failed ${input.name}`,
+          reason: `Rollback failed ${toolName}`,
           runId: input.runId,
           taskId: checkpointContext.taskId,
           restoredBy: "runtime",
         });
       } catch (rollbackError) {
-        throw createRuntimeFailure("WORKSPACE_CHECKPOINT_ROLLBACK_FAILED", `Failed to roll back changes from '${input.name}'.`, {
-          toolName: input.name,
+        throw createRuntimeFailure("WORKSPACE_CHECKPOINT_ROLLBACK_FAILED", `Failed to roll back changes from '${toolName}'.`, {
+          toolName,
           preActionCheckpointId: preAction.checkpoint.checkpointId,
           changedFiles: diff.files.map((file) => file.path),
           rollbackError: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
@@ -1849,10 +1913,55 @@ export class ExecutionEngine {
     }, 0);
 
     for (const processId of ownedProcessIds) {
+      const toolInput = { sessionId: processId, stop: true, yieldTimeMs: 1000 };
+      const runContext = {
+        runId,
+        sessionId: session.sessionId,
+        payload: runtimePayload,
+        sessionState,
+      };
+      const snapshot = await this.deps.toolGateway.createToolSurfaceSnapshot({
+        runContext,
+        toolNames: ["exec_command"],
+      });
+      const activation = snapshot.tools.find(
+        (candidate) => candidate.descriptor.toolId === "exec_command",
+      );
+      if (activation === undefined) {
+        await this.deps.toolGateway.releaseToolSurfaceSnapshot?.(snapshot.snapshotId);
+        throw createRuntimeFailure(
+          "TOOL_SNAPSHOT_LOOKUP_FAILED",
+          "Runtime closeout tool 'exec_command' is unavailable.",
+          { recoverable: false, toolName: "exec_command" },
+        );
+      }
+      const preparedToolCall = await this.deps.toolGateway.prepareToolCall(
+        {
+          runId,
+          sessionId: session.sessionId,
+          callId: `runtime-closeout:${runId}:${processId}`,
+          activation,
+          origin: {
+            kind: "trusted_runtime",
+            producerId: "runtime.process-closeout:v1",
+            adapterId: "runtime.process-stop:v1",
+          },
+          rawInput: toolInput,
+          policy: {
+            decision: "allow",
+            policyRevision: hashCanonical({
+              version: "v1",
+              source: "runtime.process-closeout",
+              activation,
+              payload: toolInput,
+            }),
+          },
+        },
+        { runContext },
+      );
       try {
         const result = await this.callToolWithWorkspaceCheckpoint({
-          name: "exec_command",
-          input: { sessionId: processId, stop: true, yieldTimeMs: 1000 },
+          preparedToolCall,
           sessionId: session.sessionId,
           runId,
           stepIndex: latestStepIndex + 1,
@@ -1888,6 +1997,8 @@ export class ExecutionEngine {
           processId,
           message: error instanceof Error ? error.message : String(error),
         }, latestStepIndex + 1);
+      } finally {
+        await this.deps.toolGateway.releaseToolSurfaceSnapshot?.(snapshot.snapshotId);
       }
     }
   }
@@ -1958,7 +2069,7 @@ export class ExecutionEngine {
   }
 
   private attachWorkspaceCheckpointEvidence(
-    result: AgentToolResult,
+    result: AgentToolResultV2,
     evidence: {
       toolName: string;
       changedFiles: string[];
@@ -1967,7 +2078,7 @@ export class ExecutionEngine {
       postActionCheckpointId?: string | undefined;
       postActionGitRef?: string | undefined;
     },
-  ): AgentToolResult {
+  ): AgentToolResultV2 {
     const resultRecord = this.asRecord(result.auditRecord.output);
     if (resultRecord === undefined) {
       return result;
@@ -2001,7 +2112,16 @@ export class ExecutionEngine {
           }
         : {}),
     };
-    return replaceAgentToolResultOutput(result, output);
+    const replaced = replaceAgentToolResultOutput(result, output) as AgentToolResultV2;
+    return result.outcome.kind === "success" || result.outcome.kind === "partial"
+      ? {
+          ...replaced,
+          outcome: {
+            ...result.outcome,
+            rawOutput: output,
+          },
+        }
+      : replaced;
   }
 
   private buildModelTimeoutMetadata(
@@ -2255,26 +2375,208 @@ export class ExecutionEngine {
     return ;
   }
 
-  private resolveEffects(
+  private async resolveEffects(
     effects: Effect[],
     runId: string,
     stepIndex: number,
     runtimePayload: Record<string, unknown> | undefined,
-  ): ResolvedEffect[] {
-    return effects.map((effect, index) => ({
-      type: effect.type,
-      payload:
-        (effect.type === "execute_tool_call" || effect.type === "tool.execute") &&
-          this.asRecord(effect.payload) !== undefined &&
-          runtimePayload !== undefined
-          ? {
-              ...this.asRecord(effect.payload),
-              runtimePayload,
-            }
-          : effect.payload,
-      idempotencyKey:
-        effect.idempotencyKey ?? `${runId}:step:${stepIndex}:effect:${index}:${effect.type}`,
-      failurePolicy: effect.failurePolicy ?? "STOP",
+    session: SessionRecord,
+    runtimeBudgetRemainingMs: number,
+  ): Promise<ResolvedEffect[]> {
+    return Promise.all(effects.map(async (effect, index) => {
+      const idempotencyKey =
+        effect.idempotencyKey ?? `${runId}:step:${stepIndex}:effect:${index}:${effect.type}`;
+      if (effect.type !== "execute_tool_call" && effect.type !== "tool.execute") {
+        return {
+          type: effect.type,
+          payload: effect.payload,
+          idempotencyKey,
+          failurePolicy: effect.failurePolicy ?? "STOP",
+        };
+      }
+      const payload = this.asRecord(effect.payload);
+      const toolName = this.asString(payload?.toolName);
+      const rawInput = this.asRecord(payload?.toolInput);
+      if (payload === undefined || toolName === undefined || rawInput === undefined) {
+        throw createRuntimeFailure(
+          "TOOL_EFFECT_PREPARATION_FAILED",
+          "Tool effects require exact toolName and object toolInput fields before persistence.",
+          { recoverable: false, effectType: effect.type },
+        );
+      }
+      const runContext = {
+        runId,
+        sessionId: session.sessionId,
+        payload: runtimePayload ?? {},
+        sessionState: session.state,
+      };
+      if (this.deps.toolGateway.preRun !== undefined) {
+        await this.deps.toolGateway.preRun({
+          runId,
+          event: {
+            id: `tool-prepare:${runId}:${idempotencyKey}`,
+            type: effect.type,
+            sessionId: session.sessionId,
+            payload: runtimePayload ?? {},
+            ...(session.currentStepAgent === undefined
+              ? {}
+              : { stepAgent: session.currentStepAgent }),
+          },
+          session,
+        });
+      }
+      const authoredSnapshot = payload.toolSurfaceSnapshot === undefined
+        ? undefined
+        : parseToolSurfaceSnapshotV1(payload.toolSurfaceSnapshot);
+      const snapshot = authoredSnapshot ??
+        await this.deps.toolGateway.createToolSurfaceSnapshot({
+          runContext,
+          toolNames: [toolName],
+        });
+      const modelToolCallId = this.asString(payload.modelToolCallId);
+      const resolvedIntent = authoredSnapshot !== undefined
+        ? this.deps.toolGateway.resolveModelToolIntent({
+            snapshot,
+            toolCall: {
+              id: modelToolCallId ?? idempotencyKey,
+              name: toolName,
+              input: rawInput,
+            },
+          })
+        : undefined;
+      const activation = resolvedIntent?.activation ?? snapshot.tools.find(
+        (candidate) => candidate.descriptor.toolId === toolName,
+      );
+      if (activation === undefined) {
+        throw createRuntimeFailure(
+          "TOOL_SNAPSHOT_LOOKUP_FAILED",
+          `Tool '${toolName}' was not exposed in snapshot '${snapshot.snapshotId}'.`,
+          { recoverable: false, toolName },
+        );
+      }
+      const recoveryAdapterId = this.asString(payload.recoveryAdapterId);
+      const origin = resolvedIntent === undefined
+        ? {
+            kind: "trusted_runtime" as const,
+            producerId: recoveryAdapterId === undefined
+              ? "runtime.step-transition:v1"
+              : "runtime.recovery-coordinator:v1",
+            adapterId: recoveryAdapterId ?? "runtime.effect-tool:v1",
+          }
+        : {
+            kind: "model" as const,
+            snapshotId: snapshot.snapshotId,
+            modelToolCallId: resolvedIntent.modelToolCallId,
+          };
+      const pendingApproval = readPendingToolApproval(session.state);
+      const approvalBinding = this.asRecord(
+        pendingApproval?.externalApprovalBinding,
+      );
+      const approvalId = this.asString(approvalBinding?.approvalId);
+      const bindingAuthorityRevision = this.asString(
+        approvalBinding?.authorityRevision,
+      );
+      let preparedRunId = runId;
+      const policyRevision = hashCanonical({
+        version: "v1",
+        source: "runtime.tool-effect",
+        descriptorRevision: activation.descriptor.contractRevision,
+        scopeFingerprint: activation.scopeFingerprint,
+        ...(bindingAuthorityRevision === undefined
+          ? { authority: "automatic" }
+          : { authority: bindingAuthorityRevision }),
+        ...(recoveryAdapterId === undefined ? {} : { recoveryAdapterId }),
+      });
+      if (approvalId !== undefined) {
+        let exactBinding;
+        try {
+          exactBinding = parseRunnerExternalApprovalBindingV1(approvalBinding);
+        } catch (error) {
+          throw createRuntimeFailure(
+            "TOOL_APPROVAL_BINDING_INVALID",
+            "Prepared tool execution requires a valid external approval binding.",
+            {
+              recoverable: false,
+              toolName,
+              cause: error instanceof Error ? error.message : String(error),
+            },
+          );
+        }
+        const preparedPayloadHash = digestExternalApprovalPayload(
+          recoveryAdapterId === undefined
+            ? rawInput
+            : { toolName, toolInput: rawInput },
+        );
+        if (
+          exactBinding.actionKey !== toolName ||
+          exactBinding.payloadHash !== preparedPayloadHash ||
+          Date.parse(exactBinding.expiresAt) <= Date.now()
+        ) {
+          throw createRuntimeFailure(
+            "TOOL_APPROVAL_BINDING_CHANGED",
+            "External approval no longer matches the exact prepared tool action.",
+            {
+              recoverable: true,
+              toolName,
+              approvalId: exactBinding.approvalId,
+              bindingRunId: exactBinding.runId,
+              preparedRunId: runId,
+              bindingActionKey: exactBinding.actionKey,
+              bindingPayloadHash: exactBinding.payloadHash,
+              preparedPayloadHash,
+              descriptorRevision: activation.descriptor.contractRevision,
+              scopeFingerprint: activation.scopeFingerprint,
+            },
+          );
+        }
+        // Approval resume events may execute in a continuation run. The
+        // prepared invocation retains the run identity that the operator
+        // actually approved instead of silently rebinding that authority to
+        // the continuation run.
+        preparedRunId = exactBinding.runId;
+      }
+      const approval = approvalId === undefined
+        ? undefined
+        : {
+            authorityRevision: bindingAuthorityRevision!,
+            approvalId,
+            ...(recoveryAdapterId === undefined
+              ? {}
+              : { recoveryAdapterId }),
+          };
+      const preparedToolCall = await this.deps.toolGateway.prepareToolCall(
+        {
+          runId: preparedRunId,
+          sessionId: session.sessionId,
+          callId: idempotencyKey,
+          activation,
+          origin,
+          rawInput,
+          policy: {
+            decision: approval === undefined ? "allow" : "approval_required",
+            policyRevision,
+          },
+          ...(approval === undefined ? {} : { approval }),
+        },
+        { runContext, runtimeBudgetRemainingMs },
+      );
+      const {
+        toolName: _toolName,
+        toolInput: _toolInput,
+        toolSurfaceSnapshot: _toolSurfaceSnapshot,
+        modelToolCallId: _modelToolCallId,
+        ...remainingPayload
+      } = payload;
+      return {
+        type: effect.type,
+        payload: {
+          ...remainingPayload,
+          preparedToolCall,
+          ...(runtimePayload === undefined ? {} : { runtimePayload }),
+        },
+        idempotencyKey,
+        failurePolicy: effect.failurePolicy ?? "STOP",
+      };
     }));
   }
 
@@ -2939,8 +3241,8 @@ export class ExecutionEngine {
         ...(this.asString(review.tenantId) !== undefined
           ? { expectedTenantId: this.asString(review.tenantId) }
           : {}),
-      });
-    } catch (error) {
+        });
+      } catch (error) {
       const code = error instanceof Error ? error.message : "RECOVERY_RESUME_INVALID";
       throw createRuntimeFailure(code, "Recovery review resume validation failed.");
     }

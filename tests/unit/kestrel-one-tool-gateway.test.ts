@@ -4,6 +4,15 @@ import assert from "node:assert/strict";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { kestrelOneSearchKnowledgeDocumentsTool } from "../../tools/kestrelOne/searchKnowledgeDocuments.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { executeTestToolCall } from "../helpers/createTestToolGateway.js";
+
+async function callTool(
+  registry: UnifiedToolRegistry,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+) {
+  return executeTestToolCall({ gateway: registry, toolName, toolInput });
+}
 
 
 const TOOL_NAME = "kestrel_one.search_knowledge_documents";
@@ -30,19 +39,15 @@ test("Kestrel-One knowledge tool sends bearer auth and tenant headers", async ()
   });
 
   const result = await handler({ query: "docs", limit: 3 }) as {
-    toolName: string;
-    status: string;
-    auditRecord: { output: unknown };
+    output: unknown;
     presentation: { citations: unknown[] };
   };
 
-  assert.deepEqual(result.auditRecord.output, {
+  assert.deepEqual(result.output, {
     query: "docs",
     count: 1,
     results: [{ title: "Doc" }],
   });
-  assert.equal(result.toolName, TOOL_NAME);
-  assert.equal(result.status, "OK");
   assert.deepEqual(result.presentation.citations, []);
   assert.equal(
     capturedUrl,
@@ -113,7 +118,7 @@ test("Kestrel-One knowledge tool input is validated by the runtime registry befo
   });
 
   await assert.rejects(
-    () => registry.call(TOOL_NAME, { query: "no" }),
+    () => callTool(registry, TOOL_NAME, { query: "no" }),
     (error) => {
       assert.equal(error instanceof RuntimeFailure, true);
       const failure = error as RuntimeFailure;

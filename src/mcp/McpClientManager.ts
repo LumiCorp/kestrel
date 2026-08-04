@@ -55,6 +55,12 @@ interface ServerHandle {
   client: unknown;
 }
 
+export interface PinnedMcpToolHandle {
+  call<T>(input: unknown): Promise<T>;
+  retain(): void;
+  release(): Promise<void>;
+}
+
 const MCP_CLIENT_NAME = "kestrel-mcp-client";
 const MCP_CLIENT_VERSION = "0.1.0";
 
@@ -72,6 +78,12 @@ export class McpClientManager {
     servers: [],
     tools: [],
   };
+  private refreshInFlight: Promise<McpStatusSnapshot> | undefined;
+  private readonly clientReferenceCounts = new Map<unknown, number>();
+  private readonly retiredClients = new Set<unknown>();
+  private readonly closedClients = new Set<unknown>();
+  private closing = false;
+  private closed = false;
 
   constructor(options: McpClientManagerOptions) {
     this.servers = [
@@ -96,15 +108,32 @@ export class McpClientManager {
   }
 
   async refresh(): Promise<McpStatusSnapshot> {
-    await this.close();
+    if (this.closing || this.closed) {
+      throw createRuntimeFailure(
+        "MCP_MANAGER_CLOSED",
+        "MCP refresh is unavailable after close has started.",
+      );
+    }
+    if (this.refreshInFlight !== undefined) return this.refreshInFlight;
+    const refresh = this.buildAndActivateRefresh();
+    this.refreshInFlight = refresh;
+    try {
+      return await refresh;
+    } finally {
+      if (this.refreshInFlight === refresh) this.refreshInFlight = undefined;
+    }
+  }
+
+  private async buildAndActivateRefresh(): Promise<McpStatusSnapshot> {
 
     if (this.servers.length === 0) {
-      this.snapshot = {
+      const next = {
         healthy: true,
         checkedAt: new Date().toISOString(),
         servers: [],
         tools: [],
       };
+      await this.activateCandidate(next, new Map(), new Map());
       return this.statusSnapshot();
     }
 
@@ -132,14 +161,20 @@ export class McpClientManager {
             : {}),
         });
       }
-      this.snapshot = {
+      const failed = {
         healthy: statuses.every((status) => status.healthy),
         checkedAt,
         servers: statuses,
         tools: [],
       };
-      return this.statusSnapshot();
+      return this.retainActiveAfterRefreshFailure(
+        failed,
+        "MCP_REFRESH_SDK_UNAVAILABLE",
+      );
     }
+
+    const candidateToolHandles = new Map<string, ToolHandle>();
+    const candidateServerHandles = new Map<string, ServerHandle>();
 
     for (const server of this.servers) {
       const checkedAt = new Date().toISOString();
@@ -158,9 +193,20 @@ export class McpClientManager {
 
       try {
         const discovered = await this.connectAndDiscover(sdk, server);
+        candidateServerHandles.set(server.id, {
+          serverId: server.id,
+          client: discovered.client,
+        });
         for (const tool of discovered.tools) {
           tools.push(tool);
-          this.toolHandles.set(tool.namespacedToolName, {
+          if (candidateToolHandles.has(tool.namespacedToolName)) {
+            throw createRuntimeFailure(
+              "MCP_TOOL_COLLISION",
+              `MCP refresh produced duplicate tool '${tool.namespacedToolName}'.`,
+              { namespacedToolName: tool.namespacedToolName },
+            );
+          }
+          candidateToolHandles.set(tool.namespacedToolName, {
             serverId: server.id,
             toolName: tool.toolName,
             namespacedToolName: tool.namespacedToolName,
@@ -169,11 +215,6 @@ export class McpClientManager {
             protocolTarget: tool.protocolTarget ?? tool.toolName,
           });
         }
-        this.serverHandles.set(server.id, {
-          serverId: server.id,
-          client: discovered.client,
-        });
-
         statuses.push({
           serverId: server.id,
           transport: server.transport,
@@ -197,12 +238,31 @@ export class McpClientManager {
       }
     }
 
-    this.snapshot = {
+    const candidateSnapshot = {
       healthy: statuses.every((status) => status.healthy),
       checkedAt: new Date().toISOString(),
       servers: statuses,
       tools,
     };
+    if (candidateSnapshot.healthy === false) {
+      await closeServerHandleMap(candidateServerHandles);
+      return this.retainActiveAfterRefreshFailure(
+        candidateSnapshot,
+        "MCP_REFRESH_CANDIDATE_INVALID",
+      );
+    }
+    if (this.closing || this.closed) {
+      await closeServerHandleMap(candidateServerHandles);
+      throw createRuntimeFailure(
+        "MCP_MANAGER_CLOSED",
+        "MCP manager closed before candidate activation.",
+      );
+    }
+    await this.activateCandidate(
+      candidateSnapshot,
+      candidateToolHandles,
+      candidateServerHandles,
+    );
     return this.statusSnapshot();
   }
 
@@ -218,42 +278,116 @@ export class McpClientManager {
       );
     }
 
-    const args = asRecord(input) ?? {};
-    let output: unknown;
-    if (handle.protocolKind === "resource") {
-      output = await readFunction(handle.client, "readResource").call(
-        handle.client,
-        { uri: handle.protocolTarget },
-      );
-    } else if (handle.protocolKind === "resource_template") {
-      const uri = readString(args, "uri");
-      if (!uri)
-        throw createRuntimeFailure(
-          "MCP_RESOURCE_URI_REQUIRED",
-          "MCP resource template access requires a URI.",
-        );
-      output = await readFunction(handle.client, "readResource").call(
-        handle.client,
-        { uri },
-      );
-    } else if (handle.protocolKind === "prompt") {
-      output = await readFunction(handle.client, "getPrompt").call(
-        handle.client,
-        {
-          name: handle.protocolTarget,
-          arguments: args,
-        },
-      );
-    } else {
-      output = await readFunction(handle.client, "callTool").call(
-        handle.client,
-        {
-          name: handle.toolName,
-          arguments: args,
-        },
+    return callToolHandle<T>(handle, input);
+  }
+
+  pinTool(namespacedToolName: string): PinnedMcpToolHandle {
+    const handle = this.toolHandles.get(namespacedToolName);
+    if (handle === undefined) {
+      throw createRuntimeFailure(
+        "MCP_TOOL_UNAVAILABLE",
+        `MCP tool '${namespacedToolName}' is not available`,
+        { namespacedToolName },
       );
     }
-    return output as T;
+    let references = 1;
+    this.retainClient(handle.client);
+    return {
+      call: <T>(input: unknown) => callToolHandle<T>(handle, input),
+      retain: () => {
+        if (references < 1) {
+          throw createRuntimeFailure(
+            "MCP_PIN_RELEASED",
+            `Pinned MCP tool '${namespacedToolName}' was already released.`,
+          );
+        }
+        references += 1;
+        this.retainClient(handle.client);
+      },
+      release: async () => {
+        if (references < 1) return;
+        references -= 1;
+        await this.releaseClient(handle.client);
+      },
+    };
+  }
+
+  private retainClient(client: unknown): void {
+    this.clientReferenceCounts.set(
+      client,
+      (this.clientReferenceCounts.get(client) ?? 0) + 1,
+    );
+  }
+
+  private async releaseClient(client: unknown): Promise<void> {
+    const next = Math.max(0, (this.clientReferenceCounts.get(client) ?? 0) - 1);
+    if (next === 0) {
+      this.clientReferenceCounts.delete(client);
+      if (this.retiredClients.delete(client)) await this.closeClient(client);
+      return;
+    }
+    this.clientReferenceCounts.set(client, next);
+  }
+
+  private async activateCandidate(
+    snapshot: McpStatusSnapshot,
+    toolHandles: Map<string, ToolHandle>,
+    serverHandles: Map<string, ServerHandle>,
+  ): Promise<void> {
+    const previousClients = new Set(
+      [...this.serverHandles.values()].map((handle) => handle.client),
+    );
+    this.toolHandles = toolHandles;
+    this.serverHandles = serverHandles;
+    this.snapshot = snapshot;
+    await Promise.all([...previousClients].map(async (client) => {
+      if ((this.clientReferenceCounts.get(client) ?? 0) > 0) {
+        this.retiredClients.add(client);
+      } else {
+        await this.closeClient(client);
+      }
+    }));
+  }
+
+  private retainActiveAfterRefreshFailure(
+    candidate: McpStatusSnapshot,
+    code: string,
+  ): McpStatusSnapshot {
+    if (this.snapshot.checkedAt === new Date(0).toISOString()) {
+      this.snapshot = candidate;
+      return this.statusSnapshot();
+    }
+    this.snapshot = {
+      ...this.snapshot,
+      refreshDiagnostic: {
+        code,
+        message: candidate.servers
+          .filter((server) => server.enabled && !server.healthy)
+          .map((server) => `${server.serverId}: ${server.error ?? "unhealthy"}`)
+          .join(", ") || "MCP refresh candidate was rejected.",
+        checkedAt: candidate.checkedAt,
+      },
+    };
+    return this.statusSnapshot();
+  }
+
+  private async closeClient(client: unknown): Promise<void> {
+    if (this.closedClients.has(client)) return;
+    this.closedClients.add(client);
+    const close = maybeReadFunction(client, "close");
+    if (close !== undefined) await Promise.resolve(close.call(client));
+  }
+
+  private async closeActiveAndRetiredClients(): Promise<void> {
+    const clients = new Set([
+      ...[...this.serverHandles.values()].map((handle) => handle.client),
+      ...this.retiredClients,
+    ]);
+    await Promise.all([...clients].map((client) => this.closeClient(client)));
+    this.serverHandles.clear();
+    this.toolHandles.clear();
+    this.retiredClients.clear();
+    this.clientReferenceCounts.clear();
   }
 
   statusSnapshot(): McpStatusSnapshot {
@@ -262,6 +396,9 @@ export class McpClientManager {
       checkedAt: this.snapshot.checkedAt,
       servers: this.snapshot.servers.map((server) => ({ ...server })),
       tools: this.snapshot.tools.map((tool) => ({ ...tool })),
+      ...(this.snapshot.refreshDiagnostic === undefined
+        ? {}
+        : { refreshDiagnostic: { ...this.snapshot.refreshDiagnostic } }),
     };
   }
 
@@ -292,19 +429,34 @@ export class McpClientManager {
   }
 
   async close(): Promise<void> {
-    const closeCalls: Promise<void>[] = [];
-    for (const handle of this.serverHandles.values()) {
-      const close = maybeReadFunction(handle.client, "close");
-      if (close !== undefined) {
-        closeCalls.push(
-          Promise.resolve(close.call(handle.client)).then(() => {}),
-        );
-      }
-    }
+    if (this.closed) return;
+    this.closing = true;
+    const refresh = this.refreshInFlight;
+    if (refresh !== undefined) await refresh.catch(() => {});
+    await this.closeActiveAndRetiredClients();
+    this.closed = true;
+    this.closing = false;
+  }
 
-    await Promise.all(closeCalls);
+  async retire(): Promise<void> {
+    if (this.closed || this.closing) return;
+    this.closing = true;
+    const clients = new Set(
+      [...this.serverHandles.values()].map((handle) => handle.client),
+    );
     this.serverHandles.clear();
     this.toolHandles.clear();
+    await Promise.all([...clients].map(async (client) => {
+      if ((this.clientReferenceCounts.get(client) ?? 0) > 0) {
+        this.retiredClients.add(client);
+      } else {
+        await this.closeClient(client);
+      }
+    }));
+    if (this.clientReferenceCounts.size === 0) {
+      this.closed = true;
+      this.closing = false;
+    }
   }
 
   private async connectAndDiscover(
@@ -326,46 +478,95 @@ export class McpClientManager {
       { name: MCP_CLIENT_NAME, version: MCP_CLIENT_VERSION },
       { capabilities: {} },
     );
-    const connect = readFunction(client, "connect");
-    await connect.call(client, transport);
+    try {
+      const connect = readFunction(client, "connect");
+      await connect.call(client, transport);
 
-    const listTools = readFunction(client, "listTools");
-    const listed = await listTools.call(client);
-    const tools = normalizeListedTools(server, listed);
-    const capabilities = asRecord(
-      maybeReadFunction(client, "getServerCapabilities")?.call(client),
-    );
-    if (asRecord(capabilities?.resources)) {
-      const listResources = maybeReadFunction(client, "listResources");
-      const listTemplates = maybeReadFunction(client, "listResourceTemplates");
-      if (listResources) {
-        tools.push(
-          ...normalizeListedResources(server, await listResources.call(client)),
-        );
+      const listTools = readFunction(client, "listTools");
+      const listed = await listTools.call(client);
+      const tools = normalizeListedTools(server, listed);
+      const capabilities = asRecord(
+        maybeReadFunction(client, "getServerCapabilities")?.call(client),
+      );
+      if (asRecord(capabilities?.resources)) {
+        const listResources = maybeReadFunction(client, "listResources");
+        const listTemplates = maybeReadFunction(client, "listResourceTemplates");
+        if (listResources) {
+          tools.push(
+            ...normalizeListedResources(server, await listResources.call(client)),
+          );
+        }
+        if (listTemplates) {
+          tools.push(
+            ...normalizeListedResourceTemplates(
+              server,
+              await listTemplates.call(client),
+            ),
+          );
+        }
       }
-      if (listTemplates) {
-        tools.push(
-          ...normalizeListedResourceTemplates(
-            server,
-            await listTemplates.call(client),
-          ),
-        );
+      if (asRecord(capabilities?.prompts)) {
+        const listPrompts = maybeReadFunction(client, "listPrompts");
+        if (listPrompts)
+          tools.push(
+            ...normalizeListedPrompts(server, await listPrompts.call(client)),
+          );
       }
-    }
-    if (asRecord(capabilities?.prompts)) {
-      const listPrompts = maybeReadFunction(client, "listPrompts");
-      if (listPrompts)
-        tools.push(
-          ...normalizeListedPrompts(server, await listPrompts.call(client)),
-        );
-    }
-    assertUniqueProjectedToolNames(tools);
+      assertUniqueProjectedToolNames(tools);
 
-    return {
-      client,
-      tools,
-    };
+      return {
+        client,
+        tools,
+      };
+    } catch (error) {
+      await this.closeClient(client);
+      throw error;
+    }
   }
+}
+
+async function callToolHandle<T>(handle: ToolHandle, input: unknown): Promise<T> {
+  const args = asRecord(input) ?? {};
+  let output: unknown;
+  if (handle.protocolKind === "resource") {
+    output = await readFunction(handle.client, "readResource").call(
+      handle.client,
+      { uri: handle.protocolTarget },
+    );
+  } else if (handle.protocolKind === "resource_template") {
+    const uri = readString(args, "uri");
+    if (!uri) {
+      throw createRuntimeFailure(
+        "MCP_RESOURCE_URI_REQUIRED",
+        "MCP resource template access requires a URI.",
+      );
+    }
+    output = await readFunction(handle.client, "readResource").call(
+      handle.client,
+      { uri },
+    );
+  } else if (handle.protocolKind === "prompt") {
+    output = await readFunction(handle.client, "getPrompt").call(
+      handle.client,
+      { name: handle.protocolTarget, arguments: args },
+    );
+  } else {
+    output = await readFunction(handle.client, "callTool").call(
+      handle.client,
+      { name: handle.toolName, arguments: args },
+    );
+  }
+  return output as T;
+}
+
+async function closeServerHandleMap(
+  handles: ReadonlyMap<string, ServerHandle>,
+): Promise<void> {
+  const clients = new Set([...handles.values()].map((handle) => handle.client));
+  await Promise.all([...clients].map(async (client) => {
+    const close = maybeReadFunction(client, "close");
+    if (close !== undefined) await Promise.resolve(close.call(client));
+  }));
 }
 
 async function loadSdkBindings(): Promise<SdkBindings> {

@@ -116,6 +116,7 @@ test("V2 result and run updates require one agreeing activation identity", () =>
   const result = parseAgentToolResultV2({
     version: "v2",
     toolName: "FinalizeAnswer",
+    status: "OK",
     toolCallId: "call-1",
     activation,
     outcome,

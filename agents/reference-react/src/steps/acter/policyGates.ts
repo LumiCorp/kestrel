@@ -10,7 +10,10 @@ import {
 
 import type { StepIO, Transition, WaitForMatcher } from "../../../../../src/kestrel/contracts/execution.js";
 
-import { createRuntimeFailure } from "../../../../../src/runtime/RuntimeFailure.js";
+import {
+  createRuntimeFailure,
+  RuntimeFailure,
+} from "../../../../../src/runtime/RuntimeFailure.js";
 import { evaluateAutonomyPolicy } from "../../../../../src/governance/autonomy.js";
 import type { AutonomyPolicy } from "../../../../../src/governance/contracts.js";
 import {
@@ -533,13 +536,29 @@ async function maybeRequireToolApproval(input: {
   });
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "approve") {
+    let exactApprovalMatches = true;
     if (binding !== undefined) {
-      validatePendingExternalApproval({
-        currentPendingApproval,
-        expected: binding,
-      });
+      try {
+        validatePendingExternalApproval({
+          currentPendingApproval,
+          expected: binding,
+        });
+      } catch (error) {
+        if (
+          error instanceof RuntimeFailure &&
+          (
+            error.code === "EXTERNAL_APPROVAL_BINDING_INVALID" ||
+            error.code === "EXTERNAL_APPROVAL_BINDING_CHANGED" ||
+            error.code === "EXTERNAL_APPROVAL_EXPIRED"
+          )
+        ) {
+          exactApprovalMatches = false;
+        } else {
+          throw error;
+        }
+      }
     }
-    return ;
+    if (exactApprovalMatches) return;
   }
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "deny") {
@@ -1013,12 +1032,22 @@ function buildExternalApprovalBinding(input: {
       },
     );
   }
-  const authority = input.approvalAuthority ?? {
+  const runtimePolicyRevision = buildRuntimePolicyRevision({
+    interactionMode: input.interactionMode,
+    actSubmode: input.actSubmode,
+    executionPolicy: input.executionPolicy,
+  });
+  const toolAuthority = input.approvalAuthority ?? {
     kind: "runtime_policy" as const,
-    revision: buildRuntimePolicyRevision({
-      interactionMode: input.interactionMode,
-      actSubmode: input.actSubmode,
-      executionPolicy: input.executionPolicy,
+    revision: runtimePolicyRevision,
+  };
+  const authority = {
+    kind: toolAuthority.kind,
+    revision: digestApprovalPayload({
+      version: "prepared-tool-approval-authority-v1",
+      toolName: input.toolName,
+      toolAuthorityRevision: toolAuthority.revision,
+      runtimePolicyRevision,
     }),
   };
   return parseRunnerExternalApprovalBindingV1({
