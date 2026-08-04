@@ -10,6 +10,7 @@
       "rollout": "environment",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
@@ -37,6 +38,7 @@
       "rollout": "environment",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
@@ -53,6 +55,7 @@
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
@@ -69,6 +72,7 @@
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
@@ -93,6 +97,7 @@
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",

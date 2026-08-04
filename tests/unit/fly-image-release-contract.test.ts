@@ -7,7 +7,7 @@ import {
   matchesCatalogInput,
   selectFlyImageDiffBase,
   type FlyImageCatalog,
-} from "./fly-image-release-contract";
+} from "../../scripts/fly-image-release-contract.js";
 
 const catalog = {
   version: 1,
@@ -60,6 +60,22 @@ test("catalog changes rebuild every managed image", () => {
   const impacted = impactedFlyImages({
     catalog,
     changedPaths: ["deploy/fly/image-catalog.json"],
+    forceAll: false,
+  });
+  assert.equal(impacted.length, 5);
+});
+
+test("Docker build-context changes rebuild every managed image", () => {
+  const catalogWithDockerContext = {
+    ...catalog,
+    images: catalog.images.map((entry) => ({
+      ...entry,
+      inputs: [".dockerignore", ...entry.inputs],
+    })),
+  } satisfies FlyImageCatalog;
+  const impacted = impactedFlyImages({
+    catalog: catalogWithDockerContext,
+    changedPaths: [".dockerignore"],
     forceAll: false,
   });
   assert.equal(impacted.length, 5);
