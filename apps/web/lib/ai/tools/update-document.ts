@@ -1,9 +1,9 @@
-import { tool, type UIMessageStreamWriter } from "ai";
-import { z } from "zod";
+import { jsonSchema, tool, type UIMessageStreamWriter } from "ai";
 import type { AuthSession } from "@/app/(auth)/auth";
 import { documentHandlersByArtifactKind } from "@/lib/artifacts/server";
 import { getLatestArtifactDocumentById } from "@/lib/artifacts/store";
 import type { ChatMessage } from "@/lib/types";
+import { webArtifactToolDescriptorCatalog } from "./artifact-tool-contracts";
 
 type UpdateDocumentProps = {
   session: AuthSession | null;
@@ -21,13 +21,10 @@ export const updateDocument = ({
   modelId,
 }: UpdateDocumentProps) =>
   tool({
-    description: "Update a document with the given description.",
-    inputSchema: z.object({
-      id: z.string().describe("The ID of the document to update"),
-      description: z
-        .string()
-        .describe("The description of changes that need to be made"),
-    }),
+    description: updateDocumentDescriptor.description,
+    inputSchema: jsonSchema<{ id: string; description: string }>(
+      updateDocumentDescriptor.inputSchema,
+    ),
     execute: async ({ id, description }) => {
       if (!session?.user?.id) {
         throw createToolExecutionError("UNAUTHORIZED", "Unauthorized");
@@ -94,3 +91,11 @@ export const updateDocument = ({
       };
     },
   });
+
+const updateDocumentDescriptor = requiredDescriptor("updateDocument");
+
+function requiredDescriptor(toolId: string) {
+  const descriptor = webArtifactToolDescriptorCatalog.getDescriptor(toolId);
+  if (descriptor === undefined) throw new Error(`Missing descriptor '${toolId}'`);
+  return descriptor;
+}

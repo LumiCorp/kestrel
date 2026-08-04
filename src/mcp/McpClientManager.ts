@@ -9,6 +9,7 @@ import type {
   McpStatusSnapshot,
   McpToolPresentationMetadata,
 } from "./contracts.js";
+import { compileMcpDiscoveredToolV1 } from "./toolDescriptor.js";
 import type { HostedMcpRuntimeConnection } from "./hosted-contracts.js";
 
 export interface McpClientManagerOptions {
@@ -583,22 +584,24 @@ function normalizeListedTools(
 
     const description = readString(tool, "description") ?? "MCP tool";
     const inputSchema = asRecord(tool?.inputSchema) ?? {};
+    const outputSchema = asRecord(tool?.outputSchema);
     const namespacedToolName = isHostedGatewayServer(server)
       ? toolName
       : buildNamespacedToolName(server.id, toolName);
     const presentation = isHostedGatewayServer(server)
       ? hostedToolPresentation(tool, toolName)
       : resolveToolPresentationMetadata(server, toolName, namespacedToolName);
-    normalized.push({
+    normalized.push(compileMcpDiscoveredToolV1({
       serverId: server.id,
       toolName,
       namespacedToolName,
       description,
       inputSchema,
+      ...(outputSchema !== undefined ? { outputSchema } : {}),
       ...(presentation !== undefined ? { presentation } : {}),
       protocolKind: "tool",
       protocolTarget: toolName,
-    });
+    }));
   }
 
   return normalized;
@@ -675,7 +678,7 @@ function normalizeProtocolItems(
       .filter(([, argument]) => argument?.required === true)
       .map(([name]) => name);
     return [
-      {
+      compileMcpDiscoveredToolV1({
         serverId: server.id,
         toolName: rawName,
         namespacedToolName,
@@ -686,12 +689,14 @@ function normalizeProtocolItems(
                 type: "object",
                 properties: { uri: { type: "string" } },
                 required: ["uri"],
+                additionalProperties: false,
               }
             : kind === "prompt"
               ? {
                   type: "object",
                   properties,
                   ...(required.length ? { required } : {}),
+                  additionalProperties: false,
                 }
               : { type: "object", properties: {}, additionalProperties: false },
         protocolKind: kind,
@@ -705,7 +710,7 @@ function normalizeProtocolItems(
           capabilityClasses: [`mcp.${kind}`],
           approvalMode: approvalMode === "auto" ? "auto" : "ask",
         },
-      },
+      }),
     ];
   });
 }

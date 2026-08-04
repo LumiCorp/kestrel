@@ -1,4 +1,12 @@
 import type { ModelToolSpec } from "../src/kestrel/contracts/model-io.js";
+import {
+  JSON_VALUE_OUTPUT_SCHEMA_V1,
+  TOOL_DESCRIPTOR_VERSION,
+  createToolDescriptorV1,
+  toToolDescriptorRefV1,
+  type ToolDescriptorV1,
+} from "../src/kestrel/contracts/tool-contract.js";
+import { compileToolRegistryV1 } from "../src/kestrel/contracts/tool-registry.js";
 import { RUNNER_BUILT_IN_TOOL_NAMES } from "@kestrel-agents/protocol";
 
 import {
@@ -204,6 +212,9 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   kestrelOneVercelDeploymentEventsTool,
 ];
 
+const BUILT_IN_RESULT_NORMALIZER_ID =
+  "kestrel.agent-tool-result-envelope:v1";
+
 export const BALANCED_STARTER_TOOL_NAMES = [
   ...RUNNER_BUILT_IN_TOOL_NAMES,
   "internet.search",
@@ -226,6 +237,7 @@ export function createToolCatalog(
   modules: SharedToolModule[] = DEFAULT_MODULES,
 ): ToolCatalog {
   const map = new Map<string, SharedToolModule>();
+  const descriptors = new Map<string, ToolDescriptorV1>();
 
   for (const module of modules) {
     if (map.has(module.definition.name)) {
@@ -242,8 +254,29 @@ export function createToolCatalog(
     }
 
     validateToolDefinition(module.definition);
+    const descriptor = createBuiltInToolDescriptor(module.definition);
 
     map.set(module.definition.name, module);
+    descriptors.set(module.definition.name, descriptor);
+  }
+
+  const compiledRegistry = compileToolRegistryV1([
+    {
+      adapterId: "kestrel.shared:v1",
+      sourceKind: "builtin",
+      sourceId: "kestrel.shared",
+      compileDescriptors: () => [...descriptors.values()],
+      hasHandler: (handlerId) =>
+        [...map.keys()].some(
+          (name) => handlerId === `builtin:${name}:handler:v1`,
+        ),
+      hasResultNormalizer: (normalizerId) =>
+        normalizerId === BUILT_IN_RESULT_NORMALIZER_ID,
+    },
+  ]);
+  descriptors.clear();
+  for (const descriptor of compiledRegistry.descriptors) {
+    descriptors.set(descriptor.toolId, descriptor);
   }
 
   const list = (): SharedToolDefinition[] =>
@@ -251,19 +284,30 @@ export function createToolCatalog(
       ...module.definition,
     }));
 
+  const listDescriptors = (): ToolDescriptorV1[] =>
+    [...descriptors.values()];
+
+  const getDescriptor = (name: string): ToolDescriptorV1 | undefined =>
+    descriptors.get(name);
+
+  const getDescriptorRef = (name: string) => {
+    const descriptor = descriptors.get(name);
+    return descriptor === undefined ? undefined : toToolDescriptorRefV1(descriptor);
+  };
+
   const toModelTools = (names: string[]): ModelToolSpec[] =>
     names.map((name) => {
-      const module = map.get(name);
-      if (module === undefined) {
+      const descriptor = descriptors.get(name);
+      if (descriptor === undefined) {
         throw createUnknownToolError(name, "modelTools");
       }
 
       return {
-        name: module.definition.name,
-        description: module.definition.description,
-        inputSchema: module.definition.inputSchema,
-        ...(module.definition.outputContract !== undefined
-          ? { outputContract: module.definition.outputContract }
+        name: descriptor.toolId,
+        description: descriptor.description,
+        inputSchema: descriptor.inputSchema,
+        ...(descriptor.modelOutputContract !== undefined
+          ? { outputContract: descriptor.modelOutputContract }
           : {}),
       };
     });
@@ -355,6 +399,9 @@ export function createToolCatalog(
 
   return {
     list,
+    listDescriptors,
+    getDescriptor,
+    getDescriptorRef,
     toModelTools,
     toCapabilityManifest,
     createHandlers,
@@ -369,6 +416,63 @@ function validateToolDefinition(definition: SharedToolDefinition): void {
     name: definition.name,
     presentation: definition.presentation,
   });
+}
+
+function createBuiltInToolDescriptor(
+  definition: SharedToolDefinition,
+): ToolDescriptorV1 {
+  const presentation = resolveToolPresentationMetadata({
+    name: definition.name,
+    presentation: definition.presentation,
+  });
+  return createToolDescriptorV1({
+    version: TOOL_DESCRIPTOR_VERSION,
+    toolId: definition.name,
+    source: {
+      kind: "builtin",
+      sourceId: "kestrel.shared",
+      protocolKind: "handler",
+      protocolTarget: definition.name,
+    },
+    description: definition.description,
+    inputSchema: definition.inputSchema,
+    runtimeOutput: {
+      schema:
+        definition.outputContract === undefined
+          ? { ...JSON_VALUE_OUTPUT_SCHEMA_V1 }
+          : modelOutputContractToJsonSchema(definition.outputContract),
+    },
+    ...(definition.outputContract !== undefined
+      ? { modelOutputContract: definition.outputContract }
+      : {}),
+    capability: definition.capability,
+    presentation,
+    execution: {
+      handlerId: `builtin:${definition.name}:handler:v1`,
+      resultNormalizerId: BUILT_IN_RESULT_NORMALIZER_ID,
+    },
+  });
+}
+
+function modelOutputContractToJsonSchema(
+  contract: NonNullable<SharedToolDefinition["outputContract"]>,
+): Record<string, unknown> {
+  const properties = Object.fromEntries(
+    Object.entries(contract.fields).map(([name, field]) => {
+      const schema: Record<string, unknown> = {};
+      if (field.type !== undefined) schema.type = field.type;
+      if (field.enum !== undefined) schema.enum = [...field.enum];
+      if (field.description !== undefined) schema.description = field.description;
+      if (field.itemType !== undefined) schema.items = { type: field.itemType };
+      return [name, schema];
+    }),
+  );
+  return {
+    type: "object",
+    properties,
+    required: [...contract.required],
+    additionalProperties: contract.additionalProperties ?? false,
+  };
 }
 
 function validateCapabilityMetadata(

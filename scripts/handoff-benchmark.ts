@@ -1,9 +1,9 @@
 import { performance } from "node:perf_hooks";
 
 import { Kestrel } from "../src/kestrel/Kestrel.js";
-import { AllowlistedToolGateway } from "../src/io/ToolGateway.js";
 import { RetryingModelGateway } from "../src/io/ModelGateway.js";
 import { InMemorySessionStore } from "../tests/helpers/InMemorySessionStore.js";
+import { createTestToolGateway } from "../tests/helpers/createTestToolGateway.js";
 
 interface CliOptions {
   iterations: number;
@@ -74,7 +74,7 @@ async function measureScenario(bufferEnabled: boolean, iterations: number): Prom
     const store = new DelayedStore();
     const kestrel = new Kestrel({
       store,
-      toolGateway: new AllowlistedToolGateway({
+      toolGateway: createTestToolGateway({
         lookup: async () => ({ ok: true }),
       }),
       modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),

@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
-import { AllowlistedToolGateway } from "../../src/io/ToolGateway.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 test("region work item claiming is deterministic with round-robin cursor", async () => {
@@ -33,7 +33,7 @@ test("engine preserves a durable region-merge wait across a fresh user turn", as
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
   let regionWorkerVisits = 0;
@@ -91,7 +91,7 @@ test("engine emits merge conflict checkpoint when sync patch violates namespaced
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
@@ -144,7 +144,7 @@ test("engine emits region.synced when sync node completes without pending region
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 

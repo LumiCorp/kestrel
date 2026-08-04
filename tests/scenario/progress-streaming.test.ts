@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 import {
   Kestrel,
   RunReplayService,
-  AllowlistedToolGateway,
   RetryingModelGateway,
   type ProgressUpdateV1,
 } from "../../src/index.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 test("Kestrel emits structured progress updates and skips heartbeat persistence", async () => {
@@ -21,7 +21,7 @@ test("Kestrel emits structured progress updates and skips heartbeat persistence"
   try {
     const kestrel = new Kestrel({
       store,
-      toolGateway: new AllowlistedToolGateway({
+      toolGateway: createTestToolGateway({
         lookup: async () => {
           await sleep(25);
           return { ok: true };

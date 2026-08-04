@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
-import { AllowlistedToolGateway } from "../../src/io/ToolGateway.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import type { RuntimeEvent } from "../../src/kestrel/contracts/events.js";
 import type { ToolGateway, ToolGatewayCallOptions } from "../../src/kestrel/contracts/model-io.js";
@@ -14,6 +13,7 @@ import { RuntimeHeapDiagnostics } from "../../src/runtime/heapDiagnostics.js";
 import { appendModelTranscriptItems, appendToolResultToTranscript, appendUserTurnToTranscript, makeModelTranscriptItem } from "../../src/runtime/modelTranscript.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 test("RuntimeHeapDiagnostics writes summary samples and near-limit reports without payload content", async () => {
@@ -61,7 +61,7 @@ test("heap guard stop mode blocks model admission before gateway call", async ()
   let modelCalls = 0;
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => {
       modelCalls += 1;
       return { ok: true } as T;
@@ -91,7 +91,7 @@ test("heap guard compact mode compacts transcript and continues when pressure dr
   let modelCalls = 0;
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => {
       modelCalls += 1;
       return { ok: true } as T;
@@ -130,7 +130,7 @@ test("heap guard compact mode rebases stale outgoing transcript patch", async ()
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     heapDiagnostics: new CompactThenOkHeapReporter("runtime.model"),
   });

@@ -5,11 +5,11 @@ import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
-import { AllowlistedToolGateway } from "../../src/io/ToolGateway.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import type { OutboxEventRecord } from "../../src/kestrel/contracts/store.js";
 
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 class CollectingDispatcher {
@@ -50,7 +50,7 @@ test("Kestrel executes multi-step run with effect barrier", async () => {
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({
+    toolGateway: createTestToolGateway({
       lookup: async () => ({ found: true }),
     }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ summary: "ok" } as T)),
@@ -118,7 +118,7 @@ test("Kestrel does not auto-sync session-scoped notes from persisted progress st
   try {
     const kestrel = new Kestrel({
       store,
-      toolGateway: new AllowlistedToolGateway({}),
+      toolGateway: createTestToolGateway({}),
       modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     });
 
@@ -167,7 +167,7 @@ test("Kestrel skips plan document sync when workspace disables it", async () => 
   try {
     const kestrel = new Kestrel({
       store,
-      toolGateway: new AllowlistedToolGateway({}),
+      toolGateway: createTestToolGateway({}),
       modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     });
 
@@ -211,7 +211,7 @@ test("Kestrel effect policy WAIT returns waiting status", async () => {
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
@@ -243,7 +243,7 @@ test("Kestrel accepts assistant.respond as a message-effect compatibility alias"
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
@@ -277,7 +277,7 @@ test("Kestrel terminal WAITING output includes waitFor matcher", async () => {
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
@@ -344,7 +344,7 @@ test("Kestrel resumes pending effects before new step execution", async () => {
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
@@ -374,7 +374,7 @@ test("Kestrel emits run logs to optional listener during execution", async () =>
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     runLogListener: (entry) => {
       seenEventNames.push(entry.eventName);
@@ -408,7 +408,7 @@ test("step-frame buffering reduces hot-path run-event write calls", async () => 
     try {
       const kestrel = new Kestrel({
         store,
-        toolGateway: new AllowlistedToolGateway({
+        toolGateway: createTestToolGateway({
           lookup: async () => ({ ok: true }),
         }),
         modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
@@ -469,7 +469,7 @@ test("Kestrel failure output preserves last executed step without explicit event
 
   const kestrel = new Kestrel({
     store,
-    toolGateway: new AllowlistedToolGateway({}),
+    toolGateway: createTestToolGateway({}),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
   });
 
