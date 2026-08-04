@@ -49,6 +49,7 @@ export const HELP_LINES = [
   "Core: F1 help · Ctrl+P actions · / slash commands · Ctrl+C quit",
   "Composer: Enter send · Shift+Enter newline · Esc clear draft",
   "Views: Ctrl+1 sessions · Ctrl+2 chat · Ctrl+3 composer · Ctrl+4 logs · Tab cycle",
+  "Chat: ↑/↓ scroll · Shift+↑/↓ page · PgUp/PgDn aliases · Ctrl+2 then g/G bounds",
   "Lists: j/k move · PgUp/PgDn page · g/G bounds · Enter select · i details",
   "Search: Ctrl+F filters sessions/logs; opens actions elsewhere",
 ] as const;

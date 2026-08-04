@@ -90,6 +90,7 @@ export function ChatView(props: ChatViewProps): React.JSX.Element {
     waitPrompt,
     unreadCount: props.unreadCount,
     tailLocked: props.scroll.tailLocked,
+    hasScrollback: windowed.start > 0 || windowed.end < visualRows.length,
     maxWidth: conversationWidth,
   });
   const clippedSelectionSummary = selectionSummary === undefined
@@ -234,22 +235,39 @@ function buildComposerStatus(input: {
   waitPrompt: string | undefined;
   unreadCount: number;
   tailLocked: boolean;
+  hasScrollback: boolean;
   maxWidth: number;
 }): string | undefined {
   if (input.waitingForInput) {
     return truncate(`Waiting · ${input.waitPrompt ?? "Enter input to resume."}`, input.maxWidth);
   }
+  const scrollHint = input.hasScrollback ? "↑/↓ scroll · Shift+↑/↓ page" : undefined;
+  if (input.tailLocked === false) {
+    return truncate(
+      [
+        "Browsing history",
+        input.unreadCount > 0 ? `${input.unreadCount} unread` : undefined,
+        scrollHint,
+        input.running ? "run in progress" : undefined,
+      ]
+        .filter((value): value is string => value !== undefined)
+        .join(" · "),
+      input.maxWidth,
+    );
+  }
   if (input.running) {
-    return "Run in progress";
+    return truncate(
+      ["Run in progress", scrollHint]
+        .filter((value): value is string => value !== undefined)
+        .join(" · "),
+      input.maxWidth,
+    );
   }
   if (input.waitPrompt !== undefined) {
     return truncate(`Waiting · ${input.waitPrompt}`, input.maxWidth);
   }
-  if (input.tailLocked === false && input.unreadCount > 0) {
-    return `Browsing history · ${input.unreadCount} unread`;
-  }
-  if (input.tailLocked === false) {
-    return "Browsing history";
+  if (scrollHint !== undefined) {
+    return truncate(scrollHint, input.maxWidth);
   }
   return ;
 }

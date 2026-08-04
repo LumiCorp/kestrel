@@ -139,6 +139,10 @@ test("composer owns palette, search, draft clear, newline, and tab keys", () => 
   assert.deepEqual(dispatch(state, "", { tab: true, shift: true }), ["cycleFocus:true"]);
   assert.deepEqual(dispatch(state, "", { upArrow: true }), ["moveActiveSelection:-1"]);
   assert.deepEqual(dispatch(state, "", { downArrow: true }), ["moveActiveSelection:1"]);
+  assert.deepEqual(dispatch(state, "", { shift: true, upArrow: true }), ["pageActiveSelection:up"]);
+  assert.deepEqual(dispatch(state, "", { shift: true, downArrow: true }), ["pageActiveSelection:down"]);
+  assert.deepEqual(dispatch(state, "", { pageUp: true }), ["pageActiveSelection:up"]);
+  assert.deepEqual(dispatch(state, "", { pageDown: true }), ["pageActiveSelection:down"]);
   assert.deepEqual(dispatch(state, "k"), []);
   assert.deepEqual(dispatch(state, "j"), []);
   assert.deepEqual(dispatch(state, "g"), []);
@@ -181,6 +185,8 @@ test("chat transcript keeps list keys while browsing history", () => {
   state.scroll.chat.tailLocked = false;
 
   assert.deepEqual(dispatch(state, "j"), ["moveActiveSelection:1"]);
+  assert.deepEqual(dispatch(state, "", { shift: true, upArrow: true }), ["pageActiveSelection:up"]);
+  assert.deepEqual(dispatch(state, "", { shift: true, downArrow: true }), ["pageActiveSelection:down"]);
   assert.deepEqual(dispatch(state, "i"), ["toggleDetailDrawer"]);
   assert.deepEqual(dispatch(state, "h"), []);
 });

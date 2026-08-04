@@ -166,6 +166,14 @@ export function dispatchAppInput(input: {
       controller.toggleHelp();
       return;
     }
+    if (key.shift && key.upArrow) {
+      controller.pageActiveSelection("up");
+      return;
+    }
+    if (key.shift && key.downArrow) {
+      controller.pageActiveSelection("down");
+      return;
+    }
     if (key.upArrow) {
       controller.moveActiveSelection(-1);
       return;
@@ -272,6 +280,16 @@ export function dispatchAppInput(input: {
     chatTailLocked: state.scroll.chat.tailLocked,
   }, rawInput, key)) {
     controller.focusComposerWithInput(rawInput);
+    return;
+  }
+
+  if (state.activeView === "chat" && key.shift && key.upArrow) {
+    controller.pageActiveSelection("up");
+    return;
+  }
+
+  if (state.activeView === "chat" && key.shift && key.downArrow) {
+    controller.pageActiveSelection("down");
     return;
   }
 
