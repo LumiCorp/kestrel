@@ -5,11 +5,22 @@ import test from "node:test";
 const root = new URL("../../../../", import.meta.url);
 
 test("Fly image release automation covers every managed image and authenticates with OIDC", async () => {
-  const [catalog, workflow, publisher, oidc] = await Promise.all([
+  const [
+    catalog,
+    workflow,
+    publisher,
+    publisherRuntime,
+    oidc,
+    runPodDockerfile,
+    runPodSmoke,
+  ] = await Promise.all([
     read("deploy/fly/image-catalog.json"),
     read(".github/workflows/fly-image-release.yml"),
     read("scripts/publish-fly-images.ts"),
+    read("scripts/fly-image-publisher.ts"),
     read("apps/web/lib/releases/github-oidc.ts"),
+    read("deploy/fly/kestrel-one-runpod-worker/Dockerfile"),
+    read("deploy/fly/kestrel-one-runpod-worker/smoke.sh"),
   ]);
   for (const role of [
     "workspace-runtime",
@@ -20,32 +31,54 @@ test("Fly image release automation covers every managed image and authenticates 
   ]) {
     assert.match(catalog, new RegExp(`"role": "${role}"`, "u"));
   }
+  const parsedCatalog = JSON.parse(catalog) as {
+    images: Array<{ inputs: string[] }>;
+  };
+  assert.equal(
+    parsedCatalog.images.every((image) =>
+      image.inputs.includes(".dockerignore"),
+    ),
+    true,
+  );
   assert.match(workflow, /cron: "0 14 \* \* 1"/u);
   assert.match(workflow, /id-token: write/u);
   assert.match(workflow, /publish-candidate:\n\s+environment: Production/u);
   assert.match(workflow, /pnpm validate/u);
   assert.match(workflow, /run: flyctl auth docker/u);
   assert.doesNotMatch(workflow, /run: fly auth docker/u);
-  assert.match(publisher, /--build-only/u);
-  assert.match(publisher, /--push/u);
-  assert.match(publisher, /await run\("flyctl", \[/u);
+  assert.match(publisherRuntime, /--build-only/u);
+  assert.match(publisherRuntime, /--push/u);
+  assert.match(publisher, /publishFlyImages/u);
+  assert.match(publisherRuntime, /dependencies\.run\("flyctl", \[/u);
   assert.doesNotMatch(publisher, /await run\("fly", \[/u);
-  assert.match(publisher, /"image",\s*"inspect"/u);
-  assert.doesNotMatch(publisher, /"image", "show"/u);
-  assert.match(publisher, /EXPECTED_GIT_SHA/u);
+  assert.match(publisherRuntime, /"image",\s*"inspect"/u);
+  assert.doesNotMatch(publisherRuntime, /"image", "show"/u);
+  assert.match(publisherRuntime, /EXPECTED_GIT_SHA/u);
+  assert.match(publisherRuntime, /pullPublishedImage/u);
+  assert.match(publisherRuntime, /publicationToken/u);
   assert.match(oidc, /workflow_ref/u);
   assert.doesNotMatch(oidc, /job_workflow_ref/u);
   assert.match(oidc, /refs\/heads\/main/u);
   assert.doesNotMatch(workflow, /FLY_API_TOKEN: \$\{\{ vars\./u);
   const jobEnvironment =
-    workflow.match(/timeout-minutes: 90\n\s+env:\n([\s\S]*?)\n\s+steps:/u)?.[1] ??
-    "";
+    workflow.match(
+      /timeout-minutes: 90\n\s+env:\n([\s\S]*?)\n\s+steps:/u,
+    )?.[1] ?? "";
   assert.doesNotMatch(jobEnvironment, /FLY_API_TOKEN/u);
   assert.match(workflow, /FLY_API_TOKEN: \$\{\{ secrets\.FLY_API_TOKEN \}\}/u);
   assert.doesNotMatch(workflow, /setup-flyctl@master/u);
-  assert.match(publisher, /selectFlyImageDiffBase/u);
-  assert.match(publisher, /const changedPaths = diffBase/u);
-  assert.match(publisher, /impactedFlyImages\(\{ catalog, changedPaths, forceAll \}\)/u);
+  assert.match(publisherRuntime, /selectFlyImageDiffBase/u);
+  assert.match(publisherRuntime, /const changedPaths = diffBase/u);
+  assert.match(
+    publisherRuntime,
+    /impactedFlyImages\(\{ catalog, changedPaths, forceAll \}\)/u,
+  );
+  assert.match(runPodDockerfile, /WORKDIR \/workspace\/apps\/web/u);
+  assert.match(runPodSmoke, /--import tsx scripts\/managed-runpod-worker\.ts/u);
+  assert.doesNotMatch(
+    runPodSmoke,
+    /\.\/apps\/web\/scripts\/managed-runpod-worker\.ts/u,
+  );
 });
 
 test("promotion drains sequentially and preserves stopped Workspaces", async () => {

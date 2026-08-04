@@ -36,7 +36,7 @@ node -e '
   if (
     health.ok !== true ||
     health.service !== "preview-edge" ||
-    health.runtimeContractRevision !== 1
+    health.runtimeContractRevision !== 2
   ) {
     throw new Error("Preview Edge health contract failed");
   }

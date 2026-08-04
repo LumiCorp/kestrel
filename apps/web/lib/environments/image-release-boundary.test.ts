@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-
 test("hosted Environment images have distinct revisioned release contracts", async () => {
   const [
     workspaceDockerfile,
@@ -15,21 +14,58 @@ test("hosted Environment images have distinct revisioned release contracts", asy
     rollout,
     previewEdgeRollout,
     imageCatalog,
+    previewEdgeServer,
+    previewEdgeSmoke,
   ] = await Promise.all([
-    readFile(new URL("../../../workspace-runtime/Dockerfile", import.meta.url), "utf8"),
-    readFile(new URL("../../../environment-router/Dockerfile", import.meta.url), "utf8"),
-    readFile(new URL("../../../preview-edge/Dockerfile", import.meta.url), "utf8"),
-    readFile(new URL("../../../workspace-runtime/fly.build.toml", import.meta.url), "utf8"),
-    readFile(new URL("../../../environment-router/fly.build.toml", import.meta.url), "utf8"),
-    readFile(new URL("../../../preview-edge/fly.build.toml", import.meta.url), "utf8"),
-    readFile(new URL("../../../preview-edge/fly.toml.example", import.meta.url), "utf8"),
     readFile(
-      new URL("../../../../deploy/fly/kestrel-one-runner/ROLLOUT.md", import.meta.url),
+      new URL("../../../workspace-runtime/Dockerfile", import.meta.url),
       "utf8",
     ),
-    readFile(new URL("../../../preview-edge/ROLLOUT.md", import.meta.url), "utf8"),
+    readFile(
+      new URL("../../../environment-router/Dockerfile", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../preview-edge/Dockerfile", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../workspace-runtime/fly.build.toml", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../environment-router/fly.build.toml", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../preview-edge/fly.build.toml", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../preview-edge/fly.toml.example", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../../../../deploy/fly/kestrel-one-runner/ROLLOUT.md",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../preview-edge/ROLLOUT.md", import.meta.url),
+      "utf8",
+    ),
     readFile(
       new URL("../../../../deploy/fly/image-catalog.json", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../preview-edge/src/server.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../preview-edge/scripts/image-smoke.sh", import.meta.url),
       "utf8",
     ),
   ]);
@@ -40,7 +76,10 @@ test("hosted Environment images have distinct revisioned release contracts", asy
     previewEdgeDockerfile,
   ]) {
     assert.match(dockerfile, /ARG KESTREL_GIT_SHA=unknown/u);
-    assert.match(dockerfile, /org\.opencontainers\.image\.revision=\$KESTREL_GIT_SHA/u);
+    assert.match(
+      dockerfile,
+      /org\.opencontainers\.image\.revision=\$KESTREL_GIT_SHA/u,
+    );
   }
   assert.match(
     workspaceDockerfile,
@@ -88,6 +127,17 @@ test("hosted Environment images have distinct revisioned release contracts", asy
   assert.match(previewEdgeServiceConfig, /\[checks\.preview_edge\]/u);
   assert.match(previewEdgeServiceConfig, /port = 8081/u);
   assert.match(previewEdgeServiceConfig, /auto_stop_machines = "off"/u);
+  const previewContractRevision = previewEdgeServer.match(
+    /const RUNTIME_CONTRACT_REVISION = (\d+);/u,
+  )?.[1];
+  assert.ok(previewContractRevision);
+  assert.match(
+    previewEdgeSmoke,
+    new RegExp(
+      `health\\.runtimeContractRevision !== ${previewContractRevision}`,
+      "u",
+    ),
+  );
   assert.doesNotMatch(
     rollout,
     /Both\s+`KESTREL_ENVIRONMENT_ROUTER_IMAGE` and `KESTREL_WORKSPACE_RUNTIME_IMAGE`/u,
