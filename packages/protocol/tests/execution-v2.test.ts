@@ -27,10 +27,10 @@ import {
 
 
 const profile = {
-  id: "reference",
-  label: "Reference",
-  agent: "reference-react",
-  sessionPrefix: "reference",
+  id: "kestrel",
+  label: "Kestrel",
+  agent: "kestrel",
+  sessionPrefix: "kestrel",
 };
 
 const turn = {
@@ -115,7 +115,7 @@ const reasoningUpdate = (
 
 const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "profile.list": {},
-  "profile.get": { profileId: "reference" },
+  "profile.get": { profileId: "kestrel" },
   "execution-profile.resolve": {
     environmentPresetId: "workspace_hosted",
     managedConfiguration: {
@@ -124,13 +124,13 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
     },
   },
   "job.run": {
-    profileId: "reference",
+    profileId: "kestrel",
     input: {
       version: "job_input_v1",
       turn,
     },
   },
-  "run.start": { profileId: "reference", turn },
+  "run.start": { profileId: "kestrel", turn },
   "run.cancel": { sessionId: "session-1", runId: "run-1" },
   "session.describe": { sessionId: "session-1" },
   "session.state": { sessionId: "session-1" },
@@ -236,7 +236,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   },
   "runner.ping": { nonce: "ping-1" },
   "mcp.status": { profile },
-  "mcp.refresh": { profileId: "reference" },
+  "mcp.refresh": { profileId: "kestrel" },
 };
 
 test("conversation message cursors and recovery pages are boundary validated", () => {
@@ -344,7 +344,7 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "job.started": {
     sessionId: "session-1",
     threadId: "thread-1",
-    profileId: "reference",
+    profileId: "kestrel",
   },
   "job.progress": {
     sessionId: "session-1",
@@ -571,7 +571,7 @@ test("canonical command parser rejects unknown and malformed payloads", () => {
     () => parseRunnerCommandV2({
       id: "command-1",
       type: "run.start",
-      payload: { profileId: "reference", turn: {} },
+      payload: { profileId: "kestrel", turn: {} },
     }),
     /turn\.sessionId/u,
   );
@@ -580,7 +580,7 @@ test("canonical command parser rejects unknown and malformed payloads", () => {
       id: "command-1",
       type: "run.start",
       payload: {
-        profileId: "reference",
+        profileId: "kestrel",
         turn: { sessionId: "session-1", eventType: "user.message" },
       },
     }),
@@ -624,7 +624,7 @@ test("canonical command parser rejects unknown and malformed payloads", () => {
       id: "command-1",
       type: "run.start",
       payload: {
-        profileId: "reference",
+        profileId: "kestrel",
         turn: {
           sessionId: "session-1",
           message: "run",
@@ -728,7 +728,7 @@ test("canonical job.run parsing preserves job defaults and bounded enums", () =>
     id: "command-job-default-event",
     type: "job.run",
     payload: {
-      profileId: "reference",
+      profileId: "kestrel",
       input: {
         version: "job_input_v1",
         turn: {
@@ -754,7 +754,7 @@ test("canonical job.run parsing preserves job defaults and bounded enums", () =>
         id: `command-job-invalid-${field}`,
         type: "job.run",
         payload: {
-          profileId: "reference",
+          profileId: "kestrel",
           input: {
             version: "job_input_v1",
             turn: {
@@ -778,7 +778,7 @@ test("canonical profile references require one unambiguous source", () => {
         type,
         payload: {
           profile,
-          profileId: "reference",
+          profileId: "kestrel",
           ...(type === "run.start" ? { turn } : {}),
         },
       }),
@@ -789,11 +789,11 @@ test("canonical profile references require one unambiguous source", () => {
   for (const payload of [
     {
       profile,
-      profileId: "reference",
+      profileId: "kestrel",
       input: { version: "job_input_v1", turn },
     },
     {
-      profileId: "reference",
+      profileId: "kestrel",
       input: {
         version: "job_input_v1",
         profileId: "nested-reference",
@@ -825,7 +825,7 @@ test("canonical turn parsing validates structured auto-compaction fields", () =>
     id: "command-auto-compaction",
     type: "run.start",
     payload: {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         ...turn,
         autoCompaction: {
@@ -857,7 +857,7 @@ test("canonical turn parsing validates structured auto-compaction fields", () =>
         id: `command-invalid-auto-compaction-${field}`,
         type: "run.start",
         payload: {
-          profileId: "reference",
+          profileId: "kestrel",
           turn: {
             ...turn,
             autoCompaction: { [field]: value },
@@ -873,7 +873,7 @@ test("canonical turn parsing validates structured auto-compaction fields", () =>
       id: "command-invalid-auto-compaction-state",
       type: "run.start",
       payload: {
-        profileId: "reference",
+        profileId: "kestrel",
         turn: {
           ...turn,
           autoCompaction: { state: "arrmed" },
@@ -896,7 +896,7 @@ test("canonical execution commands preserve exact Mission Control correlation", 
     id: "command-mission-control-start",
     type: "run.start",
     payload: {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: { ...turn, missionControl },
     },
   });
@@ -925,7 +925,7 @@ test("canonical execution commands preserve exact Mission Control correlation", 
         id: "command-invalid-mission-control",
         type: "run.start",
         payload: {
-          profileId: "reference",
+          profileId: "kestrel",
           turn: {
             ...turn,
             missionControl: {
@@ -974,7 +974,7 @@ test("canonical turn parsing validates workspace skill catalogs", () => {
     id: "command-workspace-skills",
     type: "run.start",
     payload: {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: { ...turn, workspaceSkills },
     },
   });
@@ -988,7 +988,7 @@ test("canonical turn parsing validates workspace skill catalogs", () => {
       id: "command-invalid-workspace-skills",
       type: "run.start",
       payload: {
-        profileId: "reference",
+        profileId: "kestrel",
         turn: {
           ...turn,
           workspaceSkills: [{ ...workspaceSkills[0], contentDigest: "" }],
@@ -1004,7 +1004,7 @@ test("canonical turn history distinguishes runtime assistant text from legacy wa
     id: "command-runtime-assistant-history",
     type: "run.start",
     payload: {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         ...turn,
         history: [
@@ -1044,7 +1044,7 @@ test("canonical turn history distinguishes runtime assistant text from legacy wa
       () => parseRunnerCommandV2({
         id: "command-invalid-runtime-history",
         type: "run.start",
-        payload: { profileId: "reference", turn: { ...turn, history } },
+        payload: { profileId: "kestrel", turn: { ...turn, history } },
       }),
       /data\.kind|data is only valid/u,
     );

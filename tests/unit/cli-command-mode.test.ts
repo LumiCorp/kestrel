@@ -70,10 +70,10 @@ test("command mode status reports Local Core home and lock state", async () => {
 
 test("command mode emits one resolved profile for profile-bearing jobs", () => {
   const profile = {
-    id: "reference",
+    id: "kestrel",
     label: "Reference",
-    agent: "reference-react" as const,
-    sessionPrefix: "reference",
+    agent: "kestrel" as const,
+    sessionPrefix: "kestrel",
     storeDriver: "sqlite" as const,
   };
   const turn = {
@@ -117,10 +117,10 @@ test("command mode rejects job-owned persistence selection", () => {
         eventType: "job.run",
       },
     }, {
-      id: "reference",
+      id: "kestrel",
       label: "Reference",
-      agent: "reference-react",
-      sessionPrefix: "reference",
+      agent: "kestrel",
+      sessionPrefix: "kestrel",
     }, `reference:cli_dev_local:${"a".repeat(64)}`),
     /Local Core owns persistence/u,
   );

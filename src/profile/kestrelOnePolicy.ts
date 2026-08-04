@@ -67,7 +67,7 @@ export const KESTREL_ONE_POLICY: Readonly<KestrelOnePolicyDefinition> =
     id: KESTREL_POLICY_ID,
     version: KESTREL_POLICY_VERSION,
     promptPolicyId: KESTREL_PROMPT_POLICY_ID,
-    agent: "reference-react",
+    agent: "kestrel",
     requiredModelToolNames: KESTREL_ONE_DIALOG_TOOL_NAMES,
     allowNestedCollaborators: false,
   });
@@ -77,7 +77,7 @@ export const KESTREL_POLICY = KESTREL_ONE_POLICY;
 export const KESTREL_PROFILE_DEFINITION: Readonly<KestrelProfileDefinitionV1> =
   deepFreeze(
     createKestrelProfileDefinitionV1({
-      agent: "reference-react",
+      agent: "kestrel",
       interaction: {
         modeSystemV2Enabled: true,
         defaultInteractionMode: DEFAULT_INTERACTION_MODE,
@@ -340,7 +340,7 @@ function composeLegacyKestrelOneProfile(
   const profile: TuiProfile = {
     id: profileId,
     label: input.overlay?.label ?? KESTREL_ONE_POLICY_LABEL,
-    agent: "reference-react",
+    agent: "kestrel",
     sessionPrefix: KESTREL_ONE_POLICY_ID,
     agentProfileId: runtimeIdentity.agentProfileId,
     agentProfileLabel: runtimeIdentity.agentProfileLabel,
@@ -665,7 +665,7 @@ export function createKestrelProfileDefinitionFromOverlay(
 ): KestrelProfileDefinitionV1 {
   assertNoPolicyControlledOverlay(overlay);
   return createKestrelProfileDefinitionV1({
-    agent: "reference-react",
+    agent: "kestrel",
     interaction: {
       modeSystemV2Enabled: true,
       defaultInteractionMode: DEFAULT_INTERACTION_MODE,

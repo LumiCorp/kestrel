@@ -467,7 +467,7 @@ test("Kestrel agent context builder owns deliberator system message placement", 
     interactionMode: "build",
     promptVariant: "reference-react:build",
     systemPrompt: {
-      kind: "reference-react-deliberator",
+      kind: "kestrel-deliberator",
       interactionMode: "build",
       promptVariant: "reference-react:build",
     },
@@ -519,7 +519,7 @@ test("Kestrel deliberator system prompt keeps context and build-loop contracts e
     interactionMode: "build",
     promptVariant: "reference-react:build",
     systemPrompt: {
-      kind: "reference-react-deliberator",
+      kind: "kestrel-deliberator",
       interactionMode: "build",
       promptVariant: "reference-react:build",
     },

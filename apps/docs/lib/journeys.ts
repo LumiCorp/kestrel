@@ -28,8 +28,8 @@ export const DOCS_JOURNEYS: Record<DocsJourneyId, JourneyDefinition> = {
       "/kestrel-one/artifacts-and-sharing",
     ],
   },
-  "reference-agent-build": {
-    label: "Build with the Reference agent",
+  "kestrel-agent-build": {
+    label: "Build with Kestrel",
     urls: [
       "/build/building-your-first-agent",
       "/build/running-your-first-streamed-request",

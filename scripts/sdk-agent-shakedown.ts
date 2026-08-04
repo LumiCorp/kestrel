@@ -109,7 +109,7 @@ async function main(): Promise<void> {
     assert.equal(
       profile.model,
       options.model,
-      `Shake-down requested ${options.model}, but the default Reference React profile resolved ${profile.model ?? "no model"}.`,
+      `Shake-down requested ${options.model}, but the Kestrel profile resolved ${profile.model ?? "no model"}.`,
     );
     process.stdout.write(
       `[sdk-shakedown] runner=${runner.url} service=${health.service.name}@${health.service.version} profile=${profile.id} model=${profile.model}\n`,
@@ -595,9 +595,9 @@ async function startIsolatedWebRunner(inputModel: string, options: {
   const configuredProfiles = await new ProfileStore(isolatedCoreHome, {
     managedEnvironmentPresetId: "cli_dev_local",
   }).load();
-  const referenceProfile = configuredProfiles.find((candidate) => candidate.id === "reference");
-  assert.ok(referenceProfile, "SDK shake-down requires the configured CLI Reference profile.");
-  const shakedownProfile = buildSdkAgentShakedownProfile(referenceProfile, {
+  const kestrelProfile = configuredProfiles.find((candidate) => candidate.id === "kestrel");
+  assert.ok(kestrelProfile, "SDK shake-down requires the configured Kestrel profile.");
+  const shakedownProfile = buildSdkAgentShakedownProfile(kestrelProfile, {
     extraToolAllowlist: options.extraToolAllowlist,
   });
   const registeredProfile = await new LocalCoreExecutionProfileRegistry(

@@ -206,7 +206,7 @@ test("KestrelClient dispatches unary, run-stream, and subscription traffic over 
 
   const stream = client.streamRun(
     {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-local",
         message: "deploy",
@@ -229,7 +229,7 @@ test("KestrelClient dispatches unary, run-stream, and subscription traffic over 
   });
 
   const job = await client.runJob({
-    profileId: "reference",
+    profileId: "kestrel",
     input: {
       version: "job_input_v1",
       turn: {
@@ -393,7 +393,7 @@ test("KestrelClient can close immediately after a completed local run stream", a
   t.after(async () => client.close());
 
   const stream = client.streamRun({
-    profileId: "reference",
+    profileId: "kestrel",
     turn: {
       sessionId: "session-local-immediate-close",
       message: "complete and close",
@@ -440,7 +440,7 @@ test("KestrelClient rejects a local run stream that ends before a terminal event
 
   await assert.rejects(
     client.run({
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-local-truncated",
         message: "run until disconnected",
@@ -493,7 +493,7 @@ test("KestrelClient rejects a local terminal SSE event without a command id", as
   await assert.rejects(
     Promise.race([
       client.run({
-        profileId: "reference",
+        profileId: "kestrel",
         turn: {
           sessionId: "session-local-unscoped",
           message: "receive an unscoped terminal",
@@ -542,7 +542,7 @@ test("KestrelClient rejects a local nonterminal SSE event for another command", 
 
   await assert.rejects(
     client.run({
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-local-wrong-progress",
         message: "receive mismatched progress",
@@ -613,7 +613,7 @@ test("KestrelClient rejects mismatched local terminal events without cross-settl
   t.after(async () => client.close());
 
   const victimOutcome = client.run({
-    profileId: "reference",
+    profileId: "kestrel",
     turn: {
       sessionId: "session-local-victim",
       message: "wait for the correct terminal",
@@ -628,7 +628,7 @@ test("KestrelClient rejects mismatched local terminal events without cross-settl
   await assert.rejects(
     Promise.race([
       client.run({
-        profileId: "reference",
+        profileId: "kestrel",
         turn: {
           sessionId: "session-local-source",
           message: "receive a mismatched terminal",
@@ -671,7 +671,7 @@ test("local KestrelClient does not connect for an already-aborted job", async ()
   controller.abort();
   const stream = client.streamJob({
     signal: controller.signal,
-    profileId: "reference",
+    profileId: "kestrel",
     input: {
       version: "job_input_v1",
       turn: {

@@ -5,10 +5,15 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  createDefaultProfilesFileV10,
+  ensureProfilesFileV10Binding,
   fingerprintProfilesFileV10,
   parseProfilesFileV10,
   prepareProfilesFileV10Migration,
+  resolveProfilesFileV10Profile,
   serializeProfilesFileV10,
+  updateProfilesFileV10FromProfile,
+  writeProfilesFileV10,
   writeProfilesFileV10MigrationArtifacts,
 } from "../../cli/config/ProfilesFileV10.js";
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
@@ -199,7 +204,7 @@ test("inactive migration preserves exact source bytes and fails on backup collis
   );
 });
 
-test("PR1 leaves ProfileStore runtime persistence on V9", async () => {
+test("ProfileStore activates V10 and exposes only the canonical Kestrel profile", async () => {
   const tempDir = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-profiles-v10-inactive-"),
   );
@@ -207,10 +212,69 @@ test("PR1 leaves ProfileStore runtime persistence on V9", async () => {
   await store.load();
   const persisted = JSON.parse(
     await readFile(path.join(tempDir, "profiles.json"), "utf8"),
-  ) as { version: number; profiles: unknown[] };
+  ) as { version: number; profile?: { id?: string; agent?: string }; profiles?: unknown[] };
 
-  assert.equal(persisted.version, 9);
-  assert.equal(Array.isArray(persisted.profiles), true);
+  assert.equal(persisted.version, 10);
+  assert.equal(persisted.profile?.id, "kestrel");
+  assert.equal(persisted.profile?.agent, "kestrel");
+  assert.equal("profiles" in persisted, false);
+
+  const profiles = await store.load();
+  assert.deepEqual(profiles.map((profile) => profile.id), ["kestrel"]);
+  assert.equal(profiles[0]?.agent, "kestrel");
+});
+
+test("ProfileStore save preserves every existing V10 environment binding", async () => {
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profiles-v10-save-"),
+  );
+  const profilePath = path.join(tempDir, "profiles.json");
+  let profilesFile = createDefaultProfilesFileV10("cli_safe_local");
+  profilesFile = ensureProfilesFileV10Binding(
+    profilesFile,
+    "cli_dev_local",
+  );
+  profilesFile = ensureProfilesFileV10Binding(
+    profilesFile,
+    "workspace_hosted",
+  );
+  await writeProfilesFileV10(profilePath, profilesFile);
+  const canonical = resolveProfilesFileV10Profile(
+    profilesFile,
+    "cli_safe_local",
+  );
+
+  await new ProfileStore(tempDir).save([canonical]);
+
+  const persisted = parseProfilesFileV10(await readFile(profilePath, "utf8"));
+  assert.deepEqual(Object.keys(persisted.environmentBindings), [
+    "cli_dev_local",
+    "cli_safe_local",
+    "workspace_hosted",
+  ]);
+});
+
+test("V10 profile updates persist only tools added beyond the preset", () => {
+  const profilesFile = createDefaultProfilesFileV10("cli_safe_local");
+  const canonical = resolveProfilesFileV10Profile(
+    profilesFile,
+    "cli_safe_local",
+  );
+  const withCustomTool = {
+    ...canonical,
+    toolAllowlist: [...(canonical.toolAllowlist ?? []), "custom.tool"],
+  };
+
+  const updated = updateProfilesFileV10FromProfile({
+    current: profilesFile,
+    profile: withCustomTool,
+    presetId: "cli_safe_local",
+  });
+
+  assert.deepEqual(
+    updated.environmentBindings.cli_safe_local?.tools.additionalToolNames,
+    ["custom.tool"],
+  );
 });
 
 test("legacy managed kestrel-one IDs migrate to the canonical definition", () => {

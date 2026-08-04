@@ -56,8 +56,8 @@ export async function runWebCommand(args: string[], cwd = process.cwd()): Promis
     socketPath: localCore.socketPath,
     token: localCore.authToken,
   }).resolveExecutionProfile({
-    client: "reference_web",
-    profileId: "reference",
+    client: "web",
+    profileId: "kestrel",
   });
   let server: WebRunnerProxyServer;
 

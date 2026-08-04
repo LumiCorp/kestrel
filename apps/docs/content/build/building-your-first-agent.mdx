@@ -1,6 +1,6 @@
 ---
 title: Build your first agent
-summary: Connect server-side TypeScript to Local Core, run the built-in Reference profile, and keep the session for a follow-up.
+summary: Connect server-side TypeScript to Local Core, run the canonical Kestrel profile, and keep the session for a follow-up.
 section: build
 audience: integrators
 status: stable
@@ -8,8 +8,8 @@ sourceKind: curated
 updatedAt: 2026-07-20
 ---
 
-<GuideNote step="Step 1" title="Use the shipped Reference profile">
-This tutorial sends one request to the built-in `reference` profile, whose runtime agent is `reference-react`.
+<GuideNote step="Step 1" title="Use the shipped Kestrel profile">
+This tutorial sends one request to the canonical `kestrel` profile and agent.
 </GuideNote>
 
 By the end of this tutorial, a Node.js script will send a request to Kestrel and
@@ -21,7 +21,7 @@ loopback HTTP bridge to Local Core.
 You need Node.js 20 or newer and a configured local Kestrel installation. Run:
 
 ```bash
-kestrel setup --profile reference
+kestrel setup --profile kestrel
 kestrel web
 ```
 
@@ -29,9 +29,8 @@ kestrel web
 `KESTREL_RUNNER_SERVICE_TOKEN`. Export those values in the terminal that will
 run the script. Keep the token in server-side code.
 
-The profile ID used by the SDK is `reference`. Its implementation is
-`reference-react`. Applications select the profile; they do not invent a new
-agent implementation name.
+The profile ID used by the SDK is `kestrel`. Kestrel owns the runtime policy;
+applications do not invent alternate profile or agent identities.
 
 ## Install the SDK
 
@@ -42,14 +41,14 @@ pnpm add -D tsx
 
 ## Create and run the agent
 
-Create `scripts/reference-agent-smoke.ts`:
+Create `scripts/kestrel-agent-smoke.ts`:
 
 ```ts
 import { createAgent } from "@kestrel-agents/sdk";
 
 const agent = createAgent({
-  id: "reference-agent",
-  profileId: "reference",
+  id: "kestrel-agent",
+  profileId: "kestrel",
   target: {
     kind: "remote",
     baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
@@ -69,7 +68,7 @@ const context = {
 
 const terminal = await agent.run(
   {
-    sessionId: "reference-session-001",
+    sessionId: "kestrel-session-001",
     message: "Summarize the current project and identify the next useful task.",
   },
   context,
@@ -83,7 +82,7 @@ await agent.close();
 Run it from the project directory:
 
 ```bash
-pnpm exec tsx scripts/reference-agent-smoke.ts
+pnpm exec tsx scripts/kestrel-agent-smoke.ts
 ```
 
 `kind: "remote"` selects HTTP because the script is using the loopback bridge.
@@ -98,11 +97,11 @@ is waiting. For a completed run, `terminal.payload.result.assistantText` is the
 canonical text to show a person. Structured application data remains in
 `terminal.payload.result.output`.
 
-Reuse `reference-session-001` for a follow-up that belongs to the same
+Reuse `kestrel-session-001` for a follow-up that belongs to the same
 conversation. Choose a new session ID for unrelated work.
 
 <Outcome>
-  <p>Your server-side script can run the built-in Reference profile, display the canonical answer, and retain the session identity for the next turn.</p>
+  <p>Your server-side script can run the canonical Kestrel profile, display the canonical answer, and retain the session identity for the next turn.</p>
 </Outcome>
 
 Continue with [your first streamed request](/build/running-your-first-streamed-request)

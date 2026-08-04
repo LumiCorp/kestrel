@@ -464,7 +464,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       projectSnapshot,
       promptVariant: resolvedPromptVariant,
       systemPrompt: {
-        kind: "reference-react-deliberator",
+        kind: "kestrel-deliberator",
         interactionMode: modeResolution.interactionMode,
         promptVariant: resolvedPromptVariant,
         ...readRuntimeShellKind(eventPayload),
@@ -674,7 +674,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         projectSnapshot,
         promptVariant: resolvedPromptVariant,
         systemPrompt: {
-          kind: "reference-react-deliberator",
+          kind: "kestrel-deliberator",
           interactionMode: modeResolution.interactionMode,
           promptVariant: resolvedPromptVariant,
           ...readRuntimeShellKind(eventPayload),
@@ -1805,7 +1805,7 @@ function rebuildCompactedContextRequest(
     promptVariant: input.promptVariant,
     retryContext: input.retryContext,
     systemPrompt: {
-      kind: "reference-react-deliberator",
+      kind: "kestrel-deliberator",
       interactionMode: input.interactionMode,
       promptVariant: input.promptVariant,
       ...readRuntimeShellKind(input.eventPayload),

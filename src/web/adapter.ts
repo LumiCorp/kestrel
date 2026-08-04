@@ -1221,7 +1221,7 @@ export function clampHistoryWindow(history: WebHistoryLine[] | undefined): WebHi
 }
 
 function getEntryStepAgent(profile: Pick<TuiProfile, "id" | "agent">): string {
-  if (profile.agent === "reference-react") {
+  if (profile.agent === "kestrel") {
     return AGENT_STEP_IDS.loop;
   }
 

@@ -134,13 +134,13 @@ import type {
 } from "@kestrel-agents/sdk/runner";
 
 const profile: RunnerProfile = {
-  id: "reference",
-  label: "Reference",
-  agent: "reference-react",
-  sessionPrefix: "reference",
+  id: "kestrel",
+  label: "Kestrel",
+  agent: "kestrel",
+  sessionPrefix: "kestrel",
 };
 const validRun: RunStartCommandPayload = {
-  profileId: "reference",
+  profileId: "kestrel",
   turn: {
     sessionId: "session-1",
     message: "run",
@@ -151,11 +151,11 @@ const validRun: RunStartCommandPayload = {
 const validNestedJob: JobRunCommandPayload = {
   input: {
     version: "job_input_v1",
-    profileId: "reference",
+    profileId: "kestrel",
     turn: { sessionId: "session-1", message: "run" },
   },
 };
-const validMcp: McpStatusCommandPayload = { profileId: "reference" };
+const validMcp: McpStatusCommandPayload = { profileId: "kestrel" };
 const validAction: ProjectActionCommandPayload = {
   type: "branch.create",
   sessionId: "session-1",
@@ -171,13 +171,13 @@ const explicitLocalClient = new KestrelClient({
 });
 const explicitRemoteAgent = createAgent({
   id: "contract-check",
-  profileId: "reference",
+  profileId: "kestrel",
   target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
 });
 // @ts-expect-error KestrelClient requires an explicit target
 const missingClientTarget = new KestrelClient({});
 // @ts-expect-error createAgent requires an explicit target
-const missingAgentTarget = createAgent({ id: "missing-target", profileId: "reference" });
+const missingAgentTarget = createAgent({ id: "missing-target", profileId: "kestrel" });
 const legacyClientTarget = new KestrelClient({
   // @ts-expect-error top-level connection fields are not part of the public SDK contract
   baseUrl: "http://127.0.0.1:1",
@@ -248,14 +248,14 @@ const invalidMcp: McpStatusCommandPayload = {};
 // @ts-expect-error run.start profile and profileId are mutually exclusive
 const ambiguousRun: RunStartCommandPayload = {
   profile,
-  profileId: "reference",
+  profileId: "kestrel",
   turn: { sessionId: "session-1", message: "run", eventType: "user.message" },
 };
 // @ts-expect-error mcp profile and profileId are mutually exclusive
-const ambiguousMcp: McpStatusCommandPayload = { profile, profileId: "reference" };
+const ambiguousMcp: McpStatusCommandPayload = { profile, profileId: "kestrel" };
 // @ts-expect-error job.run cannot combine outer and nested profile references
 const ambiguousJob: JobRunCommandPayload = {
-  profileId: "reference",
+  profileId: "kestrel",
   input: {
     version: "job_input_v1",
     profileId: "nested-reference",
@@ -348,7 +348,7 @@ void [
   }
   void entryModule.createAgent({
     id: "release-check",
-    profileId: "reference",
+    profileId: "kestrel",
     target: { kind: "remote", baseUrl: "http://127.0.0.1:1" },
   });
   const remoteClient = new runnerModule.KestrelClient({

@@ -87,19 +87,18 @@ async function resolveOpenRouterReferenceProfile(baseUrl: string, token: string)
   assert.equal(body.type, "profile.listed");
 
   const profiles = body.payload?.profiles ?? [];
-  const selected =
-    profiles.find((item) => item.id === "reference") ??
-    profiles.find(
-      (item) =>
-        item.agent === "reference-react" &&
-        item.default === true &&
-        (item.modelProvider === "openrouter" || item.modelProvider === undefined),
-    );
+  const selected = profiles.find(
+    (item) =>
+      item.id === "kestrel" &&
+      item.agent === "kestrel" &&
+      item.default === true &&
+      (item.modelProvider === "openrouter" || item.modelProvider === undefined),
+  );
 
   assert.notEqual(
     selected,
     undefined,
-    `Expected an openrouter-backed reference-react profile, got ${JSON.stringify(profiles)}`,
+    `Expected the openrouter-backed Kestrel profile, got ${JSON.stringify(profiles)}`,
   );
   return selected.id as string;
 }

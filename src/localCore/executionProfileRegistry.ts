@@ -199,6 +199,7 @@ function parseStoredProfile(value: unknown, index: number): TuiProfile {
     profile.id.trim().length === 0 ||
     typeof profile.label !== "string" ||
     profile.label.trim().length === 0 ||
+    profile.agent !== "kestrel" &&
     profile.agent !== "reference-react"
   ) {
     throw new Error(

@@ -12,10 +12,10 @@ import { enqueueDesktopEnvironmentCommand } from "./desktop";
 
 const POLL_INTERVAL_MS = 250;
 const DEFAULT_DESKTOP_PROFILE: RunnerProfile = {
-  id: "kestrel-one",
-  label: "Kestrel One",
-  agent: "reference-react",
-  sessionPrefix: "kestrel-one",
+  id: "kestrel",
+  label: "Kestrel",
+  agent: "kestrel",
+  sessionPrefix: "kestrel",
   defaultInteractionMode: "build",
 };
 
@@ -45,6 +45,16 @@ export function createDesktopEnvironmentRunnerFetch(input: {
     }
 
     if (command.type === "profile.get") {
+      if (command.payload.profileId !== DEFAULT_DESKTOP_PROFILE.id) {
+        return jsonResponse(
+          runnerErrorEvent({
+            commandId: command.id,
+            code: "PROFILE_NOT_FOUND",
+            message: `Profile '${command.payload.profileId}' was not found.`,
+          }),
+          404,
+        );
+      }
       return jsonResponse(
         parseRunnerEventV2({
           id: crypto.randomUUID(),
@@ -52,11 +62,7 @@ export function createDesktopEnvironmentRunnerFetch(input: {
           ts: new Date().toISOString(),
           commandId: command.id,
           payload: {
-            profile: {
-              ...DEFAULT_DESKTOP_PROFILE,
-              id: command.payload.profileId,
-              sessionPrefix: command.payload.profileId,
-            },
+            profile: DEFAULT_DESKTOP_PROFILE,
           },
         }),
       );

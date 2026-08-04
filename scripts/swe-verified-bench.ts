@@ -428,10 +428,10 @@ export function buildSweVerifiedProfile(input: {
 }): TuiProfile {
   const profile = input.profile === undefined
     ? {
-      id: "swe-verified",
-      label: "SWE Verified",
-      agent: "reference-react",
-      sessionPrefix: "swe-verified",
+      id: "kestrel",
+      label: "Kestrel",
+      agent: "kestrel",
+      sessionPrefix: "kestrel",
       shellKind: "cli",
       presetId: "cli_dev_local",
       capabilityPacks: ["filesystem", "dev_shell"],
@@ -466,6 +466,10 @@ export function buildSweVerifiedProfile(input: {
     }
     : {
       ...structuredClone(input.profile),
+      id: "kestrel",
+      label: "Kestrel",
+      agent: "kestrel",
+      sessionPrefix: "kestrel",
       shellKind: input.profile.shellKind ?? "cli",
       presetId: input.profile.presetId ?? "cli_dev_local",
       capabilityPacks: input.profile.capabilityPacks ?? ["filesystem", "dev_shell"],
@@ -490,8 +494,8 @@ export function assertSweVerifiedJobInputContract(jobInput: Record<string, unkno
 
 export function assertSweVerifiedProfileContract(profile: Record<string, unknown>): void {
   readRequiredString(profile, "id");
-  if (profile.agent !== "reference-react") {
-    throw new Error("SWE Verified job profile must use the reference-react agent.");
+  if (profile.agent !== "kestrel") {
+    throw new Error("SWE Verified job profile must use the Kestrel agent.");
   }
 
   if (profile.shellKind !== "cli" || profile.presetId !== "cli_dev_local") {

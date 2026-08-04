@@ -89,9 +89,9 @@ function createRunHarness(input: {
   registeredProfileId: string;
 } {
   const activeProfile: TuiProfile = {
-    id: "reference",
+    id: "kestrel",
     label: "Reference",
-    agent: "reference-react",
+    agent: "kestrel",
     sessionPrefix: "ref",
   };
   const activeSession: TuiSessionMeta = {
@@ -744,7 +744,7 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
     checkpointId: "checkpoint-1",
     actionValue: "compact",
   });
-  assert.equal((commands[1]?.metadata?.profile as { id?: string } | undefined)?.id, "reference");
+  assert.equal((commands[1]?.metadata?.profile as { id?: string } | undefined)?.id, "kestrel");
   assert.equal(commands[2]?.type, "run.start");
   assert.equal((commands[2]?.payload.turn as Record<string, unknown>).eventType, "user.approval");
   assert.equal((commands[2]?.payload.turn as Record<string, unknown>).resumeBlockedRun, true);

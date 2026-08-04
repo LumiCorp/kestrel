@@ -724,7 +724,7 @@ test("web adapter normalizes history and emits only correlated run events", asyn
   assert.equal((command?.payload as { profileId?: string }).profileId, undefined);
   assert.equal(
     (command?.metadata as { profile?: { id?: string } } | undefined)?.profile?.id,
-    "reference-web",
+    "kestrel-web",
   );
 
   await adapter.close();

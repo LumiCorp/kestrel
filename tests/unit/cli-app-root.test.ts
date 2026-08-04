@@ -64,15 +64,15 @@ test("AppRoot keeps chat visible behind the blocking error modal", () => {
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
-      id: "reference",
+      id: "kestrel",
       label: "Reference",
-      agent: "reference-react",
-      sessionPrefix: "reference",
+      agent: "kestrel",
+      sessionPrefix: "kestrel",
     },
     activeSession: {
       name: "alpha",
       sessionId: "alpha-1",
-      profileId: "reference",
+      profileId: "kestrel",
       createdAt: now,
       updatedAt: now,
       started: true,
@@ -108,15 +108,15 @@ test("AppRoot renders compact operator header and waiting composer state", () =>
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
-      id: "reference",
+      id: "kestrel",
       label: "Reference",
-      agent: "reference-react",
-      sessionPrefix: "reference",
+      agent: "kestrel",
+      sessionPrefix: "kestrel",
     },
     activeSession: {
       name: "long-thread",
       sessionId: "thread-1",
-      profileId: "reference",
+      profileId: "kestrel",
       createdAt: now,
       updatedAt: now,
       started: true,
@@ -160,15 +160,15 @@ test("AppRoot labels delegation and recovery views explicitly", () => {
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
-      id: "reference",
+      id: "kestrel",
       label: "Reference",
-      agent: "reference-react",
-      sessionPrefix: "reference",
+      agent: "kestrel",
+      sessionPrefix: "kestrel",
     },
     activeSession: {
       name: "ops-thread",
       sessionId: "thread-ops",
-      profileId: "reference",
+      profileId: "kestrel",
       createdAt: now,
       updatedAt: now,
       started: true,
@@ -193,15 +193,15 @@ test("AppRoot surfaces live reasoning updates while a run is active", () => {
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
-      id: "reference",
+      id: "kestrel",
       label: "Reference",
-      agent: "reference-react",
-      sessionPrefix: "reference",
+      agent: "kestrel",
+      sessionPrefix: "kestrel",
     },
     activeSession: {
       name: "reasoning-thread",
       sessionId: "thread-reasoning",
-      profileId: "reference",
+      profileId: "kestrel",
       createdAt: now,
       updatedAt: now,
       started: true,
@@ -238,15 +238,15 @@ test("AppRoot omits adaptation and evidence summary from the compact header", ()
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
-      id: "reference",
+      id: "kestrel",
       label: "Reference",
-      agent: "reference-react",
-      sessionPrefix: "reference",
+      agent: "kestrel",
+      sessionPrefix: "kestrel",
     },
     activeSession: {
       name: "adaptation-thread",
       sessionId: "thread-adaptation",
-      profileId: "reference",
+      profileId: "kestrel",
       createdAt: now,
       updatedAt: now,
       started: true,
@@ -287,15 +287,15 @@ test("AppRoot omits multi-child supervision summary from the compact header", ()
   const now = new Date().toISOString();
   const state = buildInitialUiRuntimeState({
     profile: {
-      id: "reference",
+      id: "kestrel",
       label: "Reference",
-      agent: "reference-react",
-      sessionPrefix: "reference",
+      agent: "kestrel",
+      sessionPrefix: "kestrel",
     },
     activeSession: {
       name: "supervision-thread",
       sessionId: "thread-supervision",
-      profileId: "reference",
+      profileId: "kestrel",
       createdAt: now,
       updatedAt: now,
       started: true,
