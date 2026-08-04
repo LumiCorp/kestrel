@@ -17,6 +17,7 @@
         "tsconfig.json",
         "apps/workspace-runtime/**",
         "packages/environment-auth/**",
+        "packages/memory/**",
         "packages/mcp-security/**",
         "packages/sdk/**",
         "packages/protocol/**",
