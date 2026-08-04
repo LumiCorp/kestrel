@@ -202,6 +202,32 @@ export type {
   RuntimeEvaluationVerdictV1,
 } from "./contracts/evaluation.js";
 export {
+  KESTREL_CANONICAL_PROFILE_ID,
+  KESTREL_CANONICAL_PROFILE_LABEL,
+  KESTREL_ENVIRONMENT_BINDING_VERSION,
+  KESTREL_ENVIRONMENT_SELECTION_VERSION,
+  KESTREL_PROFILE_DEFINITION_VERSION,
+  canonicalizeFirstPartyKestrelProfileId,
+  createKestrelEnvironmentBindingV1,
+  createKestrelProfileDefinitionV1,
+  fingerprintKestrelEnvironmentBindingV1,
+  fingerprintKestrelProfileDefinitionV1,
+  parseKestrelEnvironmentBindingV1,
+  parseKestrelEnvironmentSelectionV1,
+  parseKestrelProfileDefinitionV1,
+  resolveKestrelEnvironmentSelectionV1,
+} from "./contracts/profile.js";
+export type {
+  KestrelEnvironmentBindingV1,
+  KestrelEnvironmentModelRouteV1,
+  KestrelEnvironmentNameV1,
+  KestrelEnvironmentPresetIdV1,
+  KestrelEnvironmentSelectionV1,
+  KestrelPinnedModelRouteV1,
+  KestrelProfileDefinitionV1,
+  KestrelRuntimeConfigurationModelRouteV1,
+} from "./contracts/profile.js";
+export {
   COMPLETION_EVIDENCE_ASSERTIONS_V1,
   COMPLETION_EVIDENCE_ASSET_BUNDLE_V1,
   COMPLETION_EVIDENCE_OUTPUT_SCHEMA_V1,
