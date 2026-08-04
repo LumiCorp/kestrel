@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import {
   flyImagePublicationStateSchema,
@@ -79,6 +81,57 @@ test("Docker build-context changes rebuild every managed image", () => {
     forceAll: false,
   });
   assert.equal(impacted.length, 5);
+});
+
+test("workspace-runtime image builds and carries the shared memory package", async () => {
+  const dockerfile = await readFile(
+    path.join(process.cwd(), "apps/workspace-runtime/Dockerfile"),
+    "utf8",
+  );
+  const releaseCatalog = JSON.parse(
+    await readFile(
+      path.join(process.cwd(), "deploy/fly/image-catalog.json"),
+      "utf8",
+    ),
+  ) as FlyImageCatalog;
+  const workspaceRuntime = releaseCatalog.images.find(
+    (entry) => entry.role === "workspace-runtime",
+  );
+
+  assert.ok(workspaceRuntime, "workspace-runtime image must be registered");
+  assert.ok(
+    workspaceRuntime.inputs.includes("packages/memory/**"),
+    "memory changes must rebuild the workspace-runtime image",
+  );
+  const memoryManifestCopy = dockerfile.indexOf(
+    "COPY packages/memory/package.json packages/memory/package.json",
+  );
+  const dependencyInstall = dockerfile.indexOf(
+    "RUN pnpm install --frozen-lockfile",
+  );
+  assert.ok(
+    memoryManifestCopy >= 0 && memoryManifestCopy < dependencyInstall,
+    "the memory manifest must be present before pnpm install",
+  );
+  const memorySourceCopy = dockerfile.indexOf(
+    "COPY packages/memory packages/memory",
+  );
+  const memoryBuild = dockerfile.indexOf(
+    "pnpm --filter @kestrel-agents/memory build",
+  );
+  assert.ok(
+    memorySourceCopy >= 0 && memorySourceCopy < memoryBuild,
+    "the memory sources must be present in the build stage",
+  );
+  assert.ok(
+    memoryBuild >= 0 && memoryBuild < dockerfile.indexOf("pnpm run clean"),
+    "the memory package must be built before the root runtime",
+  );
+  assert.match(
+    dockerfile,
+    /COPY --from=build \/app\/packages\/memory \.\/packages\/memory/u,
+    "the memory package must be present behind the production workspace symlink",
+  );
 });
 
 test("incremental releases diff from the stable bundle revision", () => {
