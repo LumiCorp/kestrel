@@ -1,4 +1,5 @@
 import {
+  assertBudgetLedgerAppendOnly,
   createEmptyBudgetRepositoryState,
   parseBudgetRepositoryState,
   type BudgetRepositoryStateV1,
@@ -24,7 +25,9 @@ export class InMemoryBudgetRepository implements BudgetRepositoryV1 {
     await prior;
     try {
       const outcome = await operation(structuredClone(this.state));
-      this.state = parseBudgetRepositoryState(structuredClone(outcome.state));
+      const next = parseBudgetRepositoryState(structuredClone(outcome.state));
+      assertBudgetLedgerAppendOnly(this.state, next);
+      this.state = next;
       return structuredClone(outcome.result);
     } finally {
       release();

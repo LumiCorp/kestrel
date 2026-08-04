@@ -10,6 +10,7 @@ import {
   parseBudgetPolicyV1,
   parseBudgetReservationRequestV1,
   parseBudgetScopeV1,
+  parseBudgetTimestampV1,
 } from "../../src/kestrel/contracts/budget.js";
 
 const tenantScope = {
@@ -77,4 +78,31 @@ test("budget contracts reject unsafe integers and non-exact scope transitions", 
       { allocationKey: "run", parentAllocationKey: "tenant", scope: runScope, limits: {} },
     ],
   }), /must be finite/u);
+});
+
+test("budget timestamps require a valid ISO timestamp with an explicit timezone", () => {
+  assert.equal(
+    parseBudgetTimestampV1("2026-08-04T12:34:56+02:30"),
+    "2026-08-04T10:04:56.000Z",
+  );
+  for (const invalid of [
+    "1",
+    "2026-08-04",
+    "2026-08-04T12:34:56",
+    "2026-02-30T12:34:56Z",
+    "2026-08-04T25:00:00Z",
+    "2026-08-04T12:34:56.0000Z",
+  ]) {
+    assert.throws(() => parseBudgetTimestampV1(invalid), /explicit timezone/u);
+  }
+  assert.throws(() => parseBudgetReservationRequestV1({
+    allocationId: "allocation-1",
+    allocationRevision: 0,
+    policyRevision: `sha256:${"0".repeat(64)}`,
+    reservationId: "reservation-1",
+    scope: tenantScope,
+    amounts: { modelCalls: 1 },
+    idempotencyKey: "reserve-1",
+    createdAt: "2026-08-04T12:34:56",
+  }), /explicit timezone/u);
 });

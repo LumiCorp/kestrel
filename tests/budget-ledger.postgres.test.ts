@@ -5,7 +5,11 @@ import test from "node:test";
 import { Pool } from "pg";
 import { BudgetCoordinator } from "../src/budget/BudgetCoordinator.js";
 import { PostgresBudgetRepository } from "../src/budget/PostgresBudgetRepository.js";
-import { BUDGET_SCOPE_VERSION, createBudgetPolicyV1 } from "../src/kestrel/contracts/budget.js";
+import {
+  BUDGET_SCOPE_VERSION,
+  createBudgetPolicyV1,
+  fingerprintBudgetLedgerEntryV1,
+} from "../src/kestrel/contracts/budget.js";
 import { PgSqlExecutor } from "../src/store/PgSqlExecutor.js";
 
 const databaseUrl = process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL?.trim();
@@ -31,9 +35,10 @@ test("PostgreSQL budget repository serializes contention and survives coordinato
     createdAt: "2026-08-04T12:00:00.000Z",
   });
   try {
+    const repository = new PostgresBudgetRepository(executor, repositoryId);
     const coordinator = new BudgetCoordinator({
       policy,
-      repository: new PostgresBudgetRepository(executor, repositoryId),
+      repository,
     });
     await coordinator.openAllocation({
       allocationId: "allocation-postgres",
@@ -63,6 +68,22 @@ test("PostgreSQL budget repository serializes contention and survives coordinato
       [repositoryId],
     );
     assert.equal(Number(ledger.rows[0]?.count), 2);
+    await assert.rejects(repository.transaction((state) => ({
+      state: { ...state, ledger: [], nextSequence: 1 },
+      result: undefined,
+    })), /truncate ledger history/u);
+    const corrupted = await repository.read();
+    const rewritten = {
+      ...corrupted.ledger[0]!,
+      recordedAt: "2026-08-04T12:00:01.000Z",
+    };
+    rewritten.entryId = fingerprintBudgetLedgerEntryV1(rewritten);
+    corrupted.ledger[0] = rewritten;
+    await pool.query(
+      "UPDATE budget_repository_states SET state_json = $2::jsonb WHERE repository_id = $1",
+      [repositoryId, JSON.stringify(corrupted)],
+    );
+    await assert.rejects(repository.read(), /disagrees with the authoritative ledger at sequence 1/u);
   } finally {
     await pool.query("DELETE FROM budget_ledger_entries WHERE repository_id = $1", [repositoryId]);
     await pool.query("DELETE FROM budget_repository_states WHERE repository_id = $1", [repositoryId]);

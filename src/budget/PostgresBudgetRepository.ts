@@ -1,5 +1,11 @@
 import type { SqlExecutor } from "../store/PostgresSessionStore.js";
 import {
+  parseBudgetLedgerEntryV1,
+  type BudgetLedgerEntryV1,
+} from "../kestrel/contracts/budget.js";
+import {
+  assertBudgetLedgerAppendOnly,
+  assertBudgetLedgerAuthorityMatchesState,
   createEmptyBudgetRepositoryState,
   parseBudgetRepositoryState,
   type BudgetRepositoryStateV1,
@@ -10,6 +16,11 @@ import {
 interface BudgetStateRow extends Record<string, unknown> {
   state_json: unknown;
   revision: number | string;
+}
+
+interface BudgetLedgerRow extends Record<string, unknown> {
+  sequence: number | string;
+  entry_json: unknown;
 }
 
 export class PostgresBudgetRepository implements BudgetRepositoryV1 {
@@ -45,12 +56,12 @@ export class PostgresBudgetRepository implements BudgetRepositoryV1 {
       const row = selected.rows[0];
       if (row === undefined) throw new Error("Budget repository state could not be locked.");
       const before = parseBudgetRepositoryState(row.state_json);
+      const authoritativeLedger = await readAuthoritativeLedger(tx, this.repositoryId);
+      assertBudgetLedgerAuthorityMatchesState(before, authoritativeLedger);
       const outcome = await operation(structuredClone(before));
       const next = parseBudgetRepositoryState(structuredClone(outcome.state));
+      assertBudgetLedgerAppendOnly(before, next);
       const newEntries = next.ledger.slice(before.ledger.length);
-      if (newEntries.some((entry, index) => entry.sequence !== before.ledger.length + index + 1)) {
-        throw new Error("Budget repository transaction attempted to rewrite ledger history.");
-      }
       for (const entry of newEntries) {
         await tx.query(
           `INSERT INTO budget_ledger_entries
@@ -72,16 +83,54 @@ export class PostgresBudgetRepository implements BudgetRepositoryV1 {
   }
 
   async read(): Promise<BudgetRepositoryStateV1> {
-    const selected = await this.db.query<BudgetStateRow>(
-      `SELECT state_json, revision
-         FROM budget_repository_states
-        WHERE repository_id = $1`,
-      [this.repositoryId],
-    );
-    return selected.rows[0] === undefined
-      ? createEmptyBudgetRepositoryState()
-      : parseBudgetRepositoryState(selected.rows[0].state_json);
+    if (this.db.transaction === undefined) {
+      throw new Error("PostgreSQL budget repository requires transactional SQL execution.");
+    }
+    return this.db.transaction(async (tx) => {
+      const selected = await tx.query<BudgetStateRow>(
+        `SELECT state_json, revision
+           FROM budget_repository_states
+          WHERE repository_id = $1
+          FOR SHARE`,
+        [this.repositoryId],
+      );
+      const authoritativeLedger = await readAuthoritativeLedger(tx, this.repositoryId);
+      const row = selected.rows[0];
+      if (row === undefined) {
+        if (authoritativeLedger.length > 0) {
+          throw new Error("Budget repository ledger exists without its authoritative state.");
+        }
+        return createEmptyBudgetRepositoryState();
+      }
+      const state = parseBudgetRepositoryState(row.state_json);
+      assertBudgetLedgerAuthorityMatchesState(state, authoritativeLedger);
+      return state;
+    });
   }
+}
+
+async function readAuthoritativeLedger(
+  db: SqlExecutor,
+  repositoryId: string,
+): Promise<BudgetLedgerEntryV1[]> {
+  const selected = await db.query<BudgetLedgerRow>(
+    `SELECT sequence, entry_json
+       FROM budget_ledger_entries
+      WHERE repository_id = $1
+      ORDER BY sequence ASC`,
+    [repositoryId],
+  );
+  return selected.rows.map((row, index) => {
+    const sequence = Number(row.sequence);
+    if (!Number.isSafeInteger(sequence) || sequence !== index + 1) {
+      throw new Error("Authoritative budget ledger sequence is not contiguous.");
+    }
+    const entry = parseBudgetLedgerEntryV1(row.entry_json);
+    if (entry.sequence !== sequence) {
+      throw new Error("Authoritative budget ledger row sequence does not match its entry contract.");
+    }
+    return entry;
+  });
 }
 
 function requireRepositoryId(value: string): string {

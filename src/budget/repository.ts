@@ -1,4 +1,5 @@
 import {
+  canonicalBudgetJson,
   parseBudgetAllocationV1,
   parseBudgetAmountsV1,
   parseBudgetLedgerEntryV1,
@@ -76,6 +77,20 @@ export function parseBudgetRepositoryState(value: unknown): BudgetRepositoryStat
       openChildAllocationIds: parseStringArray(record.openChildAllocationIds, `Budget repository allocation '${allocationId}' children`),
     };
   }
+  const allocationBindings = new Map<string, string>();
+  for (const allocation of Object.values(allocations)) {
+    const binding = canonicalBudgetJson({
+      allocationKey: allocation.allocation.allocationKey,
+      scope: allocation.allocation.scope,
+    });
+    const existingAllocationId = allocationBindings.get(binding);
+    if (existingAllocationId !== undefined) {
+      throw new Error(
+        `Budget allocation binding is duplicated by '${existingAllocationId}' and '${allocation.allocation.allocationId}'.`,
+      );
+    }
+    allocationBindings.set(binding, allocation.allocation.allocationId);
+  }
   const reservationsRaw = requireRecord(root.reservations, "Budget repository reservations");
   const reservations: Record<string, BudgetReservationV1> = {};
   for (const [reservationId, value] of Object.entries(reservationsRaw)) {
@@ -105,6 +120,39 @@ export function parseBudgetRepositoryState(value: unknown): BudgetRepositoryStat
     idempotency[key] = { operation: record.operation, requestDigest: record.requestDigest, result: structuredClone(record.result) };
   }
   return { version: 1, nextSequence, allocations, reservations, ledger, idempotency };
+}
+
+export function assertBudgetLedgerAppendOnly(
+  before: BudgetRepositoryStateV1,
+  next: BudgetRepositoryStateV1,
+): void {
+  if (next.ledger.length < before.ledger.length) {
+    throw new Error("Budget repository transaction attempted to truncate ledger history.");
+  }
+  for (let index = 0; index < before.ledger.length; index += 1) {
+    if (canonicalBudgetJson(next.ledger[index]) !== canonicalBudgetJson(before.ledger[index])) {
+      throw new Error(`Budget repository transaction attempted to rewrite ledger history at sequence ${index + 1}.`);
+    }
+  }
+}
+
+export function assertBudgetLedgerAuthorityMatchesState(
+  state: BudgetRepositoryStateV1,
+  authoritativeLedger: BudgetLedgerEntryV1[],
+): void {
+  if (state.ledger.length !== authoritativeLedger.length) {
+    throw new Error("Budget repository state disagrees with the authoritative ledger length.");
+  }
+  for (let index = 0; index < authoritativeLedger.length; index += 1) {
+    const stateEntry = state.ledger[index];
+    const authoritativeEntry = authoritativeLedger[index];
+    if (
+      stateEntry === undefined || authoritativeEntry === undefined ||
+      canonicalBudgetJson(stateEntry) !== canonicalBudgetJson(authoritativeEntry)
+    ) {
+      throw new Error(`Budget repository state disagrees with the authoritative ledger at sequence ${index + 1}.`);
+    }
+  }
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {

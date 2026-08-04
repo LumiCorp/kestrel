@@ -2,6 +2,8 @@ export { BudgetCoordinator, BudgetIntegrityError } from "./BudgetCoordinator.js"
 export { InMemoryBudgetRepository } from "./InMemoryBudgetRepository.js";
 export { PostgresBudgetRepository } from "./PostgresBudgetRepository.js";
 export {
+  assertBudgetLedgerAppendOnly,
+  assertBudgetLedgerAuthorityMatchesState,
   createEmptyBudgetRepositoryState,
   parseBudgetRepositoryState,
 } from "./repository.js";

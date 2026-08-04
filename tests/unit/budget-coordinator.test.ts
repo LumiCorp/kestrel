@@ -5,6 +5,7 @@ import {
   BUDGET_SCOPE_VERSION,
   BUDGET_USAGE_VERSION,
   createBudgetPolicyV1,
+  fingerprintBudgetLedgerEntryV1,
   type BudgetPolicyV1,
   type BudgetScopeV1,
 } from "../../src/kestrel/contracts/budget.js";
@@ -179,11 +180,18 @@ test("atomic sibling reservations contend and a fresh over-budget request is den
   assert.equal(denied.status, "denied");
 });
 
-test("child allocation contention, restart, and close reconcile against the parent lineage", async () => {
+test("authored root and child allocation bindings are permanent across close and restart", async () => {
   const { policy } = fixtures();
   const repository = new InMemoryBudgetRepository();
   const first = new BudgetCoordinator({ policy, repository });
   await openRun(first, policy);
+  await assert.rejects(first.openAllocation({
+    allocationId: "allocation-tenant-2",
+    allocationKey: "tenant",
+    policyRevision: policy.revision,
+    idempotencyKey: "open-tenant-2",
+    openedAt: at,
+  }), (error: unknown) => error instanceof BudgetIntegrityError && error.code === "BUDGET_ALLOCATION_ALREADY_BOUND");
   await assert.rejects(first.openAllocation({
     allocationId: "allocation-run-2",
     allocationKey: "run",
@@ -192,7 +200,7 @@ test("child allocation contention, restart, and close reconcile against the pare
     parentAllocationRevision: 1,
     idempotencyKey: "open-run-2",
     openedAt: at,
-  }), (error: unknown) => error instanceof BudgetIntegrityError && error.code === "BUDGET_PARENT_EXHAUSTED");
+  }), (error: unknown) => error instanceof BudgetIntegrityError && error.code === "BUDGET_ALLOCATION_ALREADY_BOUND");
   const restarted = new BudgetCoordinator({ policy, repository });
   const snapshot = await restarted.snapshot({ allocationId: "allocation-run", allocationRevision: 0, policyRevision: policy.revision });
   assert.equal(snapshot.available.modelCalls, 3);
@@ -207,6 +215,60 @@ test("child allocation contention, restart, and close reconcile against the pare
   });
   assert.equal(closed.allocation.status, "closed");
   assert.equal(closed.parentSnapshot?.available.modelCalls, 5);
+  await assert.rejects(restarted.openAllocation({
+    allocationId: "allocation-run-reopened",
+    allocationKey: "run",
+    policyRevision: policy.revision,
+    parentAllocationId: "allocation-tenant",
+    parentAllocationRevision: 2,
+    idempotencyKey: "reopen-run",
+    openedAt: at,
+  }), (error: unknown) => error instanceof BudgetIntegrityError && error.code === "BUDGET_ALLOCATION_ALREADY_BOUND");
+  const duplicatedState = await repository.read();
+  const tenantState = duplicatedState.allocations["allocation-tenant"]!;
+  duplicatedState.allocations["allocation-tenant-corrupt"] = {
+    ...structuredClone(tenantState),
+    allocation: {
+      ...structuredClone(tenantState.allocation),
+      allocationId: "allocation-tenant-corrupt",
+    },
+  };
+  assert.throws(() => new InMemoryBudgetRepository(duplicatedState), /allocation binding is duplicated/u);
+});
+
+test("in-memory repository rejects ledger truncation and canonical prefix rewrite", async () => {
+  const { policy } = fixtures();
+  const repository = new InMemoryBudgetRepository();
+  const coordinator = new BudgetCoordinator({ policy, repository });
+  await openRun(coordinator, policy);
+  await assert.rejects(repository.transaction((state) => ({
+    state: { ...state, ledger: [], nextSequence: 1 },
+    result: undefined,
+  })), /truncate ledger history/u);
+  await assert.rejects(repository.transaction((state) => {
+    const rewritten = {
+      ...state.ledger[0]!,
+      recordedAt: "2026-08-04T12:00:01.000Z",
+    };
+    rewritten.entryId = fingerprintBudgetLedgerEntryV1(rewritten);
+    return {
+      state: { ...state, ledger: [rewritten, ...state.ledger.slice(1)] },
+      result: undefined,
+    };
+  }), /rewrite ledger history at sequence 1/u);
+  assert.equal((await repository.read()).ledger.length, 3);
+});
+
+test("coordinator rejects non-canonical allocation timestamps", async () => {
+  const { policy } = fixtures();
+  const coordinator = new BudgetCoordinator({ policy, repository: new InMemoryBudgetRepository() });
+  await assert.rejects(coordinator.openAllocation({
+    allocationId: "allocation-invalid-time",
+    allocationKey: "tenant",
+    policyRevision: policy.revision,
+    idempotencyKey: "open-invalid-time",
+    openedAt: "1",
+  }), (error: unknown) => error instanceof BudgetIntegrityError && error.code === "BUDGET_TIMESTAMP_INVALID");
 });
 
 test("unknown price evidence fails closed only when its allocation has the matching cost ceiling", async () => {

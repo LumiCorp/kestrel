@@ -210,6 +210,7 @@ export {
   parseBudgetReservationRequestV1,
   parseBudgetScopeV1,
   parseBudgetSnapshotV2,
+  parseBudgetTimestampV1,
   parseBudgetUsageV1,
 } from "./contracts/budget.js";
 export type {

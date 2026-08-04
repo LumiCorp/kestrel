@@ -170,6 +170,8 @@ export interface BudgetReservationPortV1 {
 
 const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u;
+const ISO_TIMESTAMP_WITH_TIMEZONE_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|([+-])(\d{2}):(\d{2}))$/u;
 const RESOURCE_KEY_SET = new Set<string>(BUDGET_RESOURCE_KEYS);
 const LEAF_SCOPE_KINDS = new Set<BudgetScopeKindV1>([
   "model",
@@ -245,6 +247,36 @@ export function digestBudgetCanonicalValue(value: unknown): string {
 
 export function canonicalBudgetJson(value: unknown): string {
   return JSON.stringify(sortCanonical(value));
+}
+
+export function parseBudgetTimestampV1(value: unknown, label = "Budget timestamp"): string {
+  if (typeof value !== "string") throw new Error(`${label} must be an ISO timestamp with an explicit timezone.`);
+  const match = ISO_TIMESTAMP_WITH_TIMEZONE_PATTERN.exec(value);
+  if (match === null) throw new Error(`${label} must be an ISO timestamp with an explicit timezone.`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const milliseconds = Number((match[7] ?? "").padEnd(3, "0"));
+  const offsetHour = match[8] === "Z" ? 0 : Number(match[10]);
+  const offsetMinute = match[8] === "Z" ? 0 : Number(match[11]);
+  if (hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) {
+    throw new Error(`${label} must be an ISO timestamp with an explicit timezone.`);
+  }
+  const local = new Date(0);
+  local.setUTCFullYear(year, month - 1, day);
+  local.setUTCHours(hour, minute, second, milliseconds);
+  if (
+    local.getUTCFullYear() !== year || local.getUTCMonth() !== month - 1 ||
+    local.getUTCDate() !== day || local.getUTCHours() !== hour ||
+    local.getUTCMinutes() !== minute || local.getUTCSeconds() !== second ||
+    local.getUTCMilliseconds() !== milliseconds
+  ) throw new Error(`${label} must be an ISO timestamp with an explicit timezone.`);
+  const offsetSign = match[9] === "-" ? -1 : 1;
+  const offsetMs = offsetSign * ((offsetHour * 60) + offsetMinute) * 60_000;
+  return new Date(local.getTime() - offsetMs).toISOString();
 }
 
 export function parseBudgetScopeV1(value: unknown): BudgetScopeV1 {
@@ -563,8 +595,7 @@ function requirePositiveInteger(value: unknown, label: string): number {
 }
 
 function requireTimestamp(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0 || !Number.isFinite(Date.parse(value))) throw new Error(`${label} must be an ISO timestamp.`);
-  return new Date(value).toISOString();
+  return parseBudgetTimestampV1(value, label);
 }
 
 function parseUniqueIdentifiers(value: unknown, label: string): string[] {

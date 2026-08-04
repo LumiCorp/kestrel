@@ -13,6 +13,7 @@ import {
   parseBudgetReservationRequestV1,
   parseBudgetScopeV1,
   parseBudgetSnapshotV2,
+  parseBudgetTimestampV1,
   parseBudgetUsageV1,
   type BudgetAllocationV1,
   type BudgetAmountsV1,
@@ -133,6 +134,15 @@ export class BudgetCoordinator implements BudgetReservationPortV1 {
       }
       const authored = this.allocationPolicies.get(request.allocationKey);
       if (authored === undefined) throw integrity("BUDGET_ALLOCATION_UNAUTHORED", `Budget allocation key '${request.allocationKey}' is not authored by the policy.`);
+      const existingBinding = Object.values(state.allocations).find((candidate) =>
+        candidate.allocation.allocationKey === authored.allocationKey &&
+        isExactBudgetScope(candidate.allocation.scope, authored.scope));
+      if (existingBinding !== undefined) {
+        throw integrity(
+          "BUDGET_ALLOCATION_ALREADY_BOUND",
+          `Budget allocation '${authored.allocationKey}' at its exact scope is permanently bound to '${existingBinding.allocation.allocationId}'.`,
+        );
+      }
       const openedAt = request.openedAt ?? requireTimestamp(this.now(), "clock");
       let parent: BudgetAllocationStateV1 | undefined;
       let reservedFromParent: BudgetAmountsV1 = {};
@@ -603,6 +613,10 @@ function isImmediateChild(parent: BudgetScopeV1, child: BudgetScopeV1): boolean 
   return child.segments.length === parent.segments.length + 1 && isBudgetScopeAncestor(parent, child);
 }
 
+function isExactBudgetScope(left: BudgetScopeV1, right: BudgetScopeV1): boolean {
+  return left.segments.length === right.segments.length && isBudgetScopeAncestor(left, right);
+}
+
 function requireUsageBinding(usage: BudgetUsageV1, allocationId: string, reservationId: string, policyRevision: string): void {
   if (usage.allocationId !== allocationId || usage.reservationId !== reservationId || usage.policyRevision !== policyRevision) {
     throw integrity("BUDGET_USAGE_BINDING_MISMATCH", "Budget usage does not match its allocation, reservation, and policy revision.");
@@ -656,8 +670,11 @@ function requireIdentifier(value: string, label: string): string {
 }
 
 function requireTimestamp(value: string, label: string): string {
-  if (value.length === 0 || !Number.isFinite(Date.parse(value))) throw integrity("BUDGET_TIMESTAMP_INVALID", `${label} must be an ISO timestamp.`);
-  return new Date(value).toISOString();
+  try {
+    return parseBudgetTimestampV1(value, label);
+  } catch {
+    throw integrity("BUDGET_TIMESTAMP_INVALID", `${label} must be an ISO timestamp with an explicit timezone.`);
+  }
 }
 
 function rejectUnknownInput(value: object, allowed: string[], label: string): void {
