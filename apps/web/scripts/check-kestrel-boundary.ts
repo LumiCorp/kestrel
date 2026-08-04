@@ -166,6 +166,11 @@ function validateModuleSpecifier(filePath: string, specifier: string): void {
       `${path.relative(appRoot, filePath)} imports undeclared Kestrel package '${packageName}'.`,
     );
   }
+  if (specifier === "@kestrel-agents/kestrel") {
+    failures.push(
+      `${path.relative(appRoot, filePath)} imports the full Kestrel runtime; use a purpose-built shared package.`,
+    );
+  }
   if (/\/(?:dist|src)(?:\/|$)/u.test(specifier)) {
     failures.push(
       `${path.relative(appRoot, filePath)} bypasses public package exports: ${specifier}`,

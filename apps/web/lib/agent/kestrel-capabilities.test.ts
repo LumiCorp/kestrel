@@ -36,12 +36,18 @@ test("parseRunnerKnowledgeCapabilityRequest accepts runner bearer auth and tenan
       headers: {
         authorization: "Bearer secret-token",
         "x-kestrel-tenant-id": "org_123",
+        "x-kestrel-user-id": "user_123",
+        "x-kestrel-agent-id": "agent_123",
+        "x-kestrel-task-id": "task_123",
       },
     }),
   });
 
   assert.deepEqual(result, {
     organizationId: "org_123",
+    userId: "user_123",
+    agentId: "agent_123",
+    taskId: "task_123",
   });
 });
 
@@ -55,12 +61,18 @@ test("parseRunnerKnowledgeCapabilityRequest accepts only UUID context grants", (
         authorization: "Bearer secret-token",
         "x-kestrel-tenant-id": "org_123",
         "x-kestrel-project-context-grant": contextGrantId,
+        "x-kestrel-user-id": "user_123",
+        "x-kestrel-agent-id": "agent_123",
+        "x-kestrel-task-id": "task_123",
       },
     }),
   });
 
   assert.deepEqual(result, {
     organizationId: "org_123",
+    userId: "user_123",
+    agentId: "agent_123",
+    taskId: "task_123",
     contextGrantId,
   });
 
@@ -127,7 +139,12 @@ test("parseRunnerKnowledgeCapabilityRequest accepts a tenant-bound Environment t
       environmentTicketPublicKey: publicKey,
       request,
     }),
-    { organizationId: "org_123" }
+    {
+      organizationId: "org_123",
+      userId: "user-1",
+      agentId: "kestrel-one",
+      taskId: "run-1",
+    }
   );
   assert.throws(() =>
     parseRunnerKnowledgeCapabilityRequest({
@@ -178,5 +195,25 @@ test("parseRunnerKnowledgeCapabilityRequest rejects missing or invalid token", (
         ),
       }),
     /Unauthorized/
+  );
+});
+
+test("parseRunnerKnowledgeCapabilityRequest rejects a trusted token without bound actor identity", () => {
+  assert.throws(
+    () =>
+      parseRunnerKnowledgeCapabilityRequest({
+        expectedToken: "secret-token",
+        request: new Request(
+          "https://app.example.test/api/kestrel/tools/search",
+          {
+            method: "POST",
+            headers: {
+              authorization: "Bearer secret-token",
+              "x-kestrel-tenant-id": "org_123",
+            },
+          }
+        ),
+      }),
+    /identity is incomplete/u
   );
 });

@@ -86,6 +86,9 @@ The durable, user-visible summary of the agent's current chunk, intended command
 **Narration Memory**
 Model-authored progress narration retained as working memory for collaboration and continuity.
 
+**Memory Read Binding**
+A trusted, versioned authorization that binds one memory retrieval to an exact tenant, user, agent, task, policy revision, namespace, scope, and document-access set. A model can provide a bounded query but cannot mint or widen this binding.
+
 **Provenance Hash**
 A hash-only identity for model-call audit data. It identifies the provider payload or Kestrel prompt components without retaining rendered prompt text.
 
