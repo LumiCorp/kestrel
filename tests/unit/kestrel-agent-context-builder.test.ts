@@ -1720,6 +1720,44 @@ test("Kestrel agent context builder gives an exact visible todo continuation act
   assert.match(providerText, /Run the focused regression test/u);
 });
 
+test("Kestrel agent context builder exposes the interactive visible todo wait action", () => {
+  const context = buildKestrelAgentContext({
+    reactState: {},
+    retryContext: {
+      failure: {
+        code: "DECISION_POLICY_FAILED",
+        message: "Visible checklist still has open work.",
+        schemaCategory: "visible_todos",
+      },
+      requiredCorrection: {
+        visibleTodoBeforeFinalize: {
+          action: "advance_close_or_wait_on_user_before_finalize",
+          openItem: {
+            id: "verify-answer",
+            text: "Verify the user's answer",
+            status: "pending",
+          },
+          forbiddenActionWhileOpen: "kestrel_finalize by itself",
+          allowedNextActions: [
+            "call a workspace tool that directly advances the open item",
+            "if the open item cannot advance until the user replies, call kestrel_ask_user with the direct question and leave the item open across the wait",
+            "if observed evidence already proves the item complete, combine kestrel_todo_update marking that exact item done with an evidence note and kestrel_finalize",
+          ],
+        },
+      },
+    },
+    eventPayload: { message: "Continue." },
+    eventType: "user.message",
+    goal: "Run the interactive answer check.",
+    interactionMode: "chat",
+  });
+
+  const providerText = JSON.stringify(context.messages);
+  assert.match(providerText, /advance_close_or_wait_on_user_before_finalize/u);
+  assert.match(providerText, /call kestrel_ask_user with the direct question/u);
+  assert.match(providerText, /leave the item open across the wait/u);
+});
+
 test("Kestrel agent context builder renders duplicate exec_command start correction", () => {
   const feedback = buildKestrelAgentValidationFeedbackMessage({
     code: "DECISION_POLICY_FAILED",

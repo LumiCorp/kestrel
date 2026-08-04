@@ -1377,6 +1377,16 @@ test("ask_user resume does not carry stale agent goal when transcript lacks a ta
     },
     reactState: {
       goal: "Stale legacy task",
+      visibleTodos: {
+        objective: "Wait for the user's answer.",
+        items: [
+          {
+            id: "verify-answer",
+            text: "Verify the user's answer",
+            status: "pending",
+          },
+        ],
+      },
       modelTranscript: {
         version: 1,
         windowId: 1,
@@ -1407,10 +1417,15 @@ test("ask_user resume does not carry stale agent goal when transcript lacks a ta
 
   const react = transition.statePatch?.agent as Record<string, unknown>;
   const lastActionResult = react.lastActionResult as Record<string, unknown>;
+  const visibleTodos = react.visibleTodos as {
+    items: Array<{ id: string; status: string }>;
+  };
   assert.equal(transition.status, "RUNNING");
   assert.equal(transition.nextStepAgent, "agent.loop");
   assert.equal(lastActionResult.kind, "user_reply");
   assert.equal(lastActionResult.resumeGoal, undefined);
+  assert.equal(visibleTodos.items[0]?.id, "verify-answer");
+  assert.equal(visibleTodos.items[0]?.status, "pending");
 });
 
 test("exec.dispatch records processor-owned ask_user waits", async () => {
@@ -1422,6 +1437,16 @@ test("exec.dispatch records processor-owned ask_user waits", async () => {
         version: 1,
         state: {
           agent: {
+            visibleTodos: {
+              objective: "Inspect the selected file.",
+              items: [
+                {
+                  id: "inspect-file",
+                  text: "Inspect the file selected by the user",
+                  status: "pending",
+                },
+              ],
+            },
             nextAction: {
               kind: "ask_user",
               prompt: "Which file should I inspect?",
@@ -1454,6 +1479,9 @@ test("exec.dispatch records processor-owned ask_user waits", async () => {
   const commandProcessor = react.commandProcessor as Record<string, unknown>;
   const lastCheckpoint = commandProcessor.lastCheckpoint as Record<string, unknown>;
   const workingPlan = react.workingPlan as Record<string, unknown>;
+  const visibleTodos = react.visibleTodos as {
+    items: Array<{ id: string; status: string }>;
+  };
 
   assert.equal(transition.status, "WAITING");
   assert.equal(transition.nextStepAgent, "agent.exec.wait_user");
@@ -1462,6 +1490,8 @@ test("exec.dispatch records processor-owned ask_user waits", async () => {
   assert.equal(exec.waitingForUser, undefined);
   assert.equal(lastCheckpoint.substate, "wait_user");
   assert.equal(workingPlan.status, "waiting");
+  assert.equal(visibleTodos.items[0]?.id, "inspect-file");
+  assert.equal(visibleTodos.items[0]?.status, "pending");
 });
 
 test("exec.finalize converts handoff_to_build into a user reply wait", async () => {

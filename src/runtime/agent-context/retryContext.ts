@@ -157,6 +157,8 @@ function retryInstructionForAction(action: string | undefined): string | undefin
       return "Continue with an available tool action, especially any availableToolHints in the retry details, ask for a concrete decision, or use a concrete external-blocker reason.";
     case "advance_or_close_visible_todo_before_finalize":
       return "Do not call kestrel_finalize by itself again while the named visible todo remains open. Call a workspace tool that directly advances that item, or, only when observed evidence already proves it complete, call kestrel_todo_update to mark that exact item done with an evidence note in the same response as kestrel_finalize.";
+    case "advance_close_or_wait_on_user_before_finalize":
+      return "Do not call kestrel_finalize by itself again while the named visible todo remains open. Call a workspace tool that directly advances that item; if the item cannot advance until the user replies, call kestrel_ask_user with the direct question and leave the item open across the wait; or, only when observed evidence already proves it complete, call kestrel_todo_update to mark that exact item done with an evidence note in the same response as kestrel_finalize.";
     case "call_finalize_with_user_facing_message":
       return "Call kestrel_finalize with status and a direct user-facing message.";
     case "call_available_tool":

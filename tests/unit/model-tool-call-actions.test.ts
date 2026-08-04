@@ -166,6 +166,15 @@ test("finalize control tool description stays prose closeout guidance", () => {
   assert.equal(normalized.assistantProgress, undefined);
 });
 
+test("ask_user description owns reply-dependent continuation", () => {
+  const registry = buildModelToolAliasRegistry(workspaceTools);
+  const askUserTool = registry.requestTools.find((tool) => tool.name === "kestrel_ask_user");
+
+  assert.match(askUserTool?.description ?? "", /response is required before the run can continue/u);
+  assert.match(askUserTool?.description ?? "", /leave that item open/u);
+  assert.match(askUserTool?.description ?? "", /Do not use kestrel\.finalize to pose that question/u);
+});
+
 test("cannot_satisfy description rejects unfinished build progress as a blocker", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools);
   const cannotSatisfyTool = registry.requestTools.find((tool) => tool.name === "kestrel_cannot_satisfy");
@@ -302,6 +311,9 @@ test("todo update description explains code-change notes without benchmark polic
     /Never use a todo item for closing todos, finalization, or reporting itself/u,
   );
   assert.match(todoTool?.description ?? "", /combine final completed updates with kestrel\.finalize/u);
+  assert.match(todoTool?.description ?? "", /cannot advance until the user replies/u);
+  assert.match(todoTool?.description ?? "", /leave it open and call kestrel\.ask_user/u);
+  assert.match(todoTool?.description ?? "", /do not call kestrel\.finalize/u);
   assert.doesNotMatch(todoTool?.description ?? "", /what must be true at the end/u);
   assert.doesNotMatch(todoTool?.description ?? "", /existing test file and assertion found when available/u);
   assert.doesNotMatch(todoTool?.description ?? "", /Command exited 0 is not enough/u);
