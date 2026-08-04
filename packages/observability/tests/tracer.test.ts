@@ -17,6 +17,7 @@ import {
   createTracer,
   InMemoryTraceProcessor,
   parseTraceContext,
+  parseTraceStartDirective,
 } from "../src/index.js";
 import { OpenTelemetryTraceExporter } from "../src/otel.js";
 
@@ -52,6 +53,7 @@ test("createTracer records Kestrel-native run traces", async () => {
   assert.equal(trace?.sessionId, "session-1");
   assert.equal(trace?.runId, "run-session-1");
   assert.equal(trace?.metadata["kestrel.actor_id"], "user-1");
+  assert.equal(trace?.metadata["kestrel.actor_name"], undefined);
   assert.equal(trace?.spans[0]?.status, "ok");
 });
 
@@ -73,6 +75,7 @@ test("OpenTelemetryTraceExporter exports real spans with correlation metadata", 
   assert.equal(spans[0]?.attributes["kestrel.agent_id"], "support-agent");
   assert.equal(spans[0]?.attributes["kestrel.session_id"], "session-2");
   assert.equal(spans[0]?.attributes["enduser.id"], "user-1");
+  assert.equal(spans[0]?.attributes["kestrel.actor_name"], undefined);
   assert.equal(spans[0]?.attributes["kestrel.outcome"], "ok");
 });
 
@@ -232,7 +235,7 @@ test("resume continues only an exact persisted trace context", async () => {
   assert.notEqual(span?.spanId, persisted.spanId);
 });
 
-test("a trace cannot settle while a nested span is still active", async () => {
+test("nested spans cannot outlive or be created after their parent", async () => {
   const tracer = createTracer();
   const trace = tracer.startTrace({
     agentId: "support-agent",
@@ -255,10 +258,53 @@ test("a trace cannot settle while a nested span is still active", async () => {
       "kestrel.result": "completed",
     },
   });
+  const descendant = child.startChild({
+    name: "sandbox.call",
+    kind: "sandbox",
+    attributes: {
+      "kestrel.sandbox_id": "sandbox-1",
+      "kestrel.result": "completed",
+    },
+  });
   assert.throws(() => trace.end(), /child span 'tool.call' is active/u);
+  assert.throws(
+    () => child.end(),
+    /span 'tool.call' while descendant span 'sandbox.call' is active/u,
+  );
+  descendant.end();
   child.end();
+  assert.throws(
+    () => trace.startSpan({
+      name: "late.sandbox",
+      kind: "sandbox",
+      parent: child.span,
+      attributes: {
+        "kestrel.sandbox_id": "sandbox-2",
+        "kestrel.result": "completed",
+      },
+    }),
+    /parent span 'tool.call' has ended/u,
+  );
   trace.end();
   await assert.doesNotReject(() => tracer.flush());
+});
+
+test("trace settlement rejects a mutated temporal tree", () => {
+  const tracer = createTracer();
+  const trace = startRunTrace(tracer);
+  const child = trace.root.startChild({
+    name: "tool.call",
+    kind: "tool",
+    attributes: {
+      "kestrel.tool_id": "weather.forecast",
+      "kestrel.retry_attempt": 0,
+      "kestrel.latency_ms": 5,
+      "kestrel.result": "completed",
+    },
+  });
+  child.end();
+  child.span.endedAt = "2999-01-01T00:00:00.000Z";
+  assert.throws(() => trace.end(), /outside parent span 'agent.run' lifecycle/u);
 });
 
 test("replay and fork start linked traces instead of continuing the source", async () => {
@@ -306,6 +352,90 @@ test("invalid context and untrusted baggage fail strict parsing", () => {
     }),
     /unknown field 'baggage'/u,
   );
+  assert.throws(
+    () => parseTraceStartDirective({
+      relationship: "replaay",
+      sourceContext: {
+        version: TRACE_CONTEXT_VERSION,
+        traceId: "0123456789abcdef0123456789abcdef",
+        spanId: "0123456789abcdef",
+        traceFlags: "01",
+      },
+    }),
+    /relationship is invalid/u,
+  );
+});
+
+test("invalid persisted directives are reported without changing agent behavior or creating links", async () => {
+  const processor = new InMemoryTraceProcessor();
+  const failures: unknown[] = [];
+  const tracer = createTracer({
+    processors: [processor],
+    resolveTraceStart() {
+      return {
+        relationship: "replaay",
+        sourceContext: {
+          version: TRACE_CONTEXT_VERSION,
+          traceId: "0123456789abcdef0123456789abcdef",
+          spanId: "0123456789abcdef",
+          traceFlags: "01",
+        },
+      } as never;
+    },
+    onExportError(error) { failures.push(error); },
+  });
+  const terminal = await tracer.wrapAgent(createFakeAgent()).run(
+    { sessionId: "session-invalid-directive", message: "hello" },
+    context,
+  );
+  await tracer.flush();
+
+  assert.equal(terminal.type, "run.completed");
+  assert.equal(failures.length, 1);
+  assert.equal(processor.traces[0]?.parentContext, undefined);
+  assert.deepEqual(processor.traces[0]?.links, []);
+});
+
+test("known numeric span attributes require exact non-negative values", () => {
+  const cases: ReadonlyArray<readonly [string, string | number, RegExp]> = [
+    ["kestrel.retry_attempt", "first", /retry_attempt.*non-negative safe integer/u],
+    ["kestrel.retry_attempt", -1, /retry_attempt.*non-negative safe integer/u],
+    ["kestrel.latency_ms", -0.1, /latency_ms.*non-negative finite number/u],
+    ["kestrel.input_tokens", 1.5, /input_tokens.*non-negative safe integer/u],
+    ["kestrel.output_tokens", -1, /output_tokens.*non-negative safe integer/u],
+  ];
+  for (const [key, value, expected] of cases) {
+    const trace = startRunTrace(createTracer());
+    const model = trace.root.startChild({
+      name: "model.call",
+      kind: "model",
+      attributes: {
+        "kestrel.provider_id": "openai",
+        "kestrel.model_id": "gpt-5",
+        "kestrel.retry_attempt": 0,
+        "kestrel.latency_ms": 10,
+        "kestrel.input_tokens": 1,
+        "kestrel.output_tokens": 1,
+        "kestrel.result": "completed",
+        [key]: value,
+      },
+    });
+    assert.throws(() => model.end(), expected);
+  }
+});
+
+test("OTEL export removes actor-name and PII metadata even if a trace is mutated", async () => {
+  const exporter = new InMemorySpanExporter();
+  const tracer = createTracer({ exporters: [new OpenTelemetryTraceExporter(exporter)] });
+  const trace = startRunTrace(tracer);
+  trace.trace.metadata["kestrel.actor_name"] = "Taylor";
+  trace.trace.metadata["kestrel.pii"] = "must-not-export";
+  trace.end();
+  await tracer.flush();
+
+  const attributes = exporter.getFinishedSpans()[0]?.attributes;
+  assert.equal(attributes?.["kestrel.actor_name"], undefined);
+  assert.equal(attributes?.["kestrel.pii"], undefined);
 });
 
 test("processor and exporter failures cannot change agent behavior", async () => {
@@ -323,6 +453,20 @@ test("processor and exporter failures cannot change agent behavior", async () =>
   await assert.doesNotReject(() => tracer.flush());
   assert.equal(failures.length, 2);
 });
+
+function startRunTrace(tracer: ReturnType<typeof createTracer>) {
+  return tracer.startTrace({
+    agentId: "support-agent",
+    profileId: "support",
+    name: "agent.run",
+    kind: "run",
+    attributes: {
+      "kestrel.agent_id": "support-agent",
+      "kestrel.profile_id": "support",
+      "kestrel.operation": "run",
+    },
+  });
+}
 
 function createFakeAgent(): KestrelAgent {
   return {

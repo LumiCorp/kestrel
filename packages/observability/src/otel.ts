@@ -3,6 +3,7 @@ import { SpanKind, SpanStatusCode, TraceFlags } from "@opentelemetry/api";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { SEMATTRS_ENDUSER_ID, SEMRESATTRS_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
+import { compactTraceAttributes as compactAttributes } from "./attributes.js";
 import type {
   KestrelTraceExporter,
   KestrelTracePrimitive,
@@ -174,17 +175,4 @@ function diffHrTime(startTime: [number, number], endTime: [number, number]): [nu
     nanos += 1_000_000_000;
   }
   return [Math.max(0, seconds), Math.max(0, nanos)];
-}
-
-function compactAttributes(
-  attributes: Record<string, KestrelTracePrimitive | undefined>,
-): Record<string, string | number | boolean> {
-  return Object.fromEntries(
-    Object.entries(attributes).flatMap(([key, value]) => {
-      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-        return [[key, value]];
-      }
-      return [];
-    }),
-  );
 }

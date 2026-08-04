@@ -21,6 +21,13 @@ const SPAN_ID_PATTERN = /^[0-9a-f]{16}$/u;
 const ZERO_TRACE_ID = "0".repeat(32);
 const ZERO_SPAN_ID = "0".repeat(16);
 const FIELDS = new Set(["version", "traceId", "spanId", "traceFlags"]);
+const DIRECTIVE_FIELDS = new Set(["relationship", "sourceContext"]);
+const TRACE_RELATIONSHIPS = new Set<TraceRelationship>([
+  "new",
+  "continue",
+  "replay",
+  "fork",
+]);
 
 export function parseTraceContext(value: unknown): TraceContext {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -72,28 +79,56 @@ export function createTraceContext(input: {
   });
 }
 
-export function resolveTraceStartDirective(
-  directive: TraceStartDirective | undefined,
-): {
-  context: TraceContext;
-  parentContext?: TraceContext | undefined;
-  linkContext?: TraceContext | undefined;
-} {
-  const relationship = directive?.relationship ?? "new";
-  const sourceContext = directive?.sourceContext === undefined
+export function parseTraceStartDirective(value: unknown): TraceStartDirective {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Trace start directive must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (!DIRECTIVE_FIELDS.has(key)) {
+      throw new Error(`Trace start directive contains unknown field '${key}'.`);
+    }
+  }
+  if (typeof record.relationship !== "string" || !TRACE_RELATIONSHIPS.has(record.relationship as TraceRelationship)) {
+    throw new Error("Trace start directive relationship is invalid.");
+  }
+  const relationship = record.relationship as TraceRelationship;
+  const sourceContext = record.sourceContext === undefined
     ? undefined
-    : parseTraceContext(directive.sourceContext);
+    : parseTraceContext(record.sourceContext);
   if (relationship === "new") {
     if (sourceContext !== undefined) {
       throw new Error("A new trace cannot provide sourceContext.");
     }
-    return { context: createTraceContext() };
+    return { relationship };
+  }
+  if (sourceContext === undefined) {
+    throw new Error(`Trace relationship '${relationship}' requires sourceContext.`);
+  }
+  return { relationship, sourceContext };
+}
+
+export function resolveTraceStartDirective(
+  directive: TraceStartDirective | undefined,
+): {
+  relationship: TraceRelationship;
+  context: TraceContext;
+  parentContext?: TraceContext | undefined;
+  linkContext?: TraceContext | undefined;
+} {
+  const parsedDirective = directive === undefined
+    ? { relationship: "new" as const }
+    : parseTraceStartDirective(directive);
+  const { relationship, sourceContext } = parsedDirective;
+  if (relationship === "new") {
+    return { relationship, context: createTraceContext() };
   }
   if (sourceContext === undefined) {
     throw new Error(`Trace relationship '${relationship}' requires sourceContext.`);
   }
   if (relationship === "continue") {
     return {
+      relationship,
       context: createTraceContext({
         traceId: sourceContext.traceId,
         traceFlags: sourceContext.traceFlags,
@@ -102,6 +137,7 @@ export function resolveTraceStartDirective(
     };
   }
   return {
+    relationship,
     context: createTraceContext({ traceFlags: sourceContext.traceFlags }),
     linkContext: sourceContext,
   };
