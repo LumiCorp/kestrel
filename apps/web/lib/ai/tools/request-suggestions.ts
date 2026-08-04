@@ -1,4 +1,10 @@
-import { Output, streamText, tool, type UIMessageStreamWriter } from "ai";
+import {
+  jsonSchema,
+  Output,
+  streamText,
+  tool,
+  type UIMessageStreamWriter,
+} from "ai";
 import { z } from "zod";
 import type { AuthSession } from "@/app/(auth)/auth";
 import {
@@ -8,6 +14,7 @@ import {
 import type { ArtifactSuggestion, ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
 import { resolveRequiredLanguageModel } from "../providers";
+import { webArtifactToolDescriptorCatalog } from "./artifact-tool-contracts";
 
 type RequestSuggestionsProps = {
   session: AuthSession | null;
@@ -25,15 +32,10 @@ export const requestSuggestions = ({
   modelId,
 }: RequestSuggestionsProps) =>
   tool({
-    description:
-      "Request writing suggestions for an existing document artifact. Only use this when the user explicitly asks to improve or get suggestions for a document they have already created. Never use for general questions.",
-    inputSchema: z.object({
-      documentId: z
-        .string()
-        .describe(
-          "The UUID of an existing document artifact that was previously created with createDocument"
-        ),
-    }),
+    description: requestSuggestionsDescriptor.description,
+    inputSchema: jsonSchema<{ documentId: string }>(
+      requestSuggestionsDescriptor.inputSchema,
+    ),
     execute: async ({ documentId }) => {
       if (!session?.user?.id) {
         throw createToolExecutionError("UNAUTHORIZED", "Unauthorized");
@@ -148,3 +150,11 @@ export const requestSuggestions = ({
       };
     },
   });
+
+const requestSuggestionsDescriptor = requiredDescriptor("requestSuggestions");
+
+function requiredDescriptor(toolId: string) {
+  const descriptor = webArtifactToolDescriptorCatalog.getDescriptor(toolId);
+  if (descriptor === undefined) throw new Error(`Missing descriptor '${toolId}'`);
+  return descriptor;
+}

@@ -5,6 +5,7 @@ import { sheetDocumentHandler } from "@/artifacts/sheet/server";
 import { textDocumentHandler } from "@/artifacts/text/server";
 import type { ArtifactKind } from "@/components/artifact";
 import type { ArtifactDocument, ChatMessage } from "../types";
+import { ARTIFACT_KINDS } from "../ai/tools/artifact-tool-contracts";
 import { saveArtifactDocument } from "./store";
 
 export type SaveDocumentProps = {
@@ -133,10 +134,4 @@ export const documentHandlersByArtifactKind: DocumentHandler[] = [
   sheetDocumentHandler,
 ];
 
-export const artifactKinds = [
-  "text",
-  "code",
-  "sheet",
-  "image",
-  "video",
-] as const;
+export const artifactKinds = ARTIFACT_KINDS;

@@ -12,7 +12,7 @@ export const internetResearchTool: SharedToolModule = {
         query: { type: "string" },
         topic: { type: "string" },
         model: { type: "string", enum: ["mini", "pro", "auto"] },
-        outputSchema: { type: "object" },
+        outputSchema: { type: "object", additionalProperties: true },
         citationFormat: { type: "string", enum: ["numbered", "mla", "apa", "chicago"] },
         waitForCompletion: { type: "boolean" },
         maxWaitMs: { type: "number", minimum: 1000, maximum: 120_000 },

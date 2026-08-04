@@ -17,8 +17,8 @@ import {
   createDefaultRecoveryToolResultNormalizers,
 } from "../../src/engine/recovery/RecoveryRegistries.js";
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
-import { AllowlistedToolGateway } from "../../src/io/ToolGateway.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 test("recovery interruption before decision persistence or action start fails closed", async () => {
   const primary = candidate("primary", "openai", "gpt-primary");
@@ -152,7 +152,7 @@ test("durable recovery review remains waiting across restart and resumes the exa
     const runtime = new Kestrel({
       store,
       modelGateway: gateway,
-      toolGateway: new AllowlistedToolGateway({}),
+      toolGateway: createTestToolGateway({}),
       recoveryRuntime: {
         policy,
         executionProfileFingerprint: "d".repeat(64),

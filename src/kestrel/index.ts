@@ -49,6 +49,73 @@ export type {
 } from "./contracts/model-io.js";
 export type { SessionRecord } from "./contracts/store.js";
 export {
+  JSON_VALUE_OUTPUT_SCHEMA_V1,
+  TOOL_ACTIVATION_VERSION,
+  TOOL_DESCRIPTOR_VERSION,
+  TOOL_SCHEMA_LIMITS_V1,
+  TOOL_SURFACE_SNAPSHOT_VERSION,
+  canonicalJson,
+  compileToolJsonSchemaV1,
+  createToolActivationRefV1,
+  createToolDescriptorV1,
+  createToolSurfaceSnapshotV1,
+  fingerprintToolScopeV1,
+  fingerprintToolSurfaceV1,
+  hashCanonical,
+  parseToolDescriptorV1,
+  parseToolDescriptorRefV1,
+  parseToolActivationRefV1,
+  parseToolSurfaceSnapshotV1,
+  toToolDescriptorRefV1,
+  validateToolJsonSchemaV1,
+} from "./contracts/tool-contract.js";
+export type {
+  ToolActivationRefV1,
+  ToolCapabilityContractV1,
+  ToolCapabilitySuitabilityV1,
+  ToolCostClassV1,
+  ToolDescriptorAuthoringV1,
+  ToolDescriptorRefV1,
+  ToolDescriptorV1,
+  ToolExecutionContractV1,
+  ToolFreshnessClassV1,
+  ToolGranularityV1,
+  ToolLatencyClassV1,
+  ToolPresentationContractV1,
+  ToolProtocolKindV1,
+  ToolRuntimeOutputContractV1,
+  ToolSchemaLimitsV1,
+  ToolSourceKindV1,
+  ToolSourceV1,
+  ToolSurfaceSnapshotV1,
+} from "./contracts/tool-contract.js";
+export { compileToolRegistryV1 } from "./contracts/tool-registry.js";
+export type {
+  CompiledToolRegistryV1,
+  ToolRegistrySourceAdapterV1,
+} from "./contracts/tool-registry.js";
+export {
+  AGENT_TOOL_RESULT_VERSION,
+  PREPARED_TOOL_CALL_VERSION,
+  RUN_TOOL_UPDATE_VERSION,
+  TOOL_EXECUTION_OUTCOME_VERSION,
+  parseAgentToolResultV2,
+  parsePreparedToolCallV1,
+  parseRunToolUpdateV2,
+  parseToolExecutionOutcomeV1,
+} from "./contracts/tool-invocation.js";
+export type {
+  AgentToolResultV2,
+  PreparedToolApprovalAuthorityV1,
+  PreparedToolCallOriginV1,
+  PreparedToolCallV1,
+  PreparedToolPolicyDispositionV1,
+  ResolvedModelToolIntentV1,
+  RunToolUpdateV2,
+  ToolExecutionOutcomeV1,
+  ToolExternalEffectStateV1,
+} from "./contracts/tool-invocation.js";
+export {
   RECOVERY_DECISION_VERSION,
   RECOVERY_POLICY_VERSION,
   RECOVERY_REVIEW_BINDING_VERSION,

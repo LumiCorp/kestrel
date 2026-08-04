@@ -7,8 +7,7 @@ import type {
   ToolCapabilityPolicy,
   ToolProviderDefinition,
   ToolProviderKey,
-} from "./types";
-
+} from "./types.js";
 function createDefaultPolicy(
   overrides: Partial<ToolCapabilityPolicy>,
 ): ToolCapabilityPolicy {
@@ -282,7 +281,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     capabilities: [
       createCapability({
         key: "searchKnowledgeDocuments",
-        runtimeName: "searchKnowledgeDocuments",
+        runtimeName: "kestrel_one.search_knowledge_documents",
         displayName: "Search Knowledge Documents",
         description:
           "Search uploaded knowledge documents for grouped, citation-ready evidence.",
@@ -360,7 +359,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     capabilities: [
       createCapability({
         key: "repository.read",
-        runtimeName: "githubRepositoryRead",
+        runtimeName: "kestrel_one.github_repository_read",
         displayName: "Read repository",
         description: "Clone and read an explicitly granted GitHub repository.",
         accessMode: "read",
@@ -368,7 +367,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "repository.push_agent_branch",
-        runtimeName: "githubPushAgentBranch",
+        runtimeName: "kestrel_one.github_push_agent_branch",
         displayName: "Push agent branch",
         description:
           "Push the current managed worktree to a Kestrel-owned agent branch in an explicitly granted repository.",
@@ -377,7 +376,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "pull_request.write",
-        runtimeName: "githubPullRequestWrite",
+        runtimeName: "kestrel_one.github_pull_request_create",
         displayName: "Create and update pull requests",
         description:
           "Create or update pull requests in an explicitly granted repository.",
@@ -386,7 +385,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "issue.write",
-        runtimeName: "githubIssueWrite",
+        runtimeName: "kestrel_one.github_issue_create",
         displayName: "Create and update issues",
         description:
           "Create or update issues in an explicitly granted repository.",
@@ -395,7 +394,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "merge.write",
-        runtimeName: "githubMergeWrite",
+        runtimeName: "kestrel_one.github_pull_request_merge",
         displayName: "Merge pull requests",
         description:
           "Merge an approved pull request in an explicitly granted repository.",
@@ -404,7 +403,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "release.write",
-        runtimeName: "githubReleaseWrite",
+        runtimeName: "kestrel_one.github_release_create",
         displayName: "Create releases",
         description: "Create a release in an explicitly granted repository.",
         accessMode: "write",
@@ -412,7 +411,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "workflow.dispatch",
-        runtimeName: "githubWorkflowDispatch",
+        runtimeName: "kestrel_one.github_workflow_dispatch",
         displayName: "Dispatch workflows",
         description:
           "Dispatch a selected workflow in an explicitly granted repository.",
@@ -445,7 +444,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     capabilities: [
       createCapability({
         key: "calendar.events.read",
-        runtimeName: "googleCalendarListEvents",
+        runtimeName: "kestrel_one.google_calendar_list_events",
         displayName: "List calendar events",
         description: "List events from the connected user's primary calendar.",
         accessMode: "read",
@@ -454,7 +453,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "calendar.events.create",
-        runtimeName: "googleCalendarCreateEvent",
+        runtimeName: "kestrel_one.google_calendar_create_event",
         displayName: "Create calendar events",
         description: "Create events on the connected user's primary calendar.",
         accessMode: "write",
@@ -466,7 +465,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "calendar.events.update",
-        runtimeName: "googleCalendarUpdateEvent",
+        runtimeName: "kestrel_one.google_calendar_update_event",
         displayName: "Update calendar events",
         description: "Update events on the connected user's primary calendar.",
         accessMode: "write",
@@ -478,7 +477,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "calendar.events.delete",
-        runtimeName: "googleCalendarDeleteEvent",
+        runtimeName: "kestrel_one.google_calendar_delete_event",
         displayName: "Delete calendar events",
         description:
           "Delete events from the connected user's primary calendar.",
@@ -491,7 +490,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "calendar.availability.subjects",
-        runtimeName: "googleCalendarListAvailabilitySubjects",
+        runtimeName: "kestrel_one.google_calendar_list_availability_subjects",
         displayName: "List availability subjects",
         description:
           "List Project teammates who opted in to free/busy sharing.",
@@ -501,7 +500,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "calendar.availability.read",
-        runtimeName: "googleCalendarCheckAvailability",
+        runtimeName: "kestrel_one.google_calendar_check_availability",
         displayName: "Check teammate availability",
         description:
           "Read normalized free/busy intervals for opted-in Project teammates.",
@@ -537,7 +536,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     capabilities: [
       createCapability({
         key: "send",
-        runtimeName: "email.send",
+        runtimeName: "kestrel_one.email_send",
         displayName: "Send email",
         description:
           "Send an external email from the organization's verified sender. Every message requires human approval; attachments are not supported.",
@@ -714,7 +713,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     capabilities: [
       createCapability({
         key: "outlook.mail.read",
-        runtimeName: "microsoft365ListMail",
+        runtimeName: "kestrel_one.microsoft_365_list_mail",
         displayName: "Read mail",
         description: "Find and read messages in the connected mailbox.",
         accessMode: "read",
@@ -723,7 +722,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "outlook.mail.send",
-        runtimeName: "microsoft365SendMail",
+        runtimeName: "kestrel_one.microsoft_365_send_mail",
         displayName: "Send mail",
         description: "Send mail from the connected mailbox with approval.",
         accessMode: "write",
@@ -732,7 +731,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "outlook.calendar.read",
-        runtimeName: "microsoft365ListEvents",
+        runtimeName: "kestrel_one.microsoft_365_list_events",
         displayName: "Read calendar",
         description: "List events from the connected user's calendar.",
         accessMode: "read",
@@ -741,7 +740,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "teams.chat.read",
-        runtimeName: "microsoft365ListChats",
+        runtimeName: "kestrel_one.microsoft_365_list_chats",
         displayName: "Read chats",
         description: "List and read the connected user's Teams chats.",
         accessMode: "read",
@@ -750,7 +749,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "teams.chat.send",
-        runtimeName: "microsoft365SendChatMessage",
+        runtimeName: "kestrel_one.microsoft_365_send_chat_message",
         displayName: "Send chat messages",
         description: "Send a Teams chat message with approval.",
         accessMode: "write",
@@ -759,7 +758,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "sharepoint.sites.search",
-        runtimeName: "microsoft365SearchSites",
+        runtimeName: "kestrel_one.microsoft_365_search_sites",
         displayName: "Find sites",
         description: "Find SharePoint sites available to the connected user.",
         accessMode: "read",
@@ -888,7 +887,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     capabilities: [
       createCapability({
         key: "projects.read",
-        runtimeName: "vercelProjectsList",
+        runtimeName: "kestrel_one.vercel_list_projects",
         displayName: "List projects",
         description:
           "Inspect projects available to the connected account or team.",
@@ -898,7 +897,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "deployments.read",
-        runtimeName: "vercelDeploymentsList",
+        runtimeName: "kestrel_one.vercel_list_deployments",
         displayName: "List deployments",
         description: "Inspect recent deployments and their delivery state.",
         accessMode: "read",
@@ -907,7 +906,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
       createCapability({
         key: "operations.read",
-        runtimeName: "vercelDeploymentEvents",
+        runtimeName: "kestrel_one.vercel_deployment_events",
         displayName: "Read deployment events",
         description:
           "Inspect bounded build and runtime events for one deployment.",
@@ -975,5 +974,56 @@ export function listToolRuntimeNames() {
     provider.capabilities
       .map((capability) => capability.runtimeName)
       .filter((runtimeName): runtimeName is string => Boolean(runtimeName)),
+  );
+}
+
+export interface ToolDescriptorRefResolverV1 {
+  getDescriptorRef(
+    runtimeName: string,
+  ): ToolDescriptorReferenceLikeV1 | undefined;
+}
+
+export interface ToolDescriptorReferenceLikeV1 {
+  toolId: string;
+  contractRevision: string;
+}
+
+export interface ResolvedToolProviderDescriptorV1 {
+  providerKey: ToolProviderKey;
+  capabilityKey: string;
+  runtimeName: string;
+  descriptorRef: ToolDescriptorReferenceLikeV1;
+}
+
+/**
+ * Resolve the Web App registry strictly as a policy overlay on the canonical
+ * runtime manifest. The overlay never owns schemas or handler identity.
+ */
+export function resolveToolProviderDescriptorRefs(
+  resolver: ToolDescriptorRefResolverV1,
+): ResolvedToolProviderDescriptorV1[] {
+  return TOOL_PROVIDER_REGISTRY.flatMap((provider) =>
+    provider.capabilities.flatMap((capability) => {
+      if (capability.runtimeName === null) return [];
+      const descriptorRef = resolver.getDescriptorRef(capability.runtimeName);
+      if (descriptorRef === undefined) {
+        throw new Error(
+          `Tool provider mapping '${provider.key}.${capability.key}' references missing runtime descriptor '${capability.runtimeName}'`,
+        );
+      }
+      if (descriptorRef.toolId !== capability.runtimeName) {
+        throw new Error(
+          `Tool provider mapping '${provider.key}.${capability.key}' diverges from descriptor '${descriptorRef.toolId}'`,
+        );
+      }
+      return [
+        Object.freeze({
+          providerKey: provider.key,
+          capabilityKey: capability.key,
+          runtimeName: capability.runtimeName,
+          descriptorRef,
+        }),
+      ];
+    }),
   );
 }

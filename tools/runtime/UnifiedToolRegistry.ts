@@ -1,4 +1,4 @@
-import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
+import type { ErrorObject, ValidateFunction } from "ajv";
 import path from "node:path";
 import { validateWorkspaceSkillPackage } from "@kestrel-agents/workspace-skills";
 
@@ -15,6 +15,12 @@ import type {
   McpServerConfig,
   McpStatusSnapshot,
 } from "../../src/mcp/contracts.js";
+import { compileMcpStatusSnapshotV1 } from "../../src/mcp/toolDescriptor.js";
+import {
+  compileToolJsonSchemaV1,
+  hashCanonical,
+  type ToolDescriptorV1,
+} from "../../src/kestrel/contracts/tool-contract.js";
 import {
   parseExecutionTicketAuthorization,
   parseHostedMcpContext,
@@ -94,27 +100,15 @@ interface WorkspaceSkillReadProgress {
   nextOffsetBytes: number;
 }
 
-const MCP_DEFAULT_CAPABILITY: ToolCapabilityMetadata = {
-  freshnessClass: "volatile",
-  latencyClass: "medium",
-  costClass: "metered",
-  executionClass: "external_side_effect",
-  capabilityClasses: [],
-  approvalCapabilities: ["mcp.invoke"],
-};
-
 const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set([
   "dialog.open",
   "dialog.send",
   "dialog.close",
 ]);
 export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
-  private readonly ajv = new Ajv({
-    allErrors: true,
-    strict: false,
-  });
   private readonly builtInToolSpecs: Map<string, ModelToolSpec>;
   private readonly builtInCapabilities: Map<string, CapabilityManifestItem>;
+  private readonly builtInDescriptors: Map<string, ToolDescriptorV1>;
   private readonly validatorCache = new Map<string, ValidateFunction>();
   private readonly builtInContext: SharedToolContext;
   private readonly mcpManager: McpToolProvider;
@@ -147,6 +141,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     this.builtInContext = withDefaultFileSystemPolicy(options.context);
 
     const builtInNames = defaultToolCatalog.list().map((tool) => tool.name);
+    this.builtInDescriptors = new Map(
+      defaultToolCatalog
+        .listDescriptors()
+        .map((descriptor) => [descriptor.toolId, descriptor] as const),
+    );
     this.builtInToolSpecs = new Map(
       defaultToolCatalog
         .toModelTools(builtInNames)
@@ -176,7 +175,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   async refresh(): Promise<McpStatusSnapshot> {
-    this.mcpStatus = await this.mcpManager.refresh();
+    this.mcpStatus = compileMcpStatusSnapshotV1(
+      await this.mcpManager.refresh(),
+    );
     this.initialized = true;
     return this.getMcpStatus();
   }
@@ -236,7 +237,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       servers: [],
       hostedGateway: connection,
     });
-    const snapshot = await manager.refresh();
+    const snapshot = compileMcpStatusSnapshotV1(await manager.refresh());
     this.assertHostedToolNamesSafe(snapshot);
     this.hostedMcpScopes.set(grantId, {
       manager,
@@ -326,6 +327,16 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     await this.mcpManager.assertHealthy();
   }
 
+  getDescriptor(
+    name: string,
+    options: ToolRegistryListOptions = {},
+  ): ToolDescriptorV1 | undefined {
+    return (
+      this.builtInDescriptors.get(name) ??
+      this.resolveExposedMcpTool(name, options.runContext)?.descriptor
+    );
+  }
+
   getModelTools(options: ToolRegistryListOptions = {}): ModelToolSpec[] {
     const tools: ModelToolSpec[] = [];
     const scopedContext = this.resolveScopedContext(options.runContext);
@@ -354,13 +365,16 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const mcpTool = mcpStatus.tools.find(
         (tool) => tool.namespacedToolName === name,
       );
-      if (mcpTool === undefined || mcpTool.presentation === undefined) {
+      if (mcpTool?.descriptor === undefined) {
         continue;
       }
       tools.push({
-        name: mcpTool.namespacedToolName,
-        description: mcpTool.description,
-        inputSchema: mcpTool.inputSchema,
+        name: mcpTool.descriptor.toolId,
+        description: mcpTool.descriptor.description,
+        inputSchema: mcpTool.descriptor.inputSchema,
+        ...(mcpTool.descriptor.modelOutputContract !== undefined
+          ? { outputContract: mcpTool.descriptor.modelOutputContract }
+          : {}),
       });
     }
 
@@ -408,28 +422,27 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const mcpTool = mcpStatus.tools.find(
         (tool) => tool.namespacedToolName === name,
       );
-      if (mcpTool === undefined || mcpTool.presentation === undefined) {
+      if (mcpTool?.descriptor === undefined) {
         continue;
       }
+      const capability = mcpTool.descriptor.capability;
+      const presentation = mcpTool.descriptor.presentation;
       manifest.push({
-        name: mcpTool.namespacedToolName,
-        description: mcpTool.description,
-        freshnessClass: MCP_DEFAULT_CAPABILITY.freshnessClass,
-        latencyClass: MCP_DEFAULT_CAPABILITY.latencyClass,
-        costClass: MCP_DEFAULT_CAPABILITY.costClass,
-        executionClass: MCP_DEFAULT_CAPABILITY.executionClass,
-        ...(mcpTool.presentation.allowedInteractionModes !== undefined
+        name: mcpTool.descriptor.toolId,
+        description: mcpTool.descriptor.description,
+        freshnessClass: capability.freshnessClass,
+        latencyClass: capability.latencyClass,
+        costClass: capability.costClass,
+        executionClass: capability.executionClass,
+        ...(capability.allowedInteractionModes !== undefined
           ? {
               allowedInteractionModes: [
-                ...mcpTool.presentation.allowedInteractionModes,
+                ...capability.allowedInteractionModes,
               ],
             }
           : {}),
-        capabilityClasses: [...mcpTool.presentation.capabilityClasses],
-        approvalCapabilities:
-          mcpTool.presentation.approvalMode === "auto"
-            ? []
-            : [...(MCP_DEFAULT_CAPABILITY.approvalCapabilities ?? [])],
+        capabilityClasses: [...capability.capabilityClasses],
+        approvalCapabilities: [...(capability.approvalCapabilities ?? [])],
         ...(mcpTool.serverId === "kestrel-one-hosted" && hostedMcpGrantId !== undefined
           ? {
               approvalAuthority: {
@@ -438,11 +451,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               },
             }
           : {}),
-        displayName: mcpTool.presentation.displayName,
-        aliases: [...mcpTool.presentation.aliases],
-        keywords: [...mcpTool.presentation.keywords],
-        provider: mcpTool.presentation.provider,
-        toolFamily: mcpTool.presentation.toolFamily,
+        displayName: presentation.displayName,
+        aliases: [...presentation.aliases],
+        keywords: [...presentation.keywords],
+        provider: presentation.provider,
+        toolFamily: presentation.toolFamily,
       });
     }
 
@@ -740,14 +753,14 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     name: string,
     schema: Record<string, unknown>,
   ): ValidateFunction {
-    const schemaKey = `${name}:${stringifySchema(schema)}`;
+    const schemaKey = `${name}:${hashCanonical(schema)}`;
     const cached = this.validatorCache.get(schemaKey);
     if (cached !== undefined) {
       return cached;
     }
 
     try {
-      const compiled = this.ajv.compile(schema);
+      const compiled = compileToolJsonSchemaV1(schema, { surface: "input" });
       this.validatorCache.set(schemaKey, compiled);
       return compiled;
     } catch (error) {
@@ -790,7 +803,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       available.add(name);
     }
     for (const tool of mcpStatus.tools) {
-      if (tool.presentation === undefined) {
+      if (tool.descriptor === undefined) {
         continue;
       }
       available.add(tool.namespacedToolName);
@@ -805,7 +818,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     const tool = this.resolveMcpSnapshot(runContext).tools.find(
       (candidate) => candidate.namespacedToolName === name,
     );
-    return tool?.presentation !== undefined ? tool : undefined;
+    return tool?.descriptor !== undefined ? tool : undefined;
   }
 
   private resolveMcpManager(
@@ -1572,10 +1585,6 @@ function asFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
-}
-
-function stringifySchema(schema: Record<string, unknown>): string {
-  return JSON.stringify(schema);
 }
 
 function toSchemaError(error: unknown): Error {
