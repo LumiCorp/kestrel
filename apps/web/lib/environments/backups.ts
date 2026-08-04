@@ -49,7 +49,7 @@ import {
 
 const MAX_BACKUP_BYTES = 256 * 1024 * 1024;
 const BACKUP_EXECUTION_OWNERSHIP_KEY = "backupExecutionOwnership";
-const DEFAULT_WORKSPACE_PROFILE_ID = "kestrel-one";
+const DEFAULT_WORKSPACE_PROFILE_ID = "kestrel";
 type BackupExecutionOwnership = "parent_operation" | "queue";
 
 export async function createWorkspaceBackup(input: {

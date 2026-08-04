@@ -95,7 +95,7 @@ const runnerClient = new KestrelClient({
 	},
 });
 try {
-	const profile = await runnerClient.getProfile("kestrel-one", {
+	const profile = await runnerClient.getProfile("kestrel", {
 		actor: {
 			actorId: identity.actorId,
 			actorType: "end_user",

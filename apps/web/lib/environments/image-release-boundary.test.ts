@@ -143,3 +143,44 @@ test("hosted Environment images have distinct revisioned release contracts", asy
     /Both\s+`KESTREL_ENVIRONMENT_ROUTER_IMAGE` and `KESTREL_WORKSPACE_RUNTIME_IMAGE`/u,
   );
 });
+
+test("hosted Workspace Runtime consumers request the canonical Kestrel profile", async () => {
+  const [
+    workspaceSmoke,
+    workspaceServer,
+    localCanary,
+    backupService,
+    environmentExample,
+    webReadme,
+  ] = await Promise.all([
+    readFile(
+      new URL("../../../workspace-runtime/scripts/image-smoke.sh", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../workspace-runtime/src/server.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../workspace-runtime/scripts/local-canary.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("./backups.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../.env.example", import.meta.url), "utf8"),
+    readFile(new URL("../../README.md", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(workspaceSmoke, /findById\(profiles, "kestrel"\)/u);
+  assert.doesNotMatch(workspaceSmoke, /findById\(profiles, "kestrel-one"\)/u);
+  assert.match(
+    workspaceServer,
+    /KESTREL_ONE_PROFILE_ID\?\.trim\(\) \|\| "kestrel"/u,
+  );
+  assert.match(localCanary, /getProfile\("kestrel",/u);
+  assert.equal(
+    backupService.includes('const DEFAULT_WORKSPACE_PROFILE_ID = "kestrel";'),
+    true,
+  );
+  assert.match(environmentExample, /^KESTREL_ONE_PROFILE_ID=kestrel$/mu);
+  assert.match(webReadme, /^KESTREL_ONE_PROFILE_ID=kestrel$/mu);
+});
