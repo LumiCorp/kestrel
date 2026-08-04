@@ -399,6 +399,24 @@ export function parseModelCapabilityDescriptorV1(
     ["json_object", "json_schema", "tool_contract"] as const,
     "model capability descriptor.structuredOutput.modes",
   );
+  const nativeToolCalling = requireBoolean(
+    tools.nativeToolCalling,
+    "model capability descriptor.tools.nativeToolCalling",
+  );
+  const parallelToolCalls = requireBoolean(
+    tools.parallelToolCalls,
+    "model capability descriptor.tools.parallelToolCalls",
+  );
+  if (parallelToolCalls && !nativeToolCalling) {
+    throw new Error(
+      "model capability descriptor.tools.parallelToolCalls requires nativeToolCalling",
+    );
+  }
+  if (structuredModes.includes("tool_contract") && !nativeToolCalling) {
+    throw new Error(
+      "model capability descriptor structured output mode 'tool_contract' requires nativeToolCalling",
+    );
+  }
   const reasoningModes = parseUniqueEnums(
     record.reasoningModes,
     ["off", "summary", "provider_visible"] as const,
@@ -430,14 +448,8 @@ export function parseModelCapabilityDescriptorV1(
   return deepFreeze({
     version: MODEL_CAPABILITY_DESCRIPTOR_VERSION,
     tools: {
-      nativeToolCalling: requireBoolean(
-        tools.nativeToolCalling,
-        "model capability descriptor.tools.nativeToolCalling",
-      ),
-      parallelToolCalls: requireBoolean(
-        tools.parallelToolCalls,
-        "model capability descriptor.tools.parallelToolCalls",
-      ),
+      nativeToolCalling,
+      parallelToolCalls,
     },
     structuredOutput: { modes: structuredModes },
     streaming: requireBoolean(
@@ -1042,7 +1054,12 @@ function parseEndpoint(value: unknown): string {
   if (url.username.length > 0 || url.password.length > 0) {
     throw new Error("provider runtime configuration.endpoint must not contain credentials");
   }
-  url.hash = "";
+  if (url.search.length > 0) {
+    throw new Error("provider runtime configuration.endpoint must not contain a query string");
+  }
+  if (url.hash.length > 0) {
+    throw new Error("provider runtime configuration.endpoint must not contain a fragment");
+  }
   return url.toString().replace(/\/$/u, "");
 }
 

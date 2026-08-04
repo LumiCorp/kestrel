@@ -69,6 +69,10 @@ export interface ProviderConformanceFixtureV1 {
   fixtureId: string;
   request: ModelRequestV1;
   expectedProviderId: ModelProviderIdentityV1;
+  reasoningProbe: {
+    modes: readonly ["summary", "provider_visible"];
+    requestBodyField: "reasoning" | "thinking";
+  };
 }
 
 export interface ProviderAdapterRegistrationV1 {
@@ -80,15 +84,26 @@ export interface ProviderAdapterRegistrationV1 {
   conformanceFixture: ProviderConformanceFixtureV1;
 }
 
-const hostedCapabilities = capability({
+const openRouterCapabilities = capability({
   tools: { nativeToolCalling: true, parallelToolCalls: true },
-  structuredOutput: { modes: ["json_object", "json_schema", "tool_contract"] },
+  structuredOutput: { modes: ["json_object", "json_schema"] },
   streaming: true,
   reasoningModes: ["off", "summary", "provider_visible"],
   inputModalities: ["text", "image"],
   contextLimit: { kind: "model_specific" },
   outputLimit: { kind: "model_specific" },
-  cache: { read: true, write: true, scope: "provider" },
+  cache: { read: true, write: false, scope: "provider" },
+});
+
+const openAiCapabilities = capability({
+  tools: { nativeToolCalling: true, parallelToolCalls: true },
+  structuredOutput: { modes: ["json_object", "json_schema"] },
+  streaming: true,
+  reasoningModes: ["off", "summary", "provider_visible"],
+  inputModalities: ["text", "image"],
+  contextLimit: { kind: "model_specific" },
+  outputLimit: { kind: "model_specific" },
+  cache: { read: true, write: false, scope: "provider" },
 });
 
 const anthropicCapabilities = capability({
@@ -102,12 +117,45 @@ const anthropicCapabilities = capability({
   cache: { read: true, write: true, scope: "provider" },
 });
 
-const localCapabilities = capability({
+const ollamaCapabilities = capability({
   tools: { nativeToolCalling: true, parallelToolCalls: false },
   structuredOutput: { modes: ["json_object"] },
   streaming: true,
   reasoningModes: ["off"],
   inputModalities: ["text"],
+  contextLimit: { kind: "model_specific" },
+  outputLimit: { kind: "model_specific" },
+  cache: { read: false, write: false, scope: "none" },
+});
+
+const lmStudioCapabilities = capability({
+  tools: { nativeToolCalling: true, parallelToolCalls: false },
+  structuredOutput: { modes: ["json_object"] },
+  streaming: true,
+  reasoningModes: ["off"],
+  inputModalities: ["text"],
+  contextLimit: { kind: "model_specific" },
+  outputLimit: { kind: "model_specific" },
+  cache: { read: false, write: false, scope: "none" },
+});
+
+const lumiCapabilities = capability({
+  tools: { nativeToolCalling: true, parallelToolCalls: true },
+  structuredOutput: { modes: ["json_object", "json_schema"] },
+  streaming: true,
+  reasoningModes: ["off"],
+  inputModalities: ["text", "image"],
+  contextLimit: { kind: "model_specific" },
+  outputLimit: { kind: "model_specific" },
+  cache: { read: false, write: false, scope: "none" },
+});
+
+const runPodCapabilities = capability({
+  tools: { nativeToolCalling: true, parallelToolCalls: true },
+  structuredOutput: { modes: ["json_object", "json_schema"] },
+  streaming: true,
+  reasoningModes: ["off"],
+  inputModalities: ["text", "image"],
   contextLimit: { kind: "model_specific" },
   outputLimit: { kind: "model_specific" },
   cache: { read: false, write: false, scope: "none" },
@@ -120,14 +168,14 @@ export const MODEL_PROVIDER_ADAPTERS_V1: readonly ProviderAdapterRegistrationV1[
       "openrouter",
       "openrouter.env.v1",
       createOpenRouterModelGatewayFromEnv,
-      hostedCapabilities,
+      openRouterCapabilities,
     ),
     registration(
       "openai",
       "openai",
       "openai.env.v1",
       createOpenAiModelGatewayFromEnv,
-      hostedCapabilities,
+      openAiCapabilities,
     ),
     registration(
       "anthropic",
@@ -141,28 +189,28 @@ export const MODEL_PROVIDER_ADAPTERS_V1: readonly ProviderAdapterRegistrationV1[
       "openai",
       "ollama.env.v1",
       createOllamaModelGatewayFromEnv,
-      localCapabilities,
+      ollamaCapabilities,
     ),
     registration(
       "lmstudio",
       "openai",
       "lmstudio.env.v1",
       createLmStudioModelGatewayFromEnv,
-      localCapabilities,
+      lmStudioCapabilities,
     ),
     registration(
       "lumi",
       "openai",
       "lumi.managed.v1",
       createLumiModelGateway,
-      hostedCapabilities,
+      lumiCapabilities,
     ),
     registration(
       "runpod",
       "openai",
       "runpod.managed.v1",
       createRunPodModelGateway,
-      hostedCapabilities,
+      runPodCapabilities,
     ),
   ]);
 
@@ -213,6 +261,10 @@ function registration(
         responseFormat: "text",
       }),
       expectedProviderId: providerId,
+      reasoningProbe: Object.freeze({
+        modes: Object.freeze(["summary", "provider_visible"] as const),
+        requestBodyField: protocol === "anthropic" ? "thinking" : "reasoning",
+      }),
     }),
   });
 }

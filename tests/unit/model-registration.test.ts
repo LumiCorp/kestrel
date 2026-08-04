@@ -133,6 +133,21 @@ test("capability descriptors cover all routing-relevant capability classes", () 
     }),
     /tokens is forbidden/u,
   );
+  assert.throws(
+    () => parseModelCapabilityDescriptorV1({
+      ...capabilities(),
+      tools: { nativeToolCalling: false, parallelToolCalls: true },
+    }),
+    /parallelToolCalls requires nativeToolCalling/u,
+  );
+  assert.throws(
+    () => parseModelCapabilityDescriptorV1({
+      ...capabilities(),
+      tools: { nativeToolCalling: false, parallelToolCalls: false },
+      structuredOutput: { modes: ["tool_contract"] },
+    }),
+    /'tool_contract' requires nativeToolCalling/u,
+  );
 });
 
 test("provider runtime configuration binds exact identity, protocol, auth, and controls", () => {
@@ -153,6 +168,22 @@ test("provider runtime configuration binds exact identity, protocol, auth, and c
       endpoint: "https://secret@example.com/v1",
     }),
     /must not contain credentials/u,
+  );
+  for (const query of ["api_key=secret", "token=secret", "signature=secret"] as const) {
+    assert.throws(
+      () => parseProviderRuntimeConfigurationV1({
+        ...providerConfiguration(),
+        endpoint: `https://api.openai.com/v1?${query}`,
+      }),
+      /must not contain a query string/u,
+    );
+  }
+  assert.throws(
+    () => parseProviderRuntimeConfigurationV1({
+      ...providerConfiguration(),
+      endpoint: "https://api.openai.com/v1#credential-fragment",
+    }),
+    /must not contain a fragment/u,
   );
   assert.throws(
     () => parseProviderRuntimeConfigurationV1({
@@ -212,6 +243,43 @@ test("provider registry contains every exact shipped identity once", () => {
     lumi: createLumiModelGateway,
     runpod: createRunPodModelGateway,
   } as const;
+  const expectedCapabilities = {
+    openrouter: {
+      structuredOutput: ["json_object", "json_schema"],
+      reasoningModes: ["off", "summary", "provider_visible"],
+      cache: { read: true, write: false, scope: "provider" },
+    },
+    openai: {
+      structuredOutput: ["json_object", "json_schema"],
+      reasoningModes: ["off", "summary", "provider_visible"],
+      cache: { read: true, write: false, scope: "provider" },
+    },
+    anthropic: {
+      structuredOutput: ["tool_contract"],
+      reasoningModes: ["off", "summary", "provider_visible"],
+      cache: { read: true, write: true, scope: "provider" },
+    },
+    ollama: {
+      structuredOutput: ["json_object"],
+      reasoningModes: ["off"],
+      cache: { read: false, write: false, scope: "none" },
+    },
+    lmstudio: {
+      structuredOutput: ["json_object"],
+      reasoningModes: ["off"],
+      cache: { read: false, write: false, scope: "none" },
+    },
+    lumi: {
+      structuredOutput: ["json_object", "json_schema"],
+      reasoningModes: ["off"],
+      cache: { read: false, write: false, scope: "none" },
+    },
+    runpod: {
+      structuredOutput: ["json_object", "json_schema"],
+      reasoningModes: ["off"],
+      cache: { read: false, write: false, scope: "none" },
+    },
+  } as const;
   assert.deepEqual(
     MODEL_PROVIDER_ADAPTERS_V1.map((entry) => entry.providerId),
     MODEL_PROVIDER_IDENTITIES_V1,
@@ -228,6 +296,15 @@ test("provider registry contains every exact shipped identity once", () => {
     assert.equal(typeof entry.factory, "function");
     assert.equal(entry.factory, expectedFactories[providerId]);
     assert.equal(entry.capabilityDeclaration.version, MODEL_CAPABILITY_DESCRIPTOR_VERSION);
+    assert.deepEqual(
+      entry.capabilityDeclaration.structuredOutput.modes,
+      expectedCapabilities[providerId].structuredOutput,
+    );
+    assert.deepEqual(
+      entry.capabilityDeclaration.reasoningModes,
+      expectedCapabilities[providerId].reasoningModes,
+    );
+    assert.deepEqual(entry.capabilityDeclaration.cache, expectedCapabilities[providerId].cache);
   }
   assert.notEqual(
     getModelProviderAdapterV1("openai").factory,
@@ -237,6 +314,34 @@ test("provider registry contains every exact shipped identity once", () => {
     getModelProviderAdapterV1("lumi").factory,
     getModelProviderAdapterV1("runpod").factory,
   );
+});
+
+test("provider reasoning declarations match the request each registered adapter transports", async () => {
+  for (const entry of MODEL_PROVIDER_ADAPTERS_V1) {
+    for (const mode of entry.conformanceFixture.reasoningProbe.modes) {
+      let capturedBody: Record<string, unknown> | undefined;
+      const fetchImpl: typeof fetch = async (_input, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(JSON.stringify({ error: { message: "conformance probe complete" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      };
+      const gateway = createProviderProbeGateway(entry.providerId, fetchImpl);
+      await assert.rejects(
+        gateway.call({
+          ...entry.conformanceFixture.request,
+          reasoning: { mode },
+        }),
+      );
+      assert.ok(capturedBody !== undefined, `${entry.providerId} did not dispatch its reasoning probe`);
+      assert.equal(
+        Object.hasOwn(capturedBody, entry.conformanceFixture.reasoningProbe.requestBodyField),
+        entry.capabilityDeclaration.reasoningModes.includes(mode),
+        `${entry.providerId} ${mode} declaration disagrees with its transported request`,
+      );
+    }
+  }
 });
 
 test("shared OpenAI-compatible transport preserves Lumi and RunPod identities", async () => {
@@ -312,4 +417,41 @@ function registrationAuthoring(): ModelRegistrationAuthoringV1 {
     calibrationReference: "calibration:openai:gpt-test:1",
     latencyReference: "slo:openai:gpt-test:1",
   };
+}
+
+function createProviderProbeGateway(
+  providerId: (typeof MODEL_PROVIDER_IDENTITIES_V1)[number],
+  fetchImpl: typeof fetch,
+) {
+  const openAiCompatible = {
+    fetchImpl,
+    retryCount: 0,
+    envConfig: {
+      apiKey: "conformance-key",
+      baseUrl: `https://${providerId}.example`,
+      model: `${providerId}-conformance-fixture`,
+    },
+  };
+  switch (providerId) {
+    case "openrouter":
+      return createOpenRouterModelGatewayFromEnv(openAiCompatible);
+    case "openai":
+      return createOpenAiModelGatewayFromEnv(openAiCompatible);
+    case "anthropic":
+      return createAnthropicModelGatewayFromEnv({
+        ...openAiCompatible,
+        envConfig: {
+          ...openAiCompatible.envConfig,
+          version: "2023-06-01",
+        },
+      });
+    case "ollama":
+      return createOllamaModelGatewayFromEnv(openAiCompatible);
+    case "lmstudio":
+      return createLmStudioModelGatewayFromEnv(openAiCompatible);
+    case "lumi":
+      return createLumiModelGateway(openAiCompatible);
+    case "runpod":
+      return createRunPodModelGateway(openAiCompatible);
+  }
 }
