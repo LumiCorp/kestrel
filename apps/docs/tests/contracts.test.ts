@@ -69,7 +69,7 @@ test("release metadata names only real public packages with reference coverage",
   assert.deepEqual(names, releasedNames);
   assert.deepEqual([...new Set(manifests.map(({ version }) => version))], [DOCS_RELEASE.packages.version]);
 
-  for (const route of ["protocol", "sdk", "nextjs", "ai-sdk", "observability", "workspace-skills"]) {
+  for (const route of ["protocol", "sdk", "memory", "nextjs", "ai-sdk", "observability", "workspace-skills"]) {
     assert.ok(await getRenderedPageBySlug(["reference", route]), route);
   }
 });
