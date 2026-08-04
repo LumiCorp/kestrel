@@ -8,6 +8,7 @@ import {
   parseRecoveryModelCredentialReferenceV1,
   parseRecoveryPolicyV1,
 } from "../../src/kestrel/contracts/recovery.js";
+import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
 import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
@@ -2302,6 +2303,25 @@ function validateProfilePayload(value: unknown, path: string): void {
     ) {
       throw new Error(
         `${path}.recoveryPolicy.primaryModel must match the profile primary model projection`,
+      );
+    }
+  }
+  if (record.evaluationPolicy !== undefined) {
+    const evaluationPolicy = parseRuntimeEvaluationPolicyV1(
+      record.evaluationPolicy,
+    );
+    const projectedCredential =
+      record.modelCredential === undefined
+        ? undefined
+        : parseRecoveryModelCredentialReferenceV1(record.modelCredential);
+    if (
+      evaluationPolicy.judge.provider !== record.modelProvider ||
+      evaluationPolicy.judge.model !== record.model ||
+      JSON.stringify(evaluationPolicy.judge.credentialReference ?? null) !==
+        JSON.stringify(projectedCredential ?? null)
+    ) {
+      throw new Error(
+        `${path}.evaluationPolicy.judge must match the profile primary model projection`,
       );
     }
   }

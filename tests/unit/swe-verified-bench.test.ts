@@ -675,7 +675,7 @@ test("swe verified bench dry-runs one local instance without exposing oracle fie
     assert.match(jobInput, /Fix separability/u);
     assert.equal(parsedJobInput.profile, undefined);
     assert.equal(parsedJobInput.profileId, "swe-verified");
-    assert.equal(profilesFile.version, 8);
+    assert.equal(profilesFile.version, 9);
     assert.equal(profilesFile.profiles?.[0]?.id, "swe-verified");
     assert.equal(profilesFile.profiles?.[0]?.presetId, "cli_dev_local");
     assert.deepEqual(profilesFile.profiles?.[0]?.capabilityPacks, ["filesystem", "dev_shell"]);

@@ -14,6 +14,7 @@ import {
   type ShellPresetId,
 } from "./runtimeProfile.js";
 import { resolveProfileWithRecoveryPolicy } from "./recoveryPolicy.js";
+import { resolveProfileWithEvaluationPolicy } from "./evaluationPolicy.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
 
 export const KESTREL_POLICY_ID = "kestrel";
@@ -200,6 +201,7 @@ export interface KestrelOneProfileOverlay {
   model?: string | undefined;
   modelCredential?: TuiProfile["modelCredential"] | undefined;
   recoveryPolicy?: TuiProfile["recoveryPolicy"] | undefined;
+  evaluationPolicy?: TuiProfile["evaluationPolicy"] | undefined;
   recoveryModelCandidates?: RecoveryModelCandidateV1[] | undefined;
   modelCapabilities?: TuiProfile["modelCapabilities"] | undefined;
   /** @deprecated Harness economics is policy-owned and rejected by composition. */
@@ -311,6 +313,9 @@ export function composeKestrelOneProfile(
     ...(input.overlay?.recoveryPolicy !== undefined
       ? { recoveryPolicy: input.overlay.recoveryPolicy }
       : {}),
+    ...(input.overlay?.evaluationPolicy !== undefined
+      ? { evaluationPolicy: input.overlay.evaluationPolicy }
+      : {}),
     ...(input.overlay?.modelCapabilities !== undefined
       ? { modelCapabilities: input.overlay.modelCapabilities }
       : {}),
@@ -370,12 +375,13 @@ export function composeKestrelOneProfile(
       : {}),
   };
 
-  const resolvedProfile =
+  const recoveredProfile =
     profile.modelProvider !== undefined && profile.model !== undefined
       ? resolveProfileWithRecoveryPolicy(profile, {
           alternateModels: input.overlay?.recoveryModelCandidates,
         })
       : profile;
+  const resolvedProfile = resolveProfileWithEvaluationPolicy(recoveredProfile);
 
   return {
     profile: resolvedProfile,

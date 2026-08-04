@@ -17,6 +17,7 @@ import type {
   RecoveryModelCredentialReferenceV1,
   RecoveryPolicyV1,
 } from "../src/kestrel/contracts/recovery.js";
+import type { RuntimeEvaluationPolicyV1 } from "../src/kestrel/contracts/evaluation.js";
 import type { ManagedTaskWorktreeSetupSpec } from "../src/workspace/ManagedTaskWorktreeService.js";
 import type { ResolvedOciMcpEgressBindingV1 } from "../packages/mcp-security/src/index.js";
 import type {
@@ -212,6 +213,7 @@ export interface TuiProfile {
   model?: string | undefined;
   modelCredential?: ModelCredentialReference | undefined;
   recoveryPolicy?: RecoveryPolicyV1 | undefined;
+  evaluationPolicy?: RuntimeEvaluationPolicyV1 | undefined;
   modelCapabilities?:
     | {
         visionInputEnabled?: boolean | undefined;
@@ -283,6 +285,7 @@ export interface KestrelOneManagedProfileOverlay {
     | undefined;
   reasoning?: TuiProfile["reasoning"] | undefined;
   recoveryPolicy?: RecoveryPolicyV1 | undefined;
+  evaluationPolicy?: RuntimeEvaluationPolicyV1 | undefined;
   theme?: ThemeOverrides | undefined;
   default?: boolean | undefined;
 }
@@ -328,12 +331,19 @@ export interface ProfilesFileV8 {
   managedProfileOverlays: ProfilesFileV7["managedProfileOverlays"];
 }
 
+export interface ProfilesFileV9 {
+  version: 9;
+  profiles: TuiProfile[];
+  managedProfileOverlays: ProfilesFileV8["managedProfileOverlays"];
+}
+
 export type ProfilesFile =
   | ProfilesFileV4
   | ProfilesFileV5
   | ProfilesFileV6
   | ProfilesFileV7
-  | ProfilesFileV8;
+  | ProfilesFileV8
+  | ProfilesFileV9;
 
 export interface TuiSessionMeta {
   name: string;
