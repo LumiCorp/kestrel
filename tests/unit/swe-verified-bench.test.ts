@@ -291,13 +291,13 @@ test("swe verified bench strips oracle fields before building the Kestrel prompt
     /Do not finalize until git diff contains the non-empty patch you intend to submit\./u,
   );
   assert.equal((jobInput as { storeDriver?: unknown }).storeDriver, undefined);
-  assert.equal((jobInput as { profileId?: unknown }).profileId, "swe-verified");
+  assert.equal((jobInput as { profileId?: unknown }).profileId, "kestrel");
   assert.equal((jobInput as { profile?: unknown }).profile, undefined);
   assert.deepEqual(profile, {
-    id: "swe-verified",
-    label: "SWE Verified",
-    agent: "reference-react",
-    sessionPrefix: "swe-verified",
+    id: "kestrel",
+    label: "Kestrel",
+    agent: "kestrel",
+    sessionPrefix: "kestrel",
     shellKind: "cli",
     presetId: "cli_dev_local",
     capabilityPacks: ["filesystem", "dev_shell"],
@@ -370,7 +370,7 @@ test("swe verified bench strips oracle fields before building the Kestrel prompt
   assert.doesNotMatch(serialized, /FAIL_TO_PASS/u);
 });
 
-test("swe verified bench configures explicit runtime model for reference-react agent loop", () => {
+test("swe verified bench configures an explicit runtime model for the Kestrel agent loop", () => {
   const profile = buildSweVerifiedProfile({
     runtimeModelName: "minimax/minimax-m3",
   });
@@ -385,12 +385,12 @@ test("swe verified bench configures explicit runtime model for reference-react a
   assertSweVerifiedProfileContract(profile as unknown as Record<string, unknown>);
 });
 
-test("swe verified bench canonicalizes legacy profile overrides for developer execution", () => {
+test("swe verified bench canonicalizes profile overrides to Kestrel developer execution", () => {
   const profile = buildSweVerifiedProfile({
     profile: {
       id: "candidate",
       label: "Candidate",
-      agent: "reference-react",
+      agent: "kestrel",
       sessionPrefix: "candidate",
       defaultInteractionMode: "build",
       defaultActSubmode: "full_auto",
@@ -416,6 +416,8 @@ test("swe verified bench canonicalizes legacy profile overrides for developer ex
   });
 
   assert.equal(profile.shellKind, "cli");
+  assert.equal(profile.id, "kestrel");
+  assert.equal(profile.agent, "kestrel");
   assert.equal(profile.presetId, "cli_dev_local");
   assert.deepEqual(profile.capabilityPacks, ["filesystem", "dev_shell"]);
   assert.throws(
@@ -659,29 +661,21 @@ test("swe verified bench dry-runs one local instance without exposing oracle fie
     );
     const profilesFile = JSON.parse(
       readFileSync(path.join(kestrelHome, "profiles.json"), "utf8"),
-    ) as {
-      version?: number;
-      profiles?: Array<{
-        id?: string;
-        presetId?: string;
-        capabilityPacks?: string[];
-        devShell?: { enabled?: boolean };
-        toolAllowlist?: string[];
-      }>;
-    };
+    ) as { version?: number };
+    const persistedProfile = (await new ProfileStore(kestrelHome, {
+      managedEnvironmentPresetId: "cli_dev_local",
+    }).load())[0];
     const modelPolicy = JSON.parse(
       readFileSync(path.join(kestrelHome, "model-policy.json"), "utf8"),
     ) as { provider?: string; model?: string; modelByStage?: Record<string, string> };
     assert.match(jobInput, /Fix separability/u);
     assert.equal(parsedJobInput.profile, undefined);
-    assert.equal(parsedJobInput.profileId, "swe-verified");
-    assert.equal(profilesFile.version, 9);
-    assert.equal(profilesFile.profiles?.[0]?.id, "swe-verified");
-    assert.equal(profilesFile.profiles?.[0]?.presetId, "cli_dev_local");
-    assert.deepEqual(profilesFile.profiles?.[0]?.capabilityPacks, ["filesystem", "dev_shell"]);
-    assert.equal(profilesFile.profiles?.[0]?.devShell?.enabled, true);
-    assert.equal(profilesFile.profiles?.[0]?.toolAllowlist?.includes("free.weather.current"), false);
-    assert.equal(profilesFile.profiles?.[0]?.toolAllowlist?.includes("internet.search"), false);
+    assert.equal(parsedJobInput.profileId, "kestrel");
+    assert.equal(profilesFile.version, 10);
+    assert.equal(persistedProfile?.id, "kestrel");
+    assert.equal(persistedProfile?.presetId, "cli_dev_local");
+    assert.deepEqual(persistedProfile?.capabilityPacks, ["balanced", "filesystem", "dev_shell"]);
+    assert.equal(persistedProfile?.devShell?.enabled, true);
     assert.equal(modelPolicy.provider, "openrouter");
     assert.equal(modelPolicy.model, "minimax/minimax-m3");
     assert.equal(parsedJobInput.turn.metadata.workspace.workspaceRoot, "/testbed");
@@ -691,7 +685,7 @@ test("swe verified bench dry-runs one local instance without exposing oracle fie
   }
 });
 
-test("swe verified bench preserves custom profile execution and model policy through persistence", async () => {
+test("swe verified bench preserves Kestrel configuration overrides and model policy through persistence", async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "kestrel-swe-verified-custom-profile-"));
   try {
     const instancesJsonl = path.join(tmp, "instances.jsonl");
@@ -712,7 +706,7 @@ test("swe verified bench preserves custom profile execution and model policy thr
         profiles: [{
           id: "candidate",
           label: "Candidate",
-          agent: "reference-react",
+          agent: "kestrel",
           sessionPrefix: "candidate",
           defaultInteractionMode: "build",
           defaultActSubmode: "full_auto",
@@ -795,14 +789,12 @@ test("swe verified bench preserves custom profile execution and model policy thr
     );
     const persistedProfile = (await new ProfileStore(kestrelHome, {
       managedEnvironmentPresetId: "cli_dev_local",
-    }).load()).find((profile) => profile.id === "candidate");
+    }).load()).find((profile) => profile.id === "kestrel");
 
-    assert.equal(jobInput.profileId, "candidate");
+    assert.equal(jobInput.profileId, "kestrel");
     assert.equal(persistedProfile?.presetId, "cli_dev_local");
-    assert.deepEqual(persistedProfile?.capabilityPacks, ["filesystem", "dev_shell"]);
+    assert.deepEqual(persistedProfile?.capabilityPacks, ["balanced", "filesystem", "dev_shell"]);
     assert.equal(persistedProfile?.devShell?.enabled, true);
-    assert.equal(persistedProfile?.toolAllowlist?.includes("free.weather.current"), false);
-    assert.equal(persistedProfile?.toolAllowlist?.includes("internet.search"), false);
     assert.deepEqual(persistedProfile?.agentStageConfig?.modelByStage, {
       "agent.loop": "openai/gpt-5.4-mini",
       "agent.maintenance": "openai/gpt-5.4",

@@ -250,22 +250,20 @@ test("kestrel web runs quick chat-lane agent interactions against a fake model b
   };
   assert.equal(listedBody.type, "profile.listed");
   const availableProfiles = listedBody.payload?.profiles ?? [];
-  const selectedProfile =
-    availableProfiles.find((item) => item.id === "reference") ??
-    availableProfiles.find(
-      (item) =>
-        item.agent === "reference-react" &&
-        item.default === true &&
-        (item.modelProvider === "openrouter" || item.modelProvider === undefined),
-    );
+  const selectedProfile = availableProfiles.find(
+    (item) =>
+      item.agent === "kestrel" &&
+      item.default === true &&
+      (item.modelProvider === "openrouter" || item.modelProvider === undefined),
+  );
 
   assert.notEqual(
     selectedProfile,
     undefined,
-    `Expected an openrouter-backed reference-react profile, got ${JSON.stringify(availableProfiles)}`,
+    `Expected an openrouter-backed Kestrel profile, got ${JSON.stringify(availableProfiles)}`,
   );
   if (selectedProfile === undefined) {
-    throw new Error(`Expected an openrouter-backed reference-react profile, got ${JSON.stringify(availableProfiles)}`);
+    throw new Error(`Expected an openrouter-backed Kestrel profile, got ${JSON.stringify(availableProfiles)}`);
   }
   const profileId = selectedProfile.id;
   const greetingSessionId = `session-web-chat-greeting-${randomUUID()}`;

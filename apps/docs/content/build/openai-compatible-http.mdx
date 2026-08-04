@@ -47,7 +47,7 @@ curl -sS \
   "$KESTREL_RUNNER_SERVICE_URL/v1/models"
 ```
 
-The response lists `reference-react`. Requests may also use the accepted compatibility alias `reference-web`; both select the same Reference-agent implementation. Other configured profile IDs are rejected.
+The response lists the single compatibility model, `kestrel`. Other model IDs are rejected.
 
 Example response:
 
@@ -55,7 +55,7 @@ Example response:
 {
   "data": [
     {
-      "id": "reference-react",
+      "id": "kestrel",
       "object": "model"
     }
   ],
@@ -155,7 +155,7 @@ export async function POST(request: Request) {
 
 ```json
 {
-  "model": "reference-react",
+  "model": "kestrel",
   "messages": [
     {
       "role": "user",
@@ -169,17 +169,17 @@ export async function POST(request: Request) {
 Streamed response headers worth preserving:
 
 ```text
-x-kestrel-session-id: reference-session-001
+x-kestrel-session-id: kestrel-session-001
 x-kestrel-run-id: run_01workspacecopilot
 x-kestrel-thread-id: thread_01workspacecopilot
-x-kestrel-model-id: reference-react
+x-kestrel-model-id: kestrel
 ```
 
 ### Responses API
 
 ```json
 {
-  "model": "reference-react",
+  "model": "kestrel",
   "input": "Return machine readable status",
   "text": {
     "format": {
@@ -211,7 +211,7 @@ Example Responses API payload:
   "id": "resp_01workspacecopilot",
   "object": "response",
   "created_at": 1710000000,
-  "model": "reference-react",
+  "model": "kestrel",
   "status": "completed",
   "output": [
     {
@@ -229,7 +229,7 @@ Example Responses API payload:
   "output_text": "{\"status\":\"needs-review\"}",
   "metadata": {
     "kestrel": {
-      "session_id": "reference-session-001",
+      "session_id": "kestrel-session-001",
       "run_id": "run_01workspacecopilot"
     }
   }

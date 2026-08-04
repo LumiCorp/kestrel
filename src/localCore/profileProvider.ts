@@ -103,8 +103,7 @@ export async function resolveLocalCoreExecutionProfile(
         : "desktop_safe_local";
   } else {
     if (
-      request.profileId === LOCAL_CORE_DESKTOP_PROFILE_ID ||
-      request.profileId.startsWith("reference-web")
+      request.profileId === LOCAL_CORE_DESKTOP_PROFILE_ID
     ) {
       throw new Error(
         `Legacy profile '${request.profileId}' is available for historical inspection only.`,
@@ -122,8 +121,8 @@ export async function resolveLocalCoreExecutionProfile(
       throw new Error(`Profile '${request.profileId}' was not found.`);
     }
     profile =
-      request.client === "reference_web"
-        ? resolveReferenceWebProfile(selected)
+      request.client === "web"
+        ? resolveKestrelWebProfile(selected)
         : selected.id === KESTREL_ONE_POLICY_ID
           ? composeKestrelOneProfile({
               environmentPresetId:
@@ -150,7 +149,7 @@ export async function resolveLocalCoreExecutionProfile(
             }).profile
           : selected;
     environmentPresetId =
-      request.client === "reference_web"
+      request.client === "web"
         ? "web_balanced"
         : profile.presetId === "cli_dev_local"
           ? "cli_dev_local"
@@ -430,14 +429,10 @@ export function createLocalCoreProfileProvider(
   };
 }
 
-function resolveReferenceWebProfile(selected: TuiProfile): TuiProfile {
-  if (
-    selected.id === KESTREL_ONE_POLICY_ID ||
-    selected.agentProfileId === KESTREL_ONE_POLICY_ID ||
-    selected.id === LOCAL_CORE_DESKTOP_PROFILE_ID
-  ) {
+function resolveKestrelWebProfile(selected: TuiProfile): TuiProfile {
+  if (selected.id === LOCAL_CORE_DESKTOP_PROFILE_ID) {
     throw new Error(
-      `Profile '${selected.id}' is not selectable by the Reference React web harness.`,
+      `Profile '${selected.id}' is not selectable by the Kestrel web harness.`,
     );
   }
   return {

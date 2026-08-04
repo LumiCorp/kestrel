@@ -94,7 +94,7 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
   };
 
   return {
-    id: "reference-react",
+    id: "kestrel",
     entryStepAgent: AGENT_STEP_IDS.loop,
     steps: [
       {

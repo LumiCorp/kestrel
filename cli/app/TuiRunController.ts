@@ -744,7 +744,7 @@ export class TuiRunController {
 }
 
 function getEntryStepAgent(profile: TuiProfile): string {
-  if (profile.agent === "reference-react") {
+  if (profile.agent === "kestrel") {
     return AGENT_STEP_IDS.loop;
   }
 

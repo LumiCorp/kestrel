@@ -1625,7 +1625,7 @@ function createPreviewRuntimeThreadInspection(
       sessionId: "preview-session",
       title,
       status: isChild ? "WAITING" : "RUNNING",
-      agentProfileId: "reference",
+      agentProfileId: "kestrel",
       agentProfileLabel: "Kestrel build",
       ...(isChild ? { parentThreadId } : {}),
       activeRunId: isChild

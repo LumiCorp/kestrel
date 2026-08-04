@@ -2422,7 +2422,7 @@ test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn
 test("Kestrel-One profile exposes only model-visible collaborator dialogs", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dialog-profile-registry-"));
   const store = new ProfileStore(tempDir);
-  const profile = store.findById(await store.load(), "kestrel-one");
+  const profile = store.findById(await store.load(), "kestrel");
   assert.ok(profile);
   const registry = new UnifiedToolRegistry({
     allowlist: profile.toolAllowlist ?? [],

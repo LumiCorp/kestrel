@@ -110,7 +110,7 @@ const sdkExample = `import { createAgent } from "@kestrel-agents/sdk";
 
 const agent = createAgent({
   id: "project-agent",
-  profileId: "reference",
+  profileId: "kestrel",
   target: {
     kind: "remote",
     baseUrl: runnerUrl,

@@ -1674,7 +1674,7 @@ test("Local Core API owns default shell stores through client-backed adapters", 
       sessions: [{
         name: "shell",
         sessionId: "session-shell",
-        profileId: "reference",
+        profileId: "kestrel",
         createdAt: "2026-06-17T00:00:00.000Z",
         updatedAt: "2026-06-17T00:00:00.000Z",
         started: true,
@@ -1683,14 +1683,14 @@ test("Local Core API owns default shell stores through client-backed adapters", 
     assert.equal((await new SessionStore(home).load()).activeSessionName, "shell");
 
     const profiles = await new ProfileStore(home).load();
-    assert.equal(profiles.some((profile) => profile.id === "reference"), true);
+    assert.equal(profiles.some((profile) => profile.id === "kestrel"), true);
 
     await new HistoryStore(home).append({
       source: "runner",
       eventId: "event-1",
       sessionId: "session-shell",
       sessionName: "shell",
-      profileId: "reference",
+      profileId: "kestrel",
       timestamp: "2026-06-17T00:00:00.000Z",
       role: "assistant",
       text: "hello from Core",
@@ -1955,17 +1955,11 @@ test("Local Core registers a Core-owned Desktop execution profile resolved from 
             }
           : profile,
     );
-    await client.putJson("/v1/profiles", {
-      profiles: profilesWithLegacyDesktop,
-    });
-    const readableLegacyProfiles = await client.getJson(
-      "/v1/profiles",
-    ) as { profiles: Array<{ id?: string }> };
-    assert.equal(
-      readableLegacyProfiles.profiles.some(
-        (profile) => profile.id === LOCAL_CORE_DESKTOP_PROFILE_ID,
-      ),
-      true,
+    await assert.rejects(
+      client.putJson("/v1/profiles", {
+        profiles: profilesWithLegacyDesktop,
+      }),
+      /canonical Kestrel profile|non-canonical profile/u,
     );
     await assert.rejects(
       () =>
@@ -1978,10 +1972,6 @@ test("Local Core registers a Core-owned Desktop execution profile resolved from 
         error.statusCode === 409 &&
         /historical inspection only/u.test(error.message),
     );
-    await client.putJson("/v1/profiles", {
-      profiles: storedProfiles.profiles,
-    });
-
     await assert.rejects(
       () => client.patchSettings({
         modelPolicy: {
@@ -2429,7 +2419,7 @@ async function withTimeout<T>(
 
 async function resolveCliExecutionProfile(
   client: LocalCoreClient,
-  profileId = "reference",
+  profileId = "kestrel",
 ): Promise<string> {
   return (
     await client.resolveExecutionProfile({

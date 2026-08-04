@@ -10,9 +10,9 @@ async function main(): Promise<void> {
   }
 
   const profile: TuiProfile = {
-    id: "debug-reference-react",
-    label: "Debug Reference React",
-    agent: "reference-react",
+    id: "debug-kestrel",
+    label: "Debug Kestrel",
+    agent: "kestrel",
     sessionPrefix: "debug",
   };
 

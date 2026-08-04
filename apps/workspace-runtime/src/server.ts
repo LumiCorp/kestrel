@@ -1054,7 +1054,7 @@ function readConfig() {
     environmentId: required("KESTREL_ENVIRONMENT_ID"),
     machineId: required("FLY_MACHINE_ID"),
     ticketPublicKey: required("KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY"),
-    profileId: process.env.KESTREL_ONE_PROFILE_ID?.trim() || "kestrel-one",
+    profileId: process.env.KESTREL_ONE_PROFILE_ID?.trim() || "kestrel",
     controlPlaneUrl: required("KESTREL_CONTROL_PLANE_URL"),
     environmentGatewayUrl: required("KESTREL_ENVIRONMENT_GATEWAY_URL"),
     workspaceServiceToken: required("KESTREL_WORKSPACE_SERVICE_TOKEN"),

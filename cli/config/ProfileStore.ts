@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -47,6 +46,7 @@ import {
 import { resolveRuntimeProfileSelection } from "../../src/profile/runtimeProfile.js";
 import type {
   KestrelOneManagedProfileOverlay,
+  ProfilesFileV10,
   ProfilesFileV9,
   ToolQueueProfileConfig,
   TuiProfile,
@@ -61,6 +61,17 @@ import {
   extractResponseField,
   resolveLocalCoreStoreClient,
 } from "../localCoreStoreClient.js";
+import {
+  activateProfilesFileV10Migration,
+  createDefaultProfilesFileV10,
+  ensureProfilesFileV10Binding,
+  parseProfilesFileV10,
+  prepareProfilesFileV10Migration,
+  resolveProfilesFileV10Profile,
+  serializeProfilesFileV10,
+  updateProfilesFileV10FromProfile,
+  writeProfilesFileV10,
+} from "./ProfilesFileV10.js";
 
 const PROFILE_FILE_NAME = "profiles.json";
 const DEFAULT_PROFILE_GUARDRAILS: Partial<GuardrailConfig> = {
@@ -77,69 +88,6 @@ const DEFAULT_DELEGATION_POLICY = {
   allowAgentSpawn: false,
   maxConcurrentChildSessions: 2,
   maxDepth: 2,
-};
-
-function createDefaultCliProfile(input: {
-  id: string;
-  label: string;
-  sessionPrefix: string;
-  default: boolean;
-  extraToolAllowlist?: string[] | undefined;
-}): TuiProfile {
-  const resolved = resolveRuntimeProfileSelection({
-    shellKind: "cli",
-  });
-  const toolAllowlist = [
-    ...new Set([
-      ...resolved.toolAllowlist,
-      ...(input.extraToolAllowlist ?? []),
-    ]),
-  ];
-  return {
-    id: input.id,
-    label: input.label,
-    agent: "reference-react",
-    sessionPrefix: input.sessionPrefix,
-    shellKind: resolved.shellKind,
-    presetId: resolved.presetId,
-    capabilityPacks: [...resolved.capabilityPacks],
-    storeDriver: "auto",
-    approvalPolicyPackId: "dev",
-    modeSystemV2Enabled: true,
-    defaultInteractionMode: DEFAULT_INTERACTION_MODE,
-    defaultActSubmode: DEFAULT_ACT_SUBMODE,
-    toolAllowlist,
-    mcpServers: [],
-    toolQueue: { ...DEFAULT_PROFILE_TOOL_QUEUE },
-    guardrails: { ...DEFAULT_PROFILE_GUARDRAILS },
-    codeMode: resolved.codeMode,
-    devShell: resolved.devShell,
-    delegation: {
-      ...DEFAULT_DELEGATION_POLICY,
-    },
-    default: input.default,
-  };
-}
-
-const DEFAULT_PROFILES: TuiProfile[] = [
-  createDefaultCliProfile({
-    id: "reference",
-    label: "Reference React",
-    sessionPrefix: "reference",
-    default: true,
-  }),
-  createDefaultCliProfile({
-    id: KESTREL_ONE_POLICY_ID,
-    label: "Kestrel One",
-    sessionPrefix: KESTREL_ONE_POLICY_ID,
-    default: false,
-  }),
-];
-
-const LEGACY_PROFILE_ALIASES: Readonly<Record<string, string>> = {
-  "reference-openai": "reference",
-  "reference-anthropic": "reference",
-  [LEGACY_KESTREL_ONE_POLICY_ID]: KESTREL_ONE_POLICY_ID,
 };
 
 const LOCAL_ISOLATION_MIGRATION_NOTICE =
@@ -172,7 +120,7 @@ export class ProfileStore {
     | "cli_dev_local"
     | "workspace_hosted";
   private lastLoadNotices: string[] = [];
-  private loadedManagedProfileOverlays: ManagedProfileOverlays | undefined;
+  private loadedProfilesFileV10: ProfilesFileV10 | undefined;
 
   constructor(
     baseDir = resolveKestrelHomePath(),
@@ -217,113 +165,53 @@ export class ProfileStore {
 
     const raw = await this.readFile();
     if (raw === undefined) {
-      const profiles = this.resolveProfilesWithSharedModelPolicy(
-        this.createDefaultProfiles(),
+      const profilesFile = createDefaultProfilesFileV10(
+        this.managedEnvironmentPresetId,
       );
-      await this.save(profiles);
-      return profiles;
+      await writeProfilesFileV10(this.filePath, profilesFile);
+      return this.hydrateProfilesFileV10(profilesFile);
     }
-
-    let parsed: ParsedProfilesResult;
-    try {
-      parsed = parseProfilesFile(raw);
-    } catch (error) {
-      if (error instanceof ProfileSchemaVersionError) {
-        const profiles = this.resolveProfilesWithSharedModelPolicy(
-          this.createDefaultProfiles(),
-        );
-        await this.save(profiles);
-        return profiles;
-      }
-      throw error;
-    }
-    this.lastLoadNotices.push(...parsed.notices);
-    this.loadedManagedProfileOverlays = parsed.managedProfileOverlays ?? {};
-
-    if (
-      parsed.profiles.length === 0 &&
-      Object.keys(parsed.managedProfileOverlays ?? {}).length === 0
-    ) {
-      const profiles = this.resolveProfilesWithSharedModelPolicy(
-        this.createDefaultProfiles(),
+    const decoded = JSON.parse(raw) as { version?: unknown };
+    if (decoded.version === 10) {
+      const parsed = parseProfilesFileV10(raw);
+      const ensured = ensureProfilesFileV10Binding(
+        parsed,
+        this.managedEnvironmentPresetId,
       );
-      await this.save(profiles);
-      return profiles;
-    }
-
-    const persistedManagedProfile = parsed.profiles.find(
-      (profile) => isKestrelManagedProfileId(profile.id),
-    );
-    if (
-      parsed.sourceVersion < 7 &&
-      persistedManagedProfile !== undefined &&
-      persistedManagedProfile.presetId !== "workspace_hosted"
-    ) {
-      addLocalIsolationMigrationNotice(this.lastLoadNotices);
-    }
-    const managedOverlay =
-      parsed.managedProfileOverlays?.[
-        managedOverlayKey(this.managedEnvironmentPresetId)
-      ] ??
-      (persistedManagedProfile === undefined
-        ? undefined
-        : extractKestrelOneManagedOverlay(persistedManagedProfile));
-    const hydrated = parsed.profiles
-      .filter((profile) => isKestrelManagedProfileId(profile.id) === false)
-      .map((profile) => {
-        const migratedProfile = migrateGeneratedLocalProfile(
-          profile,
-          parsed.sourceVersion,
-          this.lastLoadNotices,
-        );
-        const normalized = applyProfileDefaults(
-          applyManagedProfileInvariants(migratedProfile),
-        );
-        if (
-          profile.agent === "reference-react" &&
-          profile.modeSystemV2Enabled !== true
-        ) {
-          this.lastLoadNotices.push(
-            `Migrated profile '${profile.id}' to mode-system v2 for the reference harness.`,
-          );
-        }
-        return normalized;
-      });
-    const managedProfile = createManagedKestrelOneProfile(
-      this.managedEnvironmentPresetId,
-      managedOverlay,
-    );
-    const profiles = this.resolveProfilesWithSharedModelPolicy(
-      [...hydrated, managedProfile],
-    );
-    if (
-      parsed.migrated ||
-      profilesChanged(
-        parsed.profiles.filter(
-          (profile) => isKestrelManagedProfileId(profile.id) === false,
-        ),
-        hydrated,
-      ) ||
-      JSON.stringify(
-        parsed.managedProfileOverlays?.[
-          managedOverlayKey(this.managedEnvironmentPresetId)
-        ] ?? {},
-      ) !==
-        JSON.stringify(extractKestrelOneManagedOverlay(managedProfile))
-    ) {
-      if (
-        parsed.sourceVersion === 4 ||
-        parsed.sourceVersion === 5 ||
-        parsed.sourceVersion === 6 ||
-        parsed.sourceVersion === 7 ||
-        parsed.sourceVersion === 8
-      ) {
-        await this.writeVersionedBackup(raw, parsed.sourceVersion);
+      if (serializeProfilesFileV10(ensured) !== serializeProfilesFileV10(parsed)) {
+        await writeProfilesFileV10(this.filePath, ensured);
       }
-      await this.save(profiles, parsed.managedProfileOverlays);
+      return this.hydrateProfilesFileV10(ensured);
     }
-
-    return profiles;
+    if (
+      typeof decoded.version !== "number" ||
+      Number.isInteger(decoded.version) === false ||
+      decoded.version < 2 ||
+      decoded.version > 9
+    ) {
+      const profilesFile = createDefaultProfilesFileV10(
+        this.managedEnvironmentPresetId,
+      );
+      await writeProfilesFileV10(this.filePath, profilesFile);
+      this.lastLoadNotices.push(
+        "Reset unsupported profiles.json schema to the canonical Kestrel profile.",
+      );
+      return this.hydrateProfilesFileV10(profilesFile);
+    }
+    const prepared = prepareProfilesFileV10Migration({
+      raw,
+      profilePath: this.filePath,
+    });
+    await activateProfilesFileV10Migration(prepared, this.filePath);
+    this.lastLoadNotices.push(
+      `Migrated profiles.json V${prepared.report.sourceVersion} to the canonical Kestrel profile.`,
+    );
+    return this.hydrateProfilesFileV10(
+      ensureProfilesFileV10Binding(
+        prepared.profilesFile,
+        this.managedEnvironmentPresetId,
+      ),
+    );
   }
 
   consumeLoadNotices(): string[] {
@@ -338,7 +226,7 @@ export class ProfileStore {
 
   async save(
     profiles: TuiProfile[],
-    preservedManagedProfileOverlays?: ManagedProfileOverlays,
+    _preservedManagedProfileOverlays?: ManagedProfileOverlays,
   ): Promise<void> {
     const core = resolveLocalCoreStoreClient(this.baseDir);
     if (core !== undefined) {
@@ -346,41 +234,32 @@ export class ProfileStore {
       return;
     }
 
-    const managedProfile = profiles.find(
-      (profile) => isKestrelManagedProfileId(profile.id),
+    const canonical = profiles.find(
+      (profile) => profile.id === KESTREL_ONE_POLICY_ID,
     );
-    const managedProfileOverlays: ManagedProfileOverlays = {
-      ...(preservedManagedProfileOverlays ??
-        this.loadedManagedProfileOverlays ??
-        {}),
-      ...(managedProfile !== undefined
-        ? {
-            [managedOverlayKey(this.managedEnvironmentPresetId)]:
-              extractKestrelOneManagedOverlay(managedProfile),
-          }
-        : {}),
-    };
-    const payload: ProfilesFileV9 = {
-      version: 9,
-      profiles: profiles
-        .filter((profile) => isKestrelManagedProfileId(profile.id) === false)
-        .map((profile) => sanitizeProfileForPersistence(profile)),
-      managedProfileOverlays,
-    };
-
-    await mkdir(this.baseDir, { recursive: true });
-    const temporaryPath =
-      `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(
-      temporaryPath,
-      `${JSON.stringify(payload, null, 2)}\n`,
-      {
-        encoding: "utf8",
-        mode: 0o600,
-      },
-    );
-    await rename(temporaryPath, this.filePath);
-    this.loadedManagedProfileOverlays = managedProfileOverlays;
+    if (canonical === undefined) {
+      throw new Error("profiles.json V10 requires the canonical Kestrel profile");
+    }
+    const nonCanonical = profiles.find((profile) => profile !== canonical);
+    if (nonCanonical !== undefined) {
+      throw new Error(
+        `profiles.json V10 rejects non-canonical profile '${nonCanonical.id}'`,
+      );
+    }
+    if (this.loadedProfilesFileV10 === undefined) {
+      await this.load();
+    }
+    const current = this.loadedProfilesFileV10;
+    if (current === undefined) {
+      throw new Error("profiles.json V10 could not be loaded for persistence");
+    }
+    const next = updateProfilesFileV10FromProfile({
+      current,
+      profile: canonical,
+      presetId: this.managedEnvironmentPresetId,
+    });
+    await writeProfilesFileV10(this.filePath, next);
+    this.loadedProfilesFileV10 = next;
   }
 
   getDefault(profiles: TuiProfile[]): TuiProfile {
@@ -405,14 +284,7 @@ export class ProfileStore {
   }
 
   findById(profiles: TuiProfile[], id: string): TuiProfile | undefined {
-    const direct = profiles.find((profile) => profile.id === id);
-    if (direct !== undefined) {
-      return direct;
-    }
-    const canonicalId = LEGACY_PROFILE_ALIASES[id];
-    return canonicalId === undefined
-      ? undefined
-      : profiles.find((profile) => profile.id === canonicalId);
+    return profiles.find((profile) => profile.id === id);
   }
 
   private async readFile(): Promise<string | undefined> {
@@ -427,38 +299,31 @@ export class ProfileStore {
     }
   }
 
-  private async writeVersionedBackup(
-    raw: string,
-    version: 4 | 5 | 6 | 7 | 8,
-  ): Promise<void> {
-    try {
-      await writeFile(`${this.filePath}.v${version}.bak`, raw, {
-        encoding: "utf8",
-        flag: "wx",
-      });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        throw error;
-      }
-    }
-  }
-
-  private createDefaultProfiles(): TuiProfile[] {
-    return [
-      ...DEFAULT_PROFILES.filter(
-        (profile) => isKestrelManagedProfileId(profile.id) === false,
-      ).map((profile) => structuredClone(profile)),
-      createManagedKestrelOneProfile(this.managedEnvironmentPresetId),
-    ];
+  private hydrateProfilesFileV10(value: ProfilesFileV10): TuiProfile[] {
+    const ensured = ensureProfilesFileV10Binding(
+      value,
+      this.managedEnvironmentPresetId,
+    );
+    this.loadedProfilesFileV10 = ensured;
+    return this.resolveProfilesWithSharedModelPolicy([
+      resolveProfilesFileV10Profile(
+        ensured,
+        this.managedEnvironmentPresetId,
+      ),
+    ]);
   }
 
   private resolveProfilesWithSharedModelPolicy(
     profiles: TuiProfile[],
   ): TuiProfile[] {
     const modelPolicy = this.modelPolicyStore.read();
-    return profiles.map((profile) =>
-      resolveProfileWithModelPolicy(profile, modelPolicy),
-    );
+    return profiles.map((profile) => {
+      const resolved = resolveProfileWithModelPolicy(profile, modelPolicy);
+      return {
+        ...resolved,
+        recoveryPolicy: resolveRecoveryPolicyForProfile(resolved),
+      };
+    });
   }
 }
 
@@ -643,7 +508,7 @@ function validateProfile(
   const id = readRequiredString(item, "id");
   const label = readRequiredString(item, "label");
   const agent = readRequiredString(item, "agent");
-  if (agent !== "reference-react") {
+  if (agent !== "kestrel" && agent !== "reference-react") {
     throw new Error(`Unsupported profile agent '${agent}' for profile '${id}'`);
   }
 
@@ -738,7 +603,7 @@ function validateProfile(
   return {
     id,
     label,
-    agent: "reference-react",
+    agent,
     sessionPrefix,
     ...(shellKind !== undefined ? { shellKind } : {}),
     ...(presetId !== undefined ? { presetId } : {}),
@@ -820,7 +685,7 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
     storeDriver: profile.storeDriver ?? "auto",
     approvalPolicyPackId: profile.approvalPolicyPackId ?? "dev",
     modeSystemV2Enabled:
-      profile.agent === "reference-react"
+      profile.agent === "kestrel" || profile.agent === "reference-react"
         ? true
         : (profile.modeSystemV2Enabled ?? false),
     defaultInteractionMode:

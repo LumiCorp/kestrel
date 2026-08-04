@@ -7,9 +7,9 @@ import {
   type ShellKind,
 } from "../profile/runtimeProfile.js";
 
-export const DEFAULT_WEB_PROFILE_ID = "reference-web";
-export const DEFAULT_WEB_PROFILE_LABEL = "Reference React (Web)";
-export const DEFAULT_WEB_AGENT_PROFILE_LABEL = "Reference React";
+export const DEFAULT_WEB_PROFILE_ID = "kestrel-web";
+export const DEFAULT_WEB_PROFILE_LABEL = "Kestrel (Web)";
+export const DEFAULT_WEB_AGENT_PROFILE_LABEL = "Kestrel";
 
 export function createWebDemoProfile(shellKind: ShellKind = "web"): TuiProfile {
   const resolved = resolveRuntimeProfileSelection({
@@ -27,9 +27,9 @@ export function createWebDemoProfile(shellKind: ShellKind = "web"): TuiProfile {
     id: DEFAULT_WEB_PROFILE_ID,
     label:
       shellKind === "desktop"
-        ? "Reference React (Desktop)"
+        ? "Kestrel (Desktop)"
         : DEFAULT_WEB_PROFILE_LABEL,
-    agent: "reference-react",
+    agent: "kestrel",
     sessionPrefix: DEFAULT_WEB_PROFILE_ID,
     agentProfileId: runtimeIdentity.agentProfileId,
     agentProfileLabel: runtimeIdentity.agentProfileLabel,

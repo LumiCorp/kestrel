@@ -135,7 +135,15 @@ const SPAN_STATUSES = new Set<RuntimeSpanStatusV1>([
   "cancelled",
 ]);
 const SENSITIVE_ATTRIBUTE_KEY =
-  /(?:^|[._-])(authorization|cookie|credential|password|prompt|response|secret|raw[_-]?payload|tool[_-]?payload|pii)(?:$|[._-])/iu;
+  /(?:^|[._-])(actor[_-]?name|authorization|cookie|credential|display[_-]?name|password|prompt|response|secret|raw[_-]?payload|tool[_-]?payload|pii|user[_-]?name)(?:$|[._-])/iu;
+const NON_NEGATIVE_INTEGER_ATTRIBUTES = new Set([
+  "kestrel.retry_attempt",
+  "kestrel.input_tokens",
+  "kestrel.output_tokens",
+]);
+const NON_NEGATIVE_NUMBER_ATTRIBUTES = new Set([
+  "kestrel.latency_ms",
+]);
 
 export const REQUIRED_RUNTIME_SPAN_ATTRIBUTES_V1: Readonly<
   Record<RuntimeSpanKindV1, readonly string[]>
@@ -280,6 +288,7 @@ export function parseRuntimeSpanV1(value: unknown): RuntimeSpanV1 {
     throw new Error("Runtime span cannot be its own parent.");
   }
   const attributes = parseAttributes(record.attributes, "Runtime span attributes");
+  assertKnownNumericAttributes(attributes, "Runtime span");
   for (const required of REQUIRED_RUNTIME_SPAN_ATTRIBUTES_V1[kind]) {
     if (attributes[required] === undefined) {
       throw new Error(`Runtime span kind '${kind}' requires attribute '${required}'.`);
@@ -363,6 +372,24 @@ function parseAttributes(
     parsed[key] = item;
   }
   return parsed;
+}
+
+function assertKnownNumericAttributes(
+  attributes: Record<string, RuntimeSpanAttributeV1>,
+  label: string,
+): void {
+  for (const key of NON_NEGATIVE_INTEGER_ATTRIBUTES) {
+    const value = attributes[key];
+    if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) < 0)) {
+      throw new Error(`${label} attribute '${key}' must be a non-negative safe integer.`);
+    }
+  }
+  for (const key of NON_NEGATIVE_NUMBER_ATTRIBUTES) {
+    const value = attributes[key];
+    if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) {
+      throw new Error(`${label} attribute '${key}' must be a non-negative finite number.`);
+    }
+  }
 }
 
 function requireTraceId(value: unknown, label: string): string {
