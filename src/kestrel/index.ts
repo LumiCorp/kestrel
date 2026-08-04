@@ -89,9 +89,13 @@ export type {
   ToolSourceV1,
   ToolSurfaceSnapshotV1,
 } from "./contracts/tool-contract.js";
-export { compileToolRegistryV1 } from "./contracts/tool-registry.js";
+export {
+  TOOL_REGISTRY_SOURCE_FAMILIES_V1,
+  compileToolRegistryV1,
+} from "./contracts/tool-registry.js";
 export type {
   CompiledToolRegistryV1,
+  ToolRegistrySourceFamilyV1,
   ToolRegistrySourceAdapterV1,
 } from "./contracts/tool-registry.js";
 export {

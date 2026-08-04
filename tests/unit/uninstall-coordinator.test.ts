@@ -998,6 +998,7 @@ function baseOperations(
     }),
     listManagedWorktrees: async () => [],
     resetDesktopPrivacy: async () => {},
+    shutdownLocalCore: async () => {},
   };
 }
 
