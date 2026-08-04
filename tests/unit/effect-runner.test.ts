@@ -147,6 +147,49 @@ test("Effect runner CONTINUE policy keeps running", async () => {
   assert.equal(results.find((result) => result.idempotencyKey === "k2")?.status, "DONE");
 });
 
+test("restart consumes a recorded tool result without repeating the effect", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let handlerCalls = 0;
+  registry.register("execute_tool_call", async () => {
+    handlerCalls += 1;
+    return { repeated: true };
+  });
+  await store.saveEffectResult("run-recorded", "session-recorded", {
+    idempotencyKey: "tool-recorded-result",
+    status: "DONE",
+    output: { recorded: true },
+    timestamp: "2026-08-03T00:00:00.000Z",
+  });
+
+  const runner = new InlineEffectRunner(store, registry);
+  const outcome = await runner.runEffects(
+    [{
+      runId: "run-recorded",
+      sessionId: "session-recorded",
+      stepIndex: 0,
+      type: "execute_tool_call",
+      payload: {
+        toolName: "test.external.recorded",
+        toolInput: { value: "once" },
+      },
+      idempotencyKey: "tool-recorded-result",
+      failurePolicy: "STOP",
+      status: "PENDING",
+      createdAt: "2026-08-03T00:00:00.000Z",
+    }],
+    {
+      runId: "run-recorded",
+      sessionId: "session-recorded",
+      stepIndex: 0,
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal(handlerCalls, 0);
+  assert.equal(store.getEffectResults()[0]?.status, "DONE");
+});
+
 test("Effect runner honors existing FAILED result and WAIT policy", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();

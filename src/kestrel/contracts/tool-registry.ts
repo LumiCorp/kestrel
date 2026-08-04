@@ -4,6 +4,22 @@ import {
   type ToolSourceKindV1,
 } from "./tool-contract.js";
 
+/**
+ * Every executable tool source family that must traverse the shared
+ * conformance harness. This list is intentionally closed: adding a supported
+ * source requires adding its conformance fixture in the same change.
+ */
+export const TOOL_REGISTRY_SOURCE_FAMILIES_V1 = Object.freeze([
+  "builtin",
+  "embedded",
+  "mcp.local",
+  "mcp.hosted",
+  "app.provider-overlay",
+] as const);
+
+export type ToolRegistrySourceFamilyV1 =
+  (typeof TOOL_REGISTRY_SOURCE_FAMILIES_V1)[number];
+
 export interface ToolRegistrySourceAdapterV1 {
   readonly adapterId: string;
   readonly sourceKind: ToolSourceKindV1;
