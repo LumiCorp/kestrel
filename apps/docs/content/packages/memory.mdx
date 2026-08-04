@@ -1,0 +1,104 @@
+---
+title: "@kestrel-agents/memory"
+summary: Govern memory reads with strict contracts, trusted bindings, provenance, and backend-independent retrieval.
+section: reference
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+Use this package when an application needs governed retrieval across Kestrel
+memory backends. It provides strict lifecycle, policy, read-binding, query,
+result, and provenance contracts together with a trusted `MemoryGateway`.
+
+## Install
+
+```bash
+pnpm add @kestrel-agents/memory@0.7.0
+```
+
+Node.js 20 or newer is required.
+
+## Core APIs
+
+| API | Purpose |
+| --- | --- |
+| `MemoryGateway` | validates trusted read authority before and after backend retrieval |
+| `InMemoryMemoryBackend` | provides the conforming local and test backend |
+| `parseMemoryReadBindingV1()` | parses the exact tenant, user, agent, task, namespace, and scope grant |
+| `parseMemoryQueryV1()` | parses the bounded model-supplied query without widening authority |
+| `createMemoryTierPolicyV1()` | creates a canonical namespace and lifecycle policy |
+
+## Query authorized memory
+
+```ts
+import {
+  InMemoryMemoryBackend,
+  MemoryGateway,
+  createMemoryTierPolicyV1,
+  parseMemoryQueryV1,
+} from "@kestrel-agents/memory";
+
+const policy = createMemoryTierPolicyV1({
+  tierPolicyId: "semantic-knowledge",
+  namespace: "semantic_knowledge",
+  writerAuthorities: ["knowledge-ingest"],
+  readerAuthorities: ["agent-runtime"],
+  sourceOfTruth: "hosted_knowledge_store",
+  retention: { mode: "indefinite" },
+  lifecyclePolicyId: "semantic-knowledge-lifecycle",
+});
+
+const backend = new InMemoryMemoryBackend({
+  backendId: "local-memory",
+  policyRevision: policy.revision,
+});
+
+const result = await new MemoryGateway().query({
+  context: {
+    tenantId: "acme",
+    userId: "user-1",
+    agentId: "agent-1",
+    taskId: "task-1",
+    issuerKind: "trusted_runtime",
+    issuerAuthorityId: "agent-runtime",
+    policyRevision: policy.revision,
+    now: "2026-08-04T00:00:00.000Z",
+  },
+  binding: {
+    version: "memory_read_binding_v1",
+    bindingId: "binding-1",
+    tenantId: "acme",
+    userId: "user-1",
+    agentId: "agent-1",
+    taskId: "task-1",
+    policyRevision: policy.revision,
+    permittedNamespaces: ["semantic_knowledge"],
+    permittedScopes: [{ kind: "tenant", tenantId: "acme" }],
+    documentAccess: { mode: "scope" },
+    issuer: { kind: "trusted_runtime", authorityId: "agent-runtime" },
+    issuedAt: "2026-08-04T00:00:00.000Z",
+  },
+  query: parseMemoryQueryV1({
+    version: "memory_query_v1",
+    queryId: "query-1",
+    namespace: "semantic_knowledge",
+    scope: { kind: "tenant", tenantId: "acme" },
+    text: "deployment policy",
+    limit: 10,
+  }),
+  backend,
+});
+```
+
+## Security boundary
+
+- The model supplies only the bounded query. It cannot widen the trusted read binding.
+- Bindings are exact to tenant, user, agent, task, policy revision, namespace, and scope.
+- Backends return source and evaluator provenance instead of a routing score.
+- Persisted and network values must pass the exported parsers before use.
+- Application code remains responsible for issuing bindings from trusted runtime authority.
+
+Read [Session memory](/build/adding-session-memory) for SDK-managed session state
+or [Security](/operate/security) for the broader runtime authority model.

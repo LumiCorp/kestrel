@@ -131,12 +131,12 @@ test("Kestrel One documentation uses the owned product routes", async () => {
 });
 
 test("released packages and compatibility are first-class public reference pages", async () => {
-  const routes = ["protocol", "sdk", "nextjs", "ai-sdk", "observability", "workspace-skills"];
+  const routes = ["protocol", "sdk", "memory", "nextjs", "ai-sdk", "observability", "workspace-skills"];
   for (const route of routes) assert.ok(await getRenderedPageBySlug(["reference", route]), route);
   assert.ok(await getRenderedPageBySlug(["reference", "compatibility"]));
   assert.deepEqual(
     DOCS_RELEASE.compatibility.map(({ surface }) => surface),
-    ["Runtime", "Protocol", "SDK", "Next.js", "AI SDK", "Observability", "Workspace skills", "CLI", "Desktop", "Kestrel One"],
+    ["Runtime", "Protocol", "SDK", "Memory", "Next.js", "AI SDK", "Observability", "Workspace skills", "CLI", "Desktop", "Kestrel One"],
   );
 });
 
