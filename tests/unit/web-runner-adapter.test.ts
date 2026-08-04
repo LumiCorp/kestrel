@@ -1311,6 +1311,16 @@ test("web adapter forwards control commands", async () => {
   });
   assert.equal(controlled.type, "operator.controlled");
 
+  const recoveryControlled = await adapter.sendControl({
+    type: "operator.control",
+    action: "reply",
+    threadId: "thread-main",
+    requestId: "request-recovery",
+    recoveryOptionId: "retry.primary",
+    message: "Selected recovery option: retry.primary",
+  });
+  assert.equal(recoveryControlled.type, "operator.controlled");
+
   const focused = await adapter.sendControl({
     type: "operator.control",
     action: "focus_thread",
@@ -1401,6 +1411,12 @@ test("web adapter forwards control commands", async () => {
   )?.payload as Record<string, unknown> | undefined;
   assert.equal("allowToolClasses" in (policyControl ?? {}), false);
   assert.equal("allowCapabilities" in (policyControl ?? {}), false);
+  const recoveryControl = transport.sent.find(
+    (item) =>
+      item.type === "operator.control" &&
+      (item.payload as Record<string, unknown>).requestId === "request-recovery",
+  )?.payload as Record<string, unknown> | undefined;
+  assert.equal(recoveryControl?.recoveryOptionId, "retry.primary");
   const recentControls = transport.sent
     .filter((item) => item.type === "operator.control")
     .slice(-2)
