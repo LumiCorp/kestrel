@@ -4,12 +4,14 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY apps/workspace-runtime/package.json apps/workspace-runtime/package.json
 COPY packages/environment-auth/package.json packages/environment-auth/package.json
+COPY packages/mcp-security/package.json packages/mcp-security/package.json
 COPY packages/sdk/package.json packages/sdk/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
 COPY packages/workspace-skills/package.json packages/workspace-skills/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/workspace-runtime apps/workspace-runtime
 COPY packages/environment-auth packages/environment-auth
+COPY packages/mcp-security packages/mcp-security
 COPY packages/sdk packages/sdk
 COPY packages/protocol packages/protocol
 COPY packages/workspace-skills packages/workspace-skills
