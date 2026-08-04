@@ -1,14 +1,23 @@
 ---
-title: 0.7 package release notes
-summary: Public package changes and integration requirements for the Kestrel 0.7.0 npm line.
+title: Kestrel 0.7 release notes
+summary: Desktop 0.7.0 availability and integration requirements for the public 0.7.0 package line.
 section: reference
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
-## 0.7.0
+## Kestrel Desktop 0.7.0
+
+- publishes the signed and notarized macOS arm64 application for macOS 13 or later
+- packages Desktop, Local Core, and the local PGlite database into one application
+- provides manual update checking, download, and explicit restart-and-install
+- blocks update installation while Desktop or Local Core work is active without cancelling that work
+
+[Download Kestrel Desktop 0.7.0](https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0) or read the [installation guide](/desktop/install).
+
+## Public packages 0.7.0
 
 - introduces the required explicit `assistantText` terminal-result field
 - documents Kestrel One as the hosted product centered on Threads and Projects
@@ -16,6 +25,6 @@ updatedAt: 2026-07-20
 - aligns CLI, Runtime, Protocol, SDK, Next.js, AI SDK, Observability, and Workspace Skills around one stable package line
 - organizes guidance around Desktop, Kestrel One, building applications, and operating deployments
 
-Desktop remains on its signed `0.6.0` release until the independently versioned Desktop artifacts are published and verified. Kestrel One remains invitation-managed.
+Desktop and the public packages happen to share the `0.7.0` version number, but their release gates and artifacts remain independent. Kestrel One remains invitation-managed.
 
 Read [Upgrading to 0.7](/build/upgrading-to-0-7) before changing a consumer.

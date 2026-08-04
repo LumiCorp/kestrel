@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="apps/docs/content/desktop/install.mdx">Download Kestrel Desktop</a> ·
+  <a href="https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0">Download Kestrel Desktop</a> ·
   <a href="https://docs.kestrelagents.dev">Explore the docs</a> ·
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
@@ -23,7 +23,8 @@
 <p align="center">
   <a href="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml"><img src="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1f6f5f.svg" alt="MIT license" /></a>
-  <a href="apps/docs/content/start/release-status.mdx"><img src="https://img.shields.io/badge/release-0.7.0-2f7d32.svg" alt="Kestrel packages 0.7.0" /></a>
+  <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/packages-0.7.0-2f7d32.svg" alt="Kestrel packages 0.7.0" /></a>
+  <a href="https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0"><img src="https://img.shields.io/badge/Desktop-0.7.0-245b78.svg" alt="Kestrel Desktop 0.7.0" /></a>
 </p>
 
 ## Kestrel Desktop
@@ -40,8 +41,8 @@ or assembling a presentation.
 You can follow along, review changes, answer questions, and redirect the work
 without leaving the project.
 
-[Learn about Kestrel Desktop](apps/docs/content/apps/desktop.mdx) ·
-[Download Kestrel Desktop](apps/docs/content/desktop/install.mdx)
+[Learn about Kestrel Desktop](https://docs.kestrelagents.dev/desktop) ·
+[Download Kestrel Desktop](https://github.com/LumiCorp/kestrel/releases/download/desktop-v0.7.0/Kestrel-0.7.0-mac-arm64.dmg)
 
 ## Kestrel One
 
@@ -73,10 +74,11 @@ through local or hosted environments.
 
 ## Get started with Kestrel Desktop
 
-Kestrel Desktop 0.6.0 is available for Macs with Apple silicon. Download the
+Kestrel Desktop 0.7.0 is available for Macs with Apple silicon. Download the
 application, connect the model you want to use, and open your first project.
 
-[Download Kestrel Desktop](apps/docs/content/desktop/install.mdx)
+[Download Kestrel Desktop 0.7.0](https://github.com/LumiCorp/kestrel/releases/download/desktop-v0.7.0/Kestrel-0.7.0-mac-arm64.dmg) ·
+[Read the install guide](https://docs.kestrelagents.dev/desktop/install)
 
 Kestrel One is currently available by organization invitation. Developers can
 also install the Kestrel SDK or work with the terminal from this repository.
