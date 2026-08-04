@@ -1,11 +1,11 @@
 ---
 title: Get Kestrel Desktop
-summary: Download Kestrel Desktop 0.6.0 for macOS arm64 and prepare for your first run.
+summary: Download Kestrel Desktop 0.7.0 for macOS arm64 and prepare for your first run.
 section: desktop
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 Kestrel Desktop packages the local runtime and its managed database into one application. You will not need to install PostgreSQL or run services from a source checkout.
@@ -14,17 +14,23 @@ Kestrel Desktop packages the local runtime and its managed database into one app
 
 ## Install the application
 
-The Desktop `0.6.0` macOS arm64 archive is published with the v0.6.0 release.
+The Desktop `0.7.0` DMG is published with the Desktop-specific `desktop-v0.7.0` release. It requires macOS 13 or later on Apple silicon.
 
-1. Download the macOS arm64 artifact above.
-2. Confirm that the version is `0.6.0` and read the release notes.
-3. Move Kestrel to your Applications folder.
-4. Open Kestrel and approve only the operating-system prompts described by the release notes.
+1. Download the macOS arm64 DMG above.
+2. Confirm that the version is `0.7.0` and read the release notes.
+3. Open the DMG and move Kestrel to your Applications folder.
+4. Open Kestrel from Applications. The release is signed with a Developer ID certificate, notarized by Apple, and accepted by Gatekeeper.
 
 <Outcome>
-  <p>After installing Kestrel 0.6.0, Desktop opens to provider setup. You should not be asked to configure a database, runner service, or repository checkout.</p>
+  <p>After installing Kestrel 0.7.0, Desktop opens to provider setup. You should not be asked to configure a database, runner service, or repository checkout.</p>
 </Outcome>
+
+## Update Desktop
+
+Choose **Kestrel → Check for Updates…** or open the Desktop update panel in Diagnostics. Updates are manual: Kestrel checks only when you ask, downloads only after confirmation, and installs only after you choose **Restart and Install**.
+
+If Desktop or Local Core work is active, Kestrel blocks the restart and leaves that work running. Finish the active work, then retry the installation. Kestrel does not cancel work to install an update.
 
 ## If the application does not open
 
-Return to the release notes and confirm that you downloaded the correct platform artifact. Do not disable operating-system security controls globally. If the documented platform-specific flow still fails, capture the warning and report it through the release issue tracker.
+Return to the [Desktop 0.7.0 release notes](https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0) and confirm that you downloaded the macOS arm64 DMG. Do not disable operating-system security controls globally. If the documented flow still fails, capture the warning and report it through the release issue tracker.
