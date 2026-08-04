@@ -8,7 +8,7 @@ export const REPO_TREE_BASE_URL = `${REPO_HTTP_URL}/tree/main`;
 
 export const SITE_TITLE = "Kestrel Docs";
 export const SITE_DESCRIPTION =
-  "Use Kestrel Desktop or build durable agents you can inspect, steer, and replay.";
+  "Install Kestrel Desktop, start with Kestrel One, use the CLI/TUI, or build with the TypeScript SDK.";
 export const SITE_ORIGIN = "https://docs.kestrelagents.dev";
 export const SITE_URL = new URL(SITE_ORIGIN);
 

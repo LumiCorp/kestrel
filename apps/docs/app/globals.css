@@ -283,11 +283,11 @@ a { color: inherit; }
 .suite-pathway p { max-width: 27rem; margin: 0.9rem 0 0; color: var(--ink-muted); font-size: 0.95rem; line-height: 1.55; }
 .suite-pathway > a { width: fit-content; display: inline-flex; align-items: center; gap: 0.8rem; margin-top: auto; padding-top: 0.8rem; border-bottom: 1px solid rgba(164,22,36,0.42); color: var(--brand-red-dark); font-weight: 600; text-decoration: none; }
 .suite-pathway > a:hover { border-bottom-color: currentColor; }
-.home-secondary-paths { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1px solid var(--line-strong); }
+.home-secondary-paths { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line-strong); }
 .home-secondary-paths > a { min-height: 7.6rem; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 1.4rem; padding: 1rem 2rem 1rem 0; text-decoration: none; }
 .home-secondary-paths > a + a { padding-left: 2rem; border-left: 1px solid var(--line); }
 .home-secondary-paths > a > svg { color: var(--ink-soft); }
-.home-secondary-paths span { display: grid; grid-template-columns: minmax(10rem, auto) 1fr; align-items: center; gap: 1.25rem; }
+.home-secondary-paths span { display: grid; grid-template-columns: 1fr; align-items: center; gap: 0.35rem; }
 .home-secondary-paths strong { font-family: var(--font-display), Fraunces, serif; font-size: 1.25rem; font-weight: 500; }
 .home-secondary-paths small { max-width: 18rem; color: var(--ink-muted); font-size: 0.82rem; line-height: 1.45; }
 
@@ -349,6 +349,8 @@ dialog::backdrop { background: rgba(25, 21, 17, 0.5); backdrop-filter: blur(5px)
   .article-header { margin-bottom: 1.5rem; }
   .home-flow { padding-top: 4rem; }
   .home-hero h1 { font-size: clamp(4rem, 10vw, 6rem); }
+  .home-secondary-paths { grid-template-columns: 1fr; }
+  .home-secondary-paths > a, .home-secondary-paths > a + a { min-height: 7rem; padding: 1rem 0; border-left: 0; border-top: 1px solid var(--line); }
 }
 
 @media (max-width: 680px) {
@@ -371,8 +373,6 @@ dialog::backdrop { background: rgba(25, 21, 17, 0.5); backdrop-filter: blur(5px)
   .suite-pathway:first-child { border-top: 0; }
   .path-icon { margin-top: 1.2rem; }
   .suite-pathway h2 { font-size: 2.65rem; }
-  .home-secondary-paths { grid-template-columns: 1fr; }
-  .home-secondary-paths > a, .home-secondary-paths > a + a { min-height: 7rem; padding: 1rem 0; border-left: 0; border-top: 1px solid var(--line); }
   .related-grid, .section-listing-grid { grid-template-columns: 1fr; }
   .related-card:nth-child(even), .section-listing-card:nth-child(even) { padding-left: 0; border-left: 0; }
   .journey-progress, .journey-links { align-items: flex-start; }

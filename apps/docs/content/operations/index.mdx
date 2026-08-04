@@ -1,27 +1,23 @@
 ---
 title: Operate Kestrel
-summary: Prepare a safe deployment, understand live behavior, and confirm that recovery restored the user experience.
+summary: Deploy a Kestrel runtime, understand what it is doing, act on live work, and recover the user path when something fails.
 section: operate
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
-Operating Kestrel means more than keeping a process online. You should be able to identify the affected session and run, see what happened, choose a safe action, and verify that the same user path works afterward.
+Deploy the runtime, understand what it is doing, and keep the user path recoverable when something fails. Kestrel runs locally through Local Core and remotely through a runner service; these guides cover the controls and evidence required to operate both forms.
 
 ## Prepare and deploy
 
-Start with [local and remote runner connections](/operate/runner-service), then
-configure [environment and authentication](/operate/environment-and-auth) and
-review the [production operating model](/operate/deployment). These guides keep
-runner and provider credentials on trusted servers and establish the health
-checks required before serving users.
+Start with [local and remote runner connections](/operate/runner-service), then configure [environment and authentication](/operate/environment-and-auth) and review the [production operating model](/operate/deployment). Keep runner and provider credentials on trusted servers and prove the request path before serving users.
 
 ## Investigate and recover
 
-Use [Observability](/operate/observability) to locate the request, [Reliability](/operate/reliability) to structure the incident, [Replay](/operate/replay) to inspect persisted evidence, and [Troubleshooting](/operate/troubleshooting) to start from a visible symptom.
+Locate the affected request with [Observability](/operate/observability), structure the incident with [Reliability](/operate/reliability), inspect persisted evidence with [Replay](/operate/replay), and use [Troubleshooting](/operate/troubleshooting) when you need to begin from the visible symptom.
 
 ## Control and quality
 
-[Operator control](/operate/operator-control) acts on work already in flight. [Ruhroh evaluations](/operate/evaluations) and [quality gates](/operate/quality-gates) help compare behavior before and after a change. Kestrel One model operators should also understand [credential leases](/operate/credential-leases) and [model access decisions](/operate/model-authority).
+Use [Operator control](/operate/operator-control) to act on work already in flight. Compare behavior before and after a change with [Ruhroh evaluations](/operate/evaluations) and [quality gates](/operate/quality-gates). Kestrel One model operators should also understand [credential leases](/operate/credential-leases) and [model access decisions](/operate/model-authority).

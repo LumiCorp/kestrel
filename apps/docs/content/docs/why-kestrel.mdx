@@ -1,31 +1,30 @@
 ---
-title: Why Kestrel
-summary: Understand what changes when an agent must finish real work, survive interruptions, and remain accountable to people.
+title: What Kestrel includes
+summary: See the products, developer tools, runtime components, and supported work that make up the Kestrel platform.
 section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
-A direct model call is often enough for a disposable answer. It becomes less convincing when the work must continue tomorrow, wait for a person, produce files, recover from failure, or be explained after the fact. At that point, the application needs more than a chat transcript.
+Kestrel is an open-source agent platform with a desktop app, shared team workspaces, a CLI/TUI, and a TypeScript SDK. Use it with the model you choose to build software, conduct research, analyze data, and create reports, spreadsheets, presentations, and other files.
 
-Kestrel supplies the durable layer around that work. A run has an identity and a terminal outcome. A session keeps continuity. Waiting is visible instead of looking like a hang. Human intervention is recorded. Events and artifacts remain available for inspection, recovery, replay, and evaluation.
+## Product surfaces
 
-## The practical difference
+- **Kestrel Desktop** is a local AI agent for projects on your computer. It works with the files and tools in a folder you open.
+- **Kestrel One** is the team workspace. Projects group members, Threads, instructions, files, Knowledge, Apps, and execution Environments.
+- **CLI/TUI** provides interactive terminal work, scripts, automation, and direct runtime controls.
+- **TypeScript SDK** lets applications start, stream, resume, and inspect local or remote Kestrel runs.
 
-Applications often add memory, background jobs, streaming, retries, human approval, and logs one feature at a time. That can leave related state scattered across several systems. Kestrel keeps those behaviors connected to the same runs and sessions.
+## Runtime and protocol
 
-That model is useful when:
+Kestrel Runtime is the agent harness underneath every surface. It runs model and tool steps and records sessions, events, artifacts, waiting, cancellation, recovery, and replay.
 
-- work must survive a browser request, application restart, or team handoff
-- an operator needs to steer, stop, resume, or retry an existing run
-- work resumed by another client should retain the same project context
-- an application needs structured results as well as human-facing text
-- failures must be explained with evidence rather than guessed from the last message
+Local Core hosts the runtime on a user's computer. The runner service hosts it behind an authenticated network boundary. Both expose the same Execution Protocol for commands, streams, events, and terminal results.
 
-## What Kestrel does not require
+## Use only what you need
 
-You do not need every part of the suite at once. Desktop provides the local experience. Kestrel One supports shared team work. The SDK and HTTP interfaces let an existing application add Kestrel gradually.
+Start with Desktop for local projects, Kestrel One for shared team work, the CLI/TUI for terminal workflows, or the SDK for an application integration. The products release independently, so check [Release status](/start/release-status) for current availability and versions.
 
-Kestrel may be unnecessary for a small stateless feature where the only requirement is “send text and show the answer.” It becomes valuable when continuity, control, recovery, or accountability are part of the product promise.
+Continue with [Core concepts](/start/concepts) for the shared vocabulary or [Architecture](/start/architecture) for the local and remote execution paths.
