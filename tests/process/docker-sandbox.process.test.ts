@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -56,6 +59,147 @@ test(
       home: "/tmp",
       rootWritable: false,
     });
+  },
+);
+
+test(
+  "Docker sandbox rejects privilege escalation and setuid or setgid elevation",
+  async () => {
+    await requireDocker();
+    const result = await executeWithName("privilege", {
+      language: "javascript",
+      code: `
+        const fs = require("node:fs");
+        const { spawnSync } = require("node:child_process");
+        function attempt(name, operation) {
+          try {
+            operation();
+            return [name, { rejected: false }];
+          } catch (error) {
+            return [name, { rejected: true, code: error.code ?? error.name }];
+          }
+        }
+        fs.copyFileSync("/bin/busybox", "/workspace/setid-probe");
+        fs.chmodSync("/workspace/setid-probe", 0o6755);
+        const setidRun = spawnSync("/workspace/setid-probe", ["id", "-u"], { encoding: "utf8" });
+        const privilegedFiles = spawnSync("find", ["/", "-xdev", "-type", "f", "-perm", "/6000"], { encoding: "utf8" });
+        const evidence = Object.fromEntries([
+          attempt("setuid", () => process.setuid(0)),
+          attempt("setgid", () => process.setgid(0)),
+          attempt("setgroups", () => process.setgroups([0])),
+          attempt("chown_root", () => fs.chownSync("/workspace/setid-probe", 0, 0)),
+        ]);
+        console.log(JSON.stringify({
+          uid: process.getuid(),
+          gid: process.getgid(),
+          groups: process.getgroups(),
+          evidence,
+          setidUid: setidRun.stdout?.trim() ?? "",
+          setidStatus: setidRun.status,
+          setidError: setidRun.error?.code ?? null,
+          privilegedFiles: privilegedFiles.stdout.trim().split("\\n").filter(Boolean),
+        }));
+      `,
+    });
+
+    assert.equal(result.status, "ok", result.stderr);
+    const evidence = JSON.parse(result.stdout.trim()) as {
+      uid: number;
+      gid: number;
+      groups: number[];
+      evidence: Record<string, { rejected: boolean }>;
+      setidUid: string;
+      setidStatus: number | null;
+      setidError: string | null;
+      privilegedFiles: string[];
+    };
+    assert.equal(evidence.uid, 65_532);
+    assert.equal(evidence.gid, 65_532);
+    assert.deepEqual(evidence.groups, [65_532]);
+    for (const probe of ["setuid", "setgid", "setgroups", "chown_root"]) {
+      assert.equal(evidence.evidence[probe]?.rejected, true, probe);
+    }
+    assert.equal(
+      evidence.setidError !== null || evidence.setidStatus !== 0 || evidence.setidUid === "65532",
+      true,
+    );
+    assert.deepEqual(evidence.privilegedFiles, []);
+  },
+);
+
+test(
+  "Docker sandbox rejects namespace, mount, pivot-root, and device attacks",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("kernel-boundaries");
+    const execution = fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `
+          const fs = require("node:fs");
+          const { spawnSync } = require("node:child_process");
+          fs.mkdirSync("/workspace/mount-target");
+          fs.mkdirSync("/workspace/new-root/old-root", { recursive: true });
+          const probes = {
+            unshare_mount: ["unshare", ["-m", "true"]],
+            unshare_user: ["unshare", ["-U", "true"]],
+            unshare_network: ["unshare", ["-n", "true"]],
+            setns_mount: ["nsenter", ["-t", "1", "-m", "true"]],
+            mount: ["mount", ["-t", "tmpfs", "tmpfs", "/workspace/mount-target"]],
+            remount: ["mount", ["-o", "remount,rw", "/"]],
+            pivot_root: ["pivot_root", ["/workspace/new-root", "/workspace/new-root/old-root"]],
+            device_create: ["mknod", ["/workspace/probe-device", "c", "1", "3"]],
+          };
+          const evidence = Object.fromEntries(Object.entries(probes).map(([name, [command, args]]) => {
+            const attempt = spawnSync(command, args, { encoding: "utf8" });
+            return [name, { status: attempt.status, error: attempt.stderr.trim() }];
+          }));
+          const devices = Object.fromEntries(["/dev/mem", "/dev/kmsg", "/dev/sda"].map((device) => {
+            try {
+              fs.openSync(device, "r");
+              return [device, "opened"];
+            } catch (error) {
+              return [device, error.code ?? error.name];
+            }
+          }));
+          setTimeout(() => console.log(JSON.stringify({ evidence, devices })), 500);
+        `,
+      },
+      policy: policy(),
+    });
+
+    await waitForContainer(containerName, true);
+    const inspected = await inspectContainer(containerName);
+    assert.equal(inspected.HostConfig.Privileged, false);
+    assert.equal(inspected.HostConfig.PidMode, "");
+    assert.equal(inspected.HostConfig.NetworkMode, "none");
+    assert.equal(inspected.HostConfig.UsernsMode === "host", false);
+    assert.deepEqual(inspected.HostConfig.Binds, null);
+    assert.deepEqual(inspected.HostConfig.Devices, []);
+    assert.equal(inspected.Mounts.some((mount) => mount.Type === "bind"), false);
+
+    const result = await execution;
+    assert.equal(result.status, "ok", result.stderr);
+    const evidence = JSON.parse(result.stdout.trim()) as {
+      evidence: Record<string, { status: number; error: string }>;
+      devices: Record<string, string>;
+    };
+    for (const probe of [
+      "unshare_mount",
+      "unshare_user",
+      "unshare_network",
+      "setns_mount",
+      "mount",
+      "remount",
+      "pivot_root",
+      "device_create",
+    ]) {
+      assert.notEqual(evidence.evidence[probe]?.status, 0, probe);
+    }
+    for (const device of ["/dev/mem", "/dev/kmsg", "/dev/sda"]) {
+      assert.notEqual(evidence.devices[device], "opened", device);
+    }
+    await assertContainerAndProcessesRemoved(containerName);
   },
 );
 
@@ -129,7 +273,7 @@ test(
 );
 
 test(
-  "Docker sandbox bounds fork attempts with the configured PID limit",
+  "Docker sandbox bounds concurrent fork attempts and removes every child",
   async () => {
     await requireDocker();
     const containerName = testContainerName("pids");
@@ -161,7 +305,7 @@ test(
     assert.equal(result.status, "ok", result.stderr);
     const evidence = JSON.parse(result.stdout.trim()) as { errors?: number };
     assert.equal((evidence.errors ?? 0) > 0, true);
-    await waitForContainer(containerName, false);
+    await assertContainerAndProcessesRemoved(containerName);
   },
 );
 
@@ -222,6 +366,46 @@ test(
         createHash("sha256").update(artifact.preview.text).digest("hex"),
       );
     }
+  },
+);
+
+test(
+  "Docker sandbox excludes absolute, relative, chained, dangling, and special-file artifacts",
+  async () => {
+    await requireDocker();
+    const result = await executeWithName("artifact-types", {
+      language: "javascript",
+      code: `
+        const fs = require("node:fs");
+        const net = require("node:net");
+        const { spawnSync } = require("node:child_process");
+        fs.writeFileSync("safe.txt", "safe-artifact");
+        fs.symlinkSync("/etc/passwd", "absolute-link");
+        fs.symlinkSync("safe.txt", "relative-link");
+        fs.symlinkSync("chain-two", "chain-one");
+        fs.symlinkSync("/etc/passwd", "chain-two");
+        fs.symlinkSync("missing-target", "dangling-link");
+        fs.symlinkSync("/etc", "artifact-output");
+        const fifo = spawnSync("mkfifo", ["artifact-fifo"], { encoding: "utf8" });
+        if (fifo.status !== 0) throw new Error(fifo.stderr || "mkfifo failed");
+        const server = net.createServer();
+        server.listen("/workspace/artifact-socket", () => server.close());
+        server.on("close", () => console.log("created"));
+      `,
+    });
+
+    assert.equal(result.status, "ok", result.stderr);
+    assert.equal(result.stdout.trim(), "created");
+    assert.deepEqual(
+      result.artifacts.map((artifact) => artifact.path),
+      ["safe.txt"],
+    );
+    assert.equal(result.artifacts[0]?.preview?.text, "safe-artifact");
+    assert.equal(
+      result.artifacts.some((artifact) =>
+        artifact.preview?.text.includes("root:") === true),
+      false,
+    );
   },
 );
 
@@ -302,26 +486,64 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
 );
 
 test(
-  "Docker sandbox does not inherit parent environment secrets",
+  "Docker sandbox cannot steal host environment, filesystem, process, or namespace canaries",
   async () => {
     await requireDocker();
     const variableName = `KESTREL_SANDBOX_SECRET_${randomUUID().replaceAll("-", "")}`;
     const secret = `secret-${randomUUID()}`;
+    const hostRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-host-canary-"));
+    const hostPath = path.join(hostRoot, "canary.txt");
+    const secretDigest = createHash("sha256").update(secret).digest("hex");
+    await writeFile(hostPath, secret, "utf8");
     process.env[variableName] = secret;
     try {
       const result = await executeWithName("secret", {
         language: "javascript",
         code: `
+          const fs = require("node:fs");
+          const { createHash } = require("node:crypto");
           const name = ${JSON.stringify(variableName)};
-          console.log(process.env[name] === undefined ? "missing" : process.env[name]);
+          const secretDigest = ${JSON.stringify(secretDigest)};
+          const hostPath = ${JSON.stringify(hostPath)};
+          const paths = [
+            hostPath,
+            "/proc/1/environ",
+            "/proc/1/root/proc/1/environ",
+            "/proc/1/root" + hostPath,
+            "/host" + hostPath,
+          ];
+          const evidence = Object.fromEntries(paths.map((candidate) => {
+            try {
+              const value = fs.readFileSync(candidate);
+              const digest = createHash("sha256").update(value).digest("hex");
+              return [candidate, { readable: true, secret: digest === secretDigest }];
+            } catch (error) {
+              return [candidate, { readable: false, secret: false, code: error.code }];
+            }
+          }));
+          fs.writeFileSync("canary-search.json", JSON.stringify(evidence));
+          console.log(JSON.stringify({ inherited: process.env[name] !== undefined, evidence }));
         `,
       });
 
       assert.equal(result.status, "ok", result.stderr);
-      assert.equal(result.stdout.trim(), "missing");
-      assert.equal(`${result.stdout}\n${result.stderr}`.includes(secret), false);
+      const evidence = JSON.parse(result.stdout.trim()) as {
+        inherited: boolean;
+        evidence: Record<string, { readable: boolean; secret: boolean }>;
+      };
+      assert.equal(evidence.inherited, false);
+      assert.equal(evidence.evidence[hostPath]?.readable, false);
+      assert.equal(
+        Object.values(evidence.evidence).some((item) => item.secret),
+        false,
+      );
+      assert.equal(
+        `${result.stdout}\n${result.stderr}\n${JSON.stringify(result.artifacts)}`.includes(secret),
+        false,
+      );
     } finally {
       delete process.env[variableName];
+      await rm(hostRoot, { recursive: true, force: true });
     }
   },
 );
@@ -499,8 +721,14 @@ async function inspectHostConfig(containerName: string): Promise<{
 async function inspectContainer(containerName: string): Promise<{
   Config: { User: string };
   HostConfig: {
+    Binds: string[] | null;
+    Devices: unknown[];
+    NetworkMode: string;
+    PidMode: string;
+    Privileged: boolean;
     ReadonlyRootfs: boolean;
     Tmpfs: Record<string, string>;
+    UsernsMode: string;
   };
   Mounts: Array<{ Type: string }>;
 }> {

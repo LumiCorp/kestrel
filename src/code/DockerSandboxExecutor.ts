@@ -266,7 +266,7 @@ function sanitizeRelativePath(value: string): string | undefined {
   return candidate;
 }
 
-function buildDockerCreateCommand(
+export function buildDockerCreateCommand(
   input: SandboxExecutionInput,
   containerName: string,
 ): string[] {
@@ -538,8 +538,11 @@ async function snapshotWorkspace(input: {
         "  -exec sh -c 'for file; do",
         '    relative=${file#/workspace/};',
         '    encoded=$(printf "%s" "$relative" | base64 | tr -d "\\n");',
-        '    size=$(wc -c < "$file");',
-        '    printf "%s\\t%s\\n" "$encoded" "$size";',
+        '    size=$(stat -c "%s" "$file") || continue;',
+        '    device=$(stat -c "%d" "$file") || continue;',
+        '    inode=$(stat -c "%i" "$file") || continue;',
+        '    mode=$(stat -c "%f" "$file") || continue;',
+        '    printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$encoded" "$size" "$device" "$inode" "$mode";',
         "  done' kestrel-list {} +",
         `  | head -n ${candidateLimit}`,
       ].join(" "),
@@ -571,9 +574,20 @@ async function snapshotWorkspace(input: {
         input.containerName,
         "sh",
         "-c",
-        'base64 "$1" | tr -d "\\n"',
+        [
+          "set -eu",
+          'file="$1"',
+          'expected="$2"',
+          '[ ! -L "$file" ] && [ -f "$file" ] || exit 65',
+          'before=$(stat -c "%d:%i:%s:%f" "$file")',
+          '[ "$before" = "$expected" ] || exit 66',
+          'base64 "$file" | tr -d "\\n"',
+          'after=$(stat -c "%d:%i:%s:%f" "$file")',
+          '[ "$after" = "$expected" ] || exit 67',
+        ].join("\n"),
         "kestrel-snapshot",
         `/workspace/${candidate.path}`,
+        snapshotCandidateIdentity(candidate),
       ],
       DOCKER_LIFECYCLE_TIMEOUT_MS,
       Math.ceil(candidate.sizeBytes / 3) * 4 + 16,
@@ -598,25 +612,43 @@ async function snapshotWorkspace(input: {
 interface SnapshotCandidate {
   path: string;
   sizeBytes: number;
+  device: string;
+  inode: string;
+  mode: string;
 }
 
 function parseSnapshotCandidate(line: string): SnapshotCandidate | undefined {
-  const separator = line.lastIndexOf("\t");
-  if (separator <= 0) {
+  const [encodedPath, sizeValue, device, inode, mode, ...extra] =
+    line.split("\t");
+  if (
+    encodedPath === undefined ||
+    sizeValue === undefined ||
+    device === undefined ||
+    inode === undefined ||
+    mode === undefined ||
+    extra.length > 0
+  ) {
     return;
   }
-  const decodedPath = Buffer.from(line.slice(0, separator), "base64").toString("utf8");
+  const decodedPath = Buffer.from(encodedPath, "base64").toString("utf8");
   const safePath = sanitizeRelativePath(decodedPath);
-  const sizeBytes = Number(line.slice(separator + 1));
+  const sizeBytes = Number(sizeValue);
   if (
     safePath === undefined ||
     safePath !== decodedPath ||
     Number.isSafeInteger(sizeBytes) === false ||
-    sizeBytes < 0
+    sizeBytes < 0 ||
+    /^\d+$/u.test(device) === false ||
+    /^\d+$/u.test(inode) === false ||
+    /^[0-9a-f]+$/u.test(mode) === false
   ) {
     return;
   }
-  return { path: safePath, sizeBytes };
+  return { path: safePath, sizeBytes, device, inode, mode };
+}
+
+function snapshotCandidateIdentity(candidate: SnapshotCandidate): string {
+  return `${candidate.device}:${candidate.inode}:${candidate.sizeBytes}:${candidate.mode}`;
 }
 
 function requireSuccessfulDockerResult(
@@ -784,15 +816,27 @@ async function collectArtifacts(input: {
     }
 
     const absolutePath = path.join(input.workspaceDir, relativePath);
-    const details = await lstat(absolutePath);
-    if (details.isFile() === false || details.size > input.maxArtifactBytes) {
+    const before = await lstat(absolutePath);
+    if (before.isFile() === false || before.size > input.maxArtifactBytes) {
       continue;
     }
 
     const contents = await readFile(absolutePath);
+    const after = await lstat(absolutePath);
+    if (
+      after.isFile() === false ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      contents.byteLength !== before.size
+    ) {
+      throw new Error(
+        `Sandbox artifact '${relativePath}' changed while it was being verified`,
+      );
+    }
     artifacts.push({
       path: relativePath,
-      sizeBytes: details.size,
+      sizeBytes: before.size,
       sha256: createHash("sha256").update(contents).digest("hex"),
       preview: {
         text: contents.toString("utf8", 0, Math.min(contents.byteLength, 2000)),
