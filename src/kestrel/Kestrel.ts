@@ -37,6 +37,7 @@ import { InMemoryStepContractRegistry } from "../engine/StepContractRegistry.js"
 import { RunReplayService, type ReplayQuery, type ReplayResult } from "../replay/RunReplayService.js";
 import type { HeapDiagnosticsReporter } from "../runtime/heapDiagnostics.js";
 import type { ProviderReasoningVault } from "../runtime/ProviderReasoningVault.js";
+import type { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export interface KestrelOptions {
   store: SessionStore;
@@ -55,6 +56,7 @@ export interface KestrelOptions {
   stepContractRegistry?: StepContractRegistry;
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
   recoveryRuntime?: import("../engine/recovery/RecoveryCoordinator.js").RecoveryRuntimeConfiguration | undefined;
+  executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
 }
 
 export class Kestrel {
@@ -136,6 +138,9 @@ export class Kestrel {
         ...(options.runEventListener !== undefined ? { runEventListener: options.runEventListener } : {}),
         ...(options.heapDiagnostics !== undefined ? { heapDiagnostics: options.heapDiagnostics } : {}),
         ...(options.recoveryRuntime !== undefined ? { recoveryRuntime: options.recoveryRuntime } : {}),
+        ...(options.executionBoundaryRuntime !== undefined
+          ? { executionBoundaryRuntime: options.executionBoundaryRuntime }
+          : {}),
         outputNormalizer: new DefaultOutputNormalizer(),
       },
       options.guardrails,

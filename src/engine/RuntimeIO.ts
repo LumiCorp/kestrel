@@ -50,6 +50,13 @@ import {
   normalizeRecoveryFailureCode,
   type RecoveryRuntimeConfiguration,
 } from "./recovery/RecoveryCoordinator.js";
+import {
+  DeterministicStreamingRedactor,
+  ExecutionBoundaryPolicyRuntime,
+} from "../security/ExecutionBoundaryPolicy.js";
+import type { ExecutionBoundaryDecisionV1 } from "../kestrel/contracts/execution-boundary-policy.js";
+import { deleteTextArtifact } from "../../tools/runtime/artifactStore.js";
+import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 
 interface RuntimeIOProgressContext {
   runId: string;
@@ -183,11 +190,13 @@ interface RuntimeIOOptions {
   isRetryableToolError: (error: unknown) => boolean;
   recoveryCoordinator?: RecoveryCoordinator | undefined;
   recoveryRuntime?: RecoveryRuntimeConfiguration | undefined;
+  executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
 }
 
 export class RuntimeIO {
   private readonly options: RuntimeIOOptions;
   private previousStablePrefixHash: string | undefined;
+  private readonly modelReasoningRedactors = new Map<string, DeterministicStreamingRedactor>();
 
   constructor(options: RuntimeIOOptions) {
     this.options = options;
@@ -281,6 +290,22 @@ export class RuntimeIO {
         reasoningContext,
       );
     }
+    const providerBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<ModelRequest>({
+      boundary: "model_request",
+      identity: {
+        runId: progress.runId,
+        sessionId: progress.sessionId,
+        callId,
+        stepIndex: progress.stepIndex,
+      },
+      source: "runtime",
+      trust: "data",
+      sourceId: `model-request:${callId}`,
+      value: providerRequest,
+      handling: "redact",
+      persist: (decision) => this.persistBoundaryDecision(decision),
+    });
+    providerRequest = providerBoundary.value;
     const assemblyId =
       readNonEmptyString(runtimeAssembly?.effectiveAssemblyId) ??
       readNonEmptyString(runtimeAssembly?.bundleId);
@@ -339,12 +364,12 @@ export class RuntimeIO {
       ...(assemblyId !== undefined ? { assemblyId } : {}),
       ...(turnId !== undefined ? { turnId } : {}),
       ...(threadId !== undefined ? { threadId } : {}),
-      promptSummary: this.options.summarizePromptInput(request),
+      promptSummary: this.options.summarizePromptInput(providerRequest),
     };
     const promptDump = await this.options.persistModelPromptDump({
       callId,
       progress,
-      request: redactModelRequestForDiagnostics(request),
+      request: redactModelRequestForDiagnostics(providerRequest),
       providerRequest: redactModelRequestForDiagnostics(providerRequest),
       requestedModel,
       requestedProvider,
@@ -447,7 +472,7 @@ export class RuntimeIO {
     try {
       throwIfRuntimeIOAborted(progress.signal);
       assertEconomicsRequestAdmission(economicsPolicy, requestEconomicsManifest);
-      const result = await this.options.withProgressHeartbeat(
+      const rawResult = await this.options.withProgressHeartbeat(
         {
           runId: progress.runId,
           sessionId: progress.sessionId,
@@ -465,6 +490,22 @@ export class RuntimeIO {
         }),
       );
       throwIfRuntimeIOAborted(progress.signal);
+      const responseBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<T>({
+        boundary: "model_action",
+        identity: {
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          callId,
+          stepIndex: progress.stepIndex,
+        },
+        source: "model",
+        trust: "data",
+        sourceId: `model-response:${callId}`,
+        value: rawResult,
+        handling: "redact",
+        persist: (decision) => this.persistBoundaryDecision(decision),
+      });
+      const result = responseBoundary.value;
       if (this.options.deps.providerReasoningVault !== undefined && isModelResponse(result)) {
         await this.options.deps.providerReasoningVault.captureResponse(result, reasoningContext);
       }
@@ -551,7 +592,22 @@ export class RuntimeIO {
       });
       return result;
     } catch (error) {
-      const mappedError = this.options.mapError(error);
+      const mappedErrorBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<RuntimeError>({
+        boundary: "model_action",
+        identity: {
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          callId,
+          stepIndex: progress.stepIndex,
+        },
+        source: "model",
+        trust: "data",
+        sourceId: `model-error:${callId}`,
+        value: this.options.mapError(error),
+        handling: "redact",
+        persist: (decision) => this.persistBoundaryDecision(decision),
+      });
+      const mappedError = mappedErrorBoundary.value;
       const completedAt = new Date().toISOString();
       const latencyMs = Date.now() - startedAt;
       await this.options.persistModelResponseDump({
@@ -594,7 +650,13 @@ export class RuntimeIO {
         stepAgent: progress.stepAgent,
         persist: true,
       });
-      throw error;
+      throw mappedErrorBoundary.decision.outcome === "REDACT"
+        ? createRuntimeFailure(
+            mappedError.code,
+            mappedError.message,
+            mappedError.details,
+          )
+        : error;
     }
   }
 
@@ -878,6 +940,67 @@ export class RuntimeIO {
       return;
     }
     const progress = this.options.progress;
+    const streamKey = `${progress.runId}:${event.attempt}:${event.format}`;
+    if (event.type === "reasoning.started") {
+      this.modelReasoningRedactors.set(
+        streamKey,
+        new DeterministicStreamingRedactor(
+          this.options.executionBoundaryRuntime.sensitiveValues,
+        ),
+      );
+    }
+    let safeDelta: string | undefined;
+    if (event.type === "reasoning.delta") {
+      await this.options.executionBoundaryRuntime.evaluateAndPersist({
+        boundary: "model_stream",
+        identity: {
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          stepIndex: progress.stepIndex,
+        },
+        source: "model",
+        trust: "data",
+        sourceId: streamKey,
+        value: event.delta,
+        handling: "redact",
+        persist: (decision) => this.persistBoundaryDecision(decision),
+      });
+      const redactor = this.modelReasoningRedactors.get(streamKey) ??
+        new DeterministicStreamingRedactor(
+          this.options.executionBoundaryRuntime.sensitiveValues,
+        );
+      this.modelReasoningRedactors.set(streamKey, redactor);
+      safeDelta = redactor.push(event.delta);
+      if (safeDelta.length === 0) return;
+    }
+    if (
+      event.type === "reasoning.completed" ||
+      event.type === "reasoning.failed" ||
+      event.type === "reasoning.unavailable"
+    ) {
+      const redactor = this.modelReasoningRedactors.get(streamKey);
+      const tail = redactor?.flush() ?? "";
+      this.modelReasoningRedactors.delete(streamKey);
+      if (tail.length > 0) {
+        await this.options.deps.reasoningReporter?.emit({
+          version: "v1",
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          ts: new Date().toISOString(),
+          seq: progress.sequence(),
+          event: "delta",
+          attempt: event.attempt,
+          format: event.format,
+          delta: tail,
+          contentState: "live",
+          stepIndex: progress.stepIndex,
+          stepAgent: progress.stepAgent,
+          ...(provider !== undefined || model !== undefined
+            ? { model: { ...(provider !== undefined ? { provider } : {}), ...(model !== undefined ? { model } : {}) } }
+            : {}),
+        });
+      }
+    }
     await this.options.deps.reasoningReporter?.emit({
       version: "v1",
       runId: progress.runId,
@@ -895,7 +1018,7 @@ export class RuntimeIO {
               : "completed",
       attempt: event.attempt,
       format: event.format,
-      ...(event.type === "reasoning.delta" ? { delta: event.delta } : {}),
+      ...(event.type === "reasoning.delta" ? { delta: safeDelta ?? "" } : {}),
       contentState: "live",
       stepIndex: progress.stepIndex,
       stepAgent: progress.stepAgent,
@@ -932,7 +1055,34 @@ export class RuntimeIO {
         input: validatedInput,
         runtimeBudgetRemainingMs: guardrails.budgetSnapshot().remainingMs,
       });
-      const effectiveToolInput = budgetedToolInput.input;
+      const inputBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist({
+        boundary: "tool_request",
+        identity: {
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          callId: toolCallId,
+          stepIndex: progress.stepIndex,
+        },
+        source: "model",
+        trust: "data",
+        sourceId: `tool-request:${toolCallId}:${name}`,
+        value: budgetedToolInput.input,
+        handling: "quarantine",
+        persist: (decision) => this.persistBoundaryDecision(decision),
+      });
+      if (inputBoundary.decision.outcome === "QUARANTINE") {
+        throw createRuntimeFailure(
+          "EXECUTION_BOUNDARY_QUARANTINED",
+          `Tool '${name}' input contains registered sensitive material.`,
+          {
+            subsystem: "execution_boundary",
+            boundary: "tool_request",
+            decisionId: inputBoundary.decision.decisionId,
+            recoverable: false,
+          },
+        );
+      }
+      const effectiveToolInput = inputBoundary.value;
       recoverySourceInput = effectiveToolInput;
       const toolInputMetadata = {
         ...buildToolInputEventMetadata(effectiveToolInput),
@@ -974,6 +1124,9 @@ export class RuntimeIO {
         },
         progress.stepIndex,
       );
+      const consoleRedactor = new DeterministicStreamingRedactor(
+        this.options.executionBoundaryRuntime.sensitiveValues,
+      );
       const consoleBridge = createToolConsoleBridge({
         consoleReporter: this.options.deps.consoleReporter,
         runId: progress.runId,
@@ -983,6 +1136,25 @@ export class RuntimeIO {
         toolName: name,
         input: effectiveToolInput,
         sequence: progress.sequence,
+        transformText: async (text) => {
+          await this.options.executionBoundaryRuntime.evaluateAndPersist({
+            boundary: "tool_stream",
+            identity: {
+              runId: progress.runId,
+              sessionId: progress.sessionId,
+              callId: toolCallId,
+              stepIndex: progress.stepIndex,
+            },
+            source: "tool",
+            trust: "data",
+            sourceId: `tool-stream:${toolCallId}:${name}`,
+            value: text,
+            handling: "redact",
+            persist: (decision) => this.persistBoundaryDecision(decision),
+          });
+          return consoleRedactor.push(text);
+        },
+        flushText: () => consoleRedactor.flush(),
       });
       await consoleBridge.emitStatus("started");
       const executeToolCall = () => {
@@ -1001,7 +1173,7 @@ export class RuntimeIO {
           ...(consoleBridge.sink !== undefined ? { console: consoleBridge.sink } : {}),
         });
       };
-      const result = budgetedToolInput.shortCircuitResult !== undefined
+      let result = budgetedToolInput.shortCircuitResult !== undefined
         ? await this.buildShortCircuitToolResult(name, effectiveToolInput, budgetedToolInput.shortCircuitResult)
         : this.options.toolQueueEnabled
           ? await this.options.withProgressHeartbeat(
@@ -1105,6 +1277,37 @@ export class RuntimeIO {
             executeToolCall,
           );
       throwIfRuntimeIOAborted(progress.signal);
+
+      const originalRawOutputRef = result.modelContext.rawOutputRef;
+      const resultBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<AgentToolResult>({
+        boundary: "tool_result",
+        identity: {
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          callId: toolCallId,
+          stepIndex: progress.stepIndex,
+        },
+        source: "tool",
+        trust: "data",
+        sourceId: `tool-result:${toolCallId}:${name}`,
+        value: result,
+        handling: "redact",
+        persist: (decision) => this.persistBoundaryDecision(decision),
+      });
+      if (resultBoundary.decision.outcome === "REDACT") {
+        deleteTextArtifact(originalRawOutputRef);
+        const redactedResult = resultBoundary.value;
+        const rebuilt = replaceAgentToolResultOutput(
+          redactedResult,
+          redactedResult.auditRecord.output,
+        );
+        if (rebuilt.projections?.durableRawArtifactRef !== undefined) {
+          const { durableRawArtifactRef: _removed, ...safeProjections } = rebuilt.projections;
+          result = { ...rebuilt, projections: safeProjections };
+        } else {
+          result = rebuilt;
+        }
+      }
 
       if (queueEventTasks.length > 0) {
         await Promise.all(queueEventTasks);
@@ -1221,7 +1424,26 @@ export class RuntimeIO {
       await consoleBridge.emitStatus("completed", result);
       return result;
     } catch (error) {
-      const mappedError = this.options.mapError(error);
+      const failureBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist({
+        boundary: "tool_result",
+        identity: {
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          callId: toolCallId,
+          stepIndex: progress.stepIndex,
+        },
+        source: "runtime",
+        trust: "data",
+        sourceId: `tool-error:${toolCallId}:${name}`,
+        value: {
+          input: recoverySourceInput,
+          error: this.options.mapError(error),
+        },
+        handling: "redact",
+        persist: (decision) => this.persistBoundaryDecision(decision),
+      });
+      const mappedError = failureBoundary.value.error;
+      const safeFailureInput = failureBoundary.value.input;
       const recoveryTransition = error instanceof RecoveryToolTransitionRequired
         ? error
         : await this.buildAlternateToolRecoveryTransition({
@@ -1273,7 +1495,7 @@ export class RuntimeIO {
         phase: "failed",
         toolCallId,
         toolName: name,
-        input,
+        input: safeFailureInput,
         error: mappedError,
         durationMs: Date.now() - startedAt,
       });
@@ -1283,10 +1505,17 @@ export class RuntimeIO {
         sessionId: progress.sessionId,
         seq: progress.sequence(),
         toolName: name,
-        input,
+        input: safeFailureInput,
         status: "failed",
       });
-      throw recoveryTransition ?? error;
+      const safeError = failureBoundary.decision.outcome === "REDACT"
+        ? createRuntimeFailure(
+            mappedError.code,
+            mappedError.message,
+            mappedError.details,
+          )
+        : error;
+      throw recoveryTransition ?? safeError;
     }
   }
 
@@ -1394,6 +1623,21 @@ export class RuntimeIO {
       event.level,
       event.metadata,
       progress.stepIndex,
+    );
+  }
+
+  private async persistBoundaryDecision(
+    decision: ExecutionBoundaryDecisionV1,
+  ): Promise<void> {
+    await this.options.appendRunEvent(
+      decision.runId,
+      decision.sessionId,
+      "execution_boundary.decision",
+      decision.outcome === "DENY" || decision.outcome === "QUARANTINE"
+        ? "WARN"
+        : "INFO",
+      { ...decision },
+      decision.stepIndex,
     );
   }
 
@@ -1781,6 +2025,7 @@ function isAutomaticToolRecoveryBlocked(code: string): boolean {
     "AUTHORITY_MISMATCH",
     "RUNTIME_BUDGET_EXCEEDED",
     "TOOL_RESULT_CONTRACT_INVALID",
+    "EXECUTION_BOUNDARY_QUARANTINED",
   ]).has(code.toUpperCase());
 }
 

@@ -53,6 +53,7 @@ import {
 } from "../toolResult.js";
 import { validateBuiltInToolInputContract } from "./builtInToolInputContracts.js";
 import { normalizeToolActionInput } from "./normalizeToolInput.js";
+import type { SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -72,6 +73,7 @@ export interface UnifiedToolRegistryOptions {
   env?: NodeJS.ProcessEnv | undefined;
   fetchImpl?: typeof fetch | undefined;
   mcpOAuthProviderFactory?: McpOAuthProviderFactory | undefined;
+  sensitiveValueRegistry?: SensitiveValueRegistry | undefined;
 }
 
 export interface McpToolProvider {
@@ -118,6 +120,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   // internal run ID for tool calls. Do not assume those IDs are equal or
   // replace the session index with a single run-ID lookup.
   private readonly executionTicketsByRun = new Map<string, string>();
+  private readonly releaseExecutionTicketRegistrationByRun = new Map<
+    string,
+    () => void
+  >();
   private readonly workspaceSkillReadProgress = new Map<
     string,
     WorkspaceSkillReadProgress
@@ -135,10 +141,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     tools: [],
   };
   private initialized = false;
+  private readonly sensitiveValueRegistry: SensitiveValueRegistry | undefined;
 
   constructor(options: UnifiedToolRegistryOptions) {
     this.defaultAllowlist = new Set(options.allowlist);
     this.builtInContext = withDefaultFileSystemPolicy(options.context);
+    this.sensitiveValueRegistry = options.sensitiveValueRegistry;
 
     const builtInNames = defaultToolCatalog.list().map((tool) => tool.name);
     this.builtInDescriptors = new Map(
@@ -191,6 +199,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     if (input.mcpAuthorization !== undefined && input.runId !== undefined) {
       const executionTicket = parseExecutionTicketAuthorization(
         input.mcpAuthorization,
+      );
+      this.releaseExecutionTicketRegistrationByRun.get(input.runId)?.();
+      this.releaseExecutionTicketRegistrationByRun.set(
+        input.runId,
+        this.sensitiveValueRegistry?.register({
+          reference: {
+            referenceId: `execution-ticket:${input.runId}`,
+            kind: "credential",
+            scope: "tool",
+          },
+          value: executionTicket,
+        }) ?? (() => {}),
       );
       this.executionTicketsByRun.set(input.runId, executionTicket);
       if (input.sessionId !== undefined) {
@@ -257,6 +277,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     // Clear both indexes together. Leaving the session entry behind could
     // authorize a later internal engine run with a completed turn's ticket.
     this.executionTicketsByRun.delete(runId);
+    this.releaseExecutionTicketRegistrationByRun.get(runId)?.();
+    this.releaseExecutionTicketRegistrationByRun.delete(runId);
     for (const key of this.workspaceSkillReadProgress.keys()) {
       if (key.startsWith(`${runId}\0`))
         this.workspaceSkillReadProgress.delete(key);
@@ -721,6 +743,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     ]);
     this.hostedMcpScopes.clear();
     this.workspaceSkillReadProgress.clear();
+    for (const release of this.releaseExecutionTicketRegistrationByRun.values()) {
+      release();
+    }
+    this.releaseExecutionTicketRegistrationByRun.clear();
   }
 
   private resolveInputSchema(

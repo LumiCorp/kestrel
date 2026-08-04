@@ -173,7 +173,11 @@ export class RuntimeComposer {
       proposedBy: input.proposedBy,
       status: "PENDING",
       ...(input.reason !== undefined ? { reason: input.reason } : {}),
-      ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+      metadata: {
+        ...(input.metadata ?? {}),
+        executionBoundaryPolicyRevision:
+          this.policyEvaluator.executionBoundaryPolicyRevision,
+      },
       createdAt: new Date().toISOString(),
     };
 

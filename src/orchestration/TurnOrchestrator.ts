@@ -1,6 +1,7 @@
 import type { ContextPolicyManager } from "./ContextPolicyManager.js";
 import type { InteractionManager } from "./InteractionManager.js";
 import type {
+  EventStore,
   RunRepository,
   ThreadStore,
 } from "../kestrel/contracts/store.js";
@@ -13,28 +14,65 @@ import type {
   TurnExecutor,
 } from "./contracts.js";
 import type { RuntimeTurnInput } from "../runtime/RuntimeTurn.js";
-import { finalizeRuntimeAssistantResponse } from "../runtime/assistantResponseContract.js";
+import { enforceRuntimeAssistantResponseBoundary, finalizeRuntimeAssistantResponse } from "../runtime/assistantResponseContract.js";
 import { normalizeSubmittedHistory } from "../runtime/submittedHistory.js";
+import type { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export class TurnOrchestrator {
   private readonly executor: TurnExecutor;
-  private readonly store: ThreadStore & RunRepository;
+  private readonly store: ThreadStore & RunRepository & EventStore;
   private readonly interactionManager: InteractionManager;
   private readonly contextPolicyManager: ContextPolicyManager;
+  private readonly executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime | undefined;
 
   constructor(options: {
     executor: TurnExecutor;
-    store: ThreadStore & RunRepository;
+    store: ThreadStore & RunRepository & EventStore;
     interactionManager: InteractionManager;
     contextPolicyManager: ContextPolicyManager;
+    executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
   }) {
     this.executor = options.executor;
     this.store = options.store;
     this.interactionManager = options.interactionManager;
     this.contextPolicyManager = options.contextPolicyManager;
+    this.executionBoundaryRuntime = options.executionBoundaryRuntime;
   }
 
   async execute(thread: ThreadRecord, input: SubmitTurnInput): Promise<SubmitTurnResult> {
+    if (this.executionBoundaryRuntime !== undefined) {
+      const submittedContent = this.executionBoundaryRuntime.evaluate({
+        boundary: "user_input",
+        identity: {
+          runId: input.runtimeTurn?.runId ?? `submitted:${thread.threadId}`,
+          sessionId: thread.sessionId,
+        },
+        source: "user",
+        sourceId: `thread:${thread.threadId}:submitted-content`,
+        value: {
+          message: input.message,
+          ...(input.runtimeTurn?.history !== undefined
+            ? { history: input.runtimeTurn.history }
+            : {}),
+        },
+        handling: "redact",
+      }).value;
+      input = {
+        ...input,
+        message: submittedContent.message,
+        ...(input.runtimeTurn !== undefined
+          ? {
+              runtimeTurn: {
+                ...input.runtimeTurn,
+                message: submittedContent.message,
+                ...(submittedContent.history !== undefined
+                  ? { history: submittedContent.history }
+                  : {}),
+              },
+            }
+          : {}),
+      };
+    }
     const submittedMetadata = normalizeSubmittedMetadata(input.metadata);
     const decision = this.contextPolicyManager.evaluateBeforeTurn({
       thread,
@@ -78,11 +116,32 @@ export class TurnOrchestrator {
       ...(delegation !== null ? { delegationId: delegation.delegationId } : {}),
       waitFor: execution.output.waitFor,
     });
-    const canonicalResponse = finalizeRuntimeAssistantResponse({
+    const canonicalInput = {
       output: execution.output,
       assistantText: execution.assistantText,
       ...(request !== undefined ? { request } : {}),
-    });
+    };
+    const canonicalResponse = this.executionBoundaryRuntime === undefined
+      ? finalizeRuntimeAssistantResponse(canonicalInput)
+      : await enforceRuntimeAssistantResponseBoundary({
+          ...canonicalInput,
+          executionBoundaryRuntime: this.executionBoundaryRuntime,
+          persist: async (boundaryDecision) => {
+            await this.store.appendRunEvent({
+              runId: boundaryDecision.runId,
+              sessionId: boundaryDecision.sessionId,
+              ...(boundaryDecision.stepIndex !== undefined
+                ? { stepIndex: boundaryDecision.stepIndex }
+                : {}),
+              type: "execution_boundary.decision",
+              level: boundaryDecision.outcome === "DENY" || boundaryDecision.outcome === "QUARANTINE"
+                ? "WARN"
+                : "INFO",
+              timestamp: boundaryDecision.createdAt,
+              metadata: { ...boundaryDecision },
+            });
+          },
+        });
     const output = canonicalResponse.output;
     const assistantText = canonicalResponse.assistantText;
     const latestThread = await this.store.getThread(thread.threadId);

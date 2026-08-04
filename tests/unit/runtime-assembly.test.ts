@@ -12,6 +12,7 @@ import {
   fingerprintResolvedProfile,
 } from "../../src/profile/kestrelOnePolicy.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
 
 test("resolved profile fingerprint binds canonical OCI MCP egress authority", () => {
   const profile = buildProfile({ toolAllowlist: ["fs.read_text"] });
@@ -269,6 +270,9 @@ test("AssemblyPolicyEvaluator rejects unknown bundles and requires approval for 
       threadId: thread.threadId,
       requestedBundleId: "bundle:missing",
       proposedBy: "operator",
+      metadata: {
+        executionBoundaryPolicyRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+      },
       status: "PENDING",
       createdAt: "2026-03-16T12:00:00.000Z",
     },
@@ -300,6 +304,9 @@ test("AssemblyPolicyEvaluator rejects unknown bundles and requires approval for 
       threadId: thread.threadId,
       requestedToolAllowlist: ["fs.read_text", "web.search"],
       proposedBy: "model",
+      metadata: {
+        executionBoundaryPolicyRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+      },
       status: "PENDING",
       createdAt: "2026-03-16T12:01:00.000Z",
     },
@@ -346,6 +353,9 @@ test("AssemblyPolicyEvaluator rejects unknown bundles and requires approval for 
       requestedModel: "gpt-4.1-mini",
       requestedPromptVariant: "reference-react:chat:responses",
       proposedBy: "model",
+      metadata: {
+        executionBoundaryPolicyRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+      },
       status: "PENDING",
       createdAt: "2026-03-16T12:01:00.000Z",
     },
