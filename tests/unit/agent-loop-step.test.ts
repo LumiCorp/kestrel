@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
 import { createAgentLoopStep } from "../../agents/reference-react/src/steps/deliberator.js";
+import { shapeToolExecutionResultForTests } from "../../agents/reference-react/src/steps/acter.js";
 import {
   compileAgentAction,
   DecisionCompileError,
@@ -26,10 +27,15 @@ import { createRuntimeContinuationState } from "../../src/runtime/continuationSt
 import { stringifySanitizedJson } from "../../src/runtime/jsonSanitizer.js";
 import { RunCancelledError } from "../../src/runtime/RuntimeFailure.js";
 import {
+  appendToolResultToTranscript,
   appendUserTurnToTranscript,
   readActiveTaskGoalFromTranscript,
   type ModelTranscript,
 } from "../../src/runtime/modelTranscript.js";
+import {
+  buildAgentToolSuccessResult,
+  replaceAgentToolResultOutput,
+} from "../../tools/toolResult.js";
 
 
 const READ_TEXT_TOOL: ModelToolSpec = {
@@ -90,6 +96,20 @@ const SEARCH_TEXT_TOOL: ModelToolSpec = {
       query: { type: "string" },
     },
     required: ["path", "query"],
+  },
+};
+
+const REPO_TRACE_TOOL: ModelToolSpec = {
+  name: "repo.trace",
+  description: "Trace repository references for exact implementation evidence.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      path: { type: "string" },
+      seeds: { type: "array", items: { type: "string" } },
+    },
+    required: ["path", "seeds"],
   },
 };
 
@@ -5885,6 +5905,164 @@ test("hash-bound closeout attempts expose only mode-valid terminal controls", as
       "finalize",
     );
   }
+});
+
+test("canonical initial event preserves repository evidence and closeout state across deliberator visits", async () => {
+  const task = 'Tell me how the "like" feature works.';
+  const event = {
+    id: "event-like-feature",
+    type: "user.message",
+    sessionId: "session-1",
+    payload: {
+      message: task,
+      interactionMode: "chat",
+      modeSystemV2Enabled: true,
+      metadata: {
+        turnId: "turn-like-feature",
+        submissionKind: "initial",
+      },
+    },
+  };
+  const step = buildStep({
+    tools: [REPO_TRACE_TOOL],
+    capabilityManifest: [{
+      name: "repo.trace",
+      description: "Trace repository references for exact implementation evidence.",
+      capabilityClasses: ["filesystem.read", "repo.trace"],
+      executionClass: "read_only",
+      toolFamily: "filesystem",
+    }],
+  });
+  const firstContext = context();
+  firstContext.event = event;
+
+  const firstTransition = await step(firstContext, {
+    useModel: async () => modelResponse({
+      version: "v1",
+      reason: "Find the implementation files before answering.",
+      nextAction: {
+        kind: "tool",
+        name: "repo.trace",
+        input: { path: ".", seeds: ["like"] },
+      },
+    }),
+  } satisfies StepIO);
+  const firstAgent = firstTransition.statePatch?.agent as Record<string, unknown>;
+  const firstTranscript = firstAgent.modelTranscript as ModelTranscript;
+  const repositoryOutput = {
+    path: ".",
+    seeds: ["like"],
+    searchedFileCount: 80,
+    matchedFileCount: 18,
+    resultCount: 36,
+    truncated: true,
+    groups: Array.from({ length: 18 }, (_, index) => ({
+      path: index === 0
+        ? "src/app/components/LikeButton.tsx"
+        : index === 1
+          ? "src/app/actions/posts.ts"
+          : `src/generated/like-result-${index}.tsx`,
+      matches: [{
+        seed: "like",
+        line: index + 1,
+        column: 1,
+        preview: `const likeResult${index} = ${JSON.stringify("x".repeat(360))};`,
+        contextBefore: ["before".repeat(30)],
+        contextAfter: ["after".repeat(30)],
+      }],
+    })),
+  };
+  assert.equal(Buffer.byteLength(JSON.stringify(repositoryOutput), "utf8") > 8 * 1024, true);
+  const shapedRepositoryOutput = shapeToolExecutionResultForTests({
+    runId: "run-1",
+    stepIndex: 1,
+    toolName: "repo.trace",
+    output: repositoryOutput,
+  });
+  const projectedRepositoryResult = replaceAgentToolResultOutput(
+    buildAgentToolSuccessResult({
+      toolName: "repo.trace",
+      input: { path: ".", seeds: ["like"] },
+      output: repositoryOutput,
+    }),
+    shapedRepositoryOutput.storedOutput,
+  );
+  const transcriptWithResult = appendToolResultToTranscript({
+    transcript: firstTranscript,
+    toolName: "repo.trace",
+    toolInput: { path: ".", seeds: ["like"] },
+    toolOutput: projectedRepositoryResult,
+    stepIndex: 1,
+  });
+
+  const secondContext = context();
+  secondContext.stepIndex = 2;
+  secondContext.event = event;
+  secondContext.session.state.agent = {
+    ...firstAgent,
+    modelTranscript: transcriptWithResult,
+    lastActionResult: {
+      kind: "tool",
+      name: "repo.trace",
+      status: "succeeded",
+      output: { resultCount: 3 },
+    },
+    observations: [{
+      stepIndex: 1,
+      toolName: "repo.trace",
+      status: "succeeded",
+      summary: "Found LikeButton.tsx and posts.ts.",
+    }],
+    postToolVerification: {
+      toolName: "repo.trace",
+      success: true,
+      newFactsCount: 3,
+    },
+    closeoutLatch: {
+      version: "v1",
+      closeoutRequiredForEvidenceHash: "like-feature-evidence",
+      closeoutAttempted: true,
+      active: true,
+    },
+  };
+  let secondRequest: ModelRequest | undefined;
+
+  const secondTransition = await step(secondContext, {
+    useModel: async (request: ModelRequest) => {
+      secondRequest = request;
+      return modelResponse({
+        version: "v1",
+        reason: "The repository evidence is sufficient for a direct answer.",
+        nextAction: {
+          kind: "finalize",
+          finalizeReason: "goal_satisfied",
+          message: "The LikeButton updates optimistically and toggleLike persists the change.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.ok(secondRequest);
+  const secondInput = secondRequest.input as Record<string, unknown>;
+  const secondTranscript = secondInput.transcript as ModelTranscript;
+  assert.equal(
+    secondTranscript.items.some((item) =>
+      item.kind === "tool_result" &&
+      item.toolName === "repo.trace" &&
+      JSON.stringify(item.toolOutput).includes("LikeButton.tsx")
+    ),
+    true,
+  );
+  assert.deepEqual(
+    (secondRequest.tools ?? []).map((tool) => tool.name),
+    ["kestrel_finalize", "kestrel_ask_user", "kestrel_cannot_satisfy"],
+  );
+  const secondAgent = secondTransition.statePatch?.agent as Record<string, unknown>;
+  assert.equal((secondAgent.closeoutLatch as Record<string, unknown>)?.active, false);
+  assert.equal(
+    (secondAgent.closeoutLatch as Record<string, unknown>)?.selectedActionKind,
+    "finalize",
+  );
 });
 
 test("agent loop rejects ask_user and preserves a noninteractive retry surface for SWE job runs", async () => {

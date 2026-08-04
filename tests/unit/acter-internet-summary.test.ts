@@ -6,6 +6,10 @@ import {
   compactInternetToolOutputForTests,
   shapeToolExecutionResultForTests,
 } from "../../agents/reference-react/src/steps/acter.js";
+import {
+  buildAgentToolSuccessResult,
+  replaceAgentToolResultOutput,
+} from "../../tools/toolResult.js";
 
 
 test("compactInternetToolOutputForTests condenses internet.news results into agent-loop-friendly highlights", () => {
@@ -213,4 +217,98 @@ test("shapeToolExecutionResultForTests keeps full verification facts and compact
   assert.equal(requirementsSummary.total, 80);
   assert.equal(requirementsSummary.passed, 80);
   assert.equal(shaped.artifacts.some((artifact) => artifact.type === "tool-output"), true);
+});
+
+test("oversized repo.trace results keep exact returned paths in model-visible context", () => {
+  const output = {
+    path: ".",
+    seeds: ["like", "likeCount", "toggleLike"],
+    searchedFileCount: 80,
+    matchedFileCount: 24,
+    resultCount: 48,
+    truncated: true,
+    groups: Array.from({ length: 24 }, (_, index) => ({
+      path: index === 0
+        ? "src/app/components/LikeButton.tsx"
+        : `src/generated/like-result-${index}.tsx`,
+      matches: [
+        {
+          seed: "like",
+          line: index + 1,
+          column: 3,
+          preview: `const likeResult${index} = ${JSON.stringify("x".repeat(320))};`,
+          contextBefore: ["before".repeat(30)],
+          contextAfter: ["after".repeat(30)],
+        },
+      ],
+    })),
+  };
+  assert.equal(Buffer.byteLength(JSON.stringify(output), "utf8") > 8 * 1024, true);
+
+  const shaped = shapeToolExecutionResultForTests({
+    runId: "run-repo-trace",
+    stepIndex: 3,
+    toolName: "repo.trace",
+    output,
+  });
+  const projected = replaceAgentToolResultOutput(
+    buildAgentToolSuccessResult({
+      toolName: "repo.trace",
+      input: { path: ".", seeds: output.seeds },
+      output,
+    }),
+    shaped.storedOutput,
+  );
+
+  assert.equal((shaped.storedOutput as Record<string, unknown>).truncated, true);
+  assert.match(projected.modelContext.text, /src\/app\/components\/LikeButton\.tsx/u);
+  assert.match(projected.modelContext.text, /matchedFileCount: 24/u);
+  assert.equal(
+    ((shaped.verificationOutput as { groups: unknown[] }).groups).length,
+    24,
+  );
+});
+
+test("oversized fs.search_text results keep exact returned paths in model-visible context", () => {
+  const output = {
+    path: ".",
+    query: "like",
+    matchCount: 40,
+    returnedMatchCount: 40,
+    truncated: true,
+    previewTruncatedCount: 0,
+    totalPreviewChars: 12_000,
+    matches: Array.from({ length: 40 }, (_, index) => ({
+      path: index === 0
+        ? "src/app/actions/posts.ts"
+        : `src/generated/search-result-${index}.ts`,
+      line: index + 1,
+      column: 1,
+      preview: `const likeResult${index} = ${JSON.stringify("y".repeat(300))};`,
+    })),
+  };
+  assert.equal(Buffer.byteLength(JSON.stringify(output), "utf8") > 8 * 1024, true);
+
+  const shaped = shapeToolExecutionResultForTests({
+    runId: "run-search-text",
+    stepIndex: 5,
+    toolName: "fs.search_text",
+    output,
+  });
+  const projected = replaceAgentToolResultOutput(
+    buildAgentToolSuccessResult({
+      toolName: "fs.search_text",
+      input: { path: ".", query: "like" },
+      output,
+    }),
+    shaped.storedOutput,
+  );
+
+  assert.equal((shaped.storedOutput as Record<string, unknown>).truncated, true);
+  assert.match(projected.modelContext.text, /src\/app\/actions\/posts\.ts/u);
+  assert.match(projected.modelContext.text, /matchCount: 40/u);
+  assert.equal(
+    ((shaped.verificationOutput as { matches: unknown[] }).matches).length,
+    40,
+  );
 });
