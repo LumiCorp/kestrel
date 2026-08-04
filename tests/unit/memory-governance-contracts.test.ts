@@ -52,6 +52,8 @@ function createContext(
     userId: "user-1",
     agentId: "agent-1",
     taskId: "task-1",
+    issuerKind: "trusted_runtime",
+    issuerAuthorityId: "runtime-1",
     policyRevision: POLICY_REVISION,
     now: NOW,
     ...overrides,
@@ -215,6 +217,8 @@ test("missing, stale, expired, and identity-mismatched bindings fail before back
     ["user", createBinding(), createContext({ userId: "user-2" })],
     ["agent", createBinding(), createContext({ agentId: "agent-2" })],
     ["task", createBinding(), createContext({ taskId: "task-2" })],
+    ["issuer-kind", createBinding(), createContext({ issuerKind: "trusted_hosted" })],
+    ["issuer-id", createBinding(), createContext({ issuerAuthorityId: "runtime-2" })],
   ];
   for (const [name, binding, context] of cases) {
     let calls = 0;
@@ -231,6 +235,97 @@ test("missing, stale, expired, and identity-mismatched bindings fail before back
     );
     assert.equal(calls, 0, name);
   }
+});
+
+test("backend result validation preserves the bounded query and ignores adapter mutation", async () => {
+  const gateway = new MemoryGateway();
+  const binding = createBinding({ documentAccess: { mode: "scope" } });
+  const query = createQuery({
+    limit: 1,
+    documentIds: ["document-1"],
+    minimumMatchScore: 0.5,
+  });
+  const backend = createBackend();
+  const valid = await backend.query({ binding, query });
+
+  await assert.rejects(
+    gateway.query({
+      context: createContext(),
+      binding,
+      query,
+      backend: {
+        descriptor: backend.descriptor,
+        query: async (received) => {
+          received.query.limit = 100;
+          received.query.documentIds = ["document-2"];
+          return {
+            ...valid,
+            items: [
+              {
+                ...valid.items[0]!,
+                recordId: "document-2",
+                provenance: {
+                  ...valid.items[0]!.provenance,
+                  recordId: "document-2",
+                },
+              },
+            ],
+          };
+        },
+      },
+    }),
+    /outside the authorized scope/u,
+  );
+
+  await assert.rejects(
+    gateway.query({
+      context: createContext(),
+      binding,
+      query,
+      backend: {
+        descriptor: backend.descriptor,
+        query: async () => ({
+          ...valid,
+          items: [
+            {
+              ...valid.items[0]!,
+              segments: valid.items[0]!.segments.map((segment) => ({
+                ...segment,
+                matchEvidence: { ...segment.matchEvidence, score: 0.25 },
+              })),
+            },
+          ],
+        }),
+      },
+    }),
+    /outside the authorized scope/u,
+  );
+
+  await assert.rejects(
+    gateway.query({
+      context: createContext(),
+      binding,
+      query: createQuery({ documentIds: undefined, limit: 1 }),
+      backend: {
+        descriptor: backend.descriptor,
+        query: async () => ({
+          ...valid,
+          items: [
+            valid.items[0]!,
+            {
+              ...valid.items[0]!,
+              recordId: "document-2",
+              provenance: {
+                ...valid.items[0]!.provenance,
+                recordId: "document-2",
+              },
+            },
+          ],
+        }),
+      },
+    }),
+    /more records than the bounded query/u,
+  );
 });
 
 test("scope and document widening fail before backend calls", async () => {

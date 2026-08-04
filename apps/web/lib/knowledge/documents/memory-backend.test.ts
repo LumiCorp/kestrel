@@ -39,6 +39,8 @@ const context = {
   userId: "user-1",
   agentId: "agent-1",
   taskId: "task-1",
+  issuerKind: "trusted_runtime" as const,
+  issuerAuthorityId: "runtime-1",
   policyRevision: POLICY_REVISION,
   now: "2026-08-04T12:00:00.000Z",
 };

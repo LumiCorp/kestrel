@@ -15,6 +15,8 @@ export interface MemoryReadContextV1 {
   userId: string;
   agentId: string;
   taskId: string;
+  issuerKind: MemoryReadBindingV1["issuer"]["kind"];
+  issuerAuthorityId: string;
   policyRevision: string;
   now: string;
 }
@@ -76,7 +78,10 @@ export class MemoryGateway {
     assertQueryAuthority({ binding, query, backend });
 
     const result = parseMemoryQueryResultV1(
-      await input.backend.query({ binding, query }),
+      await input.backend.query({
+        binding: structuredClone(binding),
+        query: structuredClone(query),
+      }),
     );
     assertResultAuthority({ binding, query, backend, result });
     return result;
@@ -87,6 +92,8 @@ function parseReadContext(value: MemoryReadContextV1): MemoryReadContextV1 {
   const keys = Object.keys(value).sort();
   const expected = [
     "agentId",
+    "issuerAuthorityId",
+    "issuerKind",
     "now",
     "policyRevision",
     "taskId",
@@ -104,13 +111,26 @@ function parseReadContext(value: MemoryReadContextV1): MemoryReadContextV1 {
       "Memory read context is malformed.",
     );
   }
-  for (const field of ["tenantId", "userId", "agentId", "taskId", "policyRevision"] as const) {
+  for (const field of [
+    "tenantId",
+    "userId",
+    "agentId",
+    "taskId",
+    "issuerAuthorityId",
+    "policyRevision",
+  ] as const) {
     if (typeof value[field] !== "string" || value[field].length === 0) {
       throw new MemoryAuthorizationError(
         "MEMORY_BINDING_INVALID",
         `Memory read context ${field} is required.`,
       );
     }
+  }
+  if (value.issuerKind !== "trusted_runtime" && value.issuerKind !== "trusted_hosted") {
+    throw new MemoryAuthorizationError(
+      "MEMORY_BINDING_INVALID",
+      "Memory read context issuerKind is invalid.",
+    );
   }
   return { ...value };
 }
@@ -131,6 +151,15 @@ function assertBindingAuthority(
     throw new MemoryAuthorizationError(
       "MEMORY_BINDING_STALE",
       "Memory read binding policy revision is stale.",
+    );
+  }
+  if (
+    binding.issuer.kind !== context.issuerKind ||
+    binding.issuer.authorityId !== context.issuerAuthorityId
+  ) {
+    throw new MemoryAuthorizationError(
+      "MEMORY_BINDING_AUTHORITY_MISMATCH",
+      "Memory read binding issuer does not match trusted context.",
     );
   }
 }
@@ -223,15 +252,28 @@ function assertResultAuthority(input: {
     binding.documentAccess.mode === "exact"
       ? new Set(binding.documentAccess.documentIds)
       : undefined;
+  const requestedDocuments = query.documentIds === undefined
+    ? undefined
+    : new Set(query.documentIds);
+  if (result.items.length > query.limit) {
+    throw new MemoryAuthorizationError(
+      "MEMORY_BACKEND_INVALID",
+      "Memory backend returned more records than the bounded query allowed.",
+    );
+  }
   for (const item of result.items) {
     if (
       item.provenance.namespace !== query.namespace ||
       !memoryScopesEqualV1(item.provenance.scope, query.scope) ||
-      (exactDocuments !== undefined && !exactDocuments.has(item.recordId))
+      (exactDocuments !== undefined && !exactDocuments.has(item.recordId)) ||
+      (requestedDocuments !== undefined && !requestedDocuments.has(item.recordId)) ||
+      (query.minimumMatchScore !== undefined &&
+        item.segments.some((segment) =>
+          segment.matchEvidence.score < query.minimumMatchScore!))
     ) {
       throw new MemoryAuthorizationError(
         "MEMORY_BACKEND_INVALID",
-        "Memory backend returned a record outside the authorized scope.",
+        "Memory backend returned a record outside the authorized scope or bounded query.",
       );
     }
   }

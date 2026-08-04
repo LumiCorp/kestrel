@@ -81,6 +81,8 @@ export function createHostedKnowledgeReadAuthority(input: {
       userId: input.userId,
       agentId: input.agentId,
       taskId: input.taskId,
+      issuerKind: input.issuer.kind,
+      issuerAuthorityId: input.issuer.authorityId,
       policyRevision: HOSTED_KNOWLEDGE_TIER_POLICY.revision,
       now: issuedAt,
     },
