@@ -27,6 +27,10 @@
   <a href="https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0"><img src="https://img.shields.io/badge/Desktop-0.7.0-245b78.svg" alt="Kestrel Desktop 0.7.0" /></a>
 </p>
 
+<p align="center">
+  <img src=".github/assets/kestrel-tui-reds-demo.gif" alt="Kestrel TUI researching Cincinnati Reds news and building a static fan site." width="1000" />
+</p>
+
 ## Kestrel Desktop
 
 Start with a folder, a repository, a collection of research, or a blank
