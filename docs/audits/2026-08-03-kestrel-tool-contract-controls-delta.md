@@ -110,9 +110,19 @@ only as the historical arithmetic in the original three-PR plan.
 
 ## Verification record
 
-Observed on the PR3 branch before aggregate gates:
+Observed on the PR3 branch:
 
-- Focused invocation, interruption, chaos, conformance, and effect-replay suites: **33/33 passed**.
-- Tool-contract mutation proofs: **10/10 killed**.
-- Root TypeScript check: passed.
-- Aggregate validation gates: pending final branch verification.
+- Focused contract, invocation, interruption, chaos, conformance, MCP,
+  App-parity, and effect-replay suites: **53/53 passed**.
+- Focused tool-contract mutation proofs: **10/10 killed**.
+- Root and Web TypeScript checks: passed.
+- Public-package boundary validation: passed.
+- `CI=true pnpm validate`: passed in **154.3s**.
+- `pnpm run validate:postgres`: passed in **52.7s**.
+- `pnpm run validate:process`: passed in **362.0s**, including **16/16**
+  Docker process tests and **23/23** uninstall tests; one disposable macOS
+  keychain test was skipped under CI as designed.
+- `pnpm run validate:audit`: passed in **127.8s** with **60/60 killed**.
+- Desktop resource preparation was not separately required because no mirrored
+  runtime source changed; the portable validation resource checks passed without
+  producing a tracked diff.
