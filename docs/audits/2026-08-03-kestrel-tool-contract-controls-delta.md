@@ -117,12 +117,12 @@ Observed on the PR3 branch:
 - Focused tool-contract mutation proofs: **10/10 killed**.
 - Root and Web TypeScript checks: passed.
 - Public-package boundary validation: passed.
-- `CI=true pnpm validate`: passed in **154.3s**.
-- `pnpm run validate:postgres`: passed in **52.7s**.
-- `pnpm run validate:process`: passed in **362.0s**, including **16/16**
+- `CI=true pnpm validate`: passed in **140.5s**.
+- `pnpm run validate:postgres`: passed in **53.1s**.
+- `pnpm run validate:process`: passed in **385.6s**, including **16/16**
   Docker process tests and **23/23** uninstall tests; one disposable macOS
   keychain test was skipped under CI as designed.
-- `pnpm run validate:audit`: passed in **127.8s** with **60/60 killed**.
+- `pnpm run validate:audit`: passed in **133.1s** with **60/60 killed**.
 - Desktop resource preparation was not separately required because no mirrored
   runtime source changed; the portable validation resource checks passed without
   producing a tracked diff.
