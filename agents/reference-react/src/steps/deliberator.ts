@@ -490,6 +490,9 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       : closeoutAttemptActive
         ? availableModeControlToolNames.filter((name) => CLOSEOUT_CONTROL_TOOL_NAMES.has(name))
         : availableModeControlToolNames;
+    const askUserAvailable = modeScopedControlToolNames.some(
+      (name) => name === "kestrel.ask_user",
+    );
     const finalizeStatuses = closeoutOnly
       ? ["goal_satisfied"] as const
       : finalizeStatusesForInteractionMode({
@@ -786,6 +789,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       executionPolicy,
       response.output,
       attempt.modelToolCalls,
+      askUserAvailable,
       attempt.assistantProgress,
     );
   };
@@ -2451,6 +2455,7 @@ function toAgentLoopActionTransition(
   executionPolicy: ExecutionPolicyOverride | undefined,
   previousResponse: unknown,
   modelToolCalls: Array<{ name: string; input: Record<string, unknown>; id?: string | undefined }>,
+  askUserAvailable: boolean,
   assistantProgress?: string | undefined,
 ): Transition {
   const action = compiled.action;
@@ -2467,6 +2472,7 @@ function toAgentLoopActionTransition(
     loopStepId,
     traces,
     stepIndex,
+    askUserAvailable,
   });
   if (visibleTodoContinuation !== undefined && visibleTodoContinuation.kind === "continue") {
       return visibleTodoContinuation.transition;
@@ -2664,6 +2670,7 @@ function buildVisibleTodoFinalizeContinuationTransition(input: {
   loopStepId: string;
   traces: DecisionTrace[];
   stepIndex: number;
+  askUserAvailable: boolean;
 }):
   | { kind: "continue"; transition: Transition }
   | { kind: "allow"; visibleTodos?: VisibleTodoState | undefined }
@@ -2695,7 +2702,18 @@ function buildVisibleTodoFinalizeContinuationTransition(input: {
     itemText: openItem.text,
     itemStatus: openItem.status,
     note: openItem.note,
+    askUserAvailable: input.askUserAvailable,
   });
+  const correctionAction = input.askUserAvailable
+    ? "advance_close_or_wait_on_user_before_finalize"
+    : "advance_or_close_visible_todo_before_finalize";
+  const allowedNextActions = [
+    "call a workspace tool that directly advances the open item",
+    ...(input.askUserAvailable
+      ? ["if the open item cannot advance until the user replies, call kestrel_ask_user with the direct question and leave the item open across the wait"]
+      : []),
+    "if observed evidence already proves the item complete, combine kestrel_todo_update marking that exact item done with an evidence note and kestrel_finalize",
+  ];
   const retryContext = {
     failure: {
       code: "DECISION_POLICY_FAILED",
@@ -2712,7 +2730,7 @@ function buildVisibleTodoFinalizeContinuationTransition(input: {
     },
     requiredCorrection: {
       visibleTodoBeforeFinalize: {
-        action: "advance_or_close_visible_todo_before_finalize",
+        action: correctionAction,
         openItem: {
           id: openItem.id,
           text: openItem.text,
@@ -2720,10 +2738,7 @@ function buildVisibleTodoFinalizeContinuationTransition(input: {
           ...(openItem.note !== undefined ? { note: openItem.note } : {}),
         },
         forbiddenActionWhileOpen: "kestrel_finalize by itself",
-        allowedNextActions: [
-          "call a workspace tool that directly advances the open item",
-          "if observed evidence already proves the item complete, combine kestrel_todo_update marking that exact item done with an evidence note and kestrel_finalize",
-        ],
+        allowedNextActions,
         ...(openItem.status === "blocked"
           ? {
               blockedItemRecovery:
@@ -2779,6 +2794,7 @@ function buildVisibleTodoFinalizeContinuationCorrection(input: {
   itemText: string;
   itemStatus: string;
   note: string | undefined;
+  askUserAvailable: boolean;
 }): string {
   const blocker = input.itemStatus === "blocked" && input.note !== undefined
     ? ` Blocker: ${input.note}.`
@@ -2786,7 +2802,10 @@ function buildVisibleTodoFinalizeContinuationCorrection(input: {
   const residualGuidance = input.itemStatus === "blocked"
     ? " If this is a residual risk rather than actionable work, document it in kestrel_finalize data.openGap or data.knownWarnings, mark the item done with a note, and finalize."
     : "";
-  return `Still open: ${input.itemText}.${blocker} Do not call kestrel_finalize by itself again while this item remains open. Continue actionable work with a workspace tool, or if existing evidence proves it is complete, combine kestrel_todo_update with item '${input.itemId}' marked done and a note naming the observed validation result in the same response as kestrel_finalize.${residualGuidance}`;
+  const waitGuidance = input.askUserAvailable
+    ? " If the item cannot advance until the user replies, call kestrel_ask_user with the direct question and leave the item open across the wait."
+    : "";
+  return `Still open: ${input.itemText}.${blocker} Do not call kestrel_finalize by itself again while this item remains open. Continue actionable work with a workspace tool.${waitGuidance} If existing evidence proves it is complete, combine kestrel_todo_update with item '${input.itemId}' marked done and a note naming the observed validation result in the same response as kestrel_finalize.${residualGuidance}`;
 }
 
 function resolveBlockedActionPolicy(input: {

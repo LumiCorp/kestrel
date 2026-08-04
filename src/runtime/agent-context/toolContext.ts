@@ -98,7 +98,7 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
   },
   {
     name: "kestrel.ask_user",
-    description: "Ask the user a concise clarification or approval question.",
+    description: "Ask the user a concise clarification or approval question when their response is required before the run can continue. If an open todo depends on that response, leave that item open across the wait. Do not use kestrel.finalize to pose that question.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -175,7 +175,7 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
   },
   {
     name: "kestrel.todo_update",
-    description: "Update the visible live checklist for multi-step work. Items track concrete task work, checks, results, and blockers; do not add finalization or reporting itself as a todo item. Emit updates alongside the related executable action, and combine final completed updates with kestrel.finalize. Use a standalone update only when waiting or blocked with no executable or terminal action.",
+    description: "Update the visible live checklist for multi-step work. Items track concrete task work, checks, results, and blockers; do not add finalization or reporting itself as a todo item. Emit updates alongside the related executable action, and combine final completed updates with kestrel.finalize. If an open item cannot advance until the user replies, leave it open and call kestrel.ask_user; do not call kestrel.finalize to pose the question. Use a standalone update only when waiting or blocked with no executable or terminal action.",
     inputSchema: VISIBLE_TODOS_SCHEMA,
   },
 ];

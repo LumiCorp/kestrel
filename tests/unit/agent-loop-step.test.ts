@@ -4055,6 +4055,7 @@ test("agent loop routes premature visible-todo finalization back to open work", 
   assert.match(String(agent.decisionReason), /write-newsletter-report-json' marked done/u);
   assert.match(String(agent.decisionReason), /observed validation result/u);
   assert.match(String(agent.decisionReason), /same response as kestrel_finalize/u);
+  assert.match(String(agent.decisionReason), /kestrel_ask_user/u);
   assert.match(String(agent.decisionReason), /kestrel_finalize/u);
   const retryContext = agent.retryContext as Record<string, unknown>;
   const failure = retryContext.failure as Record<string, unknown>;
@@ -4069,11 +4070,119 @@ test("agent loop routes premature visible-todo finalization back to open work", 
   const requiredCorrection = retryContext.requiredCorrection as Record<string, unknown>;
   const todoCorrection = requiredCorrection.visibleTodoBeforeFinalize as Record<string, unknown>;
   const openItem = todoCorrection.openItem as Record<string, unknown>;
-  assert.equal(todoCorrection.action, "advance_or_close_visible_todo_before_finalize");
+  assert.equal(todoCorrection.action, "advance_close_or_wait_on_user_before_finalize");
   assert.equal(todoCorrection.forbiddenActionWhileOpen, "kestrel_finalize by itself");
+  assert.deepEqual(todoCorrection.allowedNextActions, [
+    "call a workspace tool that directly advances the open item",
+    "if the open item cannot advance until the user replies, call kestrel_ask_user with the direct question and leave the item open across the wait",
+    "if observed evidence already proves the item complete, combine kestrel_todo_update marking that exact item done with an evidence note and kestrel_finalize",
+  ]);
   assert.equal(openItem.id, "write-newsletter-report-json");
   assert.equal(openItem.status, "in_progress");
   assert.equal((agent.lastActionResult as Record<string, unknown> | undefined)?.kind, undefined);
+});
+
+test("chat-mode visible-todo correction lets reply-dependent work wait for the user", async () => {
+  const chatContext = context();
+  chatContext.event.payload = {
+    interactionMode: "chat",
+    message: "Give me a riddle and remember its answer for my guess.",
+  };
+  chatContext.session.state.agent = {
+    interactionMode: "chat",
+    goal: "Give the user a riddle and verify the answer after their guess.",
+    modelTranscript: appendUserTurnToTranscript({
+      transcript: undefined,
+      message: "Give me a riddle and remember its answer for my guess.",
+      stepIndex: 1,
+    }),
+    visibleTodos: {
+      objective: "Run the riddle interaction.",
+      items: [
+        { id: "prepare", text: "Prepare the riddle and answer", status: "done" },
+        { id: "verify", text: "Verify the user's guess", status: "pending" },
+      ],
+    },
+  };
+
+  const rejected = await buildStep()(chatContext, {
+    useModel: async () => modelResponse({
+      version: "v2",
+      reason: "Present the riddle.",
+      nextAction: {
+        kind: "finalize",
+        status: "goal_satisfied",
+        message: "What has keys but cannot open locks?",
+      },
+    }),
+  } satisfies StepIO);
+
+  const rejectedAgent = rejected.statePatch?.agent as Record<string, unknown>;
+  assert.equal(rejected.status, "RUNNING");
+  assert.equal(rejected.nextStepAgent, "agent.loop");
+  assert.match(String(rejectedAgent.decisionReason), /call kestrel_ask_user/u);
+
+  chatContext.stepIndex = 2;
+  chatContext.session.state.agent = rejectedAgent;
+  const waiting = await buildStep()(chatContext, {
+    useModel: async () => modelResponse({
+      version: "v2",
+      reason: "The pending verification requires the user's guess.",
+      nextAction: {
+        kind: "ask_user",
+        prompt: "What has keys but cannot open locks?",
+      },
+    }),
+  } satisfies StepIO);
+
+  const waitingAgent = waiting.statePatch?.agent as Record<string, unknown>;
+  const nextAction = waitingAgent.nextAction as Record<string, unknown>;
+  const visibleTodos = waitingAgent.visibleTodos as {
+    items: Array<{ id: string; status: string }>;
+  };
+  assert.equal(waiting.status, "RUNNING");
+  assert.equal(waiting.nextStepAgent, "agent.exec.dispatch");
+  assert.equal(nextAction.kind, "ask_user");
+  assert.equal(nextAction.prompt, "What has keys but cannot open locks?");
+  assert.equal(visibleTodos.items.find((item) => item.id === "verify")?.status, "pending");
+});
+
+test("noninteractive visible-todo correction does not advertise ask_user", async () => {
+  const jobContext = context();
+  jobContext.event.type = "job.run";
+  jobContext.event.payload = {
+    interactionMode: "chat",
+    message: "Complete the batch task.",
+  };
+  jobContext.session.state.agent = {
+    interactionMode: "chat",
+    visibleTodos: {
+      objective: "Complete the batch task.",
+      items: [
+        { id: "finish", text: "Finish the remaining batch work", status: "in_progress" },
+      ],
+    },
+  };
+
+  const transition = await buildStep()(jobContext, {
+    useModel: async () => modelResponse({
+      version: "v2",
+      reason: "Finish early.",
+      nextAction: {
+        kind: "finalize",
+        status: "goal_satisfied",
+        message: "Done.",
+      },
+    }),
+  } satisfies StepIO);
+
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  const retryContext = agent.retryContext as Record<string, unknown>;
+  const requiredCorrection = retryContext.requiredCorrection as Record<string, unknown>;
+  const todoCorrection = requiredCorrection.visibleTodoBeforeFinalize as Record<string, unknown>;
+  assert.equal(todoCorrection.action, "advance_or_close_visible_todo_before_finalize");
+  assert.doesNotMatch(JSON.stringify(todoCorrection), /ask_user/u);
+  assert.doesNotMatch(String(agent.decisionReason), /ask_user/u);
 });
 
 test("agent loop accepts visible todo closure with finalization in one model turn", async () => {
