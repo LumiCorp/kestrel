@@ -18,6 +18,11 @@ import type {
   RecoveryPolicyV1,
 } from "../src/kestrel/contracts/recovery.js";
 import type { RuntimeEvaluationPolicyV1 } from "../src/kestrel/contracts/evaluation.js";
+import type {
+  KestrelEnvironmentBindingV1,
+  KestrelEnvironmentPresetIdV1,
+  KestrelProfileDefinitionV1,
+} from "../src/kestrel/contracts/profile.js";
 import type { ManagedTaskWorktreeSetupSpec } from "../src/workspace/ManagedTaskWorktreeService.js";
 import type { ResolvedOciMcpEgressBindingV1 } from "../packages/mcp-security/src/index.js";
 import type {
@@ -337,13 +342,22 @@ export interface ProfilesFileV9 {
   managedProfileOverlays: ProfilesFileV8["managedProfileOverlays"];
 }
 
+export interface ProfilesFileV10 {
+  version: 10;
+  profile: KestrelProfileDefinitionV1;
+  environmentBindings: Partial<
+    Record<KestrelEnvironmentPresetIdV1, KestrelEnvironmentBindingV1>
+  >;
+}
+
 export type ProfilesFile =
   | ProfilesFileV4
   | ProfilesFileV5
   | ProfilesFileV6
   | ProfilesFileV7
   | ProfilesFileV8
-  | ProfilesFileV9;
+  | ProfilesFileV9
+  | ProfilesFileV10;
 
 export interface TuiSessionMeta {
   name: string;
