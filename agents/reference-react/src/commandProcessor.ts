@@ -836,7 +836,7 @@ function toReferenceReactWaitMatcher(waitFor: WaitForMatcher): ReferenceReactWai
   }
   throw createRuntimeFailure(
     "REFERENCE_REACT_WAIT_KIND_MISSING",
-    "Reference React wait checkpoints require an explicit wait kind.",
+    "Kestrel wait checkpoints require an explicit wait kind.",
     {
       eventType: waitFor.eventType,
     },

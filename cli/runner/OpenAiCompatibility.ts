@@ -31,8 +31,8 @@ const KESTREL_ACTOR_TYPE_HEADER = "x-kestrel-actor-type";
 const KESTREL_ACTOR_NAME_HEADER = "x-kestrel-actor-name";
 const KESTREL_TENANT_HEADER = "x-kestrel-tenant-id";
 
-const SUPPORTED_COMPATIBILITY_MODEL_ID = "reference-react";
-const COMPATIBILITY_MODEL_ALIASES = new Set(["reference-web"]);
+const SUPPORTED_COMPATIBILITY_MODEL_ID = "kestrel";
+const COMPATIBILITY_MODEL_ALIASES = new Set<string>();
 const require = createRequire(import.meta.url);
 const Ajv = require("ajv") as new (options?: { allErrors?: boolean; strict?: boolean }) => {
   validate(schema: unknown, data: unknown): boolean;
@@ -219,7 +219,7 @@ export function buildRunStartCommand(
         sessionId: request.sessionId,
         message: request.inputText,
         eventType: "user.message",
-        stepAgent: "reference-react",
+        stepAgent: "agent.loop",
         modeSystemV2Enabled: true,
         clientCapabilities: createWebClientCapabilities(),
         ...(systemInstructions.length > 0 ? { systemInstructions } : {}),
@@ -1153,7 +1153,7 @@ function resolveCompatibilityProfile(_model: string): TuiProfile {
   return {
     ...base,
     id: SUPPORTED_COMPATIBILITY_MODEL_ID,
-    label: "Reference React",
+    label: "Kestrel",
     sessionPrefix: SUPPORTED_COMPATIBILITY_MODEL_ID,
   };
 }

@@ -9,7 +9,7 @@ updatedAt: 2026-07-20
 ---
 
 <GuideNote step="SDK reference">
-The examples use the built-in `reference` profile introduced in the Build guide.
+The examples use the canonical built-in `kestrel` profile introduced in the Build guide.
 </GuideNote>
 
 The SDK is for Node.js server applications. It connects to an explicit Local
@@ -31,8 +31,8 @@ in this release.
 import { createAgent } from "@kestrel-agents/sdk";
 
 const agent = createAgent({
-  id: "reference-agent",
-  profileId: "reference",
+  id: "kestrel-agent",
+  profileId: "kestrel",
   target: {
     kind: "remote",
     baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
@@ -46,8 +46,8 @@ Core:
 
 ```ts
 const agent = createAgent({
-  id: "reference-agent",
-  profileId: "reference",
+  id: "kestrel-agent",
+  profileId: "kestrel",
   target: {
     kind: "local",
     socketPath: process.env.KESTREL_LOCAL_CORE_API_SOCKET!,
@@ -90,7 +90,7 @@ const context = {
 ```ts
 await agent.resume(
   {
-    sessionId: "reference-session-001",
+    sessionId: "kestrel-session-001",
     requestId: "interaction-123",
     message: "Approved. Continue.",
   },
@@ -103,7 +103,7 @@ The request ID must come from the durable waiting interaction being answered.
 ## Versioned session memory
 
 ```ts
-const session = agent.session("reference-session-001");
+const session = agent.session("kestrel-session-001");
 const memory = await session.memory.get(context);
 
 await session.memory.update(

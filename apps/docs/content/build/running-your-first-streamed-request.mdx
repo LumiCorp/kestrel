@@ -17,7 +17,7 @@ Use the `agent` and `context` created in the previous step:
 ```ts
 const stream = agent.stream(
   {
-    sessionId: "reference-session-001",
+    sessionId: "kestrel-session-001",
     message: "Explain the highest-risk parts of this project.",
   },
   context,
@@ -42,7 +42,7 @@ Pass an `AbortSignal` when the stream belongs to a request that may disconnect:
 ```ts
 const stream = agent.stream(
   {
-    sessionId: "reference-session-001",
+    sessionId: "kestrel-session-001",
     message: "Review the deployment configuration.",
     signal: abortController.signal,
   },

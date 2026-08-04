@@ -454,7 +454,8 @@ export class KestrelChatRuntime {
     this.releaseRuntimeAuthorization = bootstrap.releaseRuntimeAuthorization;
     this.reasoningPolicyReady =
       bootstrap.reasoningPolicyReady ?? Promise.resolve();
-    this.forceModeSystemV2 = profile.agent === "reference-react";
+    this.forceModeSystemV2 =
+      profile.agent === "kestrel" || profile.agent === "reference-react";
     this.modeSystemV2Enabled =
       this.forceModeSystemV2 || profile.modeSystemV2Enabled === true;
     this.defaultExecutionPolicy = buildExecutionPolicyFromPack(

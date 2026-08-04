@@ -8,10 +8,10 @@ import type { ProgressUpdateV1 } from "../../src/index.js";
 
 
 const profile: TuiProfile = {
-  id: "reference-react",
-  label: "Reference React",
-  agent: "reference-react",
-  sessionPrefix: "reference-react",
+  id: "kestrel",
+  label: "Kestrel",
+  agent: "kestrel",
+  sessionPrefix: "kestrel",
 };
 
 test("OpenAI compatibility lists supported models", async () => {
@@ -40,7 +40,7 @@ test("OpenAI compatibility lists supported models", async () => {
     };
     assert.equal(response.statusCode, 200);
     assert.equal(body.object, "list");
-    assert.equal(body.data[0]?.id, "reference-react");
+    assert.equal(body.data[0]?.id, "kestrel");
     assert.equal(body.data[0]?.object, "model");
   } finally {
     await service.close();
@@ -103,7 +103,7 @@ test("OpenAI compatibility returns non-streaming chat completions with sticky se
         "x-kestrel-session-id": "session-sticky",
       },
       body: JSON.stringify({
-        model: "reference-react",
+        model: "kestrel",
         messages: [
           {
             role: "system",
@@ -251,7 +251,7 @@ test("OpenAI compatibility streams chat completion chunks and mirrors internal t
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "reference-react",
+        model: "kestrel",
         stream: true,
         messages: [
           {
@@ -315,7 +315,7 @@ test("OpenAI compatibility returns responses output and enforces structured outp
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "reference-react",
+        model: "kestrel",
         input: "Return machine readable status",
         text: {
           format: {

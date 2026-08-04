@@ -117,7 +117,7 @@ export async function runLiveCodeModeE2E(): Promise<CodeModeE2ESummary> {
   const profile: TuiProfile = {
     id: "live-code-mode-e2e",
     label: "Live Code-Mode E2E",
-    agent: "reference-react",
+    agent: "kestrel",
     sessionPrefix: "live-code",
     toolAllowlist: ["code.execute"],
     codeMode: {

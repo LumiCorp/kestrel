@@ -121,7 +121,7 @@ test("runner ping documentation uses a valid canonical command envelope", async 
 test("resume documentation names the current SDK input", async () => {
   const page = await getRenderedPageBySlug(["build", "waiting-resume-and-cancellation"]);
   assert.ok(page);
-  assert.match(page.rawContent, /sessionId:\s*"reference-session-001"/u);
+  assert.match(page.rawContent, /sessionId:\s*"kestrel-session-001"/u);
   assert.match(page.rawContent, /requestId:\s*waitingRequestId/u);
   assert.match(page.rawContent, /message:\s*"Approved/u);
   assert.doesNotMatch(page.rawContent, /runId:\s*waitingRunId|event:\s*\{/u);

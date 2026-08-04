@@ -28,7 +28,7 @@ app/api/copilot/webhook/route.ts
 
 ```json
 {
-  "sessionId": "reference-session-001",
+  "sessionId": "kestrel-session-001",
   "message": "Summarize the highest-risk files in this workspace."
 }
 ```
@@ -48,7 +48,7 @@ The stream route uses the same request body:
 
 ```json
 {
-  "sessionId": "reference-session-001",
+  "sessionId": "kestrel-session-001",
   "message": "Stream progress while you inspect the workspace."
 }
 ```
@@ -95,7 +95,7 @@ Example payload mapping:
 ```ts
 mapPayload(payload) {
   return {
-    sessionId: payload.sessionId ?? "reference-session-001",
+    sessionId: payload.sessionId ?? "kestrel-session-001",
     message: payload.prompt,
   };
 }

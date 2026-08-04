@@ -646,7 +646,7 @@ export function buildResolvedJobRunCommandPayload(
 }
 
 function resolveJobEntryStepAgent(profile: Pick<TuiProfile, "agent">): string {
-  if (profile.agent === "reference-react") {
+  if (profile.agent === "kestrel") {
     return AGENT_STEP_IDS.loop;
   }
   throw new Error(`Unsupported profile agent '${profile.agent}'`);

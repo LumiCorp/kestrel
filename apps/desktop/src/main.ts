@@ -3096,7 +3096,7 @@ function registerIpcHandlers(
         registeredProjectIds: desktopSettings.projects.flatMap((project) =>
           project.id === undefined ? [] : [project.id],
         ),
-        profileId: defaultDesktopRunnerProfileId ?? "reference",
+        profileId: requireDefaultDesktopRunnerProfileId(),
         actionId: randomUUID(),
         actionTs: new Date().toISOString(),
         context: DESKTOP_RUNNER_REQUEST_CONTEXT,
@@ -4879,13 +4879,7 @@ function requireDesktopRunnerAdapter(
   profileId?: string | undefined,
   resolvedProfile?: WebRunnerRegisteredProfileSnapshot | undefined,
 ): WebRunnerAdapter {
-  const effectiveProfileId = profileId ?? defaultDesktopRunnerProfileId;
-  if (effectiveProfileId === undefined) {
-    throw createDesktopError({
-      code: "desktop.execution_profile_unavailable",
-      message: "Desktop has not resolved its Core-owned execution profile.",
-    });
-  }
+  const effectiveProfileId = profileId ?? requireDefaultDesktopRunnerProfileId();
   let adapter = desktopRunnerAdapters.get(effectiveProfileId);
   if (adapter === undefined) {
     if (resolvedProfile === undefined) {
@@ -4902,6 +4896,16 @@ function requireDesktopRunnerAdapter(
     desktopRunnerAdapters.set(effectiveProfileId, adapter);
   }
   return adapter;
+}
+
+function requireDefaultDesktopRunnerProfileId(): string {
+  if (defaultDesktopRunnerProfileId === undefined) {
+    throw createDesktopError({
+      code: "desktop.execution_profile_unavailable",
+      message: "Desktop has not resolved its Core-owned execution profile.",
+    });
+  }
+  return defaultDesktopRunnerProfileId;
 }
 
 function requireDesktopRunnerTransport(): DesktopRunnerControlTransport {
