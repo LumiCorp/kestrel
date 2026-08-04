@@ -186,6 +186,7 @@ export {
 } from "./contracts/evaluation.js";
 export type {
   EvaluationCalibrationRecordV1,
+  EvaluationCalibrationRunV1,
   EvaluationEvidenceProjectionV1,
   RuntimeEvaluationAssertionV1,
   RuntimeEvaluationAssetBundleRefV1,

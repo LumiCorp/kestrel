@@ -22,12 +22,13 @@ import { resolveProfileWithEvaluationPolicy } from "../../src/profile/evaluation
 import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
+import { bindTestRuntimeEvaluationCalibration } from "../helpers/runtimeEvaluationCalibration.js";
 
 const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
 
 function evaluationPolicy() {
-  return createRuntimeEvaluationPolicyV1({
+  const policy = createRuntimeEvaluationPolicyV1({
     policyId: "evaluation:runtime-integration",
     evaluator: {
       evaluatorId: "completion-evidence",
@@ -67,6 +68,7 @@ function evaluationPolicy() {
       ],
     },
   });
+  return bindTestRuntimeEvaluationCalibration(policy).policy;
 }
 
 function resolvedProfile(): TuiProfile {
@@ -117,10 +119,17 @@ function judgeOutput(input: {
   };
 }
 
-function createHarness(outputs: Array<ReturnType<typeof judgeOutput>>) {
+function createHarness(
+  outputs: Array<ReturnType<typeof judgeOutput>>,
+  options: {
+    store?: InMemorySessionStore | undefined;
+    callState?: { count: number } | undefined;
+  } = {},
+) {
   const profile = resolvedProfile();
   const recoveryPolicy = profile.recoveryPolicy!;
-  const store = new InMemorySessionStore();
+  const store = options.store ?? new InMemorySessionStore();
+  const callState = options.callState ?? { count: 0 };
   const gateway: ModelGateway = { call: async <T>() => ({}) as T };
   const modelRegistry = new RecoveryModelRegistry();
   modelRegistry.register({
@@ -131,7 +140,6 @@ function createHarness(outputs: Array<ReturnType<typeof judgeOutput>>) {
   const workflowHandlerRegistry = new RecoveryWorkflowHandlerRegistry();
   registerDefaultRecoveryWorkflowHandlers(workflowHandlerRegistry);
   const events: string[] = [];
-  let evaluationCalls = 0;
   const fingerprint = fingerprintResolvedProfile(profile);
   const kestrel = new Kestrel({
     store,
@@ -150,11 +158,14 @@ function createHarness(outputs: Array<ReturnType<typeof judgeOutput>>) {
     },
     evaluationRuntime: {
       policy: profile.evaluationPolicy!,
+      calibrationRecord: bindTestRuntimeEvaluationCalibration(
+        profile.evaluationPolicy!,
+      ).calibrationRecord,
       executionProfileFingerprint: fingerprint,
       evaluatorRegistry: createDefaultRuntimeEvaluatorRegistry(),
       invokeJudge: async () => {
-        const output = outputs[evaluationCalls];
-        evaluationCalls += 1;
+        const output = outputs[callState.count];
+        callState.count += 1;
         if (output === undefined) throw new Error("Unexpected evaluator call.");
         return {
           output,
@@ -167,7 +178,7 @@ function createHarness(outputs: Array<ReturnType<typeof judgeOutput>>) {
       },
     },
   });
-  return { kestrel, store, events, evaluationCalls: () => evaluationCalls };
+  return { kestrel, store, events, evaluationCalls: () => callState.count };
 }
 
 function completedAgentState(
@@ -381,6 +392,54 @@ test("a second rejection enters review without offering another revision", async
   assert.equal(harness.evaluationCalls(), 2);
 });
 
+test("integrity quarantine never exposes the candidate through the normal session projection", async () => {
+  const harness = createHarness([
+    judgeOutput({ score: 0.95, integrityPassed: false }),
+  ]);
+  harness.kestrel.registerStep("agent.loop", async (context) => ({
+    status: "COMPLETED",
+    statePatch: {
+      agent: completedAgentState(
+        context.session.state,
+        "Quarantined candidate must remain hidden.",
+      ),
+    },
+  }));
+
+  const waiting = await harness.kestrel.run({
+    id: "evaluation-quarantine-event",
+    type: "user.message",
+    sessionId: "evaluation-quarantine-session",
+    stepAgent: "agent.loop",
+    payload: {
+      message: "Return a checked result.",
+      metadata: {
+        threadId: "evaluation-quarantine-thread",
+        actor: {
+          actorId: "operator-1",
+          actorType: "operator",
+          tenantId: "tenant-1",
+        },
+      },
+    },
+  });
+
+  assert.equal(waiting.status, "WAITING");
+  const session = await harness.kestrel.getSession(
+    "evaluation-quarantine-session",
+  );
+  const agent = session?.state.agent as Record<string, unknown>;
+  assert.equal(agent.assistantText, null);
+  assert.equal(agent.finalOutput, undefined);
+  const pending = (agent.exec as Record<string, unknown>)
+    .pendingEvaluation as Record<string, unknown>;
+  assert.equal(pending.status, "quarantined");
+  assert.equal(
+    pending.candidate,
+    "Quarantined candidate must remain hidden.",
+  );
+});
+
 test("the exact terminal review option fails with EVALUATION_DECLINED", async () => {
   const harness = createHarness([
     judgeOutput({ score: 0.3, repairable: false }),
@@ -429,4 +488,140 @@ test("the exact terminal review option fails with EVALUATION_DECLINED", async ()
   assert.equal(declined.status, "FAILED");
   assert.equal(declined.errors[0]?.code, "EVALUATION_DECLINED");
   assert.equal(harness.evaluationCalls(), 1);
+});
+
+test("durable evaluation review survives restart and accept-once settles the exact candidate", async () => {
+  const store = new InMemorySessionStore();
+  const callState = { count: 0 };
+  const first = createHarness(
+    [judgeOutput({ score: 0.3, repairable: false })],
+    { store, callState },
+  );
+  first.kestrel.registerStep("agent.loop", async (context) => ({
+    status: "COMPLETED",
+    statePatch: {
+      agent: completedAgentState(context.session.state, "Restart-withheld result."),
+    },
+  }));
+  const waiting = await first.kestrel.run({
+    id: "evaluation-restart-accept-event",
+    type: "user.message",
+    sessionId: "evaluation-restart-accept-session",
+    stepAgent: "agent.loop",
+    payload: {
+      message: "Return a reviewed result.",
+      metadata: {
+        threadId: "evaluation-restart-accept-thread",
+        actor: {
+          actorId: "operator-1",
+          actorType: "operator",
+          tenantId: "tenant-1",
+        },
+      },
+    },
+  });
+  assert.equal(waiting.status, "WAITING");
+  assert.equal((await store.getRun(waiting.runId))?.status, "WAITING");
+
+  const restarted = createHarness(
+    [judgeOutput({ score: 0.3, repairable: false })],
+    { store, callState },
+  );
+  const accepted = await restarted.kestrel.run({
+    id: "evaluation-restart-accept-response",
+    type: "user.reply",
+    sessionId: "evaluation-restart-accept-session",
+    payload: {
+      recoveryOptionId: "evaluation.accept_once",
+      metadata: {
+        threadId: "evaluation-restart-accept-thread",
+        actor: {
+          actorId: "operator-1",
+          actorType: "operator",
+          tenantId: "tenant-1",
+        },
+      },
+    },
+  });
+  assert.equal(accepted.status, "COMPLETED");
+  assert.equal(callState.count, 1);
+  assert.equal(
+    ((await restarted.kestrel.getSession("evaluation-restart-accept-session"))
+      ?.state.agent as Record<string, unknown>).assistantText,
+    "Restart-withheld result.",
+  );
+});
+
+test("operator-selected evaluation revision resumes the exact action after restart", async () => {
+  const store = new InMemorySessionStore();
+  const callState = { count: 0 };
+  const outputs = [
+    judgeOutput({ score: 0.3, repairable: false }),
+    judgeOutput({ score: 0.95 }),
+  ];
+  const first = createHarness(outputs, { store, callState });
+  first.kestrel.registerStep("agent.loop", async (context) => ({
+    status: "COMPLETED",
+    statePatch: {
+      agent: completedAgentState(context.session.state, "Initial review result."),
+    },
+  }));
+  const waiting = await first.kestrel.run({
+    id: "evaluation-restart-revise-event",
+    type: "user.message",
+    sessionId: "evaluation-restart-revise-session",
+    stepAgent: "agent.loop",
+    payload: {
+      message: "Return a revised result.",
+      metadata: {
+        threadId: "evaluation-restart-revise-thread",
+        actor: {
+          actorId: "operator-1",
+          actorType: "operator",
+          tenantId: "tenant-1",
+        },
+      },
+    },
+  });
+  assert.equal(waiting.status, "WAITING");
+
+  const restarted = createHarness(outputs, { store, callState });
+  let revisedStepCalls = 0;
+  restarted.kestrel.registerStep("agent.loop", async (context) => {
+    revisedStepCalls += 1;
+    return {
+      status: "COMPLETED",
+      statePatch: {
+        agent: completedAgentState(
+          context.session.state,
+          "Restart-revised complete result.",
+        ),
+      },
+    };
+  });
+  const completed = await restarted.kestrel.run({
+    id: "evaluation-restart-revise-response",
+    type: "user.reply",
+    sessionId: "evaluation-restart-revise-session",
+    payload: {
+      recoveryOptionId: "evaluation.revise",
+      metadata: {
+        threadId: "evaluation-restart-revise-thread",
+        actor: {
+          actorId: "operator-1",
+          actorType: "operator",
+          tenantId: "tenant-1",
+        },
+      },
+    },
+  });
+  assert.equal(completed.status, "COMPLETED", JSON.stringify(completed));
+  assert.equal(revisedStepCalls, 1);
+  assert.equal(callState.count, 2);
+  assert.equal((await store.getRun(completed.runId))?.status, "COMPLETED");
+  const eventTypes = store.getRunEvents().map((event) => event.type);
+  assert.equal(eventTypes.includes("recovery.action.started"), true);
+  assert.equal(eventTypes.includes("recovery.action.completed"), true);
+  assert.equal(eventTypes.includes("evaluation.completed"), true);
+  assert.equal(eventTypes.includes("run.completed"), true);
 });

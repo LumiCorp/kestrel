@@ -1,5 +1,9 @@
 import type { SessionStore } from "../kestrel/contracts/store.js";
 import {
+  buildRecordedRuntimeEvaluationEvidenceV1,
+  type RecordedRuntimeEvaluationEvidenceV1,
+} from "../evaluation/RuntimeEvaluationReplay.js";
+import {
   RunReplayService,
   type ReplayDoctorReport,
   type ReplayQuery,
@@ -37,6 +41,7 @@ export interface RuntimeReplayBundleV1 {
     evidenceRecovery?: ReplayResult["evidenceRecovery"] | undefined;
   };
   artifactReferences: string[];
+  evaluation?: RecordedRuntimeEvaluationEvidenceV1 | undefined;
 }
 
 export async function buildRuntimeReplayBundle(
@@ -46,6 +51,19 @@ export async function buildRuntimeReplayBundle(
   const service = new RunReplayService(store);
   const replay = await service.replay(query);
   const doctor = service.doctor(replay);
+  const evaluationRunId = doctor.focus.runId;
+  const evaluationSessionId = doctor.focus.sessionId ??
+    (evaluationRunId === undefined
+      ? undefined
+      : (await store.getRun(evaluationRunId))?.sessionId);
+  const evaluation = evaluationSessionId === undefined || evaluationRunId === undefined
+    ? undefined
+    : await buildRecordedRuntimeEvaluationEvidenceV1({
+        store,
+        sessionId: evaluationSessionId,
+        runId: evaluationRunId,
+        waits: replay.waits.history,
+      });
   const bundle: RuntimeReplayBundleV1 = {
     version: "runtime_replay_bundle_v1",
     generatedAt: new Date().toISOString(),
@@ -85,6 +103,7 @@ export async function buildRuntimeReplayBundle(
       ...(replay.evidenceRecovery !== undefined ? { evidenceRecovery: replay.evidenceRecovery } : {}),
     },
     artifactReferences: collectArtifactReferences(replay),
+    ...(evaluation !== undefined ? { evaluation } : {}),
   };
   return { replay, doctor, bundle };
 }

@@ -17,6 +17,8 @@ export {
   RUNTIME_EVALUATION_LIFECYCLE_EVENT_TYPES,
   buildEvaluationEvidenceProjectionV1,
   mapRuntimeEvaluationVerdict,
+  rebuildEvaluationEvidenceProjectionV1,
+  RUNTIME_EVALUATION_ARTIFACT_TYPES,
 } from "./RuntimeEvaluationCoordinator.js";
 export type {
   RuntimeEvaluationRuntimeConfiguration,
@@ -24,6 +26,31 @@ export type {
   RuntimeEvaluationHookInputV1,
   RuntimeEvaluationHookResultV1,
 } from "./RuntimeEvaluationCoordinator.js";
+export {
+  buildRecordedRuntimeEvaluationEvidenceV1,
+  EVALUATION_EVIDENCE_INCOMPLETE,
+  reevaluateRecordedRuntimeEvaluationV1,
+  RuntimeEvaluationReplayError,
+} from "./RuntimeEvaluationReplay.js";
+export {
+  assertRuntimeEvaluationCalibrationV1,
+  RUNTIME_EVALUATION_CALIBRATION_REPETITIONS,
+  RUNTIME_EVALUATION_CALIBRATION_THRESHOLDS,
+  runRuntimeEvaluationCalibrationV1,
+} from "./RuntimeEvaluationCalibration.js";
+export {
+  COMPLETION_EVIDENCE_CALIBRATION_DATASET_ID,
+  COMPLETION_EVIDENCE_CALIBRATION_DATASET_V1,
+} from "./calibration/dataset.js";
+export type {
+  CompletionEvidenceCalibrationCaseV1,
+  CompletionEvidenceCalibrationCategoryV1,
+  CompletionEvidenceCalibrationExpectedDispositionV1,
+} from "./calibration/dataset.js";
+export type {
+  RecordedRuntimeEvaluationEntryV1,
+  RecordedRuntimeEvaluationEvidenceV1,
+} from "./RuntimeEvaluationReplay.js";
 export {
   COMPLETION_EVIDENCE_ASSERTIONS_V1,
   COMPLETION_EVIDENCE_ASSET_BUNDLE_V1,
