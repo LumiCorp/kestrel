@@ -1,3 +1,11 @@
+---
+id: kestrel-agent-harness-200-point-inspection-2026-07-30
+domain: reliability
+status: historical
+owner: kestrel-runtime
+last_verified_at: 2026-07-30
+---
+
 # Kestrel Agent Harness 200-Point Inspection
 
 ## Executive conclusion

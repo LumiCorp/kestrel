@@ -1,3 +1,13 @@
+---
+id: mcp-network-access-superseded
+domain: security
+status: deprecated
+owner: kestrel-runtime
+last_verified_at: 2026-08-03
+depends_on:
+  - 2026-08-03-oci-mcp-egress-security.md
+---
+
 # MCP network access (superseded)
 
 This accepted-risk design is superseded by

@@ -1,3 +1,11 @@
+---
+id: kestrel-critical-controls-delta-2026-08-03
+domain: reliability
+status: historical
+owner: kestrel-runtime
+last_verified_at: 2026-08-03
+---
+
 # Kestrel Critical-Controls Delta Review
 
 ## Review status

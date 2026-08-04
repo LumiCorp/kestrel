@@ -1,3 +1,11 @@
+---
+id: desktop-sidebar-search-focus-design-qa
+domain: desktop
+status: historical
+owner: kestrel-desktop
+last_verified_at: 2026-07-30
+---
+
 # Desktop sidebar search focus design QA
 
 **Comparison Target**
