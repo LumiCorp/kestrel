@@ -49,6 +49,30 @@ export type {
 } from "./contracts/model-io.js";
 export type { SessionRecord } from "./contracts/store.js";
 export {
+  REQUIRED_RUNTIME_SPAN_ATTRIBUTES_V1,
+  REQUIRED_SETTLED_RUNTIME_SPAN_ATTRIBUTES_V1,
+  RUNTIME_SPAN_EVENT_VERSION,
+  RUNTIME_SPAN_VERSION,
+  TRACE_CONTEXT_VERSION,
+  TRACE_CORRELATION_VERSION,
+  parseRuntimeSpanEventV1,
+  parseRuntimeSpanV1,
+  parseTraceContextV1,
+  parseTraceCorrelationV1,
+} from "./contracts/telemetry.js";
+export type {
+  RuntimeSpanAttributeV1,
+  RuntimeSpanEventV1,
+  RuntimeSpanKindV1,
+  RuntimeSpanLinkV1,
+  RuntimeSpanSinkV1,
+  RuntimeSpanStatusV1,
+  RuntimeSpanV1,
+  TraceContextV1,
+  TraceCorrelationV1,
+  TraceFlagsV1,
+} from "./contracts/telemetry.js";
+export {
   JSON_VALUE_OUTPUT_SCHEMA_V1,
   TOOL_ACTIVATION_VERSION,
   TOOL_DESCRIPTOR_VERSION,

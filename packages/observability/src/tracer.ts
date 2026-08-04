@@ -10,6 +10,13 @@ import type {
   RunnerStream,
 } from "@kestrel-agents/sdk";
 import type { RunnerEventEnvelope } from "@kestrel-agents/sdk/runner";
+import {
+  createTraceContext,
+  parseTraceContext,
+  resolveTraceStartDirective,
+  type TraceContext,
+  type TraceStartDirective,
+} from "./context.js";
 
 export type KestrelTracePrimitive = string | number | boolean;
 export type KestrelTraceAttributes = Record<string, KestrelTracePrimitive | undefined>;
@@ -21,12 +28,34 @@ export interface TraceEvent {
   attributes?: KestrelTraceAttributes | undefined;
 }
 
+export interface TraceLink {
+  context: TraceContext;
+  attributes?: KestrelTraceAttributes | undefined;
+}
+
+export type SpanKind =
+  | "run"
+  | "stream"
+  | "resume"
+  | "subscription"
+  | "model"
+  | "tool"
+  | "sandbox"
+  | "memory"
+  | "evaluation"
+  | "delegation"
+  | "approval"
+  | "wait"
+  | "settlement";
+
 export interface Span {
   traceId: string;
   spanId: string;
+  traceFlags: "00" | "01";
   parentSpanId?: string | undefined;
+  links: TraceLink[];
   name: string;
-  kind: "run" | "stream" | "resume" | "subscription";
+  kind: SpanKind;
   startedAt: string;
   endedAt?: string | undefined;
   status: "ok" | "error" | "cancelled";
@@ -36,6 +65,10 @@ export interface Span {
 
 export interface RunTrace {
   traceId: string;
+  traceFlags: "00" | "01";
+  rootSpanId: string;
+  parentContext?: TraceContext | undefined;
+  links: TraceLink[];
   agentId: string;
   profileId: string;
   startedAt: string;
@@ -59,10 +92,57 @@ export interface KestrelTraceExporter {
 export interface CreateTracerOptions {
   processors?: KestrelTraceProcessor[] | undefined;
   exporters?: KestrelTraceExporter[] | undefined;
+  resolveTraceStart?: ((input: TraceStartResolutionInput) => TraceStartDirective | undefined) | undefined;
+  onExportError?: ((error: unknown) => void) | undefined;
+}
+
+export interface TraceStartResolutionInput {
+  operation: "run" | "stream" | "resume" | "subscription";
+  sessionId?: string | undefined;
+  threadId?: string | undefined;
+  runId?: string | undefined;
+  requestId?: string | undefined;
+}
+
+export interface StartTraceInput {
+  agentId: string;
+  profileId: string;
+  name: string;
+  kind: SpanKind;
+  directive?: TraceStartDirective | undefined;
+  attributes?: KestrelTraceAttributes | undefined;
+  metadata?: KestrelTraceAttributes | undefined;
+  sessionId?: string | undefined;
+  threadId?: string | undefined;
+  runId?: string | undefined;
+}
+
+export interface StartSpanInput {
+  name: string;
+  kind: SpanKind;
+  parent?: Span | TraceContext | undefined;
+  links?: TraceLink[] | undefined;
+  attributes?: KestrelTraceAttributes | undefined;
+}
+
+export interface SpanHandle {
+  readonly span: Span;
+  readonly context: TraceContext;
+  addEvent(name: string, attributes?: KestrelTraceAttributes): void;
+  startChild(input: Omit<StartSpanInput, "parent">): SpanHandle;
+  end(status?: Span["status"], attributes?: KestrelTraceAttributes): void;
+}
+
+export interface TraceHandle {
+  readonly trace: RunTrace;
+  readonly root: SpanHandle;
+  startSpan(input: StartSpanInput): SpanHandle;
+  end(status?: RunTrace["status"], attributes?: KestrelTraceAttributes): void;
 }
 
 export interface KestrelTracer {
   wrapAgent(agent: KestrelAgent): KestrelAgent;
+  startTrace(input: StartTraceInput): TraceHandle;
   flush(): Promise<void>;
 }
 
@@ -70,14 +150,36 @@ export function createTracer(options: CreateTracerOptions = {}): KestrelTracer {
   const processors = options.processors ?? [];
   const exporters = options.exporters ?? [];
   const pending = new Set<Promise<void>>();
+  const schedule = (trace: RunTrace) => {
+    const promise = processTrace(trace, processors, exporters, options.onExportError);
+    pending.add(promise);
+    void promise.finally(() => pending.delete(promise));
+  };
+  const resolveDirective = (input: TraceStartResolutionInput): TraceStartDirective | undefined => {
+    try {
+      const directive = options.resolveTraceStart?.(input);
+      if (input.operation === "resume" && directive !== undefined && directive.relationship !== "continue") {
+        throw new Error("Agent resume trace context must use the continue relationship.");
+      }
+      return directive;
+    } catch (error) {
+      reportExportError(options.onExportError, error);
+      return undefined;
+    }
+  };
 
   return {
     wrapAgent(agent) {
       return {
         ...agent,
         async run(input: KestrelAgentTurnInput, context: KestrelRequestContext) {
-          const trace = createTrace(agent, "run", input, context);
-          const span = createSpan(trace, "agent.run", "run");
+          const trace = createTrace(agent, "run", input, context, resolveDirective({
+            operation: "run",
+            sessionId: input.sessionId,
+          }));
+          const span = createSpan(trace, "agent.run", "run", {
+            attributes: operationAttributes(agent, "run"),
+          });
           try {
             const terminal = await agent.run(input, context);
             annotateRunTerminal(trace, span, terminal);
@@ -87,14 +189,18 @@ export function createTracer(options: CreateTracerOptions = {}): KestrelTracer {
             throw error;
           } finally {
             settleTrace(trace, span);
-            const processTracePromise = processTrace(trace, processors, exporters);
-            pending.add(processTracePromise.finally(() => pending.delete(processTracePromise)));
+            schedule(trace);
           }
         },
 
         stream(input: KestrelAgentTurnInput & { signal?: AbortSignal | undefined }, context: KestrelRequestContext) {
-          const trace = createTrace(agent, "stream", input, context);
-          const span = createSpan(trace, "agent.stream", "stream");
+          const trace = createTrace(agent, "stream", input, context, resolveDirective({
+            operation: "stream",
+            sessionId: input.sessionId,
+          }));
+          const span = createSpan(trace, "agent.stream", "stream", {
+            attributes: operationAttributes(agent, "stream"),
+          });
           const stream = agent.stream(input, context);
           return wrapRunnerStream({
             stream,
@@ -103,15 +209,20 @@ export function createTracer(options: CreateTracerOptions = {}): KestrelTracer {
             onError: (error: unknown) => annotateErrorTrace(trace, span, error),
             onFinally: () => {
               settleTrace(trace, span);
-              const promise = processTrace(trace, processors, exporters);
-              pending.add(promise.finally(() => pending.delete(promise)));
+              schedule(trace);
             },
           });
         },
 
         async resume(input: KestrelAgentResumeInput, context: KestrelRequestContext) {
-          const trace = createTrace(agent, "resume", input, context);
-          const span = createSpan(trace, "agent.resume", "resume");
+          const trace = createTrace(agent, "resume", input, context, resolveDirective({
+            operation: "resume",
+            sessionId: input.sessionId,
+            requestId: input.requestId,
+          }));
+          const span = createSpan(trace, "agent.resume", "resume", {
+            attributes: operationAttributes(agent, "resume"),
+          });
           try {
             const terminal = await agent.resume(input, context);
             annotateRunTerminal(trace, span, terminal);
@@ -121,8 +232,7 @@ export function createTracer(options: CreateTracerOptions = {}): KestrelTracer {
             throw error;
           } finally {
             settleTrace(trace, span);
-            const promise = processTrace(trace, processors, exporters);
-            pending.add(promise.finally(() => pending.delete(promise)));
+            schedule(trace);
           }
         },
 
@@ -133,8 +243,15 @@ export function createTracer(options: CreateTracerOptions = {}): KestrelTracer {
             signal?: AbortSignal | undefined;
           },
         ) {
-          const trace = createSubscriptionTrace(agent, filter, context);
-          const span = createSpan(trace, "agent.subscribe", "subscription");
+          const trace = createSubscriptionTrace(agent, filter, context, resolveDirective({
+            operation: "subscription",
+            ...(filter.sessionId !== undefined ? { sessionId: filter.sessionId } : {}),
+            ...(filter.threadId !== undefined ? { threadId: filter.threadId } : {}),
+            ...(filter.runId !== undefined ? { runId: filter.runId } : {}),
+          }));
+          const span = createSpan(trace, "agent.subscribe", "subscription", {
+            attributes: operationAttributes(agent, "subscription"),
+          });
           const stream = agent.subscribe(filter, context, options);
           return wrapRunnerStream({
             stream,
@@ -146,10 +263,53 @@ export function createTracer(options: CreateTracerOptions = {}): KestrelTracer {
             onError: (error: unknown) => annotateErrorTrace(trace, span, error),
             onFinally: () => {
               settleTrace(trace, span);
-              const promise = processTrace(trace, processors, exporters);
-              pending.add(promise.finally(() => pending.delete(promise)));
+              schedule(trace);
             },
           });
+        },
+      };
+    },
+
+    startTrace(input) {
+      const trace = createStandaloneTrace(input);
+      const rootSpan = createSpan(trace, input.name, input.kind, {
+        attributes: input.attributes,
+      });
+      const root = createSpanHandle(trace, rootSpan);
+      let ended = false;
+      return {
+        trace,
+        root,
+        startSpan(spanInput) {
+          if (ended) throw new Error("Cannot start a span after the trace has ended.");
+          return createSpanHandle(
+            trace,
+            createSpan(trace, spanInput.name, spanInput.kind, {
+              parent: spanInput.parent ?? rootSpan,
+              links: spanInput.links,
+              attributes: spanInput.attributes,
+            }),
+          );
+        },
+        end(status = "ok", attributes = {}) {
+          if (ended) return;
+          const activeChild = trace.spans.find(
+            (span) => span !== rootSpan && span.endedAt === undefined,
+          );
+          if (activeChild !== undefined) {
+            throw new Error(`Cannot end trace while child span '${activeChild.name}' is active.`);
+          }
+          const rootAttributes = compactAttributes({ ...rootSpan.attributes, ...attributes });
+          assertRequiredSpanAttributes({ ...rootSpan, attributes: rootAttributes });
+          ended = true;
+          rootSpan.attributes = rootAttributes;
+          rootSpan.status = status;
+          settleTrace(trace, rootSpan);
+          for (const span of trace.spans) {
+            assertRequiredSpanAttributes(span);
+          }
+          trace.status = status;
+          schedule(trace);
         },
       };
     },
@@ -181,10 +341,18 @@ function createTrace(
   kind: "run" | "stream" | "resume",
   input: KestrelAgentTurnInput,
   context: KestrelRequestContext,
+  directive?: TraceStartDirective,
 ): RunTrace {
   const now = new Date().toISOString();
+  const start = resolveTraceStartDirective(directive);
   return {
-    traceId: randomUUID(),
+    traceId: start.context.traceId,
+    traceFlags: start.context.traceFlags,
+    rootSpanId: start.context.spanId,
+    ...(start.parentContext !== undefined ? { parentContext: start.parentContext } : {}),
+    links: start.linkContext === undefined
+      ? []
+      : [{ context: start.linkContext, attributes: { "kestrel.link_kind": directive?.relationship ?? "new" } }],
     agentId: agent.id,
     profileId: agent.profileId,
     startedAt: now,
@@ -206,10 +374,18 @@ function createSubscriptionTrace(
   agent: KestrelAgent,
   filter: RunnerEventSubscriptionFilter,
   context: KestrelRequestContext,
+  directive?: TraceStartDirective,
 ): RunTrace {
   const now = new Date().toISOString();
+  const start = resolveTraceStartDirective(directive);
   return {
-    traceId: randomUUID(),
+    traceId: start.context.traceId,
+    traceFlags: start.context.traceFlags,
+    rootSpanId: start.context.spanId,
+    ...(start.parentContext !== undefined ? { parentContext: start.parentContext } : {}),
+    links: start.linkContext === undefined
+      ? []
+      : [{ context: start.linkContext, attributes: { "kestrel.link_kind": directive?.relationship ?? "new" } }],
     agentId: agent.id,
     profileId: agent.profileId,
     startedAt: now,
@@ -228,19 +404,172 @@ function createSubscriptionTrace(
   };
 }
 
-function createSpan(trace: RunTrace, name: string, kind: Span["kind"]): Span {
+function createStandaloneTrace(input: StartTraceInput): RunTrace {
+  const now = new Date().toISOString();
+  const start = resolveTraceStartDirective(input.directive);
+  return {
+    traceId: start.context.traceId,
+    traceFlags: start.context.traceFlags,
+    rootSpanId: start.context.spanId,
+    ...(start.parentContext !== undefined ? { parentContext: start.parentContext } : {}),
+    links: start.linkContext === undefined
+      ? []
+      : [{ context: start.linkContext, attributes: { "kestrel.link_kind": input.directive?.relationship ?? "new" } }],
+    agentId: input.agentId,
+    profileId: input.profileId,
+    startedAt: now,
+    status: "ok",
+    ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+    ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
+    metadata: compactAttributes(input.metadata ?? {}),
+    spans: [],
+  };
+}
+
+function createSpan(
+  trace: RunTrace,
+  name: string,
+  kind: Span["kind"],
+  options: {
+    parent?: Span | TraceContext | undefined;
+    links?: TraceLink[] | undefined;
+    attributes?: KestrelTraceAttributes | undefined;
+  } = {},
+): Span {
+  const isRoot = trace.spans.length === 0;
+  const parentContext = options.parent === undefined
+    ? (isRoot ? trace.parentContext : undefined)
+    : toTraceContext(options.parent);
+  if (parentContext !== undefined && parentContext.traceId !== trace.traceId) {
+    throw new Error("A parent span must belong to the same trace; use a link for another trace.");
+  }
+  const context = isRoot
+    ? {
+        version: "trace_context_v1" as const,
+        traceId: trace.traceId,
+        spanId: trace.rootSpanId,
+        traceFlags: trace.traceFlags,
+      }
+    : createTraceContext({ traceId: trace.traceId, traceFlags: trace.traceFlags });
   const span: Span = {
     traceId: trace.traceId,
-    spanId: randomUUID(),
+    spanId: context.spanId,
+    traceFlags: trace.traceFlags,
+    ...(parentContext !== undefined ? { parentSpanId: parentContext.spanId } : {}),
+    links: normalizeLinks([...(isRoot ? trace.links : []), ...(options.links ?? [])]),
     name,
     kind,
     startedAt: new Date().toISOString(),
     status: "ok",
-    attributes: {},
+    attributes: compactAttributes(options.attributes ?? {}),
     events: [],
   };
   trace.spans.push(span);
   return span;
+}
+
+const REQUIRED_SPAN_ATTRIBUTES: Readonly<Record<SpanKind, readonly string[]>> = Object.freeze({
+  run: ["kestrel.agent_id", "kestrel.profile_id", "kestrel.operation"],
+  stream: ["kestrel.agent_id", "kestrel.profile_id", "kestrel.operation"],
+  resume: ["kestrel.agent_id", "kestrel.profile_id", "kestrel.operation"],
+  subscription: ["kestrel.agent_id", "kestrel.profile_id", "kestrel.operation"],
+  model: [
+    "kestrel.provider_id",
+    "kestrel.model_id",
+    "kestrel.retry_attempt",
+    "kestrel.latency_ms",
+    "kestrel.input_tokens",
+    "kestrel.output_tokens",
+    "kestrel.result",
+  ],
+  tool: ["kestrel.tool_id", "kestrel.retry_attempt", "kestrel.latency_ms", "kestrel.result"],
+  sandbox: ["kestrel.sandbox_id", "kestrel.result"],
+  memory: ["kestrel.memory_operation", "kestrel.result"],
+  evaluation: ["kestrel.evaluator_id", "kestrel.result"],
+  delegation: ["kestrel.delegation_id", "kestrel.result"],
+  approval: ["kestrel.approval_id", "kestrel.result"],
+  wait: ["kestrel.wait_kind", "kestrel.result"],
+  settlement: ["kestrel.termination_reason", "kestrel.result"],
+});
+
+function operationAttributes(
+  agent: KestrelAgent,
+  operation: "run" | "stream" | "resume" | "subscription",
+): KestrelTraceAttributes {
+  return {
+    "kestrel.agent_id": agent.id,
+    "kestrel.profile_id": agent.profileId,
+    "kestrel.operation": operation,
+  };
+}
+
+function toTraceContext(value: Span | TraceContext): TraceContext {
+  if ("version" in value) return parseTraceContext(value);
+  return parseTraceContext({
+    version: "trace_context_v1",
+    traceId: value.traceId,
+    spanId: value.spanId,
+    traceFlags: value.traceFlags,
+  });
+}
+
+function normalizeLinks(links: TraceLink[]): TraceLink[] {
+  const seen = new Set<string>();
+  return links.map((link) => {
+    const context = parseTraceContext(link.context);
+    const key = `${context.traceId}:${context.spanId}`;
+    if (seen.has(key)) throw new Error("Span links must be unique.");
+    seen.add(key);
+    return {
+      context,
+      ...(link.attributes !== undefined
+        ? { attributes: compactAttributes(link.attributes) }
+        : {}),
+    };
+  });
+}
+
+function createSpanHandle(trace: RunTrace, span: Span): SpanHandle {
+  let ended = span.endedAt !== undefined;
+  return {
+    span,
+    context: toTraceContext(span),
+    addEvent(name, attributes = {}) {
+      if (ended) throw new Error("Cannot add an event after the span has ended.");
+      span.events.push({
+        id: randomUUID(),
+        name,
+        ts: new Date().toISOString(),
+        attributes: compactAttributes(attributes),
+      });
+    },
+    startChild(input) {
+      if (ended) throw new Error("Cannot start a child after the parent span has ended.");
+      return createSpanHandle(trace, createSpan(trace, input.name, input.kind, {
+        parent: span,
+        links: input.links,
+        attributes: input.attributes,
+      }));
+    },
+    end(status = "ok", attributes = {}) {
+      if (ended) return;
+      const nextAttributes = compactAttributes({ ...span.attributes, ...attributes });
+      assertRequiredSpanAttributes({ ...span, attributes: nextAttributes });
+      ended = true;
+      span.status = status;
+      span.attributes = nextAttributes;
+      span.endedAt = new Date().toISOString();
+    },
+  };
+}
+
+function assertRequiredSpanAttributes(span: Span): void {
+  for (const key of REQUIRED_SPAN_ATTRIBUTES[span.kind]) {
+    if (span.attributes[key] === undefined) {
+      throw new Error(`Span kind '${span.kind}' requires attribute '${key}'.`);
+    }
+  }
 }
 
 function recordRunnerEvent(trace: RunTrace, span: Span, event: RunnerEventEnvelope): void {
@@ -342,7 +671,7 @@ function annotateErrorTrace(trace: RunTrace, span: Span, error: unknown): void {
     name: "error",
     ts: new Date().toISOString(),
     attributes: compactAttributes({
-      "error.message": error instanceof Error ? error.message : "Unknown error",
+      "error.type": error instanceof Error ? error.name : "UnknownError",
     }),
   });
 }
@@ -357,12 +686,32 @@ async function processTrace(
   trace: RunTrace,
   processors: KestrelTraceProcessor[],
   exporters: KestrelTraceExporter[],
+  onExportError?: ((error: unknown) => void) | undefined,
 ): Promise<void> {
   for (const processor of processors) {
-    await processor.process(trace);
+    try {
+      await processor.process(trace);
+    } catch (error) {
+      reportExportError(onExportError, error);
+    }
   }
   for (const exporter of exporters) {
-    await exporter.export([trace]);
+    try {
+      await exporter.export([trace]);
+    } catch (error) {
+      reportExportError(onExportError, error);
+    }
+  }
+}
+
+function reportExportError(
+  onExportError: ((error: unknown) => void) | undefined,
+  error: unknown,
+): void {
+  try {
+    onExportError?.(error);
+  } catch {
+    // Observability callbacks are intentionally non-authoritative.
   }
 }
 
@@ -460,10 +809,18 @@ function wrapRunnerStream<TEvent extends RunnerEventEnvelope, TTerminal>(
   return mirrored;
 }
 
+const SENSITIVE_ATTRIBUTE_KEY =
+  /(?:^|[._-])(authorization|cookie|credential|password|prompt|response|secret|raw[_-]?payload|tool[_-]?payload|pii)(?:$|[._-])/iu;
+
 function compactAttributes(attributes: KestrelTraceAttributes): Record<string, string | number | boolean> {
   return Object.fromEntries(
     Object.entries(attributes).flatMap(([key, value]) => {
-      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      if (SENSITIVE_ATTRIBUTE_KEY.test(key)) return [];
+      if (
+        typeof value === "string" ||
+        typeof value === "boolean" ||
+        (typeof value === "number" && Number.isFinite(value))
+      ) {
         return [[key, value]];
       }
       return [];

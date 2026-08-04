@@ -96,9 +96,12 @@ try {
 
   const entryModule = await import(pathToFileURL(path.join(fixtureDir, "node_modules", "@kestrel-agents", "observability", "dist", "index.js")).href);
   const otelModule = await import(pathToFileURL(path.join(fixtureDir, "node_modules", "@kestrel-agents", "observability", "dist", "otel.js")).href);
-  assert.equal(typeof entryModule.createTracer, "function", "packed observability package does not export createTracer.");
-  assert.equal(typeof entryModule.InMemoryTraceProcessor, "function", "packed observability package does not export InMemoryTraceProcessor.");
-  assert.equal(typeof otelModule.OpenTelemetryTraceExporter, "function", "packed observability otel subpath does not export OpenTelemetryTraceExporter.");
+assert.equal(typeof entryModule.createTracer, "function", "packed observability package does not export createTracer.");
+assert.equal(typeof entryModule.InMemoryTraceProcessor, "function", "packed observability package does not export InMemoryTraceProcessor.");
+assert.equal(typeof entryModule.parseTraceContext, "function", "packed observability package does not export parseTraceContext.");
+const nestedTracer = entryModule.createTracer();
+assert.equal(typeof nestedTracer.startTrace, "function", "packed observability tracer does not expose startTrace.");
+assert.equal(typeof otelModule.OpenTelemetryTraceExporter, "function", "packed observability otel subpath does not export OpenTelemetryTraceExporter.");
 } finally {
   rmSync(packDir, { recursive: true, force: true });
   rmSync(extractDir, { recursive: true, force: true });
