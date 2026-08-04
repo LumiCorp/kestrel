@@ -89,6 +89,9 @@ Model-authored progress narration retained as working memory for collaboration a
 **Provenance Hash**
 A hash-only identity for model-call audit data. It identifies the provider payload or Kestrel prompt components without retaining rendered prompt text.
 
+**Budget Allocation**
+A durable, revisioned resource envelope bound to one exact tenant, run, agent, subagent, or model/tool/sandbox/evaluator/embedding lineage scope. Child allocations reserve from their parent, and usage settles against a prior reservation without creating new credit.
+
 ## Relationships
 
 - A **Project** owns exactly one **Board**.

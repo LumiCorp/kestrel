@@ -20,6 +20,7 @@ const runtimeFiles = execFileSync("git", ["ls-files", "-z", "tests/**/*.postgres
   .filter(Boolean)
   .concat(
     "tests/action-bound-approval-grants.postgres.test.ts",
+    "tests/budget-ledger.postgres.test.ts",
     "tests/mission-control-project-authority.postgres.test.ts",
     "tests/mission-control-review-acceptance.postgres.test.ts",
   )
@@ -150,6 +151,7 @@ function runRuntimeGroup(): Promise<void> {
     JSON.stringify(runtimeFiles) !==
     JSON.stringify([
       "tests/action-bound-approval-grants.postgres.test.ts",
+      "tests/budget-ledger.postgres.test.ts",
       "tests/mission-control-project-authority.postgres.test.ts",
       "tests/mission-control-review-acceptance.postgres.test.ts",
     ])
