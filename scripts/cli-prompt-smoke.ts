@@ -161,7 +161,7 @@ const WORKSPACE_PROMPT_ASSETS_DIRNAME = "prompt-assets";
 const DEFAULT_WORK_ROOT = "/private/tmp/kestrel-cli-prompt-smoke";
 const DEFAULT_TIMEOUT_SECONDS = 420;
 const DEFAULT_KEEP_RUNS = 10;
-const DEFAULT_PROFILE = "reference";
+const DEFAULT_PROFILE = "kestrel";
 const DEFAULT_MODE: PromptMode = "build";
 const PTY_STATUS_PREFIX = "__KESTREL_PTY_STATUS__";
 

@@ -25,10 +25,10 @@ import { RemoteRunnerTransport } from "../src/internal/RemoteRunnerTransport.js"
 
 
 const profile: RunnerProfile = {
-  id: "reference",
+  id: "kestrel",
   label: "Reference",
-  agent: "reference-react",
-  sessionPrefix: "reference",
+  agent: "kestrel",
+  sessionPrefix: "kestrel",
 };
 
 const context = {
@@ -125,7 +125,7 @@ test("SDK session contracts preserve typed operator and continuation fields", ()
   const description: RunnerSessionDescription = {
     sessionId: "session-sdk-shape",
     version: 1,
-    currentStepAgent: "reference-react",
+    currentStepAgent: "agent.loop",
     childThreads: [{ threadId: "thread-child" }],
     blockerChain: ["thread-child"],
     nextAction: "resume",
@@ -138,7 +138,7 @@ test("SDK session contracts preserve typed operator and continuation fields", ()
   };
   const currentStepAgent: string | undefined = state.session.currentStepAgent;
   const blockerChain: string[] | undefined = state.session.blockerChain;
-  assert.equal(currentStepAgent, "reference-react");
+  assert.equal(currentStepAgent, "agent.loop");
   assert.deepEqual(blockerChain, ["thread-child"]);
 });
 
@@ -227,7 +227,7 @@ test("KestrelClient lists profiles and runs using profileId", async () => {
   const profiles = await client.listProfiles(context);
   const terminal = await client.run(
     {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-sdk-1",
         message: "hello",
@@ -237,13 +237,13 @@ test("KestrelClient lists profiles and runs using profileId", async () => {
     context,
   );
 
-  assert.deepEqual(profiles.map((item) => item.id), ["reference"]);
+  assert.deepEqual(profiles.map((item) => item.id), ["kestrel"]);
   assert.equal(terminal.type, "run.completed");
   assert.equal(requests[0]?.url, "http://runner.internal/commands");
   assert.equal(requests[1]?.url, "http://runner.internal/commands/stream");
   assert.equal(requests[1]?.headers.get("authorization"), "Bearer secret-token");
   assert.equal((requests[1]?.body.metadata as { actor?: { actorId?: string } })?.actor?.actorId, "sdk-user");
-  assert.equal((requests[1]?.body.payload as { profileId?: string }).profileId, "reference");
+  assert.equal((requests[1]?.body.payload as { profileId?: string }).profileId, "kestrel");
   await client.close();
 });
 
@@ -282,7 +282,7 @@ test("KestrelClient streams jobs and exposes operator run and promotion undo com
             payload: {
               sessionId: replay.sessionId,
               threadId: replay.threadId,
-              profileId: "reference",
+              profileId: "kestrel",
             },
           })}\n\n` +
           `event: run.progress\ndata: ${JSON.stringify({
@@ -371,7 +371,7 @@ test("KestrelClient streams jobs and exposes operator run and promotion undo com
   });
 
   const stream = client.streamJob({
-    profileId: "reference",
+    profileId: "kestrel",
     input: {
       version: "job_input_v1",
       turn: {
@@ -434,7 +434,7 @@ test("KestrelClient does not dispatch a job for an already-aborted signal", asyn
   controller.abort();
   const stream = client.streamJob({
     signal: controller.signal,
-    profileId: "reference",
+    profileId: "kestrel",
     input: {
       version: "job_input_v1",
       turn: {
@@ -495,7 +495,7 @@ test("KestrelClient streamRun stays request-scoped", async () => {
 
   const stream = client.streamRun(
     {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-sdk-1",
         message: "hello",
@@ -653,7 +653,7 @@ test("KestrelClient exposes workspace checkpoint helpers", async () => {
   assert.equal(promotions.promotions?.[0]?.promotionId, "promotion-1");
   assert.equal(
     (requests[6]?.metadata as { profile?: { id?: string } }).profile?.id,
-    "reference"
+    "kestrel"
   );
   assert.equal(preview.preview?.candidateFingerprint, "fingerprint-1");
   assert.equal(applied.promotion?.status, "promoted");
@@ -740,7 +740,7 @@ test("KestrelClient cancel resolves the run stream with run.cancelled", async ()
 
   const stream = client.streamRun(
     {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-sdk-1",
         message: "hello",
@@ -860,7 +860,7 @@ test("KestrelClient cancel includes runId after the stream learns it", async () 
 
   const stream = client.streamRun(
     {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-sdk-2",
         message: "hello",
@@ -907,7 +907,7 @@ test("RemoteRunnerTransport rejects an SSE stream that ends before a terminal ev
 
   await assert.rejects(
     client.run({
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-remote-truncated",
         message: "run until disconnected",
@@ -952,7 +952,7 @@ test("RemoteRunnerTransport rejects a terminal SSE event without a command id", 
   await assert.rejects(
     Promise.race([
       client.run({
-        profileId: "reference",
+        profileId: "kestrel",
         turn: {
           sessionId: "session-remote-unscoped",
           message: "receive an unscoped terminal",
@@ -993,7 +993,7 @@ test("RemoteRunnerTransport rejects a nonterminal SSE event for another command"
 
   await assert.rejects(
     client.run({
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-remote-wrong-progress",
         message: "receive mismatched progress",
@@ -1070,7 +1070,7 @@ test("RemoteRunnerTransport rejects mismatched terminal events without cross-set
   t.after(async () => client.close());
 
   const victimOutcome = client.run({
-    profileId: "reference",
+    profileId: "kestrel",
     turn: {
       sessionId: "session-remote-victim",
       message: "wait for the correct terminal",
@@ -1085,7 +1085,7 @@ test("RemoteRunnerTransport rejects mismatched terminal events without cross-set
   await assert.rejects(
     Promise.race([
       client.run({
-        profileId: "reference",
+        profileId: "kestrel",
         turn: {
           sessionId: "session-remote-source",
           message: "receive a mismatched terminal",
@@ -1157,7 +1157,7 @@ test("RemoteRunnerTransport does not emit protocol errors when a local close abo
     "cmd-transport-abort",
     "run.start",
     {
-      profileId: "reference",
+      profileId: "kestrel",
       turn: {
         sessionId: "session-sdk-transport",
         message: "hello",
@@ -1200,7 +1200,7 @@ test("ProtocolClient rejects malformed terminal payloads without dangling reques
     });
   });
   const request = {
-    profileId: "reference",
+    profileId: "kestrel",
     turn: {
       sessionId: "session-sdk-invalid",
       message: "hello",
@@ -1279,7 +1279,7 @@ test("ProtocolClient rejects malformed and unknown runner events", async () => {
   const malformed = client.sendCommandWithId(
     "cmd-sdk-malformed-envelope",
     "profile.get",
-    { profileId: "reference" },
+    { profileId: "kestrel" },
   );
   transport.emit({
     id: "evt-sdk-malformed-envelope",
@@ -1298,7 +1298,7 @@ test("ProtocolClient rejects malformed and unknown runner events", async () => {
   const unknown = client.sendCommandWithId(
     "cmd-sdk-unknown-event",
     "profile.get",
-    { profileId: "reference" },
+    { profileId: "kestrel" },
   );
   transport.emit({
     id: "evt-sdk-unknown-event",
@@ -1564,7 +1564,7 @@ test("KestrelClient preserves structured HTTP and service errors", async () => {
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      if (body.type === "profile.get" && (body.payload as { profileId?: string }).profileId === "reference") {
+      if (body.type === "profile.get" && (body.payload as { profileId?: string }).profileId === "kestrel") {
         return new Response(JSON.stringify({
           error: { code: "ENVIRONMENT_COMMAND_FORBIDDEN" },
         }), {
@@ -1593,7 +1593,7 @@ test("KestrelClient preserves structured HTTP and service errors", async () => {
     },
   });
 
-  await assert.rejects(() => client.getProfile("reference", context), (error: unknown) => {
+  await assert.rejects(() => client.getProfile("kestrel", context), (error: unknown) => {
     assert.ok(error instanceof KestrelHttpError);
     assert.equal(error.status, 403);
     assert.equal(error.body, JSON.stringify({

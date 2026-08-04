@@ -205,13 +205,13 @@ test("public code fences name their language and package installs pin the stable
   }
 });
 
-test("the Build journey uses only the shipped Reference profile", async () => {
+test("the Build journey uses only the shipped Kestrel profile", async () => {
   const pages = await getPublicPages();
-  const buildJourney = pages.filter(({ meta }) => meta.journey?.id === "reference-agent-build");
+  const buildJourney = pages.filter(({ meta }) => meta.journey?.id === "kestrel-agent-build");
   assert.ok(buildJourney.length > 0);
   const corpus = buildJourney.map(({ rawContent }) => rawContent).join("\n");
-  assert.match(corpus, /profileId:\s*"reference"/u);
-  assert.match(corpus, /reference-react/u);
+  assert.match(corpus, /profileId:\s*"kestrel"/u);
+  assert.doesNotMatch(corpus, /reference-react/u);
   assert.doesNotMatch(corpus, /workspace-copilot|Workspace Copilot/u);
 });
 

@@ -149,8 +149,8 @@ function parseOptionalProfile(value: unknown): TuiProfile | undefined {
   if (typeof record.label !== "string" || record.label.trim().length === 0) {
     throw new Error("job input profile.label must be a non-empty string");
   }
-  if (record.agent !== "reference-react") {
-    throw new Error("job input profile.agent must be 'reference-react'");
+  if (record.agent !== "kestrel") {
+    throw new Error("job input profile.agent must be 'kestrel'");
   }
   if (typeof record.sessionPrefix !== "string" || record.sessionPrefix.trim().length === 0) {
     throw new Error("job input profile.sessionPrefix must be a non-empty string");

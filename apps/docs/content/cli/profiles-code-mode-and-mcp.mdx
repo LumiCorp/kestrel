@@ -1,6 +1,6 @@
 ---
 title: Profiles, code mode, and MCP
-summary: Configure the Reference agent's model, tools, code execution, reasoning, and MCP connections for local CLI sessions.
+summary: Configure Kestrel's model, tools, code execution, reasoning, and MCP connections for local CLI sessions.
 section: cli
 audience: integrators
 status: stable
@@ -8,44 +8,18 @@ sourceKind: curated
 updatedAt: 2026-07-20
 ---
 
-A CLI **profile** is a saved runtime configuration. It selects the agent,
-session prefix, model policy, tools, code execution policy, reasoning policy,
-and MCP servers used by a session.
+A CLI **profile** is the saved configuration for Kestrel's runtime policy,
+environment binding, model, tools, code execution, reasoning, and MCP servers.
+Kestrel exposes one canonical profile and agent identity: `kestrel`.
 
-Kestrel creates two profiles by default:
+Select it explicitly with `--profile kestrel`. `profiles.json` V10 stores one
+canonical `profile` definition plus environment-specific bindings. Alternate
+profile and agent identities are not supported.
 
-| Profile ID | Agent | Purpose |
-| --- | --- | --- |
-| `reference` | `reference-react` | Default local Reference-agent work |
-| `kestrel-one` | `reference-react` | Kestrel One work with its additional tool allowlist |
-
-The profile ID is the CLI selection, such as `--profile reference`. The `agent`
-field identifies the runtime implementation. They are related but are not the
-same identifier.
-
-## Minimal custom profile
-
-Profiles are stored in `profiles.json` under the active Kestrel state root. A
-custom profile must use the supported `reference-react` agent:
-
-```json
-{
-  "version": 4,
-  "profiles": [
-    {
-      "id": "research",
-      "label": "Research",
-      "agent": "reference-react",
-      "sessionPrefix": "research",
-      "default": false
-    }
-  ]
-}
-```
-
-Missing optional fields receive the current defaults during profile loading.
-Use `/profiles` and `/status` to inspect the resolved profile rather than
-assuming a value from the file alone.
+Older V2-V9 files are migrated automatically. Kestrel writes a byte-for-byte
+backup and a migration report, retains supported managed Kestrel settings, and
+omits legacy or custom profile authority. Use `/profiles` and `/status` to
+inspect the resolved configuration after migration.
 
 ## Tools and code mode
 

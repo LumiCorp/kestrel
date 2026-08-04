@@ -22,10 +22,10 @@
       },
       "recommendedStack": {
         "recommended": true,
-        "rationale": "Uses Kestrel's public reference profile and Ruhroh's maintained Kestrel job-contract adapter."
+        "rationale": "Uses Kestrel's canonical profile and Ruhroh's maintained Kestrel job-contract adapter."
       },
       "env": {
-        "KESTREL_PROFILE_ID": "reference",
+        "KESTREL_PROFILE_ID": "kestrel",
         "KESTREL_STORE_DRIVER": "auto",
         "KESTREL_CLI_ADAPTER_VERSION": "0.1.0"
       }

@@ -45,7 +45,7 @@ export interface KestrelProfileDefinitionV1 {
   id: typeof KESTREL_CANONICAL_PROFILE_ID;
   revision: string;
   label: typeof KESTREL_CANONICAL_PROFILE_LABEL;
-  agent: "reference-react";
+  agent: "kestrel";
   interaction: {
     modeSystemV2Enabled: true;
     defaultInteractionMode: InteractionMode;
@@ -203,7 +203,7 @@ const profileDefinitionSchema = z
     id: z.literal(KESTREL_CANONICAL_PROFILE_ID),
     revision: z.string().regex(HASH_PATTERN),
     label: z.literal(KESTREL_CANONICAL_PROFILE_LABEL),
-    agent: z.literal("reference-react"),
+    agent: z.literal("kestrel"),
     interaction: interactionSchema,
     recoveryPolicy: z.unknown().optional(),
     evaluationPolicy: z.unknown().optional(),

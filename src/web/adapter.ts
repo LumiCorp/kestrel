@@ -588,6 +588,7 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
           ...(command.completionMode !== undefined ? { completionMode: command.completionMode } : {}),
           ...(command.followUpId !== undefined ? { followUpId: command.followUpId } : {}),
           ...(command.requestId !== undefined ? { requestId: command.requestId } : {}),
+          ...(command.recoveryOptionId !== undefined ? { recoveryOptionId: command.recoveryOptionId } : {}),
           ...(command.proposalId !== undefined ? { proposalId: command.proposalId } : {}),
           ...(command.checkpointId !== undefined ? { checkpointId: command.checkpointId } : {}),
           ...(command.delegationId !== undefined ? { delegationId: command.delegationId } : {}),
@@ -1220,7 +1221,7 @@ export function clampHistoryWindow(history: WebHistoryLine[] | undefined): WebHi
 }
 
 function getEntryStepAgent(profile: Pick<TuiProfile, "id" | "agent">): string {
-  if (profile.agent === "reference-react") {
+  if (profile.agent === "kestrel") {
     return AGENT_STEP_IDS.loop;
   }
 

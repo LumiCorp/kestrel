@@ -8,6 +8,9 @@ import { FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
 test("web demo profile resolves to the balanced web preset by default", () => {
   const profile = createWebDemoProfile();
 
+  assert.equal(profile.id, "kestrel-web");
+  assert.equal(profile.agent, "kestrel");
+
   assert.equal(profile.shellKind, "web");
   assert.equal(profile.presetId, "web_balanced");
   assert.deepEqual(profile.capabilityPacks, ["balanced"]);

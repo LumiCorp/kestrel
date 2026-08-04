@@ -18,7 +18,7 @@ concurrent writes cannot silently overwrite one another.
 ## Read memory
 
 ```ts
-const session = agent.session("reference-session-001");
+const session = agent.session("kestrel-session-001");
 const memory = await session.memory.get(context);
 
 console.log(memory.revision, memory.value.nextAction);

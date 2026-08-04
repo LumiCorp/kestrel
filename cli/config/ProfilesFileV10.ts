@@ -8,6 +8,7 @@ import {
   type KestrelEnvironmentPresetIdV1,
 } from "../../src/kestrel/contracts/profile.js";
 import {
+  composeKestrelProfile,
   createKestrelEnvironmentBindingFromOverlay,
   createKestrelProfileDefinitionFromOverlay,
   KESTREL_POLICY_ID,
@@ -146,6 +147,102 @@ export function serializeProfilesFileV10(value: ProfilesFileV10): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+export function createDefaultProfilesFileV10(
+  presetId: KestrelEnvironmentPresetIdV1,
+): ProfilesFileV10 {
+  return parseProfilesFileV10(
+    serializeProfilesFileV10({
+      version: 10,
+      profile: createKestrelProfileDefinitionFromOverlay(undefined),
+      environmentBindings: {
+        [presetId]: createKestrelEnvironmentBindingFromOverlay({
+          environmentPresetId: presetId,
+          bindingId: `kestrel:${presetId}`,
+        }),
+      },
+    }),
+  );
+}
+
+export function ensureProfilesFileV10Binding(
+  value: ProfilesFileV10,
+  presetId: KestrelEnvironmentPresetIdV1,
+): ProfilesFileV10 {
+  const parsed = parseProfilesFileV10(serializeProfilesFileV10(value));
+  if (parsed.environmentBindings[presetId] !== undefined) return parsed;
+  return parseProfilesFileV10(
+    serializeProfilesFileV10({
+      ...parsed,
+      environmentBindings: {
+        ...parsed.environmentBindings,
+        [presetId]: createKestrelEnvironmentBindingFromOverlay({
+          environmentPresetId: presetId,
+          bindingId: `kestrel:${presetId}`,
+        }),
+      },
+    }),
+  );
+}
+
+export function resolveProfilesFileV10Profile(
+  value: ProfilesFileV10,
+  presetId: KestrelEnvironmentPresetIdV1,
+): TuiProfile {
+  const parsed = ensureProfilesFileV10Binding(value, presetId);
+  const binding = parsed.environmentBindings[presetId];
+  if (binding === undefined) {
+    throw new Error(`profiles.json V10 is missing binding '${presetId}'`);
+  }
+  return {
+    ...composeKestrelProfile({
+      definition: parsed.profile,
+      environmentBinding: binding,
+      resolvedProfileId: KESTREL_POLICY_ID,
+    }).profile,
+    default: true,
+  };
+}
+
+export function updateProfilesFileV10FromProfile(input: {
+  current: ProfilesFileV10;
+  profile: TuiProfile;
+  presetId: KestrelEnvironmentPresetIdV1;
+}): ProfilesFileV10 {
+  if (input.profile.id !== KESTREL_POLICY_ID) {
+    throw new Error(
+      `profiles.json V10 rejects non-canonical profile '${input.profile.id}'`,
+    );
+  }
+  const overlay = extractManagedConfiguration(input.profile, input.presetId);
+  return parseProfilesFileV10(
+    serializeProfilesFileV10({
+      version: 10,
+      profile: createKestrelProfileDefinitionFromOverlay(
+        pickBehaviorFields(overlay),
+      ),
+      environmentBindings: {
+        ...input.current.environmentBindings,
+        [input.presetId]: createKestrelEnvironmentBindingFromOverlay({
+          environmentPresetId: input.presetId,
+          overlay: omitBehaviorFields(overlay),
+          bindingId: `kestrel:${input.presetId}`,
+        }),
+      },
+    }),
+  );
+}
+
+export async function writeProfilesFileV10(
+  filePath: string,
+  value: ProfilesFileV10,
+): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeAtomicJson(
+    filePath,
+    parseProfilesFileV10(serializeProfilesFileV10(value)),
+  );
+}
+
 export function prepareProfilesFileV10Migration(input: {
   raw: string;
   profilePath?: string | undefined;
@@ -167,7 +264,7 @@ export function prepareProfilesFileV10Migration(input: {
   if (managedProfile !== undefined) {
     const presetId = normalizeManagedPreset(managedProfile.presetId);
     overlayByPreset.set(presetId, {
-      ...extractManagedConfiguration(managedProfile),
+      ...extractManagedConfiguration(managedProfile, presetId),
       ...(overlayByPreset.get(presetId) ?? {}),
     });
   }
@@ -219,16 +316,21 @@ export function prepareProfilesFileV10Migration(input: {
   };
 }
 
-/**
- * Writes only migration evidence. PR1 intentionally does not replace
- * profiles.json or activate V10 loading.
- */
+/** Writes the immutable backup and migration report before V10 activation. */
 export async function writeProfilesFileV10MigrationArtifacts(
   prepared: PreparedProfilesFileV10Migration,
 ): Promise<void> {
   await mkdir(path.dirname(prepared.backupPath), { recursive: true });
   await writeExactBackup(prepared.backupPath, prepared.sourceBytes);
   await writeAtomicJson(prepared.reportPath, prepared.report);
+}
+
+export async function activateProfilesFileV10Migration(
+  prepared: PreparedProfilesFileV10Migration,
+  profilePath: string,
+): Promise<void> {
+  await writeProfilesFileV10MigrationArtifacts(prepared);
+  await writeProfilesFileV10(profilePath, prepared.profilesFile);
 }
 
 function collectManagedOverlays(
@@ -309,15 +411,14 @@ function omitBehaviorFields(
 
 function extractManagedConfiguration(
   profile: TuiProfile,
+  presetId = normalizeManagedPreset(profile.presetId),
 ): KestrelOneProfileOverlay {
+  const additionalToolNames = extractAdditionalToolNames(profile, presetId);
   return {
     ...(profile.modelProvider !== undefined
       ? { modelProvider: profile.modelProvider }
       : {}),
     ...(profile.model !== undefined ? { model: profile.model } : {}),
-    ...(profile.modelCredential !== undefined
-      ? { modelCredential: structuredClone(profile.modelCredential) }
-      : {}),
     ...(profile.modelCapabilities !== undefined
       ? { modelCapabilities: structuredClone(profile.modelCapabilities) }
       : {}),
@@ -340,8 +441,8 @@ function extractManagedConfiguration(
           ),
         }
       : {}),
-    ...(profile.toolAllowlist !== undefined
-      ? { additionalToolNames: [...profile.toolAllowlist] }
+    ...(additionalToolNames !== undefined && additionalToolNames.length > 0
+      ? { additionalToolNames }
       : {}),
     ...(profile.mcpServers !== undefined
       ? { mcpServers: structuredClone(profile.mcpServers) }
@@ -375,6 +476,31 @@ function extractManagedConfiguration(
       ? { reasoning: structuredClone(profile.reasoning) }
       : {}),
   };
+}
+
+function extractAdditionalToolNames(
+  profile: TuiProfile,
+  presetId: KestrelEnvironmentPresetIdV1,
+): string[] | undefined {
+  if (profile.toolAllowlist === undefined) return undefined;
+  const baseline = composeKestrelProfile({
+    definition: createKestrelProfileDefinitionFromOverlay(undefined),
+    environmentBinding: createKestrelEnvironmentBindingFromOverlay({
+      environmentPresetId: presetId,
+      overlay: {
+        ...(profile.codeMode !== undefined
+          ? { codeMode: structuredClone(profile.codeMode) }
+          : {}),
+        ...(profile.devShell !== undefined
+          ? { devShell: structuredClone(profile.devShell) }
+          : {}),
+      },
+      bindingId: `kestrel:${presetId}:baseline`,
+    }),
+    resolvedProfileId: KESTREL_POLICY_ID,
+  }).profile.toolAllowlist ?? [];
+  const baselineNames = new Set(baseline);
+  return profile.toolAllowlist.filter((name) => baselineNames.has(name) === false);
 }
 
 function collectRetainedManagedFields(

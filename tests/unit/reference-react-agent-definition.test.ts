@@ -30,10 +30,10 @@ function createDefinitionForTest() {
   });
 }
 
-test("reference-react agent definition is inspectable without constructing a runtime", () => {
+test("Kestrel agent definition is inspectable without constructing a runtime", () => {
   const definition = createDefinitionForTest();
 
-  assert.equal(definition.id, "reference-react");
+  assert.equal(definition.id, "kestrel");
   assert.equal(definition.entryStepAgent, AGENT_STEP_IDS.loop);
   assert.deepEqual(definition.steps.map((step) => step.id), EXPECTED_STEP_IDS);
   assert.equal(definition.steps.every((step) => typeof step.createStep === "function"), true);
