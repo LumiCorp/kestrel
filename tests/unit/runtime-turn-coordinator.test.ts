@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  RuntimeTurnCoordinatorService,
+  RuntimeTurnCoordinatorService as BaseRuntimeTurnCoordinatorService,
+  type RuntimeTurnCoordinatorServiceOptions,
   type RuntimeTurnActor,
   type RuntimeTurnInput,
 } from "../../src/index.js";
@@ -14,12 +15,52 @@ import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js"
 import type { ThreadRecord } from "../../src/kestrel/contracts/orchestration.js";
 import type { SessionRecord } from "../../src/kestrel/contracts/store.js";
 import { appendUserTurnToTranscript } from "../../src/runtime/modelTranscript.js";
+import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 
 import type {
   ResumeBlockedTurnInput,
   SubmitTurnInput,
   ThreadRuntimePort,
 } from "../../src/orchestration/contracts.js";
+
+class RuntimeTurnCoordinatorService extends BaseRuntimeTurnCoordinatorService {
+  constructor(options: RuntimeTurnCoordinatorServiceOptions) {
+    super({
+      ...options,
+      executionBoundaryRuntime:
+        options.executionBoundaryRuntime ?? new ExecutionBoundaryPolicyRuntime(),
+      persistExecutionBoundaryDecision:
+        options.persistExecutionBoundaryDecision ?? (async () => {}),
+    });
+  }
+}
+
+test("RuntimeTurnCoordinatorService fails closed without boundary decision persistence", async () => {
+  const coordinator = new BaseRuntimeTurnCoordinatorService({
+    defaults: {
+      defaultInteractionMode: "chat",
+      defaultActSubmode: "safe",
+      modeSystemV2Enabled: true,
+      forceModeSystemV2: true,
+      toolBatchCheckpointSize: 5,
+    },
+    directRun: async () => output("COMPLETED"),
+    getSession: async () =>
+      sessionRecord("session-missing-boundary-sink", "Completed safely."),
+  });
+
+  await assert.rejects(
+    () => coordinator.runTurn({
+      sessionId: "session-missing-boundary-sink",
+      message: "hello",
+      eventType: "user.message",
+    }),
+    (error) =>
+      error instanceof Error &&
+      (error as Error & { code?: string | undefined }).code ===
+        "EXECUTION_BOUNDARY_PERSISTENCE_REQUIRED",
+  );
+});
 
 
 test("RuntimeTurnCoordinatorService compiles and submits ordinary thread turns", async () => {

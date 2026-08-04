@@ -127,7 +127,6 @@ export async function enforceRuntimeAssistantResponseBoundary(input: {
       assistantText: canonical.assistantText,
       waitFor: canonical.output.waitFor,
     },
-    handling: "redact",
     persist: input.persist,
   });
   return {

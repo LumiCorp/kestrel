@@ -37,7 +37,6 @@ export class AssemblyPolicyEvaluator {
       trust: input.proposal.proposedBy === "policy" ? "control" : "data",
       sourceId: input.proposal.proposalId,
       value: input.proposal,
-      handling: "quarantine",
     });
     const proposedPolicyRevision = asRecord(input.proposal.metadata)
       ?.executionBoundaryPolicyRevision;

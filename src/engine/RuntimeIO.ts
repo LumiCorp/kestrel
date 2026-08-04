@@ -2,8 +2,15 @@ import { randomUUID } from "node:crypto";
 
 import type { RunEventType, RuntimeError } from "../kestrel/contracts/base.js";
 import type { ProgressPhase, ProgressUpdateV1, RunToolPhase, RunToolUpdateV1 } from "../kestrel/contracts/events.js";
+import type {
+  AgentToolResultV2,
+  RunToolUpdateV2,
+  ToolExecutionOutcomeV1,
+} from "../kestrel/contracts/tool-invocation.js";
+import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js";
 import type { GuardrailConfig, RuntimeDependencies } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelGatewayStreamEvent, ModelRequest, ModelResponse, ModelUsage, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
+import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import type { RecoveryDecisionV1, RecoveryModelCandidateV1, RecoveryPolicyV1 } from "../kestrel/contracts/recovery.js";
 import type { ProviderReasoningRetentionPolicy } from "../runtime/ProviderReasoningVault.js";
 import {
@@ -27,7 +34,6 @@ import type { ContextSectionCandidateV1, EconomicsModelCallRequestedV1, HarnessE
 import type { Guardrails } from "./Guardrails.js";
 import { type ToolJobQueue, ToolQueueOverflowError } from "./ToolJobQueue.js";
 import {
-  applyExternalDeadlineToolBudget,
   asPlainRecord,
   buildToolInputEventMetadata,
   hashUnknown,
@@ -77,8 +83,7 @@ interface RuntimeIOLogEntry {
 }
 
 interface RuntimeIOCallToolInput {
-  name: string;
-  input: unknown;
+  preparedToolCall: import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1;
   sessionId: string;
   runId: string;
   stepIndex: number;
@@ -178,7 +183,7 @@ interface RuntimeIOOptions {
   ) => Promise<void>;
   extractModelUsage: (value: unknown) => ModelUsage | undefined;
   extractModelMetadata: (value: unknown) => Record<string, unknown> | undefined;
-  callTool: (input: RuntimeIOCallToolInput) => Promise<AgentToolResult>;
+  callTool: (input: RuntimeIOCallToolInput) => Promise<AgentToolResultV2>;
   afterToolResult: (input: {
     runId: string;
     sessionId: string;
@@ -207,6 +212,12 @@ export class RuntimeIO {
     throwIfRuntimeIOAborted(progress.signal);
     const sessionState = this.options.getSessionState();
     const budget = guardrails.budgetSnapshot();
+    const toolRunContext = {
+      runId: progress.runId,
+      sessionId: progress.sessionId,
+      payload: this.options.runtimePayload ?? {},
+      sessionState,
+    };
     const startedAt = Date.now();
     const startSeq = progress.sequence();
     const requestMetadata = asPlainRecord(request.metadata) ?? {};
@@ -302,10 +313,18 @@ export class RuntimeIO {
       trust: "data",
       sourceId: `model-request:${callId}`,
       value: providerRequest,
-      handling: "redact",
       persist: (decision) => this.persistBoundaryDecision(decision),
     });
     providerRequest = providerBoundary.value;
+    const toolSurfaceSnapshot =
+      Array.isArray(providerRequest.tools) && providerRequest.tools.length > 0
+        ? await this.options.deps.toolGateway.createToolSurfaceSnapshot({
+            runContext: toolRunContext,
+            toolNames: providerRequest.tools.map(
+              (tool) => tool.runtimeName ?? tool.name,
+            ),
+          })
+        : undefined;
     const assemblyId =
       readNonEmptyString(runtimeAssembly?.effectiveAssemblyId) ??
       readNonEmptyString(runtimeAssembly?.bundleId);
@@ -365,6 +384,9 @@ export class RuntimeIO {
       ...(turnId !== undefined ? { turnId } : {}),
       ...(threadId !== undefined ? { threadId } : {}),
       promptSummary: this.options.summarizePromptInput(providerRequest),
+      ...(toolSurfaceSnapshot === undefined
+        ? {}
+        : { toolSurfaceSnapshot }),
     };
     const promptDump = await this.options.persistModelPromptDump({
       callId,
@@ -409,6 +431,9 @@ export class RuntimeIO {
         modelBudgetClass,
         messageCount: Array.isArray(request.messages) ? request.messages.length : 0,
         toolCount: Array.isArray(request.tools) ? request.tools.length : 0,
+        ...(toolSurfaceSnapshot === undefined
+          ? {}
+          : { toolSurfaceSnapshot }),
         ...(promptDump !== undefined ? { promptDump } : {}),
       },
       createdAt: new Date(startedAt).toISOString(),
@@ -429,6 +454,9 @@ export class RuntimeIO {
         ...(turnId !== undefined ? { turnId } : {}),
         ...(threadId !== undefined ? { threadId } : {}),
         ...(assemblyId !== undefined ? { assemblyId } : {}),
+        ...(toolSurfaceSnapshot === undefined
+          ? {}
+          : { toolSurfaceSnapshot }),
       },
       progress.stepIndex,
     );
@@ -472,7 +500,7 @@ export class RuntimeIO {
     try {
       throwIfRuntimeIOAborted(progress.signal);
       assertEconomicsRequestAdmission(economicsPolicy, requestEconomicsManifest);
-      const rawResult = await this.options.withProgressHeartbeat(
+      const recoveredResult = await this.options.withProgressHeartbeat(
         {
           runId: progress.runId,
           sessionId: progress.sessionId,
@@ -501,11 +529,29 @@ export class RuntimeIO {
         source: "model",
         trust: "data",
         sourceId: `model-response:${callId}`,
-        value: rawResult,
-        handling: "redact",
+        value: recoveredResult as T,
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
-      const result = responseBoundary.value;
+      let result = responseBoundary.value;
+      if (toolSurfaceSnapshot !== undefined && isModelResponse(result)) {
+        const toolIntentCount = result.toolIntents.length;
+        result = {
+          ...result,
+          toolIntents: result.toolIntents.map((intent) => ({
+            ...intent,
+            toolSurfaceSnapshot,
+          })),
+        } as T;
+        if (toolIntentCount === 0) {
+          await this.options.deps.toolGateway.releaseToolSurfaceSnapshot?.(
+            toolSurfaceSnapshot.snapshotId,
+          );
+        }
+      } else if (toolSurfaceSnapshot !== undefined) {
+        await this.options.deps.toolGateway.releaseToolSurfaceSnapshot?.(
+          toolSurfaceSnapshot.snapshotId,
+        );
+      }
       if (this.options.deps.providerReasoningVault !== undefined && isModelResponse(result)) {
         await this.options.deps.providerReasoningVault.captureResponse(result, reasoningContext);
       }
@@ -592,6 +638,11 @@ export class RuntimeIO {
       });
       return result;
     } catch (error) {
+      if (toolSurfaceSnapshot !== undefined) {
+        await this.options.deps.toolGateway.releaseToolSurfaceSnapshot?.(
+          toolSurfaceSnapshot.snapshotId,
+        );
+      }
       const mappedErrorBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<RuntimeError>({
         boundary: "model_action",
         identity: {
@@ -604,7 +655,6 @@ export class RuntimeIO {
         trust: "data",
         sourceId: `model-error:${callId}`,
         value: this.options.mapError(error),
-        handling: "redact",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       const mappedError = mappedErrorBoundary.value;
@@ -962,7 +1012,6 @@ export class RuntimeIO {
         trust: "data",
         sourceId: streamKey,
         value: event.delta,
-        handling: "redact",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       const redactor = this.modelReasoningRedactors.get(streamKey) ??
@@ -1026,7 +1075,14 @@ export class RuntimeIO {
     });
   }
 
-  async tool(name: string, input: unknown): Promise<AgentToolResult> {
+  async tool(
+    name: string,
+    input: unknown,
+    intent?: {
+      modelToolCallId?: string | undefined;
+      toolSurfaceSnapshot?: import("../kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1 | undefined;
+    },
+  ): Promise<AgentToolResult> {
     const { guardrails, progress } = this.options;
     throwIfRuntimeIOAborted(progress.signal);
     const sessionState = this.options.getSessionState();
@@ -1037,24 +1093,9 @@ export class RuntimeIO {
     let queueDepthRun: number | undefined;
     let queueDepthGlobal: number | undefined;
     let queueWaitMs: number | undefined;
+    let preparedToolCall: import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined;
     const queueEventTasks: Promise<void>[] = [];
     try {
-      const validatedInput =
-        this.options.deps.toolGateway.validateInput === undefined
-          ? input
-          : await this.options.deps.toolGateway.validateInput(name, input, {
-              runContext: {
-                runId: progress.runId,
-                sessionId: progress.sessionId,
-                payload: this.options.runtimePayload ?? {},
-                sessionState,
-              },
-            });
-      const budgetedToolInput = applyExternalDeadlineToolBudget({
-        toolName: name,
-        input: validatedInput,
-        runtimeBudgetRemainingMs: guardrails.budgetSnapshot().remainingMs,
-      });
       const inputBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist({
         boundary: "tool_request",
         identity: {
@@ -1066,8 +1107,7 @@ export class RuntimeIO {
         source: "model",
         trust: "data",
         sourceId: `tool-request:${toolCallId}:${name}`,
-        value: budgetedToolInput.input,
-        handling: "quarantine",
+        value: input,
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       if (inputBoundary.decision.outcome === "QUARANTINE") {
@@ -1082,17 +1122,83 @@ export class RuntimeIO {
           },
         );
       }
-      const effectiveToolInput = inputBoundary.value;
+      const runContext = {
+        runId: progress.runId,
+        sessionId: progress.sessionId,
+        payload: this.options.runtimePayload ?? {},
+        sessionState,
+      };
+      const snapshot = intent?.toolSurfaceSnapshot ??
+        await this.options.deps.toolGateway.createToolSurfaceSnapshot({
+          runContext,
+          toolNames: [name],
+        });
+      const activation = snapshot.tools.find(
+        (candidate) => candidate.descriptor.toolId === name,
+      );
+      if (activation === undefined) {
+        throw createRuntimeFailure(
+          "TOOL_SNAPSHOT_LOOKUP_FAILED",
+          `Tool '${name}' was not exposed in snapshot '${snapshot.snapshotId}'.`,
+          { recoverable: false, toolName: name },
+        );
+      }
+      const rawInput = asPlainRecord(inputBoundary.value);
+      if (rawInput === undefined) {
+        throw createRuntimeFailure(
+          "TOOL_INPUT_SCHEMA_FAILED",
+          `Tool '${name}' input must be an object.`,
+          { recoverable: true, toolName: name },
+        );
+      }
+      const origin = intent?.modelToolCallId !== undefined
+        ? {
+            kind: "model" as const,
+            snapshotId: snapshot.snapshotId,
+            modelToolCallId: intent.modelToolCallId,
+          }
+        : {
+            kind: "trusted_runtime" as const,
+            producerId: "runtime.step-io:v1",
+            adapterId: "runtime.direct-tool:v1",
+          };
+      const prepared = await this.options.deps.toolGateway.prepareToolCall(
+        {
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          callId: toolCallId,
+          activation,
+          origin,
+          rawInput,
+          policy: {
+            decision: "allow",
+            policyRevision: inputBoundary.decision.policyRevision,
+          },
+        },
+        {
+          runContext,
+          runtimeBudgetRemainingMs: guardrails.budgetSnapshot().remainingMs,
+        },
+      );
+      preparedToolCall = prepared;
+      const effectiveToolInput = prepared.effectiveInput;
       recoverySourceInput = effectiveToolInput;
       const toolInputMetadata = {
         ...buildToolInputEventMetadata(effectiveToolInput),
-        ...budgetedToolInput.metadata,
+        ...prepared.inputAdapters.reduce(
+          (metadata, adapter) => ({ ...metadata, ...adapter.metadata }),
+          {} as Record<string, unknown>,
+        ),
+        toolSurfaceSnapshotId: snapshot.snapshotId,
+        toolContractRevision: activation.descriptor.contractRevision,
+        registryGeneration: activation.registryGeneration,
       };
       await this.emitToolUpdate({
         phase: "started",
         toolCallId,
         toolName: name,
         input: effectiveToolInput,
+        activation: prepared.activation,
       });
       await this.options.emitProgressFromSequence({
         runId: progress.runId,
@@ -1149,7 +1255,6 @@ export class RuntimeIO {
             trust: "data",
             sourceId: `tool-stream:${toolCallId}:${name}`,
             value: text,
-            handling: "redact",
             persist: (decision) => this.persistBoundaryDecision(decision),
           });
           return consoleRedactor.push(text);
@@ -1160,8 +1265,7 @@ export class RuntimeIO {
       const executeToolCall = () => {
         throwIfRuntimeIOAborted(progress.signal);
         return this.options.callTool({
-          name,
-          input: effectiveToolInput,
+          preparedToolCall: prepared,
           sessionId: progress.sessionId,
           runId: progress.runId,
           stepIndex: progress.stepIndex,
@@ -1173,9 +1277,7 @@ export class RuntimeIO {
           ...(consoleBridge.sink !== undefined ? { console: consoleBridge.sink } : {}),
         });
       };
-      let result = budgetedToolInput.shortCircuitResult !== undefined
-        ? await this.buildShortCircuitToolResult(name, effectiveToolInput, budgetedToolInput.shortCircuitResult)
-        : this.options.toolQueueEnabled
+      let result = this.options.toolQueueEnabled
           ? await this.options.withProgressHeartbeat(
             {
               runId: progress.runId,
@@ -1187,7 +1289,7 @@ export class RuntimeIO {
               message: `Still running tool '${name}'...`,
             },
             async () => {
-              const queued = await this.options.toolJobQueue.enqueue<AgentToolResult>({
+              const queued = await this.options.toolJobQueue.enqueue<AgentToolResultV2>({
                 runId: progress.runId,
                 maxConcurrentPerRun: this.options.guardrailConfig.maxConcurrentToolJobsPerRun,
                 maxConcurrentGlobal: this.options.guardrailConfig.maxConcurrentToolJobsGlobal,
@@ -1276,10 +1378,8 @@ export class RuntimeIO {
             },
             executeToolCall,
           );
-      throwIfRuntimeIOAborted(progress.signal);
-
       const originalRawOutputRef = result.modelContext.rawOutputRef;
-      const resultBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<AgentToolResult>({
+      const resultBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<AgentToolResultV2>({
         boundary: "tool_result",
         identity: {
           runId: progress.runId,
@@ -1291,7 +1391,6 @@ export class RuntimeIO {
         trust: "data",
         sourceId: `tool-result:${toolCallId}:${name}`,
         value: result,
-        handling: "redact",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       if (resultBoundary.decision.outcome === "REDACT") {
@@ -1303,9 +1402,9 @@ export class RuntimeIO {
         );
         if (rebuilt.projections?.durableRawArtifactRef !== undefined) {
           const { durableRawArtifactRef: _removed, ...safeProjections } = rebuilt.projections;
-          result = { ...rebuilt, projections: safeProjections };
+          result = { ...rebuilt, projections: safeProjections } as AgentToolResultV2;
         } else {
-          result = rebuilt;
+          result = rebuilt as AgentToolResultV2;
         }
       }
 
@@ -1381,6 +1480,8 @@ export class RuntimeIO {
           output: result,
           error: returnedError,
           durationMs,
+          activation: result.activation,
+          outcome: result.outcome,
         });
         await consoleBridge.emitStatus("failed", result.auditRecord.output);
         return result;
@@ -1420,6 +1521,8 @@ export class RuntimeIO {
         input: effectiveToolInput,
         output: result,
         durationMs: Date.now() - startedAt,
+        activation: result.activation,
+        outcome: result.outcome,
       });
       await consoleBridge.emitStatus("completed", result);
       return result;
@@ -1439,7 +1542,6 @@ export class RuntimeIO {
           input: recoverySourceInput,
           error: this.options.mapError(error),
         },
-        handling: "redact",
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
       const mappedError = failureBoundary.value.error;
@@ -1498,6 +1600,28 @@ export class RuntimeIO {
         input: safeFailureInput,
         error: mappedError,
         durationMs: Date.now() - startedAt,
+        ...(preparedToolCall === undefined
+          ? {}
+          : {
+              activation: preparedToolCall.activation,
+              outcome: {
+                version: "v1" as const,
+                callId: preparedToolCall.callId,
+                activation: preparedToolCall.activation,
+                kind: "failure" as const,
+                startedAt: new Date(startedAt).toISOString(),
+                completedAt: new Date().toISOString(),
+                effectState: "not_started" as const,
+                normalizedFailureCode: mappedError.code,
+                retryable: mappedError.details?.recoverable === true,
+                error: {
+                  message: mappedError.message,
+                  ...(mappedError.details === undefined
+                    ? {}
+                    : { details: mappedError.details }),
+                },
+              },
+            }),
       });
       await emitDevShellConsoleStatus({
         consoleReporter: this.options.deps.consoleReporter,
@@ -1583,19 +1707,6 @@ export class RuntimeIO {
     }
   }
 
-  private async buildShortCircuitToolResult(
-    toolName: string,
-    toolInput: unknown,
-    output: unknown,
-  ): Promise<AgentToolResult> {
-    const { buildAgentToolSuccessResult } = await import("../../tools/toolResult.js");
-    return buildAgentToolSuccessResult({
-      toolName,
-      input: toolInput,
-      output,
-    });
-  }
-
   private async emitToolUpdate(input: {
     phase: RunToolPhase;
     toolCallId: string;
@@ -1604,6 +1715,8 @@ export class RuntimeIO {
     output?: AgentToolResult;
     error?: RuntimeError | undefined;
     durationMs?: number | undefined;
+    activation?: ToolActivationRefV1 | undefined;
+    outcome?: ToolExecutionOutcomeV1 | undefined;
   }): Promise<void> {
     const { progress } = this.options;
     const update = buildRunToolUpdate({
@@ -1774,12 +1887,13 @@ export function buildRunToolUpdate(input: {
   output?: unknown;
   error?: RuntimeError | undefined;
   durationMs?: number | undefined;
-}): RunToolUpdateV1 {
+  activation?: ToolActivationRefV1 | undefined;
+  outcome?: ToolExecutionOutcomeV1 | undefined;
+}): RunToolUpdateV1 | RunToolUpdateV2 {
   const outputRecord = asPlainRecord(input.output);
   const auditRecord = asPlainRecord(outputRecord?.auditRecord);
   const activityOutput = auditRecord?.output ?? input.output;
-  return {
-    version: "v1",
+  const shared = {
     runId: input.runId,
     sessionId: input.sessionId,
     ts: new Date().toISOString(),
@@ -1810,9 +1924,17 @@ export function buildRunToolUpdate(input: {
       : {}),
     ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
   };
+  return input.activation === undefined
+    ? { version: "v1", ...shared }
+    : {
+        version: "v2",
+        ...shared,
+        activation: input.activation,
+        ...(input.outcome === undefined ? {} : { outcome: input.outcome }),
+      };
 }
 
-export function buildRunToolEvent(update: RunToolUpdateV1): {
+export function buildRunToolEvent(update: RunToolUpdateV1 | RunToolUpdateV2): {
   type: "run.tool.started" | "run.tool.completed" | "run.tool.failed";
   level: "INFO" | "ERROR";
   metadata: Record<string, unknown>;
@@ -1831,6 +1953,10 @@ export function buildRunToolEvent(update: RunToolUpdateV1): {
       toolCallId: update.toolCallId,
       toolName: update.toolName,
       phase: update.phase,
+      ...(update.version === "v2" ? { activation: update.activation } : {}),
+      ...(update.version === "v2" && update.outcome !== undefined
+        ? { outcome: update.outcome }
+        : {}),
       ...(update.stepAgent !== undefined ? { stepAgent: update.stepAgent } : {}),
       ...(update.displayName !== undefined ? { displayName: update.displayName } : {}),
       ...(update.toolFamily !== undefined ? { toolFamily: update.toolFamily } : {}),

@@ -10,6 +10,11 @@ import type {
   EffectStore,
   SessionRepository,
 } from "../kestrel/contracts/store.js";
+import {
+  parseAgentToolResultV2,
+  parsePreparedToolCallV1,
+} from "../kestrel/contracts/tool-invocation.js";
+import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js";
 import type { EffectRegistry } from "./EffectRegistry.js";
 import { createEffectExecutionError } from "./errors.js";
 
@@ -73,9 +78,12 @@ export class InlineEffectRunner implements EffectRunner {
       if (toolActivity !== undefined) {
         await notifyToolActivity(context.onToolActivity, {
           phase: "started",
-          toolCallId: effect.idempotencyKey,
+          toolCallId: toolActivity.toolCallId,
           toolName: toolActivity.toolName,
           input: toolActivity.toolInput,
+          ...(toolActivity.activation === undefined
+            ? {}
+            : { activation: toolActivity.activation }),
         });
       }
       try {
@@ -93,13 +101,22 @@ export class InlineEffectRunner implements EffectRunner {
         });
         await this.store.markEffectStatus(effect.idempotencyKey, "DONE");
         if (toolActivity !== undefined) {
+          const evidence = readAgentToolResultV2(output);
           await notifyToolActivity(context.onToolActivity, {
             phase: "completed",
-            toolCallId: effect.idempotencyKey,
+            toolCallId: toolActivity.toolCallId,
             toolName: toolActivity.toolName,
             input: toolActivity.toolInput,
             output,
             durationMs: Date.now() - startedAt,
+            ...(evidence === undefined
+              ? toolActivity.activation === undefined
+                ? {}
+                : { activation: toolActivity.activation }
+              : {
+                  activation: evidence.activation,
+                  outcome: evidence.outcome,
+                }),
           });
         }
       } catch (error) {
@@ -120,11 +137,33 @@ export class InlineEffectRunner implements EffectRunner {
         if (toolActivity !== undefined) {
           await notifyToolActivity(context.onToolActivity, {
             phase: "failed",
-            toolCallId: effect.idempotencyKey,
+            toolCallId: toolActivity.toolCallId,
             toolName: toolActivity.toolName,
             input: toolActivity.toolInput,
             error: runtimeError,
             durationMs: Date.now() - startedAt,
+            ...(toolActivity.activation === undefined
+              ? {}
+              : {
+                  activation: toolActivity.activation,
+                  outcome: {
+                    version: "v1" as const,
+                    callId: toolActivity.toolCallId,
+                    activation: toolActivity.activation,
+                    kind: "failure" as const,
+                    startedAt: new Date(startedAt).toISOString(),
+                    completedAt: new Date().toISOString(),
+                    effectState: "unknown" as const,
+                    normalizedFailureCode: runtimeError.code,
+                    retryable: false,
+                    error: {
+                      message: runtimeError.message,
+                      ...(runtimeError.details === undefined
+                        ? {}
+                        : { details: runtimeError.details }),
+                    },
+                  },
+                }),
           });
         }
 
@@ -156,20 +195,43 @@ export class InlineEffectRunner implements EffectRunner {
 }
 
 function readEffectToolActivity(effect: PersistedEffect): {
+  toolCallId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
+  activation?: ToolActivationRefV1 | undefined;
 } | undefined {
   if (effect.type !== "execute_tool_call" && effect.type !== "tool.execute") {
     return ;
   }
   const payload = parseOptionalRecord(effect.payload);
-  const toolName = typeof payload?.toolName === "string" && payload.toolName.trim().length > 0
-    ? payload.toolName.trim()
-    : undefined;
-  const toolInput = parseOptionalRecord(payload?.toolInput);
-  return toolName === undefined || toolInput === undefined
-    ? undefined
-    : { toolName, toolInput };
+  if (payload?.preparedToolCall === undefined) {
+    const toolName = typeof payload?.toolName === "string" && payload.toolName.trim().length > 0
+      ? payload.toolName.trim()
+      : undefined;
+    const toolInput = parseOptionalRecord(payload?.toolInput);
+    return toolName === undefined || toolInput === undefined
+      ? undefined
+      : { toolCallId: effect.idempotencyKey, toolName, toolInput };
+  }
+  try {
+    const prepared = parsePreparedToolCallV1(payload.preparedToolCall);
+    return {
+      toolCallId: prepared.callId,
+      toolName: prepared.activation.descriptor.toolId,
+      toolInput: prepared.effectiveInput,
+      activation: prepared.activation,
+    };
+  } catch {
+    return;
+  }
+}
+
+function readAgentToolResultV2(value: unknown) {
+  try {
+    return parseAgentToolResultV2(value);
+  } catch {
+    return undefined;
+  }
 }
 
 async function notifyToolActivity(

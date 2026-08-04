@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
 import { McpClientManager } from "../../src/mcp/McpClientManager.js";
+import type { McpStatusSnapshot } from "../../src/mcp/contracts.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 
 test(
@@ -19,6 +19,140 @@ test(
     );
   },
 );
+
+test("McpClientManager refresh is transactional, coalesced, and retains pinned clients", async () => {
+  const manager = new McpClientManager({ servers: [] });
+  const oldClient = fakeMcpClient("v1");
+  const newClient = fakeMcpClient("v2");
+  const internals = manager as unknown as {
+    activateCandidate(
+      snapshot: McpStatusSnapshot,
+      tools: Map<string, unknown>,
+      servers: Map<string, unknown>,
+    ): Promise<void>;
+    retainActiveAfterRefreshFailure(
+      candidate: McpStatusSnapshot,
+      code: string,
+    ): McpStatusSnapshot;
+    buildAndActivateRefresh(): Promise<McpStatusSnapshot>;
+  };
+  await internals.activateCandidate(
+    mcpSnapshot("v1"),
+    new Map([["mcp.docs.lookup", toolHandle(oldClient)]]),
+    new Map([["docs", { serverId: "docs", client: oldClient }]]),
+  );
+  const pinned = manager.pinTool("mcp.docs.lookup");
+  const retained = internals.retainActiveAfterRefreshFailure(
+    { ...mcpSnapshot("broken"), healthy: false },
+    "MCP_REFRESH_CANDIDATE_INVALID",
+  );
+  assert.equal(retained.tools[0]?.description, "Lookup v1");
+  assert.equal(retained.refreshDiagnostic?.code, "MCP_REFRESH_CANDIDATE_INVALID");
+
+  await internals.activateCandidate(
+    mcpSnapshot("v2"),
+    new Map([["mcp.docs.lookup", toolHandle(newClient)]]),
+    new Map([["docs", { serverId: "docs", client: newClient }]]),
+  );
+  assert.equal(oldClient.closeCalls, 0);
+  assert.equal(await pinned.call({}), "v1");
+  assert.equal(await manager.callTool("mcp.docs.lookup", {}), "v2");
+  await pinned.release();
+  assert.equal(oldClient.closeCalls, 1);
+
+  let refreshBuilds = 0;
+  let releaseRefresh!: () => void;
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  internals.buildAndActivateRefresh = async () => {
+    refreshBuilds += 1;
+    await refreshGate;
+    return mcpSnapshot("coalesced");
+  };
+  const firstRefresh = manager.refresh();
+  const secondRefresh = manager.refresh();
+  assert.equal(refreshBuilds, 1);
+  releaseRefresh();
+  assert.deepEqual(await secondRefresh, await firstRefresh);
+  await manager.close();
+});
+
+test("McpClientManager closes a candidate that fails after connecting", async () => {
+  let closeCalls = 0;
+  class CandidateClient {
+    async connect() {}
+    async listTools() {
+      throw new Error("candidate discovery failed");
+    }
+    async close() {
+      closeCalls += 1;
+    }
+  }
+  class CandidateTransport {}
+  const manager = new McpClientManager({ servers: [] });
+  const internals = manager as unknown as {
+    connectAndDiscover(
+      sdk: Record<string, unknown>,
+      server: Record<string, unknown>,
+    ): Promise<unknown>;
+  };
+
+  await assert.rejects(
+    internals.connectAndDiscover(
+      {
+        ClientCtor: CandidateClient,
+        StdioTransportCtor: CandidateTransport,
+      },
+      {
+        id: "candidate",
+        transport: "stdio",
+        command: "candidate",
+        enabled: true,
+      },
+    ),
+    /candidate discovery failed/u,
+  );
+  assert.equal(closeCalls, 1);
+});
+
+function fakeMcpClient(version: string) {
+  return {
+    closeCalls: 0,
+    async callTool() {
+      return version;
+    },
+    async close() {
+      this.closeCalls += 1;
+    },
+  };
+}
+
+function toolHandle(client: ReturnType<typeof fakeMcpClient>) {
+  return {
+    serverId: "docs",
+    toolName: "lookup",
+    namespacedToolName: "mcp.docs.lookup",
+    client,
+    protocolKind: "tool",
+    protocolTarget: "lookup",
+  };
+}
+
+function mcpSnapshot(version: string): McpStatusSnapshot {
+  return {
+    healthy: true,
+    checkedAt: new Date().toISOString(),
+    servers: [],
+    tools: [{
+      serverId: "docs",
+      toolName: "lookup",
+      namespacedToolName: "mcp.docs.lookup",
+      description: `Lookup ${version}`,
+      inputSchema: { type: "object", additionalProperties: false },
+    }],
+  };
+}
 
 test(
   "McpClientManager assertHealthy throws a normalized failure with unhealthy server details",

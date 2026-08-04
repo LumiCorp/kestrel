@@ -12,6 +12,7 @@ import {
   createOpenRouterModelGatewayFromEnv,
 } from "../../src/index.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { executeTestToolCall } from "../helpers/createTestToolGateway.js";
 
 
 const REQUIRED_TOOL: ModelToolSpec = {
@@ -704,15 +705,22 @@ test("createDefaultToolGateway resolves runtime dependencies for effect_result_l
     },
   });
 
-  const lookedUp = await gateway.call("effect_result_lookup", {
-    idempotencyKey: "key_1",
+  const lookedUp = await executeTestToolCall({
+    gateway,
+    toolName: "effect_result_lookup",
+    toolInput: { idempotencyKey: "key_1" },
   });
 
-  const finalizeResult = await gateway.call("FinalizeAnswer", {
-    answer: "done",
+  const finalizeResult = await executeTestToolCall({
+    gateway,
+    toolName: "FinalizeAnswer",
+    toolInput: { answer: "done" },
   });
 
-  assert.deepEqual((lookedUp.auditRecord.output as { output?: { ok?: boolean } }).output, { ok: true });
+  assert.deepEqual(
+    (lookedUp.auditRecord.output as { output?: { ok?: boolean } }).output,
+    { ok: true },
+  );
   assert.deepEqual(finalizeResult.auditRecord.output, { accepted: true });
   assert.equal(finalized.length, 1);
 });

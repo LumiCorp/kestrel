@@ -13,10 +13,12 @@ import type {
   RunEvent,
 } from "../../src/kestrel/contracts/events.js";
 import type { ModelGatewayCallOptions, ModelRequest, ModelUsage, ToolGateway } from "../../src/kestrel/contracts/model-io.js";
+import type { AgentToolResultV2 } from "../../src/kestrel/contracts/tool-invocation.js";
 import type { RuntimeStore } from "../../src/kestrel/contracts/store.js";
 import { buildAgentToolFailedOutputResult } from "../../tools/toolResult.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 const guardrailConfig = {
   maxStepsPerRun: 10,
@@ -109,6 +111,32 @@ test("RuntimeIO persists provider-boundary decisions and redacts requests and re
   assert.ok(
     emitted.indexOf("execution_boundary.decision") < emitted.indexOf("model.requested"),
   );
+});
+
+test("RuntimeIO waits for provider-boundary persistence before provider dispatch", async () => {
+  let releasePersistence: (() => void) | undefined;
+  const persistenceGate = new Promise<void>((resolve) => {
+    releasePersistence = resolve;
+  });
+  let modelCalled = false;
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    appendRunEvent: async (type) => {
+      if (type === "execution_boundary.decision") await persistenceGate;
+    },
+    modelCall: async () => {
+      modelCalled = true;
+      return { ok: true };
+    },
+  });
+
+  const pending = io.model(modelRequest());
+  await Promise.resolve();
+  assert.equal(modelCalled, false);
+  releasePersistence?.();
+  await pending;
+  assert.equal(modelCalled, true);
 });
 
 test("RuntimeIO does not return registered sensitive values in provider failures", async () => {
@@ -224,7 +252,7 @@ test("RuntimeIO.tool does not emit tool request events when already aborted", as
   assert.deepEqual(emitted, []);
 });
 
-test("RuntimeIO.tool does not emit completion when aborted after tool return", async () => {
+test("RuntimeIO.tool persists completed evidence when aborted after tool return", async () => {
   const controller = new AbortController();
   const emitted: string[] = [];
   const io = createRuntimeIO({
@@ -236,14 +264,12 @@ test("RuntimeIO.tool does not emit completion when aborted after tool return", a
     },
   });
 
-  await assert.rejects(
-    () => io.tool("fs.read_text", { path: "README.md" }),
-    (error) => readErrorCode(error) === "RUN_CANCELLED",
-  );
+  const result = await io.tool("fs.read_text", { path: "README.md" });
 
+  assert.equal(result.status, "OK");
   assert.ok(emitted.includes("TOOL_CALL_STARTED"));
-  assert.ok(emitted.includes("TOOL_CALL_FAILED"));
-  assert.equal(emitted.includes("TOOL_CALL_DONE"), false);
+  assert.ok(emitted.includes("TOOL_CALL_DONE"));
+  assert.equal(emitted.includes("TOOL_CALL_FAILED"), false);
 });
 
 test("RuntimeIO quarantines registered sensitive values before tool dispatch", async () => {
@@ -278,6 +304,70 @@ test("RuntimeIO quarantines registered sensitive values before tool dispatch", a
   assert.equal(emitted.includes("TOOL_CALL_STARTED"), false);
 });
 
+test("RuntimeIO waits for tool-boundary persistence before scheduling an effect", async () => {
+  let releasePersistence: (() => void) | undefined;
+  const persistenceGate = new Promise<void>((resolve) => {
+    releasePersistence = resolve;
+  });
+  let toolCalled = false;
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    appendRunEvent: async (type) => {
+      if (type === "execution_boundary.decision") await persistenceGate;
+    },
+    toolCall: async () => {
+      toolCalled = true;
+      return buildAgentToolSuccessResult({
+        toolName: "test.effect",
+        input: { value: "safe" },
+        output: { ok: true },
+      });
+    },
+  });
+
+  const pending = io.tool("test.effect", { value: "safe" });
+  await Promise.resolve();
+  assert.equal(toolCalled, false);
+  releasePersistence?.();
+  await pending;
+  assert.equal(toolCalled, true);
+});
+
+test("RuntimeIO waits for tool-result persistence before downstream projection", async () => {
+  let boundaryDecisionCount = 0;
+  let releasePersistence: (() => void) | undefined;
+  const resultPersistenceGate = new Promise<void>((resolve) => {
+    releasePersistence = resolve;
+  });
+  let projected = false;
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    appendRunEvent: async (type) => {
+      if (type !== "execution_boundary.decision") return;
+      boundaryDecisionCount += 1;
+      if (boundaryDecisionCount === 2) await resultPersistenceGate;
+    },
+    toolCall: async () => buildAgentToolSuccessResult({
+      toolName: "test.effect",
+      input: { value: "safe" },
+      output: { ok: true },
+    }),
+    afterToolResult: async () => {
+      projected = true;
+    },
+  });
+
+  const pending = io.tool("test.effect", { value: "safe" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(boundaryDecisionCount, 2);
+  assert.equal(projected, false);
+  releasePersistence?.();
+  await pending;
+  assert.equal(projected, true);
+});
+
 test("RuntimeIO redacts registered sensitive values from tool failures", async () => {
   const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
   boundaryRuntime.sensitiveValues.register({
@@ -297,13 +387,36 @@ test("RuntimeIO redacts registered sensitive values from tool failures", async (
     },
   });
 
-  await assert.rejects(
-    () => io.tool("fs.read_text", { path: "README.md" }),
-    (error) =>
-      error instanceof Error &&
-      error.message === "tool rejected [REDACTED]" &&
-      error.message.includes("tool-error-secret") === false,
-  );
+  const result = await io.tool("fs.read_text", { path: "README.md" });
+  assert.equal(result.status, "FAILED");
+  assert.equal(JSON.stringify(result).includes("tool-error-secret"), false);
+  assert.equal(JSON.stringify(result).includes("[REDACTED]"), true);
+});
+
+test("RuntimeIO redacts registered sensitive values from successful tool results", async () => {
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  boundaryRuntime.sensitiveValues.register({
+    reference: {
+      referenceId: "credential:tool-result",
+      kind: "credential",
+      scope: "tool",
+    },
+    value: "tool-result-secret",
+  });
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    executionBoundaryRuntime: boundaryRuntime,
+    toolCall: async () => buildAgentToolSuccessResult({
+      toolName: "fs.read_text",
+      input: { path: "result.txt" },
+      output: { content: "tool-result-secret" },
+    }),
+  });
+
+  const result = await io.tool("fs.read_text", { path: "result.txt" });
+  assert.equal(JSON.stringify(result).includes("tool-result-secret"), false);
+  assert.equal(JSON.stringify(result).includes("[REDACTED]"), true);
 });
 
 test("RuntimeIO never retries exec_command after dispatch", async () => {
@@ -321,7 +434,8 @@ test("RuntimeIO never retries exec_command after dispatch", async () => {
     },
   });
 
-  await assert.rejects(() => io.tool("exec_command", { command: "pnpm test" }));
+  const result = await io.tool("exec_command", { command: "pnpm test" });
+  assert.equal(result.status, "FAILED");
   assert.equal(calls, 1);
   assert.equal(emitted.includes("tool_retry"), false);
 });
@@ -458,6 +572,13 @@ test("RuntimeIO joins assembly tool selection to the exact provider-boundary too
   assert.deepEqual(exposure?.modelVisibleToolNames, ["fs.read_text"]);
   assert.equal(exposure?.modelVisibleSurfaceHash, ledger.calls[0]?.request?.requestManifest.toolSurface.surfaceHash);
   assert.equal(exposure?.wouldBlock, false);
+  const provenance = runEvents.find((event) => event.type === "model.provenance");
+  const snapshot = readRecord(provenance?.metadata?.toolSurfaceSnapshot);
+  const snapshotTools = Array.isArray(snapshot?.tools) ? snapshot.tools : [];
+  assert.deepEqual(
+    snapshotTools.map((value) => readRecord(readRecord(value)?.descriptor)?.toolId),
+    ["fs.read_text"],
+  );
 });
 
 test("phase-scoped exposure preserves tools when the phase has no explicit policy", () => {
@@ -595,15 +716,17 @@ test("RuntimeIO projects returned structured tool failures as failed activity", 
     toolCall: async () => failedResult,
   });
 
-  const result = await io.tool("dev.shell.run", { command: "false" });
+  const result = await io.tool("dev.shell.run", { command: "false" }) as AgentToolResultV2;
 
-  assert.equal(result, failedResult);
+  assert.equal(result.status, "FAILED");
+  assert.equal(result.version, "v2");
+  assert.equal(result.toolName, "dev.shell.run");
+  assert.equal(readRecord(result.auditRecord.error)?.code, "DEV_SHELL_COMMAND_FAILED");
   assert.ok(emitted.includes("TOOL_CALL_FAILED"));
   assert.ok(emitted.includes("run.tool.failed"));
   assert.equal(emitted.includes("TOOL_CALL_DONE"), false);
   assert.equal(emitted.includes("run.tool.completed"), false);
   assert.equal(consoleUpdates.at(-1)?.status, "failed");
-  assert.equal(consoleUpdates.at(-1)?.exitCode, 1);
 });
 
 function createRuntimeIO(input: {
@@ -620,18 +743,20 @@ function createRuntimeIO(input: {
   consoleUpdates?: RunConsoleUpdateV1[] | undefined;
   progressUpdates?: ProgressUpdateV1[] | undefined;
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
+  appendRunEvent?: ((type: RunEventType) => Promise<void>) | undefined;
+  afterToolResult?: (() => Promise<void>) | undefined;
 }): RuntimeIO {
   let seq = 0;
   const store = {
     appendModelCallProvenance: async () => {},
     updateModelCallProvenance: async () => {},
   } as unknown as RuntimeStore;
-  const toolGateway: ToolGateway = {
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     call: async <T>() => {
       const result = input.toolCall === undefined ? { ok: true } : await input.toolCall();
       return result as T;
     },
-  };
+  });
   return new RuntimeIO({
     deps: {
       store,
@@ -692,6 +817,7 @@ function createRuntimeIO(input: {
       metadata,
       stepIndex,
     ) => {
+      await input.appendRunEvent?.(type);
       input.emitted.push(type);
       input.runEvents?.push({
         runId: "run-runtime-io",
@@ -726,11 +852,25 @@ function createRuntimeIO(input: {
         ...(typeof provider.model === "string" ? { model: provider.model } : {}),
       };
     },
-    callTool: async <T>() => {
-      const result = input.toolCall === undefined ? { ok: true } : await input.toolCall();
+    callTool: async <T>(
+      call: Parameters<ConstructorParameters<typeof RuntimeIO>[0]["callTool"]>[0],
+    ) => {
+      const result = await toolGateway.executePreparedToolCall(
+        call.preparedToolCall,
+        {
+          signal: call.signal,
+          ...(call.console === undefined ? {} : { console: call.console }),
+          runContext: {
+            runId: call.runId,
+            sessionId: call.sessionId,
+            payload: call.runtimePayload ?? {},
+            sessionState: call.sessionState,
+          },
+        },
+      );
       return result as T;
     },
-    afterToolResult: async () => {},
+    afterToolResult: async () => input.afterToolResult?.(),
     isRetryableToolError: () => input.retryableToolErrors === true,
     executionBoundaryRuntime:
       input.executionBoundaryRuntime ?? new ExecutionBoundaryPolicyRuntime(),

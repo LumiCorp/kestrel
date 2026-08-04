@@ -84,7 +84,7 @@ import type {
   ThreadStatusSnapshot,
   TurnExecutor,
 } from "./contracts.js";
-import type { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
+import { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export interface ThreadRuntimeOptions {
   sessionStore: SessionRepository;
@@ -139,9 +139,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
       store: this.store,
       ...(options.profile !== undefined ? { profile: options.profile } : {}),
     });
-    this.assemblyPolicyEvaluator = new AssemblyPolicyEvaluator(
-      options.executionBoundaryRuntime,
-    );
+    const executionBoundaryRuntime =
+      options.executionBoundaryRuntime ?? new ExecutionBoundaryPolicyRuntime();
+    this.assemblyPolicyEvaluator = new AssemblyPolicyEvaluator(executionBoundaryRuntime);
     this.runtimeComposer = new RuntimeComposer({
       store: this.store,
       catalog: this.assemblyCatalog,
@@ -161,9 +161,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
       store: this.store,
       interactionManager: this.interactionManager,
       contextPolicyManager: this.contextPolicyManager,
-      ...(options.executionBoundaryRuntime !== undefined
-        ? { executionBoundaryRuntime: options.executionBoundaryRuntime }
-        : {}),
+      executionBoundaryRuntime,
     });
     if (options.profile !== undefined) {
       this.delegationSupervisor = new DelegationSupervisor({

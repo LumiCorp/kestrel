@@ -234,6 +234,7 @@ interface SubmittedRuntimeTurn {
   interactionMode?: string | undefined;
   actSubmode?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
+  runtimeTurn?: RunTurnInput | undefined;
 }
 
 function restoreEnv(name: string, value: string | undefined) {
@@ -283,6 +284,8 @@ function createRuntimeFactory(input: {
             assistantText: "The runtime metadata test turn completed.",
             output: {
               status: "COMPLETED",
+              runId: turn.runtimeTurn?.runId ?? "run-dev-shell-test",
+              sessionId: turn.runtimeTurn?.sessionId ?? session.sessionId,
               text: "ok",
               events: [],
               errors: [],
@@ -306,6 +309,7 @@ function createRuntimeFactory(input: {
         kestrel,
         threadRuntime,
         taskGraphStore,
+        persistExecutionBoundaryDecision: async () => {},
         close: async () => {},
         entryStepAgent: "agent.loop",
       };

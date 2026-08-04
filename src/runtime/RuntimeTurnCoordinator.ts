@@ -21,8 +21,11 @@ import {
   toOperatorAssemblySummary,
 } from "../orchestration/OperatorSessionProjection.js";
 import { createRuntimeFailure } from "./RuntimeFailure.js";
-import { enforceRuntimeAssistantResponseBoundary, finalizeRuntimeAssistantResponse } from "./assistantResponseContract.js";
-import type { ExecutionBoundaryDecisionSink, ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
+import { enforceRuntimeAssistantResponseBoundary } from "./assistantResponseContract.js";
+import {
+  ExecutionBoundaryPolicyRuntime,
+  type ExecutionBoundaryDecisionSink,
+} from "../security/ExecutionBoundaryPolicy.js";
 import {
   materializeCompiledRuntimeTurn,
   prepareRuntimeTurn,
@@ -72,8 +75,8 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
   private readonly readFinalizedPayload: RuntimeTurnCoordinatorServiceOptions["readFinalizedPayload"];
   private readonly readPersistedResumeStepAgent: RuntimeTurnCoordinatorServiceOptions["readPersistedResumeStepAgent"];
   private readonly buildOperatorAffordance: RuntimeTurnCoordinatorServiceOptions["buildOperatorAffordance"];
-  private readonly executionBoundaryRuntime: RuntimeTurnCoordinatorServiceOptions["executionBoundaryRuntime"];
-  private readonly persistExecutionBoundaryDecision: RuntimeTurnCoordinatorServiceOptions["persistExecutionBoundaryDecision"];
+  private readonly executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
+  private readonly persistExecutionBoundaryDecision: ExecutionBoundaryDecisionSink;
 
   constructor(options: RuntimeTurnCoordinatorServiceOptions) {
     this.defaults = options.defaults;
@@ -83,8 +86,15 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
     this.readFinalizedPayload = options.readFinalizedPayload;
     this.readPersistedResumeStepAgent = options.readPersistedResumeStepAgent;
     this.buildOperatorAffordance = options.buildOperatorAffordance;
-    this.executionBoundaryRuntime = options.executionBoundaryRuntime;
-    this.persistExecutionBoundaryDecision = options.persistExecutionBoundaryDecision;
+    this.executionBoundaryRuntime =
+      options.executionBoundaryRuntime ?? new ExecutionBoundaryPolicyRuntime();
+    this.persistExecutionBoundaryDecision =
+      options.persistExecutionBoundaryDecision ?? (() => {
+        throw createRuntimeFailure(
+          "EXECUTION_BOUNDARY_PERSISTENCE_REQUIRED",
+          "Assistant output cannot cross the execution boundary without durable decision persistence.",
+        );
+      });
   }
 
   async runTurn(
@@ -127,18 +137,11 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
           : readAssistantText(asRecord(session?.state.agent)?.assistantText),
       request: selectCurrentInteractionRequest(result.threadStatus),
     };
-    const canonicalResponse = this.executionBoundaryRuntime === undefined
-      ? finalizeRuntimeAssistantResponse(canonicalInput)
-      : await enforceRuntimeAssistantResponseBoundary({
-          ...canonicalInput,
-          executionBoundaryRuntime: this.executionBoundaryRuntime,
-          persist: this.persistExecutionBoundaryDecision ?? (() => {
-            throw createRuntimeFailure(
-              "EXECUTION_BOUNDARY_PERSISTENCE_REQUIRED",
-              "Assistant output cannot cross the execution boundary without durable decision persistence.",
-            );
-          }),
-        });
+    const canonicalResponse = await enforceRuntimeAssistantResponseBoundary({
+      ...canonicalInput,
+      executionBoundaryRuntime: this.executionBoundaryRuntime,
+      persist: this.persistExecutionBoundaryDecision,
+    });
     const output = canonicalResponse.output;
     const assistantText = canonicalResponse.assistantText;
     const affordanceInput = {

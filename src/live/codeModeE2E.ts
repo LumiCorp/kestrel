@@ -7,6 +7,53 @@ import {
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { InMemorySessionStore } from "../store/InMemorySessionStore.js";
 import { unwrapAgentToolOutput } from "../../tools/toolResult.js";
+import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
+
+async function executeLiveTool(
+  registry: UnifiedToolRegistry,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+) {
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [toolName],
+  });
+  const activation = snapshot.tools.find(
+    (candidate) => candidate.descriptor.toolId === toolName,
+  );
+  if (activation === undefined) {
+    await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
+    throw createRuntimeFailure(
+      "TOOL_LOOKUP_FAILED",
+      `Tool '${toolName}' is not available in the live tool snapshot.`,
+      { recoverable: false, toolName },
+    );
+  }
+  try {
+    const prepared = await registry.prepareToolCall({
+      runId: "live-code-mode-e2e",
+      sessionId: "live-code-mode-e2e",
+      callId: `live-code-mode-e2e:${toolName}:${Date.now()}`,
+      activation,
+      origin: {
+        kind: "trusted_runtime",
+        producerId: "kestrel.live-code-mode-e2e:v1",
+        adapterId: "kestrel.live-code-mode-e2e.direct:v1",
+      },
+      rawInput: toolInput,
+      policy: {
+        decision: "allow",
+        policyRevision: hashCanonical({
+          source: "kestrel.live-code-mode-e2e",
+          activation,
+          payload: toolInput,
+        }),
+      },
+    });
+    return await registry.executePreparedToolCall(prepared);
+  } finally {
+    await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
+  }
+}
 
 export interface CodeModeTurnAssertionResult {
   label: string;
@@ -242,7 +289,8 @@ async function runTurnWithRetries(input: {
     let outputErrors: string[] = [];
 
     try {
-      const result = await input.registry.call(
+      const result = await executeLiveTool(
+        input.registry,
         "code.execute",
         input.request,
       );

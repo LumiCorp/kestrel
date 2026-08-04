@@ -8,6 +8,10 @@ import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import {
+  adaptLegacyTestToolGateway,
+  createLegacyTestToolDescriptorRef,
+} from "../helpers/createTestToolGateway.js";
 
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -70,7 +74,7 @@ test("reference harness asks for a narrower slice instead of thrashing on a broa
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   let thinkerCalls = 0;
 
-  const toolGateway: ToolGateway = {
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     async call<T>(name: string, input: unknown): Promise<T> {
       toolCalls.push({ name, input });
       if (name === "fs.list") {
@@ -94,7 +98,7 @@ test("reference harness asks for a narrower slice instead of thrashing on a broa
     async preRun(): Promise<void> {
       // no-op
     },
-  };
+  });
 
   const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
     const schemaName = request.providerOptions?.openrouter?.responseSchemaName;
@@ -179,6 +183,7 @@ test("reference harness asks for a narrower slice instead of thrashing on a broa
     capabilityManifestProvider: () => [
       {
         name: "fs.list",
+        descriptorRef: createLegacyTestToolDescriptorRef("fs.list"),
         description: "List files",
         freshnessClass: "static",
         latencyClass: "low",
@@ -188,6 +193,7 @@ test("reference harness asks for a narrower slice instead of thrashing on a broa
       },
       {
         name: "fs.read_text",
+        descriptorRef: createLegacyTestToolDescriptorRef("fs.read_text"),
         description: "Read text",
         freshnessClass: "static",
         latencyClass: "low",

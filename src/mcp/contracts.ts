@@ -90,4 +90,9 @@ export interface McpStatusSnapshot {
   checkedAt: string;
   servers: McpServerStatus[];
   tools: McpDiscoveredTool[];
+  refreshDiagnostic?: {
+    code: string;
+    message: string;
+    checkedAt: string;
+  } | undefined;
 }

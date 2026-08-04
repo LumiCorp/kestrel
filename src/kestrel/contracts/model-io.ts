@@ -1,6 +1,17 @@
 import type { RunConsoleChannel } from "./events.js";
 import type { RuntimeEvent } from "./events.js";
 import type { SessionRecord } from "./store.js";
+import type {
+  ToolSurfaceSnapshotV1,
+} from "./tool-contract.js";
+import type {
+  AgentToolResultV2,
+  PreparedToolApprovalAuthorityV1,
+  PreparedToolCallOriginV1,
+  PreparedToolCallV1,
+  PreparedToolPolicyDispositionV1,
+  ResolvedModelToolIntentV1,
+} from "./tool-invocation.js";
 
 export interface ToolRuntimeStatus {
   healthy: boolean;
@@ -160,6 +171,8 @@ export interface ModelMessageToolCall {
 
 export interface ModelToolSpec {
   name: string;
+  /** Internal exact runtime identity; provider mappers must not serialize it. */
+  runtimeName?: string | undefined;
   description: string;
   inputSchema: Record<string, unknown>;
   outputContract?: ModelToolContract | undefined;
@@ -245,6 +258,8 @@ export interface ModelToolIntent {
   name: string;
   input: Record<string, unknown>;
   id?: string | undefined;
+  /** Internal evidence attached after the provider response; never serialized to provider wire data. */
+  toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
 }
 
 export interface ModelUsage {
@@ -328,8 +343,32 @@ export interface ModelResponse<TOutput = unknown> {
 }
 
 export interface ToolGateway {
-  validateInput?(name: string, input: unknown, options?: ToolGatewayCallOptions): Promise<unknown>;
-  call(name: string, input: unknown, options?: ToolGatewayCallOptions): Promise<AgentToolResult>;
+  createToolSurfaceSnapshot(
+    options?: ToolGatewayCallOptions,
+  ): Promise<ToolSurfaceSnapshotV1>;
+  resolveModelToolIntent(input: {
+    snapshot: ToolSurfaceSnapshotV1;
+    toolCall: ModelMessageToolCall;
+  }): ResolvedModelToolIntentV1;
+  prepareToolCall(
+    input: {
+      runId: string;
+      sessionId: string;
+      callId: string;
+      activation: ResolvedModelToolIntentV1["activation"];
+      origin: PreparedToolCallOriginV1;
+      rawInput: Record<string, unknown>;
+      policy: PreparedToolPolicyDispositionV1;
+      approval?: PreparedToolApprovalAuthorityV1 | undefined;
+    },
+    options?: ToolGatewayCallOptions,
+  ): Promise<PreparedToolCallV1>;
+  executePreparedToolCall(
+    prepared: PreparedToolCallV1,
+    options?: ToolGatewayCallOptions,
+  ): Promise<AgentToolResultV2>;
+  releaseToolSurfaceSnapshot?(snapshotId: string): Promise<void> | void;
+  releaseToolRun?(runId: string, sessionId: string): Promise<void> | void;
   preRun?(context: ToolGatewayPreRunContext): Promise<void>;
   getRuntimeStatus?(): Promise<ToolRuntimeStatus>;
   refreshRuntime?(): Promise<ToolRuntimeStatus>;
@@ -340,6 +379,8 @@ export interface ToolGatewayCallOptions {
   signal?: AbortSignal | undefined;
   console?: ToolConsoleSink | undefined;
   runContext?: ToolRunContext | undefined;
+  toolNames?: readonly string[] | undefined;
+  runtimeBudgetRemainingMs?: number | undefined;
 }
 
 export type ToolConsoleSink = (event: ToolConsoleEvent) => void | Promise<void>;

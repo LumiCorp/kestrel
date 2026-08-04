@@ -1,5 +1,10 @@
 import type { StepContext, UserWaitForMatcher, } from "../../../src/kestrel/contracts/execution.js";
 import type { ModelReasoningRequest, ModelToolSpec } from "../../../src/kestrel/contracts/model-io.js";
+import type {
+  ToolActivationRefV1,
+  ToolDescriptorRefV1,
+  ToolSurfaceSnapshotV1,
+} from "../../../src/kestrel/contracts/tool-contract.js";
 
 import type { DevShellSourceWriteGuardResult } from "../../../src/devshell/contracts.js";
 import type {
@@ -316,6 +321,9 @@ export type ReactAction = ReactActionCommon & (
       kind: "tool";
       name: string;
       input: Record<string, unknown>;
+      toolCallId?: string | undefined;
+      toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
+      activation?: ToolActivationRefV1 | undefined;
       executionRole?: CommandExecutionRoleHint | undefined;
       policyContext?: Record<string, unknown> | undefined;
     }
@@ -324,6 +332,9 @@ export type ReactAction = ReactActionCommon & (
       items: Array<{
         name: string;
         input: Record<string, unknown>;
+        toolCallId?: string | undefined;
+        toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
+        activation?: ToolActivationRefV1 | undefined;
         executionRole?: CommandExecutionRoleHint | undefined;
       }>;
       policyContext?: Record<string, unknown> | undefined;
@@ -656,6 +667,8 @@ export interface ToolCapabilityManifestItem {
     kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
     revision: string;
   } | undefined;
+  /** Internal immutable contract evidence. Deliberation prompts must not render this field. */
+  descriptorRef?: ToolDescriptorRefV1 | undefined;
   requires?: string[] | undefined;
   suitability?: ToolCapabilitySuitability | undefined;
   displayName?: string | undefined;

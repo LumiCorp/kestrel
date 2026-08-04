@@ -315,6 +315,141 @@
       "command": "pnpm",
       "args": ["--dir", "apps/web", "exec", "node", "--import", "./scripts/register-server-only.mjs", "--import", "tsx", "--test", "--test-name-pattern=binds the execution profile", "lib/mcp/grant-service.test.ts"],
       "testFiles": ["apps/web/lib/mcp/grant-service.test.ts"]
+    },
+    {
+      "id": "execution-boundary-missing-policy-fail-open",
+      "target": "src/security/ExecutionBoundaryPolicy.ts",
+      "find": "    if (!this.policy.boundaries.includes(input.boundary)) {",
+      "replace": "    if (false && !this.policy.boundaries.includes(input.boundary)) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=missing policy boundary declarations fail closed", "tests/unit/execution-boundary-policy.test.ts"],
+      "testFiles": ["tests/unit/execution-boundary-policy.test.ts"]
+    },
+    {
+      "id": "execution-boundary-user-input-interception-removal",
+      "target": "src/orchestration/TurnOrchestrator.ts",
+      "find": "    input = {\n      ...input,\n      message: submittedContent.message,",
+      "replace": "    input = {\n      ...input,\n      message: input.message,",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=applies one boundary runtime", "tests/unit/orchestration-thread-runtime.test.ts"],
+      "testFiles": ["tests/unit/orchestration-thread-runtime.test.ts"]
+    },
+    {
+      "id": "execution-boundary-provider-request-interception-removal",
+      "target": "src/engine/RuntimeIO.ts",
+      "find": "    providerRequest = providerBoundary.value;",
+      "replace": "    void providerBoundary;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=persists provider-boundary decisions and redacts requests", "tests/unit/runtime-io-cancellation.test.ts"],
+      "testFiles": ["tests/unit/runtime-io-cancellation.test.ts"]
+    },
+    {
+      "id": "execution-boundary-model-action-interception-removal",
+      "target": "src/engine/RuntimeIO.ts",
+      "find": "      const result = responseBoundary.value;",
+      "replace": "      const result = rawResult;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=persists provider-boundary decisions and redacts requests", "tests/unit/runtime-io-cancellation.test.ts"],
+      "testFiles": ["tests/unit/runtime-io-cancellation.test.ts"]
+    },
+    {
+      "id": "execution-boundary-assembly-revision-check-bypass",
+      "target": "src/orchestration/AssemblyPolicyEvaluator.ts",
+      "find": "      proposedPolicyRevision !== this.boundaryRuntime.policy.revision ||",
+      "replace": "      false ||",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=rejects unknown bundles and requires approval", "tests/unit/runtime-assembly.test.ts"],
+      "testFiles": ["tests/unit/runtime-assembly.test.ts"]
+    },
+    {
+      "id": "execution-boundary-tool-request-interception-removal",
+      "target": "src/engine/RuntimeIO.ts",
+      "find": "      if (inputBoundary.decision.outcome === \"QUARANTINE\") {",
+      "replace": "      if (false && inputBoundary.decision.outcome === \"QUARANTINE\") {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=quarantines registered sensitive values before tool dispatch", "tests/unit/runtime-io-cancellation.test.ts"],
+      "testFiles": ["tests/unit/runtime-io-cancellation.test.ts"]
+    },
+    {
+      "id": "execution-boundary-tool-result-interception-removal",
+      "target": "src/engine/RuntimeIO.ts",
+      "find": "        const redactedResult = resultBoundary.value;",
+      "replace": "        const redactedResult = result;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=redacts registered sensitive values from successful tool results", "tests/unit/runtime-io-cancellation.test.ts"],
+      "testFiles": ["tests/unit/runtime-io-cancellation.test.ts"]
+    },
+    {
+      "id": "execution-boundary-final-output-interception-removal",
+      "target": "src/runtime/assistantResponseContract.ts",
+      "find": "    assistantText: evaluated.value.assistantText,",
+      "replace": "    assistantText: canonical.assistantText,",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=redacts registered values before durable output", "tests/unit/assistant-response-contract.test.ts"],
+      "testFiles": ["tests/unit/assistant-response-contract.test.ts"]
+    },
+    {
+      "id": "execution-boundary-encoded-representation-derivation-removal",
+      "target": "src/security/ExecutionBoundaryPolicy.ts",
+      "find": "    base64,",
+      "replace": "    // mutation removes standard Base64 coverage",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=closed encoding set", "tests/unit/execution-boundary-policy.test.ts"],
+      "testFiles": ["tests/unit/execution-boundary-policy.test.ts"]
+    },
+    {
+      "id": "execution-boundary-quarantine-converted-to-redact",
+      "target": "src/security/ExecutionBoundaryPolicy.ts",
+      "find": "  { boundary: \"tool_request\", handling: \"quarantine\" },",
+      "replace": "  { boundary: \"tool_request\", handling: \"redact\" },",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=every adversarial fixture traverses", "tests/unit/execution-boundary-conformance.test.ts"],
+      "testFiles": ["tests/unit/execution-boundary-conformance.test.ts", "tests/proof/execution-boundary-adversarial-corpus.ts"]
+    },
+    {
+      "id": "execution-boundary-decision-persistence-await-removal",
+      "target": "src/security/ExecutionBoundaryPolicy.ts",
+      "find": "    await input.persist(evaluated.decision);",
+      "replace": "    void input.persist(evaluated.decision);",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=remains blocked until durable decision persistence settles", "tests/unit/execution-boundary-policy.test.ts"],
+      "testFiles": ["tests/unit/execution-boundary-policy.test.ts"]
+    },
+    {
+      "id": "docker-capability-drop-removal",
+      "target": "src/code/DockerSandboxExecutor.ts",
+      "find": "    \"--cap-drop\",",
+      "replace": "    \"--cap-add\",",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
+      "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
+    },
+    {
+      "id": "docker-no-new-privileges-removal",
+      "target": "src/code/DockerSandboxExecutor.ts",
+      "find": "    \"no-new-privileges\",",
+      "replace": "    \"seccomp=unconfined\",",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
+      "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
+    },
+    {
+      "id": "docker-read-only-root-removal",
+      "target": "src/code/DockerSandboxExecutor.ts",
+      "find": "    \"--read-only\",",
+      "replace": "    \"--read-write\",",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
+      "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
+    },
+    {
+      "id": "docker-tmpfs-nosuid-nodev-removal",
+      "target": "src/code/DockerSandboxExecutor.ts",
+      "find": "  return `${destination}:rw,nosuid,nodev,size=${sizeMb}m,nr_inodes=${inodeLimit},uid=${SANDBOX_UID},gid=${SANDBOX_GID},mode=0700`;",
+      "replace": "  return `${destination}:rw,size=${sizeMb}m,nr_inodes=${inodeLimit},uid=${SANDBOX_UID},gid=${SANDBOX_GID},mode=0700`;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
+      "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
     }
   ]
 }

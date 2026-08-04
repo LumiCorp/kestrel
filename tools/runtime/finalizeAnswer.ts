@@ -1,6 +1,5 @@
 import type { SharedToolModule } from "../contracts.js";
 import { createToolInputError, parseObjectInput } from "../helpers.js";
-import { buildAgentToolSuccessResult } from "../toolResult.js";
 
 export const finalizeAnswerTool: SharedToolModule = {
   definition: {
@@ -10,6 +9,7 @@ export const finalizeAnswerTool: SharedToolModule = {
       type: "object",
       additionalProperties: true,
     },
+    resultNormalizerId: "kestrel.finalize-answer:v1",
     capability: {
       freshnessClass: "runtime",
       latencyClass: "low",
@@ -34,12 +34,25 @@ export const finalizeAnswerTool: SharedToolModule = {
       const output = context.onFinalize !== undefined
         ? await context.onFinalize(input)
         : { finalized: true, payload: input };
-      return buildAgentToolSuccessResult({
-        toolName: "FinalizeAnswer",
-        input,
+      return {
         output,
         presentation: readFinalizePresentation(input),
-      });
+      };
+    };
+  },
+  normalizeResult(value) {
+    const result = asRecord(value);
+    if (result === undefined || !Object.hasOwn(result, "output")) {
+      throw createToolInputError(
+        "FinalizeAnswer",
+        "FinalizeAnswer handler returned an invalid raw result.",
+      );
+    }
+    return {
+      output: result.output,
+      ...(asRecord(result.presentation) === undefined
+        ? {}
+        : { presentation: result.presentation as ReturnType<typeof readFinalizePresentation> }),
     };
   },
 };

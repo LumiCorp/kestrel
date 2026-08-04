@@ -11,15 +11,16 @@ import {
   BROAD_RESUME_MAX_INVENTORY_ACTIONS,
 } from "../../src/runtime/filesystemResumeBudget.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 test("ExecutionEngine no longer auto-resumes on filesystem loop guard in act.full_auto", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 30,
@@ -93,9 +94,9 @@ test("ExecutionEngine does not prompt for broad filesystem clarification in safe
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 30,
@@ -174,9 +175,9 @@ test("ExecutionEngine exits before filesystem clarification when loop guard meta
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 30,
@@ -244,9 +245,9 @@ test("ExecutionEngine no longer blocks on filesystem loop-guard clarification to
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 30,
@@ -315,9 +316,9 @@ test("ExecutionEngine no longer blocks on filesystem loop-guard clarification to
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 30,
@@ -385,9 +386,9 @@ test("ExecutionEngine continues unattended concrete repair instead of user clari
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 80,
@@ -522,9 +523,9 @@ test("ExecutionEngine finalizes best-effort after repeated redundant retrieval p
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() =>
       "FC Cincinnati's latest verified evidence points to the club schedule and news pages: https://www.fccincinnati.com/schedule and https://www.fccincinnati.com/news." as T
     ),
@@ -699,9 +700,9 @@ test("ExecutionEngine resumes coding work after verified redundant retrieval ins
   let loopCalls = 0;
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => {
       modelCalls += 1;
       return "This synthesis should not be used for coding workflows." as T;
@@ -901,9 +902,9 @@ test("ExecutionEngine resumes build-mode workspace work after verified redundant
   let dispatchCalls = 0;
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ("This synthesis would prematurely complete the build task." as T)),
     guardrails: {
       maxStepsPerRun: 200,
@@ -1095,9 +1096,9 @@ test("ExecutionEngine reports redundant retrieval accurately after high-quality 
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() =>
       "Trump's China visit evidence is ready to synthesize: AP reported current coverage of the trip, including Trump-Xi trade and diplomacy updates, with source URLs from the collected news results." as T
     ),
@@ -1310,9 +1311,9 @@ test("ExecutionEngine rehydrates compacted tool artifacts for verified retrieval
   let capturedUserPrompt = "";
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>(input: ModelRequest) => {
       capturedEvidence = (input.input as Record<string, unknown> | undefined)?.evidence as
         | Record<string, unknown>
@@ -1499,9 +1500,9 @@ test("ExecutionEngine reports missing compacted tool artifacts without synthesiz
   let modelCalls = 0;
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => {
       modelCalls += 1;
       return "This should not be called when compacted artifacts are missing." as T;
@@ -1642,9 +1643,9 @@ test("ExecutionEngine loop-guards repeated filesystem retrieval pivots", async (
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 200,
@@ -1749,9 +1750,9 @@ test("ExecutionEngine allows fs.list inventory to progress into a grounded fs.re
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 20,
@@ -1905,9 +1906,9 @@ test("ExecutionEngine loop-guards redundant fs.read_text pivots", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({
       message: "Continue with the filesystem read.",
       usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 },
@@ -2031,9 +2032,9 @@ test("ExecutionEngine loop-guards coding filesystem repeats without clarificatio
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
-    toolGateway: {
+    toolGateway: adaptLegacyTestToolGateway({
       call: async () => null as never,
-    },
+    }),
     modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
     guardrails: {
       maxStepsPerRun: 200,

@@ -23,6 +23,27 @@ export const KESTREL_EXECUTION_BOUNDARY_POLICY = createExecutionBoundaryPolicyV1
   boundaries: [...EXECUTION_BOUNDARIES],
 });
 
+export type ExecutionBoundaryHandlingV1 = "redact" | "quarantine";
+
+export interface ExecutionBoundaryAdapterV1 {
+  boundary: ExecutionBoundaryV1;
+  handling: ExecutionBoundaryHandlingV1;
+}
+
+export const EXECUTION_BOUNDARY_ADAPTERS = Object.freeze([
+  { boundary: "user_input", handling: "redact" },
+  { boundary: "model_request", handling: "redact" },
+  { boundary: "model_stream", handling: "redact" },
+  { boundary: "model_action", handling: "redact" },
+  { boundary: "assembly_change", handling: "quarantine" },
+  { boundary: "tool_request", handling: "quarantine" },
+  { boundary: "tool_stream", handling: "redact" },
+  { boundary: "tool_result", handling: "redact" },
+  { boundary: "assistant_output", handling: "redact" },
+] as const satisfies readonly ExecutionBoundaryAdapterV1[]);
+
+assertCanonicalBoundaryAdapters(EXECUTION_BOUNDARY_ADAPTERS);
+
 const MAX_SENSITIVE_VALUE_BYTES = 8 * 1024;
 const REDACTION_PLACEHOLDER = "[REDACTED]";
 
@@ -56,7 +77,6 @@ export interface ExecutionBoundaryEvaluateInput<T> {
   trust?: BoundaryContentProvenanceV1["trust"] | undefined;
   sourceId: string;
   value: T;
-  handling: "allow" | "redact" | "quarantine";
 }
 
 export type ExecutionBoundaryDecisionSink = (
@@ -208,12 +228,11 @@ export class ExecutionBoundaryPolicyRuntime {
     const inputDigest = digestCanonicalValue(input.value);
     const redaction = this.sensitiveValues.redact(input.value);
     const matched = redaction.references.length > 0;
+    const handling = executionBoundaryHandling(input.boundary);
     const outcome = matched
-      ? input.handling === "quarantine"
+      ? handling === "quarantine"
         ? "QUARANTINE" as const
-        : input.handling === "redact"
-          ? "REDACT" as const
-          : "ALLOW" as const
+        : "REDACT" as const
       : "ALLOW" as const;
     const value = outcome === "REDACT" ? redaction.value : input.value;
     const outputDigest = digestCanonicalValue(value);
@@ -274,6 +293,18 @@ export class ExecutionBoundaryPolicyRuntime {
     await input.persist(evaluated.decision);
     return evaluated;
   }
+}
+
+export function executionBoundaryHandling(
+  boundary: ExecutionBoundaryV1,
+): ExecutionBoundaryHandlingV1 {
+  const adapter = EXECUTION_BOUNDARY_ADAPTERS.find(
+    (candidate) => candidate.boundary === boundary,
+  );
+  if (adapter === undefined) {
+    throw new Error(`Execution boundary '${boundary}' has no registered adapter.`);
+  }
+  return adapter.handling;
 }
 
 export function deriveSensitiveRepresentations(value: string): string[] {
@@ -346,4 +377,17 @@ function shortDigest(value: unknown): string {
 
 function getRegistryRepresentations(registry: SensitiveValueRegistry): string[] {
   return registry.representations();
+}
+
+function assertCanonicalBoundaryAdapters(
+  adapters: readonly ExecutionBoundaryAdapterV1[],
+): void {
+  if (
+    adapters.length !== EXECUTION_BOUNDARIES.length ||
+    adapters.some((adapter, index) => adapter.boundary !== EXECUTION_BOUNDARIES[index])
+  ) {
+    throw new Error(
+      "Execution-boundary adapters must match the exact canonical boundary order.",
+    );
+  }
 }

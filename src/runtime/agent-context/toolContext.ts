@@ -214,6 +214,9 @@ export function buildKestrelAgentToolSurface(
     byProviderName,
     requestTools: entries.map((entry) => ({
       name: entry.providerName,
+      ...(entry.kind === "workspace"
+        ? { runtimeName: entry.canonicalName }
+        : {}),
       description: entry.description,
       inputSchema: entry.inputSchema,
     })),

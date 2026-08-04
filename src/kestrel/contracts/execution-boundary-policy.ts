@@ -74,6 +74,16 @@ export interface ExecutionBoundaryDecisionV1 {
   createdAt: string;
 }
 
+export interface ExecutionBoundaryDecisionExpectationV1 {
+  runId: string;
+  sessionId: string;
+  policyId: string;
+  policyRevision: string;
+  boundary: ExecutionBoundaryV1;
+  outputDigest: string;
+  callId?: string | undefined;
+}
+
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const POLICY_FIELDS = new Set([
   "version",
@@ -324,6 +334,33 @@ export function parseExecutionBoundaryDecisionV1(
     ...(transformId !== undefined ? { transformId } : {}),
     createdAt: requireTimestamp(record.createdAt, "Execution-boundary decision createdAt"),
   };
+}
+
+export function parseExecutionBoundaryDecisionEvidenceV1(
+  value: unknown,
+  expected: ExecutionBoundaryDecisionExpectationV1,
+): ExecutionBoundaryDecisionV1 {
+  const evidence = requireArray(value, "Execution-boundary decision evidence");
+  if (evidence.length !== 1) {
+    throw new Error(
+      "Execution-boundary decision evidence must contain exactly one decision.",
+    );
+  }
+  const decision = parseExecutionBoundaryDecisionV1(evidence[0]);
+  const mismatched =
+    decision.runId !== expected.runId ||
+    decision.sessionId !== expected.sessionId ||
+    decision.policyId !== expected.policyId ||
+    decision.policyRevision !== expected.policyRevision ||
+    decision.boundary !== expected.boundary ||
+    decision.outputDigest !== expected.outputDigest ||
+    decision.callId !== expected.callId;
+  if (mismatched) {
+    throw new Error(
+      "Execution-boundary decision evidence does not match the persisted projection.",
+    );
+  }
+  return decision;
 }
 
 export function digestCanonicalValue(value: unknown): string {

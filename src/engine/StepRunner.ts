@@ -246,7 +246,9 @@ interface StepRunnerDependencies {
     runId: string,
     stepIndex: number,
     runtimePayload: Record<string, unknown> | undefined,
-  ) => StepCommit["resolvedEffects"];
+    session: SessionRecord,
+    runtimeBudgetRemainingMs: number,
+  ) => Promise<StepCommit["resolvedEffects"]>;
   resolveTransitionMemory: (
     sessionState: Record<string, unknown>,
     statePatch: Record<string, unknown> | undefined,
@@ -848,11 +850,13 @@ export class StepRunner {
       stepIndex: input.state.stepIndex,
       transition,
       statePatch,
-      resolvedEffects: this.deps.resolveEffects(
+      resolvedEffects: await this.deps.resolveEffects(
         transition.effects ?? [],
         input.runId,
         input.state.stepIndex,
         input.state.event.payload,
+        input.state.session,
+        input.guardrails.budgetSnapshot().remainingMs,
       ),
       emitEvents: transition.emitEvents,
       ...(stepFrame.runLogs.length > 0 || stepFrame.runEvents.length > 0

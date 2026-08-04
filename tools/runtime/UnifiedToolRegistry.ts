@@ -19,8 +19,24 @@ import { compileMcpStatusSnapshotV1 } from "../../src/mcp/toolDescriptor.js";
 import {
   compileToolJsonSchemaV1,
   hashCanonical,
+  toToolDescriptorRefV1,
+  type ToolSurfaceSnapshotV1,
   type ToolDescriptorV1,
 } from "../../src/kestrel/contracts/tool-contract.js";
+import type {
+  AgentToolResultV2,
+  PreparedToolCallV1,
+  ResolvedModelToolIntentV1,
+} from "../../src/kestrel/contracts/tool-invocation.js";
+import {
+  createPreparedToolCallV1,
+  createToolSurfaceForDescriptorsV1,
+  executePinnedToolCallV1,
+  fingerprintToolRunScopeV1,
+  resolveModelToolIntentV1,
+  RUNTIME_DEADLINE_BUDGET_ADAPTER_ID,
+  type PinnedToolExecutionV1,
+} from "../../src/io/ToolInvocationSupport.js";
 import {
   parseExecutionTicketAuthorization,
   parseHostedMcpContext,
@@ -29,10 +45,10 @@ import {
 import {
   McpClientManager,
   type McpOAuthProviderFactory,
+  type PinnedMcpToolHandle,
 } from "../../src/mcp/McpClientManager.js";
 import {
   createRuntimeFailure,
-  RunCancelledError,
   RuntimeFailure,
 } from "../../src/runtime/RuntimeFailure.js";
 import { defaultToolCatalog } from "../catalog.js";
@@ -54,6 +70,7 @@ import {
 import { validateBuiltInToolInputContract } from "./builtInToolInputContracts.js";
 import { normalizeToolActionInput } from "./normalizeToolInput.js";
 import type { SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
+import { applyExternalDeadlineToolBudget } from "../../src/engine/ExecutionEngineSupport.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -80,6 +97,7 @@ export interface McpToolProvider {
   refresh(): Promise<McpStatusSnapshot>;
   assertHealthy(): Promise<void>;
   callTool<T>(namespacedToolName: string, input: unknown): Promise<T>;
+  pinTool?(namespacedToolName: string): PinnedMcpToolHandle;
   close(): Promise<void>;
 }
 
@@ -97,6 +115,17 @@ type HostedMcpScope = {
   lastUsedAt: number;
 };
 
+type PinnedExecutionSource = {
+  pinned: Omit<PinnedToolExecutionV1, "handler">;
+  createHandler: (
+    options: ToolGatewayCallOptions,
+  ) => (input: unknown) => Promise<unknown>;
+  retain?: (() => void) | undefined;
+  release?: (() => Promise<void> | void) | undefined;
+  transformInput?: ((input: Record<string, unknown>) => Record<string, unknown>) | undefined;
+  inputAdapterId?: string | undefined;
+};
+
 interface WorkspaceSkillReadProgress {
   revision: string;
   nextOffsetBytes: number;
@@ -111,10 +140,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   private readonly builtInToolSpecs: Map<string, ModelToolSpec>;
   private readonly builtInCapabilities: Map<string, CapabilityManifestItem>;
   private readonly builtInDescriptors: Map<string, ToolDescriptorV1>;
-  private readonly validatorCache = new Map<string, ValidateFunction>();
   private readonly builtInContext: SharedToolContext;
   private readonly mcpManager: McpToolProvider;
   private readonly hostedMcpScopes = new Map<string, HostedMcpScope>();
+  private readonly retiredHostedMcpManagers = new Set<McpClientManager>();
   // AUTHORIZATION INVARIANT: the hosted Environment stores the ticket under
   // its requested execution run ID, but ExecutionEngine may create a different
   // internal run ID for tool calls. Do not assume those IDs are equal or
@@ -132,6 +161,21 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     string,
     Map<string, string>
   >();
+  private readonly toolSurfaceSnapshots = new Map<
+    string,
+    ToolSurfaceSnapshotV1
+  >();
+  private readonly toolSurfaceRunIds = new Map<string, {
+    runId: string;
+    sessionId: string;
+  }>();
+  private readonly toolSurfaceExecutions = new Map<
+    string,
+    Map<string, PinnedExecutionSource>
+  >();
+  private readonly preparedExecutions = new Map<string, PinnedExecutionSource>();
+  private registryGenerationSequence = 0;
+  private registryGeneration = "tool-registry:uninitialized";
 
   private defaultAllowlist: Set<string>;
   private mcpStatus: McpStatusSnapshot = {
@@ -176,6 +220,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         oauthProviderFactory: options.mcpOAuthProviderFactory,
       });
     }
+    this.activateRegistryGeneration();
   }
 
   updateAllowlist(names: string[]): void {
@@ -183,10 +228,14 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   async refresh(): Promise<McpStatusSnapshot> {
-    this.mcpStatus = compileMcpStatusSnapshotV1(
+    const nextStatus = compileMcpStatusSnapshotV1(
       await this.mcpManager.refresh(),
     );
+    const retainedActiveGeneration =
+      this.initialized && nextStatus.refreshDiagnostic !== undefined;
+    this.mcpStatus = nextStatus;
     this.initialized = true;
+    if (!retainedActiveGeneration) this.activateRegistryGeneration();
     return this.getMcpStatus();
   }
 
@@ -265,7 +314,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       executionTicket: connection.executionTicket,
       lastUsedAt: Date.now(),
     });
-    await existing?.manager.close().catch(() => {});
+    if (existing !== undefined) {
+      this.retiredHostedMcpManagers.add(existing.manager);
+      await existing.manager.retire();
+    }
     await this.pruneHostedMcpScopes(grantId);
     return toToolRuntimeStatus(
       combineMcpSnapshots(this.mcpStatus, snapshot),
@@ -349,6 +401,252 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     await this.mcpManager.assertHealthy();
   }
 
+  async createToolSurfaceSnapshot(
+    options: ToolGatewayCallOptions = {},
+  ): Promise<ToolSurfaceSnapshotV1> {
+    if (this.initialized === false) {
+      await this.refreshRuntime();
+    }
+    const requestedNames = options.toolNames === undefined
+      ? undefined
+      : new Set(options.toolNames);
+    const descriptors = (requestedNames === undefined
+      ? this.listExposedDescriptors(options.runContext)
+      : this.listActivatableDescriptors(options.runContext)).filter(
+      (descriptor) => requestedNames?.has(descriptor.toolId) ?? true,
+    );
+    const snapshotGeneration = hashCanonical({
+      version: "tool-snapshot-generation-v1",
+      activeGeneration: this.registryGeneration,
+      scopeFingerprint: fingerprintToolRunScopeV1(options.runContext),
+      descriptors: descriptors.map(toToolDescriptorRefV1),
+    });
+    const snapshot = createToolSurfaceForDescriptorsV1({
+      descriptors,
+      registryGeneration: snapshotGeneration,
+      runContext: options.runContext,
+    });
+    const executions = new Map<string, PinnedExecutionSource>();
+    try {
+      for (const descriptor of descriptors) {
+        executions.set(
+          descriptor.toolId,
+          this.createPinnedExecutionSource(
+            descriptor,
+            snapshot.tools.find(
+              (activation) =>
+                activation.descriptor.toolId === descriptor.toolId,
+            )!,
+            options.runContext,
+          ),
+        );
+      }
+    } catch (error) {
+      await Promise.all(
+        [...executions.values()].map((source) => source.release?.()),
+      );
+      throw error;
+    }
+    this.toolSurfaceSnapshots.set(snapshot.snapshotId, snapshot);
+    this.toolSurfaceExecutions.set(snapshot.snapshotId, executions);
+    if (options.runContext !== undefined) {
+      this.toolSurfaceRunIds.set(snapshot.snapshotId, {
+        runId: options.runContext.runId,
+        sessionId: options.runContext.sessionId,
+      });
+    }
+    return snapshot;
+  }
+
+  resolveModelToolIntent(input: {
+    snapshot: ToolSurfaceSnapshotV1;
+    toolCall: { id: string; name: string; input: Record<string, unknown> };
+  }): ResolvedModelToolIntentV1 {
+    const active = this.toolSurfaceSnapshots.get(input.snapshot.snapshotId);
+    if (active === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_SNAPSHOT_STALE",
+        `Tool surface snapshot '${input.snapshot.snapshotId}' is not active.`,
+        { recoverable: false },
+      );
+    }
+    return resolveModelToolIntentV1({ snapshot: active, toolCall: input.toolCall });
+  }
+
+  async prepareToolCall(
+    input: Parameters<ToolGateway["prepareToolCall"]>[0],
+    options: ToolGatewayCallOptions = {},
+  ): Promise<PreparedToolCallV1> {
+    const snapshotSource = input.origin.kind === "model"
+      ? this.toolSurfaceExecutions
+          .get(input.origin.snapshotId)
+          ?.get(input.activation.descriptor.toolId)
+      : this.findPinnedExecutionSource(input.activation);
+    let source = snapshotSource;
+    if (source === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_PINNED_HANDLER_UNAVAILABLE",
+        `Pinned handler for tool '${input.activation.descriptor.toolId}' is unavailable.`,
+        {
+          subsystem: "tooling",
+          classification: "configuration",
+          recoverable: false,
+          toolName: input.activation.descriptor.toolId,
+          registryGeneration: input.activation.registryGeneration,
+        },
+      );
+    }
+    let retainedSnapshotReference = false;
+    try {
+      if (
+        hashCanonical(source.pinned.activation) !==
+          hashCanonical(input.activation)
+      ) {
+        throw createRuntimeFailure(
+          "TOOL_ACTIVATION_STALE",
+          `Tool '${input.activation.descriptor.toolId}' activation is stale or divergent.`,
+          { recoverable: false, toolName: input.activation.descriptor.toolId },
+        );
+      }
+      source.retain?.();
+      retainedSnapshotReference = true;
+      const inputValidator = compileToolJsonSchemaV1(
+        source.pinned.descriptor.inputSchema,
+        { surface: "input" },
+      );
+      const validatedInput = validatePinnedInput(
+        source.pinned.descriptor.toolId,
+        input.rawInput,
+        inputValidator,
+        this.builtInDescriptors.has(source.pinned.descriptor.toolId),
+      );
+      const transformedInput = source.transformInput === undefined
+        ? validatedInput
+        : source.transformInput(validatedInput);
+      const transformedValidatedInput = validatePinnedInput(
+        source.pinned.descriptor.toolId,
+        transformedInput,
+        inputValidator,
+        this.builtInDescriptors.has(source.pinned.descriptor.toolId),
+      );
+      const budgeted = options.runtimeBudgetRemainingMs === undefined
+        ? { input: transformedValidatedInput, metadata: {}, shortCircuitResult: undefined }
+        : applyExternalDeadlineToolBudget({
+            toolName: input.activation.descriptor.toolId,
+            input: transformedValidatedInput,
+            runtimeBudgetRemainingMs: options.runtimeBudgetRemainingMs,
+          });
+      const effectiveInput = validatePinnedInput(
+        source.pinned.descriptor.toolId,
+        budgeted.input,
+        inputValidator,
+        this.builtInDescriptors.has(source.pinned.descriptor.toolId),
+      );
+      if (budgeted.shortCircuitResult !== undefined) {
+        source = {
+          ...source,
+          createHandler: (_handlerOptions: ToolGatewayCallOptions) =>
+            async (_toolInput: unknown) => budgeted.shortCircuitResult,
+        };
+      }
+      const prepared = createPreparedToolCallV1({
+        ...input,
+        effectiveInput: asRecord(effectiveInput) ?? {},
+        inputAdapters: [
+          ...(source.inputAdapterId === undefined
+            ? []
+            : [{
+                adapterId: source.inputAdapterId,
+                metadata: {},
+              }]),
+          ...(input.activation.descriptor.toolId === "dev.shell.run" ||
+          input.activation.descriptor.toolId === "exec_command"
+            ? [{
+              adapterId: RUNTIME_DEADLINE_BUDGET_ADAPTER_ID,
+              metadata: budgeted.metadata,
+            }]
+            : []),
+        ],
+      });
+      const preparedKey = preparedExecutionKey(prepared);
+      if (this.preparedExecutions.has(preparedKey)) {
+        throw createRuntimeFailure(
+          "TOOL_PREPARED_CALL_COLLISION",
+          `Prepared tool call '${prepared.callId}' is already active.`,
+          { recoverable: false, toolName: prepared.activation.descriptor.toolId },
+        );
+      }
+      this.preparedExecutions.set(preparedKey, source);
+      return prepared;
+    } catch (error) {
+      if (retainedSnapshotReference) await source.release?.();
+      throw error;
+    }
+  }
+
+  async executePreparedToolCall(
+    prepared: PreparedToolCallV1,
+    options: ToolGatewayCallOptions = {},
+  ): Promise<AgentToolResultV2> {
+    const key = preparedExecutionKey(prepared);
+    const source = this.preparedExecutions.get(key) ??
+      this.rehydrateStaticBuiltInExecution(prepared, options.runContext);
+    if (source === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_PINNED_HANDLER_UNAVAILABLE",
+        `Prepared tool call '${prepared.callId}' has no pinned live handler.`,
+        {
+          subsystem: "tooling",
+          classification: "configuration",
+          recoverable: false,
+          toolName: prepared.activation.descriptor.toolId,
+          registryGeneration: prepared.activation.registryGeneration,
+        },
+      );
+    }
+    try {
+      const result = await executePinnedToolCallV1({
+        prepared,
+        pinned: {
+          ...source.pinned,
+          handler: source.createHandler(options),
+        },
+        signal: options.signal,
+      });
+      return await annotateWorkspaceSkillRead({
+        toolName: result.toolName,
+        input: prepared.effectiveInput,
+        output: result,
+        runContext: options.runContext,
+        progress: this.workspaceSkillReadProgress,
+      }) as AgentToolResultV2;
+    } finally {
+      this.preparedExecutions.delete(key);
+      await source.release?.();
+    }
+  }
+
+  async releaseToolSurfaceSnapshot(snapshotId: string): Promise<void> {
+    const executions = this.toolSurfaceExecutions.get(snapshotId);
+    this.toolSurfaceSnapshots.delete(snapshotId);
+    this.toolSurfaceExecutions.delete(snapshotId);
+    this.toolSurfaceRunIds.delete(snapshotId);
+    if (executions !== undefined) {
+      await Promise.all(
+        [...executions.values()].map((source) => source.release?.()),
+      );
+    }
+  }
+
+  async releaseToolRun(_runId: string, sessionId: string): Promise<void> {
+    const snapshotIds = [...this.toolSurfaceRunIds.entries()]
+      .filter(([, owner]) => owner.sessionId === sessionId)
+      .map(([snapshotId]) => snapshotId);
+    for (const snapshotId of snapshotIds) {
+      await this.releaseToolSurfaceSnapshot(snapshotId);
+    }
+  }
+
   getDescriptor(
     name: string,
     options: ToolRegistryListOptions = {},
@@ -427,8 +725,24 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         }
         const appApprovalMode =
           activeBuiltInContext.kestrelOne?.appApprovalModes?.[name];
+        const descriptor = this.builtInDescriptors.get(name)!;
+        const upstreamAuthority = appApprovalMode === "ask"
+          ? {
+              kind: "hosted_app_policy" as const,
+              revision: hashCanonical({ toolId: name, appApprovalMode }),
+            }
+          : builtIn.approvalAuthority ?? {
+              kind: "runtime_policy" as const,
+              revision: hashCanonical({ toolId: name, policy: "runtime" }),
+            };
         manifest.push({
           ...builtIn,
+          descriptorRef: toToolDescriptorRefV1(descriptor),
+          approvalAuthority: this.bindApprovalAuthorityToDescriptor(
+            descriptor,
+            upstreamAuthority,
+            options.runContext,
+          ),
           ...(appApprovalMode === "ask"
             ? {
                 approvalCapabilities: [
@@ -449,6 +763,19 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       }
       const capability = mcpTool.descriptor.capability;
       const presentation = mcpTool.descriptor.presentation;
+      const upstreamAuthority =
+        mcpTool.serverId === "kestrel-one-hosted" && hostedMcpGrantId !== undefined
+          ? {
+              kind: "hosted_mcp_grant" as const,
+              revision: hostedMcpGrantId,
+            }
+          : {
+              kind: "runtime_policy" as const,
+              revision: hashCanonical({
+                serverId: mcpTool.serverId,
+                policy: "runtime",
+              }),
+            };
       manifest.push({
         name: mcpTool.descriptor.toolId,
         description: mcpTool.descriptor.description,
@@ -465,14 +792,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           : {}),
         capabilityClasses: [...capability.capabilityClasses],
         approvalCapabilities: [...(capability.approvalCapabilities ?? [])],
-        ...(mcpTool.serverId === "kestrel-one-hosted" && hostedMcpGrantId !== undefined
-          ? {
-              approvalAuthority: {
-                kind: "hosted_mcp_grant" as const,
-                revision: hostedMcpGrantId,
-              },
-            }
-          : {}),
+        approvalAuthority: this.bindApprovalAuthorityToDescriptor(
+          mcpTool.descriptor,
+          upstreamAuthority,
+          options.runContext,
+        ),
+        descriptorRef: toToolDescriptorRefV1(mcpTool.descriptor),
         displayName: presentation.displayName,
         aliases: [...presentation.aliases],
         keywords: [...presentation.keywords],
@@ -494,6 +819,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         ...tool,
         allowlisted: allowlist.has(tool.namespacedToolName),
       })),
+      ...(this.mcpStatus.refreshDiagnostic === undefined
+        ? {}
+        : { refreshDiagnostic: { ...this.mcpStatus.refreshDiagnostic } }),
     };
   }
 
@@ -504,307 +832,221 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     );
   }
 
-  async validateInput(
-    name: string,
-    input: unknown,
-    options: ToolGatewayCallOptions = {},
-  ): Promise<unknown> {
-    const scopedContext = this.resolveScopedContext(options.runContext);
-    if (scopedContext.allowlist.has(name) === false) {
-      throw createRuntimeFailure(
-        "TOOL_LOOKUP_FAILED",
-        `Tool '${name}' is not allowlisted.`,
-        {
-          subsystem: "tooling",
-          toolName: name,
-          classification: "configuration",
-          recoverable: false,
-        },
-      );
-    }
-    if (isInternalOnlyRuntimeToolName(name)) {
-      throw createRuntimeFailure(
-        "TOOL_INTERNAL_ONLY",
-        `Tool '${name}' is an internal-only runtime tool. Use the dialog tools for model-facing collaboration.`,
-        {
-          subsystem: "tooling",
-          toolName: name,
-          classification: "policy",
-          recoverable: false,
-        },
-      );
-    }
-    if (
-      this.builtInToolSpecs.has(name) &&
-      isBuiltInToolDisabledByContext(name, scopedContext.builtInContext)
-    ) {
-      throw createRuntimeFailure(
-        "TOOL_DISABLED_FOR_PROFILE",
-        `Tool '${name}' is disabled for this profile.`,
-        {
-          subsystem: "tooling",
-          toolName: name,
-          classification: "policy",
-          recoverable: true,
-        },
-      );
-    }
-
-    const schema = this.resolveInputSchema(name, options.runContext);
-    const validator = this.getValidator(name, schema);
-    const rawInputValid = validator(input);
-    if (rawInputValid !== true) {
-      const validationErrors = validator.errors ?? [];
-      if (this.builtInToolSpecs.has(name)) {
-        throw createBuiltInSchemaValidationError(
-          name,
-          input,
-          validationErrors,
-        );
-      }
-      throw new RuntimeFailure(
-        "TOOL_INPUT_SCHEMA_FAILED",
-        `Tool '${name}' input failed schema validation.`,
-        {
-          toolName: name,
-          validationErrors: validationErrors.map((error) => ({
-            field: readAjvErrorField(error),
-            instancePath: error.instancePath,
-            schemaPath: error.schemaPath,
-            keyword: error.keyword,
-            message: error.message,
-          })),
-        },
-      );
-    }
-
-    const recordInput = asRecord(input);
-    const activeContext = scopedContext.builtInContext;
-    const normalizedInput =
-      recordInput !== undefined
-        ? normalizeToolActionInput(
-            name,
-            recordInput,
-            activeContext.fileSystem?.workspaceRoot,
-          )
-        : input;
-    if (this.builtInToolSpecs.has(name)) {
-      validateBuiltInToolInputContract(name, normalizedInput);
-    }
-    const valid = validator(normalizedInput);
-    if (valid !== true) {
-      if (this.builtInToolSpecs.has(name)) {
-        throw createBuiltInSchemaValidationError(
-          name,
-          normalizedInput,
-          validator.errors ?? [],
-        );
-      }
-      throw new RuntimeFailure(
-        "TOOL_INPUT_SCHEMA_FAILED",
-        `Tool '${name}' input failed schema validation.`,
-        {
-          toolName: name,
-          validationErrors: (validator.errors ?? []).map((error) => ({
-            instancePath: error.instancePath,
-            schemaPath: error.schemaPath,
-            keyword: error.keyword,
-            message: error.message,
-          })),
-        },
-      );
-    }
-
-    return normalizedInput;
-  }
-
-  async call(
-    name: string,
-    input: unknown,
-    options: ToolGatewayCallOptions = {},
-  ) {
-    this.throwIfAborted(options.signal);
-    const scopedContext = this.resolveScopedContext(options.runContext);
-    const validatedInput = await this.validateInput(name, input, options);
-    this.throwIfAborted(options.signal);
-
-    if (this.builtInToolSpecs.has(name)) {
-      if (isBuiltInToolDisabledByContext(name, scopedContext.builtInContext)) {
-        throw createRuntimeFailure(
-          "TOOL_DISABLED_FOR_PROFILE",
-          `Tool '${name}' is disabled for this profile.`,
-          {
-            subsystem: "tooling",
-            toolName: name,
-            classification: "policy",
-            recoverable: true,
-          },
-        );
-      }
-
-      const activeContext = scopedContext.builtInContext;
-      const handlers = defaultToolCatalog.createHandlers(
-        [name],
-        options.console === undefined
-          ? {
-              ...activeContext,
-              signal: options.signal,
-            }
-          : {
-              ...activeContext,
-              toolConsole: options.console,
-              signal: options.signal,
-            },
-      );
-      const builtIn = handlers[name];
-
-      if (builtIn === undefined) {
-        throw createRuntimeFailure(
-          "TOOL_LOOKUP_FAILED",
-          `Tool '${name}' is not available.`,
-          {
-            subsystem: "tooling",
-            toolName: name,
-            classification: "configuration",
-            recoverable: false,
-          },
-        );
-      }
-
-      let output: AgentToolResult;
-      try {
-        output = await builtIn(validatedInput);
-      } catch (error) {
-        this.throwIfAborted(options.signal);
-        throw error;
-      }
-      this.throwIfAborted(options.signal);
-      return await annotateWorkspaceSkillRead({
-        toolName: name,
-        input: validatedInput,
-        output,
-        runContext: options.runContext,
-        progress: this.workspaceSkillReadProgress,
-      });
-    }
-
-    const mcpTool = this.resolveExposedMcpTool(name, options.runContext);
-    if (mcpTool !== undefined) {
-      const startedAt = new Date().toISOString();
-      try {
-        const output = await this.resolveMcpManager(
-          options.runContext,
-        ).callTool(name, validatedInput);
-        this.throwIfAborted(options.signal);
-        return buildAgentToolSuccessResult({
-          toolName: name,
-          input: validatedInput,
-          output,
-          startedAt,
-        });
-      } catch (error) {
-        this.throwIfAborted(options.signal);
-        if (error instanceof RunCancelledError) {
-          throw error;
-        }
-        if (
-          error instanceof RuntimeFailure &&
-          error.details?.recoverable === false
-        ) {
-          throw error;
-        }
-        return buildAgentToolFailureResult({
-          toolName: name,
-          input: validatedInput,
-          error,
-          startedAt,
-        });
-      }
-    }
-
-    throw createRuntimeFailure(
-      "TOOL_LOOKUP_FAILED",
-      `Tool '${name}' is not available.`,
-      {
-        subsystem: "tooling",
-        toolName: name,
-        classification: "configuration",
-        recoverable: false,
-      },
-    );
-  }
-
   async close(): Promise<void> {
     await Promise.all([
       this.mcpManager.close(),
       ...[...this.hostedMcpScopes.values()].map((scope) =>
         scope.manager.close(),
       ),
+      ...[...this.retiredHostedMcpManagers].map((manager) => manager.close()),
     ]);
     this.hostedMcpScopes.clear();
+    this.retiredHostedMcpManagers.clear();
     this.workspaceSkillReadProgress.clear();
     for (const release of this.releaseExecutionTicketRegistrationByRun.values()) {
       release();
     }
     this.releaseExecutionTicketRegistrationByRun.clear();
+    this.toolSurfaceSnapshots.clear();
+    this.toolSurfaceExecutions.clear();
+    this.toolSurfaceRunIds.clear();
+    this.preparedExecutions.clear();
   }
 
-  private resolveInputSchema(
-    name: string,
+  private activateRegistryGeneration(): void {
+    this.registryGenerationSequence += 1;
+    const descriptors = [
+      ...this.builtInDescriptors.values(),
+      ...this.mcpStatus.tools.flatMap((tool) =>
+        tool.descriptor === undefined ? [] : [tool.descriptor],
+      ),
+    ].map(toToolDescriptorRefV1);
+    this.registryGeneration = `generation:${this.registryGenerationSequence}:${hashCanonical(descriptors)}`;
+  }
+
+  private listExposedDescriptors(
     runContext: ToolRunContext | undefined,
-  ): Record<string, unknown> {
-    const builtIn = this.builtInToolSpecs.get(name);
-    if (builtIn !== undefined) {
-      return builtIn.inputSchema;
-    }
-
-    const mcpTool = this.resolveExposedMcpTool(name, runContext);
-    if (mcpTool !== undefined) {
-      return mcpTool.inputSchema;
-    }
-
-    throw createRuntimeFailure(
-      "TOOL_LOOKUP_FAILED",
-      `Tool '${name}' is not available.`,
-      {
-        subsystem: "tooling",
-        toolName: name,
-        classification: "configuration",
-        recoverable: false,
-      },
-    );
+  ): ToolDescriptorV1[] {
+    return this.getModelTools({ runContext }).map((tool) => {
+      const descriptor = this.getDescriptor(tool.name, { runContext });
+      if (descriptor === undefined) {
+        throw createRuntimeFailure(
+          "TOOL_DESCRIPTOR_UNAVAILABLE",
+          `Exposed tool '${tool.name}' has no canonical descriptor.`,
+          { recoverable: false, toolName: tool.name },
+        );
+      }
+      return descriptor;
+    });
   }
 
-  private getValidator(
-    name: string,
-    schema: Record<string, unknown>,
-  ): ValidateFunction {
-    const schemaKey = `${name}:${hashCanonical(schema)}`;
-    const cached = this.validatorCache.get(schemaKey);
-    if (cached !== undefined) {
-      return cached;
-    }
+  private listActivatableDescriptors(
+    runContext: ToolRunContext | undefined,
+  ): ToolDescriptorV1[] {
+    const scopedContext = this.resolveScopedContext(runContext);
+    const mcpStatus = this.resolveMcpSnapshot(runContext);
+    return [...scopedContext.allowlist].flatMap((name) => {
+      if (isInternalOnlyRuntimeToolName(name)) return [];
+      const builtIn = this.builtInDescriptors.get(name);
+      if (builtIn !== undefined) {
+        return isBuiltInToolDisabledByContext(name, scopedContext.builtInContext)
+          ? []
+          : [builtIn];
+      }
+      const mcpTool = mcpStatus.tools.find(
+        (candidate) => candidate.namespacedToolName === name,
+      );
+      return mcpTool?.descriptor === undefined ? [] : [mcpTool.descriptor];
+    });
+  }
 
-    try {
-      const compiled = compileToolJsonSchemaV1(schema, { surface: "input" });
-      this.validatorCache.set(schemaKey, compiled);
-      return compiled;
-    } catch (error) {
-      throw new RuntimeFailure(
-        "TOOL_INPUT_SCHEMA_FAILED",
-        `Tool '${name}' schema could not be compiled for validation.`,
+  private bindApprovalAuthorityToDescriptor(
+    descriptor: ToolDescriptorV1,
+    upstream: NonNullable<ToolCapabilityMetadata["approvalAuthority"]>,
+    runContext: ToolRunContext | undefined,
+  ): NonNullable<ToolCapabilityMetadata["approvalAuthority"]> {
+    return {
+      kind: upstream.kind,
+      revision: hashCanonical({
+        version: "tool-approval-authority-v1",
+        descriptor: toToolDescriptorRefV1(descriptor),
+        activeGeneration: this.registryGeneration,
+        scopeFingerprint: fingerprintToolRunScopeV1(runContext),
+        upstream,
+      }),
+    };
+  }
+
+  private findPinnedExecutionSource(
+    activation: Parameters<ToolGateway["prepareToolCall"]>[0]["activation"],
+  ): PinnedExecutionSource | undefined {
+    for (const executions of this.toolSurfaceExecutions.values()) {
+      const source = executions.get(activation.descriptor.toolId);
+      if (
+        source !== undefined &&
+        hashCanonical(source.pinned.activation) === hashCanonical(activation)
+      ) {
+        return source;
+      }
+    }
+    return undefined;
+  }
+
+  private createPinnedExecutionSource(
+    descriptor: ToolDescriptorV1,
+    activation: Parameters<ToolGateway["prepareToolCall"]>[0]["activation"],
+    runContext: ToolRunContext | undefined,
+  ): PinnedExecutionSource {
+    const validator = compileToolJsonSchemaV1(
+      descriptor.runtimeOutput.schema,
+      { surface: "output" },
+    );
+    if (this.builtInDescriptors.has(descriptor.toolId)) {
+      const activeContext = this.resolveScopedContext(runContext).builtInContext;
+      const normalizer = defaultToolCatalog.createResultNormalizers([
+        descriptor.toolId,
+      ])[descriptor.toolId];
+      if (normalizer === undefined) {
+        throw createRuntimeFailure(
+          "TOOL_RESULT_NORMALIZER_UNAVAILABLE",
+          `Pinned result normalizer '${descriptor.execution.resultNormalizerId}' is unavailable.`,
+          { recoverable: false, toolName: descriptor.toolId },
+        );
+      }
+      return {
+        pinned: { descriptor, activation, validator, normalizer },
+        inputAdapterId: "kestrel.builtin-input-normalizer:v1",
+        transformInput: (input) => {
+          const normalized = normalizeToolActionInput(
+            descriptor.toolId,
+            input,
+            activeContext.fileSystem?.workspaceRoot,
+          );
+          validateBuiltInToolInputContract(descriptor.toolId, normalized);
+          const record = asRecord(normalized);
+          if (record === undefined) {
+            throw createRuntimeFailure(
+              "TOOL_INPUT_INVALID",
+              `Tool '${descriptor.toolId}' normalized input must remain an object.`,
+              { recoverable: false, toolName: descriptor.toolId },
+            );
+          }
+          return record;
+        },
+        createHandler: (handlerOptions: ToolGatewayCallOptions) => {
+          const handlers = defaultToolCatalog.createRawHandlers(
+            [descriptor.toolId],
+            handlerOptions.console === undefined
+              ? { ...activeContext, signal: handlerOptions.signal }
+              : {
+                  ...activeContext,
+                  toolConsole: handlerOptions.console,
+                  signal: handlerOptions.signal,
+                },
+          );
+          const handler = handlers[descriptor.toolId];
+          if (handler === undefined) {
+            throw createRuntimeFailure(
+              "TOOL_PINNED_HANDLER_UNAVAILABLE",
+              `Pinned built-in handler '${descriptor.execution.handlerId}' is unavailable.`,
+              { recoverable: false, toolName: descriptor.toolId },
+            );
+          }
+          return handler;
+        },
+      };
+    }
+    const manager = this.resolveMcpManager(runContext);
+    const pinnedHandle = manager.pinTool?.(descriptor.toolId);
+    if (pinnedHandle === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_PINNED_HANDLER_UNAVAILABLE",
+        `Dynamic tool '${descriptor.toolId}' cannot be activated without an exact pinned handler.`,
         {
-          toolName: name,
-          reason: toSchemaError(error).message,
+          recoverable: false,
+          toolName: descriptor.toolId,
+          handlerId: descriptor.execution.handlerId,
         },
       );
     }
+    const normalizer = resolveMcpResultNormalizer(
+      descriptor.execution.resultNormalizerId,
+      descriptor.toolId,
+    );
+    return {
+      pinned: {
+        descriptor,
+        activation,
+        validator,
+        normalizer,
+      },
+      createHandler: (_handlerOptions: ToolGatewayCallOptions) =>
+        (toolInput: unknown) => pinnedHandle.call(toolInput),
+      retain: () => pinnedHandle.retain(),
+      release: () => pinnedHandle.release(),
+    };
   }
 
-  private throwIfAborted(signal: AbortSignal | undefined): void {
-    if (signal?.aborted === true) {
-      throw new RunCancelledError();
+  private rehydrateStaticBuiltInExecution(
+    prepared: PreparedToolCallV1,
+    runContext: ToolRunContext | undefined,
+  ): PinnedExecutionSource | undefined {
+    const descriptor = this.builtInDescriptors.get(
+      prepared.activation.descriptor.toolId,
+    );
+    if (
+      descriptor === undefined ||
+      hashCanonical(toToolDescriptorRefV1(descriptor)) !==
+        hashCanonical(prepared.activation.descriptor) ||
+      prepared.activation.scopeFingerprint !== fingerprintToolRunScopeV1(runContext)
+    ) {
+      return;
     }
+    return this.createPinnedExecutionSource(
+      descriptor,
+      prepared.activation,
+      runContext,
+    );
   }
 
   private isRuntimeBuiltInToolName(name: string): boolean {
@@ -901,7 +1143,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       .filter(([grantId]) => grantId !== activeGrantId)
       .sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt)
       .slice(0, this.hostedMcpScopes.size - maximumScopes);
-    await Promise.all(stale.map(([, scope]) => scope.manager.close()));
+    await Promise.all(stale.map(async ([, scope]) => {
+      this.retiredHostedMcpManagers.add(scope.manager);
+      await scope.manager.retire();
+    }));
     for (const [grantId] of stale) {
       this.hostedMcpScopes.delete(grantId);
     }
@@ -1099,153 +1344,6 @@ async function annotateWorkspaceSkillRead(input: {
 function normalizeSkillEvidencePath(value: unknown): string | undefined {
   if (typeof value !== "string" || value.trim().length === 0) return;
   return value.trim().replaceAll("\\", "/").replace(/^\.\//u, "");
-}
-
-function createBuiltInSchemaValidationError(
-  toolName: string,
-  input: unknown,
-  errors: ErrorObject[],
-): RuntimeFailure {
-  const firstError = errors[0];
-  const field =
-    firstError === undefined ? "input" : readAjvErrorField(firstError);
-  const expected =
-    firstError === undefined
-      ? "input satisfying tool schema"
-      : readAjvErrorExpectation(firstError);
-  const invalidValues =
-    firstError === undefined
-      ? []
-      : readAjvErrorInvalidValues(input, firstError);
-  const location = field === "input" ? "input" : `input.${field}`;
-
-  return createToolInputError(
-    toolName,
-    `Invalid ${toolName} ${location}. Expected ${expected}.`,
-    {
-      field,
-      expected,
-      ...(invalidValues.length > 0 ? { invalidValues } : {}),
-      validationErrors: errors.map((error) => ({
-        instancePath: error.instancePath,
-        schemaPath: error.schemaPath,
-        keyword: error.keyword,
-        message: error.message,
-      })),
-    },
-  );
-}
-
-function readAjvErrorField(error: ErrorObject): string {
-  if (
-    error.keyword === "required" &&
-    typeof error.params.missingProperty === "string"
-  ) {
-    return error.params.missingProperty;
-  }
-  if (
-    error.keyword === "additionalProperties" &&
-    typeof error.params.additionalProperty === "string"
-  ) {
-    const parent = jsonPointerToField(error.instancePath);
-    return parent === "input"
-      ? error.params.additionalProperty
-      : `${parent}.${error.params.additionalProperty}`;
-  }
-  return jsonPointerToField(error.instancePath);
-}
-
-function readAjvErrorExpectation(error: ErrorObject): string {
-  switch (error.keyword) {
-    case "minimum":
-      return `value >= ${String(error.params.limit)}`;
-    case "maximum":
-      return `value <= ${String(error.params.limit)}`;
-    case "minLength":
-      return `string length >= ${String(error.params.limit)}`;
-    case "maxLength":
-      return `string length <= ${String(error.params.limit)}`;
-    case "minItems":
-      return `array length >= ${String(error.params.limit)}`;
-    case "maxItems":
-      return `array length <= ${String(error.params.limit)}`;
-    case "enum":
-      return Array.isArray(error.params.allowedValues)
-        ? `one of ${error.params.allowedValues.map(String).join(", ")}`
-        : "one of the allowed values";
-    case "type":
-      return typeof error.params.type === "string"
-        ? `type ${error.params.type}`
-        : "the expected JSON type";
-    case "required":
-      return "required field";
-    case "additionalProperties":
-      return "no unknown fields";
-    default:
-      return error.message ?? `input satisfying ${error.keyword}`;
-  }
-}
-
-function readAjvErrorInvalidValues(
-  input: unknown,
-  error: ErrorObject,
-): unknown[] {
-  if (error.keyword === "required") {
-    return [];
-  }
-  if (
-    error.keyword === "additionalProperties" &&
-    typeof error.params.additionalProperty === "string"
-  ) {
-    const value = readValueAtJsonPointer(
-      input,
-      `${error.instancePath}/${encodeJsonPointerSegment(error.params.additionalProperty)}`,
-    );
-    return value === undefined ? [] : [value];
-  }
-  const value = readValueAtJsonPointer(input, error.instancePath);
-  return value === undefined ? [] : [value];
-}
-
-function jsonPointerToField(pointer: string): string {
-  if (pointer.length === 0) {
-    return "input";
-  }
-  return pointer.slice(1).split("/").map(decodeJsonPointerSegment).join(".");
-}
-
-function encodeJsonPointerSegment(value: string): string {
-  return value.replaceAll("~", "~0").replaceAll("/", "~1");
-}
-
-function readValueAtJsonPointer(input: unknown, pointer: string): unknown {
-  if (pointer.length === 0) {
-    return input;
-  }
-
-  let current: unknown = input;
-  for (const segment of pointer
-    .slice(1)
-    .split("/")
-    .map(decodeJsonPointerSegment)) {
-    if (typeof current !== "object" || current === null) {
-      return;
-    }
-    if (Array.isArray(current)) {
-      const index = Number(segment);
-      if (Number.isInteger(index) === false || index < 0) {
-        return;
-      }
-      current = current[index];
-      continue;
-    }
-    current = (current as Record<string, unknown>)[segment];
-  }
-  return current;
-}
-
-function decodeJsonPointerSegment(segment: string): string {
-  return segment.replaceAll("~1", "/").replaceAll("~0", "~");
 }
 
 function resolveScopedRunContext(
@@ -1588,7 +1686,35 @@ function combineMcpSnapshots(
       ...base.tools.map((tool) => ({ ...tool })),
       ...hosted.tools.map((tool) => ({ ...tool })),
     ],
+    ...(hosted.refreshDiagnostic ?? base.refreshDiagnostic) === undefined
+      ? {}
+      : {
+          refreshDiagnostic: {
+            ...(hosted.refreshDiagnostic ?? base.refreshDiagnostic)!,
+          },
+        },
   };
+}
+
+const MCP_RESULT_NORMALIZER_IDS = new Set([
+  "mcp:tool:envelope:v1",
+  "mcp:resource:envelope:v1",
+  "mcp:resource_template:envelope:v1",
+  "mcp:prompt:envelope:v1",
+]);
+
+function resolveMcpResultNormalizer(
+  normalizerId: string,
+  toolName: string,
+): PinnedToolExecutionV1["normalizer"] {
+  if (!MCP_RESULT_NORMALIZER_IDS.has(normalizerId)) {
+    throw createRuntimeFailure(
+      "TOOL_RESULT_NORMALIZER_UNAVAILABLE",
+      `Pinned MCP result normalizer '${normalizerId}' is unavailable.`,
+      { recoverable: false, toolName },
+    );
+  }
+  return (output: unknown) => ({ output });
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1597,6 +1723,170 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function preparedExecutionKey(prepared: PreparedToolCallV1): string {
+  return `${prepared.runId}\0${prepared.sessionId}\0${prepared.callId}`;
+}
+
+function validatePinnedInput(
+  toolName: string,
+  value: unknown,
+  validator: ValidateFunction,
+  builtIn: boolean,
+): Record<string, unknown> {
+  if (validator(value) !== true) {
+    if (builtIn) {
+      throw createBuiltInSchemaValidationError(
+        toolName,
+        value,
+        validator.errors ?? [],
+      );
+    }
+    throw createRuntimeFailure(
+      "TOOL_INPUT_SCHEMA_FAILED",
+      `Tool '${toolName}' input failed its pinned descriptor contract.`,
+      {
+        subsystem: "tooling",
+        classification: "schema",
+        recoverable: false,
+        toolName,
+        validationErrors: (validator.errors ?? []).map((error) => ({
+          field: readAjvErrorField(error),
+          instancePath: error.instancePath,
+          schemaPath: error.schemaPath,
+          keyword: error.keyword,
+          message: error.message,
+        })),
+      },
+    );
+  }
+  const record = asRecord(value);
+  if (record === undefined) {
+    throw createRuntimeFailure(
+      "TOOL_INPUT_INVALID",
+      `Tool '${toolName}' input must be an object.`,
+      { recoverable: false, toolName },
+    );
+  }
+  return structuredClone(record);
+}
+
+function createBuiltInSchemaValidationError(
+  toolName: string,
+  input: unknown,
+  errors: ErrorObject[],
+): RuntimeFailure {
+  const firstError = errors[0];
+  const field = firstError === undefined
+    ? "input"
+    : readAjvErrorField(firstError);
+  const expected = firstError === undefined
+    ? "input satisfying tool schema"
+    : readAjvErrorExpectation(firstError);
+  const invalidValues = firstError === undefined
+    ? []
+    : readAjvErrorInvalidValues(input, firstError);
+  const location = field === "input" ? "input" : `input.${field}`;
+  return createToolInputError(
+    toolName,
+    `Invalid ${toolName} ${location}. Expected ${expected}.`,
+    {
+      field,
+      expected,
+      ...(invalidValues.length > 0 ? { invalidValues } : {}),
+      validationErrors: errors.map((error) => ({
+        instancePath: error.instancePath,
+        schemaPath: error.schemaPath,
+        keyword: error.keyword,
+        message: error.message,
+      })),
+    },
+  );
+}
+
+function readAjvErrorField(error: ErrorObject): string {
+  if (error.keyword === "required" && typeof error.params.missingProperty === "string") {
+    return error.params.missingProperty;
+  }
+  if (
+    error.keyword === "additionalProperties" &&
+    typeof error.params.additionalProperty === "string"
+  ) {
+    const parent = jsonPointerToField(error.instancePath);
+    return parent === "input"
+      ? error.params.additionalProperty
+      : `${parent}.${error.params.additionalProperty}`;
+  }
+  return jsonPointerToField(error.instancePath);
+}
+
+function readAjvErrorExpectation(error: ErrorObject): string {
+  switch (error.keyword) {
+    case "minimum": return `value >= ${String(error.params.limit)}`;
+    case "maximum": return `value <= ${String(error.params.limit)}`;
+    case "minLength": return `string length >= ${String(error.params.limit)}`;
+    case "maxLength": return `string length <= ${String(error.params.limit)}`;
+    case "minItems": return `array length >= ${String(error.params.limit)}`;
+    case "maxItems": return `array length <= ${String(error.params.limit)}`;
+    case "enum":
+      return Array.isArray(error.params.allowedValues)
+        ? `one of ${error.params.allowedValues.map(String).join(", ")}`
+        : "one of the allowed values";
+    case "type":
+      return typeof error.params.type === "string"
+        ? `type ${error.params.type}`
+        : "the expected JSON type";
+    case "required": return "required field";
+    case "additionalProperties": return "no unknown fields";
+    default: return error.message ?? `input satisfying ${error.keyword}`;
+  }
+}
+
+function readAjvErrorInvalidValues(input: unknown, error: ErrorObject): unknown[] {
+  if (error.keyword === "required") return [];
+  if (
+    error.keyword === "additionalProperties" &&
+    typeof error.params.additionalProperty === "string"
+  ) {
+    const value = readValueAtJsonPointer(
+      input,
+      `${error.instancePath}/${encodeJsonPointerSegment(error.params.additionalProperty)}`,
+    );
+    return value === undefined ? [] : [value];
+  }
+  const value = readValueAtJsonPointer(input, error.instancePath);
+  return value === undefined ? [] : [value];
+}
+
+function jsonPointerToField(pointer: string): string {
+  return pointer.length === 0
+    ? "input"
+    : pointer.slice(1).split("/").map(decodeJsonPointerSegment).join(".");
+}
+
+function encodeJsonPointerSegment(value: string): string {
+  return value.replaceAll("~", "~0").replaceAll("/", "~1");
+}
+
+function readValueAtJsonPointer(input: unknown, pointer: string): unknown {
+  if (pointer.length === 0) return input;
+  let current: unknown = input;
+  for (const segment of pointer.slice(1).split("/").map(decodeJsonPointerSegment)) {
+    if (typeof current !== "object" || current === null) return;
+    if (Array.isArray(current)) {
+      const index = Number(segment);
+      if (Number.isInteger(index) === false || index < 0) return;
+      current = current[index];
+    } else {
+      current = (current as Record<string, unknown>)[segment];
+    }
+  }
+  return current;
+}
+
+function decodeJsonPointerSegment(segment: string): string {
+  return segment.replaceAll("~1", "/").replaceAll("~0", "~");
 }
 
 function asNonEmptyString(value: unknown): string | undefined {
@@ -1611,10 +1901,6 @@ function asFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
-}
-
-function toSchemaError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
 }
 
 function isRuntimeBuiltInTool(

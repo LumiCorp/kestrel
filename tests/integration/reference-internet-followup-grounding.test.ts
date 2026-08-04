@@ -8,6 +8,10 @@ import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/register.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import {
+  adaptLegacyTestToolGateway,
+  createLegacyTestToolDescriptorRef,
+} from "../helpers/createTestToolGateway.js";
 
 
 function modelResponse(output: unknown): ModelResponse<unknown> {
@@ -71,7 +75,7 @@ test("reference harness grounds a prior news headline into internet.extract on f
   const toolCalls: Array<{ name: string; input: unknown }> = [];
   const finalized: Record<string, unknown>[] = [];
 
-  const toolGateway: ToolGateway = {
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     async call<T>(name: string, input: unknown): Promise<T> {
       toolCalls.push({ name, input });
       if (name === "internet.news") {
@@ -160,7 +164,7 @@ test("reference harness grounds a prior news headline into internet.extract on f
     async preRun(): Promise<void> {
       // no-op
     },
-  };
+  });
 
   const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
       const schemaName = request.providerOptions?.openrouter?.responseSchemaName;
@@ -350,6 +354,7 @@ test("reference harness grounds a prior news headline into internet.extract on f
     capabilityManifestProvider: () => [
       {
         name: "internet.news",
+        descriptorRef: createLegacyTestToolDescriptorRef("internet.news"),
         description: "News search",
         freshnessClass: "live",
         latencyClass: "medium",
@@ -359,6 +364,7 @@ test("reference harness grounds a prior news headline into internet.extract on f
       },
       {
         name: "internet.extract",
+        descriptorRef: createLegacyTestToolDescriptorRef("internet.extract"),
         description: "Fetch a URL",
         freshnessClass: "live",
         latencyClass: "medium",

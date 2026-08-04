@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { Kestrel, RetryingModelGateway, RunReplayService } from "../../src/index.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 
 
 test("agent progress is durable only after the action transition commits", async () => {
@@ -10,7 +11,7 @@ test("agent progress is durable only after the action transition commits", async
   const kestrel = new Kestrel({
     store,
     modelGateway: new RetryingModelGateway(async <T>() => ({} as T)),
-    toolGateway: { async call<T>() { return {} as T; } },
+    toolGateway: adaptLegacyTestToolGateway({ async call<T>() { return {} as T; } }),
   });
   kestrel.registerStep("choose", async () => ({
     status: "RUNNING",
@@ -41,7 +42,7 @@ test("rejected step output never emits agent progress", async () => {
   const kestrel = new Kestrel({
     store,
     modelGateway: new RetryingModelGateway(async <T>() => ({} as T)),
-    toolGateway: { async call<T>() { return {} as T; } },
+    toolGateway: adaptLegacyTestToolGateway({ async call<T>() { return {} as T; } }),
   });
   kestrel.registerStep("reject", async () => {
     throw new Error("transition rejected before commit");
@@ -66,7 +67,7 @@ test("terminal finalization emits no agent progress and makes no extra model cal
       modelCalls += 1;
       return { accepted: true } as T;
     }),
-    toolGateway: { async call<T>() { return {} as T; } },
+    toolGateway: adaptLegacyTestToolGateway({ async call<T>() { return {} as T; } }),
   });
   kestrel.registerStep("finalize", async (_context, io) => {
     await io.useModel({ input: "Produce the authoritative terminal decision." });

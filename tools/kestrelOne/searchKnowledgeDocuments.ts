@@ -1,6 +1,5 @@
 import { RuntimeFailure, createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolModule } from "../contracts.js";
-import { buildAgentToolSuccessResult } from "../toolResult.js";
 
 const TOOL_NAME = "kestrel_one.search_knowledge_documents";
 
@@ -17,6 +16,7 @@ export const kestrelOneSearchKnowledgeDocumentsTool: SharedToolModule = {
       required: ["query"],
       additionalProperties: false,
     },
+    resultNormalizerId: "kestrel.knowledge-search:v1",
     capability: {
       freshnessClass: "static",
       latencyClass: "medium",
@@ -96,12 +96,26 @@ export const kestrelOneSearchKnowledgeDocumentsTool: SharedToolModule = {
       }
 
       const output = await response.json();
-      return buildAgentToolSuccessResult({
-        toolName: TOOL_NAME,
-        input: payload,
+      return {
         output,
         presentation: buildKnowledgePresentation(output),
-      });
+      };
+    };
+  },
+  normalizeResult(value) {
+    const result = asRecord(value);
+    if (result === undefined || !Object.hasOwn(result, "output")) {
+      throw createRuntimeFailure(
+        "TOOL_RESULT_NORMALIZATION_FAILED",
+        "Kestrel-One knowledge search returned an invalid raw result.",
+        { recoverable: false, toolName: TOOL_NAME },
+      );
+    }
+    return {
+      output: result.output,
+      ...(asRecord(result.presentation) === undefined
+        ? {}
+        : { presentation: result.presentation as ReturnType<typeof buildKnowledgePresentation> }),
     };
   },
 };

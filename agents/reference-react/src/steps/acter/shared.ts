@@ -1,4 +1,9 @@
 import type { StepContext, StepIO, Transition, WaitForMatcher } from "../../../../../src/kestrel/contracts/execution.js";
+import type {
+  ToolActivationRefV1,
+  ToolDescriptorRefV1,
+  ToolSurfaceSnapshotV1,
+} from "../../../../../src/kestrel/contracts/tool-contract.js";
 
 import type { AutonomyPolicy } from "../../../../../src/governance/contracts.js";
 import type {
@@ -28,6 +33,7 @@ export interface ActerStepConfig {
       kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
       revision: string;
     } | undefined;
+    descriptorRef?: ToolDescriptorRefV1 | undefined;
     executionClass?: ToolExecutionClass | undefined;
     allowedInteractionModes?: CanonicalInteractionMode[] | undefined;
   }>;
@@ -65,6 +71,8 @@ export interface PendingToolBatchItem {
   name: string;
   input: Record<string, unknown>;
   toolCallId?: string | undefined;
+  toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
+  activation?: ToolActivationRefV1 | undefined;
 }
 
 export interface PendingToolBatchState {

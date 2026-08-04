@@ -7,6 +7,10 @@ import { createExecuteToolCallHandler } from "../../src/effects/handlers/execute
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
+import {
+  adaptLegacyTestToolGateway,
+  prepareTestToolCall,
+} from "../helpers/createTestToolGateway.js";
 
 
 test("Effect runner reports compiled tool activity", async () => {
@@ -146,7 +150,11 @@ test("Effect runner CONTINUE policy keeps running", async () => {
 test("Effect runner honors existing FAILED result and WAIT policy", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();
-  registry.register("ok", async () => ({ ok: true }));
+  let handlerCalls = 0;
+  registry.register("ok", async () => {
+    handlerCalls += 1;
+    return { ok: true };
+  });
 
   await store.saveEffectResult("run-1", "s1", {
     idempotencyKey: "k-existing",
@@ -183,9 +191,10 @@ test("Effect runner honors existing FAILED result and WAIT policy", async () => 
   assert.equal(outcome.stop, true);
   assert.equal(outcome.terminalStatus, "WAITING");
   assert.equal(outcome.errors.length, 1);
+  assert.equal(handlerCalls, 0);
 });
 
-test("Effect runner re-enters tool preRun context for persisted managed worktree tool effects", async () => {
+test("Effect runner executes the prepared managed-worktree activation without re-resolution", async () => {
   const store = new InMemorySessionStore();
   const initialSession = await store.ensureSession("s-managed", "agent.exec.dispatch");
   await store.patchSessionState?.({
@@ -245,6 +254,34 @@ test("Effect runner re-enters tool preRun context for persisted managed worktree
   const registryEffects = new EffectRegistry();
   registryEffects.register("execute_tool_call", createExecuteToolCallHandler(registry));
   const runner = new InlineEffectRunner(store, registryEffects);
+  const preparedSession = await store.getSession("s-managed");
+  assert.ok(preparedSession);
+  const runtimePayload = {
+    workspace: {
+      managedWorktree: true,
+      workspaceRoot: "/trusted-worktree",
+      leaseId: "lease-1",
+    },
+  };
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: registry,
+    toolName: "dev.shell.run",
+    toolInput: {
+      command: "echo ok",
+      workspaceRoot: ".",
+    },
+    runId: "run-managed",
+    sessionId: "s-managed",
+    callId: "managed-effect-1",
+    options: {
+      runContext: {
+        runId: "run-managed",
+        sessionId: "s-managed",
+        payload: runtimePayload,
+        sessionState: preparedSession.state,
+      },
+    },
+  });
 
   const outcome = await runner.runEffects(
     [
@@ -254,18 +291,8 @@ test("Effect runner re-enters tool preRun context for persisted managed worktree
         stepIndex: 0,
         type: "execute_tool_call",
         payload: {
-          toolName: "dev.shell.run",
-          toolInput: {
-            command: "echo ok",
-            workspaceRoot: ".",
-          },
-          runtimePayload: {
-            workspace: {
-              managedWorktree: true,
-              workspaceRoot: "/trusted-worktree",
-              leaseId: "lease-1",
-            },
-          },
+          preparedToolCall,
+          runtimePayload,
         },
         idempotencyKey: "managed-effect-1",
         failurePolicy: "STOP",
@@ -294,7 +321,7 @@ test("Effect runner clamps durable dev.shell.run timeout against runtime budget"
   const store = new InMemorySessionStore();
   const calls: Array<Record<string, unknown>> = [];
   const registryEffects = new EffectRegistry();
-  registryEffects.register("execute_tool_call", createExecuteToolCallHandler({
+  const toolGateway = adaptLegacyTestToolGateway({
     validateInput: async (_name, input) => input,
     call: async (name: string, input: unknown) => {
       calls.push(input as Record<string, unknown>);
@@ -309,8 +336,22 @@ test("Effect runner clamps durable dev.shell.run timeout against runtime budget"
         },
       });
     },
-  }));
+  });
+  registryEffects.register("execute_tool_call", createExecuteToolCallHandler(toolGateway));
   const runner = new InlineEffectRunner(store, registryEffects);
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: toolGateway,
+    toolName: "dev.shell.run",
+    toolInput: {
+      command: "python3 train.py",
+      workspaceRoot: "/app",
+      timeoutMs: 240_000,
+    },
+    runId: "run-budget",
+    sessionId: "s-budget",
+    callId: "budget-effect-1",
+    options: { runtimeBudgetRemainingMs: 95_000 },
+  });
 
   const outcome = await runner.runEffects(
     [
@@ -320,12 +361,7 @@ test("Effect runner clamps durable dev.shell.run timeout against runtime budget"
         stepIndex: 0,
         type: "execute_tool_call",
         payload: {
-          toolName: "dev.shell.run",
-          toolInput: {
-            command: "python3 train.py",
-            workspaceRoot: "/app",
-            timeoutMs: 240_000,
-          },
+          preparedToolCall,
           runtimePayload: {},
         },
         idempotencyKey: "budget-effect-1",
