@@ -12,7 +12,12 @@ import type {
   RunnerStreamEvent,
 } from "@kestrel-agents/sdk";
 import type { RunnerEventEnvelope } from "@kestrel-agents/sdk/runner";
-import { createTracer, InMemoryTraceProcessor } from "../src/index.js";
+import {
+  TRACE_CONTEXT_VERSION,
+  createTracer,
+  InMemoryTraceProcessor,
+  parseTraceContext,
+} from "../src/index.js";
 import { OpenTelemetryTraceExporter } from "../src/otel.js";
 
 
@@ -153,6 +158,170 @@ test("stream traces expose provider-reasoning and terminal dispatch latency metr
   assert.equal(attributes?.["kestrel.latency.model_completion_to_dispatch_ms"], 20);
   assert.equal(attributes?.["kestrel.latency.finalize_to_first_byte_ms"], 15);
   assert.equal(typeof attributes?.["kestrel.latency.time_to_first_reasoning_ms"], "number");
+});
+
+test("generic traces preserve nested parentage and required safe model attributes", async () => {
+  const processor = new InMemoryTraceProcessor();
+  const tracer = createTracer({ processors: [processor] });
+  const trace = tracer.startTrace({
+    agentId: "support-agent",
+    profileId: "support",
+    name: "agent.run",
+    kind: "run",
+    attributes: {
+      "kestrel.agent_id": "support-agent",
+      "kestrel.profile_id": "support",
+      "kestrel.operation": "run",
+    },
+  });
+  const model = trace.root.startChild({
+    name: "model.call",
+    kind: "model",
+    attributes: {
+      "kestrel.provider_id": "openai",
+      "kestrel.model_id": "gpt-5",
+      "kestrel.retry_attempt": 1,
+      "kestrel.latency_ms": 20,
+      "kestrel.input_tokens": 10,
+      "kestrel.output_tokens": 5,
+      "kestrel.result": "completed",
+      "kestrel.prompt": "must-not-be-captured",
+    },
+  });
+  model.addEvent("model.completed", { "kestrel.result": "completed" });
+  model.end();
+  trace.end();
+  await tracer.flush();
+
+  const recorded = processor.traces[0];
+  const root = recorded?.spans[0];
+  const child = recorded?.spans[1];
+  assert.equal(root?.traceId, child?.traceId);
+  assert.equal(child?.parentSpanId, root?.spanId);
+  assert.equal(child?.attributes["kestrel.prompt"], undefined);
+  assert.match(root?.traceId ?? "", /^[0-9a-f]{32}$/u);
+  assert.match(child?.spanId ?? "", /^[0-9a-f]{16}$/u);
+});
+
+test("resume continues only an exact persisted trace context", async () => {
+  const processor = new InMemoryTraceProcessor();
+  const persisted = {
+    version: TRACE_CONTEXT_VERSION,
+    traceId: "0123456789abcdef0123456789abcdef",
+    spanId: "0123456789abcdef",
+    traceFlags: "01",
+  } as const;
+  const tracer = createTracer({
+    processors: [processor],
+    resolveTraceStart(input) {
+      return input.operation === "resume"
+        ? { relationship: "continue", sourceContext: persisted }
+        : undefined;
+    },
+  });
+  const agent = tracer.wrapAgent(createFakeAgent());
+  await agent.resume(
+    { sessionId: "session-resume", requestId: "request-1", message: "continue" },
+    context,
+  );
+  await tracer.flush();
+
+  const span = processor.traces[0]?.spans[0];
+  assert.equal(span?.traceId, persisted.traceId);
+  assert.equal(span?.parentSpanId, persisted.spanId);
+  assert.notEqual(span?.spanId, persisted.spanId);
+});
+
+test("a trace cannot settle while a nested span is still active", async () => {
+  const tracer = createTracer();
+  const trace = tracer.startTrace({
+    agentId: "support-agent",
+    profileId: "support",
+    name: "agent.run",
+    kind: "run",
+    attributes: {
+      "kestrel.agent_id": "support-agent",
+      "kestrel.profile_id": "support",
+      "kestrel.operation": "run",
+    },
+  });
+  const child = trace.root.startChild({
+    name: "tool.call",
+    kind: "tool",
+    attributes: {
+      "kestrel.tool_id": "weather.forecast",
+      "kestrel.retry_attempt": 1,
+      "kestrel.latency_ms": 5,
+      "kestrel.result": "completed",
+    },
+  });
+  assert.throws(() => trace.end(), /child span 'tool.call' is active/u);
+  child.end();
+  trace.end();
+  await assert.doesNotReject(() => tracer.flush());
+});
+
+test("replay and fork start linked traces instead of continuing the source", async () => {
+  const exporter = new InMemorySpanExporter();
+  const tracer = createTracer({ exporters: [new OpenTelemetryTraceExporter(exporter)] });
+  const sourceContext = {
+    version: TRACE_CONTEXT_VERSION,
+    traceId: "fedcba9876543210fedcba9876543210",
+    spanId: "fedcba9876543210",
+    traceFlags: "01",
+  } as const;
+  for (const relationship of ["replay", "fork"] as const) {
+    const trace = tracer.startTrace({
+      agentId: "support-agent",
+      profileId: "support",
+      name: `agent.${relationship}`,
+      kind: "run",
+      directive: { relationship, sourceContext },
+      attributes: {
+        "kestrel.agent_id": "support-agent",
+        "kestrel.profile_id": "support",
+        "kestrel.operation": relationship,
+      },
+    });
+    assert.notEqual(trace.root.context.traceId, sourceContext.traceId);
+    assert.equal(trace.root.span.parentSpanId, undefined);
+    trace.end();
+  }
+  await tracer.flush();
+  const spans = exporter.getFinishedSpans();
+  assert.equal(spans.length, 2);
+  assert.equal(spans[0]?.links[0]?.context.traceId, sourceContext.traceId);
+  assert.equal(spans[0]?.links[0]?.attributes["kestrel.link_kind"], "replay");
+  assert.equal(spans[1]?.links[0]?.attributes["kestrel.link_kind"], "fork");
+});
+
+test("invalid context and untrusted baggage fail strict parsing", () => {
+  assert.throws(
+    () => parseTraceContext({
+      version: TRACE_CONTEXT_VERSION,
+      traceId: "0123456789abcdef0123456789abcdef",
+      spanId: "0123456789abcdef",
+      traceFlags: "01",
+      baggage: "untrusted=value",
+    }),
+    /unknown field 'baggage'/u,
+  );
+});
+
+test("processor and exporter failures cannot change agent behavior", async () => {
+  const failures: unknown[] = [];
+  const tracer = createTracer({
+    processors: [{ process() { throw new Error("processor unavailable"); } }],
+    exporters: [{ export() { throw new Error("exporter unavailable"); } }],
+    onExportError(error) { failures.push(error); },
+  });
+  const terminal = await tracer.wrapAgent(createFakeAgent()).run(
+    { sessionId: "session-export-failure", message: "hello" },
+    context,
+  );
+  assert.equal(terminal.type, "run.completed");
+  await assert.doesNotReject(() => tracer.flush());
+  assert.equal(failures.length, 2);
 });
 
 function createFakeAgent(): KestrelAgent {

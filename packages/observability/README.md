@@ -65,6 +65,52 @@ const tracedAgent = tracer.wrapAgent(agent);
 
 The tracer wraps SDK calls and emits Kestrel-native trace objects through the configured processors.
 
+## Create Nested Spans
+
+Use `startTrace` when application code needs explicit parent, child, or linked
+span structure. Span kinds require their documented identity and outcome
+attributes before settlement.
+
+```ts
+const trace = tracer.startTrace({
+  agentId: "support-agent",
+  profileId: "reference",
+  name: "agent.run",
+  kind: "run",
+  attributes: {
+    "kestrel.agent_id": "support-agent",
+    "kestrel.profile_id": "reference",
+    "kestrel.operation": "run",
+  },
+});
+
+const model = trace.root.startChild({
+  name: "model.call",
+  kind: "model",
+  attributes: {
+    "kestrel.provider_id": "openai",
+    "kestrel.model_id": "gpt-5",
+    "kestrel.retry_attempt": 1,
+    "kestrel.latency_ms": 100,
+    "kestrel.input_tokens": 10,
+    "kestrel.output_tokens": 5,
+    "kestrel.result": "completed",
+  },
+});
+
+model.end();
+trace.end();
+await tracer.flush();
+```
+
+The `continue` relationship preserves a validated persisted trace identity for
+resume. The `replay` and `fork` relationships always create a new trace linked
+to the source context.
+
+Prompt, response, tool-payload, credential, secret, and PII-shaped attributes
+are omitted by default. Processor and exporter failures are reported through
+the optional `onExportError` callback and never change agent behavior.
+
 ## Export to OTEL-Compatible Pipelines
 
 ```ts

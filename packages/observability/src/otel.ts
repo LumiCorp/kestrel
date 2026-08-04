@@ -83,14 +83,14 @@ function toReadableSpan(
     spanContext: () => ({
       traceId,
       spanId,
-      traceFlags: TraceFlags.SAMPLED,
+      traceFlags: toTraceFlags(span.traceFlags),
     }),
     ...(parentSpanId !== undefined
       ? {
           parentSpanContext: {
             traceId,
             spanId: parentSpanId,
-            traceFlags: TraceFlags.SAMPLED,
+            traceFlags: toTraceFlags(span.traceFlags),
           },
         }
       : {}),
@@ -118,7 +118,15 @@ function toReadableSpan(
       ...(trace.threadId !== undefined ? { "kestrel.thread_id": trace.threadId } : {}),
       ...(trace.runId !== undefined ? { "kestrel.run_id": trace.runId } : {}),
     }),
-    links: [],
+    links: span.links.map((link) => ({
+      context: {
+        traceId: link.context.traceId,
+        spanId: link.context.spanId,
+        traceFlags: toTraceFlags(link.context.traceFlags),
+        isRemote: true,
+      },
+      attributes: compactAttributes(link.attributes ?? {}),
+    })),
     events: span.events.map((event) => toReadableEvent(event)),
     duration,
     ended: true,
@@ -140,13 +148,15 @@ function toReadableEvent(event: TraceEvent): ReadableSpan["events"][number] {
 }
 
 function toTraceId(value: string): string {
-  const normalized = value.replace(/[^a-fA-F0-9]/g, "").toLowerCase();
-  return normalized.length === 32 ? normalized : normalized.padEnd(32, "0").slice(0, 32);
+  return value;
 }
 
 function toSpanId(value: string): string {
-  const normalized = value.replace(/[^a-fA-F0-9]/g, "").toLowerCase();
-  return normalized.length >= 16 ? normalized.slice(0, 16) : normalized.padEnd(16, "0");
+  return value;
+}
+
+function toTraceFlags(value: "00" | "01"): TraceFlags {
+  return value === "01" ? TraceFlags.SAMPLED : TraceFlags.NONE;
 }
 
 function toHrTime(value: string): [number, number] {
