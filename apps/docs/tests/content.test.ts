@@ -14,7 +14,7 @@ import { CONTENT_ARCHETYPES, DOCS_NAV_SECTIONS, PRODUCT_SURFACES } from "@/lib/t
 
 
 const PACKAGE_VERSION = "0.7.0";
-const DESKTOP_VERSION = "0.6.0";
+const DESKTOP_VERSION = "0.7.0";
 
 test("navigation exposes exactly six ordered public journeys", async () => {
   const navigation = await getNavigation();
@@ -147,11 +147,19 @@ test("release metadata separates packages from product availability", async () =
   assert.equal(DOCS_RELEASE.packages.channel, "Stable");
   assert.equal(DOCS_RELEASE.products.desktop.version, DESKTOP_VERSION);
   assert.equal(DOCS_RELEASE.products.desktop.channel, "Stable");
+  assert.equal(
+    DOCS_RELEASE.products.desktop.releasesUrl,
+    "https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0",
+  );
+  assert.equal(
+    DOCS_RELEASE.products.desktop.downloadUrl,
+    "https://github.com/LumiCorp/kestrel/releases/download/desktop-v0.7.0/Kestrel-0.7.0-mac-arm64.dmg",
+  );
   assert.equal(DOCS_RELEASE.products.kestrelOne.version, "Managed");
   assert.equal(DOCS_RELEASE.products.kestrelOne.channel, "Invitation");
   assert.doesNotMatch(corpus, /\b\d+\.\d+\.\d+-beta\.\d+\b/gu);
   assert.match(corpus, /\b0\.7\.0\b/u);
-  assert.match(corpus, /\b0\.6\.0\b/u);
+  assert.doesNotMatch(corpus, /\b0\.6\.0\b/u);
 });
 
 test("all seven product screenshots exist and have descriptive alt text and captions", async () => {

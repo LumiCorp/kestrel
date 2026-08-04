@@ -16,14 +16,14 @@ export const DOCS_RELEASE = {
   },
   products: {
     desktop: {
-      version: "0.6.0",
+      version: "0.7.0",
       channel: "Stable",
       mode: "release-gated",
-      releasesUrl: "https://github.com/LumiCorp/kestrel/releases/tag/v0.6.0",
-      downloadUrl: "https://github.com/LumiCorp/kestrel/releases/download/v0.6.0/Kestrel-0.6.0-darwin-arm64.zip",
+      releasesUrl: "https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0",
+      downloadUrl: "https://github.com/LumiCorp/kestrel/releases/download/desktop-v0.7.0/Kestrel-0.7.0-mac-arm64.dmg",
       artifactStatus: "published",
       supportedPlatforms: ["macOS"],
-      trustNote: "Download the macOS arm64 archive from the v0.6.0 release and review its release notes before opening the application.",
+      trustNote: "Download the signed and notarized DMG for macOS 13 or later on Apple silicon.",
     },
     kestrelOne: {
       version: "Managed",
@@ -41,7 +41,7 @@ export const DOCS_RELEASE = {
     { surface: "Observability", version: "0.7.0", channel: "Stable", note: "Wraps compatible SDK operations" },
     { surface: "Workspace skills", version: "0.7.0", channel: "Stable", note: "Installs and verifies portable workspace guidance" },
     { surface: "CLI", version: "0.7.0", channel: "Stable", note: "Operates the matching runtime line" },
-    { surface: "Desktop", version: "0.6.0", channel: "Stable", note: "Remains on the signed public Desktop release" },
+    { surface: "Desktop", version: "0.7.0", channel: "Stable", note: "Signed and notarized macOS arm64 application" },
     { surface: "Kestrel One", version: "Managed", channel: "Invitation", note: "Consumes an invitation-managed package set" },
   ],
 } as const;

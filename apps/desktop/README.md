@@ -154,7 +154,7 @@ pnpm run desktop:upload-update
 # After independent inspection and approval, move the stable channel pointer.
 KESTREL_DESKTOP_PROMOTION_APPROVED=1 \
 KESTREL_DESKTOP_UPDATE_CHANNEL=stable \
-pnpm run desktop:promote-update -- --version 0.7.0
+pnpm run desktop:promote-update -- --version 0.7.1
 ```
 
 Upload validates every updater file entry against the local artifact's
