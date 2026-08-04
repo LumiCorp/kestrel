@@ -39,6 +39,8 @@ export type {
   ModelReasoningContinuation,
   ModelVisibleReasoning,
   ModelRequest,
+  ModelResponse,
+  ModelUsage,
   ModelToolSpec,
   ToolConsoleEvent,
   ToolConsoleSink,
@@ -47,6 +49,38 @@ export type {
   ToolRunContext,
   ToolRuntimeStatus,
 } from "./contracts/model-io.js";
+export {
+  MODEL_CAPABILITY_DESCRIPTOR_VERSION,
+  MODEL_REGISTRATION_VERSION,
+  MODEL_REQUEST_VERSION,
+  MODEL_RESPONSE_VERSION,
+  PROVIDER_RUNTIME_CONFIGURATION_VERSION,
+  adaptModelRequestV0ToV1,
+  adaptModelResponseV0ToV1,
+  assertCurrentModelRegistrationV1,
+  canonicalModelRegistrationJsonV1,
+  createModelRegistrationV1,
+  fingerprintModelRegistrationV1,
+  normalizeModelRequestV1,
+  normalizeModelResponseV1,
+  parseModelCapabilityDescriptorV1,
+  parseModelRegistrationV1,
+  parseModelRequestV1,
+  parseModelResponseV1,
+  parseProviderRuntimeConfigurationV1,
+} from "./contracts/model-registration.js";
+export type {
+  ModelCapabilityDescriptorV1,
+  ModelLimitV1,
+  ModelProviderIdentityV1,
+  ModelProviderProtocolV1,
+  ModelRegistrationAuthoringV1,
+  ModelRegistrationV1,
+  ModelRequestV1,
+  ModelResponseV1,
+  ProviderCredentialReferenceV1,
+  ProviderRuntimeConfigurationV1,
+} from "./contracts/model-registration.js";
 export type { SessionRecord } from "./contracts/store.js";
 export {
   REQUIRED_RUNTIME_SPAN_ATTRIBUTES_V1,

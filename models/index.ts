@@ -93,3 +93,23 @@ export {
   createOpenRouterModelGatewayFromEnv,
   type OpenRouterGatewayFactoryOptions,
 } from "./openrouter/createOpenRouterModelGateway.js";
+export {
+  MODEL_PROVIDER_ADAPTERS_V1,
+  MODEL_PROVIDER_IDENTITIES_V1,
+  getModelProviderAdapterV1,
+  listModelProviderAdaptersV1,
+} from "./ProviderRegistry.js";
+export type {
+  ProviderAdapterFactoryOptionsV1,
+  ProviderAdapterFactoryV1,
+  ProviderAdapterRegistrationV1,
+  ProviderConformanceFixtureV1,
+} from "./ProviderRegistry.js";
+export {
+  createLumiModelGateway,
+  type LumiGatewayFactoryOptions,
+} from "./lumi/createLumiModelGateway.js";
+export {
+  createRunPodModelGateway,
+  type RunPodGatewayFactoryOptions,
+} from "./runpod/createRunPodModelGateway.js";
