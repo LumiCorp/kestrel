@@ -23,4 +23,11 @@ test("searchKnowledgeDocumentsCapabilityInputSchema rejects short query and exce
     }).success,
     false
   );
+  assert.equal(
+    searchKnowledgeDocumentsCapabilityInputSchema.safeParse({
+      query: "release checklist",
+      binding: { tenantId: "model-selected" },
+    }).success,
+    false
+  );
 });

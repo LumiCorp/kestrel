@@ -10,6 +10,10 @@ export type RawKnowledgeRetrievalRow = {
   pageNumber: number | null;
   sectionTitle: string | null;
   score: number;
+  projectId?: string | null;
+  uploaderUserId?: string;
+  createdAt?: Date | string;
+  checksumSha256?: string;
 };
 
 export type KnowledgeRetrievalExcerpt = {
@@ -37,6 +41,11 @@ export type KnowledgeRetrievalHit = {
   excerptCount: number;
   excerpts: KnowledgeRetrievalExcerpt[];
   citations: KnowledgeRetrievalCitation[];
+  retrievalStrategy?: "vector" | "lexical";
+  projectId?: string | null;
+  uploaderUserId?: string;
+  createdAt?: Date | string;
+  checksumSha256?: string;
 };
 
 function buildCitationLabel(input: {
@@ -62,6 +71,7 @@ export function groupKnowledgeRetrievalRows(
     documentLimit: number;
     excerptLimitPerDocument?: number;
     scoreThreshold: number;
+    retrievalStrategy?: "vector" | "lexical";
   }
 ) {
   const grouped = new Map<string, KnowledgeRetrievalHit>();
@@ -108,6 +118,17 @@ export function groupKnowledgeRetrievalRows(
             sectionTitle: row.sectionTitle,
           },
         ],
+        ...(input.retrievalStrategy === undefined
+          ? {}
+          : { retrievalStrategy: input.retrievalStrategy }),
+        ...(row.projectId === undefined ? {} : { projectId: row.projectId }),
+        ...(row.uploaderUserId === undefined
+          ? {}
+          : { uploaderUserId: row.uploaderUserId }),
+        ...(row.createdAt === undefined ? {} : { createdAt: row.createdAt }),
+        ...(row.checksumSha256 === undefined
+          ? {}
+          : { checksumSha256: row.checksumSha256 }),
       });
       continue;
     }

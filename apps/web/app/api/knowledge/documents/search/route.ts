@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { searchKnowledgeDocuments } from "@/lib/knowledge/documents/retrieval";
+import { createHostedKnowledgeReadAuthority } from "@/lib/knowledge/documents/memory-policy";
 import { errorResponse } from "@/lib/knowledge/http";
 
 const searchQuerySchema = z.object({
@@ -12,7 +13,7 @@ const searchQuerySchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const { organizationId } = await requireActiveOrganization();
+    const { organizationId, session } = await requireActiveOrganization();
     const query = searchQuerySchema.parse({
       q: request.nextUrl.searchParams.get("q"),
       limit: request.nextUrl.searchParams.get("limit") ?? undefined,
@@ -20,8 +21,23 @@ export async function GET(request: NextRequest) {
         request.nextUrl.searchParams.get("scoreThreshold") ?? undefined,
     });
 
+    const taskId = crypto.randomUUID();
+    const scope = { kind: "tenant" as const, tenantId: organizationId };
+    const authority = createHostedKnowledgeReadAuthority({
+      tenantId: organizationId,
+      userId: session.user.id,
+      agentId: "kestrel-one:hosted-session",
+      taskId,
+      scope,
+      documentAccess: { mode: "scope" },
+      issuer: {
+        kind: "trusted_hosted",
+        authorityId: "kestrel-one:hosted-session",
+      },
+    });
     const results = await searchKnowledgeDocuments({
-      organizationId,
+      ...authority,
+      scope,
       query: query.q,
       limit: query.limit,
       scoreThreshold: query.scoreThreshold,

@@ -252,6 +252,61 @@ export type {
   KestrelRuntimeConfigurationModelRouteV1,
 } from "./contracts/profile.js";
 export {
+  MEMORY_BACKEND_VERSION,
+  MEMORY_LIFECYCLE_EVENT_VERSION,
+  MEMORY_LIFECYCLE_POLICY_VERSION,
+  MEMORY_NAMESPACES_V1,
+  MEMORY_QUERY_RESULT_VERSION,
+  MEMORY_QUERY_VERSION,
+  MEMORY_READ_BINDING_VERSION,
+  MEMORY_RECORD_PROVENANCE_VERSION,
+  MEMORY_TIER_POLICY_VERSION,
+  createMemoryLifecyclePolicyV1,
+  createMemoryTierPolicyV1,
+  fingerprintMemoryContractV1,
+  memoryScopesEqualV1,
+  parseMemoryBackendV1,
+  parseMemoryLifecycleEventV1,
+  parseMemoryLifecyclePolicyV1,
+  parseMemoryQueryResultV1,
+  parseMemoryQueryV1,
+  parseMemoryReadBindingV1,
+  parseMemoryRecordProvenanceV1,
+  parseMemoryTierPolicyV1,
+} from "./contracts/memory.js";
+export type {
+  MemoryBackendV1,
+  MemoryConfidenceProvenanceV1,
+  MemoryDocumentAccessV1,
+  MemoryLifecycleEventV1,
+  MemoryLifecyclePolicyV1,
+  MemoryNamespaceV1,
+  MemoryQueryResultItemV1,
+  MemoryQueryResultV1,
+  MemoryQueryV1,
+  MemoryReadBindingV1,
+  MemoryRecordProvenanceV1,
+  MemoryResultSegmentV1,
+  MemoryRetentionV1,
+  MemoryRetrievalStrategyV1,
+  MemoryScopeV1,
+  MemoryTierPolicyV1,
+} from "./contracts/memory.js";
+export {
+  MemoryAuthorizationError,
+  MemoryGateway,
+} from "../memory/MemoryGateway.js";
+export type {
+  MemoryBackendAdapterV1,
+  MemoryReadContextV1,
+} from "../memory/MemoryGateway.js";
+export {
+  InMemoryMemoryBackend,
+} from "../memory/InMemoryMemoryBackend.js";
+export type {
+  InMemoryMemoryRecordV1,
+} from "../memory/InMemoryMemoryBackend.js";
+export {
   COMPLETION_EVIDENCE_ASSERTIONS_V1,
   COMPLETION_EVIDENCE_ASSET_BUNDLE_V1,
   COMPLETION_EVIDENCE_OUTPUT_SCHEMA_V1,

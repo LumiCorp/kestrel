@@ -473,6 +473,9 @@ importers:
       '@kestrel-agents/ai-sdk':
         specifier: 0.7.0
         version: link:../../packages/ai-sdk
+      '@kestrel-agents/kestrel':
+        specifier: 0.7.0
+        version: link:../..
       '@kestrel-agents/next':
         specifier: 0.7.0
         version: link:../../packages/next
