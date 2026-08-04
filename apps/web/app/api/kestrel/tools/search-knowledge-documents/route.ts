@@ -13,6 +13,7 @@ import {
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { errorResponse } from "@/lib/knowledge/http";
+import { createHostedKnowledgeReadAuthority } from "@/lib/knowledge/documents/memory-policy";
 import { resolveProjectContextGrant } from "@/lib/projects/context-grants";
 
 export async function POST(request: Request) {
@@ -27,9 +28,26 @@ export async function POST(request: Request) {
     organizationId = resolvedOrganizationId;
     const payload = await request.json();
     queryLength = getKnowledgeToolQueryLength(payload);
+    const scope = resolved.scope;
+    const authority = createHostedKnowledgeReadAuthority({
+      tenantId: resolved.organizationId,
+      userId: resolved.userId,
+      agentId: resolved.agentId,
+      taskId: resolved.taskId,
+      scope,
+      documentAccess:
+        resolved.documentIds === undefined
+          ? { mode: "scope" }
+          : { mode: "exact", documentIds: resolved.documentIds },
+      issuer: {
+        kind: "trusted_runtime",
+        authorityId: "kestrel-one:runtime-capability",
+      },
+    });
     const result = await executeSearchKnowledgeDocumentsCapability({
-      organizationId: resolvedOrganizationId,
       payload,
+      ...authority,
+      scope,
       documentIds: resolved.documentIds,
     });
     logKnowledgeToolAuditEvent(
@@ -73,10 +91,17 @@ async function resolveCapabilityOrganization(request: Request) {
         process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY,
     });
     if (!parsed.contextGrantId) {
-      return { organizationId: parsed.organizationId };
+      return {
+        ...parsed,
+        scope: { kind: "tenant" as const, tenantId: parsed.organizationId },
+      };
     }
     const resolved = await resolveProjectContextGrant(parsed.contextGrantId);
-    if (!resolved || resolved.grant.organizationId !== parsed.organizationId) {
+    if (
+      !resolved ||
+      resolved.grant.organizationId !== parsed.organizationId ||
+      resolved.grant.actorUserId !== parsed.userId
+    ) {
       throw Object.assign(new Error("Project context grant is invalid."), {
         code: "UNAUTHORIZED",
       });
@@ -92,10 +117,25 @@ async function resolveCapabilityOrganization(request: Request) {
       );
     return {
       organizationId: parsed.organizationId,
+      userId: parsed.userId,
+      agentId: parsed.agentId,
+      taskId: parsed.taskId,
+      scope: {
+        kind: "project" as const,
+        tenantId: parsed.organizationId,
+        projectId: resolved.grant.projectId,
+      },
       documentIds: documents.map((document) => document.id),
     };
   }
 
   const active = await requireActiveOrganization();
-  return { organizationId: active.organizationId };
+  const taskId = crypto.randomUUID();
+  return {
+    organizationId: active.organizationId,
+    userId: active.session.user.id,
+    agentId: "kestrel-one:hosted-session",
+    taskId,
+    scope: { kind: "tenant" as const, tenantId: active.organizationId },
+  };
 }

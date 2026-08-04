@@ -155,7 +155,7 @@ KESTREL_WORKSPACE_RUNTIME_IMAGE=registry.fly.io/kestrel-workspace@sha256:...
 KESTREL_MCP_GATEWAY_URL=https://mcp.internal.example/mcp
 KESTREL_MCP_CREDENTIAL_ACTIVE_KEY_ID=primary
 KESTREL_MCP_CREDENTIAL_KEYS={"primary":"replace-with-base64-32-byte-key"}
-KESTREL_ONE_PROFILE_ID=kestrel-one
+KESTREL_ONE_PROFILE_ID=kestrel
 NEXT_PUBLIC_BILLING_ENABLED=false
 ```
 

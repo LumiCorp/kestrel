@@ -8,6 +8,9 @@ export const runnerKnowledgeCapabilityRequestSchema = z.object({
   authorization: runnerCapabilityAuthHeaderSchema,
   tenantId: routeIdSchema,
   contextGrantId: z.string().uuid().optional(),
+  userId: routeIdSchema.optional(),
+  agentId: routeIdSchema.optional(),
+  taskId: routeIdSchema.optional(),
 });
 
 export type KestrelOneCapabilityDescriptor = {
@@ -74,13 +77,28 @@ export function parseRunnerKnowledgeCapabilityRequest(input: {
       "",
     contextGrantId:
       input.request.headers.get("x-kestrel-project-context-grant") ?? undefined,
+    userId: input.request.headers.get("x-kestrel-user-id") ?? undefined,
+    agentId: input.request.headers.get("x-kestrel-agent-id") ?? undefined,
+    taskId:
+      input.request.headers.get("x-kestrel-task-id") ??
+      input.request.headers.get("x-kestrel-run-id") ??
+      undefined,
   });
   const actualToken = parsed.authorization.replace(/^Bearer\s+/i, "").trim();
   const expectedToken = input.expectedToken?.trim();
 
   if (expectedToken && actualToken === expectedToken) {
+    if (!(parsed.userId && parsed.agentId && parsed.taskId)) {
+      throw Object.assign(
+        new Error("Trusted runtime memory identity is incomplete."),
+        { code: "UNAUTHORIZED" }
+      );
+    }
     return {
       organizationId: parsed.tenantId,
+      userId: parsed.userId,
+      agentId: parsed.agentId,
+      taskId: parsed.taskId,
       ...(parsed.contextGrantId
         ? { contextGrantId: parsed.contextGrantId }
         : {}),
@@ -99,6 +117,9 @@ export function parseRunnerKnowledgeCapabilityRequest(input: {
     }
     return {
       organizationId: ticket.organizationId,
+      userId: ticket.actorId,
+      agentId: ticket.agentId,
+      taskId: ticket.runId,
       ...(parsed.contextGrantId
         ? { contextGrantId: parsed.contextGrantId }
         : {}),

@@ -86,11 +86,16 @@ The durable, user-visible summary of the agent's current chunk, intended command
 **Narration Memory**
 Model-authored progress narration retained as working memory for collaboration and continuity.
 
+**Memory Read Binding**
+A trusted, versioned authorization that binds one memory retrieval to an exact tenant, user, agent, task, policy revision, namespace, scope, and document-access set. A model can provide a bounded query but cannot mint or widen this binding.
+
 **Provenance Hash**
 A hash-only identity for model-call audit data. It identifies the provider payload or Kestrel prompt components without retaining rendered prompt text.
 
 **Model Registration**
 A versioned, fingerprinted binding between one exact provider identity, one pinned model, its declared capabilities, and its secret-free runtime configuration. Registrations are trusted static inputs; they do not discover, rank, or select models.
+**Budget Allocation**
+A durable, revisioned resource envelope bound to one exact tenant, run, agent, subagent, or model/tool/sandbox/evaluator/embedding lineage scope. Child allocations reserve from their parent, and usage settles against a prior reservation without creating new credit.
 
 ## Relationships
 

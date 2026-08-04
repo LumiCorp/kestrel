@@ -140,6 +140,10 @@ test("RuntimeSpanV1 fails closed on missing attributes, sensitive capture, and i
     () => parseRuntimeSpanV1({ ...base, attributes: { ...base.attributes, "kestrel.prompt": "secret" } }),
     /forbidden sensitive key/u,
   );
+  assert.throws(
+    () => parseRuntimeSpanV1({ ...base, attributes: { ...base.attributes, "kestrel.actor_name": "Taylor" } }),
+    /forbidden sensitive key/u,
+  );
   const { "kestrel.output_tokens": _omitted, ...missingUsage } = base.attributes;
   assert.throws(
     () => parseRuntimeSpanV1({ ...base, attributes: missingUsage }),
@@ -149,4 +153,19 @@ test("RuntimeSpanV1 fails closed on missing attributes, sensitive capture, and i
     () => parseRuntimeSpanV1({ ...base, status: "active" }),
     /active runtime span cannot have endedAt/u,
   );
+  for (const [key, value, expected] of [
+    ["kestrel.retry_attempt", "first", /retry_attempt.*non-negative safe integer/u],
+    ["kestrel.retry_attempt", -1, /retry_attempt.*non-negative safe integer/u],
+    ["kestrel.latency_ms", -0.1, /latency_ms.*non-negative finite number/u],
+    ["kestrel.input_tokens", 1.5, /input_tokens.*non-negative safe integer/u],
+    ["kestrel.output_tokens", -1, /output_tokens.*non-negative safe integer/u],
+  ] as const) {
+    assert.throws(
+      () => parseRuntimeSpanV1({
+        ...base,
+        attributes: { ...base.attributes, [key]: value },
+      }),
+      expected,
+    );
+  }
 });

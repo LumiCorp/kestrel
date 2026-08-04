@@ -11,8 +11,13 @@ import type {
 } from "@kestrel-agents/sdk";
 import type { RunnerEventEnvelope } from "@kestrel-agents/sdk/runner";
 import {
+  assertKnownNumericTraceAttributes,
+  compactTraceAttributes as compactAttributes,
+} from "./attributes.js";
+import {
   createTraceContext,
   parseTraceContext,
+  parseTraceStartDirective,
   resolveTraceStartDirective,
   type TraceContext,
   type TraceStartDirective,
@@ -157,7 +162,8 @@ export function createTracer(options: CreateTracerOptions = {}): KestrelTracer {
   };
   const resolveDirective = (input: TraceStartResolutionInput): TraceStartDirective | undefined => {
     try {
-      const directive = options.resolveTraceStart?.(input);
+      const candidate = options.resolveTraceStart?.(input);
+      const directive = candidate === undefined ? undefined : parseTraceStartDirective(candidate);
       if (input.operation === "resume" && directive !== undefined && directive.relationship !== "continue") {
         throw new Error("Agent resume trace context must use the continue relationship.");
       }
@@ -301,13 +307,16 @@ export function createTracer(options: CreateTracerOptions = {}): KestrelTracer {
           }
           const rootAttributes = compactAttributes({ ...rootSpan.attributes, ...attributes });
           assertRequiredSpanAttributes({ ...rootSpan, attributes: rootAttributes });
+          for (const span of trace.spans) {
+            if (span !== rootSpan) assertRequiredSpanAttributes(span);
+          }
+          const rootEndedAt = rootSpan.endedAt ?? new Date().toISOString();
+          assertValidSpanTree(trace, rootSpan, rootEndedAt);
           ended = true;
           rootSpan.attributes = rootAttributes;
           rootSpan.status = status;
-          settleTrace(trace, rootSpan);
-          for (const span of trace.spans) {
-            assertRequiredSpanAttributes(span);
-          }
+          rootSpan.endedAt = rootEndedAt;
+          trace.endedAt = trace.endedAt ?? rootEndedAt;
           trace.status = status;
           schedule(trace);
         },
@@ -352,7 +361,7 @@ function createTrace(
     ...(start.parentContext !== undefined ? { parentContext: start.parentContext } : {}),
     links: start.linkContext === undefined
       ? []
-      : [{ context: start.linkContext, attributes: { "kestrel.link_kind": directive?.relationship ?? "new" } }],
+      : [{ context: start.linkContext, attributes: { "kestrel.link_kind": start.relationship } }],
     agentId: agent.id,
     profileId: agent.profileId,
     startedAt: now,
@@ -364,7 +373,6 @@ function createTrace(
       "kestrel.actor_id": context.actor.actorId,
       "kestrel.actor_type": context.actor.actorType,
       ...(context.tenantId !== undefined ? { "kestrel.tenant_id": context.tenantId } : {}),
-      ...(context.actor.displayName !== undefined ? { "kestrel.actor_name": context.actor.displayName } : {}),
     },
     spans: [],
   };
@@ -385,7 +393,7 @@ function createSubscriptionTrace(
     ...(start.parentContext !== undefined ? { parentContext: start.parentContext } : {}),
     links: start.linkContext === undefined
       ? []
-      : [{ context: start.linkContext, attributes: { "kestrel.link_kind": directive?.relationship ?? "new" } }],
+      : [{ context: start.linkContext, attributes: { "kestrel.link_kind": start.relationship } }],
     agentId: agent.id,
     profileId: agent.profileId,
     startedAt: now,
@@ -414,7 +422,7 @@ function createStandaloneTrace(input: StartTraceInput): RunTrace {
     ...(start.parentContext !== undefined ? { parentContext: start.parentContext } : {}),
     links: start.linkContext === undefined
       ? []
-      : [{ context: start.linkContext, attributes: { "kestrel.link_kind": input.directive?.relationship ?? "new" } }],
+      : [{ context: start.linkContext, attributes: { "kestrel.link_kind": start.relationship } }],
     agentId: input.agentId,
     profileId: input.profileId,
     startedAt: now,
@@ -443,6 +451,12 @@ function createSpan(
     : toTraceContext(options.parent);
   if (parentContext !== undefined && parentContext.traceId !== trace.traceId) {
     throw new Error("A parent span must belong to the same trace; use a link for another trace.");
+  }
+  if (!isRoot && parentContext !== undefined) {
+    const localParent = trace.spans.find((span) => span.spanId === parentContext.spanId);
+    if (localParent?.endedAt !== undefined) {
+      throw new Error(`Cannot start a child after the parent span '${localParent.name}' has ended.`);
+    }
   }
   const context = isRoot
     ? {
@@ -554,6 +568,10 @@ function createSpanHandle(trace: RunTrace, span: Span): SpanHandle {
     },
     end(status = "ok", attributes = {}) {
       if (ended) return;
+      const activeDescendant = findActiveDescendant(trace, span);
+      if (activeDescendant !== undefined) {
+        throw new Error(`Cannot end span '${span.name}' while descendant span '${activeDescendant.name}' is active.`);
+      }
       const nextAttributes = compactAttributes({ ...span.attributes, ...attributes });
       assertRequiredSpanAttributes({ ...span, attributes: nextAttributes });
       ended = true;
@@ -568,6 +586,63 @@ function assertRequiredSpanAttributes(span: Span): void {
   for (const key of REQUIRED_SPAN_ATTRIBUTES[span.kind]) {
     if (span.attributes[key] === undefined) {
       throw new Error(`Span kind '${span.kind}' requires attribute '${key}'.`);
+    }
+  }
+  assertKnownNumericTraceAttributes(span.attributes, `Span kind '${span.kind}'`);
+}
+
+function findActiveDescendant(trace: RunTrace, ancestor: Span): Span | undefined {
+  const spansById = new Map(trace.spans.map((span) => [span.spanId, span]));
+  return trace.spans.find((candidate) => {
+    if (candidate === ancestor || candidate.endedAt !== undefined) return false;
+    const visited = new Set<string>();
+    let parentSpanId = candidate.parentSpanId;
+    while (parentSpanId !== undefined) {
+      if (parentSpanId === ancestor.spanId) return true;
+      if (visited.has(parentSpanId)) return false;
+      visited.add(parentSpanId);
+      parentSpanId = spansById.get(parentSpanId)?.parentSpanId;
+    }
+    return false;
+  });
+}
+
+function assertValidSpanTree(trace: RunTrace, root: Span, rootEndedAt: string): void {
+  const spansById = new Map(trace.spans.map((span) => [span.spanId, span]));
+  if (spansById.size !== trace.spans.length) {
+    throw new Error("A trace cannot contain duplicate span IDs.");
+  }
+  for (const span of trace.spans) {
+    const startedAt = Date.parse(span.startedAt);
+    const endedAtValue = span === root ? rootEndedAt : span.endedAt;
+    const endedAt = endedAtValue === undefined ? Number.NaN : Date.parse(endedAtValue);
+    if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) {
+      throw new Error(`Span '${span.name}' has an invalid temporal lifecycle.`);
+    }
+    if (span.parentSpanId === undefined) continue;
+    const parent = spansById.get(span.parentSpanId);
+    if (parent === undefined) continue;
+    const visited = new Set([span.spanId]);
+    let ancestor: Span | undefined = parent;
+    while (ancestor !== undefined) {
+      if (visited.has(ancestor.spanId)) {
+        throw new Error(`Span '${span.name}' has cyclic parentage.`);
+      }
+      visited.add(ancestor.spanId);
+      ancestor = ancestor.parentSpanId === undefined
+        ? undefined
+        : spansById.get(ancestor.parentSpanId);
+    }
+    const parentStartedAt = Date.parse(parent.startedAt);
+    const parentEndedAtValue = parent === root ? rootEndedAt : parent.endedAt;
+    const parentEndedAt = parentEndedAtValue === undefined ? Number.NaN : Date.parse(parentEndedAtValue);
+    if (
+      !Number.isFinite(parentStartedAt) ||
+      !Number.isFinite(parentEndedAt) ||
+      startedAt < parentStartedAt ||
+      endedAt > parentEndedAt
+    ) {
+      throw new Error(`Span '${span.name}' is outside parent span '${parent.name}' lifecycle.`);
     }
   }
 }
@@ -807,25 +882,6 @@ function wrapRunnerStream<TEvent extends RunnerEventEnvelope, TTerminal>(
     mirrored.finish();
   }
   return mirrored;
-}
-
-const SENSITIVE_ATTRIBUTE_KEY =
-  /(?:^|[._-])(authorization|cookie|credential|password|prompt|response|secret|raw[_-]?payload|tool[_-]?payload|pii)(?:$|[._-])/iu;
-
-function compactAttributes(attributes: KestrelTraceAttributes): Record<string, string | number | boolean> {
-  return Object.fromEntries(
-    Object.entries(attributes).flatMap(([key, value]) => {
-      if (SENSITIVE_ATTRIBUTE_KEY.test(key)) return [];
-      if (
-        typeof value === "string" ||
-        typeof value === "boolean" ||
-        (typeof value === "number" && Number.isFinite(value))
-      ) {
-        return [[key, value]];
-      }
-      return [];
-    }),
-  );
 }
 
 class MirroredRunnerStream<TEvent, TTerminal>

@@ -71,7 +71,7 @@ def build_terminal_bench_profile() -> dict:
     return {
         "id": TERMINAL_BENCH_PROFILE_ID,
         "label": "Terminal-Bench Kestrel",
-        "agent": "reference-react",
+        "agent": "kestrel",
         "sessionPrefix": TERMINAL_BENCH_SESSION_PREFIX,
         "modelProvider": config.model_provider,
         "model": config.model,
@@ -225,8 +225,8 @@ def assert_terminal_bench_profile_contract(profile: Mapping[str, object]) -> Non
     assert_benchmark_profile_mode(profile, "Terminal-Bench profile")
     if "storeDriver" in profile:
         raise AssertionError("Terminal-Bench profile must leave persistence selection to Local Core.")
-    if profile.get("agent") != "reference-react":
-        raise AssertionError("Terminal-Bench profile must use reference-react.")
+    if profile.get("agent") != "kestrel":
+        raise AssertionError("Terminal-Bench profile must use Kestrel.")
     if profile.get("modelProvider") != BENCHMARK_MODEL_PROVIDER:
         raise AssertionError("Terminal-Bench profile must use OpenRouter.")
     if profile.get("devShell") != {"enabled": True, "envMode": "inherit", "maxReadBytes": 131072}:

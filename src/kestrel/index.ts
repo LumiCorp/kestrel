@@ -222,6 +222,51 @@ export type {
   RecoveryStageV1,
 } from "./contracts/recovery.js";
 export {
+  BUDGET_ALLOCATION_VERSION,
+  BUDGET_LEDGER_ENTRY_VERSION,
+  BUDGET_POLICY_VERSION,
+  BUDGET_RESERVATION_VERSION,
+  BUDGET_RESOURCE_KEYS,
+  BUDGET_SCOPE_VERSION,
+  BUDGET_SNAPSHOT_VERSION,
+  BUDGET_USAGE_VERSION,
+  canonicalBudgetJson,
+  createBudgetPolicyV1,
+  digestBudgetCanonicalValue,
+  fingerprintBudgetPolicyV1,
+  fingerprintBudgetLedgerEntryV1,
+  isBudgetScopeAncestor,
+  parseBudgetAllocationV1,
+  parseBudgetAmountsV1,
+  parseBudgetLedgerEntryV1,
+  parseBudgetPolicyV1,
+  parseBudgetReservationV1,
+  parseBudgetReservationRequestV1,
+  parseBudgetScopeV1,
+  parseBudgetSnapshotV2,
+  parseBudgetTimestampV1,
+  parseBudgetUsageV1,
+} from "./contracts/budget.js";
+export type {
+  BudgetAllocationV1,
+  BudgetAmountsV1,
+  BudgetLedgerEntryV1,
+  BudgetLedgerOperationV1,
+  BudgetPolicyAllocationV1,
+  BudgetPolicyV1,
+  BudgetReservationPortV1,
+  BudgetReservationRequestV1,
+  BudgetReservationResultV1,
+  BudgetReservationV1,
+  BudgetResourceKeyV1,
+  BudgetScopeKindV1,
+  BudgetScopeSegmentV1,
+  BudgetScopeV1,
+  BudgetSnapshotV2,
+  BudgetUnknownCostResourceV1,
+  BudgetUsageV1,
+} from "./contracts/budget.js";
+export {
   COMPLETION_EVIDENCE_EVALUATOR_ID,
   COMPLETION_EVIDENCE_EVALUATOR_VERSION,
   EVALUATION_CALIBRATION_RECORD_VERSION,
@@ -285,6 +330,61 @@ export type {
   KestrelProfileDefinitionV1,
   KestrelRuntimeConfigurationModelRouteV1,
 } from "./contracts/profile.js";
+export {
+  MEMORY_BACKEND_VERSION,
+  MEMORY_LIFECYCLE_EVENT_VERSION,
+  MEMORY_LIFECYCLE_POLICY_VERSION,
+  MEMORY_NAMESPACES_V1,
+  MEMORY_QUERY_RESULT_VERSION,
+  MEMORY_QUERY_VERSION,
+  MEMORY_READ_BINDING_VERSION,
+  MEMORY_RECORD_PROVENANCE_VERSION,
+  MEMORY_TIER_POLICY_VERSION,
+  createMemoryLifecyclePolicyV1,
+  createMemoryTierPolicyV1,
+  fingerprintMemoryContractV1,
+  memoryScopesEqualV1,
+  parseMemoryBackendV1,
+  parseMemoryLifecycleEventV1,
+  parseMemoryLifecyclePolicyV1,
+  parseMemoryQueryResultV1,
+  parseMemoryQueryV1,
+  parseMemoryReadBindingV1,
+  parseMemoryRecordProvenanceV1,
+  parseMemoryTierPolicyV1,
+} from "./contracts/memory.js";
+export type {
+  MemoryBackendV1,
+  MemoryConfidenceProvenanceV1,
+  MemoryDocumentAccessV1,
+  MemoryLifecycleEventV1,
+  MemoryLifecyclePolicyV1,
+  MemoryNamespaceV1,
+  MemoryQueryResultItemV1,
+  MemoryQueryResultV1,
+  MemoryQueryV1,
+  MemoryReadBindingV1,
+  MemoryRecordProvenanceV1,
+  MemoryResultSegmentV1,
+  MemoryRetentionV1,
+  MemoryRetrievalStrategyV1,
+  MemoryScopeV1,
+  MemoryTierPolicyV1,
+} from "./contracts/memory.js";
+export {
+  MemoryAuthorizationError,
+  MemoryGateway,
+} from "../memory/MemoryGateway.js";
+export type {
+  MemoryBackendAdapterV1,
+  MemoryReadContextV1,
+} from "../memory/MemoryGateway.js";
+export {
+  InMemoryMemoryBackend,
+} from "../memory/InMemoryMemoryBackend.js";
+export type {
+  InMemoryMemoryRecordV1,
+} from "../memory/InMemoryMemoryBackend.js";
 export {
   COMPLETION_EVIDENCE_ASSERTIONS_V1,
   COMPLETION_EVIDENCE_ASSET_BUNDLE_V1,

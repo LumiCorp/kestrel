@@ -87,7 +87,7 @@ export type {
   OperatorWaitSummary,
 };
 
-export type SupportedAgent = "reference-react";
+export type SupportedAgent = "kestrel" | "reference-react";
 export type ModelProviderId =
   | "openrouter"
   | "openai"

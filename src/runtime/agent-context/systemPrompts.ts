@@ -134,7 +134,7 @@ export function resolveDeliberatorPromptVariant(
   ) {
     return input.promptVariant;
   }
-  return `reference-react:${normalizedInteractionMode}`;
+  return `kestrel:${normalizedInteractionMode}`;
 }
 
 export function buildDeliberatorSystemPrompt(input: DeliberatorPromptInput): string {

@@ -96,60 +96,15 @@ export KESTREL_RUNNER_SERVICE_TOKEN='...'
 - `Ctrl+F` contextual search (sessions/activity screens)
 - `?` still opens help when not focused in composer
 
-## Profiles (v4)
+## Profiles (v10)
 
 Profiles are loaded from `~/.kestrel/profiles.json` and bootstrapped automatically on first run.
 Workspace catalog entries do not override the active profile.
 
-Schema:
-
-```json
-{
-  "version": 4,
-  "profiles": [
-    {
-      "id": "reference",
-      "label": "Reference React",
-      "agent": "reference-react",
-      "sessionPrefix": "reference",
-      "reasoning": {
-        "request": {
-          "mode": "provider_visible",
-          "effort": "medium"
-        },
-        "retention": {
-          "mode": "live_only",
-          "days": 7
-        }
-      },
-      "toolAllowlist": ["free.exchange.rate", "free.time.current", "code.execute"],
-      "codeMode": {
-        "enabled": true,
-        "languages": ["javascript", "python", "bash"],
-        "sandbox": {
-          "executor": "docker",
-          "timeoutMs": 20000,
-          "memoryMb": 256,
-          "cpuShares": 256,
-          "workspaceSizeMb": 64,
-          "workspaceInodes": 8192,
-          "tmpSizeMb": 32,
-          "tmpInodes": 2048,
-          "networkDefault": "off",
-          "allowDependencyInstall": false
-        },
-        "retention": {
-          "persistSummary": true,
-          "persistArtifacts": true
-        },
-        "approvalMode": "auto"
-      },
-      "mcpServers": [],
-      "default": true
-    }
-  ]
-}
-```
+V10 contains one canonical `kestrel` profile definition and one or more
+environment bindings. Alternate profile and agent identities are rejected.
+V2-V9 files migrate automatically with a byte-for-byte backup and migration
+report; unsupported legacy or custom profile authority is omitted.
 
 `request.mode` controls whether the provider is asked for a summary or its
 provider-visible reasoning format. It does not request unavailable raw

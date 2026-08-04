@@ -14,7 +14,7 @@ Use this reference when your server already speaks an OpenAI-style HTTP contract
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /v1/models` | Return the fixed `reference-react` compatibility model |
+| `GET /v1/models` | Return the fixed `kestrel` compatibility model |
 | `POST /v1/chat/completions` | Submit chat-completion shaped input |
 | `POST /v1/responses` | Submit responses-shaped input |
 
@@ -32,9 +32,9 @@ Do not expose this token to browser code. Resolve the authenticated user, tenant
 
 ## Model identifiers
 
-The compatibility layer accepts `reference-react` and the `reference-web`
-alias. `/v1/models` lists `reference-react`; it does not enumerate arbitrary
-CLI or runner profiles. Unknown model IDs are rejected.
+The compatibility layer accepts only `kestrel`. `/v1/models` lists that
+canonical model; it does not enumerate arbitrary CLI or runner profiles.
+Unknown model IDs are rejected.
 
 ## Streaming
 
