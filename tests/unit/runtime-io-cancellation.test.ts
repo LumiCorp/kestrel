@@ -16,7 +16,7 @@ import type { ModelGatewayCallOptions, ModelRequest, ModelUsage, ToolGateway } f
 import type { RuntimeStore } from "../../src/kestrel/contracts/store.js";
 import { buildAgentToolFailedOutputResult } from "../../tools/toolResult.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
-
+import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 
 const guardrailConfig = {
   maxStepsPerRun: 10,
@@ -75,6 +75,68 @@ test("RuntimeIO.model does not emit completion when aborted after provider retur
   assert.ok(emitted.includes("MODEL_CALL_FAILED"));
   assert.equal(emitted.includes("model.completed"), false);
   assert.equal(emitted.includes("MODEL_CALL_DONE"), false);
+});
+
+test("RuntimeIO persists provider-boundary decisions and redacts requests and responses", async () => {
+  const emitted: string[] = [];
+  const modelRequests: ModelRequest[] = [];
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  boundaryRuntime.sensitiveValues.register({
+    reference: {
+      referenceId: "credential:model-test",
+      kind: "credential",
+      scope: "model",
+    },
+    value: "test-provider-secret",
+  });
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted,
+    modelRequests,
+    executionBoundaryRuntime: boundaryRuntime,
+    modelCall: async () => ({ text: "answer test-provider-secret" }),
+  });
+
+  const result = await io.model<{ text: string }>({
+    input: { prompt: "use test-provider-secret" },
+    messages: [{ role: "user", content: "use test-provider-secret" }],
+  });
+
+  assert.equal(readRecord(modelRequests[0]?.input)?.prompt, "use [REDACTED]");
+  assert.equal(modelRequests[0]?.messages?.[0]?.content, "use [REDACTED]");
+  assert.equal(result.text, "answer [REDACTED]");
+  assert.ok(emitted.filter((event) => event === "execution_boundary.decision").length >= 2);
+  assert.ok(
+    emitted.indexOf("execution_boundary.decision") < emitted.indexOf("model.requested"),
+  );
+});
+
+test("RuntimeIO does not return registered sensitive values in provider failures", async () => {
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  boundaryRuntime.sensitiveValues.register({
+    reference: {
+      referenceId: "credential:model-error",
+      kind: "credential",
+      scope: "model",
+    },
+    value: "provider-error-secret",
+  });
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    executionBoundaryRuntime: boundaryRuntime,
+    modelCall: async () => {
+      throw new Error("provider rejected provider-error-secret");
+    },
+  });
+
+  await assert.rejects(
+    () => io.model(modelRequest()),
+    (error) =>
+      error instanceof Error &&
+      error.message === "provider rejected [REDACTED]" &&
+      error.message.includes("provider-error-secret") === false,
+  );
 });
 
 test("RuntimeIO projects typed provider attempts into live start and durable retry progress", async () => {
@@ -182,6 +244,66 @@ test("RuntimeIO.tool does not emit completion when aborted after tool return", a
   assert.ok(emitted.includes("TOOL_CALL_STARTED"));
   assert.ok(emitted.includes("TOOL_CALL_FAILED"));
   assert.equal(emitted.includes("TOOL_CALL_DONE"), false);
+});
+
+test("RuntimeIO quarantines registered sensitive values before tool dispatch", async () => {
+  const emitted: string[] = [];
+  let toolCalled = false;
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  boundaryRuntime.sensitiveValues.register({
+    reference: {
+      referenceId: "credential:tool-test",
+      kind: "credential",
+      scope: "tool",
+    },
+    value: "test-tool-secret",
+  });
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted,
+    executionBoundaryRuntime: boundaryRuntime,
+    toolCall: async () => {
+      toolCalled = true;
+      return { ok: true };
+    },
+  });
+
+  await assert.rejects(
+    () => io.tool("fs.read_text", { path: "test-tool-secret" }),
+    (error) => readErrorCode(error) === "EXECUTION_BOUNDARY_QUARANTINED",
+  );
+
+  assert.equal(toolCalled, false);
+  assert.ok(emitted.includes("execution_boundary.decision"));
+  assert.equal(emitted.includes("TOOL_CALL_STARTED"), false);
+});
+
+test("RuntimeIO redacts registered sensitive values from tool failures", async () => {
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  boundaryRuntime.sensitiveValues.register({
+    reference: {
+      referenceId: "credential:tool-error",
+      kind: "credential",
+      scope: "tool",
+    },
+    value: "tool-error-secret",
+  });
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    executionBoundaryRuntime: boundaryRuntime,
+    toolCall: async () => {
+      throw new Error("tool rejected tool-error-secret");
+    },
+  });
+
+  await assert.rejects(
+    () => io.tool("fs.read_text", { path: "README.md" }),
+    (error) =>
+      error instanceof Error &&
+      error.message === "tool rejected [REDACTED]" &&
+      error.message.includes("tool-error-secret") === false,
+  );
 });
 
 test("RuntimeIO never retries exec_command after dispatch", async () => {
@@ -497,6 +619,7 @@ function createRuntimeIO(input: {
   runtimeMetadata?: Record<string, unknown> | undefined;
   consoleUpdates?: RunConsoleUpdateV1[] | undefined;
   progressUpdates?: ProgressUpdateV1[] | undefined;
+  executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
 }): RuntimeIO {
   let seq = 0;
   const store = {
@@ -609,6 +732,8 @@ function createRuntimeIO(input: {
     },
     afterToolResult: async () => {},
     isRetryableToolError: () => input.retryableToolErrors === true,
+    executionBoundaryRuntime:
+      input.executionBoundaryRuntime ?? new ExecutionBoundaryPolicyRuntime(),
   });
 }
 

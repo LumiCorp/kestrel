@@ -23,6 +23,8 @@ export function createToolConsoleBridge(input: {
   toolName: string;
   input: unknown;
   sequence: () => number;
+  transformText?: ((text: string) => string | Promise<string>) | undefined;
+  flushText?: (() => string | Promise<string>) | undefined;
 }): {
   sink: ToolConsoleSink | undefined;
   emitStatus: (status: "started" | "completed" | "failed", result?: unknown) => Promise<void>;
@@ -62,7 +64,10 @@ export function createToolConsoleBridge(input: {
     });
   };
   const sink: ToolConsoleSink = async (event) => {
-    if (event.text.length === 0) {
+    const transformedText = input.transformText === undefined
+      ? event.text
+      : await input.transformText(event.text);
+    if (transformedText.length === 0) {
       return;
     }
     if (truncated) {
@@ -74,7 +79,7 @@ export function createToolConsoleBridge(input: {
       return;
     }
     const limited = takeUtf8Prefix(
-      event.text,
+      transformedText,
       Math.min(DEV_SHELL_CONSOLE_CHUNK_MAX_BYTES, remainingBytes),
     );
     if (limited.text.length === 0) {
@@ -102,6 +107,15 @@ export function createToolConsoleBridge(input: {
   return {
     sink,
     emitStatus: async (status, result) => {
+      const tail = await input.flushText?.();
+      if (tail !== undefined && tail.length > 0) {
+        await emitUpdate({
+          status: "chunk",
+          channel: "merged",
+          text: tail,
+          byteLength: Buffer.byteLength(tail, "utf8"),
+        });
+      }
       const completedOutput = readAgentToolOutput(result);
       await emitUpdate({
         status,

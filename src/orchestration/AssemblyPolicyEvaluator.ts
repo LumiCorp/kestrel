@@ -5,8 +5,17 @@ import type {
   ThreadRecord,
 } from "./contracts.js";
 import { readAssemblyCompatibilityMetadata } from "./AssemblyCompatibility.js";
+import { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export class AssemblyPolicyEvaluator {
+  constructor(
+    private readonly boundaryRuntime = new ExecutionBoundaryPolicyRuntime(),
+  ) {}
+
+  get executionBoundaryPolicyRevision(): string {
+    return this.boundaryRuntime.policy.revision;
+  }
+
   evaluate(input: {
     thread: ThreadRecord;
     currentBundle?: AssemblyBundleRecord | undefined;
@@ -14,6 +23,45 @@ export class AssemblyPolicyEvaluator {
     proposal: AssemblyChangeProposalRecord;
   }): AssemblyChangeDecisionRecord {
     const now = new Date().toISOString();
+    const boundary = this.boundaryRuntime.evaluate({
+      boundary: "assembly_change",
+      identity: {
+        runId: input.proposal.proposalId,
+        sessionId: input.thread.sessionId,
+      },
+      source: input.proposal.proposedBy === "model"
+        ? "model"
+        : input.proposal.proposedBy === "operator"
+          ? "user"
+          : "runtime",
+      trust: input.proposal.proposedBy === "policy" ? "control" : "data",
+      sourceId: input.proposal.proposalId,
+      value: input.proposal,
+      handling: "quarantine",
+    });
+    const proposedPolicyRevision = asRecord(input.proposal.metadata)
+      ?.executionBoundaryPolicyRevision;
+    if (
+      proposedPolicyRevision !== this.boundaryRuntime.policy.revision ||
+      boundary.decision.outcome === "QUARANTINE"
+    ) {
+      return {
+        decisionId: `assembly-decision:${input.proposal.proposalId}`,
+        threadId: input.thread.threadId,
+        proposalId: input.proposal.proposalId,
+        result: "REJECTED",
+        decidedBy: "policy",
+        reason: boundary.decision.outcome === "QUARANTINE"
+          ? "Assembly proposal contains registered sensitive material."
+          : "Assembly proposal execution-boundary policy revision is missing or stale.",
+        metadata: {
+          executionBoundaryDecision: boundary.decision,
+          expectedPolicyRevision: this.boundaryRuntime.policy.revision,
+          proposedPolicyRevision,
+        },
+        createdAt: now,
+      };
+    }
     const requestedToolAllowlist =
       input.proposal.requestedToolAllowlist ??
       input.requestedBundle?.toolAllowlist ??
@@ -48,6 +96,7 @@ export class AssemblyPolicyEvaluator {
         decidedBy: "policy",
         reason: `Unknown assembly bundle '${input.proposal.requestedBundleId}'.`,
         metadata: {
+          executionBoundaryDecision: boundary.decision,
           requestedBundleId: input.proposal.requestedBundleId,
         },
         createdAt: now,
@@ -66,6 +115,7 @@ export class AssemblyPolicyEvaluator {
           ? { resultingBundleId: input.requestedBundle.bundleId }
           : {}),
         metadata: {
+          executionBoundaryDecision: boundary.decision,
           currentToolAllowlist,
           requestedToolAllowlist,
           currentProvider: currentCompatibility.modelProvider,
@@ -100,6 +150,7 @@ export class AssemblyPolicyEvaluator {
           ? { resultingBundleId: input.requestedBundle.bundleId }
           : {}),
         metadata: {
+          executionBoundaryDecision: boundary.decision,
           currentToolAllowlist,
           requestedToolAllowlist,
           currentProvider: currentCompatibility.modelProvider,
@@ -127,6 +178,7 @@ export class AssemblyPolicyEvaluator {
         ? { resultingBundleId: input.requestedBundle.bundleId }
         : {}),
       metadata: {
+        executionBoundaryDecision: boundary.decision,
         currentToolAllowlist,
         requestedToolAllowlist,
         currentProvider: currentCompatibility.modelProvider,

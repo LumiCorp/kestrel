@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
-import { finalizeRuntimeAssistantResponse } from "../../src/runtime/assistantResponseContract.js";
+import { enforceRuntimeAssistantResponseBoundary, finalizeRuntimeAssistantResponse } from "../../src/runtime/assistantResponseContract.js";
+import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 
 test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stale assistant text", () => {
   const result = finalizeRuntimeAssistantResponse({
@@ -88,6 +89,30 @@ test("finalizeRuntimeAssistantResponse preserves completed and non-user wait beh
   assert.equal(completed.assistantText, "Completed response.");
   assert.equal(effectWait.assistantText, null);
   assert.equal(effectWait.output.waitFor?.interaction, undefined);
+});
+
+test("assistant response boundary redacts registered values before durable output", async () => {
+  const runtime = new ExecutionBoundaryPolicyRuntime();
+  runtime.sensitiveValues.register({
+    reference: {
+      referenceId: "credential:assistant",
+      kind: "credential",
+      scope: "test",
+    },
+    value: "assistant-secret",
+  });
+  const persisted: unknown[] = [];
+  const result = await enforceRuntimeAssistantResponseBoundary({
+    output: output("COMPLETED"),
+    assistantText: "The value is assistant-secret.",
+    executionBoundaryRuntime: runtime,
+    persist: (decision) => {
+      persisted.push(decision);
+    },
+  });
+  assert.equal(result.assistantText, "The value is [REDACTED].");
+  assert.equal(persisted.length, 1);
+  assert.equal(JSON.stringify(persisted).includes("assistant-secret"), false);
 });
 
 function output(

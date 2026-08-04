@@ -14,6 +14,7 @@ import {
   type ShellPresetId,
 } from "./runtimeProfile.js";
 import { resolveProfileWithRecoveryPolicy } from "./recoveryPolicy.js";
+import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
 
 export const KESTREL_POLICY_ID = "kestrel";
 export const KESTREL_POLICY_LABEL = "Kestrel";
@@ -429,9 +430,12 @@ export function fingerprintResolvedProfile(
   return createHash("sha256")
     .update(
       stableJson(
-        revisionProvenance === undefined
-          ? profile
-          : { profile, revisionProvenance },
+        {
+          profile,
+          executionBoundaryPolicyRevision:
+            KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+          ...(revisionProvenance !== undefined ? { revisionProvenance } : {}),
+        },
       ),
     )
     .digest("hex");

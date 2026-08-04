@@ -13,6 +13,7 @@ import {
   RuntimeFailure,
 } from "../../src/runtime/RuntimeFailure.js";
 import { validateWorkspaceSkillPackage } from "../../src/skills/index.js";
+import { SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
 import type {
   InternetExtractOutput,
   InternetFetchResult,
@@ -581,6 +582,7 @@ test("UnifiedToolRegistry turns Project App ask policy into a runtime approval g
 test("UnifiedToolRegistry routes a direct Environment App through scoped execution authorization", async () => {
   let requestUrl = "";
   let authorization = "";
+  const sensitiveValueRegistry = new SensitiveValueRegistry();
   const registry = new UnifiedToolRegistry({
     allowlist: ["internet.usage"],
     context: {
@@ -605,6 +607,7 @@ test("UnifiedToolRegistry routes a direct Environment App through scoped executi
       servers: [],
       tools: [],
     }),
+    sensitiveValueRegistry,
   });
   await registry.refreshForRuntimeTurn({
     runId: "run-environment-app",
@@ -628,7 +631,12 @@ test("UnifiedToolRegistry routes a direct Environment App through scoped executi
     "https://kestrel.example/api/runtime/apps/tavily/usage/auto/usage"
   );
   assert.equal(authorization, "Bearer signed-run-ticket");
+  assert.deepEqual(
+    sensitiveValueRegistry.registeredValueDigests().map((entry) => entry.referenceId),
+    ["execution-ticket:run-environment-app"],
+  );
   registry.clearRuntimeTurnAuthorization("run-environment-app");
+  assert.deepEqual(sensitiveValueRegistry.registeredValueDigests(), []);
 });
 
 // Regression guard: production has two real IDs here. Keeping them different

@@ -14,6 +14,7 @@ import {
 } from "../profile/runtimeProfile.js";
 import { fingerprintResolvedProfile } from "../profile/kestrelOnePolicy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
 
 export class AssemblyCatalog {
   private readonly store: OrchestrationStore;
@@ -153,6 +154,10 @@ export class AssemblyCatalog {
             ...(this.profile.harnessEconomics !== undefined
               ? { harnessEconomics: this.profile.harnessEconomics }
               : {}),
+            executionBoundaryPolicyId:
+              KESTREL_EXECUTION_BOUNDARY_POLICY.policyId,
+            executionBoundaryPolicyRevision:
+              KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
           },
           compatibility,
         ),

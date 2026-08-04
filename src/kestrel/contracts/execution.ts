@@ -304,6 +304,7 @@ export interface RuntimeDependencies {
   runEventListener?: ((event: PersistedRuntimeEvent) => void | Promise<void>) | undefined;
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
   recoveryRuntime?: import("../../engine/recovery/RecoveryCoordinator.js").RecoveryRuntimeConfiguration | undefined;
+  executionBoundaryRuntime?: import("../../security/ExecutionBoundaryPolicy.js").ExecutionBoundaryPolicyRuntime | undefined;
 }
 
 export type { ManagedTaskWorktreeBinding, ManagedTaskWorktreeService };

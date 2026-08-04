@@ -116,6 +116,27 @@ export type {
   ToolExternalEffectStateV1,
 } from "./contracts/tool-invocation.js";
 export {
+  BOUNDARY_CONTENT_PROVENANCE_VERSION,
+  EXECUTION_BOUNDARIES,
+  EXECUTION_BOUNDARY_DECISION_VERSION,
+  EXECUTION_BOUNDARY_POLICY_VERSION,
+  createExecutionBoundaryPolicyV1,
+  digestCanonicalValue,
+  fingerprintExecutionBoundaryPolicyV1,
+  parseBoundaryContentProvenanceV1,
+  parseExecutionBoundaryDecisionV1,
+  parseExecutionBoundaryPolicyV1,
+  parseSensitiveValueReferenceV1,
+} from "./contracts/execution-boundary-policy.js";
+export type {
+  BoundaryContentProvenanceV1,
+  ExecutionBoundaryDecisionV1,
+  ExecutionBoundaryOutcomeV1,
+  ExecutionBoundaryPolicyV1,
+  ExecutionBoundaryV1,
+  SensitiveValueReferenceV1,
+} from "./contracts/execution-boundary-policy.js";
+export {
   RECOVERY_DECISION_VERSION,
   RECOVERY_POLICY_VERSION,
   RECOVERY_REVIEW_BINDING_VERSION,

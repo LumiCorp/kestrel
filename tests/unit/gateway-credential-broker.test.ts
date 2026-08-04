@@ -317,6 +317,8 @@ test(
   async () => {
     let loads = 0;
     let providerCalls = 0;
+    const registeredLeases: string[] = [];
+    const releasedLeases: string[] = [];
     const requestedModels: Array<string | undefined> = [];
     const cache = new GatewayCredentialLeaseCache({
       random: () => 0,
@@ -331,6 +333,10 @@ test(
     const gateway = new BrokeredModelGateway({
       reference,
       cache,
+      onLease: (currentLease) => {
+        registeredLeases.push(currentLease.leaseId);
+        return () => releasedLeases.push(currentLease.leaseId);
+      },
       createProvider: (currentLease) =>
         ({
           async call<T>(request: Parameters<ModelGateway["call"]>[0]) {
@@ -359,6 +365,8 @@ test(
       reference.rawModelId,
       reference.rawModelId,
     ]);
+    assert.deepEqual(registeredLeases, ["lease-1", "lease-2"]);
+    assert.deepEqual(releasedLeases, ["lease-1"]);
   },
 );
 
