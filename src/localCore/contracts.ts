@@ -19,6 +19,47 @@ export {
 export const LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION = 1;
 export const LOCAL_CORE_DESKTOP_PROFILE_ID = "local-core-desktop";
 export const LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION = 1;
+export const LOCAL_CORE_BUILD_IDENTITY_VERSION = "local_core_build_identity_v1";
+
+export interface LocalCoreBuildIdentityV1 {
+  version: typeof LOCAL_CORE_BUILD_IDENTITY_VERSION;
+  buildId: `sha256:${string}`;
+  suiteVersion: string;
+  source: "source_tree" | "packaged_payload";
+  sourceCommit?: string | undefined;
+}
+
+export function parseLocalCoreBuildIdentity(value: unknown): LocalCoreBuildIdentityV1 {
+  const record = requireLocalCoreRecord(value, "build identity");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set(["version", "buildId", "suiteVersion", "source", "sourceCommit"]),
+    "build identity",
+  );
+  if (record.version !== LOCAL_CORE_BUILD_IDENTITY_VERSION) {
+    throw new Error(
+      `Local Core build identity.version must be ${LOCAL_CORE_BUILD_IDENTITY_VERSION}.`,
+    );
+  }
+  const buildId = requireLocalCoreString(record.buildId, "build identity.buildId");
+  if (/^sha256:[a-f0-9]{64}$/u.test(buildId) === false) {
+    throw new Error("Local Core build identity.buildId must be a canonical SHA-256 digest.");
+  }
+  if (record.source !== "source_tree" && record.source !== "packaged_payload") {
+    throw new Error("Local Core build identity.source is invalid.");
+  }
+  const sourceCommit = parseOptionalLocalCoreString(record, "sourceCommit", "build identity");
+  if (sourceCommit !== undefined && /^[a-f0-9]{40}$/u.test(sourceCommit) === false) {
+    throw new Error("Local Core build identity.sourceCommit must be a full Git commit.");
+  }
+  return {
+    version: LOCAL_CORE_BUILD_IDENTITY_VERSION,
+    buildId: buildId as `sha256:${string}`,
+    suiteVersion: requireLocalCoreString(record.suiteVersion, "build identity.suiteVersion"),
+    source: record.source,
+    ...(sourceCommit !== undefined ? { sourceCommit } : {}),
+  };
+}
 /**
  * An advertised Local Core capability required before Desktop can submit or
  * prepare an execution. This is deliberately separate from the shell/Core
@@ -269,6 +310,10 @@ export type LocalCoreSystemShutdownRequest =
   | {
       reason: "desktop_restart";
       confirm: "shutdown-local-core-for-desktop-restart";
+    }
+  | {
+      reason: "code_update";
+      confirm: "shutdown-local-core-for-code-update";
     };
 
 export type LocalCoreSystemShutdownResult =
@@ -383,8 +428,17 @@ export function parseLocalCoreSystemShutdownRequest(
       confirm: "shutdown-local-core-for-desktop-restart",
     };
   }
+  if (
+    record.reason === "code_update" &&
+    record.confirm === "shutdown-local-core-for-code-update"
+  ) {
+    return {
+      reason: "code_update",
+      confirm: "shutdown-local-core-for-code-update",
+    };
+  }
   throw new Error(
-    "Local Core shutdown requires an exact uninstall, Desktop update, or Desktop restart confirmation payload.",
+    "Local Core shutdown requires an exact uninstall, Desktop update, Desktop restart, or code update confirmation payload.",
   );
 }
 
@@ -403,7 +457,8 @@ export function parseLocalCoreSystemShutdownResult(
   if (
     record.reason !== "uninstall" &&
     record.reason !== "desktop_update" &&
-    record.reason !== "desktop_restart"
+    record.reason !== "desktop_restart" &&
+    record.reason !== "code_update"
   ) {
     throw new Error("Local Core system shutdown result.reason is invalid.");
   }

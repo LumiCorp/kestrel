@@ -94,11 +94,8 @@ resolve_cli_source() {
 }
 
 echo "[kestrel] building CLI"
-if pnpm build; then
-  echo "[kestrel] build complete"
-else
-  echo "[kestrel] build failed; continuing with source-backed CLI shims"
-fi
+pnpm build
+echo "[kestrel] build complete"
 
 echo "[kestrel] installing source-backed CLI shims"
 install_bin_shims

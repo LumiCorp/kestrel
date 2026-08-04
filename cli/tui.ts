@@ -113,6 +113,7 @@ export function formatKestrelHelp(): string {
     "",
     "Commands:",
     "  status",
+    "  core status|restart [--wait]",
     "  workspace status|list",
     "  web [--host <host>] [--port <port>] [--token <token>]",
     "  job run --json-in <file> --json-out <file> [--profile <id>]",

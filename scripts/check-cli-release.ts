@@ -7,6 +7,12 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { parseRunnerHealthV1 } from "../packages/protocol/src/index.js";
+import {
+  LOCAL_CORE_BUILD_MANIFEST_NAME,
+  createSourceLocalCoreBuildIdentity,
+  resolveLocalCoreBuildIdentity,
+  verifyLocalCoreWorkspacePackagePayloads,
+} from "../src/localCore/buildIdentity.js";
 
 const root = resolveRepoRoot(process.cwd());
 const TARGET_VERSION = readRootPackageVersion(root);
@@ -15,7 +21,10 @@ const TARGET_ARCH = process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
 const REMOVED_CLI_NAMES = ["kwork", "kchat", "kcode"] as const;
 const REQUIRED_LIBEXEC_PATHS = [
+  LOCAL_CORE_BUILD_MANIFEST_NAME,
   "package.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
   "tsconfig.json",
   "cli/tui.ts",
   "cli/kcron.ts",
@@ -45,6 +54,11 @@ const REQUIRED_LIBEXEC_PATHS = [
   "src/localCore/protocolEventJournal.ts",
   "src/localCore/runtimeEnvironment.ts",
   "src/localCore/store.ts",
+  "packages/mcp-security/src/index.ts",
+  "packages/protocol/dist/index.js",
+  "packages/workspace-skills/dist/index.js",
+  "packages/memory/dist/index.js",
+  "packages/environment-auth/dist/index.js",
   "src/replay/RuntimeReplayBundle.ts",
   ...(TARGET_PLATFORM === "darwin"
     ? [
@@ -121,6 +135,8 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
     platform?: unknown;
     arch?: unknown;
     entrypoint?: unknown;
+    coreBuildId?: unknown;
+    coreBuildManifest?: unknown;
   };
   if (bundleManifest.version !== "kestrel_cli_bundle_v1") {
     errors.push("artifact kestrel-bundle.json must use kestrel_cli_bundle_v1");
@@ -136,6 +152,38 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   }
   if (bundleManifest.entrypoint !== "bin/kestrel") {
     errors.push("artifact bundle manifest entrypoint must be bin/kestrel");
+  }
+  let coreBuildIdentity;
+  try {
+    coreBuildIdentity = resolveLocalCoreBuildIdentity({
+      runtimeRoot: path.join(extractRoot, "libexec"),
+      suiteVersion: TARGET_VERSION,
+      manifestRequired: true,
+    });
+    verifyLocalCoreWorkspacePackagePayloads({
+      sourceRoot: root,
+      dependencyRoot: path.join(extractRoot, "libexec"),
+    });
+  } catch (error) {
+    errors.push(`artifact Local Core build identity is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (coreBuildIdentity !== undefined) {
+    const sourceIdentity = createSourceLocalCoreBuildIdentity({
+      runtimeRoot: root,
+      suiteVersion: TARGET_VERSION,
+    });
+    if (bundleManifest.coreBuildId !== coreBuildIdentity.buildId) {
+      errors.push("artifact bundle manifest coreBuildId must match the embedded Local Core build identity");
+    }
+    if (bundleManifest.coreBuildManifest !== `libexec/${LOCAL_CORE_BUILD_MANIFEST_NAME}`) {
+      errors.push("artifact bundle manifest coreBuildManifest is invalid");
+    }
+    if (coreBuildIdentity.source !== "packaged_payload") {
+      errors.push("artifact Local Core build identity must describe a packaged payload");
+    }
+    if (coreBuildIdentity.buildId !== sourceIdentity.buildId) {
+      errors.push("artifact Local Core build identity does not match current runtime inputs");
+    }
   }
   const binRoot = path.join(extractRoot, "bin");
   const libexecRoot = realpathSync(path.join(extractRoot, "libexec"));
@@ -180,22 +228,20 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   }
 
   const runtimePackage = readJson(path.join(libexecRoot, "package.json")) as {
+    name?: unknown;
     version?: unknown;
-    dependencies?: Record<string, unknown> | undefined;
+    type?: unknown;
   };
+  if (runtimePackage.name !== "@kestrel-agents/kestrel" || runtimePackage.type !== "module") {
+    errors.push("libexec/package.json must preserve the canonical source runtime descriptor");
+  }
   if (runtimePackage.version !== TARGET_VERSION) {
     errors.push(`libexec/package.json version must be ${TARGET_VERSION}; found ${String(runtimePackage.version)}`);
   }
   for (const dependency of REQUIRED_DEPENDENCIES) {
-    if (runtimePackage.dependencies?.[dependency] === undefined) {
-      errors.push(`libexec/package.json must include dependency '${dependency}'`);
-    }
     if (!existsSync(path.join(libexecRoot, "node_modules", dependency, "package.json"))) {
       errors.push(`artifact missing libexec/node_modules/${dependency}`);
     }
-  }
-  if (runtimePackage.dependencies?.["@kestrel-agents/protocol"] !== TARGET_VERSION) {
-    errors.push(`libexec/package.json must declare @kestrel-agents/protocol ${TARGET_VERSION}`);
   }
   const installedProtocolPath = path.join(
     libexecRoot,
@@ -210,8 +256,8 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
       errors.push(`artifact must install @kestrel-agents/protocol ${TARGET_VERSION}`);
     }
   }
-  if (existsSync(path.join(libexecRoot, "packages", "protocol"))) {
-    errors.push("artifact must install protocol from its packed artifact, not copied package source");
+  if (existsSync(path.join(libexecRoot, "packages", "protocol", "src"))) {
+    errors.push("artifact Local Core build inputs must include only the built protocol payload, not package source");
   }
 
   for (const envFile of collectLocalEnvFiles(libexecRoot)) {
@@ -252,8 +298,10 @@ async function runSmokeChecks(extractRoot: string): Promise<void> {
     const versionPattern = new RegExp(escapeRegExp(TARGET_VERSION), "u");
     expectOutput(kestrel, ["--version"], cwd, env, versionPattern, "kestrel --version");
     expectOutput(kestrel, ["--help"], cwd, env, /Usage: kestrel/u, "kestrel --help");
+    expectOutput(kestrel, ["core", "status"], cwd, env, /Expected build: sha256:[a-f0-9]{64}/u, "kestrel core status");
     expectOutput(kestrel, ["workspace", "status"], cwd, env, /Workspace:/u, "kestrel workspace status");
     expectOutput(kestrel, ["status"], cwd, env, /Kestrel Local Core|Local Core/u, "kestrel status");
+    expectOutput(kestrel, ["core", "restart"], cwd, env, /(?:Started|Restarted) Kestrel Local Core/u, "kestrel core restart");
     expectOutput(kcron, ["--version"], cwd, env, versionPattern, "kcron --version");
     expectOutput(kcron, ["status"], cwd, env, /kcron:/u, "kcron status");
     smokePackagedProtocolClient(extractRoot, cwd, env);

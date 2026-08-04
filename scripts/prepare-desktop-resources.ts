@@ -8,6 +8,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  copyLocalCoreBuildInputs,
+  writePackagedLocalCoreBuildIdentity,
+} from "../src/localCore/buildIdentity.js";
 
 export const DESKTOP_RESOURCE_DIRECTORIES = [
   "cli",
@@ -18,6 +22,7 @@ export const DESKTOP_RESOURCE_DIRECTORIES = [
   "models",
   "bin",
   "scripts",
+  "packages/mcp-security",
 ] as const;
 
 export const DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS = [
@@ -56,6 +61,22 @@ export function prepareDesktopRuntimePayload(repoRoot: string): string {
       filter: shouldCopyDesktopResourceEntry,
     });
   }
+
+  const rootPackage = JSON.parse(
+    readFileSync(path.join(repoRoot, "package.json"), "utf8"),
+  ) as { version?: unknown };
+  if (typeof rootPackage.version !== "string" || rootPackage.version.trim().length === 0) {
+    throw new Error("Desktop runtime payload requires a root package version.");
+  }
+  copyLocalCoreBuildInputs({
+    sourceRoot: repoRoot,
+    targetRoot: payloadDir,
+  });
+  writePackagedLocalCoreBuildIdentity({
+    sourceRoot: repoRoot,
+    targetRoot: payloadDir,
+    suiteVersion: rootPackage.version,
+  });
 
   console.log(`[desktop] prepared Local Core payload in ${payloadDir}`);
   return payloadDir;

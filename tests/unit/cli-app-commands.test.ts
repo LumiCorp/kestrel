@@ -38,6 +38,7 @@ import type { TuiSessionMeta } from "../../cli/contracts.js";
 import type { OperatorDelegationWorkspaceSnapshot } from "../../src/operatorShell.js";
 import type { LocalCoreStatus } from "../../src/localCore/contracts.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
+import { resolveLocalCoreBuildIdentity } from "../../src/localCore/buildIdentity.js";
 
 
 test("Local Core platform parsing accepts exact Node platform values", () => {
@@ -398,6 +399,10 @@ test("bootstrapTuiApp carries a custom home's resolved Core transport into the A
     env: { KESTREL_HOME: home },
     platform: "darwin",
     coreVersion: "0.7.0",
+    buildIdentity: resolveLocalCoreBuildIdentity({
+      runtimeRoot: process.cwd(),
+      suiteVersion: "0.7.0",
+    }),
     idleTimeoutMs: 0,
   });
   let initialServerClosed = false;
@@ -765,20 +770,20 @@ test("runSplashDatabasePreflight still requires DATABASE_URL for explicit postgr
   );
 });
 
-test("profiles use rebinds the active session and subsequent history to the selected profile", async () => {
+test("profiles use rebinds the active session and subsequent history to the canonical profile", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
   await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
     kind: "command",
     command: "profiles",
-    args: ["use", "reference"],
+    args: ["use", "kestrel"],
   });
 
   const state = (appState.uiStore as UiStore).getState();
-  assert.equal(state.activeProfile.id, "reference");
-  assert.equal(state.activeSession.profileId, "reference");
-  assert.equal(state.sessions[0]?.profileId, "reference");
+  assert.equal(state.activeProfile.id, "kestrel");
+  assert.equal(state.activeSession.profileId, "kestrel");
+  assert.equal(state.sessions[0]?.profileId, "kestrel");
 
   const rendered = renderToString(
     React.createElement(SessionsView, {
@@ -794,7 +799,7 @@ test("profiles use rebinds the active session and subsequent history to the sele
       detailDrawerOpen: true,
     }),
   );
-  assert.match(rendered, /profile=reference/u);
+  assert.match(rendered, /profile=kestrel/u);
 
   const rawHistory = await readFile(historyPath, "utf8");
   const records = rawHistory
@@ -803,8 +808,8 @@ test("profiles use rebinds the active session and subsequent history to the sele
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line) as { profileId: string; text: string });
   const lastRecord = records[records.length - 1];
-  assert.equal(lastRecord?.profileId, "reference");
-  assert.match(String(lastRecord?.text), /Profile set to 'reference'/u);
+  assert.equal(lastRecord?.profileId, "kestrel");
+  assert.match(String(lastRecord?.text), /Profile set to 'kestrel'/u);
   assert.doesNotMatch(String(lastRecord?.text), /provider=|openai|anthropic/u);
 });
 
@@ -1179,7 +1184,7 @@ test("theme command switches persisted theme mode", async () => {
   assert.equal(persisted.state.themePreset, undefined);
 });
 
-test("start task journey creates a session with selected profile, mode, and launch summary", async () => {
+test("start task journey creates a session with the canonical profile, mode, and launch summary", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -1192,19 +1197,19 @@ test("start task journey creates a session with selected profile, mode, and laun
   await (appState.handleLine as (line: string) => Promise<void>)("investigation");
   await (appState.handleLine as (line: string) => Promise<void>)("detached");
   await (appState.handleLine as (line: string) => Promise<void>)("Investigate queue latency");
-  await (appState.handleLine as (line: string) => Promise<void>)("reference");
+  await (appState.handleLine as (line: string) => Promise<void>)("kestrel");
   await (appState.handleLine as (line: string) => Promise<void>)("build");
   await (appState.handleLine as (line: string) => Promise<void>)("skip");
 
   const state = (appState.uiStore as UiStore).getState();
   assert.equal(state.activeSession.name, "Investigate queue latency");
-  assert.equal(state.activeSession.profileId, "reference");
+  assert.equal(state.activeSession.profileId, "kestrel");
   assert.equal(state.activeSession.launchPresetId, "investigation");
   assert.equal(state.activeSession.launchTemplateId, "investigation-task");
   assert.equal(state.activeSession.workspaceBinding, "detached");
   assert.equal(state.activeSession.interactionMode, "build");
   assert.equal(state.activeSession.actSubmode, "safe");
-  assert.equal(state.activeProfile.id, "reference");
+  assert.equal(state.activeProfile.id, "kestrel");
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /Start task journey/u);

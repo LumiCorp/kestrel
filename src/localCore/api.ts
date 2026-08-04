@@ -62,6 +62,7 @@ import {
 } from "../desktopShell/contracts.js";
 import type {
   EnsureLocalCoreReadyOptions,
+  LocalCoreBuildIdentityV1,
   LocalCoreRuntimeStoreReset,
   LocalCoreRuntimeStoreResetResult,
   LocalCoreSystemLifecycle,
@@ -168,6 +169,7 @@ interface ProjectRunEventClient {
 }
 
 export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOptions {
+  buildIdentity?: LocalCoreBuildIdentityV1 | undefined;
   idleTimeoutMs?: number | undefined;
   heartbeatMs?: number | undefined;
   executionRuntimeFactory?:
@@ -213,6 +215,12 @@ export async function startLocalCoreApiServer(
   }
   const home = resolveKestrelCoreHome(options.env, options.platform);
   const paths = resolveLocalCorePaths(home.homePath);
+  const buildIdentity = options.buildIdentity ?? {
+    version: "local_core_build_identity_v1",
+    buildId: `sha256:${createHash("sha256").update(`local-core-api:${options.coreVersion}`).digest("hex")}`,
+    suiteVersion: options.coreVersion,
+    source: "source_tree",
+  } satisfies LocalCoreBuildIdentityV1;
   const runtimeConfigurationStore = new LocalCoreRuntimeConfigurationStore(
     home.homePath,
     {
@@ -471,7 +479,7 @@ export async function startLocalCoreApiServer(
       }
     };
 
-    const restartExecution = (): Promise<LocalCoreStatus> =>
+    const restartExecutionBundle = (): Promise<LocalCoreStatus> =>
       beginMaintenance({
         kind: "restart",
         coalesce: true,
@@ -654,6 +662,7 @@ export async function startLocalCoreApiServer(
       if (
         admissionClosed &&
         pathname !== "/v1/health" &&
+        pathname !== "/v1/system/build-identity" &&
         pathname !== "/v1/system/lifecycle" &&
         pathname !== "/v1/system/shutdown"
       ) {
@@ -694,12 +703,13 @@ export async function startLocalCoreApiServer(
           response,
           token,
           status,
+          buildIdentity,
           ensureOptions: options,
           runtimeConfigurationStore,
           withRuntimeStore,
           withRuntimeConfigurationMutation,
           updateRuntimeConfiguration,
-          restartExecution,
+          restartExecutionBundle,
           resetRuntimeStore,
           getSystemLifecycle,
           getRuntimeCredentialReadiness: () =>
@@ -1164,6 +1174,7 @@ async function handleRequest(input: {
   response: ServerResponse;
   token: string;
   status: LocalCoreStatus;
+  buildIdentity: LocalCoreBuildIdentityV1;
   ensureOptions: StartLocalCoreApiServerOptions;
   runtimeConfigurationStore: LocalCoreRuntimeConfigurationStore;
   withRuntimeStore<T>(
@@ -1175,7 +1186,7 @@ async function handleRequest(input: {
       lastKnownConfiguration: LocalCoreRuntimeConfigurationV1 | undefined,
     ) => Promise<LocalCoreRuntimeConfigurationV1>,
   ): Promise<LocalCoreRuntimeConfigurationV1>;
-  restartExecution(): Promise<LocalCoreStatus>;
+  restartExecutionBundle(): Promise<LocalCoreStatus>;
   resetRuntimeStore(): Promise<LocalCoreRuntimeStoreResetResult>;
   getSystemLifecycle(): LocalCoreSystemLifecycle;
   getRuntimeCredentialReadiness():
@@ -1220,6 +1231,13 @@ async function handleRequest(input: {
       writeJson(input.response, 200, { ok: true, status: input.status });
       return;
     }
+    if (method === "GET" && url.pathname === "/v1/system/build-identity") {
+      writeJson(input.response, 200, {
+        ok: true,
+        buildIdentity: input.buildIdentity,
+      });
+      return;
+    }
     if (method === "GET" && url.pathname === "/v1/system/lifecycle") {
       writeJson(input.response, 200, {
         ok: true,
@@ -1237,7 +1255,7 @@ async function handleRequest(input: {
         throw new LocalCoreApiRequestError(
           400,
           "LOCAL_CORE_SHUTDOWN_INVALID",
-          "Local Core shutdown requires an exact uninstall, Desktop update, or Desktop restart confirmation payload.",
+          "Local Core shutdown requires an exact uninstall, Desktop update, Desktop restart, or code update confirmation payload.",
         );
       }
       const shutdown = input.requestSystemShutdown(shutdownRequest.reason);
@@ -2516,12 +2534,12 @@ async function handleRequest(input: {
       return;
     }
     if (method === "POST" && url.pathname === "/v1/restart") {
-      const next = await input.restartExecution();
+      const next = await input.restartExecutionBundle();
       writeJson(input.response, 200, { ok: true, status: next });
       return;
     }
     if (method === "POST" && url.pathname === "/v1/repair") {
-      const next = await input.restartExecution();
+      const next = await input.restartExecutionBundle();
       writeJson(input.response, 200, { ok: true, status: next });
       return;
     }

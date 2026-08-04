@@ -61,6 +61,14 @@ authenticated Unix socket, manages local configuration and credentials, and
 uses embedded PGlite by default. An external PostgreSQL database is available
 as an advanced configuration.
 
+Each executable Local Core payload has a deterministic content build identity.
+CLI and Desktop compare their expected identity with the running daemon before
+reusing it. An outdated idle authority is replaced through the authenticated,
+lifecycle-gated shutdown contract; active executions, store reads,
+configuration mutations, maintenance, and managed project processes block the
+handoff rather than being cancelled. Build identity is process metadata and is
+not written into the persistent Core state manifest or lock contract.
+
 A runner service is the network-hosted form. It exposes the Execution Protocol
 through authenticated HTTP and streaming endpoints so trusted application
 servers can reach Kestrel without depending on a user's computer.

@@ -20,6 +20,7 @@ import {
 import {
   LOCAL_CORE_RUNTIME_CONFIGURATION_FILE_NAME,
 } from "../../src/localCore/runtimeConfiguration.js";
+import { parseLocalCoreSystemShutdownRequest } from "../../src/localCore/contracts.js";
 import {
   closeLocalCoreStore,
   ensureLocalCoreStore,
@@ -45,6 +46,23 @@ import {
 } from "../../packages/protocol/src/index.js";
 
 describe("Local Core API process contracts", { concurrency: 2 }, () => {
+
+test("Local Core code-update shutdown requires its exact confirmation contract", () => {
+  assert.deepEqual(parseLocalCoreSystemShutdownRequest({
+    reason: "code_update",
+    confirm: "shutdown-local-core-for-code-update",
+  }), {
+    reason: "code_update",
+    confirm: "shutdown-local-core-for-code-update",
+  });
+  assert.throws(
+    () => parseLocalCoreSystemShutdownRequest({
+      reason: "code_update",
+      confirm: "shutdown-local-core-for-desktop-update",
+    }),
+    /exact uninstall, Desktop update, Desktop restart, or code update/u,
+  );
+});
 
 test("Local Core API serves health/status with bearer token auth", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-api-"));
@@ -232,6 +250,10 @@ test("Local Core API serves health/status with bearer token auth", async () => {
       (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
     );
     await assert.rejects(
+      () => unauthorized.buildIdentity(),
+      (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
+    );
+    await assert.rejects(
       () => unauthorized.systemLifecycle(),
       (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
     );
@@ -247,6 +269,10 @@ test("Local Core API serves health/status with bearer token auth", async () => {
     assert.equal(lifecycle.state, "idle");
     assert.deepEqual(lifecycle.blockers, []);
     assert.equal(lifecycle.owner.pid, process.pid);
+    const buildIdentity = await client.buildIdentity();
+    assert.equal(buildIdentity.version, "local_core_build_identity_v1");
+    assert.match(buildIdentity.buildId, /^sha256:[a-f0-9]{64}$/u);
+    assert.equal(buildIdentity.suiteVersion, "0.6.0");
     assert.equal((await client.shutdownForUninstall()).status, "accepted");
     const shutdownDeadline = Date.now() + 5_000;
     while (
@@ -835,6 +861,13 @@ test("Local Core runtime-store reset rejects an active execution before archivin
       blockedRestart.lifecycle.blockers,
       blockedShutdown.lifecycle.blockers,
       "Desktop restart must use the same lifecycle truth.",
+    );
+    const blockedCodeUpdate = await withTimeout(client.shutdownForCodeUpdate());
+    assert.equal(blockedCodeUpdate.status, "blocked");
+    assert.deepEqual(
+      blockedCodeUpdate.lifecycle.blockers,
+      blockedShutdown.lifecycle.blockers,
+      "Code update must use the same lifecycle truth as every whole-Core shutdown.",
     );
     assert.equal(
       (await client.status()).state,
