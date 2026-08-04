@@ -10,6 +10,7 @@ import {
   rebindRecoveryPolicyPrimaryModel,
   resolveProfileWithRecoveryPolicy,
 } from "./recoveryPolicy.js";
+import { resolveProfileWithEvaluationPolicy } from "./evaluationPolicy.js";
 
 export const MODEL_POLICY_FILE_NAME = "model-policy.json";
 
@@ -167,16 +168,17 @@ export function resolveProfileWithModelPolicy(
       visionInputEnabled: policy.modelCapabilities.visionInputEnabled,
     },
   };
-  if (profile.recoveryPolicy === undefined) {
-    return resolveProfileWithRecoveryPolicy(projectedProfile, options);
-  }
-  return {
-    ...projectedProfile,
-    recoveryPolicy: rebindRecoveryPolicyPrimaryModel(
-      projectedProfile,
-      profile.recoveryPolicy,
-    ),
-  };
+  const recoveredProfile =
+    profile.recoveryPolicy === undefined
+      ? resolveProfileWithRecoveryPolicy(projectedProfile, options)
+      : {
+          ...projectedProfile,
+          recoveryPolicy: rebindRecoveryPolicyPrimaryModel(
+            projectedProfile,
+            profile.recoveryPolicy,
+          ),
+        };
+  return resolveProfileWithEvaluationPolicy(recoveredProfile);
 }
 
 export class ModelPolicyStore {

@@ -5,7 +5,9 @@ import path from "node:path";
 import type { TuiProfile } from "../../cli/contracts.js";
 import { parseResolvedOciMcpEgressBinding } from "../../packages/mcp-security/src/index.js";
 import { parseRecoveryPolicyV1 } from "../kestrel/contracts/recovery.js";
+import { parseRuntimeEvaluationPolicyV1 } from "../kestrel/contracts/evaluation.js";
 import { assertRecoveryPrimaryProjection } from "../profile/recoveryPolicy.js";
+import { assertEvaluationPrimaryProjection } from "../profile/evaluationPolicy.js";
 import {
   fingerprintResolvedProfile,
   KESTREL_ONE_POLICY_ID,
@@ -69,6 +71,7 @@ export class LocalCoreExecutionProfileRegistry {
   ): Promise<RegisteredExecutionProfile> {
     assertSecretFreeProfile(inputProfile);
     assertValidRecoveryPolicy(inputProfile);
+    assertValidEvaluationPolicy(inputProfile);
     const fingerprintSeed = {
       ...structuredClone(inputProfile),
       id:
@@ -204,6 +207,7 @@ function parseStoredProfile(value: unknown, index: number): TuiProfile {
   }
   assertSecretFreeProfile(profile as TuiProfile);
   assertValidRecoveryPolicy(profile as TuiProfile);
+  assertValidEvaluationPolicy(profile as TuiProfile);
   assertValidOciMcpEgressBindings(profile as TuiProfile);
   return structuredClone(profile as TuiProfile);
 }
@@ -218,6 +222,14 @@ function assertValidRecoveryPolicy(profile: TuiProfile): void {
   if (profile.recoveryPolicy === undefined) return;
   const recoveryPolicy = parseRecoveryPolicyV1(profile.recoveryPolicy);
   assertRecoveryPrimaryProjection(profile, recoveryPolicy);
+}
+
+function assertValidEvaluationPolicy(profile: TuiProfile): void {
+  if (profile.evaluationPolicy === undefined) return;
+  const evaluationPolicy = parseRuntimeEvaluationPolicyV1(
+    profile.evaluationPolicy,
+  );
+  assertEvaluationPrimaryProjection(profile, evaluationPolicy);
 }
 
 function assertSecretFreeProfile(profile: TuiProfile): void {

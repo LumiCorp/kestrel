@@ -3457,6 +3457,7 @@ async function resolveDefaultExecutionProfile(
         model: selected.model,
         modelCredential: selected.modelCredential,
         recoveryPolicy: selected.recoveryPolicy,
+        evaluationPolicy: selected.evaluationPolicy,
         modelCapabilities: selected.modelCapabilities,
         agentStageConfig: selected.agentStageConfig,
         modelTimeoutMs: selected.modelTimeoutMs,

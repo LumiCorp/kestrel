@@ -22,6 +22,7 @@ import {
   parseRecoveryModelCandidateV1,
   parseRecoveryPolicyV1,
 } from "../../src/kestrel/contracts/recovery.js";
+import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
 import type {
   McpServerConfig,
 } from "../../src/mcp/contracts.js";
@@ -46,7 +47,7 @@ import {
 import { resolveRuntimeProfileSelection } from "../../src/profile/runtimeProfile.js";
 import type {
   KestrelOneManagedProfileOverlay,
-  ProfilesFileV8,
+  ProfilesFileV9,
   ToolQueueProfileConfig,
   TuiProfile,
 } from "../contracts.js";
@@ -144,12 +145,12 @@ const LEGACY_PROFILE_ALIASES: Readonly<Record<string, string>> = {
 const LOCAL_ISOLATION_MIGRATION_NOTICE =
   "Generated local profiles now use isolated execution. Select the cli_dev_local developer preset to restore host-shell access.";
 
-type ManagedProfileOverlays = ProfilesFileV8["managedProfileOverlays"];
+type ManagedProfileOverlays = ProfilesFileV9["managedProfileOverlays"];
 
 interface ParsedProfilesResult {
   profiles: TuiProfile[];
   managedProfileOverlays?: ManagedProfileOverlays | undefined;
-  sourceVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  sourceVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   migrated: boolean;
   notices: string[];
 }
@@ -314,7 +315,8 @@ export class ProfileStore {
         parsed.sourceVersion === 4 ||
         parsed.sourceVersion === 5 ||
         parsed.sourceVersion === 6 ||
-        parsed.sourceVersion === 7
+        parsed.sourceVersion === 7 ||
+        parsed.sourceVersion === 8
       ) {
         await this.writeVersionedBackup(raw, parsed.sourceVersion);
       }
@@ -358,8 +360,8 @@ export class ProfileStore {
           }
         : {}),
     };
-    const payload: ProfilesFileV8 = {
-      version: 8,
+    const payload: ProfilesFileV9 = {
+      version: 9,
       profiles: profiles
         .filter((profile) => isKestrelManagedProfileId(profile.id) === false)
         .map((profile) => sanitizeProfileForPersistence(profile)),
@@ -427,7 +429,7 @@ export class ProfileStore {
 
   private async writeVersionedBackup(
     raw: string,
-    version: 4 | 5 | 6 | 7,
+    version: 4 | 5 | 6 | 7 | 8,
   ): Promise<void> {
     try {
       await writeFile(`${this.filePath}.v${version}.bak`, raw, {
@@ -489,10 +491,11 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
     version !== 5 &&
     version !== 6 &&
     version !== 7 &&
-    version !== 8
+    version !== 8 &&
+    version !== 9
   ) {
     throw new ProfileSchemaVersionError(
-      "profiles.json version must be 2, 3, 4, 5, 6, 7, or 8",
+      "profiles.json version must be 2, 3, 4, 5, 6, 7, 8, or 9",
     );
   }
 
@@ -505,7 +508,7 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
     validateProfile(profile, version, notices),
   );
   const managedProfileOverlays =
-    version === 5 || version === 6 || version === 7 || version === 8
+    version === 5 || version === 6 || version === 7 || version === 8 || version === 9
       ? parseKestrelOneManagedOverlays(
           root.managedProfileOverlays,
           notices,
@@ -530,7 +533,7 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
       ? { managedProfileOverlays }
       : {}),
     sourceVersion: version,
-    migrated: version !== 8,
+    migrated: version !== 9,
     notices,
   };
 }
@@ -629,7 +632,7 @@ class ProfileSchemaVersionError extends Error {}
 
 function validateProfile(
   value: unknown,
-  version: 2 | 3 | 4 | 5 | 6 | 7 | 8,
+  version: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9,
   notices: string[],
 ): TuiProfile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -688,6 +691,10 @@ function validateProfile(
     version >= 8 && item.recoveryPolicy !== undefined
       ? parseRecoveryPolicyV1(item.recoveryPolicy)
       : undefined;
+  const evaluationPolicy =
+    version >= 9 && item.evaluationPolicy !== undefined
+      ? parseRuntimeEvaluationPolicyV1(item.evaluationPolicy)
+      : undefined;
   const storeDriver = parseStoreDriver(item.storeDriver, id);
   const approvalPolicyPackId = parseApprovalPolicyPackId(
     item.approvalPolicyPackId,
@@ -740,6 +747,7 @@ function validateProfile(
     ...(model !== undefined ? { model } : {}),
     ...(modelCredential !== undefined ? { modelCredential } : {}),
     ...(recoveryPolicy !== undefined ? { recoveryPolicy } : {}),
+    ...(evaluationPolicy !== undefined ? { evaluationPolicy } : {}),
     ...(storeDriver !== undefined ? { storeDriver } : {}),
     ...(approvalPolicyPackId !== undefined ? { approvalPolicyPackId } : {}),
     ...(modeSystemV2Enabled !== undefined ? { modeSystemV2Enabled } : {}),
@@ -872,6 +880,9 @@ function createManagedKestrelOneProfile(
     ...(overlay.recoveryPolicy !== undefined
       ? { recoveryPolicy: overlay.recoveryPolicy }
       : {}),
+    ...(overlay.evaluationPolicy !== undefined
+      ? { evaluationPolicy: overlay.evaluationPolicy }
+      : {}),
     ...(overlay.theme !== undefined ? { theme: overlay.theme } : {}),
     default: true,
   };
@@ -935,6 +946,9 @@ function extractKestrelOneManagedOverlay(
     ...(isAuthoredRecoveryPolicy(profile)
       ? { recoveryPolicy: structuredClone(profile.recoveryPolicy) }
       : {}),
+    ...(profile.evaluationPolicy !== undefined
+      ? { evaluationPolicy: structuredClone(profile.evaluationPolicy) }
+      : {}),
     ...(profile.theme !== undefined
       ? { theme: structuredClone(profile.theme) }
       : {}),
@@ -945,7 +959,7 @@ function extractKestrelOneManagedOverlay(
 function parseKestrelOneManagedOverlays(
   value: unknown,
   notices: string[],
-  sourceVersion: 5 | 6 | 7 | 8,
+  sourceVersion: 5 | 6 | 7 | 8 | 9,
 ): ManagedProfileOverlays | undefined {
   if (value === undefined) return;
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -965,7 +979,7 @@ function parseKestrelOneManagedOverlays(
       `profiles.json managedProfileOverlays contains unsupported key '${unsupportedKey}'`,
     );
   }
-  const parsed: ProfilesFileV8["managedProfileOverlays"] = {};
+  const parsed: ProfilesFileV9["managedProfileOverlays"] = {};
   const legacyLocalRaw =
     overlays["kestrel@cli_dev_local"] ??
     overlays["kestrel-one@cli_dev_local"];
@@ -1008,6 +1022,7 @@ const KESTREL_MANAGED_OVERLAY_FIELDS = new Set([
   "delegationLimits",
   "reasoning",
   "recoveryPolicy",
+  "evaluationPolicy",
   "theme",
   "default",
 ]);
@@ -1019,6 +1034,7 @@ const KESTREL_MANAGED_CONFIGURATION_FIELDS = new Set([
   "model",
   "modelCredential",
   "recoveryPolicy",
+  "evaluationPolicy",
   "recoveryModelCandidates",
   "modelCapabilities",
   "agentStageConfig",
@@ -1085,6 +1101,13 @@ export function parseKestrelManagedConfiguration(
       : {}),
     ...(record.recoveryPolicy !== undefined
       ? { recoveryPolicy: parseRecoveryPolicyV1(record.recoveryPolicy) }
+      : {}),
+    ...(record.evaluationPolicy !== undefined
+      ? {
+          evaluationPolicy: parseRuntimeEvaluationPolicyV1(
+            record.evaluationPolicy,
+          ),
+        }
       : {}),
     ...(record.recoveryModelCandidates !== undefined
       ? {
@@ -1234,6 +1257,13 @@ function parseKestrelOneManagedOverlayValue(
       : {}),
     ...(record.recoveryPolicy !== undefined
       ? { recoveryPolicy: parseRecoveryPolicyV1(record.recoveryPolicy) }
+      : {}),
+    ...(record.evaluationPolicy !== undefined
+      ? {
+          evaluationPolicy: parseRuntimeEvaluationPolicyV1(
+            record.evaluationPolicy,
+          ),
+        }
       : {}),
     ...(record.theme !== undefined
       ? {

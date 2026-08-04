@@ -90,6 +90,7 @@ export * from "./profile/modelCatalogPresentation.js";
 export * from "./profile/runtimeProfile.js";
 export * from "./profile/kestrelOnePolicy.js";
 export * from "./profile/recoveryPolicy.js";
+export * from "./profile/evaluationPolicy.js";
 export * from "./engine/recovery/RecoveryCoordinator.js";
 export * from "./engine/recovery/RecoveryRegistries.js";
 export * from "./security/ExecutionBoundaryPolicy.js";

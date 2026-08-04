@@ -22,7 +22,12 @@ test(
     let manager: LocalCoreDesktopEnvironmentManager | undefined;
     context.after(async () => {
       await manager?.close();
-      await rm(home, { recursive: true, force: true });
+      await rm(home, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 10,
+      });
     });
     const credentialStore = new MemoryLocalCoreCredentialStore();
     const signingKeys = generateKeyPairSync("ed25519");
