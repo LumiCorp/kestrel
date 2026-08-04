@@ -23,6 +23,7 @@ import {
 import { buildCanonicalWaitingFor } from "../../src/runtime/waitState.js";
 import type { RuntimeWaitMatcher } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 
 
 class QueueTurnExecutor implements TurnExecutor {
@@ -125,6 +126,49 @@ class RunForeignKeyEnforcingStore extends InMemorySessionStore {
     await super.appendRunEvent(event);
   }
 }
+
+test("ThreadRuntime applies one boundary runtime to submitted content and durable output", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  boundaryRuntime.sensitiveValues.register({
+    reference: {
+      referenceId: "credential:thread-boundary",
+      kind: "credential",
+      scope: "thread",
+    },
+    value: "thread-boundary-secret",
+  });
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({ runId: "run-thread-boundary", status: "COMPLETED" }),
+      assistantText: "result thread-boundary-secret",
+    },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    executionBoundaryRuntime: boundaryRuntime,
+  });
+  const thread = await runtime.startThread({
+    threadId: "thread-boundary",
+    sessionId: "session-thread-boundary",
+    title: "Boundary",
+  });
+
+  const result = await runtime.submitTurn({
+    threadId: thread.threadId,
+    message: "input thread-boundary-secret",
+    eventType: "user.message",
+  });
+
+  assert.equal(executor.inputs[0]?.message, "input [REDACTED]");
+  assert.equal(result.assistantText, "result [REDACTED]");
+  const boundaryEvents = sessionStore.getRunEvents().filter(
+    (event) => event.type === "execution_boundary.decision",
+  );
+  assert.equal(boundaryEvents.length, 1);
+  assert.equal(JSON.stringify(boundaryEvents).includes("thread-boundary-secret"), false);
+});
 
 test("ThreadRuntime exposes the authoritative workspace on operator thread views", async () => {
   const sessionStore = new InMemorySessionStore();

@@ -73,8 +73,27 @@ test("only runtime provenance may carry control trust", () => {
   );
 });
 
+test("missing policy boundary declarations fail closed at evaluation", () => {
+  const runtime = new ExecutionBoundaryPolicyRuntime();
+  runtime.policy.boundaries.splice(
+    runtime.policy.boundaries.indexOf("tool_request"),
+    1,
+  );
+  assert.throws(
+    () => runtime.evaluate({
+      boundary: "tool_request",
+      identity: { runId: "run-missing-policy", sessionId: "session-missing-policy" },
+      source: "model",
+      trust: "data",
+      sourceId: "missing-policy",
+      value: { command: "safe" },
+    }),
+    /does not declare 'tool_request'/u,
+  );
+});
+
 test("sensitive registry derives the closed encoding set and redacts without serializing material", () => {
-  const secret = "boundary-secret-42";
+  const secret = "boundary-secret-ÿÿ";
   const representations = deriveSensitiveRepresentations(secret);
   assert.ok(representations.includes(secret));
   assert.ok(representations.includes(Buffer.from(secret).toString("base64")));
@@ -147,7 +166,6 @@ test("boundary decisions redact output, quarantine executable input, and persist
     trust: "data",
     sourceId: "request-1",
     value: { input: "registered-secret" },
-    handling: "redact",
     persist: (decision) => {
       persisted.push(decision);
     },
@@ -164,7 +182,6 @@ test("boundary decisions redact output, quarantine executable input, and persist
     trust: "data",
     sourceId: "tool-1",
     value: { command: "send registered-secret" },
-    handling: "quarantine",
   });
   assert.equal(quarantined.decision.outcome, "QUARANTINE");
   assert.deepEqual(quarantined.value, { command: "send registered-secret" });
@@ -178,7 +195,6 @@ test("boundary decisions redact output, quarantine executable input, and persist
       trust: "data",
       sourceId: "assistant-1",
       value: "registered-secret",
-      handling: "redact",
       persist: async () => {
         throw new Error("persistence unavailable");
       },
@@ -188,6 +204,33 @@ test("boundary decisions redact output, quarantine executable input, and persist
     /persistence unavailable/u,
   );
   assert.equal(crossed, false);
+});
+
+test("boundary crossing remains blocked until durable decision persistence settles", async () => {
+  const runtime = new ExecutionBoundaryPolicyRuntime();
+  let releasePersistence: (() => void) | undefined;
+  const persistenceGate = new Promise<void>((resolve) => {
+    releasePersistence = resolve;
+  });
+  let crossed = false;
+  const pending = runtime.evaluateAndPersist({
+    boundary: "model_request",
+    identity: { runId: "run-interrupt", sessionId: "session-interrupt" },
+    source: "runtime",
+    trust: "data",
+    sourceId: "request-interrupt",
+    value: { prompt: "safe" },
+    persist: () => persistenceGate,
+  }).then((result) => {
+    crossed = true;
+    return result;
+  });
+
+  await Promise.resolve();
+  assert.equal(crossed, false);
+  releasePersistence?.();
+  await pending;
+  assert.equal(crossed, true);
 });
 
 test("resolved profile fingerprints include the execution-boundary policy revision", () => {

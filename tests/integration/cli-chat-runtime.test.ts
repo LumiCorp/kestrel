@@ -66,8 +66,17 @@ function sessionWithAssistantText(
   };
 }
 
+function createTestRuntime(profile: TuiProfile, factory: RuntimeFactory): KestrelChatRuntime {
+  return new KestrelChatRuntime(profile, {
+    create: (...args) => ({
+      ...factory.create(...args),
+      persistExecutionBoundaryDecision: async () => {},
+    }),
+  });
+}
+
 test("KestrelChatRuntime rejects non-string turn messages at the runtime boundary", async () => {
-  const runtime = new KestrelChatRuntime(profile, {
+  const runtime = createTestRuntime(profile, {
     create: () => {
       const kestrel = {
         run: async () => {
@@ -104,7 +113,7 @@ test("KestrelChatRuntime rejects non-string turn messages at the runtime boundar
 test("KestrelChatRuntime consumes hosted MCP authorization before compiling the turn", async () => {
   const events: RuntimeEvent[] = [];
   const prepared: unknown[] = [];
-  const runtime = new KestrelChatRuntime(profile, {
+  const runtime = createTestRuntime(profile, {
     create: () => ({
       kestrel: {
         run: async (event: RuntimeEvent) => {
@@ -158,7 +167,7 @@ test("KestrelChatRuntime consumes execution authorization without requiring an M
   const events: RuntimeEvent[] = [];
   const prepared: unknown[] = [];
   const released: Array<{ runId: string; sessionId?: string }> = [];
-  const runtime = new KestrelChatRuntime(profile, {
+  const runtime = createTestRuntime(profile, {
     create: () => ({
       kestrel: {
         run: async (event: RuntimeEvent) => {
@@ -216,7 +225,7 @@ test("KestrelChatRuntime consumes execution authorization without requiring an M
 
 test("KestrelChatRuntime releases execution authorization when runtime preparation fails", async () => {
   const released: string[] = [];
-  const runtime = new KestrelChatRuntime(profile, {
+  const runtime = createTestRuntime(profile, {
     create: () => ({
       kestrel: {} as Kestrel,
       entryStepAgent: "example.step",
@@ -304,7 +313,7 @@ test("KestrelChatRuntime delegates direct runtime turns with step agent and oper
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const result = await runtime.runTurn({
     sessionId: "s-1",
     message: "hello",
@@ -383,7 +392,7 @@ test("KestrelChatRuntime accepts explicit v2 interaction mode through direct run
     },
   };
 
-  const runtime = new KestrelChatRuntime(v2Profile, fakeFactory);
+  const runtime = createTestRuntime(v2Profile, fakeFactory);
   await runtime.runTurn({
     sessionId: "s-v2",
     message: "need weather",
@@ -487,7 +496,7 @@ test("KestrelChatRuntime auto-resumes agent loop timeout waits exactly once and 
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const result = await runtime.runTurn({
     sessionId: "s-timeout",
     message: "continue report",
@@ -579,7 +588,7 @@ test("KestrelChatRuntime records workspace skill revisions and manual compaction
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const result = await runtime.runTurn({
     sessionId: "s-skill",
     message: "research this",
@@ -675,7 +684,7 @@ test("KestrelChatRuntime annotates forced legacy-mode migration for the referenc
     },
   };
 
-  const runtime = new KestrelChatRuntime(legacyProfile, fakeFactory);
+  const runtime = createTestRuntime(legacyProfile, fakeFactory);
   await runtime.runTurn({
     sessionId: "s-migrate",
     message: "weather",
@@ -736,7 +745,7 @@ test("KestrelChatRuntime captures finalized payload via onFinalize callback", as
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const result = await runtime.runTurn({
     sessionId: "s-2",
     message: "continue",
@@ -802,7 +811,7 @@ test("KestrelChatRuntime falls back to persisted finalized payload when no callb
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const result = await runtime.runTurn({
     sessionId: "s-3",
     message: "continue",
@@ -875,7 +884,7 @@ test("KestrelChatRuntime delegates tool runtime status APIs to Kestrel core", as
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const observed = await runtime.getToolRuntimeStatus();
   const refreshed = await runtime.refreshToolRuntime();
 
@@ -1143,7 +1152,7 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const waiting = await runtime.runTurn({
     sessionId: "thread-session",
     message: "start",
@@ -1367,7 +1376,7 @@ test("KestrelChatRuntime describeSession keeps focused thread and blocker parity
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const described = await runtime.describeSession("session-parity");
 
   assert.equal(described?.focusedThreadId, "thread-parity-child");
@@ -1441,7 +1450,7 @@ test("KestrelChatRuntime does not accept caller-selected child tool authority", 
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   await runtime.performOperatorAction({
     action: "spawn_child_thread",
     threadId: "thread-child-policy-parent",
@@ -1487,7 +1496,7 @@ test("KestrelChatRuntime forwards attachments when replying to a typed operator 
       };
     },
   };
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const attachments = [{ attachmentId: "attachment-1", threadId: "thread-reply", filename: "context.txt", mimeType: "text/plain", sizeBytes: 7, sha256: "a".repeat(64), kind: "text" as const, createdAt: new Date().toISOString(), text: "context" }];
   await runtime.performOperatorAction({ action: "reply", threadId: "thread-reply", requestId: "request-1", message: "Selected recovery option: retry.primary", recoveryOptionId: "retry.primary", attachments, interactionMode: "build", actSubmode: "safe" });
   assert.deepEqual(capturedAttachments, attachments);
@@ -1513,7 +1522,7 @@ test("KestrelChatRuntime acknowledges an accepted reply before its resumed turn 
   let capturedRecoveryOptionId: unknown;
   const now = new Date().toISOString();
   const thread = { threadId: "thread-accepted", sessionId: "session-accepted", title: "Accepted", status: "COMPLETED" as const, createdAt: now, updatedAt: now };
-  const runtime = new KestrelChatRuntime(profile, {
+  const runtime = createTestRuntime(profile, {
     create: () => ({
       kestrel: {} as Kestrel,
       threadRuntime: {
@@ -1622,7 +1631,7 @@ test("KestrelChatRuntime accepts retry with the reserved Mission Control run ide
     updatedAt: now,
   };
   let capturedMissionControl: unknown;
-  const runtime = new KestrelChatRuntime(profile, {
+  const runtime = createTestRuntime(profile, {
     create: () => ({
       kestrel: {} as Kestrel,
       threadRuntime: {
@@ -1824,7 +1833,7 @@ test("KestrelChatRuntime resolves session turns through the canonical orchestrat
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   await runtime.runTurn({
     sessionId: "session-canonical-thread",
     message: "start",
@@ -1955,7 +1964,7 @@ test("KestrelChatRuntime forwards abort signals through ThreadRuntime", async ()
     },
   };
 
-  const runtime = new KestrelChatRuntime(profile, fakeFactory);
+  const runtime = createTestRuntime(profile, fakeFactory);
   const controller = new AbortController();
   await runtime.runTurn({
     sessionId: "signal-session",

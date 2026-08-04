@@ -14,16 +14,16 @@ import type {
   TurnExecutor,
 } from "./contracts.js";
 import type { RuntimeTurnInput } from "../runtime/RuntimeTurn.js";
-import { enforceRuntimeAssistantResponseBoundary, finalizeRuntimeAssistantResponse } from "../runtime/assistantResponseContract.js";
+import { enforceRuntimeAssistantResponseBoundary } from "../runtime/assistantResponseContract.js";
 import { normalizeSubmittedHistory } from "../runtime/submittedHistory.js";
-import type { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
+import { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export class TurnOrchestrator {
   private readonly executor: TurnExecutor;
   private readonly store: ThreadStore & RunRepository & EventStore;
   private readonly interactionManager: InteractionManager;
   private readonly contextPolicyManager: ContextPolicyManager;
-  private readonly executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime | undefined;
+  private readonly executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
 
   constructor(options: {
     executor: TurnExecutor;
@@ -36,43 +36,41 @@ export class TurnOrchestrator {
     this.store = options.store;
     this.interactionManager = options.interactionManager;
     this.contextPolicyManager = options.contextPolicyManager;
-    this.executionBoundaryRuntime = options.executionBoundaryRuntime;
+    this.executionBoundaryRuntime =
+      options.executionBoundaryRuntime ?? new ExecutionBoundaryPolicyRuntime();
   }
 
   async execute(thread: ThreadRecord, input: SubmitTurnInput): Promise<SubmitTurnResult> {
-    if (this.executionBoundaryRuntime !== undefined) {
-      const submittedContent = this.executionBoundaryRuntime.evaluate({
-        boundary: "user_input",
-        identity: {
-          runId: input.runtimeTurn?.runId ?? `submitted:${thread.threadId}`,
-          sessionId: thread.sessionId,
-        },
-        source: "user",
-        sourceId: `thread:${thread.threadId}:submitted-content`,
-        value: {
-          message: input.message,
-          ...(input.runtimeTurn?.history !== undefined
-            ? { history: input.runtimeTurn.history }
-            : {}),
-        },
-        handling: "redact",
-      }).value;
-      input = {
-        ...input,
-        message: submittedContent.message,
-        ...(input.runtimeTurn !== undefined
-          ? {
-              runtimeTurn: {
-                ...input.runtimeTurn,
-                message: submittedContent.message,
-                ...(submittedContent.history !== undefined
-                  ? { history: submittedContent.history }
-                  : {}),
-              },
-            }
+    const submittedContent = this.executionBoundaryRuntime.evaluate({
+      boundary: "user_input",
+      identity: {
+        runId: input.runtimeTurn?.runId ?? `submitted:${thread.threadId}`,
+        sessionId: thread.sessionId,
+      },
+      source: "user",
+      sourceId: `thread:${thread.threadId}:submitted-content`,
+      value: {
+        message: input.message,
+        ...(input.runtimeTurn?.history !== undefined
+          ? { history: input.runtimeTurn.history }
           : {}),
-      };
-    }
+      },
+    }).value;
+    input = {
+      ...input,
+      message: submittedContent.message,
+      ...(input.runtimeTurn !== undefined
+        ? {
+            runtimeTurn: {
+              ...input.runtimeTurn,
+              message: submittedContent.message,
+              ...(submittedContent.history !== undefined
+                ? { history: submittedContent.history }
+                : {}),
+            },
+          }
+        : {}),
+    };
     const submittedMetadata = normalizeSubmittedMetadata(input.metadata);
     const decision = this.contextPolicyManager.evaluateBeforeTurn({
       thread,
@@ -121,27 +119,25 @@ export class TurnOrchestrator {
       assistantText: execution.assistantText,
       ...(request !== undefined ? { request } : {}),
     };
-    const canonicalResponse = this.executionBoundaryRuntime === undefined
-      ? finalizeRuntimeAssistantResponse(canonicalInput)
-      : await enforceRuntimeAssistantResponseBoundary({
-          ...canonicalInput,
-          executionBoundaryRuntime: this.executionBoundaryRuntime,
-          persist: async (boundaryDecision) => {
-            await this.store.appendRunEvent({
-              runId: boundaryDecision.runId,
-              sessionId: boundaryDecision.sessionId,
-              ...(boundaryDecision.stepIndex !== undefined
-                ? { stepIndex: boundaryDecision.stepIndex }
-                : {}),
-              type: "execution_boundary.decision",
-              level: boundaryDecision.outcome === "DENY" || boundaryDecision.outcome === "QUARANTINE"
-                ? "WARN"
-                : "INFO",
-              timestamp: boundaryDecision.createdAt,
-              metadata: { ...boundaryDecision },
-            });
-          },
+    const canonicalResponse = await enforceRuntimeAssistantResponseBoundary({
+      ...canonicalInput,
+      executionBoundaryRuntime: this.executionBoundaryRuntime,
+      persist: async (boundaryDecision) => {
+        await this.store.appendRunEvent({
+          runId: boundaryDecision.runId,
+          sessionId: boundaryDecision.sessionId,
+          ...(boundaryDecision.stepIndex !== undefined
+            ? { stepIndex: boundaryDecision.stepIndex }
+            : {}),
+          type: "execution_boundary.decision",
+          level: boundaryDecision.outcome === "DENY" || boundaryDecision.outcome === "QUARANTINE"
+            ? "WARN"
+            : "INFO",
+          timestamp: boundaryDecision.createdAt,
+          metadata: { ...boundaryDecision },
         });
+      },
+    });
     const output = canonicalResponse.output;
     const assistantText = canonicalResponse.assistantText;
     const latestThread = await this.store.getThread(thread.threadId);
