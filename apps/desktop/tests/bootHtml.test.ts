@@ -9,6 +9,7 @@ import { startDesktopStartup } from "../src/startupSequence.js";
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const bootHtmlPath = path.join(testDir, "..", "static", "boot.html");
 const mainPath = path.join(testDir, "..", "src", "main.ts");
+const recoveryPath = path.join(testDir, "..", "src", "localCoreRecovery.ts");
 
 test("boot screen exposes Reset Runtime Store only for sqlite init failures", async () => {
   const source = await readFile(bootHtmlPath, "utf8");
@@ -16,7 +17,11 @@ test("boot screen exposes Reset Runtime Store only for sqlite init failures", as
   assert.match(source, /id="reset-store"/u);
   assert.match(source, /id="copy-help-packet"/u);
   assert.match(source, />Restart Kestrel</u);
-  assert.match(source, /desktopBridge\.restartApp\(\)/u);
+  assert.match(source, /desktopBridge\.restartKestrel\(\{ force: restartRequiresForce \}\)/u);
+  assert.match(source, /Force Restart Kestrel/u);
+  assert.match(source, /result\.status === "blocked"/u);
+  assert.match(source, /result\.blockers\s*\.map\(\(blocker\) => blocker\.message\)/u);
+  assert.doesNotMatch(source, /desktopBridge\.restartApp\(\)/u);
   assert.doesNotMatch(source, /desktopBridge\.restartRuntime\(\)/u);
   assert.match(source, /class="brand-logo"/u);
   assert.match(source, /kestrel-full-horz-dark-mode\.png/u);
@@ -30,6 +35,32 @@ test("boot screen exposes Reset Runtime Store only for sqlite init failures", as
   assert.match(source, /desktopBridge\.getSupportBundle\(\)/u);
   assert.doesNotMatch(source, /id="check-resources"/u);
   assert.doesNotMatch(source, /repair_database/u);
+});
+
+test("blocked-startup recovery is registered before runtime transport startup", async () => {
+  const [mainSource, recoverySource] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(recoveryPath, "utf8"),
+  ]);
+
+  assert.ok(
+    mainSource.indexOf("registerBootIpcHandlers();") <
+      mainSource.indexOf("await startDesktopStartup({"),
+  );
+  assert.match(mainSource, /desktop:restart-kestrel/u);
+  assert.doesNotMatch(recoverySource, /runnerTransport/u);
+});
+
+test("healthy runtime restart remains execution-bundle scoped", async () => {
+  const source = await readFile(mainPath, "utf8");
+  const start = source.indexOf('ipcMain.handle("desktop:restart-runtime"');
+  const end = source.indexOf('"desktop:request-microphone-access"', start);
+  assert.ok(start >= 0 && end > start);
+  const handler = source.slice(start, end);
+
+  assert.match(handler, /runnerTransport\.stop\(\)/u);
+  assert.match(handler, /ensureDesktopRunnerResponsive\(runnerTransport\)/u);
+  assert.doesNotMatch(handler, /restartKestrel|signalProcess|app\.relaunch/u);
 });
 
 test("Desktop creates a visible boot window before runtime startup", async () => {

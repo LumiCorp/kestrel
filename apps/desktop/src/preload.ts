@@ -20,6 +20,8 @@ import type {
   DesktopRunnerEvent,
   DesktopRunTurnRequest,
   DesktopRuntimeHealth,
+  DesktopRestartKestrelInput,
+  DesktopRestartKestrelResult,
   DesktopUpdateState,
   DesktopUninstallApplyInput,
   DesktopThreadAuthorityResult,
@@ -222,6 +224,11 @@ const desktopBridge: DesktopBridge = {
   },
   resetRuntimeStore() {
     return ipcRenderer.invoke("desktop:reset-runtime-store");
+  },
+  restartKestrel(
+    input: DesktopRestartKestrelInput,
+  ): Promise<DesktopRestartKestrelResult> {
+    return ipcRenderer.invoke("desktop:restart-kestrel", input);
   },
   restartApp() {
     return ipcRenderer.invoke("desktop:restart-app");

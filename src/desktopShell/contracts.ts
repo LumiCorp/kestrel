@@ -103,7 +103,7 @@ export interface DesktopBridgeInfo {
   capabilities: DesktopBridgeCapabilityId[];
 }
 
-export const DESKTOP_BRIDGE_VERSION = "7";
+export const DESKTOP_BRIDGE_VERSION = "8";
 
 export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "app_info",

@@ -13,6 +13,7 @@ import {
   acquireCoreLock,
   createDefaultLocalCoreRuntimeConfiguration,
   parseLocalCoreDesktopExecutionConfig,
+  readCoreLock,
   resolveLocalCorePaths,
   startLocalCoreApiServer,
 } from "../../src/localCore/index.js";
@@ -238,6 +239,10 @@ test("Local Core API serves health/status with bearer token auth", async () => {
       () => unauthorized.shutdownForUninstall(),
       (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
     );
+    await assert.rejects(
+      () => unauthorized.shutdownForDesktopRestart(),
+      (error) => error instanceof LocalCoreApiError && error.statusCode === 401,
+    );
     const lifecycle = await client.systemLifecycle();
     assert.equal(lifecycle.state, "idle");
     assert.deepEqual(lifecycle.blockers, []);
@@ -253,6 +258,68 @@ test("Local Core API serves health/status with bearer token auth", async () => {
     assert.equal(existsSync(paths.apiSocketPath), false);
     assert.equal(existsSync(paths.lockPath), false);
   } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core API replaces an idle Desktop restart authority", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-desktop-restart-"));
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+  });
+  const paths = resolveLocalCorePaths(home);
+  let replacement: Awaited<ReturnType<typeof startLocalCoreApiServer>> | undefined;
+  try {
+    const originalLock = await readCoreLock({
+      homePath: home,
+      isPidAlive: () => true,
+    });
+    assert.equal(originalLock.state, "live");
+    if (originalLock.state !== "live") assert.fail("original Core owner is required");
+    const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+    const shutdown = await client.shutdownForDesktopRestart();
+    assert.equal(shutdown.status, "accepted");
+    assert.equal(shutdown.reason, "desktop_restart");
+    const deadline = Date.now() + 5_000;
+    while (
+      (existsSync(paths.apiSocketPath) || existsSync(paths.lockPath)) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(existsSync(paths.apiSocketPath), false);
+    assert.equal(existsSync(paths.lockPath), false);
+
+    replacement = await startLocalCoreApiServer({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "darwin",
+      coreVersion: "0.6.0",
+      idleTimeoutMs: 0,
+    });
+    const replacementLock = await readCoreLock({
+      homePath: home,
+      isPidAlive: () => true,
+    });
+    assert.equal(replacementLock.state, "live");
+    if (replacementLock.state !== "live") assert.fail("replacement Core owner is required");
+    assert.notEqual(
+      replacementLock.lock.authorityId,
+      originalLock.lock.authorityId,
+    );
+    assert.equal(existsSync(paths.lockPath), true);
+    assert.deepEqual(
+      await new LocalCoreClient({
+        socketPath: replacement.socketPath,
+        token: replacement.token,
+      }).health(),
+      { ok: true },
+    );
+  } finally {
+    await replacement?.close();
     await server.close();
     await rm(home, { recursive: true, force: true });
   }
@@ -761,6 +828,13 @@ test("Local Core runtime-store reset rejects an active execution before archivin
       blockedUpdate.lifecycle.blockers,
       blockedShutdown.lifecycle.blockers,
       "Uninstall and Desktop update must use the same lifecycle truth.",
+    );
+    const blockedRestart = await withTimeout(client.shutdownForDesktopRestart());
+    assert.equal(blockedRestart.status, "blocked");
+    assert.deepEqual(
+      blockedRestart.lifecycle.blockers,
+      blockedShutdown.lifecycle.blockers,
+      "Desktop restart must use the same lifecycle truth.",
     );
     assert.equal(
       (await client.status()).state,
