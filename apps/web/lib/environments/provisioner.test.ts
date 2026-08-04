@@ -57,6 +57,7 @@ function fixture(
             status: "requested",
             flyMachineId: null,
             flyVolumeId: null,
+            runtimeImage: null,
             sourceType: "blank",
             sourceResourceId: null,
             sourceRepository: null,
@@ -272,8 +273,10 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   repository.listEnvironmentWorkspaces = async () => [
     {
       id: "workspace-id",
+      status: "ready",
       flyMachineId: "workspace-machine-id",
       flyVolumeId: "workspace-volume-id",
+      runtimeImage,
     },
   ];
   const machineUpdates: Parameters<typeof provider.updateMachineImage>[0][] = [];
@@ -359,8 +362,10 @@ test("Environment updates recover an incompatible stopped runtime from a pre-des
   repository.listEnvironmentWorkspaces = async () => [
     {
       id: "workspace-id",
+      status: "stopped",
       flyMachineId: "workspace-machine-id",
       flyVolumeId: "workspace-volume-id",
+      runtimeImage,
     },
   ];
   provider.createVolumeSnapshot = async (input) => {
@@ -423,8 +428,10 @@ test("operator-authorized maintenance updates can skip Workspace retention", asy
   repository.listEnvironmentWorkspaces = async () => [
     {
       id: "workspace-id",
+      status: "ready",
       flyMachineId: "workspace-machine-id",
       flyVolumeId: "workspace-volume-id",
+      runtimeImage,
     },
   ];
   provider.updateMachineImage = async (input) => {
@@ -454,6 +461,64 @@ test("operator-authorized maintenance updates can skip Workspace retention", asy
   assert.ok(calls.includes("provider:image:workspace-machine-id"));
 });
 
+test("managed releases reconfigure stopped Workspaces without launching them", async () => {
+  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+    preserveStoppedWorkspaces: true,
+    automaticRollback: false,
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "workspace-id",
+      status: "stopped",
+      flyMachineId: "workspace-machine-id",
+      flyVolumeId: "workspace-volume-id",
+      runtimeImage: "registry.example/runtime@sha256:old",
+    },
+  ];
+  let configured:
+    | Parameters<NonNullable<typeof repository.configureStoppedWorkspace>>[0]
+    | undefined;
+  let completion: Record<string, unknown> | undefined;
+  let backupCount = 0;
+  repository.configureStoppedWorkspace = async (input) => {
+    configured = input;
+    calls.push("workspace:configured-stopped");
+  };
+  repository.completeOperation = async (input) => {
+    completion = input.result;
+  };
+  provider.createVolumeSnapshot = async (input) => {
+    calls.push(`provider:snapshot:${input.volumeId}`);
+    return { id: "snapshot-id", state: "created" };
+  };
+  provider.updateMachineImage = async (input) => ({
+    id: input.machineId,
+    state:
+      input.machineId === "workspace-machine-id" ? "stopped" : "started",
+    region: "iad",
+  });
+  provider.startMachine = async () => {
+    calls.push("provider:start");
+  };
+
+  await createProvisioner(repository, provider, async () => {
+    backupCount += 1;
+  }).process("operation-id");
+
+  assert.equal(backupCount, 0);
+  assert.equal(calls.includes("provider:start"), false);
+  assert.ok(calls.includes("provider:snapshot:workspace-volume-id"));
+  assert.equal(configured?.workspaceId, "workspace-id");
+  assert.equal(configured?.runtimeImage, runtimeImage);
+  assert.deepEqual(completion?.configuredUnverifiedWorkspaceIds, [
+    "workspace-id",
+  ]);
+});
+
 test("Environment updates report Workspaces that require provisioning recovery", async () => {
   const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
   const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
@@ -464,13 +529,17 @@ test("Environment updates report Workspaces that require provisioning recovery",
   repository.listEnvironmentWorkspaces = async () => [
     {
       id: "ready-workspace",
+      status: "ready",
       flyMachineId: "ready-machine",
       flyVolumeId: "ready-volume",
+      runtimeImage,
     },
     {
       id: "failed-workspace",
+      status: "failed",
       flyMachineId: null,
       flyVolumeId: null,
+      runtimeImage,
     },
   ];
   let completion:
@@ -727,6 +796,7 @@ test("Workspace start wakes the existing Machine without reprovisioning storage"
     status: "stopped",
     flyMachineId: "machine-id",
     flyVolumeId: "volume-id",
+    runtimeImage: "registry.example/runtime@sha256:abc",
     sourceType: "blank",
     sourceResourceId: null,
     sourceRepository: null,
@@ -761,6 +831,7 @@ test("Workspace stop retains its Machine and persistent volume", async () => {
     status: "ready",
     flyMachineId: "machine-id",
     flyVolumeId: "volume-id",
+    runtimeImage: "registry.example/runtime@sha256:abc",
     sourceType: "blank",
     sourceResourceId: null,
     sourceRepository: null,
@@ -792,6 +863,7 @@ test("Workspace idle stop continues from the control-plane stopping state", asyn
     status: "stopping",
     flyMachineId: "machine-id",
     flyVolumeId: "volume-id",
+    runtimeImage: "registry.example/runtime@sha256:abc",
     sourceType: "blank",
     sourceResourceId: null,
     sourceRepository: null,
@@ -822,6 +894,7 @@ test("Workspace deletion removes the Machine before its volume", async () => {
     status: "stopped",
     flyMachineId: "machine-id",
     flyVolumeId: "volume-id",
+    runtimeImage: "registry.example/runtime@sha256:abc",
     sourceType: "blank",
     sourceResourceId: null,
     sourceRepository: null,

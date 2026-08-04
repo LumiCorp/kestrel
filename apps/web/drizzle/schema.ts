@@ -1774,6 +1774,225 @@ export const environmentWorkspaces = pgTable(
   ],
 );
 
+/** =========================
+ *  Fly image releases
+ *  ========================= */
+
+export const flyImageReleases = pgTable(
+  "fly_image_releases",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    bundleRevision: text("bundle_revision").notNull(),
+    manifestDigest: text("manifest_digest").notNull(),
+    trigger: text("trigger", {
+      enum: ["main", "scheduled", "manual", "bootstrap", "rollback"],
+    }).notNull(),
+    status: text("status", {
+      enum: [
+        "candidate",
+        "approved",
+        "deploying",
+        "paused",
+        "completed",
+        "superseded",
+      ],
+    })
+      .notNull()
+      .default("candidate"),
+    migrationChanged: boolean("migration_changed").notNull().default(false),
+    migrationApprovedByUserId: text("migration_approved_by_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    migrationApprovedAt: timestamp("migration_approved_at", {
+      withTimezone: true,
+    }),
+    validation: jsonb("validation")
+      .$type<{
+        status: "passed";
+        commands: string[];
+        completedAt: string;
+      }>()
+      .notNull(),
+    baseReleaseId: text("base_release_id"),
+    approvedByUserId: text("approved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("fly_image_releases_manifest_digest_idx").on(
+      table.manifestDigest,
+    ),
+    index("fly_image_releases_status_created_idx").on(
+      table.status,
+      table.createdAt,
+    ),
+    check(
+      "fly_image_releases_bundle_revision_check",
+      sql`${table.bundleRevision} ~ '^[0-9a-f]{40}$'`,
+    ),
+    check(
+      "fly_image_releases_manifest_digest_check",
+      sql`${table.manifestDigest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+  ],
+);
+
+export const flyImageReleaseComponents = pgTable(
+  "fly_image_release_components",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    releaseId: text("release_id")
+      .notNull()
+      .references(() => flyImageReleases.id, { onDelete: "cascade" }),
+    role: text("role", {
+      enum: [
+        "workspace-runtime",
+        "environment-router",
+        "preview-edge",
+        "turn-worker",
+        "runpod-worker",
+      ],
+    }).notNull(),
+    image: text("image").notNull(),
+    sourceRevision: text("source_revision").notNull(),
+    inputFingerprint: text("input_fingerprint").notNull(),
+    changed: boolean("changed").notNull(),
+    smoke: jsonb("smoke")
+      .$type<{ status: "passed"; command: string; completedAt: string }>()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("fly_image_release_components_release_role_idx").on(
+      table.releaseId,
+      table.role,
+    ),
+    check(
+      "fly_image_release_components_image_check",
+      sql`${table.image} ~ '^registry\\.fly\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$'`,
+    ),
+  ],
+);
+
+export const flyImageReleaseTargets = pgTable(
+  "fly_image_release_targets",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    releaseId: text("release_id")
+      .notNull()
+      .references(() => flyImageReleases.id, { onDelete: "cascade" }),
+    targetKind: text("target_kind", {
+      enum: ["global_app", "environment", "workspace"],
+    }).notNull(),
+    componentRole: text("component_role", {
+      enum: [
+        "workspace-runtime",
+        "environment-router",
+        "preview-edge",
+        "turn-worker",
+        "runpod-worker",
+      ],
+    }),
+    environmentId: text("environment_id").references(() => environments.id, {
+      onDelete: "set null",
+    }),
+    workspaceId: text("workspace_id").references(
+      () => environmentWorkspaces.id,
+      { onDelete: "set null" },
+    ),
+    targetKey: text("target_key").notNull(),
+    desiredImage: text("desired_image"),
+    priorImage: text("prior_image"),
+    status: text("status", {
+      enum: [
+        "pending",
+        "draining",
+        "applying",
+        "configured_unverified",
+        "verifying",
+        "completed",
+        "failed",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    stage: text("stage").notNull().default("pending"),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("fly_image_release_targets_release_key_idx").on(
+      table.releaseId,
+      table.targetKey,
+    ),
+    index("fly_image_release_targets_release_status_idx").on(
+      table.releaseId,
+      table.status,
+    ),
+    index("fly_image_release_targets_environment_idx").on(table.environmentId),
+  ],
+);
+
+export const flyImageReleaseSettings = pgTable(
+  "fly_image_release_settings",
+  {
+    id: text("id").primaryKey().notNull().default("platform"),
+    stableReleaseId: text("stable_release_id").references(
+      () => flyImageReleases.id,
+      { onDelete: "set null" },
+    ),
+    activeReleaseId: text("active_release_id").references(
+      () => flyImageReleases.id,
+      { onDelete: "set null" },
+    ),
+    canaryEnvironmentId: text("canary_environment_id").references(
+      () => environments.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "fly_image_release_settings_singleton_check",
+      sql`${table.id} = 'platform'`,
+    ),
+  ],
+);
+
 export const projectEnvironmentBindings = pgTable(
   "project_environment_bindings",
   {

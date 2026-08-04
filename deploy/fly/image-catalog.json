@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "images": [
+    {
+      "role": "workspace-runtime",
+      "app": "kestrel-one-runner",
+      "config": "apps/workspace-runtime/fly.build.toml",
+      "dockerfile": "apps/workspace-runtime/Dockerfile",
+      "smoke": "apps/workspace-runtime/scripts/image-smoke.sh",
+      "rollout": "environment",
+      "inputs": [
+        "deploy/fly/image-catalog.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.json",
+        "apps/workspace-runtime/**",
+        "packages/environment-auth/**",
+        "packages/sdk/**",
+        "packages/protocol/**",
+        "packages/workspace-skills/**",
+        "agents/**",
+        "cli/**",
+        "models/**",
+        "src/**",
+        "tools/**",
+        "db/**"
+      ]
+    },
+    {
+      "role": "environment-router",
+      "app": "kestrel-one-runner",
+      "config": "apps/environment-router/fly.build.toml",
+      "dockerfile": "apps/environment-router/Dockerfile",
+      "smoke": "apps/environment-router/scripts/image-smoke.sh",
+      "rollout": "environment",
+      "inputs": [
+        "deploy/fly/image-catalog.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "apps/environment-router/**",
+        "packages/environment-auth/**"
+      ]
+    },
+    {
+      "role": "preview-edge",
+      "app": "kestrel-preview-edge",
+      "config": "apps/preview-edge/fly.build.toml",
+      "dockerfile": "apps/preview-edge/Dockerfile",
+      "smoke": "apps/preview-edge/scripts/image-smoke.sh",
+      "rollout": "global-app",
+      "inputs": [
+        "deploy/fly/image-catalog.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "apps/preview-edge/**",
+        "packages/environment-auth/**"
+      ]
+    },
+    {
+      "role": "turn-worker",
+      "app": "kestrel-one-turn-worker",
+      "config": "deploy/fly/kestrel-one-turn-worker/fly.toml",
+      "dockerfile": "deploy/fly/kestrel-one-turn-worker/Dockerfile",
+      "smoke": "deploy/fly/kestrel-one-turn-worker/smoke.sh",
+      "rollout": "global-app",
+      "inputs": [
+        "deploy/fly/image-catalog.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.json",
+        "apps/web/**",
+        "packages/environment-auth/**",
+        "packages/mcp-security/**",
+        "packages/protocol/**",
+        "packages/sdk/**",
+        "packages/ai-sdk/**",
+        "packages/next/**",
+        "packages/workspace-skills/**",
+        "deploy/fly/kestrel-one-turn-worker/**"
+      ]
+    },
+    {
+      "role": "runpod-worker",
+      "app": "kestrel-one-runpod-worker",
+      "config": "deploy/fly/kestrel-one-runpod-worker/fly.toml",
+      "dockerfile": "deploy/fly/kestrel-one-runpod-worker/Dockerfile",
+      "smoke": "deploy/fly/kestrel-one-runpod-worker/smoke.sh",
+      "rollout": "global-app",
+      "inputs": [
+        "deploy/fly/image-catalog.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "apps/web/**",
+        "packages/environment-auth/**",
+        "deploy/fly/kestrel-one-runpod-worker/**"
+      ]
+    }
+  ]
+}

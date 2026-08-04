@@ -770,6 +770,17 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     };
   }
 
+  async listAppMachines(input: { appName: string }) {
+    const machines = parseResponse(
+      z.array(machineSchema),
+      await this.request(
+        `/apps/${encodeURIComponent(input.appName)}/machines`,
+        { method: "GET" },
+      ),
+    );
+    return machines.map(toMachine);
+  }
+
   async waitForMachine(input: {
     appName: string;
     machineId: string;

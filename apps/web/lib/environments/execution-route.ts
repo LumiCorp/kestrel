@@ -375,45 +375,57 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
     );
-    const [environment, workspace, activeLifecycleOperation] =
-      await Promise.all([
-        transaction.query.environments.findFirst({
-          where: (table, { and, eq, isNull }) =>
-            and(
-              eq(table.id, input.environmentId),
-              eq(table.organizationId, input.organizationId),
-              eq(table.status, "ready"),
-              isNull(table.archivedAt),
-            ),
-          columns: {
-            id: true,
-            flyAppName: true,
-            routerUrl: true,
-            flyGatewayMachineId: true,
-          },
-        }),
-        transaction.query.environmentWorkspaces.findFirst({
-          where: (table, { and, eq, isNull }) =>
-            and(
-              eq(table.id, input.workspaceId),
-              eq(table.organizationId, input.organizationId),
-              eq(table.environmentId, input.environmentId),
-              eq(table.status, "ready"),
-              isNull(table.deletedAt),
-            ),
-          columns: {
-            id: true,
-            flyMachineId: true,
-            runtimeImage: true,
-          },
-        }),
-        findActiveWorkspaceLifecycleOperation(transaction, {
-          organizationId: input.organizationId,
-          environmentId: input.environmentId,
-          workspaceId: input.workspaceId,
-          excludedOperationIds: input.owningLifecycleOperationIds,
-        }),
-      ]);
+    const [
+      environment,
+      workspace,
+      activeLifecycleOperation,
+      activeReleaseTarget,
+    ] = await Promise.all([
+      transaction.query.environments.findFirst({
+        where: (table, { and, eq, isNull }) =>
+          and(
+            eq(table.id, input.environmentId),
+            eq(table.organizationId, input.organizationId),
+            eq(table.status, "ready"),
+            isNull(table.archivedAt),
+          ),
+        columns: {
+          id: true,
+          flyAppName: true,
+          routerUrl: true,
+          flyGatewayMachineId: true,
+        },
+      }),
+      transaction.query.environmentWorkspaces.findFirst({
+        where: (table, { and, eq, isNull }) =>
+          and(
+            eq(table.id, input.workspaceId),
+            eq(table.organizationId, input.organizationId),
+            eq(table.environmentId, input.environmentId),
+            eq(table.status, "ready"),
+            isNull(table.deletedAt),
+          ),
+        columns: {
+          id: true,
+          flyMachineId: true,
+          runtimeImage: true,
+        },
+      }),
+      findActiveWorkspaceLifecycleOperation(transaction, {
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        excludedOperationIds: input.owningLifecycleOperationIds,
+      }),
+      transaction.query.flyImageReleaseTargets.findFirst({
+        where: (table, { and, eq, inArray }) =>
+          and(
+            eq(table.environmentId, input.environmentId),
+            inArray(table.status, ["draining", "applying", "verifying"]),
+          ),
+        columns: { id: true },
+      }),
+    ]);
     if (
       !(
         environment?.flyAppName &&
@@ -422,7 +434,8 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
         workspace?.flyMachineId &&
         workspace.runtimeImage
       ) ||
-      activeLifecycleOperation
+      activeLifecycleOperation ||
+      activeReleaseTarget
     ) {
       return null;
     }
@@ -579,7 +592,12 @@ async function waitForExecutionResources(input: {
   let lastDetail = "";
   let startRequested = false;
   while (Date.now() < deadline) {
-    const [environment, workspace, activeLifecycleOperation] = await Promise.all([
+    const [
+      environment,
+      workspace,
+      activeLifecycleOperation,
+      activeReleaseTarget,
+    ] = await Promise.all([
       knowledgeDb.query.environments.findFirst({
         where: (table, { and, eq }) =>
           and(
@@ -600,6 +618,18 @@ async function waitForExecutionResources(input: {
         environmentId: input.environmentId,
         workspaceId: input.workspaceId,
         excludedOperationIds: input.owningLifecycleOperationIds,
+      }),
+      knowledgeDb.query.flyImageReleaseTargets.findFirst({
+        where: (table, { and, eq, inArray }) =>
+          and(
+            eq(table.environmentId, input.environmentId),
+            inArray(table.status, [
+              "draining",
+              "applying",
+              "verifying",
+            ]),
+          ),
+        columns: { id: true },
       }),
     ]);
     if (!(environment && workspace)) {
@@ -622,7 +652,8 @@ async function waitForExecutionResources(input: {
       workspace.status === "ready" &&
       workspace.flyMachineId &&
       workspace.runtimeImage &&
-      !activeLifecycleOperation
+      !activeLifecycleOperation &&
+      !activeReleaseTarget
     ) {
       return {
         environment: {
@@ -638,7 +669,7 @@ async function waitForExecutionResources(input: {
       };
     }
     if (
-      !startRequested &&
+      !(startRequested || activeReleaseTarget) &&
       (workspace.status === "stopped" || workspace.status === "degraded")
     ) {
       const operation = await requestWorkspaceStart({
@@ -652,18 +683,24 @@ async function waitForExecutionResources(input: {
       }
       startRequested = true;
     }
-    const progress = activeLifecycleOperation
+    const progress = activeReleaseTarget
       ? {
           stage: "environment.health.checking" as const,
-          detail: "Checking Workspace health…",
+          detail: "Applying a managed Environment release…",
           status: "pending" as const,
         }
-      : describeEnvironmentActivation({
-          environmentStatus: environment.status,
-          workspaceStatus: workspace.status,
-          failureMessage:
-            workspace.failureMessage ?? environment.failureMessage,
-        });
+      : activeLifecycleOperation
+        ? {
+            stage: "environment.health.checking" as const,
+            detail: "Checking Workspace health…",
+            status: "pending" as const,
+          }
+        : describeEnvironmentActivation({
+            environmentStatus: environment.status,
+            workspaceStatus: workspace.status,
+            failureMessage:
+              workspace.failureMessage ?? environment.failureMessage,
+          });
     if (progress.detail !== lastDetail) {
       lastDetail = progress.detail;
       input.onProgress?.(progress);

@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { attachActiveFlyImageReleaseTarget } from "@/lib/releases/store";
 import {
   assertEnvironmentTransition,
   assertWorkspaceTransition,
@@ -170,6 +171,7 @@ export async function ensureOrganizationDefaultEnvironment(input: {
       })
       .returning();
     if (!operation) throw new Error("Default Environment operation failed.");
+    await attachActiveFlyImageReleaseTarget(transaction, environmentId);
     return { environment, operation, created: true };
   });
 }
@@ -347,6 +349,7 @@ export async function createOrganizationEnvironment(input: {
         updatedAt: now,
       })
       .returning();
+    await attachActiveFlyImageReleaseTarget(transaction, environmentId);
     return { environment, operation };
   });
 }

@@ -55,6 +55,7 @@ export interface EnvironmentProvisioningRepository {
     status: string;
     flyMachineId: string | null;
     flyVolumeId: string | null;
+    runtimeImage: string | null;
     sourceType: "blank" | "github";
     sourceResourceId: string | null;
     sourceRepository: string | null;
@@ -63,8 +64,10 @@ export interface EnvironmentProvisioningRepository {
   listEnvironmentWorkspaces(environmentId: string): Promise<
     Array<{
       id: string;
+      status: string;
       flyMachineId: string | null;
       flyVolumeId: string | null;
+      runtimeImage: string | null;
     }>
   >;
   beginEnvironmentProvisioning(input: {
@@ -145,6 +148,15 @@ export interface EnvironmentProvisioningRepository {
     workspaceId: string;
     runtimeImage: string;
     serviceTokenHash: string;
+  }): Promise<void>;
+  configureStoppedWorkspace?(input: {
+    workspaceId: string;
+    runtimeImage: string;
+    serviceTokenHash: string;
+  }): Promise<void>;
+  markWorkspaceReleaseVerified?(input: {
+    workspaceId: string;
+    runtimeImage: string;
   }): Promise<void>;
   updateOperationStage(input: {
     operationId: string;
@@ -494,8 +506,10 @@ export class EnvironmentProvisioner {
       operation.input?.routerImage,
       "Environment router image",
     );
-    const skipWorkspaceBackups =
-      operation.input?.skipWorkspaceBackups === true;
+    const skipWorkspaceBackups = operation.input?.skipWorkspaceBackups === true;
+    const preserveStoppedWorkspaces =
+      operation.input?.preserveStoppedWorkspaces === true;
+    const automaticRollback = operation.input?.automaticRollback !== false;
     const workspaces = await this.repository.listEnvironmentWorkspaces(
       environment.id,
     );
@@ -542,7 +556,11 @@ export class EnvironmentProvisioner {
         timeoutSeconds: 90,
       });
     } catch (error) {
-      if (environment.routerImage && environment.routerImage !== routerImage) {
+      if (
+        automaticRollback &&
+        environment.routerImage &&
+        environment.routerImage !== routerImage
+      ) {
         await this.provider
           .updateMachineImage({
             appName: environment.flyAppName,
@@ -593,6 +611,13 @@ export class EnvironmentProvisioner {
       });
       for (const workspace of workspaces) {
         if (!(workspace.flyMachineId && workspace.flyVolumeId)) continue;
+        if (preserveStoppedWorkspaces && workspace.status === "stopped") {
+          await this.provider.createVolumeSnapshot({
+            appName: environment.flyAppName,
+            volumeId: workspace.flyVolumeId,
+          });
+          continue;
+        }
         const backupInput = {
           organizationId: operation.organizationId,
           environmentId: environment.id,
@@ -632,10 +657,22 @@ export class EnvironmentProvisioner {
       stage: "environment.update.workspaces",
     });
     const skippedWorkspaceIds: string[] = [];
+    const configuredUnverifiedWorkspaceIds: string[] = [];
     let updatedWorkspaceCount = 0;
     for (const workspace of workspaces) {
       if (!workspace.flyMachineId) {
         skippedWorkspaceIds.push(workspace.id);
+        continue;
+      }
+      if (preserveStoppedWorkspaces && workspace.status === "stopped") {
+        await this.configureStoppedWorkspaceRuntime({
+          appName: environment.flyAppName,
+          workspaceId: workspace.id,
+          machineId: workspace.flyMachineId,
+          runtimeImage,
+        });
+        configuredUnverifiedWorkspaceIds.push(workspace.id);
+        updatedWorkspaceCount += 1;
         continue;
       }
       await this.updateWorkspaceRuntime({
@@ -668,8 +705,47 @@ export class EnvironmentProvisioner {
         workspaceCount: workspaces.length,
         updatedWorkspaceCount,
         skippedWorkspaceIds,
+        ...(configuredUnverifiedWorkspaceIds.length > 0
+          ? { configuredUnverifiedWorkspaceIds }
+          : {}),
         ...(skipWorkspaceBackups ? { workspaceBackupsSkipped: true } : {}),
       },
+    });
+  }
+
+  private async configureStoppedWorkspaceRuntime(input: {
+    appName: string;
+    workspaceId: string;
+    machineId: string;
+    runtimeImage: string;
+  }) {
+    if (!this.repository.configureStoppedWorkspace) {
+      throw operationError(
+        "ENVIRONMENT_UNAVAILABLE",
+        "Stopped Workspace image persistence is unavailable.",
+      );
+    }
+    const workspaceServiceToken = createEnvironmentServiceToken();
+    const machine = await this.provider.updateMachineImage({
+      appName: input.appName,
+      machineId: input.machineId,
+      runtimeImage: input.runtimeImage,
+      envPatch: workspaceRuntimeIdentityPatch({
+        appName: input.appName,
+        serviceToken: workspaceServiceToken,
+      }),
+      stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
+    });
+    if (machine.state !== "stopped") {
+      throw operationError(
+        "ENVIRONMENT_UNAVAILABLE",
+        "Stopped Workspace unexpectedly launched while applying its release image.",
+      );
+    }
+    await this.repository.configureStoppedWorkspace({
+      workspaceId: input.workspaceId,
+      runtimeImage: input.runtimeImage,
+      serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
     });
   }
 
@@ -901,6 +977,15 @@ export class EnvironmentProvisioner {
       workspaceStatusSchema.parse(workspace.status),
       "starting",
     );
+    const desiredRuntimeImage = environment.runtimeImage ?? this.runtimeImage;
+    if (workspace.runtimeImage !== desiredRuntimeImage) {
+      await this.configureStoppedWorkspaceRuntime({
+        appName: environment.flyAppName,
+        workspaceId: workspace.id,
+        machineId: workspace.flyMachineId,
+        runtimeImage: desiredRuntimeImage,
+      });
+    }
     await this.repository.setWorkspaceStarting(workspace.id);
     await this.repository.updateOperationStage({
       operationId: operation.id,
@@ -927,6 +1012,10 @@ export class EnvironmentProvisioner {
       timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
     await this.repository.completeWorkspaceStart(workspace.id);
+    await this.repository.markWorkspaceReleaseVerified?.({
+      workspaceId: workspace.id,
+      runtimeImage: desiredRuntimeImage,
+    });
     await this.repository.completeOperation({
       operationId: operation.id,
       stage: "environment.activation.ready",
@@ -1212,6 +1301,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             status: true,
             flyMachineId: true,
             flyVolumeId: true,
+            runtimeImage: true,
             sourceType: true,
             sourceResourceId: true,
             sourceRepository: true,
@@ -1232,6 +1322,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             status: value.status,
             flyMachineId: value.flyMachineId,
             flyVolumeId: value.flyVolumeId,
+            runtimeImage: value.runtimeImage,
             sourceType: value.sourceType,
             sourceResourceId: value.sourceResourceId,
             sourceRepository: value.sourceRepository,
@@ -1245,8 +1336,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           and(eq(table.environmentId, environmentId), isNull(table.deletedAt)),
         columns: {
           id: true,
+          status: true,
           flyMachineId: true,
           flyVolumeId: true,
+          runtimeImage: true,
         },
       });
     },
@@ -1734,6 +1827,24 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           updatedAt: now,
         })
         .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
+    },
+    async configureStoppedWorkspace(input) {
+      await knowledgeDb
+        .update(schema.environmentWorkspaces)
+        .set({
+          status: "stopped",
+          runtimeImage: input.runtimeImage,
+          serviceTokenHash: input.serviceTokenHash,
+          failureCode: null,
+          failureMessage: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
+    },
+    async markWorkspaceReleaseVerified(input) {
+      const { markWorkspaceReleaseVerified } =
+        await import("@/lib/releases/runtime");
+      await markWorkspaceReleaseVerified(input);
     },
     async updateOperationStage(input) {
       await knowledgeDb

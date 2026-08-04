@@ -114,6 +114,7 @@
     "desktop:promote-update": "node --import tsx scripts/promote-desktop-update.ts",
     "desktop:test": "pnpm --filter @kestrel/desktop test",
     "test-proofs:mutations": "node scripts/validation/audit-mutations.mjs",
+    "release:fly-images": "node --import tsx scripts/publish-fly-images.ts",
     "check:docs": "node --import tsx scripts/check-docs.ts",
     "check:agents": "node --import tsx scripts/check-agents.ts",
     "check:architecture": "node --import tsx scripts/check-architecture.ts",
