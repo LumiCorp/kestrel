@@ -6,6 +6,7 @@ import type {
 import type { InteractionRequestRecord } from "../kestrel/contracts/orchestration.js";
 import { createRuntimeFailure } from "./RuntimeFailure.js";
 import { extractUserReplyQuestion, extractWaitPrompt } from "./waitForPrompt.js";
+import type { ExecutionBoundaryDecisionSink, ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   waitFor: T,
@@ -103,6 +104,38 @@ export function finalizeRuntimeAssistantResponse(input: {
   }
 
   return { output, assistantText: null };
+}
+
+export async function enforceRuntimeAssistantResponseBoundary(input: {
+  output: NormalizedOutput;
+  assistantText: string | null | undefined;
+  request?: InteractionRequestRecord | undefined;
+  executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
+  persist: ExecutionBoundaryDecisionSink;
+}): Promise<{ output: NormalizedOutput; assistantText: string | null }> {
+  const canonical = finalizeRuntimeAssistantResponse(input);
+  const evaluated = await input.executionBoundaryRuntime.evaluateAndPersist({
+    boundary: "assistant_output",
+    identity: {
+      runId: canonical.output.runId,
+      sessionId: canonical.output.sessionId,
+    },
+    source: "runtime",
+    trust: "data",
+    sourceId: `assistant-output:${canonical.output.runId}`,
+    value: {
+      assistantText: canonical.assistantText,
+      waitFor: canonical.output.waitFor,
+    },
+    handling: "redact",
+    persist: input.persist,
+  });
+  return {
+    output: evaluated.value.waitFor === undefined
+      ? canonical.output
+      : { ...canonical.output, waitFor: evaluated.value.waitFor },
+    assistantText: evaluated.value.assistantText,
+  };
 }
 
 export function isUserFacingWait(waitFor: WaitForMatcher | undefined): boolean {

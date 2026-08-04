@@ -11,6 +11,7 @@ export type RunEventType =
   | "run.completed"
   | "run.failed"
   | "run.cancelled"
+  | "execution_boundary.decision"
   | "recovery.decision.persisted"
   | "recovery.action.started"
   | "recovery.action.completed"

@@ -81,6 +81,14 @@ export function readTextArtifact(ref: string): StoredArtifact | undefined {
   return artifact;
 }
 
+export function deleteTextArtifact(ref: string): boolean {
+  const artifact = artifacts.get(ref);
+  if (artifact === undefined) return false;
+  artifacts.delete(ref);
+  retainedBytes -= artifact.byteLength;
+  return true;
+}
+
 function evictArtifacts(): void {
   while (artifacts.size > MAX_ARTIFACT_COUNT || retainedBytes > MAX_ARTIFACT_BYTES) {
     const oldestRef = artifacts.keys().next().value as string | undefined;

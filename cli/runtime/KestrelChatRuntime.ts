@@ -75,6 +75,8 @@ import {
   missionControlActiveWorkCount,
   type MissionControlReviewEvidenceResolver,
   type MissionControlProjectStateRecord,
+  ExecutionBoundaryPolicyRuntime,
+  type ExecutionBoundaryDecisionV1,
 } from "../../src/index.js";
 import type {
   OperatorCompactionState,
@@ -82,7 +84,10 @@ import type {
   WorkspaceRuntimeContext,
   TuiProfile,
 } from "../contracts.js";
-import { createGatewayManagedModelGateway } from "./gateway-credential-broker.js";
+import {
+  createGatewayManagedModelGateway,
+  type GatewayCredentialLease,
+} from "./gateway-credential-broker.js";
 import type {
   ModelGateway,
   ModelRequest,
@@ -187,6 +192,8 @@ export type RunTurnResult = RuntimeTurnResult & {
 
 interface RuntimeBootstrap {
   kestrel: Kestrel;
+  executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
+  persistExecutionBoundaryDecision?: ((decision: ExecutionBoundaryDecisionV1) => Promise<void>) | undefined;
   missionControlStore?: SessionStore | undefined;
   missionControlProjectService?: MissionControlProjectService | undefined;
   threadRuntime?: ThreadRuntime | undefined;
@@ -479,6 +486,12 @@ export class KestrelChatRuntime {
         const session = await this.kestrel.getSession(sessionId);
         return readResumeStepAgentFromSession(session?.state);
       },
+      ...(bootstrap.executionBoundaryRuntime !== undefined
+        ? { executionBoundaryRuntime: bootstrap.executionBoundaryRuntime }
+        : {}),
+      ...(bootstrap.persistExecutionBoundaryDecision !== undefined
+        ? { persistExecutionBoundaryDecision: bootstrap.persistExecutionBoundaryDecision }
+        : {}),
     });
     const missionControlStore = bootstrap.missionControlStore;
     if (missionControlStore === undefined) {
@@ -3177,6 +3190,13 @@ function createRuntimeWithStore(
   const mcpOAuthProviderFactory = environment?.mcpOAuthProviderFactory;
   const microsoft365Service = environment?.microsoft365Service;
   const googleWorkspaceService = environment?.googleWorkspaceService;
+  const executionBoundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  registerKnownRuntimeSensitiveValues(executionBoundaryRuntime, [
+    modelEnv,
+    runtimeEnv,
+    mcpEnv,
+    ...(internetEnv !== undefined ? [internetEnv] : []),
+  ]);
   const taskGraphStore = new ProductTaskGraphStore(store);
   const projectStore = new ProductProjectStateStore(store);
   const missionControlProjectService = new MissionControlProjectService(store);
@@ -3302,6 +3322,7 @@ function createRuntimeWithStore(
     context: toolContext,
     mcpServers: profile.mcpServers ?? [],
     env: mcpEnv,
+    sensitiveValueRegistry: executionBoundaryRuntime.sensitiveValues,
     ...(mcpOAuthProviderFactory !== undefined
       ? { mcpOAuthProviderFactory }
       : {}),
@@ -3312,7 +3333,22 @@ function createRuntimeWithStore(
     );
   }
 
-  const modelGateway = createModelGatewayForProfile(profile, { env: modelEnv });
+  const modelGateway = createModelGatewayForProfile(profile, {
+    env: modelEnv,
+    onCredentialLease: (lease) => {
+      if (lease.apiKey === null || lease.apiKey.length === 0) {
+        return;
+      }
+      return executionBoundaryRuntime.sensitiveValues.register({
+        reference: {
+          referenceId: `model-credential-lease:${lease.leaseId}`,
+          kind: "credential",
+          scope: "model",
+        },
+        value: lease.apiKey,
+      });
+    },
+  });
   const recoveryRuntime = profile.modelProvider !== undefined && profile.model !== undefined
     ? createRecoveryRuntimeConfiguration(profile, modelGateway, modelEnv)
     : undefined;
@@ -3339,6 +3375,7 @@ function createRuntimeWithStore(
   const kestrel = new Kestrel({
     store,
     modelGateway,
+    executionBoundaryRuntime,
     ...(recoveryRuntime !== undefined ? { recoveryRuntime } : {}),
     providerReasoningVault,
     toolGateway: toolRegistry,
@@ -3461,6 +3498,7 @@ function createRuntimeWithStore(
       getSession: (sessionId) => kestrel.getSession(sessionId),
     }),
     profile,
+    executionBoundaryRuntime,
     ...(resolveAttachments !== undefined ? { resolveAttachments } : {}),
     onTaskUpdate: (update) => {
       void persistDelegationTaskUpdateToGraph(taskGraphStore, update).catch(
@@ -3477,6 +3515,20 @@ function createRuntimeWithStore(
 
   return {
     kestrel,
+    executionBoundaryRuntime,
+    persistExecutionBoundaryDecision: async (decision) => {
+      await store.appendRunEvent({
+        runId: decision.runId,
+        sessionId: decision.sessionId,
+        ...(decision.stepIndex !== undefined ? { stepIndex: decision.stepIndex } : {}),
+        type: "execution_boundary.decision",
+        level: decision.outcome === "DENY" || decision.outcome === "QUARANTINE"
+          ? "WARN"
+          : "INFO",
+        timestamp: decision.createdAt,
+        metadata: { ...decision },
+      });
+    },
     missionControlStore: store,
     missionControlProjectService,
     threadRuntime,
@@ -3533,16 +3585,65 @@ function createRuntimeWithStore(
   };
 }
 
+const RUNTIME_SENSITIVE_ENVIRONMENT_KEYS = Object.freeze([
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENROUTER_API_KEY",
+  "OLLAMA_API_KEY",
+  "TAVILY_API_KEY",
+  "KESTREL_ONE_TOOL_TOKEN",
+  "KESTREL_WORKSPACE_SERVICE_TOKEN",
+] as const);
+
+function registerKnownRuntimeSensitiveValues(
+  runtime: ExecutionBoundaryPolicyRuntime,
+  environments: NodeJS.ProcessEnv[],
+): void {
+  const registered = new Set<string>();
+  for (const environment of environments) {
+    for (const key of RUNTIME_SENSITIVE_ENVIRONMENT_KEYS) {
+      const value = environment[key]?.trim();
+      if (value === undefined || value.length === 0 || registered.has(`${key}\0${value}`)) {
+        continue;
+      }
+      registered.add(`${key}\0${value}`);
+      runtime.sensitiveValues.register({
+        reference: {
+          referenceId: `environment:${key}:${registered.size}`,
+          kind: "credential",
+          scope: "runtime",
+        },
+        value,
+      });
+    }
+  }
+}
+
 export function createModelGatewayForProfile(
   profile: TuiProfile,
   options: {
-    createGatewayManaged?: ((profile: TuiProfile) => ModelGateway) | undefined;
+    createGatewayManaged?:
+      | ((
+          profile: TuiProfile,
+          options?: {
+            onLease?:
+              | ((lease: GatewayCredentialLease) => (() => void) | void)
+              | undefined;
+          },
+        ) => ModelGateway)
+      | undefined;
+    onCredentialLease?:
+      | ((lease: GatewayCredentialLease) => (() => void) | void)
+      | undefined;
     env?: NodeJS.ProcessEnv | undefined;
   } = {},
 ) {
   if (profile.modelCredential) {
     return (options.createGatewayManaged ?? createGatewayManagedModelGateway)(
       profile,
+      options.onCredentialLease !== undefined
+        ? { onLease: options.onCredentialLease }
+        : undefined,
     );
   }
   const env = options.env ?? process.env;

@@ -94,6 +94,7 @@ import {
 import { RuntimeIO } from "./RuntimeIO.js";
 import { RecoveryCoordinator, normalizeRecoveryFailureCode } from "./recovery/RecoveryCoordinator.js";
 import { resolveKestrelHomePath } from "../runtime/kestrelHome.js";
+import { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 import {
   buildPersistedRuntimeEventFromProgressUpdate,
 } from "../events/RuntimeEventProjections.js";
@@ -189,9 +190,12 @@ export class ExecutionEngine {
   private readonly progressPersistGranularity: ProgressPersistGranularity;
   private readonly loggedHeapPressureKeys = new Set<string>();
   private readonly recoveryCoordinator: RecoveryCoordinator | undefined;
+  private readonly executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
 
   constructor(deps: RuntimeDependencies, guardrailConfig?: Partial<GuardrailConfig>) {
     this.deps = deps;
+    this.executionBoundaryRuntime =
+      deps.executionBoundaryRuntime ?? new ExecutionBoundaryPolicyRuntime();
     this.guardrailConfig = {
       ...DEFAULT_GUARDRAILS,
       ...guardrailConfig,
@@ -1322,6 +1326,7 @@ export class ExecutionEngine {
       ...(this.deps.recoveryRuntime !== undefined
         ? { recoveryRuntime: this.deps.recoveryRuntime }
         : {}),
+      executionBoundaryRuntime: this.executionBoundaryRuntime,
     });
 
     return {

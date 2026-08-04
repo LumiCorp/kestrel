@@ -92,6 +92,7 @@ export * from "./profile/kestrelOnePolicy.js";
 export * from "./profile/recoveryPolicy.js";
 export * from "./engine/recovery/RecoveryCoordinator.js";
 export * from "./engine/recovery/RecoveryRegistries.js";
+export * from "./security/ExecutionBoundaryPolicy.js";
 export * from "./desktopShell/executionProfile.js";
 export * from "./economics/index.js";
 export * from "./workspace/threadWorkspaceBinding.js";

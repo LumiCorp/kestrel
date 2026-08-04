@@ -204,7 +204,11 @@ export class BrokeredModelGateway implements ModelGateway {
     lease: GatewayCredentialLease,
   ) => ModelGateway;
   private readonly onEvent: (event: GatewayCredentialCacheEvent) => void;
+  private readonly onLease: (
+    lease: GatewayCredentialLease,
+  ) => (() => void) | void;
   private provider: { leaseId: string; gateway: ModelGateway } | undefined;
+  private releaseLeaseRegistration: (() => void) | undefined;
 
   constructor(input: {
     reference: GatewayCredentialReference;
@@ -213,11 +217,15 @@ export class BrokeredModelGateway implements ModelGateway {
       | ((lease: GatewayCredentialLease) => ModelGateway)
       | undefined;
     onEvent?: ((event: GatewayCredentialCacheEvent) => void) | undefined;
+    onLease?:
+      | ((lease: GatewayCredentialLease) => (() => void) | void)
+      | undefined;
   }) {
     this.reference = input.reference;
     this.cache = input.cache;
     this.createProvider = input.createProvider ?? createProviderGatewayForLease;
     this.onEvent = input.onEvent ?? (() => {});
+    this.onLease = input.onLease ?? (() => {});
   }
 
   async call<T>(
@@ -233,6 +241,8 @@ export class BrokeredModelGateway implements ModelGateway {
         throw toSecretFreeProviderError(error);
       }
       this.cache.invalidate(this.reference);
+      this.releaseLeaseRegistration?.();
+      this.releaseLeaseRegistration = undefined;
       this.provider = undefined;
       this.onEvent({ type: "credential_auth_retry", ...this.reference });
       const refreshed = await this.cache.get(this.reference);
@@ -249,6 +259,8 @@ export class BrokeredModelGateway implements ModelGateway {
 
   private getProvider(lease: GatewayCredentialLease) {
     if (this.provider?.leaseId !== lease.leaseId) {
+      this.releaseLeaseRegistration?.();
+      this.releaseLeaseRegistration = this.onLease(lease) ?? undefined;
       this.provider = {
         leaseId: lease.leaseId,
         gateway: this.createProvider(lease),
@@ -283,6 +295,11 @@ export function registerEmbeddedGatewayCredentialLease(input: {
 
 export function createGatewayManagedModelGateway(
   profile: Pick<TuiProfile, "modelCredential">,
+  options: {
+    onLease?:
+      | ((lease: GatewayCredentialLease) => (() => void) | void)
+      | undefined;
+  } = {},
 ) {
   const reference = profile.modelCredential;
   if (!reference || reference.source !== "kestrel-one") {
@@ -296,6 +313,7 @@ export function createGatewayManagedModelGateway(
     reference,
     cache,
     onEvent: logCredentialCacheEvent,
+    ...(options.onLease !== undefined ? { onLease: options.onLease } : {}),
   });
 }
 
