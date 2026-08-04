@@ -4,6 +4,10 @@ import {
   digestCanonicalValue,
   type RuntimeEvaluationAssetBundleRefV1,
 } from "../kestrel/contracts/evaluation.js";
+import {
+  COMPLETION_EVIDENCE_CALIBRATION_DATASET_ID,
+  COMPLETION_EVIDENCE_CALIBRATION_DATASET_V1,
+} from "./calibration/dataset.js";
 
 export const COMPLETION_EVIDENCE_ASSERTIONS_V1 = Object.freeze([
   Object.freeze({
@@ -105,13 +109,8 @@ const componentRevisions = {
   promptRevision: digestCanonicalValue(COMPLETION_EVIDENCE_PROMPT_V1),
   schemaRevision: digestCanonicalValue(COMPLETION_EVIDENCE_OUTPUT_SCHEMA_V1),
   calibrationDatasetRevision: digestCanonicalValue({
-    datasetId: "completion-evidence.calibration.v1",
-    plannedCases: {
-      valid: 8,
-      incompleteOrUnsupported: 8,
-      ambiguous: 4,
-      integrity: 4,
-    },
+    datasetId: COMPLETION_EVIDENCE_CALIBRATION_DATASET_ID,
+    cases: COMPLETION_EVIDENCE_CALIBRATION_DATASET_V1,
   }),
   evaluatorCodeRevision: digestCanonicalValue({
     evaluatorId: COMPLETION_EVIDENCE_EVALUATOR_ID,

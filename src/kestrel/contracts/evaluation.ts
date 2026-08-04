@@ -236,8 +236,30 @@ export interface EvaluationCalibrationRecordV1 {
     dispositionRepeatability: number;
     thresholdStabilityFailures: number;
   };
+  runs?: EvaluationCalibrationRunV1[] | undefined;
   passed: boolean;
   createdAt: string;
+}
+
+export interface EvaluationCalibrationRunV1 {
+  caseId: string;
+  repetition: number;
+  requestedModel: string;
+  observedModelRevision: string;
+  assetBundleRevision: string;
+  verdict: {
+    score: number;
+    confidence: number;
+    assertions: Array<{
+      assertionId: string;
+      passed: boolean;
+    }>;
+    reasonCodes: string[];
+    repairable: boolean;
+    disposition: "continue" | "revise" | "review" | "quarantine";
+  };
+  usage: RuntimeEvaluationVerdictV1["usage"];
+  latencyMs: number;
 }
 
 export const LEAN_RUNTIME_EVALUATION_BUDGET_V1: RuntimeEvaluationBudgetV1 =
@@ -908,6 +930,7 @@ export function parseEvaluationCalibrationRecordV1(
       "repetitionsPerCase",
       "caseCount",
       "metrics",
+      "runs",
       "passed",
       "createdAt",
     ]),
@@ -1025,6 +1048,9 @@ export function parseEvaluationCalibrationRecordV1(
         10_000,
       ),
     },
+    ...(record.runs !== undefined
+      ? { runs: parseCalibrationRuns(record.runs) }
+      : {}),
     passed: requireBoolean(
       record.passed,
       "Evaluation calibration record passed",
@@ -1043,6 +1069,171 @@ export function parseEvaluationCalibrationRecordV1(
       "Evaluation calibration record revision does not match canonical content.",
     );
   return parsed;
+}
+
+function parseCalibrationRuns(value: unknown): EvaluationCalibrationRunV1[] {
+  const runs = requireArray(value, "Evaluation calibration record runs").map(
+    (entry, index) => parseCalibrationRun(entry, index),
+  );
+  if (runs.length > 1_000)
+    throw new Error("Evaluation calibration record runs exceeds 1000 entries.");
+  requireUnique(
+    runs.map((run) => `${run.caseId}:${run.repetition}`),
+    "Evaluation calibration record run identities",
+  );
+  return runs;
+}
+
+function parseCalibrationRun(
+  value: unknown,
+  index: number,
+): EvaluationCalibrationRunV1 {
+  const label = `Evaluation calibration record runs[${index}]`;
+  const record = requireRecord(value, label);
+  rejectUnknownFields(
+    record,
+    new Set([
+      "caseId",
+      "repetition",
+      "requestedModel",
+      "observedModelRevision",
+      "assetBundleRevision",
+      "verdict",
+      "usage",
+      "latencyMs",
+    ]),
+    label,
+  );
+  const verdict = requireRecord(record.verdict, `${label} verdict`);
+  rejectUnknownFields(
+    verdict,
+    new Set([
+      "score",
+      "confidence",
+      "assertions",
+      "reasonCodes",
+      "repairable",
+      "disposition",
+    ]),
+    `${label} verdict`,
+  );
+  const assertions = requireArray(
+    verdict.assertions,
+    `${label} verdict assertions`,
+  ).map((entry, assertionIndex) => {
+    const assertion = requireRecord(
+      entry,
+      `${label} verdict assertions[${assertionIndex}]`,
+    );
+    rejectUnknownFields(
+      assertion,
+      new Set(["assertionId", "passed"]),
+      `${label} verdict assertions[${assertionIndex}]`,
+    );
+    return {
+      assertionId: requireExactId(
+        assertion.assertionId,
+        `${label} verdict assertions[${assertionIndex}] assertionId`,
+      ),
+      passed: requireBoolean(
+        assertion.passed,
+        `${label} verdict assertions[${assertionIndex}] passed`,
+      ),
+    };
+  });
+  if (assertions.length === 0 || assertions.length > 32)
+    throw new Error(`${label} verdict assertions must contain 1 to 32 entries.`);
+  requireUnique(
+    assertions.map((assertion) => assertion.assertionId),
+    `${label} verdict assertion IDs`,
+  );
+  const disposition = verdict.disposition;
+  if (
+    disposition !== "continue" &&
+    disposition !== "revise" &&
+    disposition !== "review" &&
+    disposition !== "quarantine"
+  ) {
+    throw new Error(`${label} verdict disposition is invalid.`);
+  }
+  const usage = requireRecord(record.usage, `${label} usage`);
+  rejectUnknownFields(
+    usage,
+    new Set(["inputTokens", "outputTokens", "totalTokens", "costUsd"]),
+    `${label} usage`,
+  );
+  const inputTokens = requireNonNegativeInteger(
+    usage.inputTokens,
+    `${label} usage inputTokens`,
+    3_500,
+  );
+  const outputTokens = requireNonNegativeInteger(
+    usage.outputTokens,
+    `${label} usage outputTokens`,
+    500,
+  );
+  const totalTokens = requireNonNegativeInteger(
+    usage.totalTokens,
+    `${label} usage totalTokens`,
+    4_000,
+  );
+  if (inputTokens + outputTokens !== totalTokens)
+    throw new Error(`${label} usage totalTokens is inconsistent.`);
+  return {
+    caseId: requireExactId(record.caseId, `${label} caseId`),
+    repetition: requirePositiveInteger(
+      record.repetition,
+      `${label} repetition`,
+      100,
+    ),
+    requestedModel: requireBoundedString(
+      record.requestedModel,
+      `${label} requestedModel`,
+      512,
+    ),
+    observedModelRevision: requireBoundedString(
+      record.observedModelRevision,
+      `${label} observedModelRevision`,
+      512,
+    ),
+    assetBundleRevision: requireHash(
+      record.assetBundleRevision,
+      `${label} assetBundleRevision`,
+    ),
+    verdict: {
+      score: requireUnitNumber(verdict.score, `${label} verdict score`),
+      confidence: requireUnitNumber(
+        verdict.confidence,
+        `${label} verdict confidence`,
+      ),
+      assertions,
+      reasonCodes: parseCodeArray(
+        verdict.reasonCodes,
+        `${label} verdict reasonCodes`,
+        16,
+      ),
+      repairable: requireBoolean(
+        verdict.repairable,
+        `${label} verdict repairable`,
+      ),
+      disposition,
+    },
+    usage: {
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      costUsd: requireNonNegativeNumber(
+        usage.costUsd,
+        `${label} usage costUsd`,
+        0.05,
+      ),
+    },
+    latencyMs: requireNonNegativeInteger(
+      record.latencyMs,
+      `${label} latencyMs`,
+      15_000,
+    ),
+  };
 }
 
 export function digestCanonicalValue(value: unknown): string {

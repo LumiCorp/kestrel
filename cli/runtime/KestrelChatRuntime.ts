@@ -1,5 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import type { McpOAuthProviderFactory } from "../../src/mcp/McpClientManager.js";
 
@@ -95,7 +96,11 @@ import type {
   ModelRequest,
   ModelResponse,
 } from "../../src/kestrel/contracts/model-io.js";
-import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
+import {
+  parseEvaluationCalibrationRecordV1,
+  parseRuntimeEvaluationPolicyV1,
+  type EvaluationCalibrationRecordV1,
+} from "../../src/kestrel/contracts/evaluation.js";
 import type { RuntimeEvaluationRuntimeConfiguration } from "../../src/evaluation/RuntimeEvaluationCoordinator.js";
 import { parseRecoveryPolicyV1, type RecoveryModelCandidateV1 } from "../../src/kestrel/contracts/recovery.js";
 import {
@@ -3359,7 +3364,7 @@ function createRuntimeWithStore(
     : undefined;
   const evaluationRuntime = profile.evaluationPolicy === undefined
     ? undefined
-    : createRuntimeEvaluationConfiguration(profile, modelGateway);
+    : createRuntimeEvaluationConfiguration(profile, modelGateway, runtimeEnv);
   const providerReasoningVault = createProviderReasoningVaultFromEnv(
     store,
     runtimeEnv,
@@ -3761,6 +3766,7 @@ export function createRecoveryRuntimeConfiguration(
 export function createRuntimeEvaluationConfiguration(
   profile: TuiProfile,
   judgeGateway: ModelGateway,
+  env: NodeJS.ProcessEnv = process.env,
 ): RuntimeEvaluationRuntimeConfiguration {
   if (profile.evaluationPolicy === undefined) {
     throw new Error(
@@ -3769,11 +3775,21 @@ export function createRuntimeEvaluationConfiguration(
   }
   const policy = parseRuntimeEvaluationPolicyV1(profile.evaluationPolicy);
   const executionProfileFingerprint = fingerprintResolvedProfile(profile);
+  const calibrationRecord = loadRuntimeEvaluationCalibrationRecordFromEnv(env);
   return {
     policy,
+    calibrationRecord,
     executionProfileFingerprint,
     evaluatorRegistry: createDefaultRuntimeEvaluatorRegistry(),
-    invokeJudge: async (request, signal) => {
+    invokeJudge: createRuntimeEvaluationJudgeInvoker(policy, judgeGateway),
+  };
+}
+
+export function createRuntimeEvaluationJudgeInvoker(
+  policy: ReturnType<typeof parseRuntimeEvaluationPolicyV1>,
+  judgeGateway: ModelGateway,
+): RuntimeEvaluationRuntimeConfiguration["invokeJudge"] {
+  return async (request, signal) => {
       const startedAt = Date.now();
       let response: ModelResponse<unknown>;
       try {
@@ -3804,8 +3820,28 @@ export function createRuntimeEvaluationConfiguration(
         usage: response.usage ?? {},
         latencyMs: Date.now() - startedAt,
       };
-    },
   };
+}
+
+export function loadRuntimeEvaluationCalibrationRecordFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): EvaluationCalibrationRecordV1 {
+  const calibrationPath = env.KCHAT_RUNTIME_EVALUATION_CALIBRATION_PATH?.trim();
+  if (calibrationPath === undefined || calibrationPath.length === 0) {
+    throw new Error(
+      "Runtime evaluation is enabled but KCHAT_RUNTIME_EVALUATION_CALIBRATION_PATH does not name a passing calibration record.",
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(calibrationPath, "utf8")) as unknown;
+  } catch (error) {
+    throw new Error(
+      `Runtime evaluation calibration record '${calibrationPath}' could not be read as JSON.`,
+      { cause: error },
+    );
+  }
+  return parseEvaluationCalibrationRecordV1(parsed);
 }
 
 function readStructuredEvaluationOutput(

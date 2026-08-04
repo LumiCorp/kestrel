@@ -540,6 +540,96 @@
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=handlers cannot replace the gateway-owned result envelope", "tests/unit/tool-invocation-integrity.test.ts"],
       "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
+    },
+    {
+      "id": "evaluation-score-threshold-bypass",
+      "target": "src/evaluation/RuntimeEvaluationCoordinator.ts",
+      "find": "    input.verdict.score >= input.policy.thresholds.passScore &&",
+      "replace": "    true &&",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=blocking evaluation independently enforces score", "tests/unit/runtime-evaluation-coordinator.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-coordinator.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
+    },
+    {
+      "id": "evaluation-required-assertion-bypass",
+      "target": "src/evaluation/RuntimeEvaluationCoordinator.ts",
+      "find": "      .every((assertion) => assertion.passed) &&",
+      "replace": "      .every(() => true) &&",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=blocking evaluation independently enforces score", "tests/unit/runtime-evaluation-coordinator.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-coordinator.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
+    },
+    {
+      "id": "evaluation-stale-calibration-acceptance",
+      "target": "src/evaluation/RuntimeEvaluationCoordinator.ts",
+      "find": "    this.calibrationRecord = assertRuntimeEvaluationCalibrationV1(\n      this.policy,\n      options.calibrationRecord,\n    );",
+      "replace": "    this.calibrationRecord = options.calibrationRecord;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=runtime opt-in rejects a calibration record", "tests/unit/runtime-evaluation-coordinator.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-coordinator.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
+    },
+    {
+      "id": "evaluation-missing-evaluator-fail-open",
+      "target": "src/evaluation/RuntimeEvaluatorRegistry.ts",
+      "find": "    if (evaluator === undefined) {",
+      "replace": "    if (false && evaluator === undefined) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=runtime evaluator registry is exact-versioned", "tests/unit/runtime-evaluation-contracts.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-contracts.test.ts"]
+    },
+    {
+      "id": "evaluation-final-capacity-reserve-bypass",
+      "target": "src/evaluation/RuntimeEvaluationCoordinator.ts",
+      "find": "      budget.intermediateEvaluationsUsed >=\n      policy.budget.maxIntermediateEvaluations",
+      "replace": "      budget.intermediateEvaluationsUsed >\n      policy.budget.maxIntermediateEvaluations",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=intermediate runtime evaluation is advisory", "tests/unit/runtime-evaluation-coordinator.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-coordinator.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
+    },
+    {
+      "id": "evaluation-decision-persistence-omission",
+      "target": "src/evaluation/RuntimeEvaluationCoordinator.ts",
+      "find": "      artifactId: artifactId(input.request.requestId, \"decision\"),\n      type: ARTIFACT_TYPES.decision,",
+      "replace": "      artifactId: artifactId(input.request.requestId, \"decision\"),\n      type: ARTIFACT_TYPES.attempt,",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=blocking runtime evaluation persists a pass", "tests/unit/runtime-evaluation-coordinator.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-coordinator.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
+    },
+    {
+      "id": "evaluation-candidate-delivery-before-authorization",
+      "target": "src/engine/ExecutionEngine.ts",
+      "find": "    if (result.decision.disposition === \"continue\") {",
+      "replace": "    if (true) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=integrity quarantine never exposes", "tests/unit/runtime-evaluation-integration.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-integration.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
+    },
+    {
+      "id": "evaluation-one-revision-bound-bypass",
+      "target": "src/evaluation/RuntimeEvaluationCoordinator.ts",
+      "find": "    input.finalRevisionsUsed < input.policy.budget.maxFinalRevisions",
+      "replace": "    input.finalRevisionsUsed <= input.policy.budget.maxFinalRevisions",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=a second rejection enters review", "tests/unit/runtime-evaluation-integration.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-integration.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
+    },
+    {
+      "id": "evaluation-quarantine-normal-projection-exposure",
+      "target": "src/engine/ExecutionEngine.ts",
+      "find": "        agent: {\n          ...input.patchAgent,\n          assistantText: null,\n          finalOutput: undefined,\n          waitingFor:",
+      "replace": "        agent: {\n          ...input.patchAgent,\n          assistantText: input.sanitizedCandidate,\n          finalOutput: input.sanitizedCandidate,\n          waitingFor:",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=integrity quarantine never exposes", "tests/unit/runtime-evaluation-integration.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-integration.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
+    },
+    {
+      "id": "evaluation-replay-projection-mismatch-acceptance",
+      "target": "src/evaluation/RuntimeEvaluationReplay.ts",
+      "find": "  } catch (error) {\n    if (error instanceof RuntimeEvaluationReplayError) {\n      return incompleteEvidence(input.waits);\n    }\n    return incompleteEvidence(input.waits);\n  }",
+      "replace": "  } catch {\n    return { status: \"complete\", entries: [], reviews: [] };\n  }",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=recorded replay returns EVALUATION_EVIDENCE_INCOMPLETE", "tests/unit/runtime-evaluation-replay.test.ts"],
+      "testFiles": ["tests/unit/runtime-evaluation-replay.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
     }
   ]
 }

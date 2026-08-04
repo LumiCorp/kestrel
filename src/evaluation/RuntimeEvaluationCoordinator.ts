@@ -11,6 +11,7 @@ import {
   parseRuntimeEvaluationPolicyV1,
   parseRuntimeEvaluationRequestV1,
   parseRuntimeEvaluationVerdictV1,
+  type EvaluationCalibrationRecordV1,
   type EvaluationEvidenceProjectionV1,
   type RuntimeEvaluationDecisionV1,
   type RuntimeEvaluationHookKindV1,
@@ -29,6 +30,7 @@ import type {
   RuntimeEvaluatorRegistry,
 } from "./RuntimeEvaluatorRegistry.js";
 import { RuntimeEvaluationFailure } from "./RuntimeEvaluatorRegistry.js";
+import { assertRuntimeEvaluationCalibrationV1 } from "./RuntimeEvaluationCalibration.js";
 
 export const RUNTIME_EVALUATION_LIFECYCLE_EVENT_TYPES = Object.freeze([
   "evaluation.requested",
@@ -41,6 +43,7 @@ export const RUNTIME_EVALUATION_LIFECYCLE_EVENT_TYPES = Object.freeze([
 
 export interface RuntimeEvaluationRuntimeConfiguration {
   policy: RuntimeEvaluationPolicyV1;
+  calibrationRecord: EvaluationCalibrationRecordV1;
   executionProfileFingerprint: string;
   evaluatorRegistry: RuntimeEvaluatorRegistry;
   invokeJudge(
@@ -90,6 +93,8 @@ interface RuntimeEvaluationCoordinatorOptions
     stepIndex?: number | undefined;
   }): Promise<void>;
   now?: (() => Date) | undefined;
+  scheduleTimeout?: typeof setTimeout | undefined;
+  clearScheduledTimeout?: typeof clearTimeout | undefined;
 }
 
 interface EvaluationBudgetState {
@@ -101,23 +106,30 @@ interface EvaluationBudgetState {
   finalRevisionsUsed: number;
 }
 
-const ARTIFACT_TYPES = {
+export const RUNTIME_EVALUATION_ARTIFACT_TYPES = Object.freeze({
   request: "runtime_evaluation.request.v1",
   attempt: "runtime_evaluation.attempt.v1",
   verdict: "runtime_evaluation.verdict.v1",
   failure: "runtime_evaluation.failure.v1",
   decision: "runtime_evaluation.decision.v1",
   actionDecision: "runtime_evaluation.action_decision.v1",
-} as const;
+} as const);
+
+const ARTIFACT_TYPES = RUNTIME_EVALUATION_ARTIFACT_TYPES;
 
 export class RuntimeEvaluationCoordinator {
   readonly policy: RuntimeEvaluationPolicyV1;
+  readonly calibrationRecord: EvaluationCalibrationRecordV1;
   readonly executionProfileFingerprint: string;
   private readonly options: RuntimeEvaluationCoordinatorOptions;
   private readonly runLocks = new Map<string, Promise<void>>();
 
   constructor(options: RuntimeEvaluationCoordinatorOptions) {
     this.policy = parseRuntimeEvaluationPolicyV1(options.policy);
+    this.calibrationRecord = assertRuntimeEvaluationCalibrationV1(
+      this.policy,
+      options.calibrationRecord,
+    );
     if (/^[0-9a-f]{64}$/u.test(options.executionProfileFingerprint) === false) {
       throw new Error(
         "Runtime evaluation execution profile fingerprint must be 64 lowercase hex characters.",
@@ -386,7 +398,7 @@ export class RuntimeEvaluationCoordinator {
         this.policy.evaluator,
       );
       const controller = new AbortController();
-      const timeout = setTimeout(
+      const timeout = (this.options.scheduleTimeout ?? setTimeout)(
         () => controller.abort(new RuntimeEvaluationFailure(
           "EVALUATION_TIMEOUT",
           "Runtime evaluation exceeded its configured timeout.",
@@ -404,11 +416,16 @@ export class RuntimeEvaluationCoordinator {
         throwIfAborted(controller.signal);
         verdict = parseRuntimeEvaluationVerdictV1(evaluatedVerdict);
       } finally {
-        clearTimeout(timeout);
+        (this.options.clearScheduledTimeout ?? clearTimeout)(timeout);
         input.signal?.removeEventListener("abort", onAbort);
       }
       throwIfAborted(input.signal);
-      assertVerdictIdentity(verdict, request, this.policy);
+      assertVerdictIdentity(
+        verdict,
+        request,
+        this.policy,
+        this.calibrationRecord,
+      );
       assertVerdictBudget(verdict, budget, this.policy);
     } catch (error) {
       if (input.signal?.aborted === true) throw input.signal.reason ?? error;
@@ -800,7 +817,7 @@ export function buildEvaluationEvidenceProjectionV1(input: {
       digest: digestCanonicalValue(item.value),
     };
   });
-  return parseEvaluationEvidenceProjectionV1({
+  return rebuildEvaluationEvidenceProjectionV1({
     version: EVALUATION_EVIDENCE_PROJECTION_VERSION,
     identity: {
       runId: input.runId,
@@ -817,6 +834,12 @@ export function buildEvaluationEvidenceProjectionV1(input: {
     truncations,
     createdAt: input.createdAt,
   });
+}
+
+export function rebuildEvaluationEvidenceProjectionV1(
+  value: unknown,
+): EvaluationEvidenceProjectionV1 {
+  return parseEvaluationEvidenceProjectionV1(value);
 }
 
 export function mapRuntimeEvaluationVerdict(input: {
@@ -926,13 +949,16 @@ function assertVerdictIdentity(
   verdict: RuntimeEvaluationVerdictV1,
   request: RuntimeEvaluationRequestV1,
   policy: RuntimeEvaluationPolicyV1,
+  calibrationRecord: EvaluationCalibrationRecordV1,
 ): void {
   if (
     verdict.requestId !== request.requestId ||
     verdict.evaluator.evaluatorId !== policy.evaluator.evaluatorId ||
     verdict.evaluator.evaluatorVersion !== policy.evaluator.evaluatorVersion ||
     verdict.judge.provider !== policy.judge.provider ||
-    verdict.judge.requestedModel !== policy.judge.model
+    verdict.judge.requestedModel !== policy.judge.model ||
+    verdict.judge.observedModelRevision !==
+      calibrationRecord.observedModelRevision
   ) {
     throw new Error("Runtime evaluation verdict identity is stale or mismatched.");
   }
