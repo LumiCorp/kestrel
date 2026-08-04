@@ -300,6 +300,7 @@ export type KestrelOneAgentResponseInput = {
         message: string;
         approved?: boolean | undefined;
         reason?: string | undefined;
+        recoveryOptionId?: string | undefined;
       }
     | undefined;
   modelId?: string;

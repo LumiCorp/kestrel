@@ -139,6 +139,41 @@ test("assistant output does not settle before its boundary decision persists", a
   assert.equal(settled, true);
 });
 
+test("assistant response reuses an exact persisted evaluation boundary decision", async () => {
+  const runtime = new ExecutionBoundaryPolicyRuntime();
+  const persistedDecision = runtime.evaluate({
+    boundary: "assistant_output",
+    identity: { runId: "run-contract", sessionId: "session-contract" },
+    source: "runtime",
+    trust: "data",
+    sourceId: "evaluation-candidate:run-contract:1",
+    value: { assistantText: "Safe response." },
+  }).decision;
+  let newPersistenceCalls = 0;
+  const reused = await enforceRuntimeAssistantResponseBoundary({
+    output: output("COMPLETED"),
+    assistantText: "Safe response.",
+    persistedAssistantOutputDecision: persistedDecision,
+    executionBoundaryRuntime: runtime,
+    persist: () => {
+      newPersistenceCalls += 1;
+    },
+  });
+  assert.equal(reused.assistantText, "Safe response.");
+  assert.equal(newPersistenceCalls, 0);
+
+  await enforceRuntimeAssistantResponseBoundary({
+    output: output("COMPLETED"),
+    assistantText: "Changed response.",
+    persistedAssistantOutputDecision: persistedDecision,
+    executionBoundaryRuntime: runtime,
+    persist: () => {
+      newPersistenceCalls += 1;
+    },
+  });
+  assert.equal(newPersistenceCalls, 1);
+});
+
 function output(
   status: NormalizedOutput["status"],
   overrides: Partial<NormalizedOutput> = {},

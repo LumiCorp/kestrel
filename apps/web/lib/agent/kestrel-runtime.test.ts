@@ -302,6 +302,7 @@ test("createKestrelOneAgentResponse preserves Build mode while resuming a blocke
       requestId: "request-build-mode",
       eventType: "user.reply",
       message: "Continue in Build mode",
+      recoveryOptionId: "evaluation.accept_once",
     },
     messages: [
       {
@@ -316,6 +317,7 @@ test("createKestrelOneAgentResponse preserves Build mode while resuming a blocke
 
   assert.equal(capturedInput?.interactionMode, "build");
   assert.equal(capturedInput?.resumeRequestId, "request-build-mode");
+  assert.equal(capturedInput?.recoveryOptionId, "evaluation.accept_once");
   assert.equal(capturedInput?.eventType, "user.reply");
 });
 

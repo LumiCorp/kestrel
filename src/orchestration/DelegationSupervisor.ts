@@ -77,6 +77,15 @@ export interface DelegationSupervisorOptions {
     finalizedPayload?: unknown | undefined;
   }) => Promise<void> | void) | undefined;
   onDialogReply?: ((input: { record: DelegationRecord; message: DialogMessageRecord }) => Promise<void> | void) | undefined;
+  onHandoffCompleted?: ((input: {
+    runId: string;
+    sessionId: string;
+    threadId: string;
+    stepIndex: number;
+    specialistId: string;
+    objective: string;
+    result: unknown;
+  }) => Promise<void>) | undefined;
 }
 
 interface StoredDelegationResult {
@@ -96,6 +105,7 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
   private readonly onTaskUpdate: DelegationSupervisorOptions["onTaskUpdate"];
   private readonly onDelegationUpdated: DelegationSupervisorOptions["onDelegationUpdated"];
   private readonly onDialogReply: DelegationSupervisorOptions["onDialogReply"];
+  private readonly onHandoffCompleted: DelegationSupervisorOptions["onHandoffCompleted"];
   private readonly results = new Map<string, StoredDelegationResult>();
   private readonly activeDialogRuns = new Map<string, AbortController>();
 
@@ -108,6 +118,7 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
     this.onTaskUpdate = options.onTaskUpdate;
     this.onDelegationUpdated = options.onDelegationUpdated;
     this.onDialogReply = options.onDialogReply;
+    this.onHandoffCompleted = options.onHandoffCompleted;
   }
 
   async open(input: { parentSessionId: string; parentRunId?: string | undefined; name: string; message: string }): Promise<DialogSnapshot> {
@@ -406,6 +417,20 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
         outcomeReason:
           result.output.status === "FAILED" ? result.output.errors[0]?.code ?? "failed" : undefined,
       });
+      if (
+        completed.status === "COMPLETED" &&
+        completed.profileId !== undefined
+      ) {
+        await this.onHandoffCompleted?.({
+          runId: result.output.runId,
+          sessionId: result.output.sessionId,
+          threadId: completed.parentThreadId,
+          stepIndex: result.output.telemetry.stepsExecuted,
+          specialistId: completed.profileId,
+          objective: completed.prompt,
+          result: resultEnvelope,
+        });
+      }
       await this.store.upsertDelegation(completed);
       await this.appendDelegationEvent(
         completed.status === "COMPLETED" ? "delegation.completed" : "delegation.failed",

@@ -5,7 +5,9 @@ export type DesktopComposerSubmissionPolicy =
       mode: "select_recovery_option";
       item: DesktopOperatorInboxItem & { requestId: string };
       allowedOptionIds: string[];
+      reviewKind: "recovery" | "evaluation";
       triggeringFailureCode?: string | undefined;
+      evaluationTechnicalDisclosure?: Record<string, unknown> | undefined;
     }
   | {
       mode: "reply_to_request";
@@ -31,7 +33,10 @@ export function getDesktopComposerSubmissionPolicy(input: {
   );
   if (request !== undefined) {
     const metadata = request.metadata;
-    if (metadata?.reason === "recovery_review") {
+    if (
+      metadata?.reason === "recovery_review" ||
+      metadata?.reason === "evaluation_review"
+    ) {
       const allowedOptionIds = Array.isArray(metadata.allowedOptionIds)
         ? metadata.allowedOptionIds.filter(
             (value): value is string =>
@@ -47,10 +52,22 @@ export function getDesktopComposerSubmissionPolicy(input: {
         mode: "select_recovery_option",
         item: request,
         allowedOptionIds,
+        reviewKind:
+          metadata.reason === "evaluation_review" ? "evaluation" : "recovery",
         ...(triggeringFailureCode !== undefined ? { triggeringFailureCode } : {}),
+        ...(isRecord(metadata.evaluationTechnicalDisclosure)
+          ? {
+              evaluationTechnicalDisclosure:
+                metadata.evaluationTechnicalDisclosure,
+            }
+          : {}),
       };
     }
     return { mode: "reply_to_request", item: request };
   }
   return input.runActive ? { mode: "queue_follow_up" } : { mode: "start_turn" };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -68,6 +68,7 @@ export interface RecoveryTriggerInput {
   automaticRecoveryBlocked?: boolean | undefined;
   blockedReasonCode?: string | undefined;
   requestedWorkflowHandlerId?: string | undefined;
+  allowedReviewOptionIds?: string[] | undefined;
 }
 
 export interface RecoveryCoordinatorOptions {
@@ -242,6 +243,17 @@ export class RecoveryCoordinator {
         continue;
       }
       if (stage.action === "human_review" && outcome === undefined) {
+        const allowedOptionIds = input.allowedReviewOptionIds === undefined
+          ? stage.optionIds
+          : stage.optionIds.filter((optionId) =>
+              input.allowedReviewOptionIds?.includes(optionId) === true
+            );
+        if (allowedOptionIds.length === 0) {
+          for (const optionId of stage.optionIds) {
+            candidates.push(rejected(stage.stageId, optionId, "OPTION_NOT_APPLICABLE"));
+          }
+          continue;
+        }
         const bindingId = `recovery-review:${(this.options.createId ?? randomUUID)()}`;
         const expiresAt = stage.timeoutMs === undefined
           ? undefined
@@ -254,7 +266,7 @@ export class RecoveryCoordinator {
           runId: input.runId,
           executionProfileFingerprint: this.executionProfileFingerprint,
           policyRevision: this.policy.revision,
-          allowedOptionIds: stage.optionIds,
+          allowedOptionIds,
           requestedAt: createdAt,
           ...(expiresAt !== undefined ? { expiresAt } : {}),
         });
@@ -262,8 +274,10 @@ export class RecoveryCoordinator {
           candidates.push({
             stageId: stage.stageId,
             candidateId: optionId,
-            disposition: "skipped",
-            reasonCode: "AWAITING_OPERATOR",
+            disposition: allowedOptionIds.includes(optionId) ? "skipped" : "rejected",
+            reasonCode: allowedOptionIds.includes(optionId)
+              ? "AWAITING_OPERATOR"
+              : "OPTION_NOT_APPLICABLE",
           });
         }
         outcome = {
@@ -542,6 +556,15 @@ function assertTrigger(input: RecoveryTriggerInput): void {
   }
   for (const value of [input.budget.remainingMs, input.budget.tokensUsed, input.budget.toolCallsUsed]) {
     if (Number.isFinite(value) === false || value < 0) throw new Error("Recovery trigger budget values must be non-negative.");
+  }
+  if (input.allowedReviewOptionIds !== undefined) {
+    if (
+      input.allowedReviewOptionIds.length === 0 ||
+      new Set(input.allowedReviewOptionIds).size !== input.allowedReviewOptionIds.length ||
+      input.allowedReviewOptionIds.some((optionId) => optionId.trim().length === 0)
+    ) {
+      throw new Error("Recovery trigger allowed review options must be unique exact IDs.");
+    }
   }
 }
 

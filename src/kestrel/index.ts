@@ -207,11 +207,13 @@ export {
   COMPLETION_EVIDENCE_PROMPT_V1,
   COMPLETION_EVIDENCE_RUBRIC_V1,
   CompletionEvidenceEvaluator,
+  RuntimeEvaluationFailure,
   RuntimeEvaluatorRegistry,
   createDefaultRuntimeEvaluatorRegistry,
 } from "../evaluation/index.js";
 export type {
   RuntimeEvaluator,
   RuntimeEvaluatorContextV1,
+  RuntimeEvaluationFailureCode,
   RuntimeEvaluationJudgeResultV1,
 } from "../evaluation/index.js";

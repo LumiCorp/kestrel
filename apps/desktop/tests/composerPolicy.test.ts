@@ -50,7 +50,42 @@ test("Desktop composer exposes exact recovery options instead of free text", () 
     mode: "select_recovery_option",
     item: request,
     allowedOptionIds: ["retry.primary", "terminal.fail"],
+    reviewKind: "recovery",
     triggeringFailureCode: "RECOVERY_EXHAUSTED",
+  });
+});
+
+test("Desktop composer exposes evaluation review options and disclosure", () => {
+  const request = {
+    itemId: "request:evaluation-1",
+    kind: "user_input_request",
+    threadId: "thread-main:session-1",
+    sessionId: "session-1",
+    title: "Result requires review.",
+    actionable: true,
+    requestId: "evaluation-1",
+    createdAt: "2026-08-04T12:00:00.000Z",
+    metadata: {
+      reason: "evaluation_review",
+      allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
+      evaluationTechnicalDisclosure: {
+        candidate: "Withheld candidate",
+        score: 0.4,
+        assertions: [],
+        evidenceReferences: [],
+      },
+    },
+  } satisfies DesktopOperatorInboxItem;
+
+  assert.deepEqual(getDesktopComposerSubmissionPolicy({
+    inboxItems: [request],
+    runActive: false,
+  }), {
+    mode: "select_recovery_option",
+    item: request,
+    allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
+    reviewKind: "evaluation",
+    evaluationTechnicalDisclosure: request.metadata.evaluationTechnicalDisclosure,
   });
 });
 

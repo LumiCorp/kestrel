@@ -318,6 +318,32 @@
   font-size: 11px;
 }
 
+.recovery-option-copy details {
+  max-width: min(640px, 58vw);
+}
+
+.recovery-option-copy summary {
+  color: var(--text-primary);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.evaluation-technical-disclosure {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.evaluation-technical-disclosure pre {
+  max-height: 180px;
+  margin: 0;
+  padding: var(--space-2);
+  overflow: auto;
+  white-space: pre-wrap;
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+
 .recovery-option-actions {
   display: flex;
   gap: var(--space-2);

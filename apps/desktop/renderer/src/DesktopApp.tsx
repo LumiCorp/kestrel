@@ -1855,10 +1855,16 @@ export function DesktopApp() {
           {archivedThreadSelected ? null : composerPolicy.mode === "select_recovery_option" ? (
             <section className="composer recovery-option-composer" aria-label="Recovery options">
               <div className="recovery-option-copy">
-                <strong>Recovery is exhausted</strong>
-                <span>Choose one allowed recovery option.</span>
+                <strong>{composerPolicy.reviewKind === "evaluation" ? "Result requires review" : "Recovery is exhausted"}</strong>
+                <span>{composerPolicy.reviewKind === "evaluation" ? "Choose how to handle the withheld result." : "Choose one allowed recovery option."}</span>
                 {composerPolicy.triggeringFailureCode !== undefined ? (
                   <code>{composerPolicy.triggeringFailureCode}</code>
+                ) : null}
+                {composerPolicy.reviewKind === "evaluation" && composerPolicy.evaluationTechnicalDisclosure !== undefined ? (
+                  <details>
+                    <summary>Technical details</summary>
+                    <EvaluationTechnicalDisclosure value={composerPolicy.evaluationTechnicalDisclosure} />
+                  </details>
                 ) : null}
               </div>
               <div className="recovery-option-actions">
@@ -2248,8 +2254,30 @@ export function DesktopApp() {
 
 function recoveryOptionLabel(optionId: string): string {
   if (optionId === "retry.primary") return "Retry";
+  if (optionId === "evaluation.accept_once") return "Accept once";
+  if (optionId === "evaluation.revise") return "Revise result";
   if (optionId === "terminal.fail") return "End run";
   return optionId;
+}
+
+function EvaluationTechnicalDisclosure({ value }: { value: Record<string, unknown> }) {
+  const candidate = typeof value.candidate === "string" ? value.candidate : "";
+  const score = typeof value.score === "number" ? value.score : undefined;
+  const confidence = typeof value.confidence === "number" ? value.confidence : undefined;
+  const rationale = typeof value.rationale === "string" ? value.rationale : undefined;
+  const assertions = Array.isArray(value.assertions) ? value.assertions : [];
+  const evidenceReferences = Array.isArray(value.evidenceReferences)
+    ? value.evidenceReferences.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  return (
+    <div className="evaluation-technical-disclosure">
+      <pre>{candidate}</pre>
+      {score !== undefined ? <span>Score: {score.toFixed(2)}{confidence !== undefined ? ` · Confidence: ${confidence.toFixed(2)}` : ""}</span> : null}
+      {rationale !== undefined ? <p>{rationale}</p> : null}
+      {assertions.length > 0 ? <pre>{JSON.stringify(assertions, null, 2)}</pre> : null}
+      {evidenceReferences.length > 0 ? <span>Evidence: {evidenceReferences.join(", ")}</span> : null}
+    </div>
+  );
 }
 
 function QueuedFollowUpCard({

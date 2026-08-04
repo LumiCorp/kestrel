@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import {
   buildWaitingSystemText,
   extractWaitPrompt,
+  formatExactReviewPrompt,
+  readExactReviewOptionIds,
+  resolveExactReviewOptionId,
   resolveBlockedWaitModeReply,
 } from "../../cli/app/waitForPrompt.js";
 import { extractWaitPrompt as extractSharedWaitPrompt } from "../../src/runtime/waitForPrompt.js";
@@ -60,6 +63,49 @@ test("buildWaitingSystemText falls back to generic waiting text", () => {
       "Waiting for your reply.",
       "Reply in chat to resume the run.",
     ].join("\n"),
+  );
+});
+
+test("evaluation review exposes and resolves only exact authored options", () => {
+  const waitFor = {
+    kind: "user" as const,
+    eventType: "user.reply",
+    metadata: {
+      reason: "evaluation_review",
+      prompt: "Result requires review.",
+      allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
+    },
+    interaction: {
+      version: "v1" as const,
+      requestId: "evaluation-review-1",
+      kind: "user_input" as const,
+      eventType: "user.reply",
+      prompt: "Result requires review.",
+      inputSchema: {
+        type: "object",
+        required: ["recoveryOptionId"],
+        properties: {
+          recoveryOptionId: {
+            type: "string",
+            enum: ["evaluation.accept_once", "terminal.fail"],
+          },
+        },
+      },
+    },
+  };
+
+  assert.deepEqual(readExactReviewOptionIds(waitFor), [
+    "evaluation.accept_once",
+    "terminal.fail",
+  ]);
+  assert.equal(
+    resolveExactReviewOptionId(waitFor, "evaluation.accept_once"),
+    "evaluation.accept_once",
+  );
+  assert.equal(resolveExactReviewOptionId(waitFor, "accept"), undefined);
+  assert.equal(
+    formatExactReviewPrompt(waitFor, "Result requires review."),
+    "Result requires review. Options: evaluation.accept_once, terminal.fail",
   );
 });
 

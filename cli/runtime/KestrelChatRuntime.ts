@@ -77,6 +77,8 @@ import {
   type MissionControlProjectStateRecord,
   ExecutionBoundaryPolicyRuntime,
   type ExecutionBoundaryDecisionV1,
+  createDefaultRuntimeEvaluatorRegistry,
+  RuntimeEvaluationFailure,
 } from "../../src/index.js";
 import type {
   OperatorCompactionState,
@@ -91,7 +93,10 @@ import {
 import type {
   ModelGateway,
   ModelRequest,
+  ModelResponse,
 } from "../../src/kestrel/contracts/model-io.js";
+import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
+import type { RuntimeEvaluationRuntimeConfiguration } from "../../src/evaluation/RuntimeEvaluationCoordinator.js";
 import { parseRecoveryPolicyV1, type RecoveryModelCandidateV1 } from "../../src/kestrel/contracts/recovery.js";
 import {
   RecoveryModelRegistry,
@@ -3352,6 +3357,9 @@ function createRuntimeWithStore(
   const recoveryRuntime = profile.modelProvider !== undefined && profile.model !== undefined
     ? createRecoveryRuntimeConfiguration(profile, modelGateway, modelEnv)
     : undefined;
+  const evaluationRuntime = profile.evaluationPolicy === undefined
+    ? undefined
+    : createRuntimeEvaluationConfiguration(profile, modelGateway);
   const providerReasoningVault = createProviderReasoningVaultFromEnv(
     store,
     runtimeEnv,
@@ -3377,6 +3385,7 @@ function createRuntimeWithStore(
     modelGateway,
     executionBoundaryRuntime,
     ...(recoveryRuntime !== undefined ? { recoveryRuntime } : {}),
+    ...(evaluationRuntime !== undefined ? { evaluationRuntime } : {}),
     providerReasoningVault,
     toolGateway: toolRegistry,
     workspaceCheckpointService,
@@ -3499,6 +3508,26 @@ function createRuntimeWithStore(
     }),
     profile,
     executionBoundaryRuntime,
+    ...(evaluationRuntime !== undefined
+      ? {
+          evaluateHandoff: async (input) => {
+            await kestrel.evaluateAdvisoryRuntimeHook({
+              runId: input.runId,
+              sessionId: input.sessionId,
+              threadId: input.threadId,
+              stepIndex: input.stepIndex,
+              hookKind: "handoff",
+              sourceId: input.specialistId,
+              objective: input.objective,
+              evidence: [{
+                evidenceId: `handoff-${input.stepIndex}`,
+                kind: "handoff",
+                value: input.result,
+              }],
+            });
+          },
+        }
+      : {}),
     ...(resolveAttachments !== undefined ? { resolveAttachments } : {}),
     onTaskUpdate: (update) => {
       void persistDelegationTaskUpdateToGraph(taskGraphStore, update).catch(
@@ -3727,6 +3756,70 @@ export function createRecoveryRuntimeConfiguration(
         credential.rawModelId === candidate.model;
     },
   };
+}
+
+export function createRuntimeEvaluationConfiguration(
+  profile: TuiProfile,
+  judgeGateway: ModelGateway,
+): RuntimeEvaluationRuntimeConfiguration {
+  if (profile.evaluationPolicy === undefined) {
+    throw new Error(
+      `Profile '${profile.id}' does not define a runtime evaluation policy.`,
+    );
+  }
+  const policy = parseRuntimeEvaluationPolicyV1(profile.evaluationPolicy);
+  const executionProfileFingerprint = fingerprintResolvedProfile(profile);
+  return {
+    policy,
+    executionProfileFingerprint,
+    evaluatorRegistry: createDefaultRuntimeEvaluatorRegistry(),
+    invokeJudge: async (request, signal) => {
+      const startedAt = Date.now();
+      let response: ModelResponse<unknown>;
+      try {
+        response = await judgeGateway.call<ModelResponse<unknown>>(request, {
+          signal,
+          authorizeRetry: () => false,
+        });
+      } catch (error) {
+        if (signal.aborted) throw signal.reason ?? error;
+        throw new RuntimeEvaluationFailure(
+          "EVALUATOR_UNAVAILABLE",
+          "The pinned runtime evaluator route is unavailable.",
+        );
+      }
+      if (
+        response.provider.name !== policy.judge.provider ||
+        response.provider.model !== policy.judge.model
+      ) {
+        throw new Error(
+          "Runtime evaluator observed a model route that differs from the pinned primary route.",
+        );
+      }
+      return {
+        output: readStructuredEvaluationOutput(response),
+        provider: policy.judge.provider,
+        requestedModel: policy.judge.model,
+        observedModelRevision: response.provider.model,
+        usage: response.usage ?? {},
+        latencyMs: Date.now() - startedAt,
+      };
+    },
+  };
+}
+
+function readStructuredEvaluationOutput(
+  response: ModelResponse<unknown>,
+): unknown {
+  if (response.output !== undefined) return response.output;
+  if (typeof response.text !== "string" || response.text.trim().length === 0) {
+    throw new Error("Runtime evaluator returned no structured output.");
+  }
+  try {
+    return JSON.parse(response.text) as unknown;
+  } catch {
+    throw new Error("Runtime evaluator returned malformed structured output.");
+  }
 }
 
 function createModelGatewayForRecoveryCandidate(

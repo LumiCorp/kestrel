@@ -38,7 +38,11 @@ import {
 import { AssemblyCatalog } from "./AssemblyCatalog.js";
 import { AssemblyPolicyEvaluator } from "./AssemblyPolicyEvaluator.js";
 import { ContextPolicyManager, type ContextStructuredSummaryGenerator } from "./ContextPolicyManager.js";
-import { DelegationSupervisor, type DelegationTaskUpdate } from "./DelegationSupervisor.js";
+import {
+  DelegationSupervisor,
+  type DelegationSupervisorOptions,
+  type DelegationTaskUpdate,
+} from "./DelegationSupervisor.js";
 import { InteractionManager } from "./InteractionManager.js";
 import { OperatorControlPlane } from "./OperatorControlPlane.js";
 import { RuntimeComposer } from "./RuntimeComposer.js";
@@ -96,6 +100,7 @@ export interface ThreadRuntimeOptions {
   resolveAttachments?: ((threadId: string, attachmentIds: string[]) => Promise<RunTurnAttachment[]>) | undefined;
   onDetachedTurnEvent?: ((event: DetachedTurnLifecycleEvent) => void) | undefined;
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
+  evaluateHandoff?: DelegationSupervisorOptions["onHandoffCompleted"] | undefined;
 }
 
 export type DetachedTurnLifecycleEvent =
@@ -176,6 +181,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
             ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
           }),
         onTaskUpdate: options.onTaskUpdate,
+        ...(options.evaluateHandoff !== undefined
+          ? { onHandoffCompleted: options.evaluateHandoff }
+          : {}),
         onDelegationUpdated: async ({ record, finalizedPayload }) => {
           await this.handleDelegationUpdated(record, finalizedPayload);
         },

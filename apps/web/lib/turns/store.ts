@@ -929,6 +929,9 @@ export async function claimDurableThreadTurn(turnId: string) {
                   ...(typeof response.reason === "string"
                     ? { reason: response.reason }
                     : {}),
+                  ...(typeof response.recoveryOptionId === "string"
+                    ? { recoveryOptionId: response.recoveryOptionId }
+                    : {}),
                 }
               : null,
         }
@@ -1203,6 +1206,9 @@ export async function persistDurableAssistantOutcome(input: {
       ...(input.interaction.inputSchema
         ? { inputSchema: input.interaction.inputSchema }
         : {}),
+      ...(input.interaction.metadata
+        ? { metadata: input.interaction.metadata }
+        : {}),
       ...(input.interaction.approval
         ? { approval: input.interaction.approval }
         : {}),
@@ -1423,6 +1429,7 @@ export async function resolveDurableRuntimeInteraction(input: {
   message: string;
   approved?: boolean | undefined;
   reason?: string | undefined;
+  recoveryOptionId?: string | undefined;
   messageId: string;
   source: ThreadTurnSource;
 }) {
@@ -1490,6 +1497,25 @@ export async function resolveDurableRuntimeInteraction(input: {
         "An approval interaction requires an explicit decision.",
       );
     }
+    const inputSchema = readPlainRecord(interaction.requestEnvelope)?.inputSchema;
+    const inputContract = readPlainRecord(inputSchema);
+    const properties = readPlainRecord(inputContract?.properties);
+    const optionSchema = readPlainRecord(properties?.recoveryOptionId);
+    const allowedOptionIds = Array.isArray(optionSchema?.enum)
+      ? optionSchema.enum.filter((value): value is string => typeof value === "string")
+      : [];
+    const requiresRecoveryOption = Array.isArray(inputContract?.required) &&
+      inputContract.required.includes("recoveryOptionId");
+    if (
+      (requiresRecoveryOption && input.recoveryOptionId === undefined) ||
+      (input.recoveryOptionId !== undefined &&
+        allowedOptionIds.includes(input.recoveryOptionId) === false)
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The interaction response must select one exact allowed recovery option.",
+      );
+    }
     const [turn] = await tx
       .select()
       .from(schema.threadTurns)
@@ -1523,6 +1549,9 @@ export async function resolveDurableRuntimeInteraction(input: {
         ? { approved: input.approved }
         : {}),
       ...(input.reason ? { reason: input.reason } : {}),
+      ...(input.recoveryOptionId !== undefined
+        ? { recoveryOptionId: input.recoveryOptionId }
+        : {}),
     };
     await tx.insert(schema.threadMessages).values({
       id: input.messageId,
@@ -1593,6 +1622,12 @@ export async function resolveDurableRuntimeInteraction(input: {
   });
 }
 
+function readPlainRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function appendInteractionPresentationParts(
   value: unknown,
   interactions: Array<{
@@ -1644,6 +1679,9 @@ function appendInteractionPresentationParts(
         status,
         ...(interaction.requestEnvelope.inputSchema
           ? { inputSchema: interaction.requestEnvelope.inputSchema }
+          : {}),
+        ...(interaction.requestEnvelope.metadata
+          ? { metadata: interaction.requestEnvelope.metadata }
           : {}),
       },
     });

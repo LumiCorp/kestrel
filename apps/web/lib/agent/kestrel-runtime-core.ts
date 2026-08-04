@@ -143,6 +143,7 @@ export type KestrelOneAgentResponseInput = {
         message: string;
         approved?: boolean | undefined;
         reason?: string | undefined;
+        recoveryOptionId?: string | undefined;
       }
     | undefined;
   modelId?: string;
@@ -247,7 +248,12 @@ export function createKestrelOneAgentResponseFromAgent(
               eventType: interactionResponse?.eventType ?? "user.message",
               interactionMode: input.interactionMode,
               ...(interactionResponse !== undefined
-                ? { resumeRequestId: interactionResponse.requestId }
+                ? {
+                    resumeRequestId: interactionResponse.requestId,
+                    ...(interactionResponse.recoveryOptionId !== undefined
+                      ? { recoveryOptionId: interactionResponse.recoveryOptionId }
+                      : {}),
+                  }
                 : {}),
               history,
               ...(input.projectContext

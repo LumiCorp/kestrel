@@ -433,6 +433,12 @@ test("completion-evidence evaluator uses the pinned route and returns the typed 
     (observedModelRequest as { responseFormat?: string }).responseFormat,
     "json",
   );
+  assert.equal(
+    (observedModelRequest as {
+      providerOptions?: { openai?: { maxTokens?: number } };
+    }).providerOptions?.openai?.maxTokens,
+    500,
+  );
 });
 
 test("calibration records are canonical and bind evaluator, assets, dataset, and model", () => {
