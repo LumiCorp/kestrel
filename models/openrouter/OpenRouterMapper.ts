@@ -741,14 +741,16 @@ function extractOpenRouterChatReasoning(
   for (const detail of details) {
     const record = asRecord(detail);
     const type = asString(record?.type);
-    if (type === "reasoning.text" && asString(record?.text) !== undefined) {
-      visible.push({ format: "provider_reasoning_text", text: asString(record?.text) as string });
-    } else if (type === "reasoning.summary" && asString(record?.summary) !== undefined) {
-      visible.push({ format: "summary", text: asString(record?.summary) as string });
+    const text = normalizedVisibleReasoningText(record?.text);
+    const summary = normalizedVisibleReasoningText(record?.summary);
+    if (type === "reasoning.text" && text !== undefined) {
+      visible.push({ format: "provider_reasoning_text", text });
+    } else if (type === "reasoning.summary" && summary !== undefined) {
+      visible.push({ format: "summary", text: summary });
     }
   }
-  const plainReasoning = asString(message.reasoning);
-  if (plainReasoning !== undefined && plainReasoning.length > 0 && visible.length === 0) {
+  const plainReasoning = normalizedVisibleReasoningText(message.reasoning);
+  if (plainReasoning !== undefined && visible.length === 0) {
     visible.push({ format: "provider_reasoning_text", text: plainReasoning });
   }
   const continuation = details.length > 0
@@ -764,12 +766,12 @@ function extractOpenRouterResponsesReasoning(value: unknown): ModelResponse["rea
     const record = asRecord(item);
     if (asString(record?.type) !== "reasoning") continue;
     const summary = asArray(record?.summary)
-      .map((part) => asString(asRecord(part)?.text) ?? asString(part))
-      .filter((part): part is string => part !== undefined && part.length > 0)
+      .map((part) => normalizedVisibleReasoningText(asRecord(part)?.text ?? part))
+      .filter((part): part is string => part !== undefined)
       .join("\n");
     if (summary.length > 0) visible.push({ format: "summary", text: summary });
-    const reasoningText = asString(record?.reasoning);
-    if (reasoningText !== undefined && reasoningText.length > 0) {
+    const reasoningText = normalizedVisibleReasoningText(record?.reasoning);
+    if (reasoningText !== undefined) {
       visible.push({ format: "provider_reasoning_text", text: reasoningText });
     }
     if (record?.encrypted_content !== undefined) {
@@ -777,6 +779,11 @@ function extractOpenRouterResponsesReasoning(value: unknown): ModelResponse["rea
     }
   }
   return visible.length > 0 || continuation.length > 0 ? { visible, continuation } : undefined;
+}
+
+function normalizedVisibleReasoningText(value: unknown): string | undefined {
+  const text = asString(value)?.trim();
+  return text === undefined || text.length === 0 ? undefined : text;
 }
 
 function parseArgs(value: string | undefined): Record<string, unknown> {

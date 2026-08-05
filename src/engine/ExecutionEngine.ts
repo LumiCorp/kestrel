@@ -122,6 +122,7 @@ import {
   buildPersistedRuntimeEventFromProgressUpdate,
 } from "../events/RuntimeEventProjections.js";
 import { resolveKestrelTurnObjective } from "../runtime/turnObjective.js";
+import { redactDiagnosticText } from "../diagnostics/redaction.js";
 
 export { readModelRequestSchemaName } from "./ExecutionEngineSupport.js";
 
@@ -139,6 +140,7 @@ const DEFAULT_GUARDRAILS: GuardrailConfig = {
   toolBatchCheckpointSize: 10,
   toolCallRetryCount: 1,
 };
+const RECOVERY_FAILURE_SUMMARY_MAX_CHARS = 512;
 const DEFAULT_PROGRESS_HEARTBEAT_MS = 2000;
 const MAX_PROGRESS_MESSAGE_LENGTH = 140;
 const MODEL_PROMPT_DUMP_ENV = "KESTREL_MODEL_PROMPT_DUMP";
@@ -154,6 +156,17 @@ const ALL_FRESH_TURN_AGENT_CONTROL_KEYS = [
   ...FRESH_TURN_AGENT_CONTROL_KEYS,
   ...RETIRED_FRESH_TURN_AGENT_CONTROL_KEYS,
 ] as const;
+
+function summarizeRecoveryFailureMessage(message: string): string | undefined {
+  const summary = redactDiagnosticText(message).value.replace(/\s+/gu, " ").trim();
+  if (summary.length === 0) {
+    return undefined;
+  }
+  if (summary.length <= RECOVERY_FAILURE_SUMMARY_MAX_CHARS) {
+    return summary;
+  }
+  return `${summary.slice(0, RECOVERY_FAILURE_SUMMARY_MAX_CHARS - 1).trimEnd()}…`;
+}
 
 interface RunLifecycleObservabilityFrame {
   runId: string;
@@ -1142,6 +1155,9 @@ export class ExecutionEngine {
             guardrails,
             progressSeq,
             triggeringFailureCode: normalizeRecoveryFailureCode(runtimeError.code),
+            triggeringFailureSummary: summarizeRecoveryFailureMessage(
+              this.executionBoundaryRuntime.sensitiveValues.redactString(runtimeError.message).value,
+            ),
           });
           if (recoveryReview !== undefined) {
             return recoveryReview;
@@ -3748,6 +3764,7 @@ export class ExecutionEngine {
     guardrails: Guardrails;
     progressSeq: number;
     triggeringFailureCode: string;
+    triggeringFailureSummary?: string | undefined;
   }): Promise<NormalizedOutput | undefined> {
     const coordinator = this.recoveryCoordinator;
     if (coordinator === undefined) return;
@@ -3778,16 +3795,29 @@ export class ExecutionEngine {
       return;
     }
     const agent = this.asRecord(input.session.state.agent) ?? {};
+    const prompt = input.triggeringFailureSummary === undefined
+      ? "Recovery is exhausted. Choose exactly one allowed recovery option."
+      : [
+          "Kestrel couldn't continue. Automatic recovery could not resolve this error.",
+          "Choose exactly one allowed recovery option.",
+          "",
+          "Technical details:",
+          input.triggeringFailureSummary,
+          `Code: ${input.triggeringFailureCode}`,
+        ].join("\n");
     const waitFor = {
       kind: "user" as const,
       eventType: "user.reply",
       metadata: {
         reason: "recovery_review",
-        prompt: "Recovery is exhausted. Choose exactly one allowed recovery option.",
+        prompt,
         decisionId: selection.decision.decisionId,
         recoveryReviewBinding: structuredClone(selection.reviewBinding),
         allowedOptionIds: [...selection.reviewBinding.allowedOptionIds],
         triggeringFailureCode: input.triggeringFailureCode,
+        ...(input.triggeringFailureSummary !== undefined
+          ? { triggeringFailureSummary: input.triggeringFailureSummary }
+          : {}),
       },
     };
     await this.deps.store.commitStep({
@@ -3812,6 +3842,9 @@ export class ExecutionEngine {
               binding: structuredClone(selection.reviewBinding),
               threadId,
               triggeringFailureCode: input.triggeringFailureCode,
+              ...(input.triggeringFailureSummary !== undefined
+                ? { triggeringFailureSummary: input.triggeringFailureSummary }
+                : {}),
               ...(this.asString(actor?.tenantId) !== undefined
                 ? { tenantId: this.asString(actor?.tenantId) }
                 : {}),

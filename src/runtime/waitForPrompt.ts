@@ -247,13 +247,11 @@ function buildFallbackModeBlockedQuestion(metadata: Record<string, unknown>): st
     readFirstNonEmptyString(metadata, ["currentMode"])
     ?? "the current mode";
   const requiredMode = modeForToolClass(requiredToolClass);
-  const toolClassLabel =
-    requiredToolClass === "read_only"
-      ? "a read-only tool"
-      : requiredToolClass === "sandboxed_only"
-        ? "a sandboxed tool"
-        : "an external side-effect tool";
-  return `You're in '${formatRawModeLabel(currentMode)}'. Can I switch to '${formatUserFacingModeLabel(requiredMode)}' so I can use ${toolClassLabel}?`;
+  const currentModeLabel = formatRawModeLabel(currentMode);
+  const requiredModeLabel = formatUserFacingModeLabel(requiredMode);
+  return currentModeLabel === requiredModeLabel
+    ? `I can't perform that action with the current ${currentModeLabel} permissions. Resume it in ${requiredModeLabel}?`
+    : `I can't perform that action in ${currentModeLabel}. It requires ${requiredModeLabel}. Switch to ${requiredModeLabel} and resume this action?`;
 }
 
 function buildFallbackModeBlockedReply(metadata: Record<string, unknown>): string {
