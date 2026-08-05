@@ -274,6 +274,9 @@ importers:
 
   apps/docs:
     dependencies:
+      '@kestrel-agents/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@mdx-js/loader':
         specifier: ^3.1.0
         version: 3.1.1(webpack@5.105.4)
