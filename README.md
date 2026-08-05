@@ -44,6 +44,10 @@
 
 ## Kestrel Desktop
 
+<p align="center">
+  <img src=".github/assets/kestrel-desktop-night-flight.gif" alt="Kestrel Desktop creating a launch codename and rally cry in a completed conversation." width="1000" />
+</p>
+
 Kestrel Desktop 0.8.0 is the signed and notarized macOS application for local
 project work. Give it a folder, connect a compatible provider/model, and work
 through one durable conversation while Local Core owns execution, credentials,
