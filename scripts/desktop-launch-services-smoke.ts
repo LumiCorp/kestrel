@@ -422,6 +422,7 @@ process.stdout.write(
 
 interface LaunchHandle {
   browser: Browser;
+  debugPort: number;
   page: Page;
   pid: number;
   openProcess: ChildProcess;
@@ -443,12 +444,16 @@ async function launchThroughLaunchServices(input: {
   fakeOpenRouterUrl: string;
   onboardingProjectPath: string;
 }): Promise<LaunchHandle> {
-  assert.deepEqual(
-    listInstalledApplicationProcessIds(input.installedAppPath),
-    [],
-    `Installed LaunchServices gate app is already running: ${input.installedAppPath}`,
-  );
   const debugPort = await reserveLoopbackPort();
+  assert.deepEqual(
+    listExecutableProcessIds(
+      readProcessList(),
+      input.installedExecutablePath,
+      ["--remote-debugging-port="],
+    ),
+    [],
+    `Installed LaunchServices gate app is already running: ${input.installedExecutablePath}`,
+  );
   const stdoutPath = path.join(input.smokeRoot, `${input.label}.stdout.log`);
   const stderrPath = path.join(input.smokeRoot, `${input.label}.stderr.log`);
   const args = [
@@ -491,12 +496,14 @@ async function launchThroughLaunchServices(input: {
     const page = await waitForRendererPage(browser, 60_000);
     const pid = await waitForMainProcess(
       input.installedExecutablePath,
+      debugPort,
       openProcess,
       output,
       30_000,
     );
     return {
       browser,
+      debugPort,
       page,
       pid,
       openProcess,
@@ -576,7 +583,7 @@ async function verifyOfflineModel(
   baseUrl: string;
   response: string;
 }> {
-  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await openConversationSurface(page);
   await page.getByRole("textbox", { name: "Message", exact: true }).fill(
     "Run the deterministic LaunchServices Desktop smoke.",
   );
@@ -590,9 +597,25 @@ async function verifyOfflineModel(
   };
 }
 
+async function openConversationSurface(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /Find work/u }).click();
+  await page
+    .getByRole("dialog", { name: "Find work" })
+    .getByRole("button", { name: "Conversations", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .waitFor({ state: "visible", timeout: 30_000 });
+}
+
 async function closeLaunch(launch: LaunchHandle): Promise<void> {
-  await launch.browser.close();
-  await waitForNoInstalledProcesses(installedAppPath, 15_000);
+  requestApplicationTermination(launch.pid);
+  await waitForNoExecutableProcesses(
+    installedExecutablePath,
+    [`--remote-debugging-port=${launch.debugPort}`],
+    15_000,
+  );
+  await launch.browser.close().catch(() => {});
   await waitForChildExit(launch.openProcess, 15_000);
   if (
     launch.openProcess.exitCode !== 0 ||
@@ -609,6 +632,15 @@ async function closeLaunch(launch: LaunchHandle): Promise<void> {
       }`,
     );
   }
+}
+
+function requestApplicationTermination(pid: number): void {
+  const script = [
+    'ObjC.import("AppKit");',
+    `const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid});`,
+    'if (!app.terminate && !app.forceTerminate) throw new Error("NSRunningApplication rejected termination");',
+  ].join("\n");
+  runChecked("osascript", ["-l", "JavaScript", "-e", script]);
 }
 
 async function forceCloseLaunch(
@@ -672,13 +704,18 @@ async function waitForRendererPage(
 
 async function waitForMainProcess(
   executablePath: string,
+  debugPort: number,
   openProcess: ChildProcess,
   output: { stdout: string[]; stderr: string[] },
   timeoutMs: number,
 ): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const pids = listExecutableProcessIds(readProcessList(), executablePath);
+    const pids = listExecutableProcessIds(
+      readProcessList(),
+      executablePath,
+      [`--remote-debugging-port=${debugPort}`],
+    );
     if (pids.length === 1) {
       return pids[0]!;
     }
@@ -810,19 +847,30 @@ function listInstalledApplicationProcessIds(appPath: string): number[] {
   return [...new Set(pids)];
 }
 
-async function waitForNoInstalledProcesses(
-  appPath: string,
+async function waitForNoExecutableProcesses(
+  executablePath: string,
+  requiredArguments: readonly string[],
   timeoutMs: number,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (listInstalledApplicationProcessIds(appPath).length === 0) {
+    if (
+      listExecutableProcessIds(
+        readProcessList(),
+        executablePath,
+        requiredArguments,
+      ).length === 0
+    ) {
       return;
     }
     await delay(100);
   }
   throw new Error(
-    `Installed Desktop did not quit cleanly: ${listInstalledApplicationProcessIds(appPath).join(", ")}.`,
+    `Installed Desktop did not quit cleanly: ${listExecutableProcessIds(
+      readProcessList(),
+      executablePath,
+      requiredArguments,
+    ).join(", ")}.`,
   );
 }
 
