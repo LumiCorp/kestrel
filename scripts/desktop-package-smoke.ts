@@ -452,7 +452,7 @@ async function verifyLiveModelResponse(window: Page): Promise<{
   markdownRendered: true;
 }> {
   const expectedToken = "KESTREL_DESKTOP_MODEL_OK";
-  await window.getByRole("button", { name: "Chat", exact: true }).click();
+  await openConversationSurface(window);
   await window.getByRole("textbox", { name: "Message", exact: true }).fill(
     `Reply with exactly this token and nothing else: ${expectedToken}`,
   );
@@ -560,8 +560,7 @@ async function verifyOfflineModel(
   baseUrl: string;
   response: string;
 }> {
-  await window.getByRole("textbox", { name: "Message", exact: true }).click();
-  await window.getByRole("button", { name: "Chat", exact: true }).click();
+  await openConversationSurface(window);
   await window.getByRole("textbox", { name: "Message", exact: true }).fill(
     "Run the deterministic packaged Desktop smoke.",
   );
