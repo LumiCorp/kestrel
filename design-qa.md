@@ -128,6 +128,54 @@ final result: passed
 
 ---
 
+# Kestrel Docs homepage grid design QA
+
+## Target and implementation
+
+- Source visual truth: `/var/folders/cl/_t5qmxn134j19nhj0pj1zqj40000gn/T/codex-clipboard-b27b1e50-9ed6-42a9-a064-b301c3eb5a42.png`
+- Focused source visual: `/var/folders/cl/_t5qmxn134j19nhj0pj1zqj40000gn/T/codex-clipboard-97408176-0a4e-4c8f-91f3-e0e27a7e8188.png`
+- Desktop implementation: `/private/tmp/kestrel-docs-home-desktop.png`
+- Full comparison: `/private/tmp/kestrel-docs-home-comparison.png`
+- Focused grid comparison: `/private/tmp/kestrel-docs-grid-comparison.png`
+- Responsive captures: `/private/tmp/kestrel-docs-home-tablet.png` and `/private/tmp/kestrel-docs-home-mobile.png`
+- Desktop viewport: 1588 x 1086 CSS pixels at device pixel ratio 2; captured implementation size 3146 x 2180 pixels.
+- Tablet viewport: 1024 x 1000 CSS pixels. Mobile viewport: 390 x 844 CSS pixels.
+- State: Kestrel Docs homepage, light theme, no dialogs open.
+
+## Full-view and focused comparison
+
+The paired full-page comparison preserves the source typography, warm neutral palette, header and footer chrome, hero hierarchy, icon treatment, and primary four-column pathway grid. The focused comparison isolates the reported defect: the source used three columns for four secondary links, so Release and compatibility wrapped into an orphaned second row. The implementation aligns all four secondary links to the same four desktop tracks used by the primary pathways.
+
+At the desktop verification width, both grids resolve to four equal 316 px tracks. At the tablet width, both grids resolve to two equal 480.5 px tracks and form two rows. At the mobile width, both resolve to one 339.8 px track. The tablet and mobile documents have no horizontal overflow.
+
+## Required fidelity surfaces
+
+- Typography: the existing Fraunces display hierarchy and body type remain unchanged.
+- Spacing and layout: primary and secondary pathways now share one responsive 4-column, 2-column, and 1-column contract. Row-start padding and borders reset at each breakpoint.
+- Colors and tokens: all existing paper, ink, line, and brand-red tokens remain authoritative.
+- Images and icons: existing Lucide pathway icons are unchanged; no placeholder or substitute assets were introduced.
+- Copy and content: all pathway labels, descriptions, destinations, release copy, Lumi support copy, and footer links are unchanged.
+
+## Findings and comparison history
+
+1. P1: the secondary pathway grid declared three columns for four links, producing a false second row and a disconnected Release and compatibility card.
+2. P2: the tablet breakpoint inherited sibling-border rules that did not reset cleanly at new row starts.
+3. Fix: defined one `--home-grid-columns` contract on the homepage flow, consumed it in both grids, and changed it from four to two to one columns at the existing responsive breakpoints.
+4. Post-fix: desktop, tablet, and mobile geometry align; no cards are orphaned, no row-start border is duplicated, and no horizontal overflow remains.
+
+## Interaction and runtime checks
+
+- The primary Get Desktop link resolves uniquely to `/desktop/install`, and the destination rendered as `Get Kestrel Desktop` after the preview server restart.
+- A clean final browser tab reported no console errors.
+- The docs unit and public-surface test suite passed, including the new shared-grid regression assertion.
+- The production docs build completed successfully and generated all 101 static pages.
+
+No actionable P0, P1, or P2 visual or responsive defects remain in the scoped homepage grid.
+
+final result: passed
+
+---
+
 # Settings design QA
 
 - Source: `$TMPDIR/kestrel-settings-qa/settings-source.png`

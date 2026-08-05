@@ -36,6 +36,18 @@ test("docs chrome and README identify Lumi maintenance and support", async () =>
   assert.match(readme, /https:\/\/www\.lumicorp\.ai/u);
 });
 
+test("docs homepage grids share one responsive column contract", async () => {
+  const css = await fs.readFile(path.join(resolveDocsAppRoot(), "app", "globals.css"), "utf8");
+
+  assert.equal((css.match(/grid-template-columns: var\(--home-grid-columns\)/gu) ?? []).length, 2);
+  assert.match(css, /\.home-flow \{ --home-grid-columns: repeat\(4, minmax\(0, 1fr\)\)/u);
+  assert.match(
+    css,
+    /@media \(max-width: 1199px\)[\s\S]*?\.home-flow \{ --home-grid-columns: repeat\(2, minmax\(0, 1fr\)\)/u,
+  );
+  assert.match(css, /@media \(max-width: 680px\)[\s\S]*?\.home-flow \{ --home-grid-columns: 1fr/u);
+});
+
 test("superseded product and operations URLs are permanent redirects", async () => {
   assert.equal(typeof nextConfig.redirects, "function");
   const redirects = await nextConfig.redirects!();
