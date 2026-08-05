@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
+import { normalizeModelResponseV1 } from "../../src/kestrel/contracts/model-registration.js";
 
 import {
   buildOpenRouterHttpRequest,
@@ -584,4 +585,79 @@ test("OpenRouter preserves typed reasoning details outside assistant answer text
   }, { apiKey: "key", model: "openai/gpt-5.2", baseUrl: "https://openrouter.ai" });
   const messages = request.body.messages as Array<Record<string, unknown>>;
   assert.deepEqual(messages[0]?.reasoning_details, details);
+});
+
+test("OpenRouter chat reasoning is normalized without losing tool intents or continuation", () => {
+  const details = [
+    { type: "reasoning.text", text: "  This action requires another mode.  \n" },
+    { type: "reasoning.summary", summary: " \t " },
+    { type: "reasoning.encrypted", data: "opaque" },
+  ];
+  const mapped = mapOpenRouterResponse({
+    model: "openai/gpt-5.2",
+    choices: [{
+      message: {
+        content: "",
+        reasoning_details: details,
+        tool_calls: [{
+          id: "call-mode-switch",
+          function: {
+            name: "kestrel_request_mode_switch",
+            arguments: JSON.stringify({
+              requiredToolClass: "external_side_effect",
+              reason: "Starting Chirp and opening Safari requires Build mode.",
+            }),
+          },
+        }],
+      },
+    }],
+  }, { endpoint: "chat", requestedModel: "openai/gpt-5.2" });
+
+  assert.doesNotThrow(() => normalizeModelResponseV1(mapped));
+  assert.deepEqual(mapped.reasoning?.visible, [
+    { format: "provider_reasoning_text", text: "This action requires another mode." },
+  ]);
+  assert.deepEqual(mapped.reasoning?.continuation, [
+    { provider: "openrouter", kind: "reasoning_details", value: details },
+  ]);
+  assert.equal(mapped.toolIntents[0]?.name, "kestrel_request_mode_switch");
+});
+
+test("OpenRouter Responses reasoning is normalized without changing encrypted continuation", () => {
+  const reasoningRecord = {
+    type: "reasoning",
+    summary: [
+      { type: "summary_text", text: "  Inspecting the requested action.  " },
+      { type: "summary_text", text: " \n " },
+    ],
+    reasoning: "  It needs Build mode.\n",
+    encrypted_content: "opaque-responses-reasoning",
+  };
+  const mapped = mapOpenRouterResponse({
+    model: "openai/gpt-5.2",
+    output: [
+      reasoningRecord,
+      {
+        content: [{
+          type: "function_call",
+          id: "call-mode-switch",
+          name: "kestrel_request_mode_switch",
+          arguments: JSON.stringify({
+            requiredToolClass: "external_side_effect",
+            reason: "Opening Safari requires Build mode.",
+          }),
+        }],
+      },
+    ],
+  }, { endpoint: "responses", requestedModel: "openai/gpt-5.2" });
+
+  assert.doesNotThrow(() => normalizeModelResponseV1(mapped));
+  assert.deepEqual(mapped.reasoning?.visible, [
+    { format: "summary", text: "Inspecting the requested action." },
+    { format: "provider_reasoning_text", text: "It needs Build mode." },
+  ]);
+  assert.deepEqual(mapped.reasoning?.continuation, [
+    { provider: "openrouter", kind: "reasoning_details", value: reasoningRecord },
+  ]);
+  assert.equal(mapped.toolIntents[0]?.name, "kestrel_request_mode_switch");
 });

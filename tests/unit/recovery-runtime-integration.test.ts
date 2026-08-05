@@ -12,6 +12,7 @@ import {
   createDefaultRecoveryToolResultNormalizers,
   registerDefaultRecoveryWorkflowHandlers,
 } from "../../src/engine/recovery/RecoveryRegistries.js";
+import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { createTestToolGateway } from "../helpers/createTestToolGateway.js";
 
@@ -372,10 +373,20 @@ test("managed recovery review waits durably and exact decline settles RECOVERY_D
   const modelRegistry = new RecoveryModelRegistry();
   modelRegistry.register({ candidate: primary, policyRevision: policy.revision, gateway });
   const store = new InMemorySessionStore();
+  const executionBoundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  executionBoundaryRuntime.sensitiveValues.register({
+    reference: {
+      referenceId: "credential:recovery-review-test",
+      kind: "credential",
+      scope: "runtime",
+    },
+    value: "recovery-review-secret",
+  });
   const kestrel = new Kestrel({
     store,
     modelGateway: gateway,
     toolGateway: createTestToolGateway({}),
+    executionBoundaryRuntime,
     recoveryRuntime: {
       policy,
       executionProfileFingerprint: "c".repeat(64),
@@ -386,7 +397,9 @@ test("managed recovery review waits durably and exact decline settles RECOVERY_D
     },
   });
   kestrel.registerStep("recovery.review", async () => {
-    const error = new Error("terminal test failure") as Error & { code: string };
+    const error = new Error(
+      `terminal test failure using recovery-review-secret at https://alice:secret@provider.example/path ${"additional context. ".repeat(60)}`,
+    ) as Error & { code: string };
     error.code = "UNRECOVERABLE_TEST";
     throw error;
   });
@@ -406,10 +419,25 @@ test("managed recovery review waits durably and exact decline settles RECOVERY_D
   });
   assert.equal(waiting.status, "WAITING");
   assert.equal(waiting.waitFor?.kind, "user");
+  const waitMetadata = waiting.waitFor?.metadata as Record<string, unknown>;
+  const failureSummary = waitMetadata.triggeringFailureSummary;
+  assert.equal(typeof failureSummary, "string");
+  assert.match(String(failureSummary), /https:\/\/\[redacted\]@provider\.example\/path/u);
+  assert.doesNotMatch(String(failureSummary), /alice:secret/u);
+  assert.doesNotMatch(String(failureSummary), /recovery-review-secret/u);
+  assert.match(String(failureSummary), /\[REDACTED\]/u);
+  assert.equal(String(failureSummary).length, 512);
+  assert.match(String(failureSummary), /…$/u);
+  const prompt = String(waitMetadata.prompt);
+  assert.match(prompt, /^Kestrel couldn't continue\. Automatic recovery could not resolve this error\./u);
+  assert.match(prompt, /Technical details:\n/u);
+  assert.ok(prompt.indexOf("Choose exactly one allowed recovery option.") < prompt.indexOf("Technical details:"));
+  assert.ok(prompt.indexOf("Technical details:") < prompt.indexOf(String(failureSummary)));
   const waitingSession = await store.getSession("session-recovery-review");
   const review = ((waitingSession?.state.agent as Record<string, unknown>)?.recovery as Record<string, unknown>)?.review as Record<string, unknown>;
   const binding = review.binding as Record<string, unknown>;
   assert.equal(binding.expiresAt, undefined);
+  assert.equal(review.triggeringFailureSummary, failureSummary);
 
   const declined = await kestrel.run({
     id: "event-recovery-review-decline",

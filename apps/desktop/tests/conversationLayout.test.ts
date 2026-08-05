@@ -206,6 +206,14 @@ test("user-input requests are composer-owned without a duplicate timeline card",
   assert.match(app, /recoveryOptionId:\s*optionId/u);
   assert.match(app, /Selected recovery option: \$\{optionId\}/u);
   assert.match(app, /triggeringFailureCode/u);
+  assert.match(
+    app,
+    /<details>\s*<summary>Technical details<\/summary>\s*<span>\{composerPolicy\.triggeringFailureSummary\}<\/span>/su,
+  );
+  assert.doesNotMatch(
+    app,
+    /<span>\{composerPolicy\.reviewKind === "evaluation"[\s\S]*?composerPolicy\.triggeringFailureSummary\s*\?\?/u,
+  );
   assert.doesNotMatch(app, /timeline-entry-user-request/u);
   assert.doesNotMatch(app, /Kestrel needs your input/u);
 });

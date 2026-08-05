@@ -1889,10 +1889,27 @@ export function DesktopApp(props: {
           {archivedThreadSelected ? null : composerPolicy.mode === "select_recovery_option" ? (
             <section className="composer recovery-option-composer" aria-label="Recovery options">
               <div className="recovery-option-copy">
-                <strong>{composerPolicy.reviewKind === "evaluation" ? "Result requires review" : "Recovery is exhausted"}</strong>
-                <span>{composerPolicy.reviewKind === "evaluation" ? "Choose how to handle the withheld result." : "Choose one allowed recovery option."}</span>
-                {composerPolicy.triggeringFailureCode !== undefined ? (
+                <strong>{composerPolicy.reviewKind === "evaluation"
+                  ? "Result requires review"
+                  : composerPolicy.triggeringFailureSummary !== undefined
+                    ? "Kestrel couldn't continue"
+                    : "Recovery is exhausted"}</strong>
+                <span>{composerPolicy.reviewKind === "evaluation"
+                  ? "Choose how to handle the withheld result."
+                  : composerPolicy.triggeringFailureSummary !== undefined
+                    ? "Automatic recovery could not resolve this error. Choose one allowed recovery option."
+                    : "Choose one allowed recovery option."}</span>
+                {composerPolicy.triggeringFailureCode !== undefined && composerPolicy.triggeringFailureSummary === undefined ? (
                   <code>{composerPolicy.triggeringFailureCode}</code>
+                ) : null}
+                {composerPolicy.reviewKind === "recovery" && composerPolicy.triggeringFailureSummary !== undefined ? (
+                  <details>
+                    <summary>Technical details</summary>
+                    <span>{composerPolicy.triggeringFailureSummary}</span>
+                    {composerPolicy.triggeringFailureCode !== undefined ? (
+                      <code>{composerPolicy.triggeringFailureCode}</code>
+                    ) : null}
+                  </details>
                 ) : null}
                 {composerPolicy.reviewKind === "evaluation" && composerPolicy.evaluationTechnicalDisclosure !== undefined ? (
                   <details>
