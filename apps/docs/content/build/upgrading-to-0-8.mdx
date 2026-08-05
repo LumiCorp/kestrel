@@ -8,7 +8,7 @@ sourceKind: curated
 updatedAt: 2026-08-04
 ---
 
-Kestrel 0.8 is an exact-line upgrade. Runtime, Protocol, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and any deployed clients must use compatible `0.8.0` contracts together.
+Kestrel 0.8 is an exact-contract upgrade. Runtime, Protocol, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and any deployed clients must use compatible `0.8.0` contracts together. Install the Runtime/CLI npm distribution at `0.8.1`; that packaging-only patch pins the first-party contracts to 0.8.0.
 
 ## Who must upgrade
 
@@ -52,4 +52,4 @@ Run one successful turn, one waiting-and-resume path, one cancellation, one deni
 
 ## Rollback and fix-forward constraints
 
-Package versions and signed artifacts are immutable. Do not unpublish or overwrite 0.8.0. Do not reverse a data migration destructively; roll application code back only when compatibility is proven, otherwise stop and fix forward.
+Package versions and signed artifacts are immutable. Do not unpublish or overwrite 0.8.0; use the corrected Runtime npm patch at 0.8.1. Do not reverse a data migration destructively; roll application code back only when compatibility is proven, otherwise stop and fix forward.

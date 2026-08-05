@@ -14,6 +14,8 @@ const PUBLIC_PACKAGES = [
   "@kestrel-agents/kestrel",
 ] as const;
 
+const RUNTIME_PACKAGE = "@kestrel-agents/kestrel";
+
 const FLY_ROLES = [
   "workspace-runtime",
   "environment-router",
@@ -27,6 +29,7 @@ interface ReleaseEvidence {
   version: string;
   sourceSha: string;
   npm: {
+    runtimeVersion: string;
     packages: Array<{
       distTags: Record<string, string>;
       gitHead?: string;
@@ -103,6 +106,11 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
   assert.match(evidence.sourceSha, SHA_PATTERN, "sourceSha must be a full Git SHA");
 
   assertRecord(evidence.npm, "npm evidence");
+  assert.match(
+    evidence.npm.runtimeVersion,
+    /^\d+\.\d+\.\d+$/u,
+    "npm runtimeVersion must be numeric semver",
+  );
   assertExactNames(
     evidence.npm.packages,
     PUBLIC_PACKAGES,
@@ -110,20 +118,23 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
     "npm packages",
   );
   for (const packageEvidence of evidence.npm.packages) {
-    assert.equal(packageEvidence.version, evidence.version, `${packageEvidence.name} version mismatch`);
+    const expectedVersion = packageEvidence.name === RUNTIME_PACKAGE
+      ? evidence.npm.runtimeVersion
+      : evidence.version;
+    assert.equal(packageEvidence.version, expectedVersion, `${packageEvidence.name} version mismatch`);
     assert.match(packageEvidence.integrity, /^sha512-[A-Za-z0-9+/=]+$/u);
     if (packageEvidence.gitHead !== undefined) {
       assert.equal(packageEvidence.gitHead, evidence.sourceSha, `${packageEvidence.name} gitHead mismatch`);
     }
     assert.equal(
       packageEvidence.distTags[`release-${evidence.version}`],
-      evidence.version,
+      expectedVersion,
       `${packageEvidence.name} staging dist-tag mismatch`,
     );
     if (evidence.phase === "cutover") {
       assert.equal(
         packageEvidence.distTags.latest,
-        evidence.version,
+        expectedVersion,
         `${packageEvidence.name} latest dist-tag mismatch`,
       );
     }
@@ -135,7 +146,7 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
     "npm consumer platforms",
   );
   for (const smoke of evidence.npm.consumerSmokes) {
-    assert.equal(smoke.version, evidence.version);
+    assert.equal(smoke.version, evidence.npm.runtimeVersion);
     assertPassed(smoke.status, `npm consumer smoke ${smoke.platform}`);
     assertTimestamp(smoke.completedAt, `npm consumer smoke ${smoke.platform}`);
   }

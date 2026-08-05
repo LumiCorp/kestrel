@@ -77,8 +77,8 @@ const releaseModuleUrl = pathToFileURL(
 const { DOCS_RELEASE } = (await import(releaseModuleUrl)) as {
   DOCS_RELEASE: {
     compatibility: ReadonlyArray<{ surface: string; version: string }>;
-    packages: { releasedPackageNames: readonly string[]; version: string };
-    products: Record<string, { version: string }>;
+    packages: { releasedPackageNames: readonly string[]; runtimeNpmVersion: string; version: string };
+    products: Record<string, { npmVersion?: string; version: string }>;
   };
 };
 
@@ -91,6 +91,15 @@ assert.deepEqual(
   [...DOCS_RELEASE.packages.releasedPackageNames],
   [...publicPackageNames],
   "docs must enumerate the eight public packages in release order",
+);
+requireNumericVersion(
+  DOCS_RELEASE.packages.runtimeNpmVersion,
+  "docs Runtime npm package release metadata",
+);
+assert.equal(
+  DOCS_RELEASE.products.cli.npmVersion,
+  DOCS_RELEASE.packages.runtimeNpmVersion,
+  "docs CLI npm version must match the Runtime npm package version",
 );
 for (const [productName, product] of Object.entries(DOCS_RELEASE.products)) {
   assert.equal(

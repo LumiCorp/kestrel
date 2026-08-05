@@ -56,7 +56,8 @@ test(
     assert.match(landingSource, /View Kestrel One source/u);
     assert.match(landingSource, /github\.com\/LumiCorp\/kestrel\/tree\/v0\.8\.0\/apps\/web/u);
     assert.match(landingSource, /SDK 0\.8/u);
-    assert.match(landingSource, /@kestrel-agents\/kestrel@0\.8\.0/u);
+    assert.match(landingSource, /@kestrel-agents\/kestrel@0\.8\.1/u);
+    assert.match(landingSource, /corrected Runtime npm package is 0\.8\.1/u);
     assert.match(landingSource, /invitation-only/u);
     assert.match(
       landingSource,

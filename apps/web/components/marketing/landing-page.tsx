@@ -105,7 +105,7 @@ const capabilities = [
 ] as const;
 
 const betaNotes = [
-  "Desktop, Kestrel One, CLI/TUI, Runtime, Protocol, and SDK packages share version 0.8.0.",
+  "Products and contracts share version 0.8.0; the corrected Runtime npm package is 0.8.1.",
   "Kestrel One source is public; Lumi-hosted access remains invitation-only.",
   "Desktop 0.8.0 is a signed manual download; stable OTA proof is deferred to 0.8.1.",
   "Release identity, known Beta limitations, and compatibility remain public.",
@@ -496,7 +496,7 @@ export function LandingPage() {
                 <Button asChild variant="outline">
                   <Link href="https://docs.kestrelagents.dev/cli/install">
                     <Terminal />
-                    npm install -g @kestrel-agents/kestrel@0.8.0
+                    npm install -g @kestrel-agents/kestrel@0.8.1
                   </Link>
                 </Button>
                 <Button asChild variant="outline">
