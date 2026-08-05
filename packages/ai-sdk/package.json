@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/ai-sdk",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Typed Vercel AI SDK presentation adapter for Kestrel runner streams",
   "license": "MIT",
   "repository": {
@@ -46,6 +46,6 @@
     "test": "pnpm run test:unit",
     "test:unit": "node ../../scripts/validate.mjs --leaf hermetic packages/ai-sdk",
     "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ createKestrelPresentationAccumulator }) => { void createKestrelPresentationAccumulator; })\"",
-    "release:check": "pnpm run build && pnpm run smoke:import"
+    "release:check": "pnpm run build && pnpm run smoke:import && node --import tsx scripts/release-check.ts"
   }
 }
