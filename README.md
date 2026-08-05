@@ -85,13 +85,13 @@ operator control, Mission Control, profiles, tools, jobs, and Local Core.
 Requirements: Node.js 22 on macOS arm64 or Linux x64.
 
 ```bash
-npm install -g @kestrel-agents/kestrel@0.8.1
+npm install -g @kestrel-agents/kestrel@0.8.2
 kestrel --version
 kestrel
 ```
 
 A packaging omission made the immutable `0.8.0` Runtime npm artifact incomplete.
-The `0.8.1` npm patch is the supported distribution of the 0.8.0 Runtime and
+The `0.8.2` npm patch is the supported distribution of the 0.8.0 Runtime and
 CLI contracts; its first-party dependencies remain exactly `0.8.0`.
 
 A checksum-bearing macOS arm64 standalone archive is also attached to the

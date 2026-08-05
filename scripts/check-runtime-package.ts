@@ -5,7 +5,6 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -134,6 +133,7 @@ try {
     dependencies?: Record<string, string>;
     main?: string;
     name?: string;
+    optionalDependencies?: Record<string, string>;
     types?: string;
     bundledDependencies?: string[];
   };
@@ -142,6 +142,11 @@ try {
   assert.equal(manifest.types, "dist/src/index.d.ts");
   assert.equal(manifest.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
   assert.equal(manifest.dependencies?.["@kestrel-agents/workspace-skills"], "workspace:*");
+  assert.equal(
+    manifest.optionalDependencies?.fsevents,
+    "2.3.3",
+    "runtime package must declare fsevents directly optional for npm global installs",
+  );
   assert.ok(
     filePaths.has("node_modules/@kestrel-agents/memory/dist/index.js"),
     "runtime package is missing the bundled memory runtime",
@@ -216,13 +221,17 @@ try {
     );
   }
 
-  writeFileSync(
-    path.join(consumerDir, "package.json"),
-    `${JSON.stringify({ name: "kestrel-runtime-package-smoke", private: true })}\n`,
-  );
   execFileSync(
     resolveNpmCommand(),
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath],
+    [
+      "install",
+      "--global",
+      "--prefix",
+      consumerDir,
+      "--no-audit",
+      "--no-fund",
+      tarballPath,
+    ],
     {
       cwd: consumerDir,
       stdio: "pipe",
@@ -235,8 +244,7 @@ try {
   );
   const cliCommand = path.join(
     consumerDir,
-    "node_modules",
-    ".bin",
+    "bin",
     process.platform === "win32" ? "kestrel.cmd" : "kestrel",
   );
   const cliVersion = execFileSync(cliCommand, ["--version"], {
