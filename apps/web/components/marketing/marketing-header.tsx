@@ -20,6 +20,7 @@ const navigation = [
   { href: "#kestrel-one", label: "Kestrel One" },
   { href: "#developers", label: "Developers" },
   { href: "https://docs.kestrelagents.dev", label: "Docs" },
+  { href: "https://www.lumicorp.ai", label: "Lumi" },
 ] as const;
 
 export function MarketingHeader() {
