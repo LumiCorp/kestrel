@@ -7,6 +7,7 @@ import {
   shouldPreserveTerminalDailyBackup,
   workspaceDailyBackupDayStart,
   workspaceDailyBackupIdempotencyKey,
+  workspaceBackupRetryDelaySeconds,
 } from "./daily-backup-contract";
 
 test(
@@ -30,11 +31,20 @@ test(
   },
 );
 
+test("Workspace backup transient retries use the bounded fixed schedule", () => {
+  assert.deepEqual(
+    Array.from({ length: 5 }, (_, index) =>
+      workspaceBackupRetryDelaySeconds(index + 1),
+    ),
+    [30, 120, 300, 300, 300],
+  );
+});
+
 test(
-  "daily Workspace backups have five total queue attempts",
+  "daily Workspace backups retry transient failures three times",
   () => {
-    assert.equal(DAILY_BACKUP_MAX_ATTEMPTS, 5);
-    assert.equal(DAILY_BACKUP_RETRY_LIMIT, 4);
+    assert.equal(DAILY_BACKUP_MAX_ATTEMPTS, 4);
+    assert.equal(DAILY_BACKUP_RETRY_LIMIT, 3);
     assert.equal(
       isDailyWorkspaceBackupIdempotencyKey(
         "workspace.backup.daily:workspace-1:2026-07-24",

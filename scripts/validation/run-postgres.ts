@@ -1,6 +1,10 @@
 import { execFileSync, spawn } from "node:child_process";
 
-const files = execFileSync("git", ["ls-files", "-z", "apps/web/**/*.postgres.test.ts"], { encoding: "utf8" })
+const files = execFileSync(
+  "git",
+  ["ls-files", "-z", "apps/web/**/*.postgres.test.ts"],
+  { encoding: "utf8" },
+)
   .split("\0")
   .filter(Boolean)
   .concat(
@@ -8,15 +12,22 @@ const files = execFileSync("git", ["ls-files", "-z", "apps/web/**/*.postgres.tes
     "apps/web/lib/costs/store.postgres.test.ts",
     "apps/web/lib/environments/desktop.postgres.test.ts",
     "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
+    "apps/web/lib/environments/release-target-execution-guard.postgres.test.ts",
+    "apps/web/lib/environments/workspace-backup-revision.postgres.test.ts",
     "apps/web/lib/projects/skills.postgres.test.ts",
   )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort()
   .map((file) => file.slice("apps/web/".length));
 
-if (files.length === 0) throw new Error("No PostgreSQL contracts were discovered.");
+if (files.length === 0)
+  throw new Error("No PostgreSQL contracts were discovered.");
 
-const runtimeFiles = execFileSync("git", ["ls-files", "-z", "tests/**/*.postgres.test.ts"], { encoding: "utf8" })
+const runtimeFiles = execFileSync(
+  "git",
+  ["ls-files", "-z", "tests/**/*.postgres.test.ts"],
+  { encoding: "utf8" },
+)
   .split("\0")
   .filter(Boolean)
   .concat(
@@ -63,7 +74,9 @@ const groups = [
       "lib/environments/fly-connection.postgres.test.ts",
       "lib/environments/reconcile-lock.postgres.test.ts",
       "lib/environments/reconciliation-status.postgres.test.ts",
+      "lib/environments/release-target-execution-guard.postgres.test.ts",
       "lib/environments/store.postgres.test.ts",
+      "lib/environments/workspace-backup-revision.postgres.test.ts",
       "lib/integrations/github-action-approvals.postgres.test.ts",
       "lib/projects/skills.postgres.test.ts",
     ],
@@ -80,43 +93,54 @@ const groups = [
 
 const assigned = groups.flatMap((group) => group.files).sort();
 if (JSON.stringify(assigned) !== JSON.stringify(files)) {
-  throw new Error(`PostgreSQL contract assignment drifted.\nDiscovered: ${files.join(", ")}\nAssigned: ${assigned.join(", ")}`);
+  throw new Error(
+    `PostgreSQL contract assignment drifted.\nDiscovered: ${files.join(", ")}\nAssigned: ${assigned.join(", ")}`,
+  );
 }
 
-await Promise.all([
-  ...groups.map(runGroup),
-  runMcpGroup(),
-  runRuntimeGroup(),
-]);
+await Promise.all([...groups.map(runGroup), runMcpGroup(), runRuntimeGroup()]);
 
 function runMcpGroup(): Promise<void> {
-  if (JSON.stringify(mcpFiles) !== JSON.stringify([
-    "tests/approval-authorizer.postgres.test.ts",
-  ])) {
-    throw new Error(`MCP PostgreSQL contract assignment drifted.\nDiscovered: ${mcpFiles.join(", ")}`);
+  if (
+    JSON.stringify(mcpFiles) !==
+    JSON.stringify(["tests/approval-authorizer.postgres.test.ts"])
+  ) {
+    throw new Error(
+      `MCP PostgreSQL contract assignment drifted.\nDiscovered: ${mcpFiles.join(", ")}`,
+    );
   }
   process.stdout.write(`[postgres] MCP: ${mcpFiles.join(", ")}\n`);
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      "--import", "tsx",
-      "--test",
-      "--test-concurrency=1",
-      "--test-reporter=spec",
-      ...mcpFiles,
-    ], {
-      cwd: "apps/mcp-service",
-      env: {
-        ...process.env,
-        KESTREL_PRODUCT_RUNNER_DATABASE_URL: required(
-          "KESTREL_PRODUCT_RUNNER_DATABASE_URL",
-        ),
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--test",
+        "--test-concurrency=1",
+        "--test-reporter=spec",
+        ...mcpFiles,
+      ],
+      {
+        cwd: "apps/mcp-service",
+        env: {
+          ...process.env,
+          KESTREL_PRODUCT_RUNNER_DATABASE_URL: required(
+            "KESTREL_PRODUCT_RUNNER_DATABASE_URL",
+          ),
+        },
+        stdio: "inherit",
       },
-      stdio: "inherit",
-    });
+    );
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (code === 0) resolve();
-      else reject(new Error(`MCP PostgreSQL contracts failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`));
+      else
+        reject(
+          new Error(
+            `MCP PostgreSQL contracts failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`,
+          ),
+        );
     });
   });
 }
@@ -124,26 +148,36 @@ function runMcpGroup(): Promise<void> {
 function runGroup(group: (typeof groups)[number]): Promise<void> {
   process.stdout.write(`[postgres] ${group.name}: ${group.files.join(", ")}\n`);
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      "--conditions=react-server",
-      "--import", "tsx",
-      "--test",
-      "--test-concurrency=1",
-      "--test-reporter=spec",
-      ...group.files,
-    ], {
-      cwd: "apps/web",
-      env: {
-        ...process.env,
-        DATABASE_URL: group.databaseUrl,
-        POSTGRES_URL: group.databaseUrl,
+    const child = spawn(
+      process.execPath,
+      [
+        "--conditions=react-server",
+        "--import",
+        "tsx",
+        "--test",
+        "--test-concurrency=1",
+        "--test-reporter=spec",
+        ...group.files,
+      ],
+      {
+        cwd: "apps/web",
+        env: {
+          ...process.env,
+          DATABASE_URL: group.databaseUrl,
+          POSTGRES_URL: group.databaseUrl,
+        },
+        stdio: "inherit",
       },
-      stdio: "inherit",
-    });
+    );
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (code === 0) resolve();
-      else reject(new Error(`${group.name} PostgreSQL contracts failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`));
+      else
+        reject(
+          new Error(
+            `${group.name} PostgreSQL contracts failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`,
+          ),
+        );
     });
   });
 }
@@ -164,29 +198,35 @@ function runRuntimeGroup(): Promise<void> {
   }
   process.stdout.write(`[postgres] Runtime: ${runtimeFiles.join(", ")}\n`);
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      "--import", "tsx",
-      "--test",
-      "--test-concurrency=1",
-      "--test-reporter=spec",
-      ...runtimeFiles,
-    ], {
-      env: {
-        ...process.env,
-        KESTREL_PRODUCT_RUNNER_DATABASE_URL: required(
-          "KESTREL_PRODUCT_RUNNER_DATABASE_URL",
-        ),
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--test",
+        "--test-concurrency=1",
+        "--test-reporter=spec",
+        ...runtimeFiles,
+      ],
+      {
+        env: {
+          ...process.env,
+          KESTREL_PRODUCT_RUNNER_DATABASE_URL: required(
+            "KESTREL_PRODUCT_RUNNER_DATABASE_URL",
+          ),
+        },
+        stdio: "inherit",
       },
-      stdio: "inherit",
-    });
+    );
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (code === 0) resolve();
-      else reject(
-        new Error(
-          `Runtime PostgreSQL contracts failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`,
-        ),
-      );
+      else
+        reject(
+          new Error(
+            `Runtime PostgreSQL contracts failed${signal ? ` from ${signal}` : ` with exit ${code ?? 1}`}`,
+          ),
+        );
     });
   });
 }

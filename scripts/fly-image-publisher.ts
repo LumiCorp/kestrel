@@ -126,6 +126,7 @@ export async function publishFlyImages(
   const validationCommands = parseValidationCommands(env);
   const manifest = {
     version: 1 as const,
+    controllerContractRevision: 1,
     bundleRevision: revision,
     trigger,
     migrationChanged: flyMigrationChanged(changedPaths),

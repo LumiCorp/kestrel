@@ -102,6 +102,7 @@ export const flyImageReleaseComponentSchema = z.object({
 export const flyImageReleaseManifestV1Schema = z
   .object({
     version: z.literal(1),
+    controllerContractRevision: z.number().int().positive(),
     bundleRevision: gitRevisionSchema,
     trigger: z.enum(["main", "scheduled", "manual"]),
     migrationChanged: z.boolean(),

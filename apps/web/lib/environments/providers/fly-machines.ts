@@ -16,14 +16,14 @@ import {
   KESTREL_WORKSPACE_STOP_CONFIG,
   KESTREL_WORKSPACE_VOLUME_GB,
   type EnvironmentProviderMachineStopConfig,
-  type WorkspaceMachineProvisioningInput,
+  type WorkspaceMachineProvisioningInput
 } from "./contracts";
 
 const appDetailsSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   network: z.string().min(1).optional(),
-  organization: z.object({ slug: z.string().min(1) }),
+  organization: z.object({ slug: z.string().min(1) })
 });
 
 const appCreateSchema = z.object({ id: z.string().min(1) });
@@ -33,11 +33,11 @@ const appListSchema = z.object({ apps: z.array(appDetailsSchema) });
 const ipAssignmentSchema = z.object({
   ip: z.string().min(1),
   shared: z.boolean().optional(),
-  service_name: z.string().nullable().optional(),
+  service_name: z.string().nullable().optional()
 });
 
 const ipAssignmentsSchema = z.object({
-  ips: z.array(ipAssignmentSchema),
+  ips: z.array(ipAssignmentSchema)
 });
 
 const volumeSchema = z.object({
@@ -47,19 +47,19 @@ const volumeSchema = z.object({
   size_gb: z.number().int().positive(),
   encrypted: z.boolean(),
   state: z.string().min(1).optional(),
-  attached_machine_id: z.string().min(1).nullable().optional(),
+  attached_machine_id: z.string().min(1).nullable().optional()
 });
 
 const volumeSnapshotSchema = z.object({
   id: z.string().min(1),
   status: z.string().min(1).optional(),
-  state: z.string().min(1).optional(),
+  state: z.string().min(1).optional()
 });
 
 const volumeSnapshotsSchema = z
   .union([
     z.array(volumeSnapshotSchema),
-    z.object({ snapshots: z.array(volumeSnapshotSchema) }),
+    z.object({ snapshots: z.array(volumeSnapshotSchema) })
   ])
   .transform((value) => (Array.isArray(value) ? value : value.snapshots));
 
@@ -67,7 +67,7 @@ const machineMountSchema = z
   .object({
     volume: z.string().min(1),
     name: z.string().min(1).optional(),
-    path: z.string().min(1),
+    path: z.string().min(1)
   })
   .passthrough();
 
@@ -82,7 +82,7 @@ const machineSchema = z.object({
         name: z.string().min(1),
         status: z.string().min(1),
         output: z.string().optional(),
-        updated_at: z.string().optional(),
+        updated_at: z.string().optional()
       })
     )
     .optional(),
@@ -99,10 +99,10 @@ const machineSchema = z.object({
           timeout: z.preprocess(
             (value) =>
               typeof value === "string"
-                ? parseFlyDurationNanoseconds(value) ?? value
+                ? (parseFlyDurationNanoseconds(value) ?? value)
                 : value,
             z.number().int().nonnegative()
-          ),
+          )
         })
         .passthrough()
         .nullable()
@@ -111,18 +111,18 @@ const machineSchema = z.object({
         .object({
           cpu_kind: z.string().min(1).optional(),
           cpus: z.number().int().positive().optional(),
-          memory_mb: z.number().int().positive().optional(),
+          memory_mb: z.number().int().positive().optional()
         })
         .passthrough()
-        .optional(),
+        .optional()
     })
     .passthrough()
-    .optional(),
+    .optional()
 });
 
 const machineCreateResponseSchema = z
   .object({
-    id: z.string().min(1),
+    id: z.string().min(1)
   })
   .passthrough();
 
@@ -131,9 +131,9 @@ const snapshotResponseSchema = z.object({
     backup: z.object({
       id: z.union([z.string(), z.number()]).transform(String),
       graph_id: z.string().optional(),
-      state: z.string(),
-    }),
-  }),
+      state: z.string()
+    })
+  })
 });
 
 const MACHINE_START_RETRY_INTERVAL_MS = 1000;
@@ -214,7 +214,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         id: parsed.id,
         name: parsed.name,
         organizationSlug: parsed.organization.slug,
-        network: parsed.network ?? input.networkName,
+        network: parsed.network ?? input.networkName
       };
     }
 
@@ -225,15 +225,15 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         body: jsonBody({
           app_name: input.appName,
           org_slug: this.organizationSlug,
-          network: input.networkName,
-        }),
+          network: input.networkName
+        })
       })
     );
     return {
       id: created.id,
       name: input.appName,
       organizationSlug: this.organizationSlug,
-      network: input.networkName,
+      network: input.networkName
     };
   }
 
@@ -291,8 +291,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             {
               method: "POST",
               body: jsonBody({
-                config: environmentGatewayMachineConfig(gatewayConfigInput),
-              }),
+                config: environmentGatewayMachineConfig(gatewayConfigInput)
+              })
             }
           )
         )
@@ -310,8 +310,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
                   name: environmentGatewayMachineName(input.environmentId),
                   region: input.region,
                   skip_launch: false,
-                  config: environmentGatewayMachineConfig(gatewayConfigInput),
-                }),
+                  config: environmentGatewayMachineConfig(gatewayConfigInput)
+                })
               }
             )
           )
@@ -328,7 +328,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       region: machine.region,
       routerUrl: `https://${input.appName}.fly.dev`,
       sharedIp,
-      serviceToken,
+      serviceToken
     };
   }
 
@@ -346,7 +346,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       ipAssignmentSchema,
       await this.request(path, {
         method: "POST",
-        body: jsonBody({ type: "shared_v4" }),
+        body: jsonBody({ type: "shared_v4" })
       })
     ).ip;
   }
@@ -360,7 +360,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const listed = parseResponse(
       z.array(volumeSchema),
       await this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
-        method: "GET",
+        method: "GET"
       })
     );
     const existing = listed.find((volume) => volume.name === name);
@@ -377,10 +377,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               region: input.region,
               size_gb: KESTREL_WORKSPACE_VOLUME_GB,
               encrypted: true,
-              snapshot_retention: 30,
-              auto_backup_enabled: true,
-              require_unique_zone: false,
-            }),
+              snapshot_retention: 14,
+              auto_backup_enabled: false,
+              require_unique_zone: false
+            })
           }
         )
       );
@@ -399,7 +399,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       name: volume.name,
       region: volume.region,
       sizeGb: volume.size_gb,
-      encrypted: true,
+      encrypted: true
     };
   }
 
@@ -421,7 +421,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       const usable = await this.isWorkspaceSnapshotUsable({
         appName: input.appName,
         sourceVolumeId: input.sourceVolumeId,
-        snapshotId: input.snapshotId,
+        snapshotId: input.snapshotId
       });
       if (!usable) {
         throw new EnvironmentProviderError(
@@ -437,7 +437,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const listed = parseResponse(
       z.array(volumeSchema),
       await this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
-        method: "GET",
+        method: "GET"
       })
     );
     const existing = listed.find((volume) => volume.name === name);
@@ -454,11 +454,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               region: input.region,
               size_gb: KESTREL_WORKSPACE_VOLUME_GB,
               encrypted: true,
-              snapshot_retention: 30,
-              auto_backup_enabled: true,
+              snapshot_retention: 14,
+              auto_backup_enabled: false,
               require_unique_zone: false,
-              ...(input.snapshotId ? { snapshot_id: input.snapshotId } : {}),
-            }),
+              ...(input.snapshotId ? { snapshot_id: input.snapshotId } : {})
+            })
           }
         )
       );
@@ -494,7 +494,9 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         volumeSchema,
         await this.request(
           `/apps/${encodeURIComponent(appName)}/volumes/${encodeURIComponent(volumeId)}`,
-          { method: "GET" }
+          {
+            method: "GET"
+          }
         )
       );
       if (!volume.state || volume.state === "created") return volume;
@@ -534,7 +536,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         await this.reconcileWorkspaceServiceToken({
           appName: input.appName,
           machine: existing,
-          serviceToken: input.serviceToken,
+          serviceToken: input.serviceToken
         })
       );
     }
@@ -565,7 +567,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         await this.reconcileWorkspaceServiceToken({
           appName: input.appName,
           machine: existing,
-          serviceToken: input.serviceToken,
+          serviceToken: input.serviceToken
         })
       );
     }
@@ -591,15 +593,15 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             name,
             region: input.region,
             skip_launch: false,
-            config: workspaceMachineConfig(input, replacementId),
-          }),
+            config: workspaceMachineConfig(input, replacementId)
+          })
         }
       )
     );
     return {
       id: machine.id,
       state: "created",
-      region: input.region,
+      region: input.region
     };
   }
 
@@ -610,8 +612,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }) {
     if (
       !input.serviceToken ||
-      input.machine.config?.env?.KESTREL_WORKSPACE_SERVICE_TOKEN === input.serviceToken
-    ) return input.machine;
+      input.machine.config?.env?.KESTREL_WORKSPACE_SERVICE_TOKEN ===
+        input.serviceToken
+    )
+      return input.machine;
     if (!input.machine.config) {
       throw new EnvironmentProviderError(
         "FLY_RESOURCE_CONFLICT",
@@ -629,10 +633,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               ...input.machine.config,
               env: {
                 ...input.machine.config.env,
-                KESTREL_WORKSPACE_SERVICE_TOKEN: input.serviceToken,
-              },
-            },
-          }),
+                KESTREL_WORKSPACE_SERVICE_TOKEN: input.serviceToken
+              }
+            }
+          })
         }
       )
     );
@@ -663,8 +667,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         return;
       } catch (error) {
         if (
-          !(error instanceof EnvironmentProviderError) ||
-          error.status !== 412
+          !(
+            error instanceof EnvironmentProviderError &&
+            (error.code === "FLY_PROVIDER_UNAVAILABLE" ||
+              [408, 409, 412].includes(error.status ?? 0))
+          )
         ) {
           throw error;
         }
@@ -676,11 +683,23 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         ) {
           return;
         }
+        const authoritativeState = {
+          machineId: machine?.id ?? input.machineId,
+          state: machine?.state ?? "unavailable",
+          image: machine?.image,
+        };
+        if (
+          error.code === "FLY_PROVIDER_UNAVAILABLE" ||
+          error.status === 408
+        ) {
+          Object.assign(error, { authoritativeState });
+          throw error;
+        }
         if (machine?.state === "stopping") {
           await this.waitForMachine({
             ...input,
             state: "stopped",
-            timeoutSeconds: 60,
+            timeoutSeconds: 60
           });
         } else if (
           machine?.state !== "stopped" &&
@@ -693,10 +712,13 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           );
         }
         if (retriesRemaining === 0) {
-          throw new EnvironmentProviderError(
-            "FLY_PROVIDER_REJECTED",
-            "Fly Machine remained stopped after 10 bounded start retries.",
-            412
+          throw Object.assign(
+            new EnvironmentProviderError(
+              "FLY_PROVIDER_REJECTED",
+              "Fly Machine remained stopped after 10 bounded start retries.",
+              412,
+            ),
+            { authoritativeState },
           );
         }
         retriesRemaining -= 1;
@@ -728,6 +750,22 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     );
   }
 
+  async reconcileWorkspaceVolumeBackupPolicy(input: {
+    appName: string;
+    volumeId: string;
+  }) {
+    await this.request(
+      `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.volumeId)}`,
+      {
+        method: "PUT",
+        body: jsonBody({
+          auto_backup_enabled: false,
+          snapshot_retention: 14
+        })
+      }
+    );
+  }
+
   async deleteEnvironmentApp(input: { appName: string }) {
     await this.request(
       `/apps/${encodeURIComponent(input.appName)}`,
@@ -741,11 +779,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }): Promise<EnvironmentProviderInventory> {
     const [machines, volumes] = await Promise.all([
       this.request(`/apps/${encodeURIComponent(input.appName)}/machines`, {
-        method: "GET",
+        method: "GET"
       }),
       this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
-        method: "GET",
-      }),
+        method: "GET"
+      })
     ]);
     return {
       machines: parseResponse(z.array(machineSchema), machines).map(
@@ -757,7 +795,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           replacementId:
             machine.config?.metadata?.kestrel_replacement_id ?? null,
           mountedVolumeIds:
-            machine.config?.mounts?.map((mount) => mount.volume) ?? [],
+            machine.config?.mounts?.map((mount) => mount.volume) ?? []
         })
       ),
       volumes: parseResponse(z.array(volumeSchema), volumes).map((volume) => ({
@@ -765,8 +803,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         name: volume.name,
         region: volume.region,
         sizeGb: volume.size_gb,
-        attachedMachineId: volume.attached_machine_id ?? null,
-      })),
+        attachedMachineId: volume.attached_machine_id ?? null
+      }))
     };
   }
 
@@ -775,8 +813,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       z.array(machineSchema),
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/machines`,
-        { method: "GET" },
-      ),
+        { method: "GET" }
+      )
     );
     return machines.map(toMachine);
   }
@@ -805,7 +843,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       );
       const query = new URLSearchParams({
         state: input.state,
-        timeout: String(Math.min(remainingSeconds, 60)),
+        timeout: String(Math.min(remainingSeconds, 60))
       });
       if (instanceId) query.set("instance_id", instanceId);
       try {
@@ -818,7 +856,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         if (!(error instanceof EnvironmentProviderError)) {
           throw error;
         }
-        if ((error.status === 408 || error.status === 409)) {
+        if (error.status === 408 || error.status === 409) {
           const machine = await this.getMachine(input);
           if (machine?.state === input.state) return;
           if (
@@ -881,7 +919,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     );
     return {
       id: response.Msg.backup.graph_id ?? response.Msg.backup.id,
-      state: response.Msg.backup.state,
+      state: response.Msg.backup.state
     };
   }
 
@@ -896,7 +934,9 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       machineSchema,
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
-        { method: "GET" }
+        {
+          method: "GET"
+        }
       )
     );
     if (!current.config) {
@@ -916,29 +956,67 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     ) {
       return toMachine(current);
     }
-    const updated = parseResponse(
-      machineSchema,
-      await this.request(
-        `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
-        {
-          method: "POST",
-          body: jsonBody({
-            config: {
-              ...current.config,
-              image: input.runtimeImage,
-              env: nextEnvironment,
-              ...(input.stopConfig ? { stop_config: input.stopConfig } : {}),
-            },
-            current_version: current.instance_id,
-            skip_launch: current.state !== "started",
-          }),
-        }
-      )
-    );
+    let updated;
+    try {
+      updated = parseResponse(
+        machineSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
+          {
+            method: "POST",
+            body: jsonBody({
+              config: {
+                ...current.config,
+                image: input.runtimeImage,
+                env: nextEnvironment,
+                ...(input.stopConfig ? { stop_config: input.stopConfig } : {})
+              },
+              current_version: current.instance_id,
+              skip_launch: current.state !== "started"
+            })
+          }
+        )
+      );
+    } catch (error) {
+      if (
+        !(
+          error instanceof EnvironmentProviderError &&
+          (error.code === "FLY_PROVIDER_UNAVAILABLE" ||
+            [408, 409, 412].includes(error.status ?? 0))
+        )
+      ) {
+        throw error;
+      }
+      const authoritative = parseResponse(
+        machineSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
+          { method: "GET" }
+        )
+      );
+      if (
+        !machineConfigurationMatches(authoritative.config, {
+          runtimeImage: input.runtimeImage,
+          environment: nextEnvironment,
+          stopConfig: input.stopConfig
+        })
+      ) {
+        Object.assign(error, {
+          authoritativeState: {
+            machineId: authoritative.id,
+            state: authoritative.state,
+            image: authoritative.config?.image,
+            instanceId: authoritative.instance_id
+          }
+        });
+        throw error;
+      }
+      updated = authoritative;
+    }
     const applied = machineConfigurationMatches(updated.config, {
       runtimeImage: input.runtimeImage,
       environment: nextEnvironment,
-      stopConfig: input.stopConfig,
+      stopConfig: input.stopConfig
     })
       ? updated
       : await this.waitForMachineConfiguration({
@@ -946,7 +1024,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           machineId: input.machineId,
           runtimeImage: input.runtimeImage,
           environment: nextEnvironment,
-          stopConfig: input.stopConfig,
+          stopConfig: input.stopConfig
         });
     return toMachine(applied);
   }
@@ -971,7 +1049,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         machineConfigurationMatches(machine.config, {
           runtimeImage: input.runtimeImage,
           environment: input.environment,
-          stopConfig: input.stopConfig,
+          stopConfig: input.stopConfig
         })
       ) {
         return machine;
@@ -999,8 +1077,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           accept: "application/json",
           authorization: `Bearer ${this.token}`,
           "content-type": "application/json",
-          ...init.headers,
-        },
+          ...init.headers
+        }
       });
     } catch {
       throw new EnvironmentProviderError(
@@ -1028,7 +1106,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
 function sanitizeHealthCheckOutput(value: string | undefined) {
   if (!value) return "";
   return value
-    .replace(/(authorization|token|secret|password)\s*[:=]\s*\S+/giu, "$1=[redacted]")
+    .replace(
+      /(authorization|token|secret|password)\s*[:=]\s*\S+/giu,
+      "$1=[redacted]"
+    )
     .replace(/[\r\n\t]+/gu, " ")
     .trim()
     .slice(0, 300);
@@ -1078,21 +1159,21 @@ function workspaceMachineConfig(
         : {}),
       ...(input.source.defaultBranch
         ? {
-            KESTREL_WORKSPACE_SOURCE_DEFAULT_BRANCH: input.source.defaultBranch,
+            KESTREL_WORKSPACE_SOURCE_DEFAULT_BRANCH: input.source.defaultBranch
           }
         : {}),
-      KESTREL_IDLE_TIMEOUT_MINUTES: String(input.idleTimeoutMinutes),
+      KESTREL_IDLE_TIMEOUT_MINUTES: String(input.idleTimeoutMinutes)
     },
     metadata: {
       kestrel_environment_id: input.environmentId,
       kestrel_organization_id: input.organizationId,
       kestrel_workspace_id: input.workspaceId,
-      ...(replacementId ? { kestrel_replacement_id: replacementId } : {}),
+      ...(replacementId ? { kestrel_replacement_id: replacementId } : {})
     },
     guest: {
       cpu_kind: "shared",
       cpus: KESTREL_WORKSPACE_CPUS,
-      memory_mb: KESTREL_WORKSPACE_MEMORY_MB,
+      memory_mb: KESTREL_WORKSPACE_MEMORY_MB
     },
     mounts: [{ volume: input.volumeId, path: "/workspace" }],
     restart: { policy: "on-failure", max_retries: 3 },
@@ -1105,9 +1186,9 @@ function workspaceMachineConfig(
         path: "/health",
         interval: "15s",
         timeout: "10s",
-        grace_period: "30s",
-      },
-    },
+        grace_period: "30s"
+      }
+    }
   };
 }
 
@@ -1128,11 +1209,11 @@ function environmentGatewayMachineConfig(input: {
       KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: input.ticketPublicKey,
       KESTREL_CONTROL_PLANE_URL: input.controlPlaneUrl,
       KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN: input.serviceToken,
-      PORT: "8080",
+      PORT: "8080"
     },
     metadata: {
       kestrel_environment_gateway: "true",
-      kestrel_environment_id: input.environmentId,
+      kestrel_environment_id: input.environmentId
     },
     guest: { cpu_kind: "shared", cpus: 1, memory_mb: 512 },
     restart: { policy: "on-failure", max_retries: 3 },
@@ -1145,10 +1226,10 @@ function environmentGatewayMachineConfig(input: {
         min_machines_running: 1,
         ports: [
           { port: 80, handlers: ["http"] },
-          { port: 443, handlers: ["tls", "http"] },
+          { port: 443, handlers: ["tls", "http"] }
         ],
-        concurrency: { type: "requests", soft_limit: 50, hard_limit: 100 },
-      },
+        concurrency: { type: "requests", soft_limit: 50, hard_limit: 100 }
+      }
     ],
     checks: {
       gateway: {
@@ -1158,9 +1239,9 @@ function environmentGatewayMachineConfig(input: {
         path: "/health",
         interval: "15s",
         timeout: "10s",
-        grace_period: "15s",
-      },
-    },
+        grace_period: "15s"
+      }
+    }
   };
 }
 
@@ -1183,7 +1264,7 @@ function checkedVolume(
     name: volume.name,
     region: volume.region,
     sizeGb: volume.size_gb,
-    encrypted: true,
+    encrypted: true
   };
 }
 
@@ -1234,9 +1315,7 @@ function toMachine(
     ...(machine.config?.guest?.cpu_kind
       ? { cpuKind: machine.config.guest.cpu_kind }
       : {}),
-    ...(machine.config?.guest?.cpus
-      ? { cpus: machine.config.guest.cpus }
-      : {}),
+    ...(machine.config?.guest?.cpus ? { cpus: machine.config.guest.cpus } : {}),
     ...(machine.config?.guest?.memory_mb
       ? { memoryMb: machine.config.guest.memory_mb }
       : {}),
@@ -1249,8 +1328,8 @@ function toMachine(
       machine.config?.mounts?.map((mount) => ({
         volumeId: mount.volume,
         ...(mount.name ? { name: mount.name } : {}),
-        path: mount.path,
-      })) ?? [],
+        path: mount.path
+      })) ?? []
   };
 }
 
@@ -1279,8 +1358,12 @@ function environmentsEqual(
   left: Record<string, string>,
   right: Record<string, string>
 ) {
-  const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
-  const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
+  const leftEntries = Object.entries(left).sort(([a], [b]) =>
+    a.localeCompare(b)
+  );
+  const rightEntries = Object.entries(right).sort(([a], [b]) =>
+    a.localeCompare(b)
+  );
   return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
 }
 
@@ -1288,16 +1371,14 @@ function parseFlyDurationNanoseconds(value: string) {
   const unitNanoseconds: Record<string, number> = {
     ns: 1,
     us: 1000,
-    "µs": 1000,
-    "μs": 1000,
+    µs: 1000,
+    μs: 1000,
     ms: 1_000_000,
     s: 1_000_000_000,
     m: 60_000_000_000,
-    h: 3_600_000_000_000,
+    h: 3_600_000_000_000
   };
-  const components = value.matchAll(
-    /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/gu
-  );
+  const components = value.matchAll(/(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/gu);
   let cursor = 0;
   let total = 0;
   for (const component of components) {
@@ -1312,10 +1393,7 @@ function parseFlyDurationNanoseconds(value: string) {
 }
 
 function stopConfigsEqual(
-  current:
-    | { signal: string; timeout: number }
-    | null
-    | undefined,
+  current: { signal: string; timeout: number } | null | undefined,
   requested: EnvironmentProviderMachineStopConfig | undefined
 ) {
   return (
@@ -1330,10 +1408,7 @@ function machineConfigurationMatches(
     | {
         image?: string | undefined;
         env?: Record<string, string> | undefined;
-        stop_config?:
-          | { signal: string; timeout: number }
-          | null
-          | undefined;
+        stop_config?: { signal: string; timeout: number } | null | undefined;
       }
     | undefined,
   requested: {
@@ -1344,9 +1419,9 @@ function machineConfigurationMatches(
 ) {
   return Boolean(
     current?.image &&
-      sameImageDigest(current.image, requested.runtimeImage) &&
-      environmentsEqual(current.env ?? {}, requested.environment) &&
-      stopConfigsEqual(current.stop_config, requested.stopConfig)
+    sameImageDigest(current.image, requested.runtimeImage) &&
+    environmentsEqual(current.env ?? {}, requested.environment) &&
+    stopConfigsEqual(current.stop_config, requested.stopConfig)
   );
 }
 

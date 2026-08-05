@@ -2,10 +2,6 @@ import {
   startDurableThreadTurnWorker,
   stopDurableThreadTurnWorker,
 } from "@/lib/turns/queue";
-import {
-  startEnvironmentLifecycleWorker,
-  stopEnvironmentLifecycleWorker,
-} from "@/lib/knowledge/queue";
 import { getGatewayCredentialAuthorityReadiness } from "@/lib/ai/gateway-credential-readiness.server";
 import { rm, writeFile } from "node:fs/promises";
 
@@ -31,20 +27,14 @@ async function main() {
       `Gateway credential readiness failed: ${gatewayCredentialReadiness.code}`
     );
   }
-  await Promise.all([
-    startDurableThreadTurnWorker(),
-    startEnvironmentLifecycleWorker(),
-  ]);
+  await startDurableThreadTurnWorker();
   await markReady();
   process.stdout.write("Kestrel One durable turn worker started.\n");
 }
 
 async function shutdown(signal: string) {
   process.stdout.write(`Kestrel One durable turn worker received ${signal}.\n`);
-  await Promise.all([
-    stopDurableThreadTurnWorker(),
-    stopEnvironmentLifecycleWorker(),
-  ]);
+  await stopDurableThreadTurnWorker();
   await clearReady();
   process.exit(0);
 }

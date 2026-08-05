@@ -1,27 +1,30 @@
 import { randomBytes } from "node:crypto";
 import {
   KestrelClient,
-  type KestrelRequestContext,
+  type KestrelRequestContext
 } from "@kestrel-agents/sdk/runner";
 import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
-import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
-import { createReadStream } from "node:fs";
 import {
-  cp,
-  mkdir,
-  mkdtemp,
-  readdir,
-  rm,
-  stat,
-} from "node:fs/promises";
+  createServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type ServerResponse
+} from "node:http";
+import { createReadStream } from "node:fs";
+import { cp, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { WorkspaceApplicationRegistry } from "./applications.js";
 import { WorkspaceBackupImportRegistry } from "./backup-imports.js";
 import {
+  WorkspaceBackupPreparationError,
+  WorkspaceBackupPreparationRegistry
+} from "./backup-preparations.js";
+import {
   workspaceChildEnvironment,
-  workspaceRunnerEnvironment,
+  workspaceRunnerEnvironment
 } from "./child-environment.js";
 import { readWorkspaceFile, writeWorkspaceFile } from "./files.js";
 import { requestGitHubToolCredential } from "./github-credentials.js";
@@ -29,26 +32,37 @@ import { notifyWorkspaceIdle } from "./idle.js";
 import { workspaceListenHost } from "./network.js";
 import { isPortListening } from "./previews.js";
 import { buildWorkspaceProxyHeaders, isRunnerProxyPath } from "./proxy.js";
-import { handlePreviewRelayHttp, handlePreviewRelayUpgrade, isPreviewRelayRequest } from "./preview-relay.js";
+import {
+  handlePreviewRelayHttp,
+  handlePreviewRelayUpgrade,
+  isPreviewRelayRequest
+} from "./preview-relay.js";
 import { resolveRunnerServiceEntrypoint } from "./runner-entrypoint.js";
 import {
   createWorkspaceRunnerReadiness,
-  workspaceRunnerHealthStatus,
+  workspaceRunnerHealthStatus
 } from "./runner-readiness.js";
-import { authorizeWorkspaceRequest, resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
+import {
+  authorizeWorkspaceRequest,
+  resolveWorkspacePath,
+  WorkspaceRequestError
+} from "./security.js";
 import { WorkspaceTerminalRegistry } from "./terminals.js";
 import {
   WorkspaceSkillManager,
-  type WorkspaceSkillSource,
+  type WorkspaceSkillSource
 } from "@kestrel-agents/workspace-skills";
 
-const WORKSPACE_RUNTIME_CONTRACT_REVISION = 2;
+const WORKSPACE_RUNTIME_CONTRACT_REVISION = 3;
 const config = readConfig();
 await mkdir(config.workspaceRoot, { recursive: true });
 await mkdir(path.join(config.workspaceRoot, ".kestrel"), { recursive: true });
 const applications = new WorkspaceApplicationRegistry(config.workspaceRoot);
 await applications.restore();
 const backupImports = new WorkspaceBackupImportRegistry(config.workspaceRoot);
+const backupPreparations = new WorkspaceBackupPreparationRegistry(
+  config.workspaceRoot
+);
 const terminals = new WorkspaceTerminalRegistry(workspaceChildEnvironment);
 let lastActivityAt = Date.now();
 let activeRequests = 0;
@@ -56,13 +70,17 @@ let activePreviewSockets = 0;
 let idleNotificationInFlight = false;
 let idleStopAccepted = false;
 let drainingForIdleStop = false;
-const workspaceIsIdle = () => Promise.resolve(activeRequests <= 1 && terminals.activeCount === 0);
-const workspaceSkills = new WorkspaceSkillManager({
-  workspaceId: config.workspaceId,
-  workspaceRoot: config.workspaceRoot,
-}, {
-  isWorkspaceIdle: workspaceIsIdle,
-});
+const workspaceIsIdle = () =>
+  Promise.resolve(activeRequests <= 1 && terminals.activeCount === 0);
+const workspaceSkills = new WorkspaceSkillManager(
+  {
+    workspaceId: config.workspaceId,
+    workspaceRoot: config.workspaceRoot
+  },
+  {
+    isWorkspaceIdle: workspaceIsIdle
+  }
+);
 const workspaceSkillsActivation = workspaceSkills.syncAll();
 const runnerToken = randomBytes(32).toString("base64url");
 let sourceInitialization: Promise<void> | null = null;
@@ -78,10 +96,10 @@ const runnerReadiness = createWorkspaceRunnerReadiness({
       `${JSON.stringify({
         ...event,
         workspaceId: config.workspaceId,
-        occurredAt: new Date().toISOString(),
-      })}\n`,
+        occurredAt: new Date().toISOString()
+      })}\n`
     );
-  },
+  }
 });
 
 const server = createServer(async (request, response) => {
@@ -93,7 +111,7 @@ const server = createServer(async (request, response) => {
         ok: false,
         workspaceId: config.workspaceId,
         runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
-        error: { code: "WORKSPACE_SKILLS_ACTIVATION_FAILED" },
+        error: { code: "WORKSPACE_SKILLS_ACTIVATION_FAILED" }
       });
       return;
     }
@@ -105,20 +123,20 @@ const server = createServer(async (request, response) => {
         ok: false,
         workspaceId: config.workspaceId,
         runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
-        error: { code: runnerHealth.code },
+        error: { code: runnerHealth.code }
       });
       return;
     }
     writeJson(response, 200, {
       ok: true,
       workspaceId: config.workspaceId,
-      runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
+      runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION
     });
     return;
   }
   if (drainingForIdleStop) {
     writeJson(response, 503, {
-      error: { code: "WORKSPACE_IDLE_STOPPING" },
+      error: { code: "WORKSPACE_IDLE_STOPPING" }
     });
     return;
   }
@@ -134,8 +152,8 @@ const server = createServer(async (request, response) => {
           organizationId: config.organizationId,
           environmentId: config.environmentId,
           workspaceId: config.workspaceId,
-          machineId: config.machineId,
-        },
+          machineId: config.machineId
+        }
       });
       return;
     }
@@ -145,7 +163,7 @@ const server = createServer(async (request, response) => {
       workspaceId: config.workspaceId,
       organizationId: config.organizationId,
       environmentId: config.environmentId,
-      machineId: config.machineId,
+      machineId: config.machineId
     });
     const url = new URL(request.url ?? "/", "http://workspace.internal");
     if (!url.pathname.startsWith("/v1/backups/imports")) {
@@ -156,7 +174,7 @@ const server = createServer(async (request, response) => {
       await proxyHttp(request, response, {
         port: 43_105,
         path: request.url ?? url.pathname,
-        authorization: `Bearer ${runnerToken}`,
+        authorization: `Bearer ${runnerToken}`
       });
       return;
     }
@@ -168,9 +186,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/v1/skills") {
       requireCapability(ticket.capabilities, "workspace.skills.write");
       const skill = await workspaceSkills.install(
-        parseWorkspaceSkillSource(
-          parseJson(await readBody(request, 100_000)),
-        ),
+        parseWorkspaceSkillSource(parseJson(await readBody(request, 100_000)))
       );
       writeJson(response, 201, { skill });
       return;
@@ -189,10 +205,10 @@ const server = createServer(async (request, response) => {
         throw new WorkspaceRequestError(409, "WORKSPACE_SKILLS_ACTIVE_RUN");
       }
       const installations = parseDesiredWorkspaceSkillCatalog(
-        parseJson(await readBody(request, 250_000)),
+        parseJson(await readBody(request, 250_000))
       );
       writeJson(response, 200, {
-        skills: await workspaceSkills.reconcile(installations),
+        skills: await workspaceSkills.reconcile(installations)
       });
       return;
     }
@@ -203,7 +219,7 @@ const server = createServer(async (request, response) => {
         requireCapability(ticket.capabilities, "workspace.skills.write");
         const skill = await workspaceSkills.updateSource(
           installationId,
-          parseWorkspaceSkillSource(parseJson(await readBody(request, 100_000))),
+          parseWorkspaceSkillSource(parseJson(await readBody(request, 100_000)))
         );
         writeJson(response, 200, { skill });
         return;
@@ -233,7 +249,7 @@ const server = createServer(async (request, response) => {
         ticket,
         authorization: request.headers.authorization ?? "",
         promotionId: body.promotionId,
-        candidateFingerprint: body.candidateFingerprint,
+        candidateFingerprint: body.candidateFingerprint
       });
       writeJson(response, 200, result);
       return;
@@ -267,14 +283,16 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/v1/promotions") {
       requireCapability(ticket.capabilities, "workspace.promotions.read");
-      const payload = await withRunnerClient((client, context) =>
-        client.listWorkspacePromotions(
-          { sessionId: ticket.threadId },
-          context
-        )
-      , ticket);
+      const payload = await withRunnerClient(
+        (client, context) =>
+          client.listWorkspacePromotions(
+            { sessionId: ticket.threadId },
+            context
+          ),
+        ticket
+      );
       writeJson(response, 200, {
-        promotions: payload.promotions ?? [],
+        promotions: payload.promotions ?? []
       });
       return;
     }
@@ -289,7 +307,7 @@ const server = createServer(async (request, response) => {
             client.previewWorkspacePromotion(
               {
                 sessionId: ticket.threadId,
-                promotionId: promotionPath[1]!,
+                promotionId: promotionPath[1]!
               },
               context
             ),
@@ -317,7 +335,7 @@ const server = createServer(async (request, response) => {
               {
                 sessionId: ticket.threadId,
                 promotionId: promotionPath[1]!,
-                candidateFingerprint: body.candidateFingerprint as string,
+                candidateFingerprint: body.candidateFingerprint as string
               },
               context
             ),
@@ -327,9 +345,20 @@ const server = createServer(async (request, response) => {
         return;
       }
     }
+    if (request.method === "POST" && url.pathname === "/v1/backups/prepare") {
+      requireCapability(ticket.capabilities, "workspace.backups.export");
+      writeJson(response, 201, await backupPreparations.prepare());
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/v1/backups/export") {
       requireCapability(ticket.capabilities, "workspace.backups.export");
-      await streamWorkspaceBackup(response);
+      const preparationId = url.searchParams.get("preparationId");
+      await streamWorkspaceBackup(
+        response,
+        preparationId
+          ? backupPreparations.createArchive(preparationId)
+          : undefined
+      );
       return;
     }
     if (request.method === "POST" && url.pathname === "/v1/backups/imports") {
@@ -407,7 +436,7 @@ const server = createServer(async (request, response) => {
       }
       await proxyHttp(request, response, {
         port: application.port,
-        path: `${applicationProxy[2] ?? "/"}${url.search}`,
+        path: `${applicationProxy[2] ?? "/"}${url.search}`
       });
       return;
     }
@@ -420,7 +449,7 @@ const server = createServer(async (request, response) => {
       response.writeHead(200, {
         "content-type": "application/octet-stream",
         "cache-control": "no-store",
-        etag: file.revision,
+        etag: file.revision
       });
       response.end(file.content);
       return;
@@ -431,26 +460,35 @@ const server = createServer(async (request, response) => {
         workspaceRoot: config.workspaceRoot,
         requestedPath: url.searchParams.get("path") ?? "",
         expectedRevision: request.headers["if-match"],
-        content: await readBody(request, 5_000_000),
+        content: await readBody(request, 5_000_000)
       });
       response.writeHead(200, {
         "content-type": "application/json",
         "cache-control": "no-store",
-        etag: saved.revision,
+        etag: saved.revision
       });
       response.end(JSON.stringify({ ok: true, revision: saved.revision }));
       return;
     }
     if (request.method === "GET" && url.pathname === "/v1/tree") {
       requireCapability(ticket.capabilities, "workspace.files.read");
-      const directory = await resolveWorkspacePath(config.workspaceRoot, url.searchParams.get("path") ?? "");
-      writeJson(response, 200, { entries: await listDirectory(directory, config.workspaceRoot) });
+      const directory = await resolveWorkspacePath(
+        config.workspaceRoot,
+        url.searchParams.get("path") ?? ""
+      );
+      writeJson(response, 200, {
+        entries: await listDirectory(directory, config.workspaceRoot)
+      });
       return;
     }
     if (request.method === "POST" && url.pathname === "/v1/terminal/exec") {
       requireCapability(ticket.capabilities, "workspace.terminal.exec");
       const body = parseJson(await readBody(request, 100_000));
-      if (!isRecord(body) || typeof body.command !== "string" || !body.command.trim()) {
+      if (
+        !isRecord(body) ||
+        typeof body.command !== "string" ||
+        !body.command.trim()
+      ) {
         throw new WorkspaceRequestError(400, "TERMINAL_COMMAND_INVALID");
       }
       const cwd = await resolveWorkspacePath(
@@ -460,10 +498,7 @@ const server = createServer(async (request, response) => {
       writeJson(response, 200, await executeCommand(body.command, cwd));
       return;
     }
-    if (
-      request.method === "POST" &&
-      url.pathname === "/v1/terminal/sessions"
-    ) {
+    if (request.method === "POST" && url.pathname === "/v1/terminal/sessions") {
       requireCapability(ticket.capabilities, "workspace.terminal.exec");
       const body = parseJson(await readBody(request, 100_000));
       const cwd = await resolveWorkspacePath(
@@ -488,7 +523,10 @@ const server = createServer(async (request, response) => {
         return;
       }
       if (request.method === "GET" && terminalSession[2] === "output") {
-        const cursor = Number.parseInt(url.searchParams.get("cursor") ?? "0", 10);
+        const cursor = Number.parseInt(
+          url.searchParams.get("cursor") ?? "0",
+          10
+        );
         writeJson(
           response,
           200,
@@ -504,18 +542,28 @@ const server = createServer(async (request, response) => {
     }
     writeJson(response, 404, { error: { code: "WORKSPACE_ROUTE_NOT_FOUND" } });
   } catch (error) {
-    const status = error instanceof WorkspaceRequestError ? error.status : 500;
-    const code = error instanceof WorkspaceRequestError ? error.code : "WORKSPACE_REQUEST_FAILED";
+    const status =
+      error instanceof WorkspaceRequestError ||
+      error instanceof WorkspaceBackupPreparationError
+        ? error.status
+        : 500;
+    const code =
+      error instanceof WorkspaceRequestError ||
+      error instanceof WorkspaceBackupPreparationError
+        ? error.code
+        : "WORKSPACE_REQUEST_FAILED";
     process.stdout.write(
       `${JSON.stringify({
         type: "workspace.request.denied",
         workspaceId: config.workspaceId,
         code,
         status,
-        occurredAt: new Date().toISOString(),
+        occurredAt: new Date().toISOString()
       })}\n`
     );
-    writeJson(response, status, { error: { code } });
+    if (response.headersSent)
+      response.destroy(error instanceof Error ? error : undefined);
+    else writeJson(response, status, { error: { code } });
   } finally {
     activeRequests -= 1;
     lastActivityAt = Date.now();
@@ -544,13 +592,13 @@ server.on("upgrade", (request, socket, head) => {
       organizationId: config.organizationId,
       environmentId: config.environmentId,
       workspaceId: config.workspaceId,
-      machineId: config.machineId,
-    },
+      machineId: config.machineId
+    }
   });
 });
 const idleTimer = setInterval(() => {
   if (
-    !(idleNotificationInFlight ||idleStopAccepted ) &&
+    !(idleNotificationInFlight || idleStopAccepted) &&
     activeRequests === 0 &&
     activePreviewSockets === 0 &&
     terminals.activeCount === 0 &&
@@ -566,7 +614,7 @@ const idleTimer = setInterval(() => {
       environmentId: config.environmentId,
       workspaceId: config.workspaceId,
       machineId: config.machineId,
-      lastActivityAt: reportedLastActivityAt,
+      lastActivityAt: reportedLastActivityAt
     })
       .then((accepted) => {
         idleStopAccepted = accepted;
@@ -597,8 +645,8 @@ function startRunner(authToken: string): ChildProcess {
       storeDir: path.join(runnerHome, "store"),
       runtimeUrl: `http://127.0.0.1:${config.port}`,
       serviceToken: authToken,
-      workspaceServiceToken: config.workspaceServiceToken,
-    }),
+      workspaceServiceToken: config.workspaceServiceToken
+    })
   });
   return child;
 }
@@ -612,8 +660,8 @@ async function waitForRunnerService() {
     target: {
       kind: "remote",
       baseUrl: "http://127.0.0.1:43105",
-      authToken: runnerToken,
-    },
+      authToken: runnerToken
+    }
   });
   try {
     await waitForRunner(client);
@@ -627,8 +675,8 @@ async function probeRunnerService() {
     target: {
       kind: "remote",
       baseUrl: "http://127.0.0.1:43105",
-      authToken: runnerToken,
-    },
+      authToken: runnerToken
+    }
   });
   try {
     await client.getHealth();
@@ -638,10 +686,7 @@ async function probeRunnerService() {
 }
 
 async function withRunnerClient<T>(
-  run: (
-    client: KestrelClient,
-    context: KestrelRequestContext
-  ) => Promise<T>,
+  run: (client: KestrelClient, context: KestrelRequestContext) => Promise<T>,
   ticket: { actorId: string; organizationId: string }
 ): Promise<T> {
   await ensureRunnerReady();
@@ -649,17 +694,17 @@ async function withRunnerClient<T>(
     target: {
       kind: "remote",
       baseUrl: "http://127.0.0.1:43105",
-      authToken: runnerToken,
-    },
+      authToken: runnerToken
+    }
   });
   try {
     const context: KestrelRequestContext = {
       actor: {
         actorId: ticket.actorId,
         actorType: "end_user",
-        tenantId: ticket.organizationId,
+        tenantId: ticket.organizationId
       },
-      tenantId: ticket.organizationId,
+      tenantId: ticket.organizationId
     };
     const profile = await client.getProfile(config.profileId, context);
     return await run(client, { ...context, profile });
@@ -684,17 +729,20 @@ async function waitForRunner(client: KestrelClient) {
 async function ensureWorkspaceSource(authorization: string) {
   if (config.sourceType !== "github") return;
   if (!sourceInitialization) {
-    sourceInitialization = initializeGitHubSource(authorization).catch((error) => {
-      sourceInitialization = null;
-      throw error;
-    });
+    sourceInitialization = initializeGitHubSource(authorization).catch(
+      (error) => {
+        sourceInitialization = null;
+        throw error;
+      }
+    );
   }
   await sourceInitialization;
 }
 
 async function initializeGitHubSource(authorization: string) {
   try {
-    if ((await stat(path.join(config.workspaceRoot, ".git"))).isDirectory()) return;
+    if ((await stat(path.join(config.workspaceRoot, ".git"))).isDirectory())
+      return;
   } catch {}
   if (!(config.sourceResourceId && config.controlPlaneUrl)) {
     throw new WorkspaceRequestError(500, "WORKSPACE_SOURCE_NOT_CONFIGURED");
@@ -710,7 +758,7 @@ async function initializeGitHubSource(authorization: string) {
       controlPlaneUrl: config.controlPlaneUrl,
       executionAuthorization: authorization,
       resourceId: config.sourceResourceId,
-      operation: "git.upload_pack",
+      operation: "git.upload_pack"
     });
     await runProcess(
       "git",
@@ -721,21 +769,25 @@ async function initializeGitHubSource(authorization: string) {
           : []),
         "--",
         proxyUrl.toString(),
-        cloneRoot,
+        cloneRoot
       ],
       "/tmp",
       {
         GIT_CONFIG_COUNT: "1",
         GIT_CONFIG_KEY_0: "http.extraHeader",
         GIT_CONFIG_VALUE_0: `Authorization: ${credential.authorization}`,
-        GIT_TERMINAL_PROMPT: "0",
+        GIT_TERMINAL_PROMPT: "0"
       }
     );
     for (const entry of await readdir(cloneRoot)) {
-      await cp(path.join(cloneRoot, entry), path.join(config.workspaceRoot, entry), {
-        recursive: true,
-        force: true,
-      });
+      await cp(
+        path.join(cloneRoot, entry),
+        path.join(config.workspaceRoot, entry),
+        {
+          recursive: true,
+          force: true
+        }
+      );
     }
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
@@ -756,7 +808,7 @@ async function pushManagedCandidateBranch(input: {
       client.previewWorkspacePromotion(
         {
           sessionId: input.ticket.threadId,
-          promotionId: input.promotionId,
+          promotionId: input.promotionId
         },
         context
       ),
@@ -784,7 +836,7 @@ async function pushManagedCandidateBranch(input: {
       GIT_AUTHOR_NAME: "Kestrel Agent",
       GIT_AUTHOR_EMAIL: "agent@kestrel.invalid",
       GIT_COMMITTER_NAME: "Kestrel Agent",
-      GIT_COMMITTER_EMAIL: "agent@kestrel.invalid",
+      GIT_COMMITTER_EMAIL: "agent@kestrel.invalid"
     };
     await runProcess(
       "git",
@@ -815,7 +867,7 @@ async function pushManagedCandidateBranch(input: {
           "-p",
           baseHead,
           "-m",
-          `Kestrel candidate ${input.ticket.runId}`,
+          `Kestrel candidate ${input.ticket.runId}`
         ],
         worktreeRoot,
         candidateEnvironment
@@ -841,7 +893,7 @@ async function pushManagedCandidateBranch(input: {
       executionAuthorization: input.authorization,
       resourceId: config.sourceResourceId,
       operation: "repository.push_agent_branch",
-      candidateFingerprint: input.candidateFingerprint,
+      candidateFingerprint: input.candidateFingerprint
     });
     const pushResponse = await fetch(
       new URL("/api/runtime/github/push", config.controlPlaneUrl),
@@ -851,10 +903,10 @@ async function pushManagedCandidateBranch(input: {
           authorization: credential.authorization,
           "content-type": "application/x-git-bundle",
           "x-kestrel-resource-id": config.sourceResourceId,
-          "x-kestrel-candidate-fingerprint": input.candidateFingerprint,
+          "x-kestrel-candidate-fingerprint": input.candidateFingerprint
         },
         body: bundleStream,
-        duplex: "half",
+        duplex: "half"
       } as RequestInit & { duplex: "half" }
     );
     const payload = (await pushResponse.json()) as {
@@ -896,16 +948,14 @@ function runProcess(
     const child = spawn(command, args, {
       cwd,
       env: { ...process.env, ...extraEnv },
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["ignore", "ignore", "pipe"]
     });
     child.stderr.resume();
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolve();
       else
-        reject(
-          new WorkspaceRequestError(502, "WORKSPACE_SOURCE_CLONE_FAILED")
-        );
+        reject(new WorkspaceRequestError(502, "WORKSPACE_SOURCE_CLONE_FAILED"));
     });
   });
 }
@@ -920,7 +970,7 @@ function runProcessOutput(
     const child = spawn(command, args, {
       cwd,
       env: { ...process.env, ...extraEnv },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"]
     });
     const stdout: Buffer[] = [];
     child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
@@ -928,7 +978,8 @@ function runProcessOutput(
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolve(Buffer.concat(stdout).toString("utf8"));
-      else reject(new WorkspaceRequestError(502, "WORKSPACE_GIT_COMMAND_FAILED"));
+      else
+        reject(new WorkspaceRequestError(502, "WORKSPACE_GIT_COMMAND_FAILED"));
     });
   });
 }
@@ -950,8 +1001,8 @@ function proxyHttp(
           port: target.port,
           ...(target.authorization
             ? { authorization: target.authorization }
-            : {}),
-        }),
+            : {})
+        })
       },
       (response) => {
         outgoing.writeHead(response.statusCode ?? 502, response.headers);
@@ -969,43 +1020,68 @@ function proxyHttp(
 
 async function listDirectory(directory: string, root: string) {
   const entries = await readdir(directory, { withFileTypes: true });
-  return Promise.all(entries.sort((a, b) => a.name.localeCompare(b.name)).map(async (entry) => {
-    const absolute = path.join(directory, entry.name);
-    const metadata = await stat(absolute);
-    return {
-      name: entry.name,
-      path: path.relative(root, absolute),
-      type: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other",
-      size: metadata.size,
-      updatedAt: metadata.mtime.toISOString(),
-    };
-  }));
+  return Promise.all(
+    entries
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(async (entry) => {
+        const absolute = path.join(directory, entry.name);
+        const metadata = await stat(absolute);
+        return {
+          name: entry.name,
+          path: path.relative(root, absolute),
+          type: entry.isDirectory()
+            ? "directory"
+            : entry.isFile()
+              ? "file"
+              : "other",
+          size: metadata.size,
+          updatedAt: metadata.mtime.toISOString()
+        };
+      })
+  );
 }
 
 function executeCommand(command: string, cwd: string) {
-  return new Promise<{ exitCode: number | null; stdout: string; stderr: string }>((resolve) => {
+  return new Promise<{
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+  }>((resolve) => {
     const child = spawn("/bin/sh", ["-lc", command], {
       cwd,
-      env: workspaceChildEnvironment(),
+      env: workspaceChildEnvironment()
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
     child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-    child.once("exit", (exitCode) => resolve({
-      exitCode,
-      stdout: Buffer.concat(stdout).subarray(0, 1_000_000).toString("utf8"),
-      stderr: Buffer.concat(stderr).subarray(0, 1_000_000).toString("utf8"),
-    }));
+    child.once("exit", (exitCode) =>
+      resolve({
+        exitCode,
+        stdout: Buffer.concat(stdout).subarray(0, 1_000_000).toString("utf8"),
+        stderr: Buffer.concat(stderr).subarray(0, 1_000_000).toString("utf8")
+      })
+    );
   });
 }
 
-function streamWorkspaceBackup(response: ServerResponse) {
+function streamWorkspaceBackup(
+  response: ServerResponse,
+  preparedArchive?: Readable | undefined
+) {
+  if (preparedArchive) {
+    response.writeHead(200, {
+      "content-type": "application/gzip",
+      "cache-control": "no-store",
+      "content-disposition": "attachment; filename=workspace.tar.gz"
+    });
+    return pipeline(preparedArchive, response);
+  }
   return new Promise<void>((resolve, reject) => {
     response.writeHead(200, {
       "content-type": "application/gzip",
       "cache-control": "no-store",
-      "content-disposition": "attachment; filename=workspace.tar.gz",
+      "content-disposition": "attachment; filename=workspace.tar.gz"
     });
     const child = spawn("tar", ["-czf", "-", "-C", config.workspaceRoot, "."]);
     child.stdout.pipe(response);
@@ -1046,9 +1122,11 @@ function readConfig() {
     port: Number.parseInt(process.env.KESTREL_WORKSPACE_PORT ?? "43104", 10),
     listenHost: workspaceListenHost({
       flyPrivateIp: process.env.FLY_PRIVATE_IP,
-      configuredHost: process.env.KESTREL_WORKSPACE_HOST,
+      configuredHost: process.env.KESTREL_WORKSPACE_HOST
     }),
-    workspaceRoot: path.resolve(process.env.KESTREL_WORKSPACE_ROOT ?? "/workspace"),
+    workspaceRoot: path.resolve(
+      process.env.KESTREL_WORKSPACE_ROOT ?? "/workspace"
+    ),
     workspaceId: required("KESTREL_WORKSPACE_ID"),
     organizationId: required("KESTREL_ORGANIZATION_ID"),
     environmentId: required("KESTREL_ENVIRONMENT_ID"),
@@ -1065,37 +1143,56 @@ function readConfig() {
       process.env.KESTREL_WORKSPACE_SOURCE_REPOSITORY?.trim() ?? "",
     sourceDefaultBranch:
       process.env.KESTREL_WORKSPACE_SOURCE_DEFAULT_BRANCH?.trim() ?? "",
-    idleTimeoutMinutes: Number.parseInt(process.env.KESTREL_IDLE_TIMEOUT_MINUTES ?? "15", 10),
+    idleTimeoutMinutes: Number.parseInt(
+      process.env.KESTREL_IDLE_TIMEOUT_MINUTES ?? "15",
+      10
+    )
   };
 }
 
 function parseJson(value: Buffer) {
-  try { return JSON.parse(value.toString("utf8")) as unknown; }
-  catch { throw new WorkspaceRequestError(400, "REQUEST_JSON_INVALID"); }
+  try {
+    return JSON.parse(value.toString("utf8")) as unknown;
+  } catch {
+    throw new WorkspaceRequestError(400, "REQUEST_JSON_INVALID");
+  }
 }
 
 function parseWorkspaceSkillSource(value: unknown): WorkspaceSkillSource {
-  if (!isRecord(value) || typeof value.gitUrl !== "string" || typeof value.branch !== "string") {
+  if (
+    !isRecord(value) ||
+    typeof value.gitUrl !== "string" ||
+    typeof value.branch !== "string"
+  ) {
     throw new WorkspaceRequestError(400, "WORKSPACE_SKILL_SOURCE_INVALID");
   }
   return {
     gitUrl: value.gitUrl,
     branch: value.branch,
-    ...(typeof value.path === "string" && value.path.trim().length > 0 ? { path: value.path } : {}),
+    ...(typeof value.path === "string" && value.path.trim().length > 0
+      ? { path: value.path }
+      : {})
   };
 }
 
 function parseDesiredWorkspaceSkillCatalog(value: unknown) {
-  if (!isRecord(value) || !Array.isArray(value.installations) || value.installations.length > 100) {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.installations) ||
+    value.installations.length > 100
+  ) {
     throw new WorkspaceRequestError(400, "WORKSPACE_SKILL_CATALOG_INVALID");
   }
   return value.installations.map((installation) => {
-    if (!isRecord(installation) || typeof installation.installationId !== "string") {
+    if (
+      !isRecord(installation) ||
+      typeof installation.installationId !== "string"
+    ) {
       throw new WorkspaceRequestError(400, "WORKSPACE_SKILL_CATALOG_INVALID");
     }
     return {
       installationId: installation.installationId,
-      source: parseWorkspaceSkillSource(installation.source),
+      source: parseWorkspaceSkillSource(installation.source)
     };
   });
 }
@@ -1106,7 +1203,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function writeJson(response: ServerResponse, status: number, body: unknown) {
   if (response.headersSent) return;
-  response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+  response.writeHead(status, {
+    "content-type": "application/json",
+    "cache-control": "no-store"
+  });
   response.end(JSON.stringify(body));
 }
 
@@ -1123,7 +1223,7 @@ function shutdown(code: number): Promise<void> {
     await Promise.allSettled([
       runnerReadiness.stop(),
       applications.stopAll(),
-      backupImports.closeAll(),
+      backupImports.closeAll()
     ]);
     await serverClosed;
     process.exit(code);

@@ -34,7 +34,8 @@ export default async function AdminReleasesPage() {
           trigger: release.trigger,
           status: release.status,
           migrationChanged: release.migrationChanged,
-          migrationApprovedAt: release.migrationApprovedAt?.toISOString() ?? null,
+          migrationApprovedAt:
+            release.migrationApprovedAt?.toISOString() ?? null,
           failureMessage: release.failureMessage,
           createdAt: release.createdAt.toISOString(),
           components: release.components.map((component) => ({
@@ -46,6 +47,7 @@ export default async function AdminReleasesPage() {
             targetKey: target.targetKey,
             status: target.status,
             stage: target.stage,
+            result: target.result,
           })),
         }))}
         initialSettings={

@@ -1,5 +1,9 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { FlyMachinesClient } from "@/lib/environments/providers/fly-machines";
+import { EnvironmentProviderError } from "@/lib/environments/providers/contracts";
+import {
+  releaseRetryNextAttemptAt,
+} from "@/lib/environments/provisioner";
 import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
@@ -70,6 +74,9 @@ export async function processFlyImageRelease(
     );
     return "not_claimed";
   }
+  const nextAttemptAt = readResultString(target.result, "nextAttemptAt");
+  if (nextAttemptAt && Date.parse(nextAttemptAt) > Date.now())
+    return "deferred";
 
   try {
     if (target.targetKind === "global_app" && target.componentRole) {
@@ -89,19 +96,97 @@ export async function processFlyImageRelease(
       error instanceof Error
         ? error.message
         : "Unknown release target failure.";
+    const retryable = isRetryableReleaseProviderFailure(error);
+    const firstFailureAt =
+      readResultString(target.result, "firstFailureAt") ??
+      new Date().toISOString();
+    const retryAttempt =
+      (readResultNumber(target.result, "retryAttempt") ?? 0) + 1;
+    const nextAttemptAt = releaseRetryNextAttemptAt(
+      firstFailureAt,
+      retryAttempt,
+    );
+    if (retryable && nextAttemptAt) {
+      await knowledgeDb
+        .update(schema.flyImageReleaseTargets)
+        .set({
+          status: "applying",
+          stage: "environment.provider.retrying",
+          failureCode: null,
+          failureMessage: null,
+          result: {
+            ...(target.result ?? {}),
+            retryAttempt,
+            firstFailureAt,
+            nextAttemptAt,
+            lastProviderResponse: {
+              code:
+                error instanceof EnvironmentProviderError
+                  ? error.code
+                  : "FLY_PROVIDER_UNAVAILABLE",
+              status:
+                error instanceof EnvironmentProviderError
+                  ? error.status
+                  : undefined,
+              message,
+            },
+            authoritativeState:
+              error &&
+              typeof error === "object" &&
+              "authoritativeState" in error
+                ? error.authoritativeState
+                : undefined,
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.flyImageReleaseTargets.id, target.id));
+      return "deferred";
+    }
+    const failureCode = retryable
+      ? "RELEASE_RETRY_BUDGET_EXHAUSTED"
+      : "RELEASE_TARGET_FAILED";
     await knowledgeDb
       .update(schema.flyImageReleaseTargets)
       .set({
         status: "failed",
-        failureCode: "RELEASE_TARGET_FAILED",
+        failureCode,
         failureMessage: message,
         completedAt: new Date(),
         updatedAt: new Date(),
       })
       .where(eq(schema.flyImageReleaseTargets.id, target.id));
-    await pauseRelease(release.id, "RELEASE_TARGET_FAILED", message);
+    await pauseRelease(release.id, failureCode, message);
     return "not_claimed";
   }
+}
+
+export async function nextFlyImageReleaseDelaySeconds(releaseId: string) {
+  const targets = await knowledgeDb.query.flyImageReleaseTargets.findMany({
+    where: (table, { eq }) => eq(table.releaseId, releaseId),
+    columns: { status: true, result: true },
+  });
+  const future = targets
+    .filter((target) => target.status === "applying")
+    .map((target) => readResultString(target.result, "nextAttemptAt"))
+    .flatMap((value) => (value ? [Date.parse(value)] : []))
+    .filter((value) => Number.isFinite(value) && value > Date.now());
+  if (!future.length) return 15;
+  return Math.max(1, Math.ceil((Math.min(...future) - Date.now()) / 1000));
+}
+
+function isRetryableReleaseProviderFailure(error: unknown) {
+  if (!(error instanceof EnvironmentProviderError)) return false;
+  if (
+    error.code === "FLY_PROVIDER_UNAVAILABLE" ||
+    error.status === 408 ||
+    error.status === 429 ||
+    (error.status !== undefined && error.status >= 500)
+  ) {
+    return true;
+  }
+  return (
+    [409, 412].includes(error.status ?? 0) && "authoritativeState" in error
+  );
 }
 
 async function applyGlobalAppTarget(
@@ -330,6 +415,7 @@ async function applyEnvironmentTarget(input: {
       idempotencyKey: `fly-image-release:${input.release.id}:${environment.id}:${retryCount}`,
       input: {
         releaseId: input.release.id,
+        releaseTargetId: input.target.id,
         runtimeImage,
         routerImage,
         preserveStoppedWorkspaces: true,

@@ -34,6 +34,17 @@ Production release owner: run `pnpm --dir apps/web release:turn-worker` after ap
 Do not run that command in PR CI: it synchronizes production keyring secrets
 from Vercel to Fly before deploying the worker.
 
+For a Kestrel One release-controller or lifecycle-queue change, add this release
+note:
+
+```text
+Production release owner: run `pnpm --dir apps/web release:control-worker` after migration verification and before queue ownership changes.
+```
+
+The controller release command refuses to proceed unless legacy lifecycle queues
+are idle, and verifies both the deployed readiness contract and database
+heartbeat.
+
 ## Notes
 
 Anything reviewers should pay attention to.

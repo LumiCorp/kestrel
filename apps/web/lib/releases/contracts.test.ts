@@ -24,6 +24,7 @@ test("release manifests require unique changed roles from the bundle revision", 
   };
   const base = {
     version: 1 as const,
+    controllerContractRevision: 1,
     bundleRevision: revision,
     trigger: "main" as const,
     migrationChanged: false,

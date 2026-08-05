@@ -204,6 +204,64 @@ test("Fly start is idempotent when another request already started the Machine",
   );
 });
 
+test("Fly start accepts authoritative started state after an ambiguous timeout", async () => {
+  const methods: string[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      if (method === "POST") return new Response(null, { status: 408 });
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+
+  await client.startMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+  });
+
+  assert.deepEqual(methods, ["POST", "GET"]);
+});
+
+test("Fly start defers mutation replay after a timeout with safe stopped state", async () => {
+  const methods: string[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      if (method === "POST") return new Response(null, { status: 408 });
+      return Response.json({
+        id: "machine-1",
+        state: "stopped",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+
+  await assert.rejects(
+    client.startMachine({
+      appName: "kestrel-env-abc",
+      machineId: "machine-1",
+    }),
+    (error: unknown) =>
+      error instanceof EnvironmentProviderError &&
+      error.status === 408 &&
+      (error as EnvironmentProviderError & { authoritativeState?: unknown })
+        .authoritativeState !== undefined,
+  );
+  assert.deepEqual(methods, ["POST", "GET"]);
+});
+
 test("Fly start waits out an in-progress stop before issuing the start", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const client = new FlyMachinesClient({
@@ -572,6 +630,8 @@ test("Workspace provisioning requests encrypted storage and a private runtime Ma
   const machineBody = JSON.parse(String(machineCreate?.init.body));
   assert.equal(volumeBody.encrypted, true);
   assert.equal(volumeBody.size_gb, 20);
+  assert.equal(volumeBody.auto_backup_enabled, false);
+  assert.equal(volumeBody.snapshot_retention, 14);
   assert.deepEqual(machineBody.config.mounts, [
     { volume: "vol-1", path: "/workspace" },
   ]);
@@ -611,6 +671,29 @@ test("Workspace provisioning requests encrypted storage and a private runtime Ma
   assert.equal(machineBody.config.env.ANTHROPIC_API_KEY, undefined);
   assert.equal(machineBody.config.env.OPENROUTER_API_KEY, undefined);
   assert.equal(machineBody.config.services, undefined);
+});
+
+test("existing Fly volumes converge to the Kestrel backup policy in place", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return Response.json({ id: "vol-1" });
+    }) as typeof fetch,
+  });
+  await client.reconcileWorkspaceVolumeBackupPolicy({
+    appName: "kestrel-env-abc",
+    volumeId: "vol-1",
+  });
+  const request = requests[0];
+  assert.match(request?.url ?? "", /\/volumes\/vol-1$/u);
+  assert.equal(request?.init?.method, "PUT");
+  assert.deepEqual(JSON.parse(String(request?.init?.body)), {
+    auto_backup_enabled: false,
+    snapshot_retention: 14,
+  });
 });
 
 test("Environment gateway owns public ingress while Workspace Machines remain private", async () => {
@@ -835,6 +918,52 @@ test("Fly Workspace image updates repair missing graceful stop configuration", a
     update.config?.stop_config,
     KESTREL_WORKSPACE_STOP_CONFIG,
   );
+});
+
+test("Fly image updates accept authoritative configuration after an ambiguous timeout", async () => {
+  const methods: string[] = [];
+  const digest = `sha256:${"e".repeat(64)}`;
+  const currentConfig = {
+    image: `registry.fly.io/kestrel-one-runner@sha256:${"f".repeat(64)}`,
+    env: { KESTREL_WORKSPACE_ID: "workspace-1" },
+  };
+  const desiredConfig = {
+    image: `registry.fly.io/kestrel-one-runner@${digest}`,
+    env: {
+      KESTREL_WORKSPACE_ID: "workspace-1",
+      KESTREL_WORKSPACE_SERVICE_TOKEN: "rotated-token",
+    },
+    stop_config: KESTREL_WORKSPACE_STOP_CONFIG,
+  };
+  let getCount = 0;
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      if (method === "POST") return new Response(null, { status: 408 });
+      getCount += 1;
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        instance_id: `instance-${getCount}`,
+        config: getCount === 1 ? currentConfig : desiredConfig,
+      });
+    }) as typeof fetch,
+  });
+
+  const machine = await client.updateMachineImage({
+    appName: "app-1",
+    machineId: "machine-1",
+    runtimeImage: desiredConfig.image,
+    envPatch: { KESTREL_WORKSPACE_SERVICE_TOKEN: "rotated-token" },
+    stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
+  });
+
+  assert.equal(machine.image, desiredConfig.image);
+  assert.deepEqual(methods, ["GET", "POST", "GET"]);
 });
 
 test("Fly Workspace image updates verify the persisted graceful stop configuration", async () => {

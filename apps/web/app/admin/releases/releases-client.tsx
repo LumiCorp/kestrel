@@ -24,7 +24,12 @@ type Release = {
   failureMessage: string | null;
   createdAt: string;
   components: Array<{ role: string; image: string; changed: boolean }>;
-  targets: Array<{ targetKey: string; status: string; stage: string }>;
+  targets: Array<{
+    targetKey: string;
+    status: string;
+    stage: string;
+    result: Record<string, unknown> | null;
+  }>;
 };
 
 export function ReleasesClient({
@@ -48,7 +53,8 @@ export function ReleasesClient({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [canaryId, setCanaryId] = useState(
+  const savedCanaryId = initialSettings?.canaryEnvironmentId ?? "";
+  const [draftCanaryId, setDraftCanaryId] = useState(
     initialSettings?.canaryEnvironmentId ?? "",
   );
   const active = initialReleases.find(
@@ -131,8 +137,8 @@ export function ReleasesClient({
           <select
             className="h-9 min-w-72 rounded-md border bg-background px-3 text-sm"
             disabled={pending || Boolean(active)}
-            onChange={(event) => setCanaryId(event.target.value)}
-            value={canaryId}
+            onChange={(event) => setDraftCanaryId(event.target.value)}
+            value={draftCanaryId}
           >
             <option value="">Choose a Fly Environment</option>
             {canaries.map((canary) => (
@@ -142,13 +148,33 @@ export function ReleasesClient({
             ))}
           </select>
           <Button
-            disabled={pending || Boolean(active) || !canaryId}
+            disabled={
+              pending ||
+              Boolean(active) ||
+              !draftCanaryId ||
+              draftCanaryId === savedCanaryId
+            }
             onClick={() =>
-              act({ action: "set_canary", environmentId: canaryId })
+              act({ action: "set_canary", environmentId: draftCanaryId })
             }
           >
             Save canary
           </Button>
+          <div className="basis-full text-muted-foreground text-sm">
+            {savedCanaryId ? (
+              <>
+                Saved canary:{" "}
+                {
+                  canaries.find((item) => item.id === savedCanaryId)
+                    ?.organizationName
+                }{" "}
+                / {canaries.find((item) => item.id === savedCanaryId)?.name}
+                {active ? " — locked while this release is active." : ""}
+              </>
+            ) : (
+              "No canary has been saved. Approval uses only the server-persisted canary."
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -179,7 +205,9 @@ export function ReleasesClient({
                       migration runbook required
                     </Badge>
                   ) : release.migrationChanged ? (
-                    <Badge variant="secondary">migration runbook complete</Badge>
+                    <Badge variant="secondary">
+                      migration runbook complete
+                    </Badge>
                   ) : null}
                 </div>
                 <CardDescription>
@@ -210,13 +238,50 @@ export function ReleasesClient({
                   ))}
                 </div>
                 {release.targets.length ? (
-                  <div className="text-muted-foreground text-sm">
-                    {
-                      release.targets.filter(
-                        (target) => target.status === "completed",
-                      ).length
-                    }{" "}
-                    / {release.targets.length} targets complete
+                  <div className="space-y-2 text-sm">
+                    <div className="text-muted-foreground">
+                      {
+                        release.targets.filter(
+                          (target) => target.status === "completed",
+                        ).length
+                      }{" "}
+                      / {release.targets.length} targets complete
+                    </div>
+                    {release.targets
+                      .filter((target) => target.stage.endsWith("retrying"))
+                      .map((target) => {
+                        const attempt = readNumber(
+                          target.result,
+                          "retryAttempt",
+                        );
+                        const nextAttemptAt = readString(
+                          target.result,
+                          "nextAttemptAt",
+                        );
+                        const response = readRecord(
+                          target.result,
+                          "lastProviderResponse",
+                        );
+                        return (
+                          <div
+                            className="rounded-md border p-3"
+                            key={target.targetKey}
+                          >
+                            <div className="font-medium">
+                              {target.targetKey} is retrying
+                            </div>
+                            <div className="text-muted-foreground">
+                              Attempt {attempt ?? "—"}
+                              {nextAttemptAt
+                                ? ` · next ${new Date(nextAttemptAt).toLocaleTimeString()}`
+                                : ""}
+                              {typeof response?.message === "string"
+                                ? ` · ${response.message}`
+                                : ""}
+                            </div>
+                          </div>
+                        );
+                      })}
                   </div>
                 ) : null}
                 <div className="flex flex-wrap gap-2">
@@ -241,7 +306,7 @@ export function ReleasesClient({
                         disabled={
                           pending ||
                           Boolean(active) ||
-                          !canaryId ||
+                          !savedCanaryId ||
                           (release.migrationChanged &&
                             !release.migrationApprovedAt)
                         }
@@ -282,4 +347,22 @@ export function ReleasesClient({
       </div>
     </div>
   );
+}
+
+function readRecord(value: unknown, key: string) {
+  if (!(value && typeof value === "object")) return null;
+  const candidate = (value as Record<string, unknown>)[key];
+  return candidate && typeof candidate === "object"
+    ? (candidate as Record<string, unknown>)
+    : null;
+}
+
+function readString(value: unknown, key: string) {
+  const candidate = readRecord({ value }, "value")?.[key];
+  return typeof candidate === "string" ? candidate : null;
+}
+
+function readNumber(value: unknown, key: string) {
+  const candidate = readRecord({ value }, "value")?.[key];
+  return typeof candidate === "number" ? candidate : null;
 }
