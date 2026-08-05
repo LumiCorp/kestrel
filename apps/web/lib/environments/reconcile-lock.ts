@@ -3,6 +3,7 @@ import postgres from "postgres";
 const ENVIRONMENT_RECONCILE_LOCK_KEY = "kestrel:hosted-environments:reconcile";
 const ENVIRONMENT_OPERATION_LOCK_PREFIX =
   "kestrel:hosted-environments:environment";
+const ORGANIZATION_DELETION_LOCK_PREFIX = "kestrel:organizations:deletion";
 
 export type EnvironmentReconcileLock = {
   tryAcquire(): Promise<boolean>;
@@ -30,6 +31,22 @@ export async function withEnvironmentOperationLock<T>(input: {
   return withEnvironmentAdvisoryLock({
     createLock: input.createLock,
     lockKey: `${ENVIRONMENT_OPERATION_LOCK_PREFIX}:${environmentId}`,
+    run: input.run,
+  });
+}
+
+export async function withOrganizationDeletionLock<T>(input: {
+  operationId: string;
+  run: () => Promise<T>;
+  createLock?: (lockKey: string) => Promise<EnvironmentReconcileLock>;
+}) {
+  const operationId = input.operationId.trim();
+  if (!operationId) {
+    throw new Error("Organization deletion operation ID is required");
+  }
+  return withEnvironmentAdvisoryLock({
+    createLock: input.createLock,
+    lockKey: `${ORGANIZATION_DELETION_LOCK_PREFIX}:${operationId}`,
     run: input.run,
   });
 }

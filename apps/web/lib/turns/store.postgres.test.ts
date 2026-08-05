@@ -199,10 +199,10 @@ test(
       await transaction`
         INSERT INTO "environment_model_grants" (
           "run_id", "organization_id", "environment_id", "workspace_id",
-          "thread_id", "gateway_id", "raw_model_id", "status"
+          "thread_id", "gateway_id", "raw_model_id", "gateway_model_id", "status"
         ) VALUES (
           ${executionId}, ${organizationId}, ${environmentId}, ${workspaceId},
-          ${successfulThreadId}, ${gatewayId}, 'turn-model', 'active'
+          ${successfulThreadId}, ${gatewayId}, 'turn-model', ${modelId}, 'active'
         )
       `;
       await transaction`

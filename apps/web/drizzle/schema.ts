@@ -4763,10 +4763,13 @@ export const environmentModelGrants = pgTable(
     threadId: text("thread_id")
       .notNull()
       .references(() => threads.id, { onDelete: "cascade" }),
-    gatewayId: text("gateway_id")
-      .notNull()
-      .references(() => aiGateways.id, { onDelete: "restrict" }),
+    // Durable evidence snapshot. Live authorization uses gatewayModelId.
+    gatewayId: text("gateway_id").notNull(),
     rawModelId: text("raw_model_id").notNull(),
+    gatewayModelId: text("gateway_model_id").references(
+      () => aiGatewayModels.id,
+      { onDelete: "set null" },
+    ),
     status: text("status", { enum: ["active", "closed"] })
       .notNull()
       .default("active"),
@@ -4784,11 +4787,10 @@ export const environmentModelGrants = pgTable(
       foreignColumns: [environments.organizationId, environments.id],
       name: "environment_model_grants_organization_environment_fk",
     }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.gatewayId, table.rawModelId],
-      foreignColumns: [aiGatewayModels.gatewayId, aiGatewayModels.rawModelId],
-      name: "environment_model_grants_gateway_model_fk",
-    }).onDelete("restrict"),
+    check(
+      "environment_model_grants_active_model_check",
+      sql`${table.status} <> 'active' OR ${table.gatewayModelId} IS NOT NULL`,
+    ),
     index("environment_model_grants_environment_status_idx").on(
       table.environmentId,
       table.status,
@@ -4796,6 +4798,9 @@ export const environmentModelGrants = pgTable(
     index("environment_model_grants_workspace_status_idx").on(
       table.workspaceId,
       table.status,
+    ),
+    index("environment_model_grants_gateway_model_id_idx").on(
+      table.gatewayModelId,
     ),
   ],
 );

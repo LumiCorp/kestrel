@@ -7,6 +7,7 @@ import { buildRunPodServerlessBaseUrl } from "./gateway-utils";
 import { createGateway, validateRunPodGatewayModelByRawId } from "./gateways";
 import {
   createRunPodControlPlaneClient,
+  createRunPodControlPlaneClientByConnectionId,
   listEnabledRunPodProviderConnections,
   resolveRunPodProviderApiKey,
 } from "./managed-runpod-connection";
@@ -21,6 +22,12 @@ import {
   ensureManagedRunPodResource,
   isManagedRunPodDeletionStatus,
 } from "./managed-runpod-orchestration";
+import {
+  ManagedRunPodProvenanceError,
+  parseManagedRunPodRunMetadata,
+  requireManagedRunPodCleanupConnectionId,
+} from "./managed-runpod-provenance";
+import { ManagedRunPodActiveModelGrantsError } from "./managed-runpod-lifecycle-error";
 import {
   isRunPodConnectionTestError,
   validateRunPodToolRoundTrip,
@@ -62,6 +69,20 @@ function safeFailure(error: unknown) {
     };
   }
   if (error instanceof ManagedRunPodRuntimeError) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+    };
+  }
+  if (error instanceof ManagedRunPodActiveModelGrantsError) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+    };
+  }
+  if (error instanceof ManagedRunPodProvenanceError) {
     return {
       code: error.code,
       message: error.message,
@@ -111,17 +132,38 @@ async function updateProvisioningDeployment(
   }
 }
 
-async function ensureTemplate(input: {
+type RunPodControlPlaneContext = Awaited<
+  ReturnType<typeof createRunPodControlPlaneClient>
+>;
+
+async function resolveRunPodProvisioningContext(input: {
+  run: typeof schema.aiDeploymentRuns.$inferSelect;
   organizationId: string;
+}): Promise<RunPodControlPlaneContext> {
+  const metadata = parseManagedRunPodRunMetadata(input.run.metadata);
+  if (metadata.providerConnectionId) {
+    return createRunPodControlPlaneClientByConnectionId({
+      connectionId: metadata.providerConnectionId,
+    });
+  }
+  const context = await createRunPodControlPlaneClient({
+    organizationId: input.organizationId,
+  });
+  await updateRun(input.run.id, {
+    metadata: { ...metadata, providerConnectionId: context.connection.id },
+  });
+  return context;
+}
+
+async function ensureTemplate(input: {
+  context: RunPodControlPlaneContext;
   runId: string;
   name: string;
   imageRef: string;
   templateSpec: unknown;
   providerTemplateId: string | null;
 }) {
-  const { client } = await createRunPodControlPlaneClient({
-    organizationId: input.organizationId,
-  });
+  const { client } = input.context;
   const templateId = await ensureManagedRunPodResource({
     knownResourceId: input.providerTemplateId,
     findExisting: async () =>
@@ -141,16 +183,14 @@ async function ensureTemplate(input: {
 }
 
 async function ensureEndpoint(input: {
-  organizationId: string;
+  context: RunPodControlPlaneContext;
   runId: string;
   name: string;
   templateId: string;
   endpointSpec: unknown;
   providerEndpointId: string | null;
 }) {
-  const { client } = await createRunPodControlPlaneClient({
-    organizationId: input.organizationId,
-  });
+  const { client } = input.context;
   const endpointId = await ensureManagedRunPodResource({
     knownResourceId: input.providerEndpointId,
     findExisting: async () =>
@@ -173,12 +213,13 @@ async function ensureEndpoint(input: {
 }
 
 async function cleanupProviderResources(input: {
-  organizationId: string;
+  providerConnectionId: string;
   endpointId?: string | null;
   templateId?: string | null;
 }) {
-  const { client } = await createRunPodControlPlaneClient({
-    organizationId: input.organizationId,
+  const { client } = await createRunPodControlPlaneClientByConnectionId({
+    connectionId: input.providerConnectionId,
+    allowDisabledForCleanup: true,
   });
   await deleteManagedRunPodResources({
     ...input,
@@ -200,9 +241,13 @@ async function processQualification(
   });
   let templateId = run.providerTemplateId;
   let endpointId = run.providerEndpointId;
+  const context = await resolveRunPodProvisioningContext({
+    run,
+    organizationId: profile.organizationId,
+  });
   try {
     const template = await ensureTemplate({
-      organizationId: profile.organizationId,
+      context,
       runId: run.id,
       name,
       imageRef: profile.imageRef,
@@ -211,7 +256,7 @@ async function processQualification(
     });
     templateId = template.templateId;
     const endpoint = await ensureEndpoint({
-      organizationId: profile.organizationId,
+      context,
       runId: run.id,
       name,
       templateId,
@@ -225,9 +270,7 @@ async function processQualification(
       providerEndpointId: endpointId,
     });
     endpointId = endpoint.endpointId;
-    const { connection, client } = await createRunPodControlPlaneClient({
-      organizationId: profile.organizationId,
-    });
+    const { connection, client } = context;
     await client.getEndpoint(endpointId);
     const apiKey = resolveRunPodProviderApiKey(connection);
     const validation = await validateRunPodToolRoundTrip({
@@ -238,7 +281,7 @@ async function processQualification(
         .executionTimeoutMs,
     });
     await cleanupProviderResources({
-      organizationId: profile.organizationId,
+      providerConnectionId: connection.id,
       endpointId,
       templateId,
     });
@@ -271,7 +314,7 @@ async function processQualification(
     const failure = safeFailure(error);
     if (!failure.retryable) {
       await cleanupProviderResources({
-        organizationId: profile.organizationId,
+        providerConnectionId: context.connection.id,
         endpointId,
         templateId,
       }).catch(
@@ -343,13 +386,23 @@ async function settleCancelledProvision(input: {
     latestDeployment?.providerEndpointId ?? latestRun?.providerEndpointId;
   const templateId =
     latestDeployment?.providerTemplateId ?? latestRun?.providerTemplateId;
+  const gateway = latestDeployment?.gatewayId
+    ? await knowledgeDb.query.aiGateways.findFirst({
+        where: eq(schema.aiGateways.id, latestDeployment.gatewayId),
+        columns: { providerConnectionId: true },
+      })
+    : null;
+  const providerConnectionId = requireManagedRunPodCleanupConnectionId({
+    providerConnectionId:
+      gateway?.providerConnectionId ??
+      parseManagedRunPodRunMetadata(latestRun?.metadata).providerConnectionId,
+    endpointId,
+    templateId,
+  });
   if (endpointId || templateId) {
-    if (!latestDeployment?.organizationId) {
-      throw new Error("Managed RunPod deployment organization is required.");
-    }
     try {
       await cleanupProviderResources({
-        organizationId: latestDeployment.organizationId,
+        providerConnectionId: providerConnectionId!,
         endpointId,
         templateId,
       });
@@ -402,6 +455,10 @@ async function processProvision(
   deployment: typeof schema.aiDeployments.$inferSelect
 ) {
   const snapshot = parseManagedRunPodSpecSnapshot(deployment.specSnapshot);
+  const context = await resolveRunPodProvisioningContext({
+    run,
+    organizationId: deployment.organizationId,
+  });
   const name = getManagedRunPodResourceName({
     kind: "deployment",
     id: deployment.id,
@@ -410,7 +467,7 @@ async function processProvision(
     status: "provisioning_template",
   });
   const template = await ensureTemplate({
-    organizationId: deployment.organizationId,
+    context,
     runId: run.id,
     name,
     imageRef: snapshot.imageRef,
@@ -422,16 +479,14 @@ async function processProvision(
     providerTemplateId: template.templateId,
   });
   const endpoint = await ensureEndpoint({
-    organizationId: deployment.organizationId,
+    context,
     runId: run.id,
     name,
     templateId: template.templateId,
     endpointSpec: snapshot.endpointSpec,
     providerEndpointId: deployment.providerEndpointId ?? run.providerEndpointId,
   });
-  const { connection, client } = await createRunPodControlPlaneClient({
-    organizationId: deployment.organizationId,
-  });
+  const { connection, client } = context;
   await client.getEndpoint(endpoint.endpointId);
   const apiKey = resolveRunPodProviderApiKey(connection);
   await updateProvisioningDeployment(deployment.id, {
@@ -510,11 +565,44 @@ async function processDelete(
   run: typeof schema.aiDeploymentRuns.$inferSelect,
   deployment: typeof schema.aiDeployments.$inferSelect
 ) {
-  await cleanupProviderResources({
-    organizationId: deployment.organizationId,
-    endpointId: deployment.providerEndpointId ?? run.providerEndpointId,
-    templateId: deployment.providerTemplateId ?? run.providerTemplateId,
+  const gateway = deployment.gatewayId
+    ? await knowledgeDb.query.aiGateways.findFirst({
+        where: and(
+          eq(schema.aiGateways.id, deployment.gatewayId),
+          eq(schema.aiGateways.deploymentId, deployment.id),
+        ),
+        columns: { id: true, providerConnectionId: true },
+      })
+    : null;
+  if (gateway) {
+    const activeGrant =
+      await knowledgeDb.query.environmentModelGrants.findFirst({
+        where: and(
+          eq(schema.environmentModelGrants.gatewayId, gateway.id),
+          eq(schema.environmentModelGrants.status, "active"),
+        ),
+        columns: { runId: true },
+      });
+    if (activeGrant) {
+      throw new ManagedRunPodActiveModelGrantsError();
+    }
+  }
+  const endpointId = deployment.providerEndpointId ?? run.providerEndpointId;
+  const templateId = deployment.providerTemplateId ?? run.providerTemplateId;
+  const providerConnectionId = requireManagedRunPodCleanupConnectionId({
+    providerConnectionId:
+      gateway?.providerConnectionId ??
+      parseManagedRunPodRunMetadata(run.metadata).providerConnectionId,
+    endpointId,
+    templateId,
   });
+  if (providerConnectionId) {
+    await cleanupProviderResources({
+      providerConnectionId,
+      endpointId,
+      templateId,
+    });
+  }
   await knowledgeDb.transaction(async (tx) => {
     if (deployment.gatewayId) {
       await tx
@@ -612,12 +700,25 @@ export async function processManagedRunPodRun(runId: string) {
         const latestRun = await knowledgeDb.query.aiDeploymentRuns.findFirst({
           where: eq(schema.aiDeploymentRuns.id, runId),
         });
-        if (row.profile.organizationId) {
-          await cleanupProviderResources({
-            organizationId: row.profile.organizationId,
+        try {
+          const providerConnectionId = requireManagedRunPodCleanupConnectionId({
+            providerConnectionId: parseManagedRunPodRunMetadata(
+              latestRun?.metadata,
+            ).providerConnectionId,
             endpointId: latestRun?.providerEndpointId,
             templateId: latestRun?.providerTemplateId,
-          }).catch(() => {});
+          });
+          if (providerConnectionId) {
+            await cleanupProviderResources({
+              providerConnectionId,
+              endpointId: latestRun?.providerEndpointId,
+              templateId: latestRun?.providerTemplateId,
+            });
+          }
+        } catch {
+          // Terminal settlement must not be blocked by malformed provenance or
+          // a provider cleanup failure. Recorded resource IDs remain available
+          // for an operator-assisted retry without guessing credentials.
         }
         await knowledgeDb
           .update(schema.aiDeploymentProfiles)

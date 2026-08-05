@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { RunPodControlPlaneError } from "./runpod-control-plane";
+import { ManagedRunPodActiveModelGrantsError } from "./managed-runpod-lifecycle-error";
 
 const CONFLICT_MESSAGES = [
   "entitlement is required",
@@ -27,6 +28,12 @@ export function managedRunPodErrorResponse(error: unknown) {
     return NextResponse.json(
       { code: error.code, error: error.message },
       { status: error.status }
+    );
+  }
+  if (error instanceof ManagedRunPodActiveModelGrantsError) {
+    return NextResponse.json(
+      { code: error.code, error: error.message },
+      { status: 409 },
     );
   }
   const message =

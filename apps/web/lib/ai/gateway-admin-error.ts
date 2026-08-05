@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import { GatewayCredentialEncryptionError } from "./gateway-credential-crypto";
 import { GatewayCredentialSourceError } from "./gateway-credential-source";
+import { GatewayModelInUseError } from "./gateway-lifecycle-error";
 import { RunPodConnectionTestError } from "./runpod-connection-test";
 
 type GatewayAdminErrorBody = {
@@ -49,6 +50,13 @@ export function getSafeGatewayAdminError(
         error: error.message,
       },
       status: 422,
+    };
+  }
+
+  if (error instanceof GatewayModelInUseError) {
+    return {
+      body: { code: error.code, error: error.message },
+      status: 409,
     };
   }
 

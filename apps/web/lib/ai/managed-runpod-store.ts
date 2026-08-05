@@ -23,6 +23,8 @@ import {
   sanitizeManagedRunPodSpecSnapshot,
   sanitizeManagedRunPodTemplateSpec,
 } from "./managed-runpod-contracts";
+import { parseManagedRunPodRunMetadata } from "./managed-runpod-provenance";
+import { ManagedRunPodActiveModelGrantsError } from "./managed-runpod-lifecycle-error";
 
 const ACTIVE_DEPLOYMENT_STATUSES = [
   "requested",
@@ -613,10 +615,44 @@ export async function queueManagedRunPodDeletion(input: {
     if (!deployment || deployment.status === "deleted") {
       return null;
     }
+    if (deployment.gatewayId) {
+      const activeGrant =
+        await tx.query.environmentModelGrants.findFirst({
+          where: and(
+            eq(schema.environmentModelGrants.gatewayId, deployment.gatewayId),
+            eq(schema.environmentModelGrants.status, "active"),
+          ),
+          columns: { runId: true },
+        });
+      if (activeGrant) {
+        throw new ManagedRunPodActiveModelGrantsError();
+      }
+    }
     await tx
       .update(schema.aiDeployments)
       .set({ status: "deleting", failureCode: null, failureMessage: null })
       .where(eq(schema.aiDeployments.id, deployment.id));
+    const gateway = deployment.gatewayId
+      ? await tx.query.aiGateways.findFirst({
+          where: eq(schema.aiGateways.id, deployment.gatewayId),
+          columns: { providerConnectionId: true },
+        })
+      : null;
+    const latestProvisionRun = gateway?.providerConnectionId
+      ? null
+      : await tx.query.aiDeploymentRuns.findFirst({
+          where: and(
+            eq(schema.aiDeploymentRuns.deploymentId, deployment.id),
+            eq(schema.aiDeploymentRuns.kind, "provision")
+          ),
+          orderBy: [desc(schema.aiDeploymentRuns.createdAt)],
+          columns: { metadata: true },
+        });
+    const providerConnectionId =
+      gateway?.providerConnectionId ??
+      parseManagedRunPodRunMetadata(latestProvisionRun?.metadata)
+        .providerConnectionId ??
+      null;
     if (deployment.gatewayId) {
       await tx
         .update(schema.aiGateways)
@@ -631,6 +667,7 @@ export async function queueManagedRunPodDeletion(input: {
         profileId: deployment.profileId,
         deploymentId: deployment.id,
         status: "queued",
+        metadata: providerConnectionId ? { providerConnectionId } : null,
       })
       .returning();
     return { deployment: { ...deployment, status: "deleting" as const }, run };
@@ -666,6 +703,25 @@ export async function queueManagedRunPodRetry(input: {
       );
     }
     const kind = deployment.status === "delete_failed" ? "delete" : "provision";
+    const gateway = deployment.gatewayId
+      ? await tx.query.aiGateways.findFirst({
+          where: eq(schema.aiGateways.id, deployment.gatewayId),
+          columns: { providerConnectionId: true },
+        })
+      : null;
+    const latestRunWithProvenance = await tx.query.aiDeploymentRuns.findFirst({
+      where: and(
+        eq(schema.aiDeploymentRuns.deploymentId, deployment.id),
+        inArray(schema.aiDeploymentRuns.kind, ["provision", "delete"])
+      ),
+      orderBy: [desc(schema.aiDeploymentRuns.createdAt)],
+      columns: { metadata: true },
+    });
+    const providerConnectionId =
+      gateway?.providerConnectionId ??
+      parseManagedRunPodRunMetadata(latestRunWithProvenance?.metadata)
+        .providerConnectionId ??
+      null;
     if (kind === "provision") {
       const [policy] = await tx
         .select()
@@ -694,6 +750,7 @@ export async function queueManagedRunPodRetry(input: {
         status: "queued",
         providerTemplateId: deployment.providerTemplateId,
         providerEndpointId: deployment.providerEndpointId,
+        metadata: providerConnectionId ? { providerConnectionId } : null,
       })
       .returning();
     await tx

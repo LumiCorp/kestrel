@@ -11,6 +11,8 @@ import { isPersonalOrganizationSlug } from "@/lib/personal-workspace-shared";
 import { ensurePersonalOrganizationByUserId } from "@/lib/personal-workspace";
 import { queueManagedRunPodDeletion } from "@/lib/ai/managed-runpod-store";
 import { processManagedRunPodRun } from "@/lib/ai/managed-runpod-runtime";
+import { withOrganizationDeletionLock } from "@/lib/environments/reconcile-lock";
+import { ManagedRunPodActiveModelGrantsError } from "@/lib/ai/managed-runpod-lifecycle-error";
 
 const BILLABLE_SUBSCRIPTION_STATUSES = new Set([
   "active",
@@ -167,7 +169,12 @@ export async function retryOrganizationDeletion(input: {
         errorMessage: null,
         updatedAt: new Date(),
       })
-      .where(eq(schema.organizationDeletionOperations.id, operation.id));
+      .where(
+        and(
+          eq(schema.organizationDeletionOperations.id, operation.id),
+          eq(schema.organizationDeletionOperations.status, "failed"),
+        ),
+      );
     if (environmentIds.length) {
       await transaction
         .update(schema.environmentOperations)
@@ -211,22 +218,69 @@ export async function retryOrganizationDeletion(input: {
 }
 
 export async function processOrganizationDeletion(operationId: string) {
+  await withOrganizationDeletionLock({
+    operationId,
+    run: () => processOrganizationDeletionLocked(operationId),
+  });
+}
+
+async function processOrganizationDeletionLocked(operationId: string) {
   const operation =
     await knowledgeDb.query.organizationDeletionOperations.findFirst({
       where: eq(schema.organizationDeletionOperations.id, operationId),
     });
-  if (!operation || ["completed", "cancelled"].includes(operation.status))
+  if (!(operation && ["queued", "running"].includes(operation.status))) return;
+  const organization = await knowledgeDb.query.organizations.findFirst({
+    where: eq(schema.organizations.id, operation.organizationId),
+    columns: { id: true },
+  });
+  if (!organization) {
+    const now = new Date();
+    await knowledgeDb
+      .update(schema.organizationDeletionOperations)
+      .set({
+        status: "completed",
+        stage: "organization.deleted",
+        result:
+          operation.result ?? { reconciledAfterOrganizationDeletion: true },
+        errorCode: null,
+        errorMessage: null,
+        completedAt: operation.completedAt ?? now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.organizationDeletionOperations.id, operation.id),
+          inArray(schema.organizationDeletionOperations.status, [
+            "queued",
+            "running",
+          ]),
+        ),
+      );
     return;
+  }
   const now = new Date();
-  await knowledgeDb
+  const [started] = await knowledgeDb
     .update(schema.organizationDeletionOperations)
     .set({
       status: "running",
       stage: "organization.deletion.waiting_for_environments",
+      errorCode: null,
+      errorMessage: null,
       startedAt: operation.startedAt ?? now,
       updatedAt: now,
     })
-    .where(eq(schema.organizationDeletionOperations.id, operation.id));
+    .where(
+      and(
+        eq(schema.organizationDeletionOperations.id, operation.id),
+        inArray(schema.organizationDeletionOperations.status, [
+          "queued",
+          "running",
+        ]),
+      ),
+    )
+    .returning({ id: schema.organizationDeletionOperations.id });
+  if (!started) return;
 
   const environmentIds = Array.isArray(
     (operation.inventory as { environments?: unknown } | null)?.environments,
@@ -247,11 +301,35 @@ export async function processOrganizationDeletion(operationId: string) {
     columns: { id: true, environmentId: true, status: true },
   });
   for (const deployment of deployments) {
-    const deletion = await queueManagedRunPodDeletion({
-      organizationId: operation.organizationId,
-      deploymentId: deployment.id,
-      environmentId: deployment.environmentId,
-    });
+    let deletion;
+    try {
+      deletion = await queueManagedRunPodDeletion({
+        organizationId: operation.organizationId,
+        deploymentId: deployment.id,
+        environmentId: deployment.environmentId,
+      });
+    } catch (error) {
+      if (!(error instanceof ManagedRunPodActiveModelGrantsError)) throw error;
+      await knowledgeDb
+        .update(schema.organizationDeletionOperations)
+        .set({
+          status: "queued",
+          stage: "organization.deletion.waiting_for_managed_compute",
+          errorCode: error.code,
+          errorMessage: error.message,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.organizationDeletionOperations.id, operation.id),
+            inArray(schema.organizationDeletionOperations.status, [
+              "queued",
+              "running",
+            ]),
+          ),
+        );
+      return;
+    }
     if (deletion?.run) {
       await enqueueManagedRunPodRun(deletion.run.id);
       await processManagedRunPodRun(deletion.run.id);
@@ -285,19 +363,27 @@ export async function processOrganizationDeletion(operationId: string) {
         stage: "organization.deletion.waiting_for_managed_compute",
         updatedAt: new Date(),
       })
-      .where(eq(schema.organizationDeletionOperations.id, operation.id));
+      .where(
+        and(
+          eq(schema.organizationDeletionOperations.id, operation.id),
+          inArray(schema.organizationDeletionOperations.status, [
+            "queued",
+            "running",
+          ]),
+        ),
+      );
     return;
   }
 
-  const environmentOperationIds =
+  const environmentChildOperations =
     await ensureOrganizationEnvironmentDeletionOperations({
       operation,
       environmentIds,
     });
   await Promise.all(
-    environmentOperationIds.map((childOperationId) =>
-      enqueueEnvironmentOperation(childOperationId),
-    ),
+    environmentChildOperations
+      .filter((child) => child.status === "queued")
+      .map((child) => enqueueEnvironmentOperation(child.id)),
   );
   const environmentOperations = environmentIds.length
     ? await knowledgeDb.query.environmentOperations.findMany({
@@ -332,7 +418,15 @@ export async function processOrganizationDeletion(operationId: string) {
         stage: "organization.deletion.waiting_for_environments",
         updatedAt: new Date(),
       })
-      .where(eq(schema.organizationDeletionOperations.id, operation.id));
+      .where(
+        and(
+          eq(schema.organizationDeletionOperations.id, operation.id),
+          inArray(schema.organizationDeletionOperations.status, [
+            "queued",
+            "running",
+          ]),
+        ),
+      );
     return;
   }
 
@@ -356,6 +450,20 @@ export async function processOrganizationDeletion(operationId: string) {
     ? await ensurePersonalOrganizationByUserId(operation.requestedByUserId)
     : null;
   await knowledgeDb.transaction(async (transaction) => {
+    const [currentOperation] = await transaction
+      .select({ status: schema.organizationDeletionOperations.status })
+      .from(schema.organizationDeletionOperations)
+      .where(eq(schema.organizationDeletionOperations.id, operation.id))
+      .limit(1)
+      .for("update");
+    if (
+      !(
+        currentOperation &&
+        ["queued", "running"].includes(currentOperation.status)
+      )
+    ) {
+      return;
+    }
     if (personalOrganization && operation.requestedByUserId) {
       await transaction
         .update(schema.sessions)
@@ -382,7 +490,15 @@ export async function processOrganizationDeletion(operationId: string) {
         completedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(schema.organizationDeletionOperations.id, operation.id));
+      .where(
+        and(
+          eq(schema.organizationDeletionOperations.id, operation.id),
+          inArray(schema.organizationDeletionOperations.status, [
+            "queued",
+            "running",
+          ]),
+        ),
+      );
     await transaction
       .delete(schema.organizations)
       .where(eq(schema.organizations.id, operation.organizationId));
@@ -399,16 +515,19 @@ async function ensureOrganizationEnvironmentDeletionOperations(input: {
 }) {
   if (!input.environmentIds.length) return [];
   return knowledgeDb.transaction(async (transaction) => {
-    const operationIds: string[] = [];
+    const operations: Array<{
+      id: string;
+      status: "queued" | "running" | "completed" | "failed" | "cancelled";
+    }> = [];
     const now = new Date();
     for (const environmentId of input.environmentIds) {
       const idempotencyKey = `organization.delete:${input.operation.id}:environment:${environmentId}`;
       const existing = await transaction.query.environmentOperations.findFirst({
         where: (table, { eq }) => eq(table.idempotencyKey, idempotencyKey),
-        columns: { id: true },
+        columns: { id: true, status: true },
       });
       if (existing) {
-        operationIds.push(existing.id);
+        operations.push(existing);
         continue;
       }
       const [childOperation] = await transaction
@@ -426,13 +545,16 @@ async function ensureOrganizationEnvironmentDeletionOperations(input: {
           createdAt: now,
           updatedAt: now,
         })
-        .returning({ id: schema.environmentOperations.id });
+        .returning({
+          id: schema.environmentOperations.id,
+          status: schema.environmentOperations.status,
+        });
       if (!childOperation) {
         throw new Error("Environment deletion operation was not created.");
       }
-      operationIds.push(childOperation.id);
+      operations.push(childOperation);
     }
-    return operationIds;
+    return operations;
   });
 }
 
@@ -449,5 +571,13 @@ async function failOrganizationDeletion(
       errorMessage: input.message,
       updatedAt: new Date(),
     })
-    .where(eq(schema.organizationDeletionOperations.id, operationId));
+    .where(
+      and(
+        eq(schema.organizationDeletionOperations.id, operationId),
+        inArray(schema.organizationDeletionOperations.status, [
+          "queued",
+          "running",
+        ]),
+      ),
+    );
 }

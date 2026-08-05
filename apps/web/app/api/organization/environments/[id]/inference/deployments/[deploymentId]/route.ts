@@ -9,6 +9,8 @@ import {
   queueManagedRunPodDeletion,
   queueManagedRunPodRetry,
 } from "@/lib/ai/managed-runpod-store";
+import { ManagedRunPodActiveModelGrantsError } from "@/lib/ai/managed-runpod-lifecycle-error";
+import { managedRunPodErrorResponse } from "@/lib/ai/managed-runpod-http";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { enqueueManagedRunPodRun } from "@/lib/knowledge/queue";
@@ -103,6 +105,9 @@ export async function DELETE(
     if (result.run) await enqueueManagedRunPodRun(result.run.id);
     return NextResponse.json(result, { status: 202 });
   } catch (error) {
+    if (error instanceof ManagedRunPodActiveModelGrantsError) {
+      return managedRunPodErrorResponse(error);
+    }
     return errorResponse(error, 400);
   }
 }

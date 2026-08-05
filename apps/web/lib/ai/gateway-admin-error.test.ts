@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { z } from "zod";
 import { getSafeGatewayAdminError } from "./gateway-admin-error";
 import { GatewayCredentialEncryptionError } from "./gateway-credential-crypto";
+import { GatewayModelInUseError } from "./gateway-lifecycle-error";
 
 
 test("gateway admin errors do not expose database parameters or credential envelopes", () => {
@@ -42,4 +43,14 @@ test("gateway admin encryption failures expose only a stable code", () => {
   assert.equal(result.status, 503);
   assert.equal(result.body.code, "GATEWAY_CREDENTIAL_KEYS_INVALID");
   assert.equal(JSON.stringify(result).includes(secret), false);
+});
+
+test("active model grants expose a stable conflict", () => {
+  assert.deepEqual(getSafeGatewayAdminError(new GatewayModelInUseError()), {
+    body: {
+      code: "GATEWAY_MODEL_IN_USE",
+      error: "An active Environment execution is using this gateway model.",
+    },
+    status: 409,
+  });
 });

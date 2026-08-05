@@ -23,6 +23,15 @@ export async function getRunPodProviderConnection(organizationId: string) {
   });
 }
 
+export async function getRunPodProviderConnectionById(connectionId: string) {
+  return knowledgeDb.query.aiProviderConnections.findFirst({
+    where: and(
+      eq(schema.aiProviderConnections.id, connectionId),
+      eq(schema.aiProviderConnections.provider, "runpod")
+    ),
+  });
+}
+
 export async function listEnabledRunPodProviderConnections() {
   return knowledgeDb.query.aiProviderConnections.findMany({
     where: and(
@@ -119,6 +128,12 @@ export function resolveRunPodProviderApiKey(
   if (!connection.enabled) {
     throw new Error("RunPod provider connection is disabled.");
   }
+  return resolveStoredRunPodProviderApiKey(connection);
+}
+
+export function resolveStoredRunPodProviderApiKey(
+  connection: typeof schema.aiProviderConnections.$inferSelect
+) {
   if (connection.apiKey?.trim()) {
     return decryptGatewayCredential({
       gatewayId: connection.id,
@@ -126,6 +141,27 @@ export function resolveRunPodProviderApiKey(
     });
   }
   throw new Error("RunPod provider connection credential is missing.");
+}
+
+export async function createRunPodControlPlaneClientByConnectionId(input: {
+  connectionId: string;
+  allowDisabledForCleanup?: boolean;
+  fetchImpl?: RunPodControlFetch;
+}) {
+  const connection = await getRunPodProviderConnectionById(input.connectionId);
+  if (!connection) {
+    throw new Error("Recorded RunPod provider connection is unavailable.");
+  }
+  const apiKey = input.allowDisabledForCleanup
+    ? resolveStoredRunPodProviderApiKey(connection)
+    : resolveRunPodProviderApiKey(connection);
+  return {
+    connection,
+    client: new RunPodControlPlaneClient({
+      apiKey,
+      ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+    }),
+  };
 }
 
 export async function createRunPodControlPlaneClient(input: {
