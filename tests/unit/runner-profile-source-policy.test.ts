@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import { RunnerHost } from "../../cli/runner/RunnerHost.js";
 import type { RunnerEventSink } from "../../cli/runner/EventWriter.js";
@@ -93,6 +96,45 @@ test("RunnerHost emits execution profile resolution from provider", async () => 
     `kestrel:workspace_hosted:${"a".repeat(64)}`,
   );
   await host.close();
+});
+
+test("default RunnerHost loads the immutable profile it resolves", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-runner-profile-"));
+  const previousHome = process.env.KESTREL_HOME;
+  process.env.KESTREL_HOME = home;
+  const events: Array<{ type: string; payload: unknown }> = [];
+  const host = new RunnerHost(
+    {
+      emit(type, payload) {
+        events.push({ type, payload });
+      },
+    },
+    () => {
+      throw new Error("runtime must not be created");
+    },
+  );
+
+  try {
+    await host.executionProfileResolve("resolve-default-profile", {
+      environmentPresetId: "workspace_hosted",
+    });
+    const resolved = events[0]?.payload as { profileId?: string } | undefined;
+    assert.equal(events[0]?.type, "execution-profile.resolved");
+    assert.match(resolved?.profileId ?? "", /^kestrel:workspace_hosted:[a-f0-9]{64}$/u);
+
+    await host.profileGet("load-default-profile", {
+      profileId: resolved!.profileId!,
+    });
+    assert.equal(events[1]?.type, "profile.loaded");
+  } finally {
+    await host.close();
+    if (previousHome === undefined) {
+      delete process.env.KESTREL_HOME;
+    } else {
+      process.env.KESTREL_HOME = previousHome;
+    }
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("registered-only RunnerHost rejects mutable profile ids before lookup", async () => {

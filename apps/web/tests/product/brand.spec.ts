@@ -39,7 +39,11 @@ test(
     );
 
     await page.getByRole("tab", { name: "Sign Up" }).click();
-    await expect(page.getByText("by Lumi Corp")).toBeVisible();
+    await expect(
+      page.getByText(
+        "Kestrel One accounts are created from an organization invitation.",
+      ),
+    ).toBeVisible();
     await expect(page.getByRole("img", { name: "Kestrel One" })).toHaveCount(1);
 
     await page.evaluate(() => localStorage.setItem("theme", "light"));

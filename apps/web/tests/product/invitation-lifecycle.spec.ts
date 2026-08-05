@@ -172,7 +172,7 @@ async function createAccountFromInvitation(
   await page.getByLabel("Last name").fill("Member");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByLabel("Confirm Password").fill(password);
+  await page.getByLabel("Confirm Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Create an account" }).click();
   await expect(
     page.getByRole("button", { name: "Join organization" }),
@@ -186,7 +186,11 @@ async function createAccountFromInvitation(
 
 async function signOut(page: Page) {
   const response = await page.evaluate(async () => {
-    const result = await fetch("/api/auth/sign-out", { method: "POST" });
+    const result = await fetch("/api/auth/sign-out", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
     return { ok: result.ok, status: result.status };
   });
   expect(response).toMatchObject({ ok: true });

@@ -75,6 +75,9 @@ export const auth = betterAuth({
     dialect,
     type: "postgres",
   },
+  rateLimit: {
+    enabled: process.env.KESTREL_PRODUCT_CONTRACT !== "true",
+  },
   emailVerification: {
     async sendVerificationEmail({ user, url }) {
       await deliverTransactionalEmail({

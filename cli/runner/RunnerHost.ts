@@ -3388,6 +3388,10 @@ function createDefaultProfileProvider(): RunnerProfileProvider {
       return store.load();
     },
     async getProfile(profileId: string): Promise<TuiProfile | undefined> {
+      const registeredProfile = await registry.get(profileId);
+      if (registeredProfile !== undefined) {
+        return registeredProfile;
+      }
       const profiles = await store.load();
       return store.findById(profiles, profileId);
     },
