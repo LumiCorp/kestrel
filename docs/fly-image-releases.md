@@ -3,7 +3,7 @@ id: fly-image-releases
 domain: operations
 status: active
 owner: kestrel-one
-last_verified_at: 2026-08-03
+last_verified_at: 2026-08-05
 depends_on:
   - ../.github/workflows/fly-image-release.yml
   - ../deploy/fly/image-catalog.json
@@ -32,15 +32,39 @@ Configure the GitHub `Production` environment with:
 The `publish-candidate` job must remain attached to that environment so GitHub
 Actions makes the release secret and URL available to the workflow.
 
-The Kestrel One worker that processes promotions requires `FLY_API_TOKEN` and
+The dedicated Kestrel One control worker processes promotions and hosted
+Environment lifecycle work. It requires `FLY_API_TOKEN` and
 `KESTREL_FLY_ORGANIZATION_SLUG` so it can update the three platform Fly Apps.
+The turn worker processes durable user turns only and is never a release queue
+owner. Controller-owned queue names include the controller contract revision;
+an older turn worker therefore cannot claim lifecycle work produced after the
+ownership cutover.
 The existing `KESTREL_WORKSPACE_RUNTIME_IMAGE` and
 `KESTREL_ENVIRONMENT_ROUTER_IMAGE` values remain bootstrap fallbacks until the
 first release becomes stable. Postgres is authoritative after that point.
 
 The candidate endpoint accepts only a GitHub Actions OIDC token for the exact
-main-branch release workflow and commit SHA. No long-lived publisher secret is
-shared with Kestrel One.
+main-branch release workflow and commit SHA. It also requires a fresh controller
+heartbeat at the manifest's declared contract revision. The workflow deploys
+and checks the controller, then waits for `/api/health` to report the exact
+production commit before publishing the candidate. No long-lived publisher
+secret is shared with Kestrel One.
+
+## Controller release gate
+
+Bootstrap or deliberately repair the production controller from a clean,
+committed revision with:
+
+```bash
+pnpm --dir apps/web release:control-worker
+```
+
+The command pulls the canonical `lumi-kestrel/one` production configuration,
+selects only the explicit controller allowlist, passes secrets to Fly through
+standard input, and refuses the cutover while a legacy release or Environment
+lifecycle queue has nonterminal work. It deploys the exact local commit and
+verifies the readiness file and database heartbeat. Do not run this command in
+pull-request CI.
 
 ## Promotion
 
@@ -72,8 +96,16 @@ start verifies health on the new digest. Desktop Environments are excluded.
 
 ## Failure and recovery
 
-The first failed target pauses promotion. Inspect the failed target in Admin,
-fix the external condition, and choose **Retry failed target**. There is no
-automatic rollback. Choose **Roll back to stable** only when the active release
-is paused; rollback creates a new coordinated release using the prior stable
-digests and follows the same canary-first rollout.
+Retryable provider failures do not immediately pause promotion. Network errors,
+HTTP 408, 429, and 5xx responses enter a persisted 15-minute retry window. The
+controller reads authoritative provider state before every retry; if the target
+already satisfies the requested postcondition, it completes the target without
+replaying the mutation. Admin shows the attempt, next retry time, last provider
+response, and authoritative state while the release remains deploying.
+
+Promotion pauses immediately for non-retryable failures, contradictory provider
+state, or failed health checks, and pauses when the retry budget is exhausted.
+Only then is **Retry failed target** available. There is no automatic rollback.
+Choose **Roll back to stable** only when the active release is paused; rollback
+creates a new coordinated release using the prior stable digests and follows the
+same canary-first rollout.
