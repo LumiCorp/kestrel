@@ -30,6 +30,7 @@ const retireRoute = read(
 const deletionRoute = read("app/api/organization/deletion/route.ts");
 const deletionService = read("lib/organizations/deletion.ts");
 const environmentStore = read("lib/environments/store.ts");
+const queue = read("lib/knowledge/queue.ts");
 
 test(
   "Organization management enters from the active organization and centers Environments",
@@ -58,6 +59,25 @@ test(
     assert.match(environmentWorkspaces, /Volume:/u);
   },
 );
+
+test("Organization teardown queue delivery is single-writer and terminal-monotonic", () => {
+  assert.match(queue, /singletonKey:\s*operationId/u);
+  assert.match(
+    queue,
+    /createQueue\(ORGANIZATION_DELETION_QUEUE,\s*\{[\s\S]*?policy:\s*"singleton"/u,
+  );
+  assert.match(
+    queue,
+    /LEGACY_ORGANIZATION_DELETION_QUEUE\s*=\s*"organization\.deletion"/u,
+  );
+  assert.match(queue, /boss\.work\(LEGACY_ORGANIZATION_DELETION_QUEUE/u);
+  assert.match(deletionService, /withOrganizationDeletionLock/u);
+  assert.match(
+    deletionService,
+    /inArray\([\s\S]*?status[\s\S]*?\["queued", "running"\]/u,
+  );
+  assert.match(deletionService, /status === "queued"/u);
+});
 
 test(
   "Workspace machine actions stay organization-admin scoped and durable",

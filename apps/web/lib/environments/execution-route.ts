@@ -772,19 +772,97 @@ export async function activateEnvironmentModelGrant(input: {
   rawModelId: string;
 }) {
   const now = new Date();
-  await knowledgeDb
-    .insert(schema.environmentModelGrants)
-    .values({ ...input, status: "active", createdAt: now, updatedAt: now })
-    .onConflictDoUpdate({
-      target: schema.environmentModelGrants.runId,
-      set: {
-        gatewayId: input.gatewayId,
-        rawModelId: input.rawModelId,
+  await knowledgeDb.transaction(async (transaction) => {
+    const [candidate] = await transaction
+      .select({ deploymentId: schema.aiGateways.deploymentId })
+      .from(schema.aiGatewayModels)
+      .innerJoin(
+        schema.aiGateways,
+        eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId),
+      )
+      .where(
+        and(
+          eq(schema.aiGatewayModels.organizationId, input.organizationId),
+          eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
+          eq(schema.aiGatewayModels.rawModelId, input.rawModelId),
+        ),
+      )
+      .limit(1);
+    if (!candidate) {
+      throw new Error("Environment model grant gateway model is unavailable.");
+    }
+    if (candidate.deploymentId) {
+      const [deployment] = await transaction
+        .select({ status: schema.aiDeployments.status })
+        .from(schema.aiDeployments)
+        .where(
+          and(
+            eq(schema.aiDeployments.id, candidate.deploymentId),
+            eq(schema.aiDeployments.organizationId, input.organizationId),
+            eq(schema.aiDeployments.environmentId, input.environmentId),
+          ),
+        )
+        .limit(1)
+        .for("share");
+      if (deployment?.status !== "ready") {
+        throw new Error("Environment model grant gateway model is unavailable.");
+      }
+    }
+    const [model] = await transaction
+      .select({
+        id: schema.aiGatewayModels.id,
+        enabled: schema.aiGateways.enabled,
+        deploymentId: schema.aiGateways.deploymentId,
+      })
+      .from(schema.aiGatewayModels)
+      .innerJoin(
+        schema.aiGateways,
+        eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId),
+      )
+      .where(
+        and(
+          eq(schema.aiGatewayModels.organizationId, input.organizationId),
+          eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
+          eq(schema.aiGatewayModels.rawModelId, input.rawModelId),
+        ),
+      )
+      .limit(1)
+      .for("share");
+    if (
+      !model?.enabled ||
+      model.deploymentId !== candidate.deploymentId
+    ) {
+      throw new Error("Environment model grant gateway model is unavailable.");
+    }
+    const [grant] = await transaction
+      .insert(schema.environmentModelGrants)
+      .values({
+        ...input,
+        gatewayModelId: model.id,
         status: "active",
-        closedAt: null,
+        createdAt: now,
         updatedAt: now,
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: schema.environmentModelGrants.runId,
+        setWhere: and(
+          eq(schema.environmentModelGrants.gatewayId, input.gatewayId),
+          eq(schema.environmentModelGrants.rawModelId, input.rawModelId),
+        ),
+        set: {
+          gatewayModelId: model.id,
+          status: "active",
+          closedAt: null,
+          updatedAt: now,
+        },
+      })
+      .returning({ runId: schema.environmentModelGrants.runId });
+    if (!grant) {
+      throw new Error(
+        "Environment model grant historical model identity is immutable.",
+      );
+    }
+  });
 }
 
 export async function updateEnvironmentExecutionRuntimeIdentity(input: {

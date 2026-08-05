@@ -11,7 +11,8 @@ import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
 import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
 
 const ENVIRONMENT_OPERATION_QUEUE = "environment.operation";
-const ORGANIZATION_DELETION_QUEUE = "organization.deletion";
+const LEGACY_ORGANIZATION_DELETION_QUEUE = "organization.deletion";
+const ORGANIZATION_DELETION_QUEUE = "organization.deletion.v2";
 const ENVIRONMENT_RECONCILE_QUEUE = "environment.reconcile";
 const FLY_IMAGE_RELEASE_QUEUE = "fly-image.release";
 const COST_PRICING_QUEUE = "costs.price";
@@ -69,11 +70,24 @@ async function createBoss() {
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
   });
+  await boss.createQueue(LEGACY_ORGANIZATION_DELETION_QUEUE, {
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
   await boss.createQueue(ORGANIZATION_DELETION_QUEUE, {
+    policy: "singleton",
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
   });
   await boss.updateQueue(ENVIRONMENT_OPERATION_QUEUE, {
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
+  await boss.updateQueue(ORGANIZATION_DELETION_QUEUE, {
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
+  await boss.updateQueue(LEGACY_ORGANIZATION_DELETION_QUEUE, {
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
   });
@@ -294,6 +308,7 @@ export async function enqueueOrganizationDeletion(operationId: string) {
       retryBackoff: true,
       expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
       heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+      singletonKey: operationId,
     },
   );
   if (!jobId)
@@ -373,10 +388,18 @@ async function reconcileOrganizationDeletionQueue(boss: PgBoss) {
       limit: 20,
     });
   for (const operation of operations) {
-    const jobs = await boss.findJobs<{ operationId?: unknown }>(
-      ORGANIZATION_DELETION_QUEUE,
-      { data: { operationId: operation.id } },
-    );
+    const jobs = (
+      await Promise.all(
+        [
+          LEGACY_ORGANIZATION_DELETION_QUEUE,
+          ORGANIZATION_DELETION_QUEUE,
+        ].map((queueName) =>
+          boss.findJobs<{ operationId?: unknown }>(queueName, {
+            data: { operationId: operation.id },
+          }),
+        ),
+      )
+    ).flat();
     if (jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state))) continue;
     await enqueueOrganizationDeletion(operation.id);
   }
@@ -390,6 +413,17 @@ async function runEnvironmentMaintenance(boss: PgBoss) {
     await reconcileOrganizationDeletionQueue(boss);
   } finally {
     environmentMaintenanceRunning = false;
+  }
+}
+
+async function processOrganizationDeletionJobs(
+  jobs: Array<{ data?: { operationId?: unknown } }>,
+) {
+  const { processOrganizationDeletion } =
+    await import("@/lib/organizations/deletion");
+  for (const job of jobs) {
+    if (typeof job.data?.operationId !== "string") continue;
+    await processOrganizationDeletion(job.data.operationId);
   }
 }
 
@@ -438,17 +472,8 @@ export async function startEnvironmentLifecycleWorker() {
       }
     },
   );
-  await boss.work(
-    ORGANIZATION_DELETION_QUEUE,
-    async (jobs: Array<{ data?: { operationId?: unknown } }>) => {
-      const { processOrganizationDeletion } =
-        await import("@/lib/organizations/deletion");
-      for (const job of jobs) {
-        if (typeof job.data?.operationId !== "string") continue;
-        await processOrganizationDeletion(job.data.operationId);
-      }
-    },
-  );
+  await boss.work(LEGACY_ORGANIZATION_DELETION_QUEUE, processOrganizationDeletionJobs);
+  await boss.work(ORGANIZATION_DELETION_QUEUE, processOrganizationDeletionJobs);
   await boss.work(ENVIRONMENT_RECONCILE_QUEUE, async () => {
     const { runScheduledEnvironmentReconciliation } =
       await import("@/lib/environments/reconcile-schedule");

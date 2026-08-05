@@ -4,6 +4,7 @@ const files = execFileSync("git", ["ls-files", "-z", "apps/web/**/*.postgres.tes
   .split("\0")
   .filter(Boolean)
   .concat(
+    "apps/web/lib/ai/managed-runpod-lifecycle.postgres.test.ts",
     "apps/web/lib/costs/store.postgres.test.ts",
     "apps/web/lib/environments/desktop.postgres.test.ts",
     "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
@@ -53,6 +54,7 @@ const groups = [
     databaseUrl: required("KESTREL_ENVIRONMENT_DB_TEST_URL"),
     files: [
       "lib/ai/gateways.postgres.test.ts",
+      "lib/ai/managed-runpod-lifecycle.postgres.test.ts",
       "lib/costs/store.postgres.test.ts",
       "lib/email/config.postgres.test.ts",
       "lib/environments/backup-execution-guard.postgres.test.ts",

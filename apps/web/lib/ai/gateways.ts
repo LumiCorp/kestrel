@@ -21,6 +21,7 @@ import {
   decryptGatewayCredential,
   encryptGatewayCredential,
 } from "./gateway-credential-crypto";
+import { GatewayModelInUseError } from "./gateway-lifecycle-error";
 import {
   normalizeGatewayStoredCredential,
 } from "./gateway-credential-source";
@@ -1473,17 +1474,44 @@ export async function deleteGateway(
   organizationId: string,
   gatewayId: string
 ) {
-  const [deleted] = await knowledgeDb
-    .delete(schema.aiGateways)
-    .where(
-      and(
-        eq(schema.aiGateways.id, gatewayId),
-        eq(schema.aiGateways.organizationId, organizationId)
+  return knowledgeDb.transaction(async (transaction) => {
+    const [gateway] = await transaction
+      .select({ id: schema.aiGateways.id })
+      .from(schema.aiGateways)
+      .where(
+        and(
+          eq(schema.aiGateways.id, gatewayId),
+          eq(schema.aiGateways.organizationId, organizationId),
+        ),
       )
-    )
-    .returning();
-
-  return deleted ? sanitizeGateway(deleted) : null;
+      .limit(1)
+      .for("update");
+    if (!gateway) return null;
+    const [activeGrant] = await transaction
+      .select({ runId: schema.environmentModelGrants.runId })
+      .from(schema.environmentModelGrants)
+      .innerJoin(
+        schema.aiGatewayModels,
+        eq(
+          schema.aiGatewayModels.id,
+          schema.environmentModelGrants.gatewayModelId,
+        ),
+      )
+      .where(
+        and(
+          eq(schema.aiGatewayModels.organizationId, organizationId),
+          eq(schema.aiGatewayModels.gatewayId, gatewayId),
+          eq(schema.environmentModelGrants.status, "active"),
+        ),
+      )
+      .limit(1);
+    if (activeGrant) throw new GatewayModelInUseError();
+    const [deleted] = await transaction
+      .delete(schema.aiGateways)
+      .where(eq(schema.aiGateways.id, gatewayId))
+      .returning();
+    return deleted ? sanitizeGateway(deleted) : null;
+  });
 }
 
 export async function deleteGatewayModel(
@@ -1491,18 +1519,36 @@ export async function deleteGatewayModel(
   gatewayId: string,
   modelId: string
 ) {
-  const [deleted] = await knowledgeDb
-    .delete(schema.aiGatewayModels)
-    .where(
-      and(
-        eq(schema.aiGatewayModels.id, modelId),
-        eq(schema.aiGatewayModels.organizationId, organizationId),
-        eq(schema.aiGatewayModels.gatewayId, gatewayId)
+  return knowledgeDb.transaction(async (transaction) => {
+    const [model] = await transaction
+      .select({ id: schema.aiGatewayModels.id })
+      .from(schema.aiGatewayModels)
+      .where(
+        and(
+          eq(schema.aiGatewayModels.id, modelId),
+          eq(schema.aiGatewayModels.organizationId, organizationId),
+          eq(schema.aiGatewayModels.gatewayId, gatewayId),
+        ),
       )
-    )
-    .returning();
-
-  return deleted ?? null;
+      .limit(1)
+      .for("update");
+    if (!model) return null;
+    const activeGrant =
+      await transaction.query.environmentModelGrants.findFirst({
+        where: and(
+          eq(schema.environmentModelGrants.gatewayModelId, modelId),
+          eq(schema.environmentModelGrants.organizationId, organizationId),
+          eq(schema.environmentModelGrants.status, "active"),
+        ),
+        columns: { runId: true },
+      });
+    if (activeGrant) throw new GatewayModelInUseError();
+    const [deleted] = await transaction
+      .delete(schema.aiGatewayModels)
+      .where(eq(schema.aiGatewayModels.id, modelId))
+      .returning();
+    return deleted ?? null;
+  });
 }
 
 export async function hasApprovedModelsForModalities(
