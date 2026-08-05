@@ -76,6 +76,7 @@ type DesktopSettingsFileBase = {
   tavilyHttpsProxy?: string | undefined;
   providerSelectionCompletedAt?: string | undefined;
   setupCompletedAt?: string | undefined;
+  desktopOnboarding?: DesktopSettings["desktopOnboarding"] | undefined;
   advancedWorkspaceEnabled?: boolean | undefined;
   mcpServers?: DesktopSettings["mcpServers"] | undefined;
   capabilityVerifications?:
@@ -350,6 +351,9 @@ export function normalizeDesktopSettings(
       selectedProvider !== "openrouter")
       ? LEGACY_PROVIDER_SELECTION_COMPLETED_AT
       : undefined);
+  const desktopOnboarding = normalizeDesktopOnboardingRecord(
+    settings?.desktopOnboarding,
+  );
   let modelConfigurations: DesktopSettings["modelConfigurations"];
   try {
     modelConfigurations =
@@ -467,6 +471,7 @@ export function normalizeDesktopSettings(
     ...(nextSetupCompletedAt !== undefined
       ? { setupCompletedAt: nextSetupCompletedAt }
       : {}),
+    ...(desktopOnboarding !== undefined ? { desktopOnboarding } : {}),
     advancedWorkspaceEnabled:
       typeof settings?.advancedWorkspaceEnabled === "boolean"
         ? settings.advancedWorkspaceEnabled
@@ -767,6 +772,10 @@ export async function readDesktopSettings(
       typeof parsed.setupCompletedAt === "string"
         ? parsed.setupCompletedAt
         : undefined;
+    const desktopOnboarding =
+      parsed.version === 10
+        ? normalizeDesktopOnboardingRecord(parsed.desktopOnboarding)
+        : undefined;
     const advancedWorkspaceEnabled =
       parsed.advancedWorkspaceEnabled === true ||
       parsed.advancedWorkspaceEnabled === false
@@ -870,6 +879,7 @@ export async function readDesktopSettings(
           ? { providerSelectionCompletedAt }
           : {}),
         ...(setupCompletedAt !== undefined ? { setupCompletedAt } : {}),
+        ...(desktopOnboarding !== undefined ? { desktopOnboarding } : {}),
         ...(advancedWorkspaceEnabled !== undefined
           ? { advancedWorkspaceEnabled }
           : {}),
@@ -994,6 +1004,9 @@ export async function writeDesktopSettings(
     ...(normalized.setupCompletedAt !== undefined
       ? { setupCompletedAt: normalized.setupCompletedAt }
       : {}),
+    ...(normalized.desktopOnboarding !== undefined
+      ? { desktopOnboarding: normalized.desktopOnboarding }
+      : {}),
     advancedWorkspaceEnabled: normalized.advancedWorkspaceEnabled,
     modelConfigurations: normalized.modelConfigurations,
     defaultModelConfigurationId: normalized.defaultModelConfigurationId,
@@ -1015,6 +1028,48 @@ export async function writeDesktopSettings(
     ...sanitized
   } = normalized;
   return sanitized;
+}
+
+function normalizeDesktopOnboardingRecord(
+  value: unknown,
+): DesktopSettings["desktopOnboarding"] | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.version !== 1 ||
+    (record.status !== "in_progress" && record.status !== "complete") ||
+    typeof record.startedAt !== "string" ||
+    record.startedAt.trim().length === 0
+  ) {
+    return;
+  }
+  const provider = normalizeProvider(record.provider);
+  const model = normalizeOptionalSecret(record.model);
+  const projectPath = normalizeOptionalSecret(record.projectPath);
+  const completedAt = normalizeOptionalSecret(record.completedAt);
+  const handoffId = normalizeOptionalSecret(record.handoffId);
+  const handoffAcknowledgedAt =
+    handoffId === undefined
+      ? undefined
+      : normalizeOptionalSecret(record.handoffAcknowledgedAt);
+  if (record.status === "complete" && completedAt === undefined) {
+    return;
+  }
+  return {
+    version: 1,
+    status: record.status,
+    startedAt: record.startedAt,
+    ...(completedAt !== undefined ? { completedAt } : {}),
+    ...(handoffId !== undefined ? { handoffId } : {}),
+    ...(handoffAcknowledgedAt !== undefined
+      ? { handoffAcknowledgedAt }
+      : {}),
+    ...(record.provider !== undefined ? { provider } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(projectPath !== undefined ? { projectPath } : {}),
+  };
 }
 
 function normalizeOptionalSecret(value: unknown): string | undefined {

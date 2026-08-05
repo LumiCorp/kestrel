@@ -32,7 +32,7 @@ test("blocked database owns the readiness summary ahead of provider setup", () =
   });
 });
 
-test("provider setup owns the summary when no higher-severity check is blocked", () => {
+test("provider setup is an explicit starting state rather than degraded runtime", () => {
   const settings = createDefaultDesktopSettings();
   const readiness = deriveDesktopReadiness({
     isDesktopApp: true,
@@ -57,8 +57,48 @@ test("provider setup owns the summary when no higher-severity check is blocked",
     },
   });
 
-  assert.equal(readiness.summary.state, "degraded");
-  assert.equal(readiness.summary.detail, "Choose a model provider to finish Desktop setup.");
+  assert.equal(readiness.summary.state, "starting");
+  assert.equal(
+    readiness.summary.detail,
+    "Runtime starts after you choose and verify a model provider.",
+  );
+});
+
+test("capability verification evidence overrides legacy plaintext-key readiness", () => {
+  const settings = {
+    ...createDefaultDesktopSettings(),
+    providerSelectionCompletedAt: "2026-08-04T12:00:00.000Z",
+  };
+  const readiness = deriveDesktopReadiness({
+    isDesktopApp: true,
+    settings,
+    providerConfigured: true,
+    bootState: { phase: "ready", message: "Desktop ready." },
+    settingsLoaded: true,
+    resourcesReady: true,
+    bridgeConnected: true,
+    projectCount: 1,
+    databaseStatus: {
+      state: "healthy",
+      summary: "Local Core database is ready.",
+      managed: true,
+      initialized: true,
+      running: true,
+    },
+    runtimeHealth: {
+      state: "healthy",
+      summary: "Runtime is ready.",
+      running: true,
+      recentStdout: [],
+      recentStderr: [],
+    },
+  });
+
+  assert.equal(
+    readiness.items.find((item) => item.id === "provider")?.state,
+    "ready",
+  );
+  assert.equal(readiness.summary.state, "ready");
 });
 
 test("Local Core profile incompatibility directs the user to update Desktop", () => {

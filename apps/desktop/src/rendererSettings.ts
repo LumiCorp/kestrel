@@ -30,12 +30,21 @@ export function toDesktopRendererSettings(
   const providers: DesktopSettings["selectedProvider"][] = [
     "openrouter", "openai", "anthropic", "ollama", "lmstudio",
   ];
+  const defaultProjectPath =
+    settings.desktopOnboarding?.status === "complete" &&
+    settings.desktopOnboarding.projectPath !== undefined &&
+    settings.projects.some(
+      (project) => project.path === settings.desktopOnboarding?.projectPath,
+    )
+      ? settings.desktopOnboarding.projectPath
+      : undefined;
   return {
     selectedProvider: settings.selectedProvider,
     databaseMode: settings.databaseMode,
     presetId: settings.presetId,
     capabilityPacks: [...settings.capabilityPacks],
     projects: settings.projects.map((project) => ({ ...project })),
+    ...(defaultProjectPath !== undefined ? { defaultProjectPath } : {}),
     ...(settings.providerSelectionCompletedAt !== undefined
       ? { providerSelectionCompletedAt: settings.providerSelectionCompletedAt }
       : {}),

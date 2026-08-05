@@ -42,6 +42,28 @@ test("Desktop renderer settings never project persisted credentials", () => {
   assert.equal(settings.projects[0]?.label, "kestrel");
 });
 
+test("Desktop renderer settings project the completed onboarding project as the default", () => {
+  const settings = {
+    ...createDefaultDesktopSettings(),
+    projects: [
+      { path: "/workspace/first", label: "first" },
+      { path: "/workspace/selected", label: "selected" },
+    ],
+    desktopOnboarding: {
+      version: 1 as const,
+      status: "complete" as const,
+      startedAt: "2026-08-04T12:00:00.000Z",
+      completedAt: "2026-08-04T12:02:00.000Z",
+      projectPath: "/workspace/selected",
+    },
+  };
+
+  assert.equal(
+    toDesktopRendererSettings(settings).defaultProjectPath,
+    "/workspace/selected",
+  );
+});
+
 test("Desktop projects standard capabilities under their canonical App", () => {
   const settings = {
     ...createDefaultDesktopSettings(),

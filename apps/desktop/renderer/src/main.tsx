@@ -1,10 +1,11 @@
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 
-import { DesktopApp } from "./DesktopApp";
+import { LaunchRoot } from "./LaunchRoot";
 import { FileEditorApp } from "./FileEditorApp";
 import { RendererErrorBoundary } from "./RendererErrorBoundary";
 import { ensureBrowserPreviewBridge } from "./browserPreview";
+import { reportRendererBootstrapReadyAfterCommit } from "./rendererBootstrap";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
@@ -37,11 +38,19 @@ createRoot(root).render(
           {...(columnNumber !== undefined ? { columnNumber } : {})}
         />
       ) : (
-        <DesktopApp />
+        <>
+          <RendererBootstrapReporter />
+          <LaunchRoot />
+        </>
       )}
     </RendererErrorBoundary>
   </StrictMode>,
 );
+
+function RendererBootstrapReporter(): null {
+  useEffect(reportRendererBootstrapReadyAfterCommit, []);
+  return null;
+}
 
 function parseSourcePosition(value: string | null): number | undefined {
   if (value === null) {

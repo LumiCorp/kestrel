@@ -1,6 +1,13 @@
 import type {
   DesktopBridgeInfo,
   DesktopBootState,
+  DesktopLaunchState,
+  DesktopOnboardingDraftInput,
+  DesktopOnboardingProviderInput,
+  DesktopOnboardingProviderVerificationResult,
+  DesktopOnboardingProjectCandidate,
+  DesktopOnboardingStateV1,
+  DesktopOnboardingStep,
   DesktopCapabilityView,
   DesktopCapabilityConfigurationInput,
   DesktopCapabilityConfigurationResult,
@@ -32,6 +39,8 @@ import type {
   DesktopProjectFilesChangedEvent,
   DesktopProjectRegistration,
   DesktopProviderModelCatalog,
+  DesktopProviderModelCatalogRequest,
+  DesktopRendererBootstrapReport,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
   DesktopRunCancelRequest,
@@ -104,6 +113,7 @@ export {
   DESKTOP_UI_STATE_SOURCE,
   DESKTOP_UI_STATE_RENDERER_SOURCE,
   DESKTOP_UI_STATE_VERSION,
+  parseDesktopProviderModelCatalogRequest,
 } from "../../../src/desktopShell/contracts.js";
 export type {
   DesktopAttachmentMetadata,
@@ -112,6 +122,17 @@ export type {
   DesktopBridgeCapabilityId,
   DesktopBridgeInfo,
   DesktopBootState,
+  DesktopLaunchState,
+  DesktopOnboardingDraftInput,
+  DesktopOnboardingProviderInput,
+  DesktopOnboardingProviderFailureKind,
+  DesktopOnboardingProviderVerificationResult,
+  DesktopOnboardingProjectCandidate,
+  DesktopOnboardingRecordV1,
+  DesktopOnboardingStateV1,
+  DesktopOnboardingStep,
+  DesktopProviderModelCatalogRequest,
+  DesktopRendererBootstrapReport,
   DesktopCapability,
   DesktopCapabilityCategory,
   DesktopCapabilityId,
@@ -333,6 +354,7 @@ export type DesktopShellCommand =
   | "toggle-left-sidebar"
   | "toggle-right-sidebar"
   | "restart-runtime"
+  | "settings"
   | "uninstall";
 
 export type DesktopRunCancellationResult =
@@ -359,6 +381,27 @@ export interface DesktopAttachmentImportInput {
 export interface DesktopBridge {
   getBridgeInfo(): Promise<DesktopBridgeInfo>;
   getAppInfo(): Promise<DesktopAppInfo>;
+  getLaunchState(): Promise<DesktopLaunchState>;
+  onLaunchState(listener: (state: DesktopLaunchState) => void): () => void;
+  getOnboardingState(): Promise<DesktopOnboardingStateV1>;
+  saveOnboardingDraft(
+    input: DesktopOnboardingDraftInput,
+  ): Promise<DesktopOnboardingStateV1>;
+  verifyOnboardingProvider(
+    input: DesktopOnboardingProviderInput,
+  ): Promise<DesktopOnboardingProviderVerificationResult>;
+  pickOnboardingProject(): Promise<DesktopOnboardingProjectCandidate | undefined>;
+  inspectOnboardingProject(
+    path: string,
+  ): Promise<DesktopOnboardingProjectCandidate>;
+  confirmOnboardingProject(input: {
+    selectionId: string;
+    allowGitBootstrap: boolean;
+  }): Promise<DesktopOnboardingStateV1>;
+  completeOnboarding(): Promise<DesktopLaunchState>;
+  reportRendererBootstrap(
+    report: DesktopRendererBootstrapReport,
+  ): Promise<boolean>;
   getSupportBundle(): Promise<DesktopSupportBundle>;
   createUninstallPlan(input: {
     scope: KestrelUninstallScope;
@@ -440,7 +483,7 @@ export interface DesktopBridge {
   onRunnerEvent(listener: (event: DesktopRunnerEvent) => void): () => void;
   getModelPolicy(): Promise<ModelPolicyV1>;
   getModelCatalog(
-    provider: DesktopRendererSettings["selectedProvider"],
+    request: DesktopProviderModelCatalogRequest,
   ): Promise<DesktopProviderModelCatalog>;
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;

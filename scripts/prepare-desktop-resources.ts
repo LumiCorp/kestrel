@@ -30,6 +30,7 @@ export const DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS = [
   "src",
   "cli",
   "db/migrations",
+  "packages/mcp-security",
 ] as const;
 
 const EXCLUDED_BASENAMES = new Set([

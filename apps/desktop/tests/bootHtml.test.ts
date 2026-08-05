@@ -10,13 +10,22 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const bootHtmlPath = path.join(testDir, "..", "static", "boot.html");
 const mainPath = path.join(testDir, "..", "src", "main.ts");
 const recoveryPath = path.join(testDir, "..", "src", "localCoreRecovery.ts");
+const sharedContractsPath = path.join(
+  testDir,
+  "..",
+  "..",
+  "..",
+  "src",
+  "desktopShell",
+  "contracts.ts",
+);
 
-test("boot screen exposes Reset Runtime Store only for sqlite init failures", async () => {
+test("static boot fallback exposes only renderer recovery actions", async () => {
   const source = await readFile(bootHtmlPath, "utf8");
 
-  assert.match(source, /id="reset-store"/u);
-  assert.match(source, /id="copy-help-packet"/u);
+  assert.match(source, /Kestrel’s interface could not load/u);
   assert.match(source, />Restart Kestrel</u);
+  assert.match(source, />Open Diagnostics</u);
   assert.match(source, /desktopBridge\.restartKestrel\(\{ force: restartRequiresForce \}\)/u);
   assert.match(source, /Force Restart Kestrel/u);
   assert.match(source, /result\.status === "blocked"/u);
@@ -25,16 +34,11 @@ test("boot screen exposes Reset Runtime Store only for sqlite init failures", as
   assert.doesNotMatch(source, /desktopBridge\.restartRuntime\(\)/u);
   assert.match(source, /class="brand-logo"/u);
   assert.match(source, /kestrel-full-horz-dark-mode\.png/u);
-  assert.match(source, /Readiness checklist/u);
-  assert.match(source, /id="checklist"/u);
-  assert.match(source, /renderChecklist/u);
-  assert.match(source, /renderTimeline/u);
-  assert.match(source, /for \(const item of \[\.\.\.items\]\.sort/u);
-  assert.match(source, /resetStore\.hidden = state\.code !== "STORE_SQLITE_INIT_FAILED";/u);
-  assert.match(source, /desktopBridge\.resetRuntimeStore\(\)/u);
-  assert.match(source, /desktopBridge\.getSupportBundle\(\)/u);
-  assert.doesNotMatch(source, /id="check-resources"/u);
-  assert.doesNotMatch(source, /repair_database/u);
+  assert.match(source, /desktopBridge\?\.openDiagnostics\(\)/u);
+  assert.doesNotMatch(source, /Settings/u);
+  assert.doesNotMatch(source, /project/u);
+  assert.doesNotMatch(source, /restartRuntime/u);
+  assert.doesNotMatch(source, /resetRuntimeStore/u);
 });
 
 test("blocked-startup recovery is registered before runtime transport startup", async () => {
@@ -68,6 +72,79 @@ test("Desktop creates a visible boot window before runtime startup", async () =>
 
   assert.match(source, /backgroundColor:\s*"#101315",\s*show:\s*true,/su);
   assert.doesNotMatch(source, /window\.on\("ready-to-show"/u);
+});
+
+test("Desktop guards the Vite renderer with generation-scoped readiness and fallback", async () => {
+  const source = await readFile(mainPath, "utf8");
+
+  assert.match(source, /DESKTOP_RENDERER_BOOTSTRAP_TIMEOUT_MS\s*=\s*10_000/u);
+  assert.match(source, /query:\s*\{ bootstrapGeneration:/u);
+  assert.match(source, /desktop:report-renderer-bootstrap/u);
+  assert.match(source, /report\.generation\s*!==\s*rendererBootstrapGeneration/u);
+  assert.match(source, /"did-fail-load"/u);
+  assert.match(source, /"render-process-gone"/u);
+  assert.match(source, /showDesktopRendererFallback/u);
+});
+
+test("Desktop accepts onboarding IPC only from the current main renderer", async () => {
+  const source = await readFile(mainPath, "utf8");
+  const guardedChannels = [
+    "desktop:get-launch-state",
+    "desktop:get-onboarding-state",
+    "desktop:save-onboarding-draft",
+    "desktop:verify-onboarding-provider",
+    "desktop:pick-onboarding-project",
+    "desktop:inspect-onboarding-project",
+    "desktop:confirm-onboarding-project",
+    "desktop:complete-onboarding",
+    "desktop:get-model-catalog",
+  ];
+
+  assert.match(
+    source,
+    /event\.senderFrame\s*!==\s*window\.webContents\.mainFrame/u,
+  );
+  for (const channel of guardedChannels) {
+    const handlerStart = source.indexOf(`"${channel}"`);
+    assert.notEqual(handlerStart, -1, `${channel} must be registered`);
+    assert.match(
+      source.slice(handlerStart, handlerStart + 500),
+      /requireCurrentMainWindowIpcSender\(event\)/u,
+      `${channel} must validate its sender before use`,
+    );
+  }
+});
+
+test("generic onboarding drafts cannot nominate a project path", async () => {
+  const [mainSource, contractSource] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(sharedContractsPath, "utf8"),
+  ]);
+  const draftContract = contractSource.slice(
+    contractSource.indexOf("export interface DesktopOnboardingDraftInput"),
+    contractSource.indexOf("export interface DesktopOnboardingProviderInput"),
+  );
+  const draftParser = mainSource.slice(
+    mainSource.indexOf("function parseDesktopOnboardingDraftInput"),
+    mainSource.indexOf("function parseDesktopOnboardingProviderInput"),
+  );
+
+  assert.doesNotMatch(draftContract, /projectPath/u);
+  assert.match(draftParser, /new Set\(\["provider", "model"\]\)/u);
+  assert.doesNotMatch(draftParser, /projectPath/u);
+});
+
+test("Desktop revalidates onboarding after execution startup before completion", async () => {
+  const source = await readFile(mainPath, "utf8");
+  const completion = source.slice(
+    source.indexOf("async function completeDesktopOnboarding"),
+    source.indexOf("async function ensureCompletedDesktopOnboardingHandoff"),
+  );
+
+  assert.match(
+    completion,
+    /await startDesktopExecutionServices\(\);[\s\S]*await readDesktopOnboardingState\(\);[\s\S]*confirmedOnboarding\.canComplete === false[\s\S]*await saveDesktopCoreSettings/u,
+  );
 });
 
 test(

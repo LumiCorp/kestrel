@@ -8,13 +8,15 @@ import {
   DESKTOP_UI_STATE_VERSION,
   parseDesktopLegacyUiStateEntries,
   parseDesktopOperatorControlRequest,
+  parseDesktopProviderModelCatalogRequest,
   parseDesktopRunTurnRequest,
   parseDesktopUiStateV1,
 } from "../../src/desktopShell/contracts.js";
 
 
-test("Desktop bridge v8 exposes update, workspace, attachment, and operator-control contracts", () => {
+test("Desktop bridge v8 exposes onboarding, update, workspace, attachment, and operator-control contracts", () => {
   assert.equal(DESKTOP_BRIDGE_VERSION, "8");
+  assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("onboarding"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("updates"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("attachments"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("operator_control"), true);
@@ -67,6 +69,37 @@ test("Desktop UI state accepts only the versioned legacy storage contract", () =
     "kchat:web:active-thread:v1": "thread-1",
   });
   assert.equal(state.sourceAppVersion, "0.5.1");
+});
+
+test("Desktop local model catalog requests validate and canonicalize candidate endpoints", () => {
+  assert.deepEqual(
+    parseDesktopProviderModelCatalogRequest({
+      provider: "ollama",
+      baseUrl: " http://127.0.0.1:2244/local/ ",
+    }),
+    { provider: "ollama", baseUrl: "http://127.0.0.1:2244/local" },
+  );
+  assert.throws(
+    () => parseDesktopProviderModelCatalogRequest({
+      provider: "openrouter",
+      baseUrl: "https://proxy.example.test",
+    }),
+    /Hosted model catalog requests do not accept/u,
+  );
+  for (const baseUrl of [
+    "file:///tmp/ollama.sock",
+    "http://user:secret@localhost:11434",
+    "http://localhost:11434?model=qwen",
+    "http://localhost:11434#models",
+  ]) {
+    assert.throws(
+      () => parseDesktopProviderModelCatalogRequest({
+        provider: "ollama",
+        baseUrl,
+      }),
+      /must use HTTP or HTTPS/u,
+    );
+  }
 });
 
 test("Desktop UI state rejects unknown storage keys and non-string values", () => {

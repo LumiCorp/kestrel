@@ -15,6 +15,7 @@ import {
   resolveLocalCoreDaemonEntrypoint,
   resolveLocalCoreDaemonNodeMode,
 } from "../../src/localCore/daemon.js";
+import { resolveLocalCoreDaemonCredentialStore } from "../../src/localCore/daemonMain.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
 import { resolveLocalCoreBuildIdentity } from "../../src/localCore/buildIdentity.js";
 import { resolveLocalCorePaths } from "../../src/localCore/home.js";
@@ -29,6 +30,38 @@ test("Local Core daemon runs Electron executables in Node mode", () => {
   assert.equal(resolveLocalCoreDaemonNodeMode({ electron: "37.10.3" }), "1");
   assert.equal(resolveLocalCoreDaemonNodeMode({}), undefined);
   assert.equal(resolveLocalCoreDaemonNodeMode({ electron: "  " }), undefined);
+});
+
+test("Local Core daemon owns the default macOS Keychain backend", () => {
+  assert.equal(
+    resolveLocalCoreDaemonCredentialStore({ platform: "darwin" })?.backend,
+    "macos_keychain",
+  );
+  assert.equal(
+    resolveLocalCoreDaemonCredentialStore({
+      platform: "darwin",
+      configuredStore: "macos_keychain",
+    })?.backend,
+    "macos_keychain",
+  );
+  assert.equal(
+    resolveLocalCoreDaemonCredentialStore({
+      platform: "darwin",
+      configuredStore: "environment",
+    }),
+    undefined,
+  );
+  assert.equal(
+    resolveLocalCoreDaemonCredentialStore({ platform: "linux" }),
+    undefined,
+  );
+  assert.throws(
+    () => resolveLocalCoreDaemonCredentialStore({
+      platform: "darwin",
+      configuredStore: "plaintext",
+    }),
+    /Unsupported Local Core credential store/u,
+  );
 });
 
 test("Local Core daemon resolves the emitted JavaScript entrypoint from compiled callers", () => {

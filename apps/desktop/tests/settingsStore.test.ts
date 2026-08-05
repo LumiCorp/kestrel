@@ -19,6 +19,45 @@ import {
   writeDesktopSettings,
 } from "../src/settingsStore.js";
 
+test("Desktop settings round-trip versioned non-secret onboarding progress", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "kestrel-onboarding-settings-"));
+  const settingsPath = path.join(directory, "settings.json");
+  const startedAt = "2026-08-04T12:00:00.000Z";
+  const acknowledgedAt = "2026-08-04T12:05:00.000Z";
+  const projectPath = "/workspace/kestrel";
+
+  await writeDesktopSettings(settingsPath, {
+    ...createDefaultDesktopSettings(),
+    desktopOnboarding: {
+      version: 1,
+      status: "complete",
+      startedAt,
+      completedAt: startedAt,
+      provider: "openai",
+      model: "gpt-5",
+      projectPath,
+      handoffId: "handoff-stable-v1",
+      handoffAcknowledgedAt: acknowledgedAt,
+    },
+  });
+
+  const persisted = await readFile(settingsPath, "utf8");
+  assert.match(persisted, /"desktopOnboarding"/u);
+  assert.doesNotMatch(persisted, /apiKey/u);
+  const restored = await readDesktopSettings(settingsPath);
+  assert.deepEqual(restored.desktopOnboarding, {
+    version: 1,
+    status: "complete",
+    startedAt,
+    completedAt: startedAt,
+    provider: "openai",
+    model: "gpt-5",
+    projectPath,
+    handoffId: "handoff-stable-v1",
+    handoffAcknowledgedAt: acknowledgedAt,
+  });
+});
+
 test(
   "renderer project settings preserve the registered UUID by exact path",
   () => {

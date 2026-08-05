@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 
 import { createDefaultModelPolicy } from "../../../src/profile/modelPolicy.js";
 import { parseDesktopCapabilityConfigurationInput } from "../../../src/desktopShell/contracts.js";
-import { buildDesktopCapabilityConfigurationPlan } from "../src/capabilityConfiguration.js";
+import { createDesktopModelConfiguration } from "../../../src/desktopShell/configuration.js";
+import {
+  buildDesktopCapabilityConfigurationPlan,
+  promoteDesktopDefaultModelConfiguration,
+} from "../src/capabilityConfiguration.js";
 import { createDefaultDesktopSettings } from "../src/settingsStore.js";
 
 
@@ -34,6 +38,50 @@ test("capability configuration builds one verified hosted-model replacement", ()
   assert.equal(plan.restartRuntime, true);
 });
 
+test("onboarding promotes the verified model as the immutable Desktop default", () => {
+  const settings = createDefaultDesktopSettings();
+  const existingConfiguration = createDesktopModelConfiguration(
+    {
+      ...createDefaultModelPolicy(),
+      model: "existing/model",
+    },
+    { id: "existing-configuration", name: "Existing" },
+  );
+  settings.modelConfigurations.push(existingConfiguration);
+  const previousDefault = structuredClone(settings.modelConfigurations[0]!);
+  const verifiedPolicy = {
+    ...createDefaultModelPolicy(),
+    provider: "openai" as const,
+    model: "gpt-5",
+  };
+
+  const promoted = promoteDesktopDefaultModelConfiguration(
+    settings,
+    verifiedPolicy,
+    "2026-08-04T12:00:00.000Z",
+  );
+  const defaultConfiguration = promoted.modelConfigurations.find(
+    (configuration) => configuration.id === promoted.defaultModelConfigurationId,
+  )!;
+
+  assert.equal(defaultConfiguration.id, settings.defaultModelConfigurationId);
+  assert.equal(defaultConfiguration.currentRevision, 2);
+  assert.deepEqual(defaultConfiguration.revisions[0], previousDefault.revisions[0]);
+  assert.deepEqual(defaultConfiguration.revisions[1], {
+    revision: 2,
+    createdAt: "2026-08-04T12:00:00.000Z",
+    policy: verifiedPolicy,
+  });
+  assert.deepEqual(promoted.modelConfigurations[1], existingConfiguration);
+
+  const repeated = promoteDesktopDefaultModelConfiguration(
+    promoted,
+    verifiedPolicy,
+    "2026-08-04T12:01:00.000Z",
+  );
+  assert.deepEqual(repeated.modelConfigurations, promoted.modelConfigurations);
+});
+
 test("hosted capability changes require credential re-entry for atomic verification", () => {
   assert.throws(
     () => buildDesktopCapabilityConfigurationPlan({
@@ -43,6 +91,27 @@ test("hosted capability changes require credential re-entry for atomic verificat
     }),
     /Re-enter the credential/u,
   );
+});
+
+test("local model configuration carries the verified endpoint through the shared apply plan", () => {
+  const settings = createDefaultDesktopSettings();
+  const plan = buildDesktopCapabilityConfigurationPlan({
+    currentSettings: settings,
+    currentModelPolicy: createDefaultModelPolicy(),
+    configuration: parseDesktopCapabilityConfigurationInput({
+      capabilityId: "model.ollama",
+      enabled: true,
+      settings: {
+        model: "qwen3:8b",
+        baseUrl: "http://127.0.0.1:2244",
+      },
+    }),
+  });
+
+  assert.equal(settings.ollamaBaseUrl, undefined);
+  assert.equal(plan.settings.ollamaBaseUrl, "http://127.0.0.1:2244");
+  assert.equal(plan.settings.ollamaModel, "qwen3:8b");
+  assert.equal(plan.requiresVerification, true);
 });
 
 test("credential removal does not verify or disturb unrelated settings", () => {

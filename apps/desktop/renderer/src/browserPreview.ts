@@ -13,6 +13,7 @@ import type {
   DesktopMissionControlProjectResponse,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
+  DesktopProviderModelCatalogRequest,
   DesktopRunnerEvent,
   DesktopRuntimeRunIndex,
   DesktopRuntimeRunIndexQuery,
@@ -106,6 +107,24 @@ export function ensureBrowserPreviewBridge(): void {
     "",
   ].join("\n");
   const runnerListeners = new Set<(event: DesktopRunnerEvent) => void>();
+  const launchListeners = new Set<
+    (state: import("../../src/contracts").DesktopLaunchState) => void
+  >();
+  let launchState: import("../../src/contracts").DesktopLaunchState =
+    new URLSearchParams(window.location.search).get("onboarding") === "1"
+      ? { phase: "setup_required", message: "Finish setting up Kestrel." }
+      : { phase: "ready", message: "Kestrel is ready." };
+  let onboardingState: import("../../src/contracts").DesktopOnboardingStateV1 = {
+    version: 1,
+    mode: "first_run",
+    step: "welcome",
+    provider: "openrouter",
+    providerVerified: false,
+    credentialConfigured: false,
+    secureStorageAvailable: true,
+    projects: [],
+    canComplete: false,
+  };
   const projectRunListeners = new Set<
     (runs: DesktopManagedProjectRun[]) => void
   >();
@@ -192,8 +211,9 @@ export function ensureBrowserPreviewBridge(): void {
     async getBridgeInfo() {
       return {
         connected: true,
-        version: "4-preview",
+        version: "8-preview",
         capabilities: [
+          "onboarding",
           "ui_state",
           "runner_commands",
           "settings",
@@ -207,6 +227,74 @@ export function ensureBrowserPreviewBridge(): void {
           "app_selection",
         ],
       };
+    },
+    async getLaunchState() {
+      return launchState;
+    },
+    onLaunchState(
+      listener: (state: import("../../src/contracts").DesktopLaunchState) => void,
+    ) {
+      launchListeners.add(listener);
+      return () => launchListeners.delete(listener);
+    },
+    async getOnboardingState() {
+      return onboardingState;
+    },
+    async saveOnboardingDraft(input: import("../../src/contracts").DesktopOnboardingDraftInput) {
+      onboardingState = {
+        ...onboardingState,
+        step: "provider",
+        ...(input.provider !== undefined ? { provider: input.provider } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
+      };
+      return onboardingState;
+    },
+    async verifyOnboardingProvider(input: import("../../src/contracts").DesktopOnboardingProviderInput) {
+      onboardingState = {
+        ...onboardingState,
+        step: "project",
+        provider: input.provider,
+        model: input.model,
+        providerVerified: true,
+        credentialConfigured: true,
+      };
+      return { ok: true as const, state: onboardingState };
+    },
+    async pickOnboardingProject() {
+      return {
+        selectionId: "preview-project-selection",
+        path: "/workspace/kestrel",
+        label: "kestrel",
+        kind: "existing_git" as const,
+        requiresGitBootstrap: false,
+      };
+    },
+    async inspectOnboardingProject(projectPath: string) {
+      return {
+        selectionId: "preview-project-selection",
+        path: projectPath,
+        label: projectPath.split("/").at(-1) ?? "project",
+        kind: "existing_git" as const,
+        requiresGitBootstrap: false,
+      };
+    },
+    async confirmOnboardingProject() {
+      onboardingState = {
+        ...onboardingState,
+        step: "review",
+        projectPath: "/workspace/kestrel",
+        projects: [{ path: "/workspace/kestrel", label: "kestrel", available: true }],
+        canComplete: true,
+      };
+      return onboardingState;
+    },
+    async completeOnboarding() {
+      launchState = { phase: "ready", message: "Kestrel is ready." };
+      for (const listener of launchListeners) listener(launchState);
+      return launchState;
+    },
+    async reportRendererBootstrap() {
+      return true;
     },
     async getUiState() {
       return null;
@@ -345,14 +433,12 @@ export function ensureBrowserPreviewBridge(): void {
     async getModelPolicy() {
       return modelPolicy;
     },
-    async getModelCatalog(
-      provider: DesktopRendererSettings["selectedProvider"],
-    ) {
+    async getModelCatalog({ provider }: DesktopProviderModelCatalogRequest) {
       return {
         provider,
         models:
           provider === "openrouter"
-            ? ["openai/gpt-5.2", "anthropic/claude-sonnet-4.5"]
+            ? ["z-ai/glm-5.2", "openai/gpt-5.2", "anthropic/claude-sonnet-4.5"]
             : [modelPolicy.model],
         source: "fallback" as const,
       };

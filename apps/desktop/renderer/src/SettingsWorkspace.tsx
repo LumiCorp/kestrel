@@ -284,7 +284,7 @@ export function SettingsWorkspace({
   useEffect(() => {
     let disposed = false;
     void window.kestrelDesktop
-      .getModelCatalog(provider)
+      .getModelCatalog({ provider })
       .then((result) => {
         if (!disposed) setCatalog(result.models);
       })
