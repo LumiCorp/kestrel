@@ -176,13 +176,24 @@ test(
     );
 
     assert.doesNotMatch(workerSource, /^await startDurableThreadTurnWorker/mu);
-    assert.match(workerSource, /startEnvironmentLifecycleWorker/u);
+    assert.doesNotMatch(workerSource, /startEnvironmentLifecycleWorker/u);
     assert.match(workerSource, /getGatewayCredentialAuthorityReadiness/u);
     assert.match(workerSource, /Gateway credential readiness failed/u);
-    assert.match(workerSource, /stopEnvironmentLifecycleWorker/u);
+    assert.doesNotMatch(workerSource, /stopEnvironmentLifecycleWorker/u);
     assert.match(workerSource, /void main\(\)\.catch/u);
   },
 );
+
+test("the dedicated control worker owns release and lifecycle queues", async () => {
+  const source = await readFile(
+    new URL("../../scripts/control-worker.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /startEnvironmentLifecycleWorker/u);
+  assert.match(source, /stopEnvironmentLifecycleWorker/u);
+  assert.match(source, /releaseControllerHeartbeats/u);
+  assert.match(source, /RELEASE_CONTROLLER_CONTRACT_REVISION/u);
+});
 
 test(
   "title failures remain non-blocking and emit a durable sanitized diagnostic",

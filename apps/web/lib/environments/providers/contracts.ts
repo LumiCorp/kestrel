@@ -140,6 +140,10 @@ export interface EnvironmentInfrastructureProvider {
   stopMachine(input: { appName: string; machineId: string }): Promise<void>;
   deleteMachine(input: { appName: string; machineId: string }): Promise<void>;
   deleteVolume(input: { appName: string; volumeId: string }): Promise<void>;
+  reconcileWorkspaceVolumeBackupPolicy?(input: {
+    appName: string;
+    volumeId: string;
+  }): Promise<void>;
   deleteEnvironmentApp(input: { appName: string }): Promise<void>;
   listEnvironmentResources(input: {
     appName: string;

@@ -9,12 +9,17 @@ import { parseEnvironmentWorkerAttempt } from "@/lib/environments/worker-failure
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
 import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
+import { RELEASE_CONTROLLER_QUEUES } from "@/lib/releases/controller-contract";
 
-const ENVIRONMENT_OPERATION_QUEUE = "environment.operation";
 const LEGACY_ORGANIZATION_DELETION_QUEUE = "organization.deletion";
-const ORGANIZATION_DELETION_QUEUE = "organization.deletion.v2";
-const ENVIRONMENT_RECONCILE_QUEUE = "environment.reconcile";
-const FLY_IMAGE_RELEASE_QUEUE = "fly-image.release";
+const LEGACY_ORGANIZATION_DELETION_QUEUE_V2 = "organization.deletion.v2";
+const ENVIRONMENT_OPERATION_QUEUE =
+  RELEASE_CONTROLLER_QUEUES.environmentOperation;
+const ORGANIZATION_DELETION_QUEUE =
+  RELEASE_CONTROLLER_QUEUES.organizationDeletion;
+const ENVIRONMENT_RECONCILE_QUEUE =
+  RELEASE_CONTROLLER_QUEUES.environmentReconcile;
+const FLY_IMAGE_RELEASE_QUEUE = RELEASE_CONTROLLER_QUEUES.flyImageRelease;
 const COST_PRICING_QUEUE = "costs.price";
 const COST_ACCRUAL_QUEUE = "costs.accrue-fixed";
 const COST_FLY_METERING_QUEUE = "costs.meter-fly";
@@ -74,6 +79,11 @@ async function createBoss() {
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
   });
+  await boss.createQueue(LEGACY_ORGANIZATION_DELETION_QUEUE_V2, {
+    policy: "singleton",
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
   await boss.createQueue(ORGANIZATION_DELETION_QUEUE, {
     policy: "singleton",
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
@@ -88,6 +98,10 @@ async function createBoss() {
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
   });
   await boss.updateQueue(LEGACY_ORGANIZATION_DELETION_QUEUE, {
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
+  await boss.updateQueue(LEGACY_ORGANIZATION_DELETION_QUEUE_V2, {
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
   });
@@ -258,10 +272,7 @@ export async function enqueueFlyImageRelease(
   if (!jobId) throw new Error("The Fly image release queue rejected the job.");
 }
 
-async function deferEnvironmentOperation(
-  boss: PgBoss,
-  operationId: string,
-) {
+async function deferEnvironmentOperation(boss: PgBoss, operationId: string) {
   const operation = await knowledgeDb.query.environmentOperations.findFirst({
     where: (table, { and, eq }) =>
       and(eq(table.id, operationId), eq(table.status, "queued")),
@@ -270,6 +281,7 @@ async function deferEnvironmentOperation(
       type: true,
       idempotencyKey: true,
       attempt: true,
+      result: true,
     },
   });
   if (!operation) return;
@@ -287,14 +299,31 @@ async function deferEnvironmentOperation(
       retryBackoff: true,
       expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
       heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
-      startAfter: new Date(
-        Date.now() + ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS * 1000,
-      ),
+      startAfter: environmentOperationNextAttemptAt(operation.result),
     },
   );
   if (!jobId) {
     throw new Error("The Environment operation queue rejected the deferral.");
   }
+}
+
+function environmentOperationNextAttemptAt(result: unknown) {
+  if (!(result && typeof result === "object")) {
+    return new Date(
+      Date.now() + ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS * 1000,
+    );
+  }
+  const retryState = (result as Record<string, unknown>).retryState;
+  if (!(retryState && typeof retryState === "object")) {
+    return new Date(
+      Date.now() + ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS * 1000,
+    );
+  }
+  const value = (retryState as Record<string, unknown>).nextAttemptAt;
+  const timestamp = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  return new Date(
+    Number.isFinite(timestamp) ? Math.max(Date.now(), timestamp) : Date.now(),
+  );
 }
 
 export async function enqueueOrganizationDeletion(operationId: string) {
@@ -392,6 +421,7 @@ async function reconcileOrganizationDeletionQueue(boss: PgBoss) {
       await Promise.all(
         [
           LEGACY_ORGANIZATION_DELETION_QUEUE,
+          LEGACY_ORGANIZATION_DELETION_QUEUE_V2,
           ORGANIZATION_DELETION_QUEUE,
         ].map((queueName) =>
           boss.findJobs<{ operationId?: unknown }>(queueName, {
@@ -465,14 +495,17 @@ export async function startEnvironmentLifecycleWorker() {
         if (typeof job.data?.releaseId !== "string") continue;
         const result = await processFlyImageRelease(job.data.releaseId);
         if (result === "deferred") {
+          const { nextFlyImageReleaseDelaySeconds } =
+            await import("@/lib/releases/runtime");
           await enqueueFlyImageRelease(job.data.releaseId, {
-            delaySeconds: 15,
+            delaySeconds: await nextFlyImageReleaseDelaySeconds(
+              job.data.releaseId,
+            ),
           });
         }
       }
     },
   );
-  await boss.work(LEGACY_ORGANIZATION_DELETION_QUEUE, processOrganizationDeletionJobs);
   await boss.work(ORGANIZATION_DELETION_QUEUE, processOrganizationDeletionJobs);
   await boss.work(ENVIRONMENT_RECONCILE_QUEUE, async () => {
     const { runScheduledEnvironmentReconciliation } =

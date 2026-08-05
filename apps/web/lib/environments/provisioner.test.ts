@@ -6,9 +6,43 @@ import {
 } from "./providers/contracts";
 import {
   EnvironmentProvisioner,
+  releaseRetryDelaySeconds,
+  releaseRetryNextAttemptAt,
   type EnvironmentProvisioningRepository,
   type ProvisioningOperation,
 } from "./provisioner";
+
+test("managed release retries use the bounded fixed schedule", () => {
+  assert.deepEqual(
+    Array.from({ length: 8 }, (_, index) => releaseRetryDelaySeconds(index + 1)),
+    [5, 10, 20, 40, 80, 120, 120, 120],
+  );
+});
+
+test("managed release retries stop exactly at the 15-minute deadline", () => {
+  const firstFailureAt = "2026-08-05T12:00:00.000Z";
+  const firstFailureTime = Date.parse(firstFailureAt);
+  assert.equal(
+    releaseRetryNextAttemptAt(firstFailureAt, 1, firstFailureTime),
+    "2026-08-05T12:00:05.000Z",
+  );
+  assert.equal(
+    releaseRetryNextAttemptAt(
+      firstFailureAt,
+      20,
+      firstFailureTime + 14 * 60 * 1000,
+    ),
+    "2026-08-05T12:15:00.000Z",
+  );
+  assert.equal(
+    releaseRetryNextAttemptAt(
+      firstFailureAt,
+      20,
+      firstFailureTime + 15 * 60 * 1000,
+    ),
+    null,
+  );
+});
 
 
 function fixture(
@@ -269,6 +303,7 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
+    releaseTargetId: "release-target-id",
   });
   repository.listEnvironmentWorkspaces = async () => [
     {
@@ -280,6 +315,9 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
     },
   ];
   const machineUpdates: Parameters<typeof provider.updateMachineImage>[0][] = [];
+  const backupInputs: Array<{
+    parentReleaseTargetId?: string | undefined;
+  }> = [];
   let gatewayUpdate:
     | Parameters<typeof repository.completeEnvironmentGatewayUpdate>[0]
     | undefined;
@@ -306,6 +344,7 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
     repository,
     provider,
     async (input) => {
+      backupInputs.push(input);
       calls.push(`backup:${input.workspaceId}`);
     }
   );
@@ -350,6 +389,7 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   assert.ok(machineUpdates[1]?.envPatch?.KESTREL_WORKSPACE_SERVICE_TOKEN);
   assert.ok(gatewayUpdate?.gatewayServiceTokenHash);
   assert.ok(workspaceUpdate?.serviceTokenHash);
+  assert.equal(backupInputs[0]?.parentReleaseTargetId, "release-target-id");
 });
 
 test("Environment updates recover an incompatible stopped runtime from a pre-destructive snapshot", async () => {
@@ -658,6 +698,24 @@ test("transient Fly failures return the durable operation to its retry queue", a
     "environment:provisioning",
     "operation:stage:environment.runtime.connecting",
     "operation:deferred:Fly is temporarily unavailable.",
+  ]);
+});
+
+test("Fly request timeouts return the durable operation to its retry queue", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  provider.ensureEnvironmentApp = async () => {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_REJECTED",
+      "Fly Machines API rejected the request (408).",
+      408,
+    );
+  };
+  const provisioner = createProvisioner(repository, provider);
+  assert.equal(await provisioner.process("operation-id"), "deferred");
+  assert.deepEqual(calls, [
+    "environment:provisioning",
+    "operation:stage:environment.runtime.connecting",
+    "operation:deferred:Fly Machines API rejected the request (408).",
   ]);
 });
 

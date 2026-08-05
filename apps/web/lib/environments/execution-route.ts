@@ -3,7 +3,7 @@ import {
   signEnvironmentExecutionTicket,
   WORKSPACE_READINESS_TIMEOUT_MS,
 } from "@lumi/kestrel-environment-auth";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
 import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -85,6 +85,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     durableTurnId?: string | undefined;
   };
   owningLifecycleOperationIds?: readonly string[] | undefined;
+  owningReleaseTargetIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
   await requireHostedEnvironmentsEnabled({
@@ -166,6 +167,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
       workspaceId: resolved.binding.workspaceId,
       actorUserId: input.actorUserId,
       owningLifecycleOperationIds: input.owningLifecycleOperationIds,
+      owningReleaseTargetIds: input.owningReleaseTargetIds,
       onProgress: input.onProgress,
     });
     const effectiveCapabilities = await snapshotEffectiveCapabilities({
@@ -191,6 +193,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
       reasoningPolicy,
       recordExecution: input.recordExecution,
       owningLifecycleOperationIds: input.owningLifecycleOperationIds,
+      owningReleaseTargetIds: input.owningReleaseTargetIds,
     });
   }
   let mcpPolicy;
@@ -367,6 +370,7 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
       }
     | undefined;
   owningLifecycleOperationIds?: readonly string[] | undefined;
+  owningReleaseTargetIds?: readonly string[] | undefined;
 }) {
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
@@ -422,6 +426,9 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
           and(
             eq(table.environmentId, input.environmentId),
             inArray(table.status, ["draining", "applying", "verifying"]),
+            ...(input.owningReleaseTargetIds?.length
+              ? [notInArray(table.id, [...input.owningReleaseTargetIds])]
+              : []),
           ),
         columns: { id: true },
       }),
@@ -586,6 +593,7 @@ async function waitForExecutionResources(input: {
   workspaceId: string;
   actorUserId: string;
   owningLifecycleOperationIds?: readonly string[] | undefined;
+  owningReleaseTargetIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
   const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
@@ -628,6 +636,9 @@ async function waitForExecutionResources(input: {
               "applying",
               "verifying",
             ]),
+            ...(input.owningReleaseTargetIds?.length
+              ? [notInArray(table.id, [...input.owningReleaseTargetIds])]
+              : []),
           ),
         columns: { id: true },
       }),

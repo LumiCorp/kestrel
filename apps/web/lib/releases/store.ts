@@ -20,6 +20,7 @@ import {
 } from "./contracts";
 import { digestCanonicalJson } from "./digest";
 import { mergePinnedFlyImageReleaseHistory } from "./history";
+import { RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS } from "./controller-contract";
 
 export const FLY_IMAGE_RELEASE_LOCK_KEY = "kestrel:fly-image-release";
 
@@ -32,6 +33,7 @@ export class FlyImageReleaseError extends Error {
     readonly code:
       | "RELEASE_ACTIVE"
       | "RELEASE_CANARY_REQUIRED"
+      | "RELEASE_CONTROLLER_STALE"
       | "RELEASE_INCOMPLETE"
       | "RELEASE_MIGRATION_BLOCKED"
       | "RELEASE_NOT_FOUND"
@@ -49,6 +51,21 @@ export async function registerFlyImageReleaseCandidate(
   const manifest = flyImageReleaseManifestV1Schema.parse(input);
   for (const component of manifest.components) {
     assertFlyImageMatchesRole(component.role, component.image);
+  }
+  const controller =
+    await knowledgeDb.query.releaseControllerHeartbeats.findFirst({
+      where: eq(schema.releaseControllerHeartbeats.id, "platform"),
+    });
+  if (
+    !controller ||
+    controller.contractRevision < manifest.controllerContractRevision ||
+    Date.now() - controller.heartbeatAt.getTime() >
+      RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS
+  ) {
+    throw new FlyImageReleaseError(
+      "RELEASE_CONTROLLER_STALE",
+      `Release controller revision ${manifest.controllerContractRevision} is not healthy. Deploy and verify the control worker before publishing this candidate.`,
+    );
   }
 
   return knowledgeDb.transaction(async (transaction) => {
@@ -94,6 +111,7 @@ export async function registerFlyImageReleaseCandidate(
     });
     const manifestDigest = digestCanonicalJson({
       version: manifest.version,
+      controllerContractRevision: manifest.controllerContractRevision,
       bundleRevision: manifest.bundleRevision,
       trigger: manifest.trigger,
       migrationChanged: manifest.migrationChanged,
@@ -157,9 +175,11 @@ export async function listFlyImageReleases(limit = 25) {
     }),
   ]);
   const recentIds = new Set(recentReleases.map((release) => release.id));
-  const pinnedIds = [settings?.activeReleaseId, settings?.stableReleaseId].filter(
-    (releaseId): releaseId is string =>
-      Boolean(releaseId && !recentIds.has(releaseId)),
+  const pinnedIds = [
+    settings?.activeReleaseId,
+    settings?.stableReleaseId,
+  ].filter((releaseId): releaseId is string =>
+    Boolean(releaseId && !recentIds.has(releaseId)),
   );
   const pinnedReleases = pinnedIds.length
     ? await knowledgeDb
@@ -855,8 +875,8 @@ async function releaseChangesEnvironmentImages(
   transaction: KnowledgeTransaction,
   releaseId: string,
 ) {
-  const component =
-    await transaction.query.flyImageReleaseComponents.findFirst({
+  const component = await transaction.query.flyImageReleaseComponents.findFirst(
+    {
       where: and(
         eq(schema.flyImageReleaseComponents.releaseId, releaseId),
         eq(schema.flyImageReleaseComponents.changed, true),
@@ -866,7 +886,8 @@ async function releaseChangesEnvironmentImages(
         ]),
       ),
       columns: { id: true },
-    });
+    },
+  );
   return Boolean(component);
 }
 

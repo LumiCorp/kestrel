@@ -70,7 +70,19 @@ test("Organization teardown queue delivery is single-writer and terminal-monoton
     queue,
     /LEGACY_ORGANIZATION_DELETION_QUEUE\s*=\s*"organization\.deletion"/u,
   );
-  assert.match(queue, /boss\.work\(LEGACY_ORGANIZATION_DELETION_QUEUE/u);
+  assert.match(
+    queue,
+    /LEGACY_ORGANIZATION_DELETION_QUEUE_V2\s*=\s*"organization\.deletion\.v2"/u,
+  );
+  assert.match(
+    queue,
+    /LEGACY_ORGANIZATION_DELETION_QUEUE,[\s\S]*?LEGACY_ORGANIZATION_DELETION_QUEUE_V2,[\s\S]*?ORGANIZATION_DELETION_QUEUE/u,
+  );
+  assert.doesNotMatch(
+    queue,
+    /boss\.work\(LEGACY_ORGANIZATION_DELETION_QUEUE/u,
+  );
+  assert.match(queue, /boss\.work\(ORGANIZATION_DELETION_QUEUE/u);
   assert.match(deletionService, /withOrganizationDeletionLock/u);
   assert.match(
     deletionService,

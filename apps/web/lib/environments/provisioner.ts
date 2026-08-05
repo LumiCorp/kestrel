@@ -33,6 +33,8 @@ export type ProvisioningOperation = {
   requestedByUserId: string | null;
   type: string;
   input: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
+  createdAt?: Date;
 };
 
 export interface EnvironmentProvisioningRepository {
@@ -181,7 +183,34 @@ export interface EnvironmentProvisioningRepository {
     stage: string;
     code?: string | undefined;
     message: string;
+    retryState?:
+      | {
+          attempt: number;
+          firstFailureAt: string;
+          lastError: { code: string; message: string };
+          nextAttemptAt: string;
+          authoritativeState?: unknown;
+        }
+      | undefined;
   }): Promise<void>;
+}
+
+export const RELEASE_RETRY_BUDGET_MS = 15 * 60 * 1000;
+
+export function releaseRetryDelaySeconds(attempt: number) {
+  return [5, 10, 20, 40, 80][attempt - 1] ?? 120;
+}
+
+export function releaseRetryNextAttemptAt(
+  firstFailureAt: string,
+  attempt: number,
+  now = Date.now(),
+) {
+  const deadline = Date.parse(firstFailureAt) + RELEASE_RETRY_BUDGET_MS;
+  if (now >= deadline) return null;
+  return new Date(
+    Math.min(deadline, now + releaseRetryDelaySeconds(attempt) * 1000),
+  ).toISOString();
 }
 
 export class EnvironmentProvisioner {
@@ -199,6 +228,7 @@ export class EnvironmentProvisioner {
     reason: "pre_destructive";
     idempotencyKey: string;
     parentLifecycleOperationId?: string | undefined;
+    parentReleaseTargetId?: string | undefined;
     preDestructiveSnapshot?: { id: string; state: string } | undefined;
   }) => Promise<unknown>;
 
@@ -218,6 +248,7 @@ export class EnvironmentProvisioner {
           reason: "pre_destructive";
           idempotencyKey: string;
           parentLifecycleOperationId?: string | undefined;
+          parentReleaseTargetId?: string | undefined;
           preDestructiveSnapshot?: { id: string; state: string } | undefined;
         }) => Promise<unknown>)
       | undefined;
@@ -312,12 +343,53 @@ export class EnvironmentProvisioner {
         return "deferred";
       }
       if (failure.retryable) {
+        const releaseTargetId = readInputString(
+          operation.input,
+          "releaseTargetId",
+        );
+        const previousRetry = asRecord(operation.result)?.retryState;
+        const firstFailureAt =
+          readInputString(asRecord(previousRetry), "firstFailureAt") ??
+          new Date().toISOString();
+        const retryAttempt =
+          Number(asRecord(previousRetry)?.attempt ?? 0) + 1;
+        const nextAttemptAt = releaseRetryNextAttemptAt(
+          firstFailureAt,
+          retryAttempt,
+        );
+        if (releaseTargetId && !nextAttemptAt) {
+          await this.repository.failOperation({
+            operationId: operation.id,
+            stage: "environment.provider.retry_exhausted",
+            code: "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
+            message: `Automatic provider retries were exhausted after 15 minutes. Last response: ${failure.message}`,
+          });
+          if (operation.workspaceId) {
+            await this.repository.failWorkspace({
+              workspaceId: operation.workspaceId,
+              code: "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
+              message: failure.message,
+            });
+          }
+          return "processed";
+        }
         await this.repository.deferOperation({
           operationId: operation.id,
           attempt: operation.attempt,
           stage: "environment.provider.retrying",
           code: failure.code,
           message: failure.message,
+          retryState: {
+            attempt: retryAttempt,
+            firstFailureAt,
+            lastError: { code: failure.code, message: failure.message },
+            nextAttemptAt:
+              nextAttemptAt ??
+              new Date(
+                Date.now() + releaseRetryDelaySeconds(retryAttempt) * 1000,
+              ).toISOString(),
+            authoritativeState: readAuthoritativeState(error),
+          },
         });
         return "deferred";
       }
@@ -626,6 +698,10 @@ export class EnvironmentProvisioner {
           reason: "pre_destructive",
           idempotencyKey: `environment.update:${operation.id}:backup:${workspace.id}`,
           parentLifecycleOperationId: operation.id,
+          parentReleaseTargetId:
+            typeof operation.input?.releaseTargetId === "string"
+              ? operation.input.releaseTargetId
+              : undefined,
         } as const;
         try {
           await this.backupWorkspace(backupInput);
@@ -804,11 +880,13 @@ export class EnvironmentProvisioner {
       });
     } catch (error) {
       const failure = safeFailure(error);
-      await this.repository.failWorkspace({
-        workspaceId: input.workspaceId,
-        code: failure.code,
-        message: failure.message,
-      });
+      if (!failure.retryable) {
+        await this.repository.failWorkspace({
+          workspaceId: input.workspaceId,
+          code: failure.code,
+          message: failure.message,
+        });
+      }
       throw error;
     }
   }
@@ -1269,6 +1347,8 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           requestedByUserId: schema.environmentOperations.requestedByUserId,
           type: schema.environmentOperations.type,
           input: schema.environmentOperations.input,
+          result: schema.environmentOperations.result,
+          createdAt: schema.environmentOperations.createdAt,
         });
       return claimed ?? null;
     },
@@ -1892,24 +1972,57 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .where(eq(schema.environmentOperations.id, input.operationId));
     },
     async deferOperation(input) {
-      await knowledgeDb
-        .update(schema.environmentOperations)
-        .set({
-          status: "queued",
-          stage: input.stage,
-          errorCode: input.code ?? null,
-          errorMessage: input.message,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(schema.environmentOperations.id, input.operationId),
-            eq(schema.environmentOperations.status, "running"),
-            ...(input.attempt === undefined
-              ? []
-              : [eq(schema.environmentOperations.attempt, input.attempt)]),
-          ),
+      await knowledgeDb.transaction(async (transaction) => {
+        const [operation] = await transaction
+          .update(schema.environmentOperations)
+          .set({
+            status: "queued",
+            stage: input.stage,
+            errorCode: input.code ?? null,
+            errorMessage: input.message,
+            ...(input.retryState
+              ? { result: { retryState: input.retryState } }
+              : {}),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(schema.environmentOperations.id, input.operationId),
+              eq(schema.environmentOperations.status, "running"),
+              ...(input.attempt === undefined
+                ? []
+                : [eq(schema.environmentOperations.attempt, input.attempt)]),
+            ),
+          )
+          .returning({ input: schema.environmentOperations.input });
+        const releaseTargetId = readInputString(
+          operation?.input,
+          "releaseTargetId",
         );
+        if (releaseTargetId && input.retryState) {
+          const target =
+            await transaction.query.flyImageReleaseTargets.findFirst({
+              where: (table, { eq }) => eq(table.id, releaseTargetId),
+              columns: { result: true },
+            });
+          await transaction
+            .update(schema.flyImageReleaseTargets)
+            .set({
+              status: "applying",
+              stage: "environment.provider.retrying",
+              result: {
+                ...(target?.result ?? {}),
+                retryAttempt: input.retryState.attempt,
+                firstFailureAt: input.retryState.firstFailureAt,
+                lastProviderResponse: input.retryState.lastError,
+                nextAttemptAt: input.retryState.nextAttemptAt,
+                authoritativeState: input.retryState.authoritativeState,
+              },
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.flyImageReleaseTargets.id, releaseTargetId));
+        }
+      });
     },
   };
 
@@ -2023,8 +2136,10 @@ function safeFailure(error: unknown): {
       retryable:
         error instanceof EnvironmentProviderError &&
         (error.code === "FLY_PROVIDER_UNAVAILABLE" ||
-          error.status === 412 ||
+          error.status === 408 ||
           error.status === 429 ||
+          ([409, 412].includes(error.status ?? 0) &&
+            readAuthoritativeState(error) !== undefined) ||
           (error.status !== undefined && error.status >= 500)),
     };
   }
@@ -2041,4 +2156,19 @@ function hasErrorCode(error: unknown, code: string) {
     "code" in error &&
     (error as Error & { code?: unknown }).code === code
   );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readInputString(value: unknown, key: string) {
+  const candidate = asRecord(value)?.[key];
+  return typeof candidate === "string" ? candidate : null;
+}
+
+function readAuthoritativeState(error: unknown) {
+  return asRecord(error)?.authoritativeState;
 }
