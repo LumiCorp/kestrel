@@ -4,6 +4,7 @@ import path from "node:path";
 import { startLocalCoreApiServer } from "./api.js";
 import { resolveLocalCoreBuildIdentity } from "./buildIdentity.js";
 import { LOCAL_CORE_SCHEMA_VERSION } from "./contracts.js";
+import type { LocalCoreCredentialStore } from "./credentialStore.js";
 import { MacosKeychainCredentialStore } from "./macosKeychainCredentialStore.js";
 import { parseLocalCorePlatform } from "./platform.js";
 
@@ -27,6 +28,10 @@ export async function runLocalCoreDaemon(env: NodeJS.ProcessEnv = process.env): 
       `Local Core build changed during startup: expected ${expectedBuildId}, resolved ${buildIdentity.buildId}.`,
     );
   }
+  const credentialStore = resolveLocalCoreDaemonCredentialStore({
+    platform,
+    configuredStore: env.KESTREL_CORE_CREDENTIAL_STORE,
+  });
   const server = await startLocalCoreApiServer({
     env,
     platform,
@@ -41,9 +46,7 @@ export async function runLocalCoreDaemon(env: NodeJS.ProcessEnv = process.env): 
     runMigrations: env.KESTREL_CORE_RUN_MIGRATIONS === "1",
     repoRoot: env.KESTREL_CORE_REPO_ROOT,
     idleTimeoutMs: parseInteger(env.KESTREL_CORE_IDLE_TIMEOUT_MS) ?? DEFAULT_IDLE_TIMEOUT_MS,
-    ...(platform === "darwin" && env.KESTREL_CORE_CREDENTIAL_STORE === "macos_keychain"
-      ? { credentialStore: new MacosKeychainCredentialStore() }
-      : {}),
+    ...(credentialStore !== undefined ? { credentialStore } : {}),
   });
 
   const close = async () => {
@@ -60,6 +63,29 @@ export async function runLocalCoreDaemon(env: NodeJS.ProcessEnv = process.env): 
 function resolveRuntimeRoot(env: NodeJS.ProcessEnv): string {
   const explicit = env.KESTREL_CLI_LIBEXEC?.trim() || env.KESTREL_CORE_REPO_ROOT?.trim();
   return explicit ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+}
+
+export function resolveLocalCoreDaemonCredentialStore(input: {
+  platform: NodeJS.Platform;
+  configuredStore?: string | undefined;
+}): LocalCoreCredentialStore | undefined {
+  const configuredStore = input.configuredStore?.trim();
+  if (
+    configuredStore !== undefined &&
+    configuredStore.length > 0 &&
+    configuredStore !== "macos_keychain" &&
+    configuredStore !== "environment"
+  ) {
+    throw new Error(
+      `Unsupported Local Core credential store '${configuredStore}'.`,
+    );
+  }
+  if (configuredStore === "environment") {
+    return undefined;
+  }
+  return input.platform === "darwin"
+    ? new MacosKeychainCredentialStore()
+    : undefined;
 }
 
 function readRequiredEnv(env: NodeJS.ProcessEnv, key: string): string {

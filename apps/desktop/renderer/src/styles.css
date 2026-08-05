@@ -1,6 +1,7 @@
 @import "./styles/legacy.css";
 @import "./styles/tokens.css";
 @import "./styles/foundation.css";
+@import "./styles/launch.css";
 @import "./styles/shell.css";
 @import "./styles/conversation.css";
 @import "./styles/workspaces.css";

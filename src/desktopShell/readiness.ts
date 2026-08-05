@@ -57,11 +57,12 @@ export function deriveDesktopReadiness(input: DeriveDesktopReadinessInput): Desk
     ? deriveDesktopOnboardingState(input.settings)
     : undefined;
   const providerConfigured =
-    onboarding?.providerRequirementState === "ready"
+    input.providerConfigured ??
+    (onboarding?.providerRequirementState === "ready"
       ? true
       : onboarding?.providerRequirementState === "choice_required"
         ? false
-        : input.providerConfigured;
+        : undefined);
   const resourcesReady = input.resourcesReady;
   const settingsLoaded = input.settingsLoaded;
   const projectCount = input.projectCount;
@@ -97,31 +98,30 @@ export function deriveDesktopReadiness(input: DeriveDesktopReadinessInput): Desk
     item(
       "provider",
       "Model provider",
-      onboarding?.providerRequirementState === "choice_required"
-        ? "degraded"
+      providerConfigured === true
+        ? "ready"
+        : onboarding?.providerRequirementState === "choice_required"
+        ? "starting"
         : onboarding?.providerRequirementState === "credential_required"
           ? onboarding.providerIssueOwnedBySetup
-            ? "degraded"
+            ? "starting"
             : "blocked"
           : providerConfigured === false
             ? "blocked"
-            : providerConfigured === true
-              ? "ready"
-              : "unknown",
-      onboarding?.providerRequirementState === "choice_required"
-        ? "Choose a model provider to finish Desktop setup."
+            : "unknown",
+      providerConfigured === true
+        ? "The selected model provider is configured."
+        : onboarding?.providerRequirementState === "choice_required"
+        ? "Runtime starts after you choose and verify a model provider."
         : onboarding?.providerRequirementState === "credential_required"
           ? onboarding.providerIssueOwnedBySetup
-            ? "Add the selected provider API key to finish Desktop setup."
+            ? "Runtime starts after the selected provider is verified."
             : "The selected model provider has no configured key."
-          : providerConfigured === true
-            ? "The selected model provider is configured."
-            : providerConfigured === false
-              ? "The selected model provider has no configured key."
-              : "Provider key status has not reported yet.",
+          : providerConfigured === false
+            ? "The selected model provider has no configured key."
+            : "Provider key status has not reported yet.",
       undefined,
-      (onboarding?.providerRequirementState !== "ready" ||
-        providerConfigured === false)
+      providerConfigured !== true
         ? {
             label: "Open Settings",
             command: "open_settings",
@@ -361,7 +361,9 @@ function summarize(
     return {
       state: "starting",
       title: "Desktop starting",
-      detail: bootState?.message ?? "Desktop checks are still starting.",
+      detail: bootState?.message
+        ?? firstItemInState(items, "starting")?.detail
+        ?? "Desktop checks are still starting.",
     };
   }
   if (items.some((entry) => entry.state === "unknown")) {

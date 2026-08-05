@@ -66,13 +66,17 @@ Local Core settings support two database modes:
 
 ## First-Run Setup
 
-Packaged Desktop treats first-run onboarding as an explicit choice flow, not a silent OpenRouter default. A public 0.7 artifact must be Developer ID signed and notarized.
+The Vite renderer owns one full-window launch experience from the first frame. The runner is not a prerequisite for setup: Desktop initializes Local Core, settings, secure-storage status, and PGlite first, then either renders onboarding or starts execution for an already completed installation.
 
-- Guided setup requires the user to choose one provider first: `openrouter`, `openai`, `anthropic`, `ollama`, or `lmstudio`.
-- Hosted providers require a Local Core Keychain credential before runs can start.
-- Local providers (`ollama`, `lmstudio`) do not require an API key by default and use local OpenAI-compatible base URLs.
-- If onboarding is incomplete, Desktop resumes the first unfinished milestone instead of routing provider setup through the blocked recovery screen.
-- Settings is the authoritative capability surface for models, built-in tools, local execution, MCP, storage, and operating-system permissions. Credential inputs are write-only and verified before replacement.
+- Setup is mandatory and requires one verified model plus one available project folder.
+- OpenRouter is presented first as the recommended hosted path; OpenAI and Anthropic are equal alternatives. Ollama and LM Studio are grouped as local providers.
+- Provider verification performs the provider's authenticated account check where required, then confirms the selected model through a bounded catalog request without sending an inference request. Local providers are checked only for endpoint reachability and loaded-model availability. Hosted credentials are write-only renderer inputs and are stored only by Local Core in the macOS Keychain.
+- Project selection is inspect-then-confirm. Existing Git and non-empty non-Git folders are registered without mutation. Empty folders and Git repositories without a HEAD require an explicit disclosure before Kestrel creates an empty initial commit.
+- Non-secret progress is stored in the versioned `DesktopOnboardingRecordV1`. Legacy completion markers remain readable and are dual-written when v1 completion succeeds.
+- Runtime startup is deferred until the Review screen. Completion is persisted only after the runner handshake succeeds; a failed handshake preserves the verified provider and project for retry.
+- Successful setup persists a stable one-time handoff and opens an empty conversation bound to the selected project and default model. The handoff is acknowledged only after that conversation reaches Local Core UI-state storage, so a crash cannot lose or duplicate it. No tutorial or paid model turn runs automatically.
+- Missing credentials or projects after completion route to the relevant repair step. Optional tools, Apps, local execution, MCP, storage, and permissions remain Settings-owned after onboarding.
+- The Vite renderer reports a generation-scoped readiness signal only after React commits and the launch stylesheet sentinel is present. Missing assets, renderer crashes, fatal bootstrap reports, and a ten-second bootstrap timeout open the static `boot.html` fallback, which exposes Restart and Diagnostics but no setup actions.
 
 ## 0.7 Release Boundaries
 

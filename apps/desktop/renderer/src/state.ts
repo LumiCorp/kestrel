@@ -104,6 +104,7 @@ export interface DesktopRendererState {
 export function readDesktopRendererState(
   uiState: DesktopUiStateV1 | null,
   defaults: {
+    projectPath?: string | undefined;
     modelConfigurationId?: string | undefined;
     modelConfigurationRevision?: number | undefined;
     enabledAppIds?: string[] | undefined;
@@ -159,7 +160,7 @@ export function createRendererThread(input: {
       : {}),
     updatedAt: now,
     transcript: [],
-    mode: "build",
+    mode: "chat",
     workspaceMode: "local",
     workspaceBaseRef: "HEAD",
     workspaceSetupIgnoredFiles: "",
@@ -181,6 +182,45 @@ export function createRendererThread(input: {
     ],
     rawSummary: {},
     rawState: {},
+  };
+}
+
+export function applyDesktopOnboardingHandoff(
+  state: DesktopRendererState,
+  input: {
+    id: string;
+    projectPath: string;
+    replaceInitialThread: boolean;
+    modelConfigurationId?: string | undefined;
+    modelConfigurationRevision?: number | undefined;
+    enabledAppIds?: string[] | undefined;
+  },
+): DesktopRendererState {
+  const existing = state.threads.find(
+    (thread) => thread.rawState.onboardingHandoffId === input.id,
+  );
+  if (existing !== undefined) {
+    return { ...state, activeThreadId: existing.id };
+  }
+  const thread = createRendererThread({
+    projectPath: input.projectPath,
+    ...(input.modelConfigurationId !== undefined
+      ? { modelConfigurationId: input.modelConfigurationId }
+      : {}),
+    ...(input.modelConfigurationRevision !== undefined
+      ? { modelConfigurationRevision: input.modelConfigurationRevision }
+      : {}),
+    ...(input.enabledAppIds !== undefined
+      ? { enabledAppIds: input.enabledAppIds }
+      : {}),
+  });
+  thread.rawState = { onboardingHandoffId: input.id };
+  return {
+    ...state,
+    activeThreadId: thread.id,
+    threads: input.replaceInitialThread
+      ? [thread]
+      : [thread, ...state.threads],
   };
 }
 
@@ -745,9 +785,10 @@ function collectThreads(store: {
           : (transcript.at(-1)?.timestamp ?? new Date().toISOString());
       const mode: RendererMode =
         rawState.interactionMode === "chat" ||
-        rawState.interactionMode === "plan"
+        rawState.interactionMode === "plan" ||
+        rawState.interactionMode === "build"
           ? rawState.interactionMode
-          : "build";
+          : "chat";
       const workspaceMode: RendererWorkspaceMode =
         rawState.workspaceMode === "managed" ? "managed" : "local";
       const workspaceBaseRef =

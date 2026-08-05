@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   DesktopBootState,
+  DesktopLaunchState,
+  DesktopOnboardingDraftInput,
+  DesktopOnboardingProviderInput,
+  DesktopRendererBootstrapReport,
   DesktopAttachmentImportInput,
   DesktopBridge,
   DesktopBridgeInfo,
@@ -40,6 +44,41 @@ const desktopBridge: DesktopBridge = {
   },
   getAppInfo() {
     return ipcRenderer.invoke("desktop:get-app-info");
+  },
+  getLaunchState(): Promise<DesktopLaunchState> {
+    return ipcRenderer.invoke("desktop:get-launch-state");
+  },
+  onLaunchState(listener) {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: DesktopLaunchState,
+    ) => listener(state);
+    ipcRenderer.on("desktop:launch-state", handler);
+    return () => ipcRenderer.removeListener("desktop:launch-state", handler);
+  },
+  getOnboardingState() {
+    return ipcRenderer.invoke("desktop:get-onboarding-state");
+  },
+  saveOnboardingDraft(input: DesktopOnboardingDraftInput) {
+    return ipcRenderer.invoke("desktop:save-onboarding-draft", input);
+  },
+  verifyOnboardingProvider(input: DesktopOnboardingProviderInput) {
+    return ipcRenderer.invoke("desktop:verify-onboarding-provider", input);
+  },
+  pickOnboardingProject() {
+    return ipcRenderer.invoke("desktop:pick-onboarding-project");
+  },
+  inspectOnboardingProject(path) {
+    return ipcRenderer.invoke("desktop:inspect-onboarding-project", path);
+  },
+  confirmOnboardingProject(input) {
+    return ipcRenderer.invoke("desktop:confirm-onboarding-project", input);
+  },
+  completeOnboarding() {
+    return ipcRenderer.invoke("desktop:complete-onboarding");
+  },
+  reportRendererBootstrap(report: DesktopRendererBootstrapReport) {
+    return ipcRenderer.invoke("desktop:report-renderer-bootstrap", report);
   },
   getSupportBundle(): Promise<DesktopSupportBundle> {
     return ipcRenderer.invoke("desktop:get-support-bundle");
@@ -177,8 +216,8 @@ const desktopBridge: DesktopBridge = {
   getModelPolicy(): Promise<ModelPolicyV1> {
     return ipcRenderer.invoke("desktop:get-model-policy");
   },
-  getModelCatalog(provider) {
-    return ipcRenderer.invoke("desktop:get-model-catalog", provider);
+  getModelCatalog(request) {
+    return ipcRenderer.invoke("desktop:get-model-catalog", request);
   },
   getBootState() {
     return ipcRenderer.invoke("desktop:get-boot-state");

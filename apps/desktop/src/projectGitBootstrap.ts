@@ -19,6 +19,53 @@ export interface DesktopProjectGitBootstrapResult {
   status: DesktopProjectGitBootstrapStatus;
 }
 
+export type DesktopProjectInspectionKind =
+  | "existing_git"
+  | "non_empty"
+  | "empty"
+  | "git_without_head";
+
+export interface DesktopProjectInspection {
+  projectPath: string;
+  kind: DesktopProjectInspectionKind;
+  requiresGitBootstrap: boolean;
+}
+
+export async function inspectDesktopProjectGitBootstrap(
+  projectPath: string,
+): Promise<DesktopProjectInspection> {
+  const directory = await stat(projectPath);
+  if (directory.isDirectory() === false) {
+    throw createRuntimeFailure(
+      "DESKTOP_PROJECT_PATH_INVALID",
+      `Desktop project path must be a directory: ${projectPath}`,
+      { projectPath },
+    );
+  }
+  const existingGit = await hasGitRepository(projectPath);
+  if (existingGit) {
+    if (await hasGitHead(projectPath)) {
+      return { projectPath, kind: "existing_git", requiresGitBootstrap: false };
+    }
+    return {
+      projectPath,
+      kind: "git_without_head",
+      requiresGitBootstrap: true,
+    };
+  }
+  const safeToBootstrap = await isNewProjectDirectory(projectPath, {
+    ignoreGitDirectory: false,
+  });
+  if (safeToBootstrap === false) {
+    return { projectPath, kind: "non_empty", requiresGitBootstrap: false };
+  }
+  return {
+    projectPath,
+    kind: "empty",
+    requiresGitBootstrap: true,
+  };
+}
+
 export async function prepareDesktopProjectRegistrations(
   projects: readonly DesktopProjectRegistration[],
 ): Promise<DesktopProjectRegistration[]> {
@@ -39,32 +86,31 @@ export async function prepareDesktopProjectRegistrations(
 
 export async function ensureDesktopProjectGitBootstrap(
   projectPath: string,
+  options: {
+    allowNonEmptyGitWithoutHeadBootstrap?: boolean | undefined;
+  } = {},
 ): Promise<DesktopProjectGitBootstrapResult> {
-  const directory = await stat(projectPath);
-  if (directory.isDirectory() === false) {
-    throw createRuntimeFailure(
-      "DESKTOP_PROJECT_PATH_INVALID",
-      `Desktop project path must be a directory: ${projectPath}`,
-      { projectPath },
-    );
-  }
-
-  const existingGit = await hasGitRepository(projectPath);
-  if (existingGit && await hasGitHead(projectPath)) {
+  const inspection = await inspectDesktopProjectGitBootstrap(projectPath);
+  if (inspection.kind === "existing_git") {
     return { projectPath, status: "existing_git" };
   }
-
-  const safeToBootstrap = await isNewProjectDirectory(projectPath, {
-    ignoreGitDirectory: existingGit,
-  });
-  if (safeToBootstrap === false) {
+  if (inspection.kind === "non_empty") {
     return { projectPath, status: "skipped_non_empty" };
   }
-
-  if (existingGit === false) {
+  if (inspection.kind === "empty") {
     await git(projectPath, ["init"]);
     await createEmptyInitialCommit(projectPath);
     return { projectPath, status: "initialized" };
+  }
+
+  const safeToBootstrap = await isNewProjectDirectory(projectPath, {
+    ignoreGitDirectory: true,
+  });
+  if (
+    safeToBootstrap === false &&
+    options.allowNonEmptyGitWithoutHeadBootstrap !== true
+  ) {
+    return { projectPath, status: "skipped_non_empty" };
   }
 
   await createEmptyInitialCommit(projectPath);

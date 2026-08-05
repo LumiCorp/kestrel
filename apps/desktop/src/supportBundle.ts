@@ -1,5 +1,6 @@
 import type {
   DesktopBootState,
+  DesktopLaunchState,
   DesktopRuntimeStatus,
 } from "./contracts.js";
 import type {
@@ -22,6 +23,7 @@ export interface DesktopSupportBundleInput {
     isPackaged: boolean;
   };
   bootState: DesktopBootState;
+  launchState?: DesktopLaunchState | undefined;
   runtimeHealth: DesktopRuntimeHealth;
   databaseStatus: DesktopDatabaseStatus;
   settings: DesktopSettings;
@@ -64,6 +66,7 @@ export function buildDesktopSupportBundle(input: DesktopSupportBundleInput): Sup
     ],
     extra: {
       boot: input.bootState,
+      ...(input.launchState !== undefined ? { launch: input.launchState } : {}),
       ...(input.localCoreStatus !== undefined ? { localCore: input.localCoreStatus } : {}),
       ...(input.coreSupportBundle !== undefined ? { coreSupportBundle: input.coreSupportBundle } : {}),
     },

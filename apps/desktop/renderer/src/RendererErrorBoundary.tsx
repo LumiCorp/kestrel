@@ -4,6 +4,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { reportRendererBootstrapFailure } from "./rendererBootstrap";
+
 interface RendererErrorBoundaryProps {
   children: ReactNode;
 }
@@ -23,6 +25,7 @@ export class RendererErrorBoundary extends Component<
   }
 
   public componentDidCatch(error: Error, info: ErrorInfo): void {
+    reportRendererBootstrapFailure("react_error");
     console.error("Kestrel Desktop renderer failed.", error, info.componentStack);
   }
 
