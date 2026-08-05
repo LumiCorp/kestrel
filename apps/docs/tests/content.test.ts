@@ -169,9 +169,9 @@ test("release metadata separates packages from product availability", async () =
     "https://github.com/LumiCorp/kestrel/releases/download/v0.8.0/Kestrel-0.8.0-mac-arm64.dmg",
   );
   assert.equal(DOCS_RELEASE.products.cli.version, PACKAGE_VERSION);
-  assert.equal(DOCS_RELEASE.packages.runtimeNpmVersion, "0.8.1");
+  assert.equal(DOCS_RELEASE.packages.runtimeNpmVersion, "0.8.2");
   assert.equal(DOCS_RELEASE.products.cli.npmVersion, DOCS_RELEASE.packages.runtimeNpmVersion);
-  assert.equal(DOCS_RELEASE.products.cli.installCommand, "npm install -g @kestrel-agents/kestrel@0.8.1");
+  assert.equal(DOCS_RELEASE.products.cli.installCommand, "npm install -g @kestrel-agents/kestrel@0.8.2");
   assert.equal(DOCS_RELEASE.products.kestrelOne.version, PACKAGE_VERSION);
   assert.equal(DOCS_RELEASE.products.kestrelOne.channel, "Beta");
   assert.equal(DOCS_RELEASE.products.kestrelOne.hostedAccess, "Invitation");

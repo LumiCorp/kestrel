@@ -86,20 +86,20 @@ function validEvidence() {
     version: "0.8.0",
     sourceSha,
     npm: {
-      runtimeVersion: "0.8.1",
+      runtimeVersion: "0.8.2",
       packages: packageNames.map((name) => ({
         name,
-        version: name === "@kestrel-agents/kestrel" ? "0.8.1" : "0.8.0",
+        version: name === "@kestrel-agents/kestrel" ? "0.8.2" : "0.8.0",
         gitHead: sourceSha,
         integrity: "sha512-YWJjZA==",
         distTags: {
-          "release-0.8.0": name === "@kestrel-agents/kestrel" ? "0.8.1" : "0.8.0",
+          "release-0.8.0": name === "@kestrel-agents/kestrel" ? "0.8.2" : "0.8.0",
           latest: "0.7.0",
         },
       })),
       consumerSmokes: ["darwin-arm64", "linux-x64"].map((platform) => ({
         platform,
-        version: "0.8.1",
+        version: "0.8.2",
         status: "passed",
         completedAt: timestamp,
       })),
