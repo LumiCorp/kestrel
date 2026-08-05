@@ -10,6 +10,7 @@ import {
   FileText,
   Github,
   Laptop,
+  Terminal,
   Users,
 } from "lucide-react";
 import Image from "next/image";
@@ -32,7 +33,7 @@ import {
 const productPaths = [
   {
     id: "desktop",
-    status: "Beta",
+    status: "0.8 Beta",
     title: "Kestrel Desktop",
     description:
       "Start with the files and tools in a project on your computer. Choose a model, describe the outcome, and work with Kestrel in the same place.",
@@ -42,20 +43,30 @@ const productPaths = [
   },
   {
     id: "kestrel-one",
-    status: "Beta",
+    status: "0.8 Beta",
     title: "Kestrel One",
     description:
       "Bring people, shared context, and connected capabilities into the work with Projects, Threads, Knowledge, Apps, and execution Environments.",
-    action: "Explore Kestrel One Beta",
-    href: "https://docs.kestrelagents.dev/kestrel-one/getting-started",
+    action: "Access hosted Kestrel One",
+    href: "/sign-in",
     icon: Users,
   },
   {
-    id: "developers",
-    status: "0.7",
-    title: "Build with Kestrel",
+    id: "cli",
+    status: "0.8 Beta",
+    title: "Kestrel CLI/TUI",
     description:
-      "Work directly from the CLI/TUI or use the TypeScript SDK to start, stream, resume, and inspect runs in your own application.",
+      "Work from the terminal with the same durable sessions, Mission Control, recovery, profiles, tools, and terminal outcomes.",
+    action: "Install the CLI/TUI",
+    href: "https://docs.kestrelagents.dev/cli/install",
+    icon: Terminal,
+  },
+  {
+    id: "developers",
+    status: "0.8",
+    title: "Build with the SDK",
+    description:
+      "Embed Kestrel with exact 0.8 packages for execution, Memory, adapters, observability, recovery, and approvals.",
     action: "Build your first agent",
     href: "https://docs.kestrelagents.dev/build/building-your-first-agent",
     icon: Braces,
@@ -94,10 +105,10 @@ const capabilities = [
 ] as const;
 
 const betaNotes = [
-  "Desktop and Kestrel One release independently as Beta products.",
-  "Capabilities and availability can change as each product matures.",
-  "Current release status and known limitations remain public.",
-  "Reproducible issues and specific feedback guide what ships next.",
+  "Desktop, Kestrel One, CLI/TUI, Runtime, Protocol, and SDK packages share version 0.8.0.",
+  "Kestrel One source is public; Lumi-hosted access remains invitation-only.",
+  "Desktop 0.8.0 is a signed manual download; stable OTA proof is deferred to 0.8.1.",
+  "Release identity, known Beta limitations, and compatibility remain public.",
 ] as const;
 
 const footerLinkClass =
@@ -151,7 +162,7 @@ function BetaNotice() {
         <Badge className="border-primary/40 bg-primary/10" variant="outline">
           Beta
         </Badge>
-        <span>Kestrel Desktop and Kestrel One are in Beta.</span>
+        <span>Kestrel 0.8 is one coordinated Beta release across every product surface.</span>
         <Link
           className="inline-flex items-center gap-1 rounded-sm font-medium underline decoration-border underline-offset-4 hover:decoration-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           href="https://docs.kestrelagents.dev/start/release-status"
@@ -182,7 +193,10 @@ function MarketingFooter() {
             document work.
           </p>
           <p className="font-mono text-muted-foreground text-xs">
-            Kestrel Desktop and Kestrel One are Beta products.
+            Kestrel 0.8 is Beta across Desktop, One, CLI/TUI, and SDK integrations.
+          </p>
+          <p className="max-w-md text-muted-foreground text-sm leading-6">
+            Kestrel is maintained and supported by Lumi.
           </p>
         </div>
         <nav
@@ -225,12 +239,20 @@ function MarketingFooter() {
           >
             Security
           </Link>
+          <Link
+            className={footerLinkClass}
+            href="https://www.lumicorp.ai"
+          >
+            Lumi
+          </Link>
         </nav>
       </div>
       <div className="border-t">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-4 text-muted-foreground text-xs sm:px-6 lg:px-8">
           <span>Open source under the MIT License.</span>
-          <span>Built by Lumi Corp.</span>
+          <Link className={footerLinkClass} href="https://www.lumicorp.ai">
+            www.lumicorp.ai
+          </Link>
         </div>
       </div>
     </footer>
@@ -255,12 +277,12 @@ export function LandingPage() {
             <div className="space-y-8">
               <div className="space-y-5">
                 <div className="flex flex-wrap items-center gap-3 font-mono text-muted-foreground text-xs uppercase tracking-[0.18em]">
-                  <span>Kestrel Desktop</span>
+                  <span>Kestrel 0.8</span>
                   <span aria-hidden="true">·</span>
                   <span>Beta</span>
                 </div>
                 <h1 className="text-balance font-semibold text-5xl tracking-[-0.055em] sm:text-6xl lg:text-7xl">
-                  Open a project. Choose a model. Ask Kestrel to do the work.
+                  One Kestrel everywhere.
                 </h1>
                 <p className="text-balance font-medium text-2xl tracking-tight sm:text-3xl">
                   Kestrel is an open-source agent platform for building
@@ -269,9 +291,9 @@ export function LandingPage() {
                   files.
                 </p>
                 <p className="max-w-xl text-pretty text-lg text-muted-foreground leading-8">
-                  Start on your computer with Kestrel Desktop. Bring the same
-                  work into Kestrel One, the terminal, or your own TypeScript
-                  application when you need to go further.
+                  Desktop, Kestrel One, the CLI/TUI, and SDK integrations use
+                  the same 0.8 Runtime, Protocol, Mission Control, recovery,
+                  Memory, approvals, and evidence contracts.
                 </p>
               </div>
 
@@ -288,9 +310,15 @@ export function LandingPage() {
                   size="lg"
                   variant="outline"
                 >
-                  <Link href="https://docs.kestrelagents.dev/kestrel-one/getting-started">
-                    Explore Kestrel One Beta
+                  <Link href="/sign-in">
+                    Access hosted Kestrel One
                     <ArrowRight />
+                  </Link>
+                </Button>
+                <Button asChild className="h-11 px-5" size="lg" variant="ghost">
+                  <Link href="https://github.com/LumiCorp/kestrel/tree/v0.8.0/apps/web">
+                    <Github />
+                    View Kestrel One source
                   </Link>
                 </Button>
               </div>
@@ -378,12 +406,12 @@ export function LandingPage() {
         <section className="border-b py-20 sm:py-24" id="products">
           <div className="mx-auto max-w-7xl space-y-12 px-4 sm:px-6 lg:px-8">
             <SectionIntro
-              description="Desktop gives you the complete local application. Kestrel One adds a shared workspace, while the CLI/TUI and SDK give you direct access to the platform."
-              eyebrow="Desktop · Kestrel One · Developers"
-              title="Start on your computer. Add a team or integration when you need it."
+              description="Desktop, Kestrel One, CLI/TUI, and the SDK are peer entry points into one versioned runtime and contract system."
+              eyebrow="Desktop · Kestrel One · CLI/TUI · SDK"
+              title="Choose the surface. Keep the same Kestrel."
             />
 
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {productPaths.map((product, index) => (
                 <Card
                   className="group h-full scroll-mt-24 gap-8 overflow-hidden bg-card transition-colors hover:border-primary/45"
@@ -428,7 +456,7 @@ export function LandingPage() {
         <section className="border-b bg-surface py-20 sm:py-24">
           <div className="mx-auto max-w-7xl space-y-12 px-4 sm:px-6 lg:px-8">
             <SectionIntro
-              description="Desktop keeps the conversation, files, activity, and result beside the local project. Kestrel One gives a team shared Projects and Threads shaped by the context they need."
+              description="Desktop keeps durable local conversations and project evidence beside the files. Kestrel One carries that model into shared Projects, Threads, context revisions, Knowledge, Apps, and Environments."
               eyebrow="Kestrel Desktop · Kestrel One"
               title="Work in the project, then bring in the team."
             />
@@ -439,7 +467,7 @@ export function LandingPage() {
         <section className="border-b bg-card py-20 sm:py-24">
           <div className="mx-auto max-w-7xl space-y-12 px-4 sm:px-6 lg:px-8">
             <SectionIntro
-              description="Model steps, tool calls, files, questions, approvals, interruptions, artifacts, and final outcomes remain attached to the recorded run that produced them."
+              description="Mission Control, policy-bound recovery, action-bound approvals, governed Memory, tool activity, artifacts, and terminal outcomes remain attached to the recorded work and release identity that produced them."
               eyebrow="Kestrel Runtime"
               title="See the run, not just the answer."
             />
@@ -466,6 +494,12 @@ export function LandingPage() {
                   </Link>
                 </Button>
                 <Button asChild variant="outline">
+                  <Link href="https://docs.kestrelagents.dev/cli/install">
+                    <Terminal />
+                    npm install -g @kestrel-agents/kestrel@0.8.0
+                  </Link>
+                </Button>
+                <Button asChild variant="outline">
                   <Link href="https://github.com/LumiCorp/kestrel">
                     <Github />
                     View on GitHub
@@ -480,7 +514,7 @@ export function LandingPage() {
                   <Code2 className="size-4 text-code-number" />
                   agent.ts
                 </div>
-                <Badge variant="outline">SDK 0.7</Badge>
+                <Badge variant="outline">SDK 0.8</Badge>
               </div>
               <pre className="overflow-x-auto p-5 text-code-foreground text-sm leading-6">
                 <code>{sdkExample}</code>
@@ -501,9 +535,10 @@ export function LandingPage() {
                     Help shape Kestrel in Beta.
                   </h2>
                   <p className="mt-4 text-pretty text-muted-foreground leading-7">
-                    Desktop and Kestrel One are evolving in public. We document
-                    current availability and limitations, and use reproducible
-                    feedback to guide what ships next.
+                    Kestrel 0.8 evolves in public as one version across distinct
+                    distribution and access channels. Source, release evidence,
+                    documentation, and known Beta limitations remain visible.
+                    Kestrel is maintained and supported by Lumi.
                   </p>
                 </div>
                 <Button asChild className="w-fit" variant="outline">
@@ -532,13 +567,13 @@ export function LandingPage() {
           <div className="mx-auto max-w-5xl space-y-8 px-4 text-center sm:px-6 lg:px-8">
             <div className="space-y-4">
               <p className="font-mono text-muted-foreground text-xs uppercase tracking-[0.2em]">
-                Kestrel Desktop
+                Kestrel 0.8
               </p>
               <h2 className="text-balance font-semibold text-4xl tracking-[-0.04em] sm:text-6xl">
-                Start with a project you already know.
+                Choose how you want to start.
               </h2>
               <p className="mx-auto max-w-2xl text-pretty text-lg text-muted-foreground leading-8">
-                Choose your model and give Kestrel something useful to do.
+                Download Desktop, clone Kestrel One, access the invited hosted service, or read the docs.
               </p>
             </div>
             <div className="flex flex-col justify-center gap-3 sm:flex-row">
@@ -554,9 +589,21 @@ export function LandingPage() {
                 size="lg"
                 variant="outline"
               >
-                <Link href="https://docs.kestrelagents.dev/desktop">
+                <Link href="https://github.com/LumiCorp/kestrel/tree/v0.8.0/apps/web">
+                  <Github />
+                  Kestrel One source
+                </Link>
+              </Button>
+              <Button asChild className="h-11 px-5" size="lg" variant="outline">
+                <Link href="/sign-in">
+                  <Users />
+                  Hosted access
+                </Link>
+              </Button>
+              <Button asChild className="h-11 px-5" size="lg" variant="ghost">
+                <Link href="https://docs.kestrelagents.dev">
                   <BookOpen />
-                  Read the Desktop guide
+                  Read the docs
                 </Link>
               </Button>
             </div>

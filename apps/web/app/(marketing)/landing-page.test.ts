@@ -13,7 +13,7 @@ function readPackageFile(file: string) {
 }
 
 test(
-  "public Kestrel landing page keeps Beta status and authenticated workspace entry explicit",
+  "public Kestrel landing page presents unified 0.8, public One source, and separate hosted access",
   () => {
     const rootRoute = KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.find(
       (entry) => entry.kind === "page" && entry.route === "/",
@@ -21,6 +21,9 @@ test(
     const pageSource = readPackageFile("app/(marketing)/page.tsx");
     const landingSource = readPackageFile(
       "components/marketing/landing-page.tsx",
+    );
+    const headerSource = readPackageFile(
+      "components/marketing/marketing-header.tsx",
     );
     const showcaseSource = readPackageFile(
       "components/marketing/product-showcase.tsx",
@@ -45,11 +48,23 @@ test(
 
     assert.match(
       landingSource,
-      /Kestrel Desktop and Kestrel One are in Beta\./u,
+      /Kestrel 0\.8 is one coordinated Beta release/u,
     );
     assert.match(landingSource, /Download Desktop Beta/u);
-    assert.match(landingSource, /Explore Kestrel One Beta/u);
-    assert.match(landingSource, /SDK 0\.7/u);
+    assert.match(landingSource, /One Kestrel everywhere\./u);
+    assert.match(landingSource, /Access hosted Kestrel One/u);
+    assert.match(landingSource, /View Kestrel One source/u);
+    assert.match(landingSource, /github\.com\/LumiCorp\/kestrel\/tree\/v0\.8\.0\/apps\/web/u);
+    assert.match(landingSource, /SDK 0\.8/u);
+    assert.match(landingSource, /@kestrel-agents\/kestrel@0\.8\.0/u);
+    assert.match(landingSource, /invitation-only/u);
+    assert.match(
+      landingSource,
+      /Kestrel is maintained and supported by Lumi\./u,
+    );
+    assert.match(landingSource, /https:\/\/www\.lumicorp\.ai/u);
+    assert.match(headerSource, /https:\/\/www\.lumicorp\.ai/u);
+    assert.doesNotMatch(landingSource, /release independently/iu);
     assert.doesNotMatch(landingSource, /private beta/iu);
     assert.doesNotMatch(landingSource, /Release readiness/u);
     assert.doesNotMatch(showcaseSource, /Release readiness/u);
