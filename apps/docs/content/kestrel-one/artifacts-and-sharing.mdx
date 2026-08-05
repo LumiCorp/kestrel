@@ -5,14 +5,22 @@ section: kestrel-one
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 An **artifact** is an output richer than a chat message: a file, structured dataset, code result, sheet, or rendered interface. Kestrel One keeps artifacts attached to the Thread and Project that produced them so their origin remains clear.
 
+## Artifact identity and provenance
+
+An artifact records its owning organization, Project and Thread where applicable, run/turn, producing action, source/context revision, and terminal result. Review that identity before treating the file as approved output.
+
 ## Review an artifact
 
 Open the artifact from its Thread, confirm that it represents the intended run, and inspect any source or context references before distributing it. Access follows the owning Thread and Project; a person who cannot open that work cannot retrieve its private artifact through another route.
+
+## Approve external effects
+
+Reviewing an artifact does not authorize sending, publishing, purchasing, deploying, or otherwise affecting an external system. Those actions use a separate grant bound to the exact effect.
 
 ## Share a transcript
 
@@ -22,6 +30,14 @@ Sharing publishes an anonymized, read-only transcript at a private link. It does
 2. Use the Thread sharing action.
 3. Open the public link in a signed-out browser to verify the published view.
 4. Revoke the share when it should no longer be available.
+
+## Access and revocation
+
+Project membership controls private artifacts. A shared link exposes only its approved representation and can be revoked without changing the underlying Thread or organization record.
+
+## Reconnect and replay
+
+Artifacts and committed provenance survive reconnect. Replay may inspect their production evidence without regenerating or redistributing the artifact automatically.
 
 <Outcome>
   <p>The recipient can read the approved public representation, while the surrounding Project and organization remain inaccessible.</p>

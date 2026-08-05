@@ -5,7 +5,7 @@ section: kestrel-one
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 An **App** gives Kestrel One agents a set of named capabilities. An App may be
@@ -55,6 +55,22 @@ expanding its authority.
 Organization administrators can add a private MCP-backed App from Environment
 settings. Kestrel records the capabilities reported by the server and keeps
 them disabled until an administrator reviews and enables them.
+
+## MCP services
+
+Remote and Environment-installed MCP servers use the same capability snapshot and grant model. Connection ownership, OAuth, health, descriptors, and enabled operations remain explicit.
+
+## Network and execution policy
+
+An Environment chooses full or isolated network behavior. OCI/MCP egress is default-deny unless the owning policy allows the required destination. Container isolation does not itself authorize outbound access or additional workspace data.
+
+## Per-action authorization
+
+An installed App can make a capability visible without pre-authorizing every effect. Consequential operations may still require a grant bound to the exact actor, target, parameters, and action.
+
+## Confirm availability
+
+Verify the App is installed, its connection is ready, the Environment allows the capability, the Project has not narrowed it, and the effective agent can see the expected descriptor.
 
 <Outcome>
   <p>You can identify whether an App is ready, which connection it uses, and where an administrator controls the maximum access available to a Project.</p>

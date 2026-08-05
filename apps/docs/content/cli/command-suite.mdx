@@ -5,12 +5,16 @@ section: cli
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 Run `kestrel` or its `ks` alias without a command to open the interactive
 terminal client. Command mode provides focused operations that can also be used
 from scripts.
+
+## Invocation and aliases
+
+`kestrel` is canonical and `ks` is its interactive alias. Command mode returns process exit status; commands that advertise JSON or files keep structured output separate from human-readable diagnostics.
 
 ## Command-mode families
 
@@ -58,12 +62,20 @@ active state epoch:
 testing. In either case, Local Core resolves the active `state/<epoch>` below
 that root.
 
+## Projects, sessions, and Mission Control
+
+Workspace commands resolve local projects; interactive session commands preserve conversation identity. `/tasks` and related project views are Mission Control projections in 0.8, while operator commands control active or waiting runs.
+
 ## Scheduling status
 
 The separate `kcron` executable can install, start, stop, and inspect its local
 service and evaluate registered workspaces. Workspace execution is not
 available: an enabled workspace is recorded with the `deferred` outcome until
 the central scheduler is implemented. See [kcron availability](/cli/kcron).
+
+## Exit codes and structured output
+
+Treat zero as successful command completion and nonzero as a typed command/setup/runtime failure. For `job run`, read the required JSON output file and its terminal outcome rather than scraping terminal prose.
 
 ## Related references
 

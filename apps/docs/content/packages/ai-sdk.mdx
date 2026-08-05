@@ -5,7 +5,7 @@ section: packages
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 `@kestrel-agents/ai-sdk` is a server-side presentation adapter. It converts one
@@ -19,14 +19,14 @@ the resulting stream to this package.
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/ai-sdk@0.7.0 @kestrel-agents/sdk@0.7.0 ai@^6
+pnpm add @kestrel-agents/ai-sdk@0.8.0 @kestrel-agents/sdk@0.8.0 ai@^6
 ```
 
 Requirements:
 
 - Node.js 20 or newer
 - Vercel AI SDK `>=6 <7`
-- compatible Kestrel Protocol and SDK `0.7.0` packages
+- compatible Kestrel Protocol and SDK `0.8.0` packages
 - server-side execution so runner credentials remain outside the browser
 
 ## Write a run to an AI SDK message
@@ -110,6 +110,14 @@ const snapshot = presentation.finish(await runStream.result);
 waiting terminal event. `KestrelPresentationContractError` makes invalid or
 contradictory presentation data visible instead of silently dropping it.
 
+## Stream, recovery, and terminal mapping
+
+Live reasoning/progress/tool parts remain distinct from committed assistant text. Waiting snapshots retain the exact pending interaction and recovery option; the terminal part owns completed, failed, cancelled, or waiting status.
+
+## Error and cancellation behavior
+
+Map a validated Kestrel failure through `writeKestrelFailureToUIMessage`. Cancellation belongs to the exact upstream run and must not be rewritten as a generic text response or dropped when the client disconnects.
+
 ## Main exports
 
 - `writeKestrelRunnerStreamToUIMessage`
@@ -118,6 +126,10 @@ contradictory presentation data visible instead of silently dropping it.
 - `readKestrelTerminalInteraction`
 - `KestrelPresentationContractError`
 - typed Kestrel message, part, snapshot, status, and interaction contracts
+
+## Compatibility and release checks
+
+Use exact 0.8 Kestrel SDK/Protocol packages and AI SDK `>=6 <7`. Packed-artifact checks verify the adapter exports, declarations, and dependency pins before publication.
 
 Read [SDK reference](/reference/sdk) for starting and controlling runs and
 [Protocol reference](/reference/protocol) for the event and terminal-result

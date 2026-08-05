@@ -5,12 +5,14 @@ section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Step 2">
 Change the Reference-agent request from `run()` to `stream()` when a person should see activity before the terminal result is ready.
 </GuideNote>
+
+## Start the stream
 
 Use the `agent` and `context` created in the previous step:
 
@@ -35,6 +37,14 @@ Iteration reads live events for this request. `stream.result` resolves to the
 terminal event for that same run. Live progress does not replace the terminal
 result.
 
+## Read the event envelope
+
+Validate every envelope before use. Correlate its event type, request, session, run, turn, sequence, and timestamp; never order a durable history by browser arrival time alone.
+
+## Render only committed output
+
+Render provider reasoning, concise agent progress, tool activity, and assistant output as distinct UI states. Output deltas are provisional. Commit the final assistant message only from the terminal result's `assistantText`.
+
 ## Cancel when the caller leaves
 
 Pass an `AbortSignal` when the stream belongs to a request that may disconnect:
@@ -53,6 +63,14 @@ const stream = agent.stream(
 Aborting cancels that upstream run. The terminal promise resolves with
 `run.cancelled`, which should remain visible as a deliberate outcome rather
 than being converted into a generic network error.
+
+## Reconnect or replay
+
+For observation that survives a request, subscribe using a server-owned actor and resume from the last accepted cursor. Consumers must tolerate duplicate delivery and apply each persisted event idempotently.
+
+## Verify termination
+
+Interrupt one stream and let another complete. Each accepted run must produce exactly one valid terminal outcome—completed, failed, cancelled, or waiting—and the UI must not synthesize a second outcome from a disconnect.
 
 Use a [durable background subscription](/build/adding-background-subscriptions)
 when observation must continue after the original request ends.

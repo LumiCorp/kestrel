@@ -5,10 +5,14 @@ section: desktop
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 A **provider** is the service that runs the model. Desktop stores the provider choice separately from your workspaces and sessions, so changing projects does not require entering the same credential again.
+
+## Provider readiness model
+
+Desktop treats **configured**, **reachable**, **compatible**, and **qualified** as separate states. The versioned provider registry records model identity and declared capabilities; the canonical Kestrel profile defines which capabilities the task path requires.
 
 ## Hosted providers
 
@@ -21,6 +25,14 @@ Ollama and LM Studio expose models from your computer through a local OpenAI-com
 ## Verify the connection
 
 Create a short test session and ask for a one-sentence response. If Local Core is healthy but the request fails, check the provider status, endpoint, credential, and model name before restarting Desktop.
+
+## Choose a compatible model
+
+Use a registry identity whose capability checks satisfy the active profile. Tool calling, structured inputs, context limits, and reasoning formats are explicit provider capabilities rather than assumptions derived from the model name.
+
+## Change or remove a provider
+
+Changing the default affects future turns; prior runs retain their effective provider/model evidence. Remove a credential only through the supported settings path and confirm no active run depends on it.
 
 <Outcome>
   <p>The provider panel shows no credential warning, the configured model ID is saved, and a short test request completes successfully.</p>

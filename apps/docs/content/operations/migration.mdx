@@ -1,23 +1,55 @@
 ---
-title: Migration
-summary: The v2-to-v3 migration flow and the broader operational stance for schema or persistence changes in a runtime that values replayable history.
-section: operations
-audience: maintainers
+title: Operate Kestrel migrations
+summary: Inspect and apply only pending Desktop, Local Core, and Kestrel One migrations while preserving compatibility and evidence.
+section: operate
+audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-03-19
+updatedAt: 2026-08-04
 ---
 
-Migration work in Kestrel is treated cautiously because schema and persistence changes can damage replay and audit semantics if handled casually.
+Treat every migration as a change to durable product history. The goal is not merely to make a schema current; it is to preserve conversations, project authority, replay, approvals, budgets, and release evidence across the change.
 
-## Current Migration Surface
+## Migration ownership
 
-The root README documents a dedicated v2-to-v3 migration CLI with dry-run and apply modes, plus scopes for active/resumable sessions, all sessions, or targeted session IDs.
+Local Core owns its application stores and migration sequence. Kestrel One owns its PostgreSQL migration history. The deployment operator owns target selection, backup, timing, and compatibility evidence.
 
-## Operational Posture
+## Inspect current and pending migrations
 
-The repo instructions explicitly call for escalation when schema migrations, irreversible data moves, or policy changes are involved.
+Connect to the exact target, record its current migration history, and compare that history with the candidate revision. Apply only entries that are pending for that target.
 
-## Why That Matters
+## Compatibility preflight
 
-In a durable runtime, migration is not only data movement. It is also historical integrity work.
+Verify that the current application, candidate application, workers, and rollback revision can read the states that may exist during the rollout. Stop when compatibility is unknown.
+
+## Backup and evidence
+
+Take an owned backup appropriate to the store and record target identity, source revision, migration set, operator, time, and restoration procedure before applying changes.
+
+## Apply pending migrations
+
+Run the repository-owned migration entrypoint once. Do not replay migrations from `v0.7.0` blindly and do not edit migration history to make a failed state appear current.
+
+## Verify application and worker compatibility
+
+Check migration history, database constraints, application health, worker readiness, one durable conversation, and the affected product path before promotion.
+
+## Rollback limitations
+
+Application rollback is allowed only when the prior revision can read the migrated state. Do not reverse a destructive data migration merely to match old code.
+
+## Fix-forward procedure
+
+If the migration completed but the candidate is unhealthy, preserve evidence, stop further promotion, and repair the owning contract with a new forward migration or compatible application patch.
+
+## Desktop and Local Core migrations
+
+Upgrade the existing application-owned stores in place. Preserve provider settings, Keychain credentials, projects, sessions, conversations, Mission Control records, and recovery state. Test with isolated owned fixtures before touching a real user profile.
+
+## Kestrel One hosted migrations
+
+Preflight the production database, apply only pending Kestrel One migrations, verify queue and worker compatibility, then promote the exact tested application and image candidate.
+
+## Release checklist
+
+The release record must include target, before/after migration history, backup, command result, application revision, worker/image identities, smoke tests, and rollback or fix-forward disposition.

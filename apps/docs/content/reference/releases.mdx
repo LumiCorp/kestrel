@@ -1,6 +1,6 @@
 ---
-title: Kestrel 0.7 release notes
-summary: Desktop 0.7.0 availability and integration requirements for the public 0.7.0 package line.
+title: Kestrel 0.8 release notes
+summary: One coordinated 0.8 release across Runtime, SDK packages, CLI/TUI, Desktop, Kestrel One source, and hosted execution.
 section: reference
 audience: everyone
 status: active
@@ -8,23 +8,64 @@ sourceKind: curated
 updatedAt: 2026-08-04
 ---
 
-## Kestrel Desktop 0.7.0
+## Kestrel 0.8.0 overview
 
-- publishes the signed and notarized macOS arm64 application for macOS 13 or later
-- packages Desktop, Local Core, and the local PGlite database into one application
-- provides manual update checking, download, and explicit restart-and-install
-- blocks update installation while Desktop or Local Core work is active without cancelling that work
+Kestrel 0.8 is one versioned agent system across Desktop, CLI/TUI, Kestrel One, and application integrations. The release strengthens shared contracts, durable continuity, operator control, governed memory, approvals, security, evaluation, and release evidence while retaining Beta status.
 
-[Download Kestrel Desktop 0.7.0](https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0) or read the [installation guide](/desktop/install).
+## Runtime and Protocol
 
-## Public packages 0.7.0
+- Canonical `kestrel` profile and versioned provider capability contracts
+- Policy-bound recovery with registered option identifiers
+- Durable conversations, cursors, and truthful terminal delivery
+- Action-bound external approval contracts
+- Mission Control project, execution, review, and migration authority
+- Durable budget and runtime evaluation contracts
 
-- introduces the required explicit `assistantText` terminal-result field
-- documents Kestrel One as the hosted product centered on Threads and Projects
-- documents organization-scoped model access and managed model deployments
-- aligns CLI, Runtime, Protocol, SDK, Memory, Next.js, AI SDK, Observability, and Workspace Skills around one stable package line
-- organizes guidance around Desktop, Kestrel One, building applications, and operating deployments
+## SDK, Memory, and adapters
 
-Desktop and the public packages happen to share the `0.7.0` version number, but their release gates and artifacts remain independent. Kestrel One remains invitation-managed.
+The exact 0.8 package line includes Runtime/CLI, Protocol, SDK, public Memory, Next.js, AI SDK, Observability, and Workspace Skills. Memory adds governed backends, gateway behavior, canonical results, provenance, and authority boundaries. Observability expands trace context and correlation.
 
-Read [Upgrading to 0.7](/build/upgrading-to-0-7) before changing a consumer.
+## CLI/TUI
+
+The supported installation is `npm install -g @kestrel-agents/kestrel@0.8.0` on Node.js 22. Release verification covers macOS arm64 and Linux x64. The macOS arm64 standalone archive remains a secondary artifact. TUI recovery, provider readiness, reconnect, and readable scrollback are strengthened.
+
+## Desktop
+
+Desktop 0.8.0 adds the current onboarding/readiness path, self-healing Local Core startup, unified Mission Control, provider readiness, workspace preparation, guarded manual updates, and recovery/support evidence. It ships as a signed, notarized manual macOS arm64 download; stable OTA metadata is not promoted for 0.8.0.
+
+## Kestrel One source and hosted service
+
+Kestrel One carries product/source version 0.8.0. Source is cloneable from the release tag. The Lumi-hosted service remains invitation-only and records exact application, worker, migration, and Fly image identities.
+
+## Mission Control
+
+Legacy Board/Task and project snapshot write surfaces are retired. Current clients inspect a project through `mission_control.project.get` and execute supported changes through `mission_control.action.execute`.
+
+## Recovery, approvals, security, and budgets
+
+Recovery decisions bind to exact pending requests. Approval grants bind to exact external actions. Tool descriptors, execution-boundary policy, filesystem/Docker isolation, MCP network modes, and default-deny OCI egress make effect ownership explicit. Durable budget allocation records reserve, commit, release, and reconcile governed spend.
+
+## Observability and evaluations
+
+Trace context connects request, conversation, run, turn, provider, tool/effect, and terminal result. Provider reasoning remains distinct from committed agent progress. Runtime evaluation policies, calibration assets, replay, and delivery controls record evidence without rewriting the primary outcome.
+
+## Breaking changes and migration
+
+Upgrade all Kestrel packages and clients together. Remove legacy project actions, `project.snapshot.update`, and SDK `updateProjectSnapshot`. Update event consumers, waiting/resume input, recovery options, approvals, Mission Control calls, and Memory integrations. See [Upgrading to 0.8](/build/upgrading-to-0-8).
+
+## Artifacts and evidence
+
+The unified [`v0.8.0` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.0) owns source archives, package notes, CLI archive/checksum, signed Desktop assets, and Kestrel One deployment evidence. Artifacts are immutable and tied to the tagged revision.
+
+## Known limitations
+
+- Products remain Beta.
+- Desktop release support is macOS arm64.
+- CLI release support is macOS arm64 and Linux x64.
+- Desktop OTA proof is deferred to 0.8.1.
+- Kestrel One source/local development is supported, but turnkey production self-hosting is not promised.
+- Lumi-hosted Kestrel One requires an invitation.
+
+## Kestrel 0.7.0 history
+
+The 0.7 release established public packages, signed Desktop distribution, manual update checking, and the prior terminal-result contract. Its package and Desktop gates remained structurally separate, and Kestrel One was documented only as invitation-managed. Read [Upgrading to 0.7](/build/upgrading-to-0-7) only when maintaining historical consumers.

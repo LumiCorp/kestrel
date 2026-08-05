@@ -1,30 +1,32 @@
 ---
 title: What Kestrel includes
-summary: See the products, developer tools, runtime components, and supported work that make up the Kestrel platform.
+summary: Understand why Desktop, Kestrel One, CLI/TUI, and SDK integrations share one durable and controllable runtime.
 section: start
 audience: everyone
-status: stable
+status: active
 sourceKind: curated
 updatedAt: 2026-08-04
 ---
 
-Kestrel is an open-source agent platform with a desktop app, shared team workspaces, a CLI/TUI, and a TypeScript SDK. Use it with the model you choose to build software, conduct research, analyze data, and create reports, spreadsheets, presentations, and other files.
+Kestrel is for work that must remain understandable after the first model call: a person needs to continue it, inspect what happened, recover it, authorize a consequential action, or prove which system produced the result.
 
 ## Product surfaces
 
-- **Kestrel Desktop** is a local AI agent for projects on your computer. It works with the files and tools in a folder you open.
-- **Kestrel One** is the team workspace. Projects group members, Threads, instructions, files, Knowledge, Apps, and execution Environments.
-- **CLI/TUI** provides interactive terminal work, scripts, automation, and direct runtime controls.
-- **TypeScript SDK** lets applications start, stream, resume, and inspect local or remote Kestrel runs.
+- **Desktop** is the complete local project application.
+- **Kestrel One** is the versioned shared product for Projects, Threads, Knowledge, Apps, Environments, and managed execution. Its source is public; Lumi hosting is invitation-only.
+- **CLI/TUI** brings the same project and conversation model to supported terminals.
+- **SDK packages** embed the runtime, protocol, memory, adapters, and observability in an application you own.
 
 ## Runtime and protocol
 
-Kestrel Runtime is the agent harness underneath every surface. It runs model and tool steps and records sessions, events, artifacts, waiting, cancellation, recovery, and replay.
+Every surface uses the same 0.8 execution and result contracts. The runtime keeps conversation identity, profile/provider selection, tools, memory, waits, recovery, approvals, budgets, evaluation, and terminal outcomes explicit instead of hiding them behind one text response.
 
-Local Core hosts the runtime on a user's computer. The runner service hosts it behind an authenticated network boundary. Both expose the same Execution Protocol for commands, streams, events, and terminal results.
+## Control and proof
+
+Mission Control records project work and review. Operator control steers running or waiting work. Action-bound approvals constrain external effects. Trace, replay, artifact provenance, and release identity show what happened and which code, model, tools, and decisions shaped it.
 
 ## Use only what you need
 
-Start with Desktop for local projects, Kestrel One for shared team work, the CLI/TUI for terminal workflows, or the SDK for an application integration. The products release independently, so check [Release status](/start/release-status) for current availability and versions.
+Start with one surface and add others as the work grows. A local project does not require Kestrel One; a compatible HTTP client does not require every SDK package. Installed Kestrel packages and connected clients must still use the exact matching release line.
 
-Continue with [Core concepts](/start/concepts) for the shared vocabulary or [Architecture](/start/architecture) for the local and remote execution paths.
+Choose a path in the [Quickstart](/start/quickstart), or follow the [Runtime model](/start/runtime-model) before designing an integration.

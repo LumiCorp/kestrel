@@ -5,10 +5,18 @@ section: kestrel-one
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 A **gateway** connects Kestrel One to a model provider. An **approved model** is one that an administrator has tested and allowed members to select.
+
+## Model, provider, and gateway
+
+A provider operates model infrastructure. A gateway is Kestrel One’s trusted connection to it. A model identity is the registry entry selected by a profile or member. These identities remain separate even when their labels look similar.
+
+## Provider registry and capabilities
+
+Versioned registry entries record model identity, declared capabilities, qualification, and readiness evidence. Tool calling, structured inputs, context limits, and reasoning formats are not inferred from the model name.
 
 ## Make a model available
 
@@ -19,5 +27,17 @@ A **gateway** connects Kestrel One to a model provider. An **approved model** is
 5. Confirm that an authorized member can select it in a Thread.
 
 Provider credentials remain on trusted Kestrel One services. A member’s browser requests an approved model by identifier; it never receives the provider URL, raw credential, or runner token.
+
+## Credential leases
+
+Trusted services issue short-lived leases only after organization, model, gateway, actor, readiness, capability, policy, and budget checks succeed. The browser never receives the lease credential.
+
+## Member selection
+
+Members choose approved identifiers exposed for their organization and Environment. A model disappears or becomes unavailable when its owning readiness or authority check fails.
+
+## Diagnose denial or mismatch
+
+Inspect organization authority, Environment policy, gateway credential, endpoint/model reachability, registry capability, qualification, budget, and lease decision before changing configuration.
 
 Managed deployments add an infrastructure readiness check to the same approval flow.

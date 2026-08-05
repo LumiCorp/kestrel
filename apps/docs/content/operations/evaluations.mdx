@@ -5,12 +5,16 @@ section: operate
 audience: integrators
 status: active
 sourceKind: repo-inferred
-updatedAt: 2026-07-10
+updatedAt: 2026-08-04
 ---
 
 Ruhroh runs Kestrel evaluation scenarios, records the results, and compares one
 run with another. Use these checks before releasing runtime, prompt, or model
 changes that could alter user-visible behavior.
+
+## Evaluation model
+
+Runtime evaluators enforce one run's delivery, policy, terminal, recovery, or quality contract. Ruhroh performs repeatable comparative evaluation across scenarios, versions, prompts, or providers. Keep those roles separate in evidence.
 
 ## Core commands
 
@@ -31,6 +35,18 @@ The release check confirms that:
 
 These checks do not call a live model provider. Run live benchmarks separately
 when a release changes model-dependent behavior.
+
+## Runtime evaluation policy
+
+Record the evaluator identity and version, trigger, required inputs, delivery consequence, and evidence with the run. An evaluator may block delivery only through its declared policy; assistant prose cannot override it.
+
+## Calibration datasets and assets
+
+Version scenario inputs, expected contracts, calibration datasets, prompts, provider/profile selection, and supporting artifacts. Historical assets remain immutable comparison evidence.
+
+## Delivery control and terminal outcomes
+
+Evaluation progress is not a terminal result. Record whether a gate admitted, blocked, or requested recovery and preserve the run's actual completed, failed, cancelled, or waiting outcome separately.
 
 ## Historical comparison records
 

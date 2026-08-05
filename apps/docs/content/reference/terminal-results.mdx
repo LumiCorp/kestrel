@@ -5,7 +5,7 @@ section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 ## Result shape
@@ -28,6 +28,18 @@ interface RunnerResultV2<TOutput = unknown> {
 
 An empty string is not valid `assistantText`. Structured data must never be converted into an invented assistant message.
 
+## Assistant text and structured data
+
+Only `assistantText` owns the committed reader-facing answer. `output` and `finalizedPayload` are validated application/runtime data; visible progress, tool results, and provider reasoning remain separate.
+
+## Terminal outcome taxonomy
+
+Completed, failed, cancelled, and waiting outcomes are mutually distinguishable. A disconnect is a transport observation and cannot synthesize a terminal outcome.
+
+## Waiting, cancellation, and recovery
+
+Waiting names the exact pending request and allowed continuation. Recovery may add a stable option identifier. Cancellation records the accepted request and terminal result for the exact run.
+
 ## Outcome handling
 
 | Outcome | Event or status | Consumer behavior |
@@ -46,3 +58,15 @@ if (result.assistantText !== null) {
 
 storeStructuredResult(result.output, result.finalizedPayload);
 ```
+
+## Persistence and replay
+
+Persist the canonical terminal event once with its session/run correlation and last accepted cursor. Replay may render that record again but cannot replace or reinterpret it.
+
+## Consumer invariants
+
+- Parse before use.
+- Render committed text only from `assistantText`.
+- Require one terminal outcome per accepted run.
+- Bind resume/recovery to the exact pending request.
+- Preserve structured data, evidence, and cancellation independently.

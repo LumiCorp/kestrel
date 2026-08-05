@@ -1,30 +1,55 @@
 ---
 title: Operate Kestrel One in production
-summary: Verify application, data, storage, queues, runner access, models, and communications before inviting a team.
+summary: Verify exact application, migration, worker, image, model, and user-path evidence before inviting a team or promoting a change.
 section: kestrel-one
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
-Use this playbook before enabling a new organization or after a change to application code, data services, model access, or managed deployment infrastructure.
+Use this playbook before enabling an organization and after a change to application code, data, workers, images, model access, Apps/MCP, or managed deployment infrastructure.
 
 ## Establish a healthy baseline
 
-Record the deployed version and confirm that the Next.js application, PostgreSQL, Redis, object storage, background jobs, runner service, approved model gateways, and configured email services are healthy.
+Record Kestrel version and source revision. Confirm the Vercel application, PostgreSQL, Redis, object storage, queue services, runner access, approved gateways/models, workers, Fly image roles, and email services are healthy.
+
+## Preflight migrations
+
+Inspect the actual production migration history, identify only pending migrations, take an owned backup, and verify current/candidate application and worker compatibility. Stop when rollback compatibility is unknown.
+
+## Deploy an exact revision
+
+Build application, workers, and images from the same reviewed commit. Record deployment identity and immutable artifacts; do not rebuild another revision under the same candidate.
+
+## Promote the Vercel deployment
+
+Build and test a production-shaped preview. Inspect its build identity, run the user-path smoke, and use `vercel promote` on that exact deployment rather than triggering a new production build.
+
+## Roll out workers and Fly images
+
+Build and smoke workspace-runtime, environment-router, preview-edge, turn-worker, and runpod-worker. Record immutable digests, bind them to the release approval, and roll out only the approved candidate.
 
 ## Verify the user path
 
-1. Sign in with a non-administrator test account.
+1. Accept an invitation with a non-administrator account.
 2. Open the intended organization and Project.
-3. Create a Thread with an approved model.
-4. Upload or retrieve a permitted Knowledge source.
-5. Inspect the completed result and artifact access.
-6. Test an administrative action separately with an administrator account.
+3. Confirm Environment, model, and required App readiness.
+4. Create a Thread and complete one run.
+5. Upload or retrieve permitted Knowledge and inspect an artifact.
+6. Exercise one waiting/operator-control path.
+7. Test an administrative action separately with an administrator.
+
+## Run canaries
+
+Verify application health, queue/worker delivery, workspace provisioning, model access, one terminal result, artifact persistence, operator control, and exact image identities before widening traffic.
 
 ## Prove recovery after a change
 
-If any check fails, preserve the relevant application, queue, runner, deployment, and provider evidence. Change only the owning service, repeat the same user path, and record the successful result before declaring recovery.
+Preserve application, database, queue, runner, deployment, model, trace, and image evidence. Restore the prior Vercel deployment and approved digests only when migrations remain compatible; otherwise stop and fix forward.
 
-Escalate when authorization results differ between equivalent users, persisted data disappears, a provider credential reaches browser state, or a deployment becomes selectable before qualification.
+## Incident handoff
+
+Include version, source revision, Vercel deployment, migration before/after state, worker revision, five image digests, organization/Environment/Project/Thread/run identifiers, trace correlation, timestamps, observed symptom, and last safe action.
+
+Escalate when equivalent actors receive different authority results, data disappears, a credential reaches browser state, an unqualified deployment becomes selectable, or release identity cannot be proven.

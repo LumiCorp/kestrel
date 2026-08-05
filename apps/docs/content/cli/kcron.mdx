@@ -5,11 +5,15 @@ section: cli
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 `kcron` manages a local polling service and evaluates registered workspace
 entries. It does **not** currently launch workspace agent tasks.
+
+## 0.8 support status
+
+The 0.8 binary supports service/catalog inspection on the same macOS arm64 and Linux x64 CLI line. Deferred execution remains a documented Beta limitation.
 
 ## Implemented commands
 
@@ -47,3 +51,15 @@ report. Do not depend on `kcron` for recurring execution until the command stops
 returning the explicit deferred outcome.
 
 See [Workspace workflows](/cli/workspace-workflows) for catalog discovery.
+
+## Schedule storage and ownership
+
+Local Core owns the workspace catalog, automation flag, lease, evaluation time, and recorded outcome. `kcron` must not create a parallel schedule source.
+
+## Output and failure behavior
+
+Status distinguishes disabled, deferred, service failure, invalid catalog entry, and lease conflict. A successful `run-once` means evaluation completed, not that an agent task ran.
+
+## Known limitations
+
+There is no central scheduler or recurring workspace execution in 0.8. Do not advertise or operationally depend on completed scheduled work until the explicit deferred result is replaced by a released contract.

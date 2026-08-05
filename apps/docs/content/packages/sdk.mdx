@@ -1,11 +1,11 @@
 ---
 title: "@kestrel-agents/sdk"
-summary: Create server-side Kestrel clients for local or remote execution, durable sessions, streams, resume, memory, and filtered events.
+summary: Create exact-0.8 server-side clients for execution, durable sessions, streams, subscriptions, recovery, and Mission Control.
 section: reference
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="SDK reference">
@@ -19,7 +19,7 @@ inside the application process.
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/sdk@0.7.0
+pnpm add @kestrel-agents/sdk@0.8.0
 ```
 
 Node.js 20 or newer is required. Browser and edge-runtime use are not supported
@@ -99,6 +99,11 @@ await agent.resume(
 ```
 
 The request ID must come from the durable waiting interaction being answered.
+When the pending interaction is a recovery review, also submit the exact recovery option identifier exposed by the result. Never bind by display label.
+
+## Streaming and subscriptions
+
+`stream()` and `resumeStream()` expose live request activity plus one terminal promise. `subscribe()` observes filtered persisted events independently and reconnects through durable cursor state. Consumers must validate event envelopes and tolerate duplicates.
 
 ## Versioned session memory
 
@@ -118,11 +123,15 @@ await session.memory.update(
 );
 ```
 
+## Mission Control methods
+
+The 0.8 runner protocol exposes `mission_control.project.get` and `mission_control.action.execute` for Project work, attempts, evidence, review, and acceptance. Runtime operator methods continue to own active and waiting runs. Resolve Project and action authority on the server before dispatch.
+
 ## Advanced runner client
 
 Import `KestrelClient` from `@kestrel-agents/sdk/runner` when an application
-needs direct Execution Protocol operations for jobs, operator state, task
-graphs, project snapshots, reviews, checkpoints, or subscriptions.
+needs direct Execution Protocol operations for jobs, operator state, Mission
+Control, checkpoints, recovery, or subscriptions.
 
 ```ts
 import { KestrelClient } from "@kestrel-agents/sdk/runner";
@@ -140,12 +149,17 @@ The root Agent API is the default application surface. The runner subpath is
 appropriate when the application intentionally owns lower-level command and
 event handling.
 
-## Constraints
+## Errors, cancellation, and terminal outcomes
+
+Transport, HTTP, protocol-validation, terminal failure, cancellation, and waiting are distinct outcomes. Preserve the underlying safe error code and correlation; do not turn a cancelled or waiting run into a generic failure.
+
+## Constraints and compatibility
 
 - keep credentials and actor resolution in server-owned code
 - use explicit filters for subscriptions; the SDK does not expose a global event firehose
 - use `stream.result` or `run()` results for terminal state rather than inferring completion from a disconnected stream
 - close long-lived clients when the owning server process or scope ends
+- use exact matching 0.8 Runtime, Protocol, SDK, adapter, and client versions
 
 Start with [Build your first agent](/build/building-your-first-agent), then use
 [Next.js integration](/build/integrating-with-nextjs) or the

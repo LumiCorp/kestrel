@@ -1,14 +1,18 @@
 ---
 title: Protocol and results
-summary: Read the user-facing answer, structured output, and run status from a 0.7 terminal result.
+summary: Read the user-facing answer, structured output, waits, recovery state, and terminal status from a 0.8 result.
 section: build
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
-Every terminal result separates the answer intended for a person from status and structured application data. In Kestrel 0.7, the readable answer is always available as `assistantText: string | null`.
+Every terminal result separates the answer intended for a person from status and structured application data. In Kestrel 0.8, the readable answer is always available as `assistantText: string | null`.
+
+## Protocol layers
+
+The 0.8 protocol defines execution, durable conversations, events, exact approvals, policy-owned recovery, and Mission Control. These layers share identity and correlation but retain separate authority and persistence rules.
 
 ```ts
 type RunnerTerminalResult = {
@@ -50,3 +54,23 @@ persistRunOutcome({
   finalizedPayload: result.finalizedPayload,
 });
 ```
+
+## Waiting and recovery
+
+A waiting result names the exact pending request. Recovery choices carry stable option identifiers and review context. Resume the same session and bind the reply to both the pending request and, when present, `recoveryOptionId`; descriptive labels alone are not authority.
+
+## External approvals
+
+An approval authorizes one canonical action and effect under an actor, scope, and expiry. Validate it immediately before execution and record both the approval decision and effect result.
+
+## Mission Control
+
+Use `mission_control.project.get` to inspect project work, attempts, evidence, review, and acceptance. Execute a typed change through `mission_control.action.execute`. Runtime control remains responsible for an active or waiting run.
+
+## Compatibility
+
+Runtime, Protocol, SDK, adapters, and clients must use the exact matching 0.8 line. Kestrel does not add a 0.7 wire or API shim around removed project actions.
+
+<Outcome>
+  <p>Your consumer renders committed output, handles every terminal state, and routes recovery, approval, and Mission Control actions to their owning contracts.</p>
+</Outcome>

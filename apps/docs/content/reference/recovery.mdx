@@ -1,0 +1,51 @@
+---
+title: Recovery contracts
+summary: Reference Kestrel recovery policy, option identifiers, pending-request binding, resume behavior, terminal outcomes, and evidence.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+Recovery is a policy-owned continuation of existing work. It is not a generic retry and must not create a replacement session merely because a run is blocked or failed.
+
+## Recovery terminology
+
+A recovery review describes the observed problem and supported next actions. A recovery option identifies one registered action. A pending request binds the operator’s selection to the exact waiting work.
+
+## Recovery policy
+
+The effective runtime profile determines which failures are reviewable, which actions may be offered, and what evidence is required before execution.
+
+## Registries and supported actions
+
+Recovery actions come from explicit registries. Consumers display registered options and identifiers; they do not infer actions from error text.
+
+## Recovery option identifiers
+
+Treat option identifiers as opaque contract values. Return the selected identifier unchanged with the pending request identity.
+
+## Pending-request binding
+
+A recovery response is valid only for the request, session/thread, actor, and current state that produced it. Reject stale, cross-session, or already-consumed responses.
+
+## Reviews and operator context
+
+Show the first unhealthy owner, observed evidence, effect of each action, and whether external work may already have occurred.
+
+## Resume behavior
+
+Resume the same durable session and request. Preserve conversation history, correlation, profile, workspace, and committed state.
+
+## Terminal outcomes
+
+Recovery may return to running work or finish as completed, failed, or cancelled. Waiting is non-terminal and must remain visible as such.
+
+## Persistence and replay
+
+Persist accepted decisions and resulting state transitions. Replay may reconstruct the decision path without silently executing an external effect again.
+
+## Consumer rules
+
+Render only registered options, bind submissions exactly, handle stale decisions explicitly, and verify the original work continued.

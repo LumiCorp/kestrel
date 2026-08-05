@@ -5,7 +5,7 @@ section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 | Symptom | Check first | Verification after the fix |
@@ -16,6 +16,10 @@ updatedAt: 2026-07-13
 | Stream closes unexpectedly | Client disconnect, forwarded abort signal, and terminal event | Disconnect produces `run.cancelled`; normal request completes |
 | Wrong user or organization context | Server-side authentication resolver | Allowed account succeeds and denied account receives no protected data |
 | Model cannot be selected | Gateway visibility, approval, deployment readiness, and lease | Short request completes through the requested model |
+
+## Start from the symptom
+
+Record the exact visible failure, actor, environment, request/correlation identifiers, time, and deployed revision before restarting or redeploying anything.
 
 ## Runner checks
 
@@ -41,3 +45,35 @@ curl -sS "$KESTREL_RUNNER_SERVICE_URL/commands" \
 ```
 
 Preserve the request, correlation, session, and run identifiers before changing the deployment. Use [Reliability and recovery](/operate/reliability) to confirm that the original user path works afterward.
+
+## Identity and auth
+
+Prove server-owned actor/tenant resolution and an allowed and denied request. A runner token or provider credential must never be accepted from the browser.
+
+## Provider and profile capability
+
+Compare the canonical profile, provider-registry revision, model readiness, required capabilities, qualification, lease, and budget evidence.
+
+## Database and migrations
+
+Inspect the deployed schema and pending list. Stop when compatibility or backup evidence is missing; do not replay already-applied migrations to make the list look current.
+
+## Queue and worker delivery
+
+Check queue ownership, stuck work, retry evidence, each of the five role digests, and the terminal event emitted for the affected run.
+
+## Vercel and Fly release identity
+
+Compare the user-facing deployment and every worker digest with the approved release record. A rebuild with the same version label is not the same artifact.
+
+## Execution policy and external approvals
+
+Inspect the resolved profile, tool descriptor, network/OCI policy, pending request, and exact action approval before treating a denial as infrastructure failure.
+
+## Roll back or fix forward
+
+Roll code and images to recorded exact identities only when migration compatibility is proven. Otherwise stop and fix forward without destructive data reversal.
+
+## Confirm the user path
+
+Repeat the smallest original path—from authentication through terminal result or artifact—and confirm persisted evidence, hosted identity, and operator controls agree.

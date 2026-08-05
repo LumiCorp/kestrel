@@ -5,7 +5,7 @@ section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 If your application already uses Chat Completions or Responses API requests, you can point its server-side integration at Kestrel first and adopt the richer SDK capabilities later. Your existing request format stays familiar while Kestrel adds durable runs, session identifiers, and user attribution.
@@ -276,13 +276,13 @@ Compatibility mode lets you keep familiar HTTP while gaining durable runs, actor
 Move to the SDK or runner protocol when you need any of these:
 
 - `operator.inbox`, `operator.thread`, or `operator.control`
-- `task.graph.get` or `task.graph.update`
 - `mission_control.project.get` or `mission_control.action.execute`
-- `project.snapshot.get` or Git-only `project.action`
-- filtered background subscriptions over `/events/stream`
-- direct evaluation and quality workflows
+- authorized Memory queries or mutations
+- filtered background subscriptions and replay cursors
+- exact waiting, recovery, and external-approval decisions
+- direct budget, evaluation, and quality workflows
 
-Those capabilities are what separate Kestrel from a thin compat proxy.
+Compatibility endpoints map OpenAI-style success and errors, but do not expose every Kestrel-native terminal state. Preserve Kestrel correlation headers, and move to the native protocol before the application depends on recovery, approvals, Mission Control, or durable subscriptions.
 
 ## Continue when you need more control
 

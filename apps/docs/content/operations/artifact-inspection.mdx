@@ -5,7 +5,7 @@ section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 An artifact is useful evidence only when it can be connected to the work that
@@ -14,11 +14,22 @@ identities back through the run.
 
 ## Inspection order
 
-1. Identify the session and run that should have produced the artifact.
-2. Read the run's terminal event rather than inferring success from UI text.
-3. Inspect tool events and results for the create or update operation.
-4. Compare session memory `linkedArtifacts` with the actual artifact path or ID.
-5. Inspect traces, checkpoints, and replay evidence tied to the same run.
+1. Identify the application request and trace.
+2. Follow correlation to the session, thread, run, turn, tool or external effect.
+3. Read the terminal result rather than inferring success from UI text.
+4. Inspect the artifact identity, producing action, source revision, and Mission Control evidence.
+
+## Correlation contract
+
+Request, correlation, actor, tenant, session, thread, run, turn, operation, tool/effect, and artifact identifiers must remain consistent across application, runner, worker, trace, and persisted result.
+
+## Provider reasoning and agent progress
+
+Provider-returned reasoning and concise agent-authored progress are labeled, retained, and authorized independently. Neither is the terminal answer or proof that an artifact was committed.
+
+## Evaluation and recovery evidence
+
+Attach evaluation results, recovery option/decision, approval, and external-effect result to the same run lineage. Do not infer those decisions from assistant text.
 
 ## Common disagreements
 
@@ -33,6 +44,10 @@ identities back through the run.
 Do not rewrite historical evidence to make it agree with the current artifact.
 Preserve the original run and create new work only when a corrected artifact is
 actually needed.
+
+## Incident evidence package
+
+Retain release identity, request/trace correlation, terminal event, relevant tool/effect events, artifact provenance, Mission Control evidence, evaluation/recovery decisions, and timestamps. Redact credentials, leases, private reasoning, and unrelated user data.
 
 Continue with [Store and replay](/operate/replay),
 [Reliability](/operate/reliability), and [Evaluations](/operate/evaluations).

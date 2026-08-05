@@ -15,7 +15,7 @@ result, and provenance contracts together with a trusted `MemoryGateway`.
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/memory@0.7.0
+pnpm add @kestrel-agents/memory@0.8.0
 ```
 
 Node.js 20 or newer is required.
@@ -29,6 +29,10 @@ Node.js 20 or newer is required.
 | `parseMemoryReadBindingV1()` | parses the exact tenant, user, agent, task, namespace, and scope grant |
 | `parseMemoryQueryV1()` | parses the bounded model-supplied query without widening authority |
 | `createMemoryTierPolicyV1()` | creates a canonical namespace and lifecycle policy |
+
+## Backends and MemoryGateway
+
+`MemoryGateway` owns authorization and canonical result validation. A `MemoryBackendAdapterV1` owns storage-specific retrieval and publishes a descriptor tied to one namespace and policy revision. The in-memory backend is for development and tests; production persistence remains application-owned.
 
 ## Query authorized memory
 
@@ -92,6 +96,14 @@ const result = await new MemoryGateway().query({
 });
 ```
 
+## Canonical results and provenance
+
+Results identify query, backend, namespace, policy revision, canonical grouping, and source/evaluator provenance. Consumers must not replace those fields with a private routing score or merge results across unauthorized scopes.
+
+## Mutations and idempotency
+
+The public 0.8 gateway owns reads. Applications own ingestion and mutation through their trusted backend boundary, enforce writer authority, validate canonical content, retain source provenance, and require an idempotency key. A read binding never authorizes a write.
+
 ## Security boundary
 
 - The model supplies only the bounded query. It cannot widen the trusted read binding.
@@ -99,6 +111,10 @@ const result = await new MemoryGateway().query({
 - Backends return source and evaluator provenance instead of a routing score.
 - Persisted and network values must pass the exported parsers before use.
 - Application code remains responsible for issuing bindings from trusted runtime authority.
+
+## Compatibility and persistence ownership
+
+Use the exact 0.8 Memory package with the 0.8 integration. Session history, SDK-managed session memory, Kestrel One Knowledge, and a governed Memory backend are different stores with explicit owners and retention.
 
 Read [Session memory](/build/adding-session-memory) for SDK-managed session state
 or [Security](/operate/security) for the broader runtime authority model.

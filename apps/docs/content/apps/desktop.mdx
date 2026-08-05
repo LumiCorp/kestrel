@@ -10,6 +10,10 @@ updatedAt: 2026-08-04
 
 Open a project you care about and give Kestrel a real outcome to work toward. Desktop can inspect the material, use approved tools, change files, create new ones, and show you what it did without separating the work from the project.
 
+Kestrel Desktop 0.8.0 is a Beta application for macOS 13 or later on Apple silicon. It ships as a signed, notarized manual download from the unified release.
+
+Kestrel Desktop 0.8.0 is a Beta application for macOS 13 or later on Apple silicon. It ships as a signed, notarized manual download from the unified release.
+
 Use it to build software, investigate a question, analyze data, or create a report, spreadsheet, presentation, or other file. The project, conversation, active run, and outputs remain together in one application.
 
 ## Start with an outcome
@@ -20,17 +24,33 @@ Choose the model you want to use, open the folder where the work belongs, and de
 
 Each session belongs to a local workspace. Kestrel starts with the project files, and the requests, changes, and results remain attached to that workspace instead of becoming a disconnected chat.
 
+Desktop registers the folder, prepares the owned workspace and Git boundary, and reports bootstrap failures before a run begins.
+
+Desktop registers the folder, prepares the owned workspace and Git boundary, and reports bootstrap failures before a run begins.
+
 ### Leave and come back
 
 Close the application and return to the same session later. The earlier conversation, completed runs, and current project remain available, so you can continue without explaining the work again.
+
+Local Core is supervised beside Desktop. Readiness and content-aware restart preserve the same project and session rather than creating replacement work.
+
+Local Core is supervised beside Desktop. Readiness and content-aware restart preserve the same project and session rather than creating replacement work.
 
 ### Know where things stand
 
 See whether the run is active, completed, waiting for you, cancelled, or failed. Review the answer, generated files, recent activity, and recorded outcome instead of relying on the last visible message.
 
+Mission Control adds project work, attempts, evidence, review, and acceptance without turning that state into chat text.
+
+Mission Control adds project work, attempts, evidence, review, and acceptance without turning that state into chat text.
+
 ### Step in when the work needs you
 
 Inspect, steer, stop, resume, retry, or recover the existing run. Your intervention stays with the session instead of forcing you to discard the work and begin again.
+
+Waiting and recovery choices identify the exact pending request. External approvals authorize one exact action rather than all similar actions.
+
+Waiting and recovery choices identify the exact pending request. External approvals authorize one exact action rather than all similar actions.
 
 ## What people use Desktop for
 
@@ -45,6 +65,14 @@ Use Desktop when the result belongs in a project rather than only in a chat wind
 
 ## Start with one real project
 
-[Download Kestrel Desktop 0.7.0](/desktop/install), connect a model, and open a project you already understand. Ask for one useful outcome, review what Kestrel produces, and then return to the same session when you have the next task.
+[Download Kestrel Desktop 0.8.0](/desktop/install), connect a model, and open a project you already understand. Ask for one useful outcome, review what Kestrel produces, and then return to the same session when you have the next task.
 
 From there, learn how [workspaces and sessions](/desktop/workspaces-and-sessions) stay organized or see the [operator controls](/desktop/operator-control) available when a run needs you.
+
+## Data and privacy
+
+Project files remain in their local folder unless you explicitly use a connected service. Desktop stores provider choices and application state separately from the project, keeps supported credentials in the macOS Keychain, and does not upload the folder to Kestrel One merely because you registered it locally.
+
+## Data and privacy
+
+Project files remain in their local folder unless you explicitly use a connected service. Desktop stores provider choices and application state separately from the project, keeps supported credentials in the macOS Keychain, and does not upload the folder to Kestrel One merely because you registered it locally.

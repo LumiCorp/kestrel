@@ -5,7 +5,7 @@ section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Release checks">
@@ -28,9 +28,21 @@ iteration, but they do not establish pull-request readiness.
 
 | Gate | Protects |
 | --- | --- |
-| `validate` | type safety, governance, executable contract counterexamples, builds, PostgreSQL, and Chromium product behavior |
+| `pnpm validate` | public boundaries, builds, workspace typechecks, hermetic tests, and portable release contracts |
+| `validate:process` | real process lifecycle, Local Core, and runner boundaries |
+| `validate:postgres` | persistence, migrations, concurrency, and replay contracts |
+| `validate:chromium` | browser-visible product journeys and contract behavior |
+| `validate:audit` | dependency, governance, and public-surface audit rules |
 | `test-proofs:mutations` | current killed mutations for high- and critical-risk contracts |
 | `validate:release:macos` | CLI and Desktop macOS package readiness during release preparation |
+
+## Package and release proofs
+
+Pack all eight public packages, inspect contents and exact internal pins, and install them into a clean external consumer. Release evidence also covers CLI archives/checksums, signed Desktop artifacts, deployment revision/digests, and registry metadata.
+
+## Documentation and public-boundary proofs
+
+Validate metadata, search, navigation, source references, links, sitemap, executable examples, landing contracts, and a built exact-revision preview. Public claims must not precede the artifact or deployment gate they describe.
 
 ## When a check fails
 

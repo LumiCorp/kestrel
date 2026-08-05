@@ -1,0 +1,55 @@
+---
+title: Upgrade an integration to 0.8
+summary: Move a Kestrel 0.7 integration to the exact 0.8 package line and adopt the current Mission Control, recovery, approval, memory, and event contracts.
+section: build
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+Kestrel 0.8 is an exact-line upgrade. Runtime, Protocol, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and any deployed clients must use compatible `0.8.0` contracts together.
+
+## Who must upgrade
+
+Upgrade applications that import a Kestrel package, parse runner events or results, call project-state APIs, resume waiting work, authorize external effects, persist memory, or deploy a runner compatible with the application.
+
+## Before upgrading
+
+Record the current versions, runner revision, persistence stores, event consumers, project APIs, and any code that assumes a particular wait or terminal-result shape. Back up application-owned stores before applying migrations.
+
+## Move every Kestrel package to 0.8
+
+Use exact versions, not mixed minor lines. Install only the packages the application needs and regenerate the lockfile from the same release revision.
+
+## Removed project and SDK APIs
+
+Legacy Board/Task project actions, `project.snapshot.update`, and SDK `updateProjectSnapshot` are not 0.8 write surfaces. Remove callers instead of adding a compatibility shim.
+
+## Adopt Mission Control
+
+Read authoritative project state through `mission_control.project.get` and execute supported changes through `mission_control.action.execute`. Keep project, execution, review, and migration authority distinct.
+
+## Update waits, recovery, and approvals
+
+Resume the exact pending request using its request and option identifiers. Bind external authorization to the exact action/effect being executed; a broad approval token is not a substitute.
+
+## Adopt public Memory where applicable
+
+Use `@kestrel-agents/memory@0.8.0` for governed memory contracts and gateways. Preserve tenant, subject, issuer, query authority, provenance, and application-owned persistence decisions.
+
+## Update event and observability consumers
+
+Handle the exported 0.8 event set exhaustively, preserve correlation identifiers, and separate provider reasoning, agent progress, tool activity, visible assistant text, and terminal outcomes.
+
+## Preserve and migrate local or hosted data
+
+Apply only pending migrations for the actual store. Preserve Desktop and Local Core settings, sessions, credentials, and project records. Hosted operators must verify application and worker compatibility before promotion.
+
+## Verify the upgraded integration
+
+Run one successful turn, one waiting-and-resume path, one cancellation, one denied external effect, one Mission Control read/action, and one reconnect from persisted history.
+
+## Rollback and fix-forward constraints
+
+Package versions and signed artifacts are immutable. Do not unpublish or overwrite 0.8.0. Do not reverse a data migration destructively; roll application code back only when compatibility is proven, otherwise stop and fix forward.

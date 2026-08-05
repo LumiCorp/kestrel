@@ -5,7 +5,7 @@ section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Authentication boundary">
@@ -24,6 +24,8 @@ export KESTREL_RUNNER_SERVICE_TOKEN=dev-secret
 ```
 
 Do not expose the token through browser-readable environment variables.
+
+Configuration owners should also declare the canonical profile/provider registry, memory persistence, MCP/network policy, budget/evaluation policy, release identity, and worker/image identity. Keep each value in the service that owns it instead of copying one unrestricted environment block everywhere.
 
 ## Resolve user context in one place
 
@@ -53,6 +55,8 @@ The Next.js route helpers read these headers from the inbound request:
 
 If either id is missing, the helper generates it and returns Kestrel correlation ids in the response headers. Preserve them so a support report can be matched to the corresponding runner activity.
 
+Carry the resulting actor, tenant, request, correlation, session, thread, run, turn, and operation identifiers through downstream services.
+
 ## Where each value comes from
 
 | Value | Supplied by |
@@ -61,12 +65,21 @@ If either id is missing, the helper generates it and returns Kestrel correlation
 | runner bearer token | application server |
 | actor id / actor type / tenant id | application server |
 | run lifecycle and persistence | Local Core or runner service + runtime |
+| profile/provider and model authority | versioned registry and Environment policy |
+| memory authority | trusted binding issuer and application-owned backend |
+| MCP, network, and tool authority | Environment and canonical profile |
+| release/build identity | build and deployment system |
+
+## Action and approval authority
+
+Resolve the exact requested action and effect on the trusted server. A browser may choose among offered options, but the server validates the pending request, grant, action fingerprint, expiry, and actor before execution.
 
 ## Check the server-side setup
 
 - the application reads credentials and caller identity in one server module
 - actor and tenant values come from authenticated application data
 - `/api/copilot/run` and `/api/copilot/stream` preserve request correlation end to end
+- the selected profile, provider/model capabilities, tools, and budget are ready
 
 ## If identity is missing or incorrect
 

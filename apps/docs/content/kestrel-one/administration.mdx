@@ -5,7 +5,7 @@ section: kestrel-one
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 Administration is for authorized platform operators. Regular members manage their own Threads and the Projects they can access; they do not need these controls for everyday work.
@@ -22,6 +22,9 @@ Administration is for authorized platform operators. Regular members manage thei
 | Configure provider reasoning or inspect opted-in retained content | Environment settings and Environment activity |
 | Manage shared Apps, custom MCP Apps, and maximum capability policy | Environment Apps |
 | Manage enabled commercial controls | Organization billing |
+| Inspect or reconcile governed spend | Budgets and allocation ledger |
+| Approve and inspect application/worker releases | Releases and rollouts |
+| Inspect pending schema changes and data health | Migrations and database health |
 
 Kestrel One checks for an administrator session before returning administrative data. Secrets may be entered through trusted settings but are never returned in readable form.
 
@@ -33,3 +36,31 @@ views, and deletions are audited. Encrypted or opaque continuation state is
 never available in the inspector.
 
 Read [Environments](/kestrel-one/environments) before changing execution or shared capability policy, and continue with [Production operations](/kestrel-one/production-operations) before changing a live deployment.
+
+## Organizations and access
+
+Manage people and roles without using organization administration as a substitute for Project, Environment, model, App, or external-effect authority.
+
+## Environments, Apps, and MCP
+
+Own execution images, Workspaces, shared connections, capability ceilings, network modes, OCI egress, and retained activity through Environment administration.
+
+## Models, gateways, and deployments
+
+Register provider/model identities, qualify capabilities, manage trusted credentials and leases, and operate immutable managed-model profiles.
+
+## Budgets and allocations
+
+Inspect reservation, commit, release, reconciliation, exhaustion, and provider/model evidence through the durable organization ledger.
+
+## Releases, workers, and image rollouts
+
+Approve exact application and image candidates, verify all required roles, inspect immutable digests, run canaries, and preserve rollback identities.
+
+## Migrations and data health
+
+Inspect the actual target and pending migrations, take an owned backup, apply repository-owned migrations once, and verify application/worker compatibility.
+
+## Audit and incident evidence
+
+Record actor, organization, resource, version/revision, operation, decision, result, correlation, and timestamps without returning secrets.

@@ -65,11 +65,13 @@ const curatedPages: RegisteredPageSpec[] = [
   page("start/concepts", "docs/core-concepts.mdx", { sourceRefs: ["DESIGN.md", "ARCHITECTURE.md"], related: ["start/architecture", "reference/terminology", "reference/terminal-results"] }),
   page("start/why-kestrel", "docs/why-kestrel.mdx", { sourceRefs: ["README.md", "DESIGN.md"], related: ["start/concepts", "desktop", "build"] }),
   page("start/architecture", "docs/architecture-overview.mdx", { sourceRefs: ["ARCHITECTURE.md", "README.md"], related: ["start/concepts", "reference/protocol", "operate/reliability"] }),
+  page("start/runtime-model", "docs/runtime-model.mdx", { sourceRefs: ["ARCHITECTURE.md", "src/runtime/RuntimeTurnCoordinator.ts", "src/engine/ExecutionEngine.ts"], archetype: "explainer", experienceLevel: "intermediate", related: ["start/architecture", "reference/runtime-profiles-and-providers", "operate/replay"], priority: 95, capabilities: ["runtime", "recovery", "memory", "mission control"] }),
   page("start/faq", "docs/faq.mdx", { sourceRefs: ["README.md"], related: ["start/quickstart", "desktop/troubleshooting", "operate/troubleshooting"] }),
   page("start/release-status", "start/release-status.mdx", { sourceRefs: ["package.json", "apps/docs/package.json"], related: ["reference/compatibility", "reference/releases"], priority: 94 }),
 
   page("desktop", "apps/desktop.mdx", { sourceRefs: ["apps/desktop/package.json", "apps/desktop/README.md"], archetype: "gateway", priority: 97, capabilities: ["operator control"] }),
   page("desktop/install", "desktop/install.mdx", { sourceRefs: ["apps/desktop/README.md", "README.md"], archetype: "task-recipe", estimatedTime: "5 minutes", journeyId: "desktop-first-success", related: ["desktop/first-run", "desktop/providers"] }),
+  page("desktop/updates", "desktop/updates.mdx", { sourceRefs: ["apps/desktop/package.json", "scripts/check-desktop-release.ts", "scripts/promote-desktop-update.ts"], archetype: "task-recipe", estimatedTime: "10 minutes", related: ["desktop/install", "desktop/troubleshooting", "start/release-status"], capabilities: ["updates"] }),
   page("desktop/first-run", "desktop/first-run.mdx", { sourceRefs: ["apps/desktop/renderer/src/DesktopApp.tsx"], estimatedTime: "10 minutes", journeyId: "desktop-first-success", related: ["desktop/install", "desktop/providers", "desktop/workspaces-and-sessions"] }),
   page("desktop/providers", "desktop/providers.mdx", { sourceRefs: ["apps/desktop/renderer/src/DesktopApp.tsx", ".env.example"], archetype: "task-recipe", related: ["desktop/first-run", "desktop/troubleshooting"] }),
   page("desktop/workspaces-and-sessions", "desktop/workspaces-and-sessions.mdx", { sourceRefs: ["docs/cli/workspaces.md", "apps/desktop/renderer/src/DesktopApp.tsx"], journeyId: "desktop-first-success", related: ["desktop/operator-control", "desktop/recovery"] }),
@@ -79,6 +81,7 @@ const curatedPages: RegisteredPageSpec[] = [
 
   page("kestrel-one", "apps/web.mdx", { sourceRefs: ["apps/web/app/route-ownership.manifest.ts", "apps/web/README.md"], archetype: "gateway", priority: 99, capabilities: ["threads", "projects", "knowledge", "managed models", "access control"] }),
   page("kestrel-one/getting-started", "kestrel-one/getting-started.mdx", { sourceRefs: ["apps/web/README.md"], estimatedTime: "10 minutes", journeyId: "kestrel-one-collaboration", related: ["kestrel-one/threads", "kestrel-one/projects"] }),
+  page("kestrel-one/source-and-hosting", "kestrel-one/source-and-hosting.mdx", { sourceRefs: ["apps/web/README.md", "apps/web/package.json", "apps/web/lib/deployment/build-identity.ts"], archetype: "explainer", experienceLevel: "intermediate", related: ["kestrel-one/getting-started", "kestrel-one/production-operations", "start/release-status"], priority: 98, capabilities: ["release management", "access control"] }),
   page("kestrel-one/threads", "kestrel-one/threads.mdx", { sourceRefs: ["apps/web/app/route-ownership.manifest.ts", "apps/web/lib/threads/store.ts"], journeyId: "kestrel-one-collaboration", related: ["kestrel-one/projects", "kestrel-one/artifacts-and-sharing"], priority: 98, capabilities: ["threads"] }),
   page("kestrel-one/projects", "kestrel-one/projects.mdx", { sourceRefs: ["apps/web/app/route-ownership.manifest.ts", "apps/web/lib/projects/store.ts"], journeyId: "kestrel-one-collaboration", related: ["kestrel-one/threads", "kestrel-one/apps", "kestrel-one/context-revisions"], priority: 97, capabilities: ["projects", "access control"] }),
   page("kestrel-one/apps", "kestrel-one/apps.mdx", { sourceRefs: ["apps/web/app/route-ownership.manifest.ts", "apps/web/lib/apps/service.ts", "apps/web/lib/apps/types.ts"], journeyId: "kestrel-one-collaboration", related: ["kestrel-one/projects", "kestrel-one/environments"], priority: 96, capabilities: ["apps", "access control"] }),
@@ -105,16 +108,20 @@ const curatedPages: RegisteredPageSpec[] = [
   page("build/runner-events", "build/runner-events.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "cli/protocol/contracts.ts"], archetype: "explainer", surface: "protocol", experienceLevel: "intermediate", related: ["reference/events", "build/waiting-resume-and-cancellation"], capabilities: ["protocol", "terminal results"] }),
   page("build/waiting-resume-and-cancellation", "build/waiting-resume-and-cancellation.mdx", { sourceRefs: ["packages/sdk/src/agent.ts", "src/runtime/waitForPrompt.ts"], archetype: "explainer", experienceLevel: "intermediate", journeyId: "kestrel-agent-build", related: ["build/runner-events", "reference/terminal-results"], capabilities: ["terminal results", "operator control"] }),
   page("build/upgrading-to-0-7", "build/upgrading-to-0-7.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "packages/sdk/src/contracts.ts"], related: ["reference/compatibility", "reference/releases"], priority: 96, capabilities: ["protocol", "terminal results"] }),
+  page("build/upgrading-to-0-8", "build/upgrading-to-0-8.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "packages/sdk/src/KestrelClient.ts", "src/missionControl/migrationContracts.ts"], archetype: "migration", experienceLevel: "intermediate", related: ["reference/compatibility", "reference/releases", "operate/migrations"], priority: 99, capabilities: ["protocol", "mission control", "recovery", "approvals", "memory"] }),
 
   page("operate", "operations/index.mdx", { sourceRefs: ["RELIABILITY.md", "SECURITY.md"], archetype: "gateway", priority: 95 }),
   page("operate/runner-service", "deploy/running-the-runner-service.mdx", { sourceRefs: ["tests/integration/web-command.test.ts", "cli/webCommand.ts"], archetype: "task-recipe", experienceLevel: "intermediate", priority: 94, capabilities: ["runner service"] }),
   page("operate/environment-and-auth", "deploy/environment-and-auth.mdx", { sourceRefs: ["cli/runner/service.ts", "packages/next/src/routes.ts"], related: ["operate/runner-service", "operate/credential-leases"], capabilities: ["runner service", "access control"] }),
   page("operate/deployment", "deploy/production-operating-model.mdx", { sourceRefs: ["ARCHITECTURE.md", "RELIABILITY.md"], related: ["operate/reliability", "kestrel-one/production-operations"] }),
+  page("operate/migrations", "operations/migration.mdx", { sourceRefs: ["src/localCore/migrations.ts", "apps/web/lib/db/migrate.ts", "RELIABILITY.md"], archetype: "operational-playbook", experienceLevel: "advanced", related: ["operate/deployment", "operate/release-management", "reference/compatibility"], capabilities: ["migrations"] }),
+  page("operate/budgets-and-allocations", "operate/budgets-and-allocations.mdx", { sourceRefs: ["src/budget/BudgetCoordinator.ts", "src/budget/repository.ts", "src/kestrel/contracts/budget.ts"], archetype: "operational-playbook", experienceLevel: "advanced", related: ["operate/model-authority", "operate/observability", "kestrel-one/managed-model-deployments"], capabilities: ["budgets", "provider capabilities"] }),
+  page("operate/release-management", "operate/release-management.mdx", { sourceRefs: ["apps/web/lib/releases/contracts.ts", "apps/web/lib/releases/runtime.ts", ".github/workflows/fly-image-release.yml"], archetype: "operational-playbook", experienceLevel: "advanced", related: ["operate/deployment", "operate/migrations", "kestrel-one/production-operations"], priority: 95, capabilities: ["release management", "migrations"] }),
   page("operate/credential-leases", "operate/credential-leases.mdx", { sourceRefs: ["apps/web/lib/ai/gateway-credential-lease.ts"], archetype: "explainer", experienceLevel: "advanced", related: ["operate/model-authority", "kestrel-one/models-and-gateways"], capabilities: ["gateways", "access control"] }),
   page("operate/model-authority", "operate/model-authority.mdx", { sourceRefs: ["apps/web/lib/ai/gateway-credential-lease.ts", "apps/web/lib/ai/managed-runpod-access.ts"], archetype: "explainer", experienceLevel: "advanced", related: ["operate/credential-leases", "kestrel-one/managed-model-deployments"], capabilities: ["gateways", "managed models", "access control"] }),
   page("operate/observability", "operations/artifact-inspection.mdx", { sourceRefs: ["RELIABILITY.md", "packages/observability/README.md"], related: ["operate/reliability", "reference/observability"], capabilities: ["artifact inspection"] }),
   page("operate/operator-control", "operations/operator-control-workflows.mdx", { sourceRefs: ["docs/cli/kchat.md", "packages/sdk/src/KestrelClient.ts"], related: ["desktop/operator-control", "operate/review-and-state"], capabilities: ["operator control"] }),
-  page("operate/review-and-state", "operations/review-and-state-workflows.mdx", { sourceRefs: ["packages/sdk/src/KestrelClient.ts"], related: ["operate/operator-control", "reference/sdk"], capabilities: ["project review", "task graph", "project snapshot"] }),
+  page("operate/review-and-state", "operations/review-and-state-workflows.mdx", { sourceRefs: ["packages/sdk/src/KestrelClient.ts", "src/missionControl/projectAuthority.ts", "src/missionControl/reviewAuthority.ts"], related: ["operate/operator-control", "reference/sdk"], capabilities: ["project review", "mission control", "recovery"] }),
   page("operate/security", "operations/security.mdx", { sourceRefs: ["SECURITY.md"], archetype: "explainer", experienceLevel: "advanced", related: ["operate/environment-and-auth", "kestrel-one/organizations-and-access"], capabilities: ["access control"] }),
   page("operate/reliability", "operations/reliability.mdx", { sourceRefs: ["RELIABILITY.md"], related: ["operate/replay", "operate/evaluations"] }),
   page("operate/replay", "runtime/store-and-replay.mdx", { sourceRefs: ["ARCHITECTURE.md", "RELIABILITY.md"], related: ["operate/reliability", "operate/evaluations"], capabilities: ["runtime", "evaluation"] }),
@@ -124,6 +131,10 @@ const curatedPages: RegisteredPageSpec[] = [
 
   page("reference", "reference/index.mdx", { sourceRefs: ["docs/index.md"], archetype: "gateway", priority: 91 }),
   page("reference/protocol", "reference/protocol.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "packages/protocol/package.json"], related: ["reference/terminal-results", "reference/events", "reference/compatibility"], priority: 99, capabilities: ["protocol", "terminal results"] }),
+  page("reference/runtime-profiles-and-providers", "reference/runtime-profiles-and-providers.mdx", { sourceRefs: ["src/kestrel/contracts/profile.ts", "src/kestrel/contracts/model-registration.ts", "src/profile/runtimeProfile.ts"], archetype: "reference", experienceLevel: "advanced", related: ["reference/protocol", "reference/configuration", "operate/model-authority"], capabilities: ["profiles", "provider capabilities"] }),
+  page("reference/recovery", "reference/recovery.mdx", { sourceRefs: ["src/kestrel/contracts/recovery.ts", "src/engine/recovery/RecoveryCoordinator.ts", "src/profile/recoveryPolicy.ts"], archetype: "reference", experienceLevel: "advanced", related: ["build/waiting-resume-and-cancellation", "operate/reliability", "reference/protocol"], capabilities: ["recovery", "operator control"] }),
+  page("reference/approvals-and-effects", "reference/approvals-and-effects.mdx", { sourceRefs: ["packages/protocol/src/approvals.ts", "src/kestrel/contracts/execution-boundary-policy.ts", "src/security/ExecutionBoundaryPolicy.ts"], archetype: "reference", experienceLevel: "advanced", related: ["operate/security", "reference/tool-contracts", "reference/protocol"], capabilities: ["approvals", "tool contracts", "access control"] }),
+  page("reference/tool-contracts", "reference/tool-contracts.mdx", { sourceRefs: ["src/kestrel/contracts/tool-contract.ts", "src/kestrel/contracts/tool-invocation.ts", "src/mcp/toolDescriptor.ts"], archetype: "reference", experienceLevel: "advanced", related: ["reference/approvals-and-effects", "operate/security", "cli/profiles-code-mode-and-mcp"], capabilities: ["tool contracts", "approvals"] }),
   page("reference/sdk", "packages/sdk.mdx", { sourceRefs: ["packages/sdk/README.md", "packages/sdk/src/contracts.ts"], surface: "sdk", experienceLevel: "intermediate", tocMode: "full", related: ["reference/protocol", "reference/terminal-results"], priority: 98, capabilities: ["protocol", "operator control"] }),
   page("reference/memory", "packages/memory.mdx", { sourceRefs: ["packages/memory/README.md", "packages/memory/src/contracts.ts", "packages/memory/package.json"], surface: "sdk", experienceLevel: "intermediate", tocMode: "full", related: ["build/adding-session-memory", "reference/sdk", "operate/security"], capabilities: ["knowledge", "access control"] }),
   page("reference/nextjs", "packages/next.mdx", { sourceRefs: ["packages/next/README.md"], surface: "nextjs", experienceLevel: "intermediate", tocMode: "full", related: ["build/integrating-with-nextjs", "reference/sdk"], capabilities: ["nextjs"] }),
@@ -133,11 +144,13 @@ const curatedPages: RegisteredPageSpec[] = [
   page("reference/http", "reference/http.mdx", { sourceRefs: ["tests/integration/runner-service-openai-compat.test.ts"], experienceLevel: "intermediate", tocMode: "full", capabilities: ["openai-compatible http"] }),
   page("reference/terminal-results", "reference/terminal-results.mdx", { sourceRefs: ["packages/protocol/src/index.ts", "packages/sdk/src/contracts.ts"], related: ["reference/protocol", "reference/events"], priority: 97, capabilities: ["protocol", "terminal results"] }),
   page("reference/events", "reference/events.mdx", { sourceRefs: ["cli/protocol/contracts.ts", "packages/protocol/src/index.ts"], related: ["reference/protocol", "reference/terminal-results"], capabilities: ["protocol", "terminal results"] }),
+  page("reference/reasoning-and-agent-progress", "reference/reasoning-and-agent-progress.mdx", { sourceRefs: ["src/runtime/modelTranscript.ts", "packages/observability/src/context.ts", "apps/web/app/(workspace)/settings/environments/[id]/activity/retained-reasoning-inspector.tsx"], archetype: "reference", experienceLevel: "advanced", related: ["reference/observability", "kestrel-one/threads", "operate/observability"], capabilities: ["runtime", "artifact inspection"] }),
   page("reference/configuration", "reference/configuration.mdx", { sourceRefs: [".env.example", "apps/web/.env.example"], related: ["operate/environment-and-auth", "cli/profiles-code-mode-and-mcp"] }),
-  page("reference/compatibility", "reference/compatibility.mdx", { sourceRefs: ["package.json", "packages/protocol/package.json", "packages/sdk/package.json", "packages/memory/package.json", "packages/next/package.json", "packages/ai-sdk/package.json", "packages/observability/package.json", "packages/workspace-skills/package.json"], related: ["reference/releases", "build/upgrading-to-0-7"], priority: 96 }),
+  page("reference/compatibility", "reference/compatibility.mdx", { sourceRefs: ["package.json", "packages/protocol/package.json", "packages/sdk/package.json", "packages/memory/package.json", "packages/next/package.json", "packages/ai-sdk/package.json", "packages/observability/package.json", "packages/workspace-skills/package.json"], related: ["reference/releases", "build/upgrading-to-0-8"], priority: 96 }),
   page("reference/releases", "reference/releases.mdx", { sourceRefs: ["package.json"], related: ["start/release-status", "reference/compatibility"] }),
   page("reference/terminology", "reference/terminology.mdx", { sourceRefs: ["README.md", "ARCHITECTURE.md"], related: ["start/concepts", "reference/protocol"] }),
   page("reference/cli", "cli/index.mdx", { sourceRefs: ["README.md", "docs/cli/kchat.md"], related: ["cli/kchat", "cli/command-suite"] }),
+  page("cli/install", "cli/install.mdx", { sourceRefs: ["package.json", "scripts/package-cli.ts", "scripts/install-cli.sh"], archetype: "task-recipe", experienceLevel: "beginner", estimatedTime: "5 minutes", related: ["reference/cli", "cli/kchat", "cli/command-suite"], priority: 97, capabilities: ["cli"] }),
   page("cli/command-suite", "cli/command-suite.mdx", { sourceRefs: ["README.md", "docs/cli/kchat.md"], capabilities: ["cli"] }),
   page("cli/kchat", "cli/kchat.mdx", { sourceRefs: ["docs/cli/kchat.md", "cli/protocol/contracts.ts"], capabilities: ["cli", "operator control"] }),
   page("cli/kcron", "cli/kcron.mdx", { sourceRefs: ["cli/kcron.ts"], capabilities: ["cli"] }),
@@ -148,41 +161,7 @@ const curatedPages: RegisteredPageSpec[] = [
   page("archive", "archive/index.mdx", { sourceRefs: ["docs/PLANS.md"], archetype: "gateway", priority: 20, internal: true }),
 ];
 
-const archivedPlans: RegisteredPageSpec[] = [
-  "2026-04-20-desktop-project-library-persistence-design",
-  "2026-04-20-thread-titlebar-icon-first-design",
-  "2026-04-20-thread-titlebar-icon-first-implementation-plan",
-  "2026-04-27-terminal-bench-dual-adapter-design",
-  "2026-04-28-terminal-bench-task-queue-improvement-loop-design",
-  "2026-05-11-terminal-bench-completion-boundary-hardening",
-  "2026-05-13-composer-multimodal-followups-design",
-  "2026-05-14-reference-react-command-processor-milestones",
-].map((slug) => ({
-  slug: ["archive", "plans", slug],
-  sourcePath: `docs/plans/${slug}.md`,
-  archetype: "reference" as const,
-  surface: "suite" as const,
-  experienceLevel: "advanced" as const,
-  tocMode: "auto" as const,
-  archive: true,
-  archiveGroup: "plans" as const,
-}));
-
-const archivedRunbooks: RegisteredPageSpec[] = [
-  "2026-02-25-kestrel-mvp-operator-runbook",
-  "2026-02-26-v3-migration-runbook",
-].map((slug) => ({
-  slug: ["archive", "runbooks", slug],
-  sourcePath: `docs/runbooks/${slug}.md`,
-  archetype: "operational-playbook" as const,
-  surface: "operations" as const,
-  experienceLevel: "advanced" as const,
-  tocMode: "auto" as const,
-  archive: true,
-  archiveGroup: "runbooks" as const,
-}));
-
-export const pageRegistry = [...curatedPages, ...archivedPlans, ...archivedRunbooks];
+export const pageRegistry = curatedPages;
 
 const slugSet = new Set<string>();
 for (const spec of pageRegistry) {
