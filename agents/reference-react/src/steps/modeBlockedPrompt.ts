@@ -23,16 +23,9 @@ export function buildModeBlockedWaitGuidance(input: {
   const currentMode = formatUserFacingModeLabel({
     interactionMode: input.interactionMode,
   });
-  const toolClassLabel =
-    input.requiredToolClass === "read_only"
-      ? "a read-only tool"
-      : input.requiredToolClass === "planning_write"
-        ? "a session plan document write tool"
-        : input.requiredToolClass === "sandboxed_only"
-          ? "a sandboxed tool"
-          : "an external side-effect tool";
-  const question =
-    `You're in '${currentMode}'. Can I switch to '${requiredModeLabel}' so I can use ${toolClassLabel}?`;
+  const question = currentMode === requiredModeLabel
+    ? `I can't perform that action with the current ${currentMode} permissions. Resume it in ${requiredModeLabel}?`
+    : `I can't perform that action in ${currentMode}. It requires ${requiredModeLabel}. Switch to ${requiredModeLabel} and resume this action?`;
   const prompt = [
     ...(input.reason !== undefined ? [input.reason.trim(), ""] : []),
     `Question: ${question}`,

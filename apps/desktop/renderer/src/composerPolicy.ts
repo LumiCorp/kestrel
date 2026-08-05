@@ -7,6 +7,7 @@ export type DesktopComposerSubmissionPolicy =
       allowedOptionIds: string[];
       reviewKind: "recovery" | "evaluation";
       triggeringFailureCode?: string | undefined;
+      triggeringFailureSummary?: string | undefined;
       evaluationTechnicalDisclosure?: Record<string, unknown> | undefined;
     }
   | {
@@ -48,6 +49,11 @@ export function getDesktopComposerSubmissionPolicy(input: {
         metadata.triggeringFailureCode.trim().length > 0
           ? metadata.triggeringFailureCode
           : undefined;
+      const triggeringFailureSummary =
+        typeof metadata.triggeringFailureSummary === "string" &&
+        metadata.triggeringFailureSummary.trim().length > 0
+          ? metadata.triggeringFailureSummary.trim()
+          : undefined;
       return {
         mode: "select_recovery_option",
         item: request,
@@ -55,6 +61,9 @@ export function getDesktopComposerSubmissionPolicy(input: {
         reviewKind:
           metadata.reason === "evaluation_review" ? "evaluation" : "recovery",
         ...(triggeringFailureCode !== undefined ? { triggeringFailureCode } : {}),
+        ...(triggeringFailureSummary !== undefined
+          ? { triggeringFailureSummary }
+          : {}),
         ...(isRecord(metadata.evaluationTechnicalDisclosure)
           ? {
               evaluationTechnicalDisclosure:

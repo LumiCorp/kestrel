@@ -5579,6 +5579,58 @@ test("agent loop compiles a mode switch request into one resumable user wait", a
   assert.doesNotMatch(JSON.stringify(agent), /stale inspection/u);
 });
 
+test("agent loop explains that an external action cannot run in Chat and requires Build", async () => {
+  const chatContext = context();
+  const objective = "Please start the Chirp app and open the localhost URL in Safari.";
+  chatContext.event = {
+    id: "event-start-chirp",
+    type: "user.message",
+    sessionId: "session-1",
+    payload: {
+      message: objective,
+      interactionMode: "chat",
+      metadata: { turnId: "turn-start-chirp", submissionKind: "initial" },
+    },
+  };
+  chatContext.session.state.agent = {
+    interactionMode: "chat",
+    modelTranscript: transcriptForTask(objective),
+  };
+
+  const transition = await buildStep({
+    tools: [DEV_SHELL_RUN_TOOL],
+    capabilityManifest: [{
+      name: "dev.shell.run",
+      description: "Run a command in the development shell.",
+      capabilityClasses: ["dev.shell", "host.shell"],
+      executionClass: "external_side_effect",
+    }],
+  })(chatContext, {
+    useModel: async () => modelResponse({
+      reason: "Starting Chirp and opening Safari requires an external action.",
+      nextAction: {
+        kind: "request_mode_switch",
+        requiredToolClass: "external_side_effect",
+        reason: "Starting Chirp and opening Safari requires an external action.",
+      },
+    }),
+  } satisfies StepIO);
+
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  const nextAction = agent.nextAction as Record<string, unknown>;
+  const waitFor = nextAction.waitFor as Record<string, unknown>;
+  const metadata = waitFor.metadata as Record<string, unknown>;
+  assert.equal(metadata.reason, "planner_mode_blocked");
+  assert.equal(metadata.currentMode, "Chat");
+  assert.equal(metadata.requiredMode, "Build");
+  assert.equal(
+    metadata.question,
+    "I can't perform that action in Chat. It requires Build. Switch to Build and resume this action?",
+  );
+  assert.equal(metadata.resumeCommand, "/mode build");
+  assert.equal((agent.activeTurnIntent as Record<string, unknown>).objective, objective);
+});
+
 test("agent loop accepts missing assistantProgress with a neutral fallback", async () => {
   let modelCallCount = 0;
   let retryRequest: ModelRequest | undefined;

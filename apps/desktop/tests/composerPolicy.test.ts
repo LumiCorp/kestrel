@@ -40,6 +40,7 @@ test("Desktop composer exposes exact recovery options instead of free text", () 
       reason: "recovery_review",
       allowedOptionIds: ["retry.primary", "terminal.fail"],
       triggeringFailureCode: "RECOVERY_EXHAUSTED",
+      triggeringFailureSummary: "The model response did not meet Kestrel's response contract.",
     },
   } satisfies DesktopOperatorInboxItem;
 
@@ -52,6 +53,7 @@ test("Desktop composer exposes exact recovery options instead of free text", () 
     allowedOptionIds: ["retry.primary", "terminal.fail"],
     reviewKind: "recovery",
     triggeringFailureCode: "RECOVERY_EXHAUSTED",
+    triggeringFailureSummary: "The model response did not meet Kestrel's response contract.",
   });
 });
 
@@ -86,6 +88,35 @@ test("Desktop composer exposes evaluation review options and disclosure", () => 
     allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
     reviewKind: "evaluation",
     evaluationTechnicalDisclosure: request.metadata.evaluationTechnicalDisclosure,
+  });
+});
+
+test("Desktop composer preserves legacy recovery waits without a failure summary", () => {
+  const request = {
+    itemId: "request:legacy-recovery",
+    kind: "user_input_request",
+    threadId: "thread-main:session-1",
+    sessionId: "session-1",
+    title: "Recovery is exhausted. Choose exactly one allowed recovery option.",
+    actionable: true,
+    requestId: "legacy-recovery",
+    createdAt: "2026-08-03T12:00:00.000Z",
+    metadata: {
+      reason: "recovery_review",
+      allowedOptionIds: ["terminal.fail"],
+      triggeringFailureCode: "RECOVERY_EXHAUSTED",
+    },
+  } satisfies DesktopOperatorInboxItem;
+
+  assert.deepEqual(getDesktopComposerSubmissionPolicy({
+    inboxItems: [request],
+    runActive: false,
+  }), {
+    mode: "select_recovery_option",
+    item: request,
+    allowedOptionIds: ["terminal.fail"],
+    reviewKind: "recovery",
+    triggeringFailureCode: "RECOVERY_EXHAUSTED",
   });
 });
 
