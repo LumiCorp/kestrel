@@ -2,6 +2,7 @@ import {
   getDesktopCapabilityRegistration,
   type DesktopCapabilityRegistration,
 } from "../../../src/desktopShell/capabilityRegistry.js";
+import { appendDesktopModelConfigurationRevision } from "../../../src/desktopShell/configuration.js";
 import type { LocalCoreCredentialId } from "../../../src/localCore/credentialStore.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
 import { DEFAULT_MODEL_BY_PROVIDER, type ModelProviderId } from "../../../src/profile/runtimeProfile.js";
@@ -18,6 +19,36 @@ export interface DesktopCapabilityConfigurationPlan {
   credential?: { id: LocalCoreCredentialId; value: string | null } | undefined;
   requiresVerification: boolean;
   restartRuntime: boolean;
+}
+
+export function promoteDesktopDefaultModelConfiguration(
+  settings: DesktopSettings,
+  policy: ModelPolicyV1,
+  createdAt = new Date().toISOString(),
+): DesktopSettings {
+  const defaultConfiguration = settings.modelConfigurations.find(
+    (configuration) => configuration.id === settings.defaultModelConfigurationId,
+  );
+  if (defaultConfiguration === undefined) {
+    throw new Error("Desktop default model configuration is missing.");
+  }
+  const currentRevision = defaultConfiguration.revisions.find(
+    (revision) => revision.revision === defaultConfiguration.currentRevision,
+  );
+  if (currentRevision === undefined) {
+    throw new Error("Desktop default model configuration revision is missing.");
+  }
+  if (modelPoliciesEqual(currentRevision.policy, policy)) {
+    return settings;
+  }
+  return {
+    ...settings,
+    modelConfigurations: settings.modelConfigurations.map((configuration) =>
+      configuration.id === defaultConfiguration.id
+        ? appendDesktopModelConfigurationRevision(configuration, policy, createdAt)
+        : configuration,
+    ),
+  };
 }
 
 export function buildDesktopCapabilityConfigurationPlan(input: {
@@ -247,4 +278,27 @@ function providerModel(settings: DesktopSettings, provider: ModelProviderId): st
   if (provider === "anthropic") return settings.anthropicModel;
   if (provider === "ollama") return settings.ollamaModel;
   return settings.lmstudioModel;
+}
+
+function modelPoliciesEqual(left: ModelPolicyV1, right: ModelPolicyV1): boolean {
+  if (
+    left.version !== right.version ||
+    left.provider !== right.provider ||
+    left.model !== right.model ||
+    left.modelTimeoutMs !== right.modelTimeoutMs ||
+    left.modelCapabilities.visionInputEnabled !==
+      right.modelCapabilities.visionInputEnabled
+  ) {
+    return false;
+  }
+  const leftStages = Object.entries(left.modelByStage).sort(([leftStage], [rightStage]) =>
+    leftStage.localeCompare(rightStage),
+  );
+  const rightStages = Object.entries(right.modelByStage).sort(([leftStage], [rightStage]) =>
+    leftStage.localeCompare(rightStage),
+  );
+  return leftStages.length === rightStages.length && leftStages.every(
+    ([stage, model], index) =>
+      rightStages[index]?.[0] === stage && rightStages[index]?.[1] === model,
+  );
 }

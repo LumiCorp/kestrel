@@ -95,6 +95,7 @@ import {
   archiveRendererThread,
   appendRendererTranscript,
   acceptRendererPrompt,
+  applyDesktopOnboardingHandoff,
   getRendererTurnContinuation,
   getRendererThreadArchiveBlockReason,
   getTerminalWaitEventType,
@@ -152,7 +153,12 @@ const SURFACE_STATE_KEY = "kestrel:desktop:surface:v1" as const;
 const INSPECTOR_STATE_KEY = "kestrel:desktop:inspector-open:v1" as const;
 const INSPECTOR_WIDTH_KEY = "kestrel:desktop:inspector-width:v1" as const;
 
-export function DesktopApp() {
+export function DesktopApp(props: {
+  onboardingHandoff?: {
+    id: string;
+    projectPath: string;
+  } | undefined;
+} = {}) {
   const [state, setState] = useState<DesktopRendererState>();
   const [settings, setSettings] = useState<DesktopRendererSettings>();
   const [runtimeHealth, setRuntimeHealth] = useState<DesktopRuntimeHealth>();
@@ -305,12 +311,30 @@ export function DesktopApp() {
       const defaultConfiguration = nextSettings.modelConfigurations.find(
         (configuration) => configuration.id === nextSettings.defaultModelConfigurationId,
       );
-      const rendererState = readDesktopRendererState(uiStateBootstrap.state, {
+      let rendererState = readDesktopRendererState(uiStateBootstrap.state, {
+        projectPath:
+          props.onboardingHandoff?.projectPath ??
+          nextSettings.defaultProjectPath ??
+          nextSettings.projects[0]?.path,
         modelConfigurationId: defaultConfiguration?.id,
         modelConfigurationRevision: defaultConfiguration?.currentRevision,
         enabledAppIds: nextSettings.defaultEnabledAppIds,
         theme: nextSettings.appearanceTheme,
       });
+      if (props.onboardingHandoff !== undefined) {
+        rendererState = applyDesktopOnboardingHandoff(rendererState, {
+          ...props.onboardingHandoff,
+          replaceInitialThread: uiStateBootstrap.state === null,
+          ...(defaultConfiguration !== undefined
+            ? {
+                modelConfigurationId: defaultConfiguration.id,
+                modelConfigurationRevision:
+                  defaultConfiguration.currentRevision,
+              }
+            : {}),
+          enabledAppIds: nextSettings.defaultEnabledAppIds,
+        });
+      }
       setState(rendererState);
       void (async () => {
         for (const thread of rendererState.threads) {
@@ -324,7 +348,13 @@ export function DesktopApp() {
         }
       })();
       setSettings(nextSettings);
-      setSelectedProjectPath((current) => current ?? nextSettings.projects[0]?.path);
+      setSelectedProjectPath(
+        (current) =>
+          current ??
+          props.onboardingHandoff?.projectPath ??
+          nextSettings.defaultProjectPath ??
+          nextSettings.projects[0]?.path,
+      );
       setRuntimeHealth(health);
     }).catch((cause) => {
       if (disposed === false) {
@@ -334,7 +364,7 @@ export function DesktopApp() {
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [props.onboardingHandoff?.id, props.onboardingHandoff?.projectPath]);
 
   useEffect(() => window.kestrelDesktop.onRunnerEvent((event) => {
       const rendererThread = event.sessionId === undefined
@@ -484,6 +514,10 @@ export function DesktopApp() {
         }
         if (command === "restart-runtime") {
           void window.kestrelDesktop.restartRuntime();
+          return;
+        }
+        if (command === "settings") {
+          openCapabilitySettings();
           return;
         }
         if (command === "toggle-left-sidebar") {

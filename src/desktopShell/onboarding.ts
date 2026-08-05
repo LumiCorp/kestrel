@@ -1,4 +1,78 @@
-import type { DesktopModelProvider, DesktopSettings } from "./contracts.js";
+import type {
+  DesktopLegacyUiStateEntries,
+  DesktopModelProvider,
+  DesktopOnboardingRecordV1,
+  DesktopSettings,
+} from "./contracts.js";
+
+const DESKTOP_THREADS_STORAGE_KEY = "kchat:web:threads:v2" as const;
+
+export function desktopUiStateContainsOnboardingHandoff(
+  entries: DesktopLegacyUiStateEntries,
+  handoffId: string,
+): boolean {
+  const raw = entries[DESKTOP_THREADS_STORAGE_KEY];
+  if (typeof raw !== "string") {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return false;
+    }
+    const states = (parsed as { states?: unknown }).states;
+    if (
+      typeof states !== "object" ||
+      states === null ||
+      Array.isArray(states)
+    ) {
+      return false;
+    }
+    return Object.values(states).some(
+      (state) =>
+        typeof state === "object" &&
+        state !== null &&
+        Array.isArray(state) === false &&
+        (state as { onboardingHandoffId?: unknown }).onboardingHandoffId ===
+          handoffId,
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function deriveDesktopOnboardingRouteV1(input: {
+  record?: DesktopOnboardingRecordV1 | undefined;
+  providerVerified: boolean;
+  projectReady: boolean;
+  hasExistingState: boolean;
+}): {
+  mode: "first_run" | "resume" | "repair";
+  step: "welcome" | "provider" | "project" | "review";
+} {
+  const mode =
+    input.record?.status === "complete" &&
+    (!input.providerVerified || !input.projectReady)
+      ? "repair"
+      : input.hasExistingState
+        ? "resume"
+        : "first_run";
+  const step =
+    mode === "first_run" &&
+    input.providerVerified === false &&
+    input.record?.provider === undefined
+      ? "welcome"
+      : input.providerVerified === false
+        ? "provider"
+        : input.projectReady === false
+          ? "project"
+          : "review";
+  return { mode, step };
+}
 
 export type DesktopOnboardingStep =
   | "provider"
@@ -26,30 +100,6 @@ export interface DesktopOnboardingState {
   providerRequirementState: DesktopProviderRequirementState;
   providerIssueOwnedBySetup: boolean;
   nextStep: DesktopOnboardingStep;
-}
-
-export const DESKTOP_SETUP_STEPS = [
-  "welcome",
-  "provider",
-  "key",
-  "project",
-  "finish",
-] as const;
-
-export type DesktopSetupStep = (typeof DESKTOP_SETUP_STEPS)[number];
-
-export const DESKTOP_SETUP_PROVIDERS: readonly DesktopModelProvider[] = [
-  "openrouter",
-  "openai",
-  "anthropic",
-  "ollama",
-  "lmstudio",
-];
-
-export interface DesktopSetupProjectLike {
-  path: string;
-  label: string;
-  addedAt?: string | undefined;
 }
 
 type DesktopProviderCredentialSettings = Pick<
@@ -96,100 +146,6 @@ export function hasConfiguredDesktopProviderCredential(
         ? settings.anthropicApiKey
         : settings.openrouterApiKey;
   return typeof key === "string" && key.trim().length > 0;
-}
-
-export function toDesktopSetupStep(
-  step: DesktopOnboardingState["nextStep"],
-): DesktopSetupStep {
-  return step === "complete" ? "welcome" : step;
-}
-
-export function getPreviousDesktopSetupStep(
-  step: DesktopSetupStep,
-): DesktopSetupStep {
-  const index = DESKTOP_SETUP_STEPS.indexOf(step);
-  return DESKTOP_SETUP_STEPS[Math.max(0, index - 1)] ?? "welcome";
-}
-
-export function getNextDesktopSetupStep(
-  step: DesktopSetupStep,
-): DesktopSetupStep {
-  const index = DESKTOP_SETUP_STEPS.indexOf(step);
-  return DESKTOP_SETUP_STEPS[
-    Math.min(DESKTOP_SETUP_STEPS.length - 1, index + 1)
-  ] ?? "finish";
-}
-
-export function getDesktopSetupAdvanceError(input: {
-  step: DesktopSetupStep;
-  settings: Pick<
-    DesktopSettings,
-    | "selectedProvider"
-    | "providerSelectionCompletedAt"
-    | "openrouterApiKey"
-    | "openaiApiKey"
-    | "anthropicApiKey"
-  >;
-  setupProject?: DesktopSetupProjectLike | undefined;
-}): string | undefined {
-  const onboarding = deriveDesktopOnboardingState({
-    ...input.settings,
-    projects: [],
-    setupCompletedAt: undefined,
-  });
-
-  if (
-    input.step === "provider" &&
-    onboarding.providerSelectionCompleted === false
-  ) {
-    return "Choose a model provider before continuing.";
-  }
-
-  if (
-    input.step === "key" &&
-    desktopProviderRequiresApiKey(input.settings.selectedProvider)
-  ) {
-    const key =
-      input.settings.selectedProvider === "openai"
-        ? input.settings.openaiApiKey
-        : input.settings.selectedProvider === "anthropic"
-          ? input.settings.anthropicApiKey
-          : input.settings.openrouterApiKey;
-    if (typeof key !== "string" || key.trim().length === 0) {
-      return `Enter ${DESKTOP_PROVIDER_ENV_VARS[input.settings.selectedProvider]} before continuing.`;
-    }
-  }
-
-  if (input.step === "project" && input.setupProject === undefined) {
-    return "Choose a project before continuing.";
-  }
-
-  return ;
-}
-
-export function buildCompletedDesktopSetupSettings(input: {
-  settings: DesktopSettings;
-  workspaceProjects: readonly DesktopSetupProjectLike[];
-  setupProject: DesktopSetupProjectLike;
-  completedAt: string;
-}): DesktopSettings {
-  const projectAlreadyPresent = input.workspaceProjects.some(
-    (project) => project.path === input.setupProject.path,
-  );
-  const projects = projectAlreadyPresent
-    ? input.workspaceProjects
-    : [...input.workspaceProjects, input.setupProject];
-
-  return {
-    ...input.settings,
-    projects: projects.map((project) => ({
-      path: project.path,
-      label: project.label,
-      addedAt: project.addedAt ?? input.completedAt,
-    })),
-    setupCompletedAt: input.completedAt,
-    advancedWorkspaceEnabled: false,
-  };
 }
 
 export function deriveDesktopOnboardingState(

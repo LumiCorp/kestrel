@@ -85,6 +85,28 @@ async function handleFakeOpenRouterRequest(
     return;
   }
 
+  if (request.url === "/api/v1/key" && request.method === "GET") {
+    const authorization = request.headers.authorization;
+    if (
+      typeof authorization !== "string" ||
+      authorization.startsWith("Bearer ") === false ||
+      authorization.length <= "Bearer ".length
+    ) {
+      response.writeHead(401, {
+        "content-type": "application/json",
+        connection: "close",
+      });
+      response.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
+    response.writeHead(200, {
+      "content-type": "application/json",
+      connection: "close",
+    });
+    response.end(JSON.stringify({ data: { label: "fake-smoke-key" } }));
+    return;
+  }
+
   if (request.url === "/test/reset" && request.method === "POST") {
     scenarios.failedAttempts = 0;
     delete scenarios.waitingCallId;

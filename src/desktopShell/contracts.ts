@@ -61,6 +61,7 @@ export type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 
 export type DesktopBridgeCapabilityId =
   | "app_info"
+  | "onboarding"
   | "settings"
   | "capability_registry"
   | "provider_credentials"
@@ -107,6 +108,7 @@ export const DESKTOP_BRIDGE_VERSION = "8";
 
 export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "app_info",
+  "onboarding",
   "settings",
   "capability_registry",
   "provider_credentials",
@@ -1351,6 +1353,194 @@ export interface DesktopBootState {
   updatedAt?: string | undefined;
 }
 
+export type DesktopLaunchPhase =
+  | "foundation_starting"
+  | "setup_required"
+  | "starting_execution"
+  | "ready"
+  | "failed";
+
+export interface DesktopLaunchState {
+  phase: DesktopLaunchPhase;
+  message: string;
+  code?: string | undefined;
+  details?: string | undefined;
+  onboardingHandoff?: {
+    id: string;
+    projectPath: string;
+  } | undefined;
+}
+
+export interface DesktopOnboardingRecordV1 {
+  version: 1;
+  status: "in_progress" | "complete";
+  startedAt: string;
+  completedAt?: string | undefined;
+  handoffId?: string | undefined;
+  handoffAcknowledgedAt?: string | undefined;
+  provider?: DesktopModelProvider | undefined;
+  model?: string | undefined;
+  projectPath?: string | undefined;
+}
+
+export type DesktopOnboardingStep =
+  | "welcome"
+  | "provider"
+  | "project"
+  | "review";
+
+export interface DesktopOnboardingProjectChoice {
+  path: string;
+  label: string;
+  available: boolean;
+}
+
+export interface DesktopOnboardingStateV1 {
+  version: 1;
+  mode: "first_run" | "resume" | "repair";
+  step: DesktopOnboardingStep;
+  provider?: DesktopModelProvider | undefined;
+  model?: string | undefined;
+  baseUrl?: string | undefined;
+  providerVerified: boolean;
+  credentialConfigured: boolean;
+  secureStorageAvailable: boolean;
+  projectPath?: string | undefined;
+  projects: DesktopOnboardingProjectChoice[];
+  canComplete: boolean;
+}
+
+export interface DesktopOnboardingDraftInput {
+  provider?: DesktopModelProvider | undefined;
+  model?: string | undefined;
+}
+
+export interface DesktopOnboardingProviderInput {
+  provider: DesktopModelProvider;
+  model: string;
+  baseUrl?: string | undefined;
+  credential?: string | undefined;
+}
+
+export type DesktopOnboardingProviderFailureKind =
+  | "invalid_credential"
+  | "provider_rejected"
+  | "timeout"
+  | "unreachable"
+  | "model_unavailable"
+  | "secure_storage_unavailable";
+
+export type DesktopOnboardingProviderVerificationResult =
+  | {
+      ok: true;
+      state: DesktopOnboardingStateV1;
+    }
+  | {
+      ok: false;
+      failure: {
+        kind: DesktopOnboardingProviderFailureKind;
+        message: string;
+      };
+    };
+
+export type DesktopRendererBootstrapReport =
+  | {
+      generation: number;
+      status: "ready";
+    }
+  | {
+      generation: number;
+      status: "failed";
+      reason: "react_error" | "stylesheet_missing";
+    };
+
+export interface DesktopProviderModelCatalogRequest {
+  provider: DesktopModelProvider;
+  baseUrl?: string | undefined;
+}
+
+export function parseDesktopProviderModelCatalogRequest(
+  value: unknown,
+): DesktopProviderModelCatalogRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Model catalog request must be an object.");
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).some(
+      (key) => key !== "provider" && key !== "baseUrl",
+    )
+  ) {
+    throw new Error("Model catalog request contains unsupported fields.");
+  }
+  const provider = parseDesktopModelProviderValue(input.provider);
+  if (
+    input.baseUrl !== undefined &&
+    provider !== "ollama" &&
+    provider !== "lmstudio"
+  ) {
+    throw new Error("Hosted model catalog requests do not accept a base URL.");
+  }
+  return {
+    provider,
+    ...(input.baseUrl !== undefined
+      ? { baseUrl: parseDesktopLocalProviderBaseUrl(input.baseUrl) }
+      : {}),
+  };
+}
+
+function parseDesktopModelProviderValue(value: unknown): DesktopModelProvider {
+  if (
+    value !== "openrouter" &&
+    value !== "openai" &&
+    value !== "anthropic" &&
+    value !== "ollama" &&
+    value !== "lmstudio"
+  ) {
+    throw new Error("Desktop model provider is invalid.");
+  }
+  return value;
+}
+
+function parseDesktopLocalProviderBaseUrl(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error("Local provider endpoint is required.");
+  }
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error("Local provider endpoint must be an absolute URL.");
+  }
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username.length > 0 ||
+    url.password.length > 0 ||
+    url.search.length > 0 ||
+    url.hash.length > 0
+  ) {
+    throw new Error(
+      "Local provider endpoint must use HTTP or HTTPS without credentials, a query, or a fragment.",
+    );
+  }
+  url.pathname = url.pathname.replace(/\/+$/u, "") || "/";
+  return url.toString().replace(/\/$/u, "");
+}
+
+export type DesktopOnboardingProjectInspectionKind =
+  | "existing_git"
+  | "non_empty"
+  | "empty"
+  | "git_without_head";
+
+export interface DesktopOnboardingProjectCandidate {
+  selectionId: string;
+  path: string;
+  label: string;
+  kind: DesktopOnboardingProjectInspectionKind;
+  requiresGitBootstrap: boolean;
+}
+
 export interface DesktopRuntimeStoreReset {
   storePath: string;
   archivedStorePath?: string | undefined;
@@ -1706,6 +1896,7 @@ export interface DesktopSettings {
   tavilyHttpsProxy?: string | undefined;
   providerSelectionCompletedAt?: string | undefined;
   setupCompletedAt?: string | undefined;
+  desktopOnboarding?: DesktopOnboardingRecordV1 | undefined;
   advancedWorkspaceEnabled: boolean;
   modelConfigurations: DesktopModelConfiguration[];
   defaultModelConfigurationId: string;
@@ -1725,6 +1916,7 @@ export interface DesktopRendererSettings {
   presetId: DesktopShellPresetId;
   capabilityPacks: DesktopCapabilityPackId[];
   projects: DesktopProjectRegistration[];
+  defaultProjectPath?: string | undefined;
   providerSelectionCompletedAt?: string | undefined;
   setupCompletedAt?: string | undefined;
   advancedWorkspaceEnabled: boolean;

@@ -1,3 +1,4 @@
+import { DEFAULT_LMSTUDIO_BASE_URL } from "../../models/lmstudio/LmStudioEnv.js";
 import { DEFAULT_OLLAMA_BASE_URL } from "../../models/ollama/OllamaEnv.js";
 import { DEFAULT_OPENROUTER_BASE_URL } from "../../models/openrouter/OpenRouterEnv.js";
 import type { ModelProviderId } from "./runtimeProfile.js";
@@ -16,14 +17,57 @@ export async function resolveProviderModelCatalog(
   provider: ModelProviderId,
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl: typeof fetch = fetch,
+  options: {
+    requireLiveLocalCatalog?: boolean | undefined;
+    preserveProviderOrder?: boolean | undefined;
+  } = {},
 ): Promise<ResolvedProviderModelCatalog> {
   switch (provider) {
     case "openrouter":
-      return resolveOpenRouterModelCatalog(env, fetchImpl);
+      return resolveOpenRouterModelCatalog(env, fetchImpl, options);
     case "ollama":
-      return resolveOllamaModelCatalog(env, fetchImpl);
+      return resolveOllamaModelCatalog(env, fetchImpl, options);
+    case "lmstudio":
+      return options.requireLiveLocalCatalog === true
+        ? resolveLmStudioModelCatalog(env, fetchImpl)
+        : buildFallbackCatalog("lmstudio");
     default:
       return buildFallbackCatalog(provider);
+  }
+}
+
+async function resolveLmStudioModelCatalog(
+  env: NodeJS.ProcessEnv,
+  fetchImpl: typeof fetch,
+): Promise<ResolvedProviderModelCatalog> {
+  const baseUrl = readOptionalString(env.LMSTUDIO_BASE_URL) ?? DEFAULT_LMSTUDIO_BASE_URL;
+  try {
+    const payload = await fetchJson(
+      `${trimTrailingSlash(baseUrl)}/v1/models`,
+      { headers: { Accept: "application/json" } },
+      fetchImpl,
+    );
+    const discovered = readOpenRouterModelIds(payload);
+    if (discovered.length === 0) {
+      return {
+        provider: "lmstudio",
+        models: [],
+        source: "fallback",
+        note: "The endpoint returned no loaded models.",
+      };
+    }
+    return {
+      provider: "lmstudio",
+      models: discovered,
+      source: "live",
+    };
+  } catch (error) {
+    return {
+      provider: "lmstudio",
+      models: [],
+      source: "fallback",
+      note: `Endpoint discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
@@ -42,6 +86,7 @@ function buildFallbackCatalog(
 async function resolveOpenRouterModelCatalog(
   env: NodeJS.ProcessEnv,
   fetchImpl: typeof fetch,
+  options: { preserveProviderOrder?: boolean | undefined },
 ): Promise<ResolvedProviderModelCatalog> {
   const apiKey = readOptionalString(env.OPENROUTER_API_KEY);
   const baseUrl = readOptionalString(env.OPENROUTER_BASE_URL) ?? DEFAULT_OPENROUTER_BASE_URL;
@@ -62,7 +107,9 @@ async function resolveOpenRouterModelCatalog(
     }
     return {
       provider: "openrouter",
-      models: rankDiscoveredModels("openrouter", discovered),
+      models: options.preserveProviderOrder === true
+        ? [...new Set(discovered)]
+        : rankDiscoveredModels("openrouter", discovered),
       source: "live",
     };
   } catch (error) {
@@ -76,6 +123,10 @@ async function resolveOpenRouterModelCatalog(
 async function resolveOllamaModelCatalog(
   env: NodeJS.ProcessEnv,
   fetchImpl: typeof fetch,
+  options: {
+    requireLiveLocalCatalog?: boolean | undefined;
+    preserveProviderOrder?: boolean | undefined;
+  },
 ): Promise<ResolvedProviderModelCatalog> {
   const apiKey = readOptionalString(env.OLLAMA_API_KEY);
   const baseUrl = readOptionalString(env.OLLAMA_BASE_URL) ?? DEFAULT_OLLAMA_BASE_URL;
@@ -92,19 +143,54 @@ async function resolveOllamaModelCatalog(
     );
     const discovered = readOllamaModelIds(payload);
     if (discovered.length === 0) {
-      return buildFallbackCatalog("ollama", "Live discovery returned no models; using the curated fallback list.");
+      return options.requireLiveLocalCatalog === true
+        ? {
+            provider: "ollama",
+            models: [],
+            source: "fallback",
+            note: "The endpoint returned no installed models.",
+          }
+        : buildFallbackCatalog(
+            "ollama",
+            "Live discovery returned no models; using the curated fallback list.",
+          );
     }
     return {
       provider: "ollama",
-      models: rankDiscoveredModels("ollama", discovered),
+      models: options.preserveProviderOrder === true
+        ? [...new Set(discovered)]
+        : rankDiscoveredModels("ollama", discovered),
       source: "live",
     };
   } catch (error) {
-    return buildFallbackCatalog(
-      "ollama",
-      `Live discovery failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    return options.requireLiveLocalCatalog === true
+      ? {
+          provider: "ollama",
+          models: [],
+          source: "fallback",
+          note: `Endpoint discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+        }
+      : buildFallbackCatalog(
+          "ollama",
+          `Live discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
   }
+}
+
+function rankDiscoveredModels(provider: ModelProviderId, discovered: string[]): string[] {
+  const preferred = MODEL_ALLOWLIST_BY_PROVIDER[provider];
+  const unique = [...new Set(discovered.map((model) => model.trim()).filter((model) => model.length > 0))];
+  const preferredRank = new Map(preferred.map((model, index) => [model, index]));
+  return unique.sort((left, right) => {
+    const leftRank = preferredRank.get(left);
+    const rightRank = preferredRank.get(right);
+    if (leftRank !== undefined || rightRank !== undefined) {
+      if (leftRank === undefined) return 1;
+      if (rightRank === undefined) return -1;
+      return leftRank - rightRank;
+    }
+    return left.localeCompare(right);
+  });
 }
 
 async function fetchJson(
@@ -126,26 +212,6 @@ async function fetchJson(
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function rankDiscoveredModels(provider: ModelProviderId, discovered: string[]): string[] {
-  const preferred = MODEL_ALLOWLIST_BY_PROVIDER[provider];
-  const unique = [...new Set(discovered.map((model) => model.trim()).filter((model) => model.length > 0))];
-  const preferredRank = new Map(preferred.map((model, index) => [model, index]));
-  return unique.sort((left, right) => {
-    const leftRank = preferredRank.get(left);
-    const rightRank = preferredRank.get(right);
-    if (leftRank !== undefined || rightRank !== undefined) {
-      if (leftRank === undefined) {
-        return 1;
-      }
-      if (rightRank === undefined) {
-        return -1;
-      }
-      return leftRank - rightRank;
-    }
-    return left.localeCompare(right);
-  });
 }
 
 function readOpenRouterModelIds(value: unknown): string[] {

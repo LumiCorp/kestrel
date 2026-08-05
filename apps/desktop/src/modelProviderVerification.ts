@@ -11,11 +11,26 @@ const VERIFICATION_TIMEOUT_MS = 5000;
 
 export class DesktopModelProviderVerificationError extends Error {
   readonly code = "DESKTOP_MODEL_PROVIDER_VERIFICATION_FAILED";
+  readonly kind:
+    | "invalid_credential"
+    | "provider_rejected"
+    | "timeout"
+    | "unreachable"
+    | "model_unavailable";
 
-  constructor(provider: DesktopModelProvider, detail: string) {
+  constructor(
+    provider: DesktopModelProvider,
+    detail: string,
+    kind: DesktopModelProviderVerificationError["kind"] = "provider_rejected",
+  ) {
     super(`${providerLabel(provider)} credential verification failed. ${detail}`);
     this.name = "DesktopModelProviderVerificationError";
+    this.kind = kind;
   }
+}
+
+export interface DesktopModelProviderVerificationResult {
+  models: string[];
 }
 
 export async function verifyDesktopModelProviderCredential(input: {
@@ -24,22 +39,36 @@ export async function verifyDesktopModelProviderCredential(input: {
   settings: DesktopSettings;
   fetchImpl?: typeof fetch | undefined;
   timeoutMs?: number | undefined;
-}): Promise<void> {
-  const request = buildVerificationRequest(input.provider, input.apiKey, input.settings);
+}): Promise<DesktopModelProviderVerificationResult> {
+  const requests = buildVerificationRequests(
+    input.provider,
+    input.apiKey,
+    input.settings,
+  );
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? VERIFICATION_TIMEOUT_MS);
   try {
-    const response = await (input.fetchImpl ?? fetch)(request.url, {
+    if (requests.authentication !== undefined) {
+      const authenticationResponse = await (input.fetchImpl ?? fetch)(
+        requests.authentication.url,
+        {
+          method: "GET",
+          headers: requests.authentication.headers,
+          signal: controller.signal,
+        },
+      );
+      assertSuccessfulProviderResponse(input.provider, authenticationResponse);
+      // Authentication payloads can contain account or key metadata. Kestrel
+      // intentionally does not parse, retain, or expose them.
+      await authenticationResponse.body?.cancel();
+    }
+    const response = await (input.fetchImpl ?? fetch)(requests.catalog.url, {
       method: "GET",
-      headers: request.headers,
+      headers: requests.catalog.headers,
       signal: controller.signal,
     });
-    if (response.ok === false) {
-      throw new DesktopModelProviderVerificationError(
-        input.provider,
-        `The provider returned HTTP ${response.status}. Check the key and endpoint, then try again.`,
-      );
-    }
+    assertSuccessfulProviderResponse(input.provider, response);
+    return { models: readHostedModelIds(await response.json()) };
   } catch (error) {
     if (error instanceof DesktopModelProviderVerificationError) throw error;
     throw new DesktopModelProviderVerificationError(
@@ -47,10 +76,27 @@ export async function verifyDesktopModelProviderCredential(input: {
       error instanceof Error && error.name === "AbortError"
         ? "The provider did not respond before the verification timeout."
         : "The provider endpoint could not be reached.",
+      error instanceof Error && error.name === "AbortError"
+        ? "timeout"
+        : "unreachable",
     );
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function assertSuccessfulProviderResponse(
+  provider: DesktopCredentialedModelProvider,
+  response: Response,
+): void {
+  if (response.ok) return;
+  throw new DesktopModelProviderVerificationError(
+    provider,
+    `The provider returned HTTP ${response.status}. Check the key and endpoint, then try again.`,
+    response.status === 401 || response.status === 403
+      ? "invalid_credential"
+      : "provider_rejected",
+  );
 }
 
 export async function verifyDesktopModelCapability(input: {
@@ -59,7 +105,7 @@ export async function verifyDesktopModelCapability(input: {
   apiKey?: string | undefined;
   fetchImpl?: typeof fetch | undefined;
   timeoutMs?: number | undefined;
-}): Promise<void> {
+}): Promise<DesktopModelProviderVerificationResult> {
   if (
     input.provider === "openrouter"
     || input.provider === "openai"
@@ -68,13 +114,24 @@ export async function verifyDesktopModelCapability(input: {
     if (input.apiKey === undefined) {
       throw new DesktopModelProviderVerificationError(input.provider, "Re-enter the API key to verify this configuration.");
     }
-    return await verifyDesktopModelProviderCredential({
+    const result = await verifyDesktopModelProviderCredential({
       provider: input.provider,
       apiKey: input.apiKey,
       settings: input.settings,
       ...(input.fetchImpl !== undefined ? { fetchImpl: input.fetchImpl } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
     });
+    const model = providerModel(input.provider, input.settings);
+    if (model === undefined || result.models.includes(model) === false) {
+      throw new DesktopModelProviderVerificationError(
+        input.provider,
+        model === undefined
+          ? "Select a model before applying this provider."
+          : `The configured model '${model}' is not available from the provider.`,
+        "model_unavailable",
+      );
+    }
+    return result;
   }
   const baseUrl = input.provider === "ollama"
     ? input.settings.ollamaBaseUrl ?? "http://127.0.0.1:11434"
@@ -95,7 +152,7 @@ export async function verifyDesktopModelCapability(input: {
       signal: controller.signal,
     });
     if (response.ok === false) {
-      throw new DesktopModelProviderVerificationError(input.provider, `The local endpoint returned HTTP ${response.status}.`);
+      throw new DesktopModelProviderVerificationError(input.provider, `The local endpoint returned HTTP ${response.status}.`, "provider_rejected");
     }
     const models = readLocalModelIds(input.provider, await response.json());
     if (model === undefined || models.includes(model) === false) {
@@ -104,8 +161,10 @@ export async function verifyDesktopModelCapability(input: {
         model === undefined
           ? "Select a model before applying this provider."
           : `The configured model '${model}' is not available from the local endpoint.`,
+        "model_unavailable",
       );
     }
+    return { models };
   } catch (error) {
     if (error instanceof DesktopModelProviderVerificationError) throw error;
     throw new DesktopModelProviderVerificationError(
@@ -113,40 +172,82 @@ export async function verifyDesktopModelCapability(input: {
       error instanceof Error && error.name === "AbortError"
         ? "The local endpoint did not respond before the verification timeout."
         : "The local endpoint could not be reached.",
+      error instanceof Error && error.name === "AbortError"
+        ? "timeout"
+        : "unreachable",
     );
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function buildVerificationRequest(
+function providerModel(
+  provider: DesktopCredentialedModelProvider,
+  settings: DesktopSettings,
+): string | undefined {
+  if (provider === "openrouter") return settings.openrouterModel;
+  if (provider === "openai") return settings.openaiModel;
+  return settings.anthropicModel;
+}
+
+function readHostedModelIds(value: unknown): string[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return [];
+  }
+  const data = (value as { data?: unknown }).data;
+  if (Array.isArray(data) === false) return [];
+  return data.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return [];
+    }
+    const id = (entry as { id?: unknown }).id;
+    return typeof id === "string" && id.trim().length > 0 ? [id.trim()] : [];
+  });
+}
+
+function buildVerificationRequests(
   provider: DesktopCredentialedModelProvider,
   apiKey: string,
   settings: DesktopSettings,
-): { url: string; headers: Record<string, string> } {
+): {
+  authentication?: { url: string; headers: Record<string, string> } | undefined;
+  catalog: { url: string; headers: Record<string, string> };
+} {
   if (provider === "openrouter") {
+    const headers = { Accept: "application/json", Authorization: `Bearer ${apiKey}` };
+    const baseUrl = settings.openrouterBaseUrl ?? DEFAULT_OPENROUTER_BASE_URL;
     return {
-      url: appendProviderPath(settings.openrouterBaseUrl ?? DEFAULT_OPENROUTER_BASE_URL, "/api/v1/models", "/api/v1"),
-      headers: { Accept: "application/json", Authorization: `Bearer ${apiKey}` },
+      authentication: {
+        url: appendProviderPath(baseUrl, "/api/v1/key", "/api/v1"),
+        headers,
+      },
+      catalog: {
+        url: appendProviderPath(baseUrl, "/api/v1/models", "/api/v1"),
+        headers,
+      },
     };
   }
   if (provider === "openai") {
     return {
-      url: appendProviderPath(settings.openaiBaseUrl ?? DEFAULT_OPENAI_BASE_URL, "/v1/models", "/v1"),
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        ...(settings.openaiOrgId !== undefined ? { "OpenAI-Organization": settings.openaiOrgId } : {}),
-        ...(settings.openaiProjectId !== undefined ? { "OpenAI-Project": settings.openaiProjectId } : {}),
+      catalog: {
+        url: appendProviderPath(settings.openaiBaseUrl ?? DEFAULT_OPENAI_BASE_URL, "/v1/models", "/v1"),
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          ...(settings.openaiOrgId !== undefined ? { "OpenAI-Organization": settings.openaiOrgId } : {}),
+          ...(settings.openaiProjectId !== undefined ? { "OpenAI-Project": settings.openaiProjectId } : {}),
+        },
       },
     };
   }
   return {
-    url: appendProviderPath(settings.anthropicBaseUrl ?? DEFAULT_ANTHROPIC_BASE_URL, "/v1/models", "/v1"),
-    headers: {
-      Accept: "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": settings.anthropicVersion ?? DEFAULT_ANTHROPIC_VERSION,
+    catalog: {
+      url: appendProviderPath(settings.anthropicBaseUrl ?? DEFAULT_ANTHROPIC_BASE_URL, "/v1/models", "/v1"),
+      headers: {
+        Accept: "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": settings.anthropicVersion ?? DEFAULT_ANTHROPIC_VERSION,
+      },
     },
   };
 }

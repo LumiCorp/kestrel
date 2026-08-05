@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +17,7 @@ import {
   systemPreferences,
   webContents,
   session,
+  type IpcMainInvokeEvent,
   type WebContents,
 } from "electron";
 import {
@@ -27,6 +28,7 @@ import {
   DESKTOP_UI_STATE_VERSION,
   parseDesktopLegacyUiStateEntries,
   parseDesktopCapabilityConfigurationInput,
+  parseDesktopProviderModelCatalogRequest,
   parseDesktopMcpServerMutationInput,
   parseDesktopRendererSettingsUpdate,
   parseDesktopRunCancelRequest,
@@ -58,12 +60,12 @@ import {
   parseRunnerEventV2,
 } from "@kestrel-agents/protocol";
 import { deriveDesktopReadiness } from "../../../src/desktopShell/readiness.js";
+import {
+  deriveDesktopOnboardingRouteV1,
+  desktopUiStateContainsOnboardingHandoff,
+} from "../../../src/desktopShell/onboarding.js";
 import { redactDiagnosticValue } from "../../../src/diagnostics/redaction.js";
 import { resolveDesktopCapabilityView } from "../../../src/desktopShell/capabilityRegistry.js";
-import {
-  deriveDesktopOnboardingState,
-  describeDesktopProviderRequirement,
-} from "../../../src/desktopShell/onboarding.js";
 import {
   createDefaultModelPolicy,
   type ResolvedModelPolicy,
@@ -87,6 +89,12 @@ import {
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import type {
   DesktopBootState,
+  DesktopLaunchState,
+  DesktopOnboardingDraftInput,
+  DesktopOnboardingProviderInput,
+  DesktopOnboardingProviderVerificationResult,
+  DesktopOnboardingProjectCandidate,
+  DesktopOnboardingStateV1,
   DesktopCapabilityConfigurationResult,
   DesktopCapabilityView,
   DesktopDatabaseStatus,
@@ -111,6 +119,7 @@ import type {
   DesktopProjectFilesChangedEvent,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
+  DesktopRendererBootstrapReport,
   DesktopProtocolTransport,
   DesktopProjectLauncherDescriptor,
   DesktopRuntimeHealth,
@@ -148,6 +157,11 @@ import {
   DesktopUpdateCoordinator,
 } from "./updater.js";
 import {
+  canReuseDesktopOnboardingProviderVerification,
+  createDesktopOnboardingProviderFailure,
+} from "./onboardingProviderVerificationResult.js";
+import { findExactRegisteredOnboardingProject } from "./onboardingProjectSelection.js";
+import {
   buildDesktopUpdateDialog,
   resolveDesktopUpdateDialogAction,
 } from "./updateDialog.js";
@@ -176,6 +190,7 @@ import { startDesktopStartup } from "./startupSequence.js";
 import { buildDesktopSupportBundle } from "./supportBundle.js";
 import {
   ensureDesktopProjectGitBootstrap,
+  inspectDesktopProjectGitBootstrap,
   prepareDesktopProjectRegistrations as prepareProjectRegistrationsForSettings,
 } from "./projectGitBootstrap.js";
 import { discoverMcpServersFromKnownConfigFiles } from "./mcpDiscovery.js";
@@ -189,9 +204,15 @@ import {
   toDesktopRendererSettings,
 } from "./rendererSettings.js";
 import { probeDesktopCapabilities } from "./capabilityProbes.js";
-import { verifyDesktopModelCapability } from "./modelProviderVerification.js";
+import {
+  DesktopModelProviderVerificationError,
+  verifyDesktopModelCapability,
+} from "./modelProviderVerification.js";
 import { verifyDesktopToolProvider } from "./toolProviderVerification.js";
-import { buildDesktopCapabilityConfigurationPlan } from "./capabilityConfiguration.js";
+import {
+  buildDesktopCapabilityConfigurationPlan,
+  promoteDesktopDefaultModelConfiguration,
+} from "./capabilityConfiguration.js";
 import {
   deriveDesktopWorkspaceId,
   resolveDesktopThreadWorkspace,
@@ -309,6 +330,25 @@ let bootState: DesktopBootState = {
   startedAt: bootStartedAt,
   updatedAt: bootStartedAt,
 };
+let launchState: DesktopLaunchState = {
+  phase: "foundation_starting",
+  message: "Preparing Kestrel…",
+};
+let executionStartup: Promise<void> | undefined;
+let executionIpcRegistered = false;
+const onboardingProjectSelections = new Map<
+  string,
+  Omit<DesktopOnboardingProjectCandidate, "selectionId"> &
+    (
+      | { source: "picker"; selectedPath: string }
+      | { source: "registered"; registeredPath: string }
+    )
+>();
+const DESKTOP_RENDERER_BOOTSTRAP_TIMEOUT_MS = 10_000;
+let rendererBootstrapGeneration = 0;
+let rendererBootstrapTimeout: NodeJS.Timeout | undefined;
+let rendererFallbackActive = false;
+let desktopAppQuitting = false;
 let runnerTransport: DesktopRunnerControlTransport | undefined;
 const microsoft365AuthorizationSessionIds = new Set<string>();
 const googleWorkspaceAuthorizationSessionIds = new Set<string>();
@@ -406,9 +446,7 @@ async function main(): Promise<void> {
     process.env.KESTREL_HOME = localCoreHome.homePath;
   }
   const isolatedPackageSmokeCredentials =
-    app.isPackaged &&
-    process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_APPROVED === "1" &&
-    process.env.KESTREL_CORE_CREDENTIAL_STORE === "environment";
+    isApprovedPackageSmokeEnvironmentCredentialStore();
   if (process.platform === "darwin" && isolatedPackageSmokeCredentials === false) {
     process.env.KESTREL_CORE_CREDENTIAL_STORE = "macos_keychain";
   }
@@ -467,6 +505,10 @@ async function main(): Promise<void> {
 
 async function startDesktopServices(): Promise<void> {
   const localCoreConfig = requireDesktopConfig();
+  updateLaunchState({
+    phase: "foundation_starting",
+    message: "Connecting to Kestrel Local Core…",
+  });
   updateBootState(
     {
       phase: "starting_runtime",
@@ -512,9 +554,6 @@ async function startDesktopServices(): Promise<void> {
     await saveDesktopCoreSettings({
       ...desktopSettings,
       selectedProvider: desktopModelPolicy.provider,
-      providerSelectionCompletedAt:
-        desktopSettings.providerSelectionCompletedAt ??
-        new Date().toISOString(),
     });
   }
   syncDesktopWebEnvironment(desktopSettings);
@@ -527,6 +566,87 @@ async function startDesktopServices(): Promise<void> {
     mainWindow?.webContents,
   );
   await reconfigureDatabaseController(desktopSettings);
+  if (databaseController === undefined) {
+    throw createDesktopError({
+      code: "desktop.database_controller_unavailable",
+      message: "Kestrel Local Core database controller is unavailable.",
+    });
+  }
+  const database = await databaseController.prepare();
+  currentDatabaseUrl = database.databaseUrl;
+  databaseStatus = database.status;
+
+  if (desktopSettings.desktopOnboarding === undefined) {
+    const resumeExistingSetup =
+      desktopSettings.providerSelectionCompletedAt !== undefined ||
+      desktopSettings.setupCompletedAt !== undefined ||
+      desktopSettings.projects.length > 0 ||
+      Object.keys(desktopSettings.capabilityVerifications).length > 0;
+    await saveDesktopCoreSettings({
+      ...desktopSettings,
+      desktopOnboarding: {
+        version: 1,
+        status: "in_progress",
+        startedAt: new Date().toISOString(),
+        ...(resumeExistingSetup
+          ? { provider: desktopSettings.selectedProvider }
+          : {}),
+        ...(resumeExistingSetup && currentProviderModel(desktopSettings) !== undefined
+          ? { model: currentProviderModel(desktopSettings) }
+          : {}),
+        ...(resumeExistingSetup && desktopSettings.projects[0] !== undefined
+          ? { projectPath: desktopSettings.projects[0].path }
+          : {}),
+      },
+    });
+  }
+
+  const onboarding = await readDesktopOnboardingState();
+  if (
+    desktopSettings.desktopOnboarding?.status !== "complete" ||
+    onboarding.canComplete === false
+  ) {
+    updateBootState(
+      {
+        phase: "ready",
+        message: "Desktop setup is ready.",
+        database: databaseStatus,
+      },
+      mainWindow?.webContents,
+    );
+    updateLaunchState({
+      phase: "setup_required",
+      message:
+        onboarding.mode === "repair"
+          ? "Kestrel needs one setup item repaired."
+          : "Finish setting up Kestrel.",
+    });
+    return;
+  }
+
+  await ensureDesktopOnboardingModelIsDefault(onboarding);
+  await startDesktopExecutionServices();
+  await ensureCompletedDesktopOnboardingHandoff();
+  updateLaunchState(buildDesktopReadyLaunchState());
+}
+
+async function startDesktopExecutionServices(): Promise<void> {
+  if (executionStartup !== undefined) {
+    return await executionStartup;
+  }
+  executionStartup = startDesktopExecutionServicesOnce().catch((error) => {
+    executionStartup = undefined;
+    throw error;
+  });
+  return await executionStartup;
+}
+
+async function startDesktopExecutionServicesOnce(): Promise<void> {
+  const localCoreConfig = requireDesktopConfig();
+  updateLaunchState({
+    phase: "starting_execution",
+    message: "Starting Kestrel for this project…",
+  });
   runnerTransport = new LocalCoreRunnerTransport({
     connectionManager: requireLocalCoreConnectionManager(),
     logPath: localCoreConfig.runtimeLogPath,
@@ -565,8 +685,11 @@ async function startDesktopServices(): Promise<void> {
     return runnerTransport;
   };
 
-  registerIpcHandlers(runnerTransport);
-  await bootDesktop({ config: localCoreConfig, runnerTransport });
+  await bootDesktop({ runnerTransport });
+  if (executionIpcRegistered === false) {
+    registerIpcHandlers(runnerTransport);
+    executionIpcRegistered = true;
+  }
 }
 
 function installDesktopLifecycleHandlers(
@@ -581,6 +704,10 @@ function installDesktopLifecycleHandlers(
     if (process.platform !== "darwin") {
       app.quit();
     }
+  });
+  app.on("before-quit", () => {
+    desktopAppQuitting = true;
+    clearDesktopRendererBootstrapTimeout();
   });
   app.on(
     "before-quit",
@@ -650,6 +777,14 @@ async function reportDesktopStartupFailure(error: unknown): Promise<void> {
     },
     mainWindow?.webContents,
   );
+  updateLaunchState({
+    phase: "failed",
+    message: "Kestrel could not finish starting.",
+    ...(readDesktopErrorCode(error) !== undefined
+      ? { code: readDesktopErrorCode(error) }
+      : {}),
+    details: error instanceof Error ? error.message : String(error),
+  });
 }
 
 function requireDesktopConfig(): ReturnType<typeof resolveDesktopPathConfig> {
@@ -715,9 +850,6 @@ if (shouldStartDesktopMain) {
 async function ensureMainWindow(): Promise<BrowserWindow> {
   const config = requireDesktopConfig();
   if (mainWindow !== undefined && mainWindow.isDestroyed() === false) {
-    if (bootState.phase === "ready") {
-      await mainWindow.loadFile(config.rendererHtmlPath);
-    }
     return mainWindow;
   }
   const window = new BrowserWindow({
@@ -757,24 +889,74 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
   );
   ensureMediaPermissionHandler(window);
   window.on("closed", () => {
+    clearDesktopRendererBootstrapTimeout();
     if (mainWindow === window) {
       mainWindow = undefined;
     }
   });
+  window.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, _errorDescription, _validatedUrl, isMainFrame) => {
+      if (errorCode === -3 || isMainFrame === false || rendererFallbackActive) {
+        return;
+      }
+      void showDesktopRendererFallback(window, rendererBootstrapGeneration);
+    },
+  );
+  window.webContents.on("render-process-gone", () => {
+    if (desktopAppQuitting || rendererFallbackActive) {
+      return;
+    }
+    void showDesktopRendererFallback(window, rendererBootstrapGeneration);
+  });
   mainWindow = window;
-  await window.loadFile(config.bootHtmlPath);
-
-  if (bootState.phase === "ready") {
-    updateBootState(
-      {
-        phase: "ready",
-        message: "Desktop ready.",
-      },
-      window.webContents,
-    );
-    await window.loadFile(config.rendererHtmlPath);
-  }
+  await loadDesktopRenderer(window, config);
   return window;
+}
+
+async function loadDesktopRenderer(
+  window: BrowserWindow,
+  config: ReturnType<typeof resolveDesktopPathConfig>,
+): Promise<void> {
+  rendererBootstrapGeneration += 1;
+  const generation = rendererBootstrapGeneration;
+  rendererFallbackActive = false;
+  clearDesktopRendererBootstrapTimeout();
+  rendererBootstrapTimeout = setTimeout(() => {
+    void showDesktopRendererFallback(window, generation);
+  }, DESKTOP_RENDERER_BOOTSTRAP_TIMEOUT_MS);
+  try {
+    await window.loadFile(config.rendererHtmlPath, {
+      query: { bootstrapGeneration: String(generation) },
+    });
+  } catch {
+    await showDesktopRendererFallback(window, generation);
+  }
+}
+
+async function showDesktopRendererFallback(
+  window: BrowserWindow,
+  generation: number,
+): Promise<void> {
+  if (
+    desktopAppQuitting ||
+    window.isDestroyed() ||
+    window !== mainWindow ||
+    generation !== rendererBootstrapGeneration ||
+    rendererFallbackActive
+  ) {
+    return;
+  }
+  rendererFallbackActive = true;
+  clearDesktopRendererBootstrapTimeout();
+  await window.loadFile(requireDesktopConfig().bootHtmlPath);
+}
+
+function clearDesktopRendererBootstrapTimeout(): void {
+  if (rendererBootstrapTimeout !== undefined) {
+    clearTimeout(rendererBootstrapTimeout);
+    rendererBootstrapTimeout = undefined;
+  }
 }
 
 function configureEmbeddedPreviewSecurity(): void {
@@ -853,7 +1035,6 @@ function sendPreviewDiagnostic(input: {
 }
 
 async function bootDesktop(input: {
-  config: ReturnType<typeof resolveDesktopPathConfig>;
   runnerTransport: DesktopRunnerControlTransport;
 }): Promise<void> {
   if (databaseController === undefined) {
@@ -870,9 +1051,6 @@ async function bootDesktop(input: {
     },
     mainWindow?.webContents,
   );
-  const database = await databaseController.prepare();
-  currentDatabaseUrl = database.databaseUrl;
-  databaseStatus = database.status;
   updateBootState(
     {
       phase: "starting_runtime",
@@ -900,15 +1078,26 @@ async function bootDesktop(input: {
     },
     window.webContents,
   );
-  await window.loadFile(input.config.rendererHtmlPath);
 }
 
 function installApplicationMenu(): void {
+  const desktopReady = launchState.phase === "ready";
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: app.getName(),
       submenu: [
         { role: "about" },
+        { type: "separator" },
+        {
+          label: "Settings…",
+          accelerator: "CmdOrCtrl+,",
+          visible: desktopReady,
+          click: () => {
+            if (launchState.phase === "ready") {
+              void sendDesktopCommand("settings");
+            }
+          },
+        },
         { type: "separator" },
         {
           label: "Stop Agent",
@@ -948,6 +1137,7 @@ function installApplicationMenu(): void {
     },
     {
       label: "File",
+      visible: desktopReady,
       submenu: [
         {
           label: "Add Project",
@@ -983,6 +1173,7 @@ function installApplicationMenu(): void {
     },
     {
       label: "View",
+      visible: desktopReady,
       submenu: [
         {
           label: "Toggle Left Sidebar",
@@ -1044,6 +1235,24 @@ async function showDesktopUpdateDialog(): Promise<void> {
   }
 }
 
+function requireCurrentMainWindowIpcSender(
+  event: IpcMainInvokeEvent,
+): BrowserWindow {
+  const window = mainWindow;
+  if (
+    window === undefined ||
+    window.isDestroyed() ||
+    event.sender.id !== window.webContents.id ||
+    event.senderFrame !== window.webContents.mainFrame
+  ) {
+    throw createDesktopError({
+      code: "desktop.invalid_renderer_sender",
+      message: "This operation is accepted only from Kestrel's main window.",
+    });
+  }
+  return window;
+}
+
 function registerBootIpcHandlers(): void {
   ipcMain.handle("desktop:get-bridge-info", () => ({
     connected: true,
@@ -1055,6 +1264,152 @@ function registerBootIpcHandlers(): void {
     version: app.getVersion(),
     isPackaged: app.isPackaged,
   }));
+  ipcMain.handle(
+    "desktop:report-renderer-bootstrap",
+    async (event, input: unknown) => {
+      const report = parseDesktopRendererBootstrapReport(input);
+      const window = requireCurrentMainWindowIpcSender(event);
+      if (
+        report.generation !== rendererBootstrapGeneration ||
+        rendererFallbackActive
+      ) {
+        return false;
+      }
+      if (report.status === "failed") {
+        await showDesktopRendererFallback(window, report.generation);
+        return false;
+      }
+      clearDesktopRendererBootstrapTimeout();
+      return true;
+    },
+  );
+  ipcMain.handle("desktop:get-launch-state", (event) => {
+    requireCurrentMainWindowIpcSender(event);
+    return launchState;
+  });
+  ipcMain.handle("desktop:get-onboarding-state", async (event) => {
+    requireCurrentMainWindowIpcSender(event);
+    return await readDesktopOnboardingState();
+  });
+  ipcMain.handle(
+    "desktop:save-onboarding-draft",
+    async (event, input: unknown) => {
+      requireCurrentMainWindowIpcSender(event);
+      return await saveDesktopOnboardingDraft(
+        parseDesktopOnboardingDraftInput(input),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:verify-onboarding-provider",
+    async (event, input: unknown) => {
+      requireCurrentMainWindowIpcSender(event);
+      return await applyDesktopOnboardingProvider(
+        parseDesktopOnboardingProviderInput(input),
+      );
+    },
+  );
+  ipcMain.handle("desktop:pick-onboarding-project", async (event) => {
+    requireCurrentMainWindowIpcSender(event);
+    const approvedSmokePath = readApprovedPackageSmokeProjectPath();
+    const selectedPath =
+      approvedSmokePath ??
+      await dialog.showOpenDialog({
+        properties: ["openDirectory", "createDirectory"],
+        title: "Choose a Kestrel project",
+        buttonLabel: "Choose Project",
+      }).then((result) => result.canceled ? undefined : result.filePaths[0]);
+    return selectedPath === undefined
+      ? undefined
+      : await createDesktopOnboardingProjectCandidate(selectedPath, {
+          source: "picker",
+        });
+  });
+  ipcMain.handle(
+    "desktop:inspect-onboarding-project",
+    async (event, projectPath: unknown) => {
+      requireCurrentMainWindowIpcSender(event);
+      if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+        throw createDesktopError({
+          code: "desktop.invalid_onboarding_project",
+          message: "Choose a valid project folder.",
+        });
+      }
+      const registered = findExactRegisteredOnboardingProject(
+        desktopSettings.projects,
+        projectPath,
+      );
+      if (registered === undefined) {
+        throw createDesktopError({
+          code: "desktop.onboarding_project_not_registered",
+          message: "Choose this folder with the native picker first.",
+        });
+      }
+      return await createDesktopOnboardingProjectCandidate(registered.path, {
+        source: "registered",
+        registeredPath: registered.path,
+      });
+    },
+  );
+  ipcMain.handle(
+    "desktop:confirm-onboarding-project",
+    async (event, input: unknown) => {
+      requireCurrentMainWindowIpcSender(event);
+      return await confirmDesktopOnboardingProject(
+        parseDesktopOnboardingProjectConfirmation(input),
+      );
+    },
+  );
+  ipcMain.handle("desktop:complete-onboarding", async (event) => {
+    requireCurrentMainWindowIpcSender(event);
+    return await completeDesktopOnboarding();
+  });
+  ipcMain.handle(
+    "desktop:get-model-catalog",
+    async (event, input: unknown) => {
+      requireCurrentMainWindowIpcSender(event);
+      const request = parseDesktopProviderModelCatalogRequest(input);
+      return await resolveProviderModelCatalog(
+        request.provider,
+        {
+          ...process.env,
+          ...(desktopSettings.openrouterBaseUrl !== undefined
+            ? { OPENROUTER_BASE_URL: desktopSettings.openrouterBaseUrl }
+            : {}),
+          ...(desktopSettings.openaiBaseUrl !== undefined
+            ? { OPENAI_BASE_URL: desktopSettings.openaiBaseUrl }
+            : {}),
+          ...(desktopSettings.anthropicBaseUrl !== undefined
+            ? { ANTHROPIC_BASE_URL: desktopSettings.anthropicBaseUrl }
+            : {}),
+          ...((request.provider === "ollama" && request.baseUrl !== undefined)
+            ? { OLLAMA_BASE_URL: request.baseUrl }
+            : desktopSettings.ollamaBaseUrl !== undefined
+              ? { OLLAMA_BASE_URL: desktopSettings.ollamaBaseUrl }
+              : {}),
+          ...((request.provider === "lmstudio" && request.baseUrl !== undefined)
+            ? { LMSTUDIO_BASE_URL: request.baseUrl }
+            : desktopSettings.lmstudioBaseUrl !== undefined
+              ? { LMSTUDIO_BASE_URL: desktopSettings.lmstudioBaseUrl }
+              : {}),
+        },
+        fetch,
+        {
+          requireLiveLocalCatalog: true,
+          preserveProviderOrder: true,
+        },
+      );
+    },
+  );
+  ipcMain.handle("desktop:open-external", async (_event, url: unknown) => {
+    if (typeof url !== "string" || /^https?:\/\//u.test(url) === false) {
+      throw createDesktopError({
+        code: "desktop.invalid_external_url",
+        message: "desktop.openExternal requires an http(s) URL.",
+      });
+    }
+    await shell.openExternal(url);
+  });
   ipcMain.handle("desktop:get-boot-state", () => bootState);
   ipcMain.handle(
     "desktop:get-support-bundle",
@@ -1167,6 +1522,7 @@ async function buildCurrentDesktopSupportBundle() {
       isPackaged: app.isPackaged,
     },
     bootState,
+    launchState,
     runtimeHealth,
     databaseStatus,
     settings: desktopSettings,
@@ -1402,6 +1758,27 @@ function registerIpcHandlers(
           details: error instanceof Error ? error.message : String(error),
         });
       }
+      if (configuration.capabilityId.startsWith("model.")) {
+        const { runtimeRestarted } =
+          await applyDesktopModelCapabilityConfiguration(configuration, {
+            runnerTransport,
+            deferExecution: false,
+            mapVerificationError(error): never {
+              throw createDesktopError({
+                code: "desktop.capability_verification_failed",
+                message:
+                  "Desktop could not verify this capability configuration.",
+                details: error instanceof Error ? error.message : String(error),
+              });
+            },
+          });
+        return {
+          capabilityId: configuration.capabilityId,
+          applied: true,
+          runtimeRestarted,
+          view: await readDesktopCapabilityView(),
+        };
+      }
       const previousSettings = structuredClone(desktopSettings);
       const previousModelPolicy = structuredClone(desktopModelPolicy);
       let plan: ReturnType<typeof buildDesktopCapabilityConfigurationPlan>;
@@ -1412,17 +1789,6 @@ function registerIpcHandlers(
           configuration,
         });
         if (
-          plan.requiresVerification &&
-          plan.registration.modelProvider !== undefined
-        ) {
-          await verifyDesktopModelCapability({
-            provider: plan.registration.modelProvider,
-            settings: plan.settings,
-            ...(typeof plan.credential?.value === "string"
-              ? { apiKey: plan.credential.value }
-              : {}),
-          });
-        } else if (
           plan.requiresVerification &&
           (configuration.capabilityId === "tools.internet.tavily" ||
             configuration.capabilityId === "tools.weather")
@@ -1603,9 +1969,11 @@ function registerIpcHandlers(
       capturedAt: new Date().toISOString(),
       entries,
     };
-    return await requireLocalCoreConnectionManager().executeIdempotent(
+    const result = await requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.syncDesktopUiState(state),
     );
+    await acknowledgePersistedDesktopOnboardingHandoff(result.state.entries);
+    return result;
   });
   ipcMain.handle("desktop:run-turn", async (_event, input: unknown) => {
     let request: DesktopRunTurnRequest;
@@ -1974,24 +2342,6 @@ function registerIpcHandlers(
   });
   ipcMain.handle("desktop:get-model-policy", async () => desktopModelPolicy);
   ipcMain.handle(
-    "desktop:get-model-catalog",
-    async (_event, provider: unknown) => {
-      if (
-        provider !== "openrouter" &&
-        provider !== "openai" &&
-        provider !== "anthropic" &&
-        provider !== "ollama" &&
-        provider !== "lmstudio"
-      ) {
-        throw createDesktopError({
-          code: "desktop.invalid_model_provider",
-          message: "Desktop model provider is invalid.",
-        });
-      }
-      return await resolveProviderModelCatalog(provider, process.env);
-    },
-  );
-  ipcMain.handle(
     "desktop:save-settings",
     async (_event, nextSettings: unknown) => {
       assertDesktopAdmissionOpen("a settings mutation");
@@ -2092,15 +2442,6 @@ function registerIpcHandlers(
       };
     },
   );
-  ipcMain.handle("desktop:open-external", async (_event, url: unknown) => {
-    if (typeof url !== "string" || /^https?:\/\//u.test(url) === false) {
-      throw createDesktopError({
-        code: "desktop.invalid_external_url",
-        message: "desktop.openExternal requires an http(s) URL.",
-      });
-    }
-    await shell.openExternal(url);
-  });
   ipcMain.handle(
     "desktop:open-project-run-preview",
     async (_event, input: unknown) => {
@@ -4672,32 +5013,6 @@ function deriveRuntimeHealth(
   nextBootState: DesktopBootState,
 ): DesktopRuntimeHealth {
   const status = runnerTransport?.getStatus();
-  const onboarding = deriveDesktopOnboardingState(desktopSettings);
-  const providerRequirement =
-    describeDesktopProviderRequirement(desktopSettings);
-  if (
-    providerRequirement !== undefined &&
-    onboarding.providerIssueOwnedBySetup
-  ) {
-    return {
-      state: "degraded",
-      summary: providerRequirement.summary,
-      details: providerRequirement.detail,
-      running: status?.running ?? false,
-      ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
-      database: databaseStatus,
-    };
-  }
-  if (providerRequirement !== undefined) {
-    return {
-      state: "blocked",
-      summary: providerRequirement.summary,
-      details: providerRequirement.detail,
-      running: status?.running ?? false,
-      ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
-      database: databaseStatus,
-    };
-  }
   if (databaseStatus.state === "blocked") {
     return {
       state: "blocked",
@@ -4808,6 +5123,10 @@ function deriveDesktopBootReadiness(
     runtimeHealth: nextRuntimeHealth,
     databaseStatus,
     settings: desktopSettings,
+    providerConfigured:
+      typeof desktopSettings.capabilityVerifications[
+        `model.${desktopSettings.selectedProvider}`
+      ] === "string",
     bridgeConnected: true,
     resourcesReady: resources.ready,
     resourcesDetail: resources.detail,
@@ -5146,6 +5465,829 @@ async function saveDesktopCoreSettings(
   projectFileIndex.retainRoots(
     desktopSettings.projects.map((project) => project.path),
   );
+}
+
+async function applyDesktopModelCapabilityConfiguration(
+  configuration: ReturnType<typeof parseDesktopCapabilityConfigurationInput>,
+  options: {
+    runnerTransport?: DesktopRunnerControlTransport | undefined;
+    deferExecution: boolean;
+    skipCredentialWrite?: boolean | undefined;
+    onboardingRecord?: DesktopSettings["desktopOnboarding"] | undefined;
+    mapVerificationError(error: unknown): never;
+  },
+): Promise<{ runtimeRestarted: boolean }> {
+  const previousSettings = structuredClone(desktopSettings);
+  const previousModelPolicy = structuredClone(desktopModelPolicy);
+  let plan: ReturnType<typeof buildDesktopCapabilityConfigurationPlan>;
+  try {
+    plan = buildDesktopCapabilityConfigurationPlan({
+      currentSettings: desktopSettings,
+      currentModelPolicy: desktopModelPolicy,
+      configuration,
+    });
+    const provider = plan.registration.modelProvider;
+    if (provider === undefined) {
+      throw new Error(
+        `Capability '${configuration.capabilityId}' is not a model provider.`,
+      );
+    }
+    if (plan.requiresVerification) {
+      await verifyDesktopModelCapability({
+        provider,
+        settings: plan.settings,
+        ...(typeof plan.credential?.value === "string"
+          ? { apiKey: plan.credential.value }
+          : {}),
+      });
+    }
+  } catch (error) {
+    return options.mapVerificationError(error);
+  }
+
+  const verifiedAt = new Date().toISOString();
+  const capabilityVerifications = {
+    ...plan.settings.capabilityVerifications,
+  };
+  if (plan.credential?.value === null) {
+    delete capabilityVerifications[configuration.capabilityId];
+  } else if (plan.requiresVerification) {
+    capabilityVerifications[configuration.capabilityId] = verifiedAt;
+  }
+  await saveDesktopCoreSettings({
+    ...plan.settings,
+    capabilityVerifications,
+    ...(configuration.enabled === true
+      ? {
+          providerSelectionCompletedAt:
+            plan.settings.providerSelectionCompletedAt ?? verifiedAt,
+        }
+      : {}),
+    ...(options.onboardingRecord !== undefined
+      ? { desktopOnboarding: options.onboardingRecord }
+      : {}),
+    modelPolicy: plan.modelPolicy,
+  });
+  try {
+    if (plan.credential?.value === null) {
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.deleteCredential(plan.credential!.id),
+      );
+    } else if (
+      typeof plan.credential?.value === "string" &&
+      options.skipCredentialWrite !== true
+    ) {
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.setCredential(
+            plan.credential!.id,
+            plan.credential!.value as string,
+          ),
+      );
+    }
+  } catch (error) {
+    await saveDesktopCoreSettings({
+      ...previousSettings,
+      modelPolicy: previousModelPolicy,
+    });
+    throw createDesktopError({
+      code: "desktop.capability_credential_apply_failed",
+      message:
+        "Desktop could not apply the verified credential. The previous configuration was preserved.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  syncDesktopWebEnvironment(desktopSettings);
+  applyDesktopProfileOverride(desktopSettings);
+  if (options.deferExecution) {
+    return { runtimeRestarted: false };
+  }
+
+  await resetDesktopRunnerAdapter();
+  let runtimeRestarted = false;
+  if (plan.restartRuntime) {
+    const transport = options.runnerTransport;
+    if (transport === undefined) {
+      throw createDesktopError({
+        code: "desktop.runtime_unavailable",
+        message: "Desktop runtime is unavailable for provider reconfiguration.",
+      });
+    }
+    updateBootState(
+      {
+        phase: "starting_runtime",
+        message: `Applying ${configuration.capabilityId} configuration…`,
+        database: databaseStatus,
+      },
+      mainWindow?.webContents,
+    );
+    await transport.restart();
+    runtimeRestarted = true;
+    updateBootState(
+      {
+        phase: "ready",
+        message: "Desktop ready.",
+        database: databaseStatus,
+      },
+      mainWindow?.webContents,
+    );
+  }
+  runtimeHealth = deriveRuntimeHealth(bootState);
+  mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
+  return { runtimeRestarted };
+}
+
+function updateLaunchState(state: DesktopLaunchState): void {
+  const readinessChanged =
+    (launchState.phase === "ready") !== (state.phase === "ready");
+  launchState = state;
+  if (readinessChanged && app.isReady()) {
+    installApplicationMenu();
+  }
+  if (mainWindow !== undefined && mainWindow.isDestroyed() === false) {
+    mainWindow.webContents.send("desktop:launch-state", state);
+  }
+}
+
+async function readDesktopOnboardingState(): Promise<DesktopOnboardingStateV1> {
+  const record = desktopSettings.desktopOnboarding;
+  const credentials = await requireLocalCoreConnectionManager().executeIdempotent(
+    async (client) => await client.credentialStatus(),
+  );
+  const projects = await Promise.all(
+    desktopSettings.projects.map(async (project) => ({
+      path: project.path,
+      label: project.label,
+      available: await stat(project.path)
+        .then((entry) => entry.isDirectory())
+        .catch(() => false),
+    })),
+  );
+  const provider = record?.provider ?? desktopSettings.selectedProvider;
+  const model = record?.model ?? providerModel(desktopSettings, provider);
+  const baseUrl = providerBaseUrl(desktopSettings, provider);
+  const credentialConfigured =
+    provider === "ollama" || provider === "lmstudio"
+      ? true
+      : credentials.credentials.some(
+          (entry) =>
+            entry.id === providerCredentialId(provider) && entry.configured,
+        ) || readApprovedPackageSmokeEnvironmentCredential(provider) !== undefined;
+  const configuredModel = providerModel(desktopSettings, provider);
+  const providerVerified =
+    credentialConfigured &&
+    typeof model === "string" &&
+    model.length > 0 &&
+    desktopSettings.selectedProvider === provider &&
+    configuredModel === model &&
+    typeof desktopSettings.capabilityVerifications[`model.${provider}`] ===
+      "string";
+  const projectPath = record?.projectPath;
+  const projectReady =
+    projectPath !== undefined &&
+    projects.some(
+      (project) => project.path === projectPath && project.available,
+    );
+  const hasExistingState =
+    desktopSettings.providerSelectionCompletedAt !== undefined ||
+    desktopSettings.setupCompletedAt !== undefined ||
+    desktopSettings.projects.length > 0 ||
+    Object.keys(desktopSettings.capabilityVerifications).length > 0;
+  const { mode, step } = deriveDesktopOnboardingRouteV1({
+    ...(record !== undefined ? { record } : {}),
+    providerVerified,
+    projectReady,
+    hasExistingState,
+  });
+  return {
+    version: 1,
+    mode,
+    step,
+    ...(provider !== undefined ? { provider } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
+    providerVerified,
+    credentialConfigured,
+    secureStorageAvailable:
+      credentials.available || isApprovedPackageSmokeEnvironmentCredentialStore(),
+    ...(projectPath !== undefined ? { projectPath } : {}),
+    projects,
+    canComplete: providerVerified && projectReady,
+  };
+}
+
+async function saveDesktopOnboardingDraft(
+  input: DesktopOnboardingDraftInput,
+): Promise<DesktopOnboardingStateV1> {
+  const current = desktopSettings.desktopOnboarding ?? {
+    version: 1 as const,
+    status: "in_progress" as const,
+    startedAt: new Date().toISOString(),
+  };
+  await saveDesktopCoreSettings({
+    ...desktopSettings,
+    desktopOnboarding: {
+      ...current,
+      status: "in_progress",
+      completedAt: undefined,
+      ...(input.provider !== undefined ? { provider: input.provider } : {}),
+      ...(input.model !== undefined ? { model: input.model } : {}),
+    },
+  });
+  return await readDesktopOnboardingState();
+}
+
+async function applyDesktopOnboardingProvider(
+  input: DesktopOnboardingProviderInput,
+): Promise<DesktopOnboardingProviderVerificationResult> {
+  const capabilityId = `model.${input.provider}` as const;
+  const approvedSmokeCredential =
+    input.provider === "ollama" || input.provider === "lmstudio"
+      ? undefined
+      : readApprovedPackageSmokeEnvironmentCredential(input.provider);
+  const usesApprovedSmokeCredential =
+    approvedSmokeCredential !== undefined &&
+    approvedSmokeCredential === input.credential;
+  const credentialStatus = await requireLocalCoreConnectionManager().executeIdempotent(
+    async (client) => await client.credentialStatus(),
+  );
+  if (
+    input.provider !== "ollama" &&
+    input.provider !== "lmstudio" &&
+    credentialStatus.available === false &&
+    usesApprovedSmokeCredential === false
+  ) {
+    return createDesktopOnboardingProviderFailure("secure_storage_unavailable");
+  }
+  const credentialId =
+    input.provider === "ollama" || input.provider === "lmstudio"
+      ? undefined
+      : providerCredentialId(input.provider);
+  const credentialConfigured =
+    credentialId === undefined ||
+    credentialStatus.credentials.some(
+      (entry) => entry.id === credentialId && entry.configured,
+    ) ||
+    approvedSmokeCredential !== undefined;
+  const alreadyVerified = canReuseDesktopOnboardingProviderVerification({
+    requestedProvider: input.provider,
+    requestedModel: input.model,
+    activeProvider: desktopSettings.selectedProvider,
+    activeModel: providerModel(desktopSettings, input.provider),
+    credentialConfigured,
+    verificationPresent:
+      typeof desktopSettings.capabilityVerifications[capabilityId] === "string",
+  });
+  if (
+    input.provider !== "ollama" &&
+    input.provider !== "lmstudio" &&
+    input.credential === undefined &&
+    alreadyVerified
+  ) {
+    return {
+      ok: true,
+      state: await saveDesktopOnboardingDraft({
+        provider: input.provider,
+        model: input.model,
+      }),
+    };
+  }
+  if (
+    input.provider !== "ollama" &&
+    input.provider !== "lmstudio" &&
+    input.credential === undefined
+  ) {
+    return createDesktopOnboardingProviderFailure("invalid_credential");
+  }
+  const configuration = parseDesktopCapabilityConfigurationInput({
+    capabilityId,
+    enabled: true,
+    settings: {
+      model: input.model,
+      ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
+    },
+    ...(input.credential !== undefined ? { credential: input.credential } : {}),
+  });
+  const verifiedAt = new Date().toISOString();
+  const currentRecord = desktopSettings.desktopOnboarding ?? {
+    version: 1 as const,
+    status: "in_progress" as const,
+    startedAt: verifiedAt,
+  };
+  try {
+    await applyDesktopModelCapabilityConfiguration(configuration, {
+      deferExecution: true,
+      skipCredentialWrite: usesApprovedSmokeCredential,
+      onboardingRecord: {
+        ...currentRecord,
+        status: "in_progress",
+        completedAt: undefined,
+        provider: input.provider,
+        model: input.model,
+      },
+      mapVerificationError(error): never {
+        throw error;
+      },
+    });
+  } catch (error) {
+    if (error instanceof DesktopModelProviderVerificationError) {
+      return createDesktopOnboardingProviderFailure(error.kind);
+    }
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "desktop.capability_credential_apply_failed"
+    ) {
+      return createDesktopOnboardingProviderFailure(
+        "secure_storage_unavailable",
+      );
+    }
+    throw error;
+  }
+  return { ok: true, state: await readDesktopOnboardingState() };
+}
+
+async function createDesktopOnboardingProjectCandidate(
+  selectedPath: string,
+  selectionSource:
+    | { source: "picker" }
+    | { source: "registered"; registeredPath: string },
+): Promise<DesktopOnboardingProjectCandidate> {
+  const canonicalPath = await realpath(path.resolve(selectedPath));
+  const inspection = await inspectDesktopProjectGitBootstrap(canonicalPath);
+  const selectionId = randomUUID();
+  const publicCandidate = {
+    path: canonicalPath,
+    label: path.basename(canonicalPath),
+    kind: inspection.kind,
+    requiresGitBootstrap: inspection.requiresGitBootstrap,
+  } satisfies Omit<DesktopOnboardingProjectCandidate, "selectionId">;
+  const candidate = selectionSource.source === "picker"
+    ? {
+        ...publicCandidate,
+        source: "picker" as const,
+        selectedPath: path.resolve(selectedPath),
+      }
+    : { ...publicCandidate, ...selectionSource };
+  onboardingProjectSelections.set(selectionId, candidate);
+  return { selectionId, ...publicCandidate };
+}
+
+async function confirmDesktopOnboardingProject(input: {
+  selectionId: string;
+  allowGitBootstrap: boolean;
+}): Promise<DesktopOnboardingStateV1> {
+  const candidate = onboardingProjectSelections.get(input.selectionId);
+  if (candidate === undefined) {
+    throw createDesktopError({
+      code: "desktop.onboarding_project_selection_expired",
+      message: "Select the project folder again.",
+    });
+  }
+  if (candidate.source === "registered") {
+    const stillRegistered = desktopSettings.projects.some(
+      (project) => project.path === candidate.registeredPath,
+    );
+    const registeredCanonicalPath = stillRegistered
+      ? await realpath(candidate.registeredPath).catch(() => undefined)
+      : undefined;
+    if (
+      stillRegistered === false ||
+      registeredCanonicalPath !== candidate.path
+    ) {
+      throw createDesktopError({
+        code: "desktop.onboarding_project_changed",
+        message: "The registered project changed. Select it again.",
+      });
+    }
+  } else {
+    const selectedCanonicalPath = await realpath(candidate.selectedPath).catch(
+      () => undefined,
+    );
+    if (selectedCanonicalPath !== candidate.path) {
+      throw createDesktopError({
+        code: "desktop.onboarding_project_changed",
+        message: "The selected project path changed. Select it again.",
+      });
+    }
+  }
+  const canonicalPath = await realpath(candidate.path);
+  if (canonicalPath !== candidate.path) {
+    throw createDesktopError({
+      code: "desktop.onboarding_project_changed",
+      message: "The selected project path changed. Select it again.",
+    });
+  }
+  const inspection = await inspectDesktopProjectGitBootstrap(canonicalPath);
+  if (
+    inspection.kind !== candidate.kind ||
+    inspection.requiresGitBootstrap !== candidate.requiresGitBootstrap
+  ) {
+    throw createDesktopError({
+      code: "desktop.onboarding_project_changed",
+      message: "The selected project changed. Review it and try again.",
+    });
+  }
+  if (inspection.requiresGitBootstrap && input.allowGitBootstrap === false) {
+    throw createDesktopError({
+      code: "desktop.onboarding_git_confirmation_required",
+      message: "Confirm the initial Git commit before continuing.",
+    });
+  }
+  if (inspection.requiresGitBootstrap) {
+    await ensureDesktopProjectGitBootstrap(canonicalPath, {
+      allowNonEmptyGitWithoutHeadBootstrap: true,
+    });
+  }
+  const now = new Date().toISOString();
+  const projectPath =
+    candidate.source === "registered"
+      ? candidate.registeredPath
+      : canonicalPath;
+  const projects = desktopSettings.projects.some(
+    (project) => project.path === projectPath,
+  )
+    ? desktopSettings.projects
+    : [
+        ...desktopSettings.projects,
+        { path: projectPath, label: candidate.label, addedAt: now },
+      ];
+  const record = desktopSettings.desktopOnboarding ?? {
+    version: 1 as const,
+    status: "in_progress" as const,
+    startedAt: now,
+  };
+  await saveDesktopCoreSettings({
+    ...desktopSettings,
+    projects,
+    desktopOnboarding: {
+      ...record,
+      status: "in_progress",
+      completedAt: undefined,
+      projectPath,
+    },
+  });
+  await requireLocalCoreConnectionManager().executeOnce(
+    async (client) => await client.syncKestrelOneProjects(projects),
+  ).catch(() => {
+    // Kestrel One is optional and must not block local project onboarding.
+  });
+  onboardingProjectSelections.delete(input.selectionId);
+  return await readDesktopOnboardingState();
+}
+
+async function completeDesktopOnboarding(): Promise<DesktopLaunchState> {
+  const onboarding = await readDesktopOnboardingState();
+  if (onboarding.canComplete === false) {
+    throw createDesktopError({
+      code: "desktop.onboarding_incomplete",
+      message: "Verify a model and choose an available project first.",
+    });
+  }
+  try {
+    await ensureDesktopOnboardingModelIsDefault(onboarding);
+    await startDesktopExecutionServices();
+    const confirmedOnboarding = await readDesktopOnboardingState();
+    if (confirmedOnboarding.canComplete === false) {
+      throw createDesktopError({
+        code: "desktop.onboarding_changed_during_startup",
+        message:
+          "Model or project setup changed while Kestrel was starting. Review the setup and retry.",
+      });
+    }
+    const completedAt = new Date().toISOString();
+    const record = desktopSettings.desktopOnboarding!;
+    const handoffId = record.handoffId ?? randomUUID();
+    await saveDesktopCoreSettings({
+      ...desktopSettings,
+      providerSelectionCompletedAt:
+        desktopSettings.providerSelectionCompletedAt ?? completedAt,
+      setupCompletedAt: completedAt,
+      desktopOnboarding: {
+        ...record,
+        status: "complete",
+        completedAt,
+        handoffId,
+      },
+    });
+    updateLaunchState(buildDesktopReadyLaunchState());
+    return launchState;
+  } catch (error) {
+    updateLaunchState({
+      phase: "setup_required",
+      message: "Kestrel could not start for this setup.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+async function ensureDesktopOnboardingModelIsDefault(
+  onboarding: DesktopOnboardingStateV1,
+): Promise<void> {
+  if (onboarding.provider === undefined || onboarding.model === undefined) {
+    throw createDesktopError({
+      code: "desktop.onboarding_model_missing",
+      message: "The verified onboarding model is unavailable.",
+    });
+  }
+  const authoritativeModelPolicy: ResolvedModelPolicy = {
+    ...desktopModelPolicy,
+    provider: onboarding.provider,
+    model: onboarding.model,
+  };
+  const promotedSettings = promoteDesktopDefaultModelConfiguration(
+    desktopSettings,
+    authoritativeModelPolicy,
+  );
+  if (promotedSettings === desktopSettings) {
+    return;
+  }
+  await saveDesktopCoreSettings({
+    ...promotedSettings,
+    modelPolicy: authoritativeModelPolicy,
+  });
+}
+
+async function ensureCompletedDesktopOnboardingHandoff(): Promise<void> {
+  const record = desktopSettings.desktopOnboarding;
+  if (record?.status !== "complete" || record.handoffId !== undefined) {
+    return;
+  }
+  await saveDesktopCoreSettings({
+    ...desktopSettings,
+    desktopOnboarding: {
+      ...record,
+      handoffId: randomUUID(),
+    },
+  });
+}
+
+async function acknowledgePersistedDesktopOnboardingHandoff(
+  entries: DesktopLegacyUiStateEntries,
+): Promise<void> {
+  const record = desktopSettings.desktopOnboarding;
+  if (
+    record?.status !== "complete" ||
+    record.handoffId === undefined ||
+    record.handoffAcknowledgedAt !== undefined ||
+    desktopUiStateContainsOnboardingHandoff(entries, record.handoffId) === false
+  ) {
+    return;
+  }
+  await saveDesktopCoreSettings({
+    ...desktopSettings,
+    desktopOnboarding: {
+      ...record,
+      handoffAcknowledgedAt: new Date().toISOString(),
+    },
+  });
+  updateLaunchState(buildDesktopReadyLaunchState());
+}
+
+function buildDesktopReadyLaunchState(): DesktopLaunchState {
+  const record = desktopSettings.desktopOnboarding;
+  const projectAvailable =
+    record?.projectPath !== undefined &&
+    desktopSettings.projects.some(
+      (project) => project.path === record.projectPath,
+    );
+  return {
+    phase: "ready",
+    message: "Kestrel is ready.",
+    ...(record?.status === "complete" &&
+    record.handoffId !== undefined &&
+    record.handoffAcknowledgedAt === undefined &&
+    projectAvailable
+      ? {
+          onboardingHandoff: {
+            id: record.handoffId,
+            projectPath: record.projectPath!,
+          },
+        }
+      : {}),
+  };
+}
+
+function parseDesktopOnboardingProvider(value: unknown): DesktopModelProvider {
+  if (
+    value !== "openrouter" &&
+    value !== "openai" &&
+    value !== "anthropic" &&
+    value !== "ollama" &&
+    value !== "lmstudio"
+  ) {
+    throw createDesktopError({
+      code: "desktop.invalid_model_provider",
+      message: "Desktop model provider is invalid.",
+    });
+  }
+  return value;
+}
+
+function parseDesktopRendererBootstrapReport(
+  value: unknown,
+): DesktopRendererBootstrapReport {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Renderer bootstrap report must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  const supported = new Set(["generation", "status", "reason"]);
+  if (
+    Object.keys(record).some((key) => supported.has(key) === false) ||
+    typeof record.generation !== "number" ||
+    Number.isSafeInteger(record.generation) === false ||
+    record.generation < 1
+  ) {
+    throw new Error("Renderer bootstrap report is invalid.");
+  }
+  if (record.status === "ready" && record.reason === undefined) {
+    return { generation: record.generation, status: "ready" };
+  }
+  if (
+    record.status === "failed" &&
+    (record.reason === "react_error" ||
+      record.reason === "stylesheet_missing")
+  ) {
+    return {
+      generation: record.generation,
+      status: "failed",
+      reason: record.reason,
+    };
+  }
+  throw new Error("Renderer bootstrap report status is invalid.");
+}
+
+function parseDesktopOnboardingDraftInput(
+  value: unknown,
+): DesktopOnboardingDraftInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Onboarding draft must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  const supported = new Set(["provider", "model"]);
+  if (Object.keys(record).some((key) => supported.has(key) === false)) {
+    throw new Error("Onboarding draft contains unsupported fields.");
+  }
+  return {
+    ...(record.provider !== undefined
+      ? { provider: parseDesktopOnboardingProvider(record.provider) }
+      : {}),
+    ...(record.model !== undefined
+      ? { model: parseNonEmptyOnboardingText(record.model, "model") }
+      : {}),
+  };
+}
+
+function parseDesktopOnboardingProviderInput(
+  value: unknown,
+): DesktopOnboardingProviderInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Provider setup must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  const supported = new Set(["provider", "model", "baseUrl", "credential"]);
+  if (Object.keys(record).some((key) => supported.has(key) === false)) {
+    throw new Error("Provider setup contains unsupported fields.");
+  }
+  const provider = parseDesktopOnboardingProvider(record.provider);
+  if (
+    record.baseUrl !== undefined &&
+    provider !== "ollama" &&
+    provider !== "lmstudio"
+  ) {
+    throw new Error("Hosted onboarding providers do not accept a base URL.");
+  }
+  const baseUrl =
+    record.baseUrl === undefined
+      ? undefined
+      : parseDesktopProviderModelCatalogRequest({
+          provider,
+          baseUrl: record.baseUrl,
+        }).baseUrl;
+  const credential =
+    record.credential === undefined
+      ? undefined
+      : parseNonEmptyOnboardingText(record.credential, "API key", false);
+  return {
+    provider,
+    model: parseNonEmptyOnboardingText(record.model, "model"),
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
+    ...(credential !== undefined ? { credential } : {}),
+  };
+}
+
+function parseDesktopOnboardingProjectConfirmation(value: unknown): {
+  selectionId: string;
+  allowGitBootstrap: boolean;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Project confirmation must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).some(
+      (key) => key !== "selectionId" && key !== "allowGitBootstrap",
+    ) ||
+    typeof record.allowGitBootstrap !== "boolean"
+  ) {
+    throw new Error("Project confirmation is invalid.");
+  }
+  return {
+    selectionId: parseNonEmptyOnboardingText(
+      record.selectionId,
+      "selection ID",
+    ),
+    allowGitBootstrap: record.allowGitBootstrap,
+  };
+}
+
+function parseNonEmptyOnboardingText(
+  value: unknown,
+  label: string,
+  trim = true,
+): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Onboarding ${label} is required.`);
+  }
+  const normalized = trim ? value.trim() : value;
+  if (
+    normalized.length === 0 ||
+    (trim === false && normalized.trim() !== normalized) ||
+    /[\u0000-\u001f\u007f]/u.test(normalized)
+  ) {
+    throw new Error(`Onboarding ${label} is invalid.`);
+  }
+  return normalized;
+}
+
+function providerCredentialId(
+  provider: Exclude<DesktopModelProvider, "ollama" | "lmstudio">,
+): LocalCoreCredentialId {
+  if (provider === "openrouter") return "provider.openrouter.default";
+  if (provider === "openai") return "provider.openai.default";
+  return "provider.anthropic.default";
+}
+
+function isApprovedPackageSmokeEnvironmentCredentialStore(): boolean {
+  return (
+    app.isPackaged &&
+    process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_APPROVED === "1" &&
+    process.env.KESTREL_CORE_CREDENTIAL_STORE === "environment"
+  );
+}
+
+function readApprovedPackageSmokeEnvironmentCredential(
+  provider: Exclude<DesktopModelProvider, "ollama" | "lmstudio">,
+): string | undefined {
+  if (isApprovedPackageSmokeEnvironmentCredentialStore() === false) {
+    return undefined;
+  }
+  const value =
+    provider === "openrouter"
+      ? process.env.OPENROUTER_API_KEY
+      : provider === "openai"
+        ? process.env.OPENAI_API_KEY
+        : process.env.ANTHROPIC_API_KEY;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readApprovedPackageSmokeProjectPath(): string | undefined {
+  if (isApprovedPackageSmokeEnvironmentCredentialStore() === false) {
+    return undefined;
+  }
+  const value = process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_PROJECT_PATH;
+  return typeof value === "string" && value.trim().length > 0
+    ? path.resolve(value.trim())
+    : undefined;
+}
+
+function providerModel(
+  settings: DesktopSettings,
+  provider: DesktopModelProvider,
+): string | undefined {
+  if (provider === "openrouter") return settings.openrouterModel;
+  if (provider === "openai") return settings.openaiModel;
+  if (provider === "anthropic") return settings.anthropicModel;
+  if (provider === "ollama") return settings.ollamaModel;
+  return settings.lmstudioModel;
+}
+
+function providerBaseUrl(
+  settings: DesktopSettings,
+  provider: DesktopModelProvider,
+): string | undefined {
+  if (provider === "openrouter") return settings.openrouterBaseUrl;
+  if (provider === "openai") return settings.openaiBaseUrl;
+  if (provider === "anthropic") return settings.anthropicBaseUrl;
+  if (provider === "ollama") return settings.ollamaBaseUrl;
+  return settings.lmstudioBaseUrl;
+}
+
+function currentProviderModel(settings: DesktopSettings): string | undefined {
+  return providerModel(settings, settings.selectedProvider);
 }
 
 async function persistDesktopRendererConfiguration(

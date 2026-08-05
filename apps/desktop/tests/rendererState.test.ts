@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   acceptRendererPrompt,
+  applyDesktopOnboardingHandoff,
   addRendererDraftAttachment,
   addRendererThread,
   appendRendererTranscript,
@@ -32,6 +33,34 @@ import { projectDesktopTerminalMessage } from "../renderer/src/terminalProjectio
 
 test("new Desktop conversations default to the local checkout", () => {
   assert.equal(createRendererThread().workspaceMode, "local");
+});
+
+test("new Desktop conversations default to chat mode", () => {
+  assert.equal(createRendererThread().mode, "chat");
+});
+
+test("Desktop preserves explicit build mode but defaults missing persisted mode to chat", () => {
+  const makeState = (interactionMode?: "build") => readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-renderer-vite",
+    capturedAt: "2026-08-04T22:24:00.000Z",
+    entries: {
+      "kchat:web:active-thread:v1": "thread-1",
+      "kchat:web:threads:v2": JSON.stringify({
+        summaries: [{ id: "thread-1", title: "Conversation" }],
+        states: {
+          "thread-1": {
+            sessionId: "session-1",
+            ...(interactionMode !== undefined ? { interactionMode } : {}),
+            transcript: [],
+          },
+        },
+      }),
+    },
+  });
+
+  assert.equal(makeState("build").threads[0]?.mode, "build");
+  assert.equal(makeState().threads[0]?.mode, "chat");
 });
 
 test("Desktop projects terminal messages after pending users and suppresses duplicate run identities", () => {
@@ -736,4 +765,49 @@ test("Vite renderer migrates legacy per-thread composer drafts and prompt histor
   });
   assert.equal(migrated.threads[0]?.draft, "legacy draft");
   assert.deepEqual(migrated.threads[0]?.promptHistory, ["one", "two"]);
+});
+
+test("onboarding handoff opens one authoritative empty project conversation", () => {
+  const existing = readDesktopRendererState(null);
+  const handedOff = applyDesktopOnboardingHandoff(existing, {
+    id: "handoff-1",
+    projectPath: "/workspace/selected",
+    replaceInitialThread: false,
+    modelConfigurationId: "configured-model",
+    modelConfigurationRevision: 4,
+    enabledAppIds: ["built_in.sandbox"],
+  });
+
+  assert.equal(handedOff.threads.length, 2);
+  const active = handedOff.threads.find(
+    (thread) => thread.id === handedOff.activeThreadId,
+  )!;
+  assert.equal(active.projectPath, "/workspace/selected");
+  assert.equal(active.modelConfigurationId, "configured-model");
+  assert.equal(active.modelConfigurationRevision, 4);
+  assert.deepEqual(active.transcript, []);
+  assert.equal(active.mode, "chat");
+  assert.equal(active.rawState.onboardingHandoffId, "handoff-1");
+
+  const repeated = applyDesktopOnboardingHandoff(handedOff, {
+    id: "handoff-1",
+    projectPath: "/workspace/selected",
+    replaceInitialThread: false,
+  });
+  assert.equal(repeated.threads.length, 2);
+  assert.equal(repeated.activeThreadId, active.id);
+});
+
+test("pristine onboarding handoff replaces the placeholder conversation", () => {
+  const handedOff = applyDesktopOnboardingHandoff(
+    readDesktopRendererState(null),
+    {
+      id: "handoff-pristine",
+      projectPath: "/workspace/selected",
+      replaceInitialThread: true,
+    },
+  );
+
+  assert.equal(handedOff.threads.length, 1);
+  assert.equal(handedOff.threads[0]?.projectPath, "/workspace/selected");
 });

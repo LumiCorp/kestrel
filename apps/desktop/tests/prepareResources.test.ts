@@ -9,6 +9,7 @@ import {
 
 test("desktop runtime resources include database migrations", () => {
   assert.ok(DESKTOP_RESOURCE_DIRECTORIES.includes("db/migrations"));
+  assert.ok(DESKTOP_RESOURCE_DIRECTORIES.includes("packages/mcp-security"));
   assert.equal(DESKTOP_RESOURCE_DIRECTORIES.includes("apps/web"), false);
   assert.equal(DESKTOP_RESOURCE_DIRECTORIES.includes("packages/protocol"), false);
 });
