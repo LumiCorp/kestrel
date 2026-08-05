@@ -123,6 +123,12 @@ try {
   mountPoint = path.join(smokeRoot, "dmg");
   coreHome = path.join(smokeRoot, "core-home");
   const userDataPath = path.join(smokeRoot, "user-data");
+  const onboardingProjectPath = path.join(smokeRoot, "first-project");
+  mkdirSync(onboardingProjectPath, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(onboardingProjectPath, "README.md"), "# First Kestrel project\n", {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   mkdirSync(mountPoint, { recursive: true });
   fakeOpenRouter = await startFakeOpenRouterServer();
   await seedOfflineModelConfiguration({
@@ -190,8 +196,19 @@ try {
     coreHome,
     smokeRoot,
     fakeOpenRouterUrl: fakeOpenRouter.url,
+    onboardingProjectPath,
   });
+  await completeFirstRunOnboarding(activeLaunch.page);
   const firstLaunch = await verifyReadyDesktop(activeLaunch.page);
+  const completedSettings = JSON.parse(readFileSync(
+    path.join(resolveLocalCorePaths(coreHome).settingsPath, "local-core-settings.json"),
+    "utf8",
+  )) as Record<string, unknown>;
+  assert.equal(
+    (completedSettings.desktopOnboarding as { status?: unknown } | undefined)?.status,
+    "complete",
+    "LaunchServices first run must persist onboarding after execution startup.",
+  );
   const offlineModel = await verifyOfflineModel(
     activeLaunch.page,
     fakeOpenRouter.url,
@@ -225,8 +242,14 @@ try {
     coreHome,
     smokeRoot,
     fakeOpenRouterUrl: fakeOpenRouter.url,
+    onboardingProjectPath,
   });
   const relaunch = await verifyReadyDesktop(activeLaunch.page);
+  assert.equal(
+    await activeLaunch.page.getByRole("button", { name: /Get started/u }).count(),
+    0,
+    "LaunchServices relaunch must skip completed onboarding.",
+  );
   const composer = activeLaunch.page.getByRole("textbox", {
     name: "Message",
     exact: true,
@@ -418,6 +441,7 @@ async function launchThroughLaunchServices(input: {
   coreHome: string;
   smokeRoot: string;
   fakeOpenRouterUrl: string;
+  onboardingProjectPath: string;
 }): Promise<LaunchHandle> {
   assert.deepEqual(
     listInstalledApplicationProcessIds(input.installedAppPath),
@@ -437,6 +461,7 @@ async function launchThroughLaunchServices(input: {
         ELECTRON_ENABLE_STACK_DUMPING: "1",
         KESTREL_CORE_CREDENTIAL_STORE: "environment",
         KESTREL_DESKTOP_PACKAGE_SMOKE_APPROVED: "1",
+        KESTREL_DESKTOP_PACKAGE_SMOKE_PROJECT_PATH: input.onboardingProjectPath,
         KESTREL_HOME: input.coreHome,
         OPENROUTER_API_KEY: "kestrel-launch-services-smoke-token",
       },
@@ -877,10 +902,30 @@ async function seedOfflineModelConfiguration(input: {
       selectedProvider: "openrouter",
       openrouterModel: policy.model,
       openrouterBaseUrl: input.baseUrl,
-      providerSelectionCompletedAt: new Date().toISOString(),
-      setupCompletedAt: new Date().toISOString(),
     },
   );
+}
+
+async function completeFirstRunOnboarding(
+  page: Page,
+): Promise<void> {
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, { timeout: 60_000 });
+  await page.getByRole("button", { name: /Get started/u }).click({ timeout: 60_000 });
+  await page.getByLabel("Model", { exact: true }).selectOption("openai/gpt-5.2-chat");
+  await page.getByLabel("API key", { exact: true }).fill("kestrel-launch-services-smoke-token");
+  await page.getByRole("button", { name: /Verify connection/u }).click();
+  await page.getByRole("heading", { name: "Choose a project", exact: true }).waitFor({
+    state: "visible",
+    timeout: 60_000,
+  });
+  await page.getByRole("button", { name: /Choose or create a folder/u }).click();
+  await page.getByRole("button", { name: /Use this project/u }).click();
+  await page.getByRole("heading", { name: "Your Kestrel workspace", exact: true }).waitFor({
+    state: "visible",
+    timeout: 60_000,
+  });
+  await page.getByRole("button", { name: /Open Kestrel/u }).click();
 }
 
 function runChecked(

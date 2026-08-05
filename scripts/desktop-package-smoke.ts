@@ -69,6 +69,12 @@ const heartbeat = setInterval(() => {
 const smokeRoot = mkdtempSync(path.join(resolveSmokeTempParent(), "kdp-gui-"));
 const coreHome = path.join(smokeRoot, "core-home");
 const userDataPath = path.join(smokeRoot, "user-data");
+const onboardingProjectPath = path.join(smokeRoot, "first-project");
+mkdirSync(onboardingProjectPath, { recursive: true, mode: 0o700 });
+writeFileSync(path.join(onboardingProjectPath, "README.md"), "# First Kestrel project\n", {
+  encoding: "utf8",
+  mode: 0o600,
+});
 const fakeOpenRouter = await startFakeOpenRouterServer();
 await seedOfflineModelConfiguration({
   coreHome,
@@ -103,6 +109,7 @@ try {
       ELECTRON_ENABLE_STACK_DUMPING: "1",
       KESTREL_HOME: coreHome,
       KESTREL_CORE_CREDENTIAL_STORE: "environment",
+      KESTREL_DESKTOP_PACKAGE_SMOKE_PROJECT_PATH: onboardingProjectPath,
       OPENROUTER_API_KEY: "kestrel-package-smoke-token",
     },
     timeout: 60_000,
@@ -136,7 +143,19 @@ try {
   await window.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, { timeout: 60_000 });
   await window.waitForLoadState("domcontentloaded");
   await window.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
+  await completeFirstRunOnboarding(window);
   await window.locator(".composer").waitFor({ state: "visible", timeout: 60_000 });
+  const completedSettings = JSON.parse(readFileSync(
+    path.join(resolveLocalCorePaths(coreHome).settingsPath, "local-core-settings.json"),
+    "utf8",
+  )) as Record<string, unknown>;
+  assert.equal(
+    (completedSettings.desktopOnboarding as { status?: unknown } | undefined)?.status,
+    "complete",
+    "First-run completion must persist only after Desktop execution is ready.",
+  );
+  assert.equal(typeof completedSettings.providerSelectionCompletedAt, "string");
+  assert.equal(typeof completedSettings.setupCompletedAt, "string");
   const terminalBootState = await window.evaluate(async () => {
     const bridge = (globalThis as typeof globalThis & {
       kestrelDesktop?: {
@@ -214,6 +233,7 @@ try {
   assert.equal(renderer.bridgeInfo.capabilities.includes("mission_control"), true);
   assert.equal(renderer.bridgeInfo.capabilities.includes("attachments"), true);
   assert.equal(renderer.bridgeInfo.capabilities.includes("operator_control"), true);
+  assert.equal(renderer.bridgeInfo.capabilities.includes("onboarding"), true);
   assert.equal(renderer.bootState.phase, "ready", renderer.bootState.code ?? renderer.bootState.message);
   assert.equal(renderer.hasRoot, true, "Packaged Desktop must mount the Vite renderer root.");
   assert.equal(renderer.hasNextAsset, false, "Packaged Desktop must not load Next.js assets.");
@@ -248,7 +268,10 @@ try {
   const liveModel = liveModelApproved
     ? await verifyLiveModelResponse(window)
     : undefined;
-  const surfaces = await verifyStaticRendererSurfaces(window);
+  const surfaces = await verifyStaticRendererSurfaces(
+    window,
+    path.basename(onboardingProjectPath),
+  );
   const persistenceMarker = `KESTREL_PACKAGE_PERSIST_${Date.now()}`;
   await openConversationSurface(window);
   await window
@@ -276,6 +299,7 @@ try {
       ELECTRON_ENABLE_STACK_DUMPING: "1",
       KESTREL_HOME: coreHome,
       KESTREL_CORE_CREDENTIAL_STORE: "environment",
+      KESTREL_DESKTOP_PACKAGE_SMOKE_PROJECT_PATH: onboardingProjectPath,
       OPENROUTER_API_KEY: "kestrel-package-smoke-token",
     },
     timeout: 60_000,
@@ -291,6 +315,11 @@ try {
   await relaunchedWindow
     .getByRole("textbox", { name: "Message", exact: true })
     .waitFor({ state: "visible", timeout: 30_000 });
+  assert.equal(
+    await relaunchedWindow.getByRole("button", { name: /Get started/u }).count(),
+    0,
+    "Completed onboarding must not reappear after relaunch.",
+  );
   assert.equal(
     await relaunchedWindow
       .getByRole("textbox", { name: "Message", exact: true })
@@ -496,10 +525,31 @@ async function seedOfflineModelConfiguration(input: {
       selectedProvider: "openrouter",
       openrouterModel: policy.model,
       openrouterBaseUrl: input.baseUrl,
-      providerSelectionCompletedAt: new Date().toISOString(),
-      setupCompletedAt: new Date().toISOString(),
     },
   );
+}
+
+async function completeFirstRunOnboarding(
+  window: Page,
+): Promise<void> {
+  const getStarted = window.getByRole("button", { name: /Get started/u });
+  await getStarted.waitFor({ state: "visible", timeout: 60_000 });
+  await getStarted.click();
+  await window.getByLabel("Model", { exact: true }).selectOption("openai/gpt-5.2-chat");
+  await window.getByLabel("API key", { exact: true }).fill("kestrel-package-smoke-token");
+  await window.getByRole("button", { name: /Verify connection/u }).click();
+  await window.getByRole("heading", { name: "Choose a project", exact: true }).waitFor({
+    state: "visible",
+    timeout: 60_000,
+  });
+
+  await window.getByRole("button", { name: /Choose or create a folder/u }).click();
+  await window.getByRole("button", { name: /Use this project/u }).click();
+  await window.getByRole("heading", { name: "Your Kestrel workspace", exact: true }).waitFor({
+    state: "visible",
+    timeout: 60_000,
+  });
+  await window.getByRole("button", { name: /Open Kestrel/u }).click();
 }
 
 async function verifyOfflineModel(
@@ -550,7 +600,10 @@ function readDesktopVersion(root: string): string {
   return manifest.version;
 }
 
-async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string, string>> {
+async function verifyStaticRendererSurfaces(
+  window: Page,
+  projectLabel: string,
+): Promise<Record<string, string>> {
   await openRendererSurface(window, "Settings", "Settings");
   for (const [category, capabilities] of [
     ["Models", ["OpenRouter"]],
@@ -590,7 +643,7 @@ async function verifyStaticRendererSurfaces(window: Page): Promise<Record<string
   await assertNoSurfaceError(window, "Settings");
   await window.screenshot({ path: settingsScreenshotPath, fullPage: true });
 
-  await openRendererSurface(window, "Projects", "No project selected");
+  await openRendererSurface(window, "Projects", projectLabel);
   await assertNoSurfaceError(window, "Projects");
   await window.screenshot({ path: projectsScreenshotPath, fullPage: true });
 
