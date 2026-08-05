@@ -10,6 +10,10 @@ updatedAt: 2026-08-04
 
 Choose the Kestrel surface that matches where the work happens. They use the same runtime, but each provides a different way to start and manage the work.
 
+## Before choosing
+
+Desktop requires macOS 13 or later on Apple silicon. The CLI/TUI requires Node.js 22 on macOS arm64 or Linux x64. Lumi-hosted Kestrel One requires an organization invitation. Source development and SDK integrations require the repository or package prerequisites plus a configured provider path.
+
 ## Run agents on your computer
 
 Choose **Kestrel Desktop** for projects on your computer. Open a folder, choose a model, and ask Kestrel to work with the files and approved tools in that project.
@@ -22,11 +26,30 @@ Choose **Kestrel One** when a team needs shared Projects, Threads, instructions,
 
 [Start with your Kestrel One invitation](/kestrel-one/getting-started)
 
+## Use Kestrel One source
+
+Choose the Kestrel One source path when you need to inspect, extend, or run the application in a development environment. The source is versioned at `0.8.0`; Lumi hosting is a separate invitation-only access path.
+
+[Get Kestrel One source](/kestrel-one/source-and-hosting)
+
+## Use the terminal
+
+Install `@kestrel-agents/kestrel@0.8.0` globally with npm on a release-verified platform, open the intended project directory, and start the TUI.
+
+[Install the CLI/TUI](/cli/install)
+
 ## Add Kestrel to your product
 
 Choose **Build** when you want a TypeScript application to start, stream, resume, and inspect Kestrel runs. The first tutorial creates a typed agent and runs it through the SDK.
 
 [Build your first agent](/build/building-your-first-agent)
+
+## Confirm first success
+
+- Desktop opens the intended project and records one truthful terminal outcome.
+- Kestrel One creates a durable Thread in the expected organization or Project.
+- The CLI/TUI reports `0.8.0`, becomes ready, and finishes one bounded project task.
+- An SDK integration preserves actor/session identity and reads `assistantText` plus the structured terminal result.
 
 <Callout title="Not sure which path fits?">
   <p>Start with Desktop for local project work, Kestrel One for shared team work, the CLI/TUI for terminal workflows, or Build for an API or application integration.</p>

@@ -5,7 +5,7 @@ section: reference
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-21
+updatedAt: 2026-08-04
 ---
 
 Use this package when a Kestrel host needs to install portable agent guidance
@@ -14,7 +14,7 @@ into a persistent workspace.
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/workspace-skills@0.7.0
+pnpm add @kestrel-agents/workspace-skills@0.8.0
 ```
 
 ## Create a workspace manager
@@ -34,6 +34,14 @@ await skills.install({
 });
 ```
 
+## Discover, install, and verify skills
+
+Discover candidate sources outside the runtime, then install an exact repository/branch/path through the manager. Verify the resolved commit, content digest, root `SKILL.md`, metadata, and active/pending state before exposing guidance to a run.
+
+## Ownership and portability
+
+The workspace owner chooses which portable guidance belongs to the project. The immutable installed revision travels with workspace provenance; provider credentials and host policy do not.
+
 ## Runtime guarantees
 
 - Sources must use credential-free public HTTPS Git URLs.
@@ -48,3 +56,11 @@ await skills.install({
 
 Skill instructions are guidance only. The host remains responsible for its
 tool, credential, network, and filesystem policy.
+
+## Security and workspace boundaries
+
+Resolve paths under the declared workspace, reject symlink escapes, install only credential-free public HTTPS sources, and never execute source hooks. Tool access still comes from the active Kestrel profile.
+
+## Errors and compatibility
+
+Surface invalid metadata, unreachable sources, digest mismatch, busy workspace, and failed refresh distinctly. Use the exact 0.8 package line and retain the last verified revision when a refresh cannot be accepted.

@@ -5,14 +5,14 @@ section: kestrel-one
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 Project context changes as a team learns: instructions improve, files are replaced, and new Knowledge becomes relevant. Kestrel One records those changes as revisions instead of rewriting the past underneath existing work.
 
 ## What a revision contains
 
-A context revision identifies the Project instructions, private files, and selected organization Knowledge available for a new turn. Each accepted change creates a new immutable revision.
+A context revision identifies the Project instructions, private files, selected organization Knowledge, allowed Apps, Environment reference, and relevant policy references available for a new turn. Each accepted change creates a new immutable revision.
 
 ## Why each turn records one
 
@@ -21,6 +21,18 @@ When a new turn begins, Kestrel One attaches the current revision to it. Later, 
 ## A simple example
 
 If a teammate replaces `requirements-v1.pdf` with `requirements-v2.pdf`, the next turn uses the new revision. A previous result still points to the revision containing `requirements-v1.pdf`, so its reasoning can be reviewed honestly.
+
+## Who may change context
+
+Project role, resource ownership, and organization policy determine who may update each input. Accepting a context change records the authorized actor and new immutable revision.
+
+## Inspect a revision
+
+Compare the revision attached to a turn with the Project’s current revision. Reviewers should be able to identify changed instructions, files, Knowledge, Apps, and Environment references.
+
+## Operational implications
+
+Replay and review use the historical revision. Earlier Threads do not pretend to have used later context, and removing current access does not rewrite the evidence for an already completed turn.
 
 <Outcome>
   <p>A reviewer can identify the exact Project context used for any new turn and explain why two turns may have produced different results.</p>

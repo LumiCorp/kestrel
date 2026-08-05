@@ -1,6 +1,6 @@
 ---
 title: Release compatibility
-summary: Match the 0.7 package line while respecting the independently released Desktop and Kestrel One channels.
+summary: Match the exact Kestrel 0.8 package line and verify CLI, Desktop, Kestrel One, platform, persistence, and deployed identities.
 section: reference
 audience: integrators
 status: active
@@ -8,6 +8,46 @@ sourceKind: curated
 updatedAt: 2026-08-04
 ---
 
+## Compatibility rule
+
+Use the exact `0.8.0` line across Runtime, Protocol, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and compatible clients. Do not combine 0.7 and 0.8 contracts or add an application-side shim for removed APIs.
+
+## Package matrix
+
 <ReleaseCompatibilityTable />
 
-Use the `0.7.0` package line together across Runtime, Protocol, SDK, Memory, and adapters. The signed public Desktop release is also `0.7.0`, but Desktop and Kestrel One remain products with independent release channels; Kestrel One is invitation-managed. Do not infer a product artifact version from the npm package line.
+All eight published npm artifacts share the coordinated release line. A package may remain optional to an application, but every installed Kestrel package must match.
+
+## Product matrix
+
+CLI/TUI uses the Runtime package and supports Node.js 22 on macOS arm64 and Linux x64. Desktop 0.8.0 is a signed manual macOS arm64 application. Kestrel One source is tagged 0.8.0; Lumi hosting runs an exact identified deployment of that product version.
+
+## Platform matrix
+
+| Surface | Release-verified platform |
+| --- | --- |
+| CLI/TUI | macOS arm64, Linux x64 |
+| Desktop | macOS 13+ on Apple silicon |
+| SDK packages | Node.js 22 server runtimes supported by each package |
+| Kestrel One source | repository development environment |
+| Lumi-hosted Kestrel One | Lumi-operated Vercel, worker, and Fly targets |
+
+## Persistence and migrations
+
+Desktop and Local Core preserve their owned settings, credentials, projects, sessions, and history across the 0.8 manual upgrade. Hosted operators apply only pending migrations and verify application/worker compatibility before promotion.
+
+## Unsupported combinations
+
+- Mixed 0.7 and 0.8 Kestrel package graphs
+- Removed Board/Task or project snapshot write APIs
+- Desktop 0.8.0 installed through the stable OTA pointer
+- Broad approvals reused for a different action
+- A hosted deployment identified only by semantic version without revision and image evidence
+
+## Historical releases
+
+The [0.7 upgrade guide](/build/upgrading-to-0-7) remains available as history. It is not current integration guidance.
+
+## Verify a deployed system
+
+Record package versions, Desktop or CLI version, application/source revision, migration history, worker revision, Fly image digests, and one successful terminal result. Every value must describe the same release candidate.

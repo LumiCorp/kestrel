@@ -5,12 +5,14 @@ section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 ## Trusted request path
 
 Browser code authenticates with your application. The application server resolves the person, tenant or organization, and allowed model before calling the runner with a server-owned token. Provider credentials remain in Desktop settings or trusted Kestrel One services.
+
+That trusted path continues through the runner, hosted worker, tool boundary, and external effect. Every hop carries validated actor and correlation context without exposing credentials to the model or browser.
 
 ## Required controls
 
@@ -21,6 +23,28 @@ Browser code authenticates with your application. The application server resolve
 - Keep control actions and final run outcomes in history.
 - Require a reviewed change plan for schema migrations, irreversible data moves, and policy changes.
 
+## Provider and credential controls
+
+Resolve a versioned provider entry and qualified capability set before issuing a credential lease. Scope leases to the trusted service, model/gateway, actor, budget, and expiry; revoke them independently of conversation history.
+
+## Tool invocation and execution boundaries
+
+Expose only canonical tool descriptors allowed by the active profile. Validate arguments at invocation, isolate filesystem and Docker access, prevent symlink escapes, and keep storage authority narrower than the worker's host account.
+
+## Action-bound external approvals
+
+Approval binds actor, grant, canonical action, intended effect, scope, and expiry. Revalidate immediately before the effect and store the decision and result as separate evidence.
+
+## MCP and OCI egress
+
+Environment policy controls which MCP services are visible and whether OCI workloads have full or isolated networking. Default-deny egress must remain enforced even when a tool descriptor advertises a remote capability.
+
+## Required evidence
+
+Retain request/run correlation, authority decision, profile/provider revisions, tool descriptor, approval/effect identifiers, terminal result, and release identity without storing secrets or private continuation state.
+
 ## Verify the controls
 
 Test both an allowed and denied request with non-administrator test accounts. Confirm that a denied request returns no protected metadata, file content, model endpoint, or credential. Review browser bundles and network responses for secrets before release.
+
+Run the focused mutation proofs for the changed security boundary as defense against validators that appear present but no longer reject the prohibited case.

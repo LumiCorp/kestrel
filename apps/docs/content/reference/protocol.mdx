@@ -5,12 +5,18 @@ section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 ```bash
-pnpm add @kestrel-agents/protocol@0.7.0
+pnpm add @kestrel-agents/protocol@0.8.0
 ```
+
+Runtime, SDK, adapters, and clients must use the exact matching 0.8 protocol line.
+
+## Exported modules
+
+The package exports execution, durable conversations, approvals/effects, recovery, Mission Control, public events, and health contracts from its supported entrypoints. Import only public exports rather than internal source paths.
 
 ## Exported constants
 
@@ -46,3 +52,11 @@ The payload parser validates the nested result for `run.completed`, `run.failed`
 ## Validate runner health
 
 Use `parseRunnerHealthV1()` on an unknown health response. It verifies the service name, contract versions, capability list, and non-empty service version before returning typed data.
+
+## Validation and unknown fields
+
+Parse network, persisted, and plugin-provided data before use. Canonical contracts reject malformed required values and unexpected shapes where closed objects own the boundary. Consumers must preserve or safely ignore unknown future event names rather than coercing them.
+
+## Removed 0.7 APIs
+
+The current project-control contract is Mission Control. Legacy Board/Task writes and project snapshot updates are migration/history concepts only; 0.8 clients do not receive a compatibility shim.

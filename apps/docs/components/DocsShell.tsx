@@ -41,6 +41,23 @@ function LocalNavigation({ currentUrl, navigation }: { currentUrl: string; navig
   );
 }
 
+function SiteFooter() {
+  return (
+    <footer className="global-footer">
+      <div className="global-footer-inner">
+        <p>
+          Kestrel is maintained and supported by <a href="https://www.lumicorp.ai">Lumi</a>.
+        </p>
+        <nav aria-label="Kestrel and Lumi">
+          <a href="https://www.lumicorp.ai">www.lumicorp.ai</a>
+          <a href="https://github.com/LumiCorp/kestrel">GitHub</a>
+          <Link href="/start/release-status">Release status</Link>
+        </nav>
+      </div>
+    </footer>
+  );
+}
+
 export function DocsShell(props: DocsShellProps) {
   const { children, currentUrl, navigation, pageMeta, toc = [], sectionListing, relatedListing, renderChrome = true } = props;
   const isWidePage = !pageMeta;
@@ -117,6 +134,7 @@ export function DocsShell(props: DocsShellProps) {
           </aside>
         ) : null}
       </div>
+      {renderChrome ? <SiteFooter /> : null}
     </div>
   );
 }

@@ -5,8 +5,12 @@ section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-15
+updatedAt: 2026-08-04
 ---
+
+## Event envelope
+
+Every public event carries canonical identity, ordering, timestamp, and correlation fields. Validate the complete envelope before use and order replay by protocol sequence/cursor.
 
 ## Public event names
 
@@ -31,6 +35,26 @@ updatedAt: 2026-07-15
 | `run.cancelled` | The exact run was cancelled and carries a terminal result |
 | `runner.error` | The runner could not satisfy the request contract |
 
+## Lifecycle and terminal events
+
+`run.started` begins accepted work. Exactly one of the terminal events completes its run lineage. Waiting is a normalized result state, not a fabricated event name.
+
+## Output and progress events
+
+Operational progress, provider reasoning, agent-authored progress, console/logs, and committed assistant output have different sources and retention rules.
+
+## Tool and external-effect events
+
+Tool start/completion/failure records execution activity. External effects additionally require exact approval and effect-result evidence even when the underlying invocation is a tool.
+
+## Wait, recovery, and approval events
+
+Pending-request, recovery-option, and approval details remain bound to their exact runtime/operator state. Consumers must not infer a decision from nearby assistant text.
+
+## Evaluation and budget events
+
+Where exposed by a command/result contract, retain evaluation identity and allocation/ledger correlation separately from output. Do not invent event names not present in the exported list.
+
 ## Consumer rules
 
 - Validate the event envelope before updating application state.
@@ -42,3 +66,5 @@ updatedAt: 2026-07-15
 - Treat operational progress, logs, provider reasoning, and agent progress as activity, not the final answer.
 - Read human-facing `assistantText` and structured data from the terminal result.
 - Waiting is a normalized run status, not a fabricated `run.waiting` event.
+- Persist the last accepted cursor atomically with consumer state and apply duplicates idempotently.
+- Preserve unknown future events safely and never reinterpret one as a known terminal outcome.

@@ -1,85 +1,83 @@
 ---
 title: Core concepts
-summary: Learn the small set of ideas shared by Desktop, Kestrel One, the CLI, and SDK applications.
+summary: Learn the identities, contracts, control surfaces, memory, recovery, approvals, budgets, and evidence shared across Kestrel 0.8.
 section: start
 audience: everyone
-status: stable
+status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
-The same concepts appear throughout Kestrel even though each product provides a
-different experience. Learn them here when a guide uses an unfamiliar term.
+Kestrel uses the same small set of concepts across Desktop, Kestrel One, CLI/TUI, and SDK applications. Learn the identity and ownership of each concept before choosing an API or recovery action.
 
 ## Runtime
 
-The **runtime** executes and records agent work. It advances runs through model
-and tool steps, persists events and results, and supports waiting, cancellation,
-recovery, and replay.
+The Runtime advances validated turns, calls models and tools, commits visible output, and records terminal outcomes. Its effective profile also owns recovery, evaluation, budgets, memory, and telemetry policy.
 
 ## Execution Protocol
 
-The **Execution Protocol** is the shared contract for commands, events, streams,
-and terminal results. Local Core and remote runner services expose the same
-protocol through different transports.
+The Protocol defines request and result shapes, conversations, stream events, approvals, recovery decisions, Mission Control commands, health, and correlation. Consumers validate these contracts instead of inferring state from text.
 
 ## Local Core
 
-**Local Core** is the runtime host on a user's computer. Desktop and local
-CLI/TUI workflows connect to it through an authenticated Unix socket. A local
-SDK target can use the same connection.
+Local Core is the supervised runtime bridge used by Desktop and local terminal/application workflows. It reports readiness and build identity, preserves owned state, restarts when configuration changes require it, and attempts safe self-healing when its process is unhealthy.
 
 ## Runner service
 
-A **runner service** is a network-hosted runtime endpoint for trusted
-application servers. Kestrel One and remote SDK targets use this form. Browser
-code should call its application server rather than hold runner credentials
-directly.
-
-The `kestrel web` command is a local HTTP bridge to Local Core. It gives a local
-server application a runner-service-compatible URL without starting another
-runtime.
+A runner service is the trusted execution boundary behind an application. Local Core serves local work; hosted runners and workers serve remote applications such as Kestrel One. Browsers never receive runner or provider credentials.
 
 ## Run and terminal outcome
 
-A **run** is one execution attempt. It ends as completed, failed, cancelled, or
-waiting for a person or external condition. The terminal result keeps
-human-facing `assistantText` separate from structured application data.
+A run is one execution attempt. It finishes as completed, failed, or cancelled, or remains waiting for an exact request. Human-facing `assistantText`, structured finalized data, runtime status, and operator affordances remain separate.
 
 ## Agent
 
-An **agent** is the application-facing definition created with `createAgent()`.
-It binds an identity and profile to an explicit local or remote execution target
-and provides methods such as `run`, `stream`, `resume`, `session`, and
-`subscribe`.
+An Agent combines a profile with application-owned instructions and integration behavior. The effective profile and provider registry determine model, capability, tool, recovery, memory, evaluation, and budget policy.
 
 ## Session
 
-A **session** is a durable line of continuity. It connects related turns,
-memory, events, and evidence so later work can continue instead of starting
-from an empty request.
+A Session is the durable local conversation identity used by Desktop, CLI/TUI, and SDK clients. Follow-up turns, waits, recovery choices, events, and terminal outcomes remain attached to it.
 
 ## Thread and Project
 
-A **Thread** is the product-facing conversation and work history. In Kestrel
-One, a **Project** groups related Threads with members, instructions, files, and
-Knowledge. Desktop uses a local workspace rather than a hosted Project.
+A Kestrel One Thread is the durable shared conversation. A Project groups Threads with members, revisioned context, Knowledge, Apps, an Environment, and Mission Control work.
 
 ## Workspace
 
-A **workspace** is a local project folder known to Desktop or the CLI. It tells
-Kestrel where the work belongs; it does not automatically enable recurring
-automation.
+A local Workspace is the owned folder or checkout where tools operate. A Kestrel One Environment is the hosted compute and capability boundary. A Project is the collaboration boundary and may select an Environment.
 
 ## Stream, subscription, and replay
 
-A **stream** shows live events for the request that just started. A
-**subscription** follows selected persisted events. **Replay** uses recorded
-evidence to inspect work after it ends. They solve different jobs and are not
-one global event feed.
+Streams deliver live events, subscriptions deliver durable background activity, and cursors resume ordered history. Replay reconstructs persisted decisions and evidence without silently repeating uncertain external effects.
 
 ## Operator control
 
-**Operator control** lets a person inspect and act on work that already exists.
-Steering, stopping, resuming, and retrying remain attached to the original
-session instead of creating an unrelated conversation.
+Operator control inspects or steers running and waiting conversations. Decisions bind to the exact pending request, actor, session/thread, and current state.
+
+## Profile and Provider Registry
+
+A Profile selects registered runtime policy. A Provider Registry entry identifies a provider/model path and its qualified capabilities. Configured, reachable, compatible, qualified, and authorized are separate states.
+
+## Mission Control
+
+Mission Control owns project work, attempts, evidence, review, and acceptance. It is not transcript metadata or the legacy Board/Task system.
+
+## Memory and Knowledge
+
+Runtime Memory stores authorized facts with subject, issuer, provenance, and query policy. Kestrel One Knowledge supplies organization or Project documents through revisioned context. Conversation history remains a third, separate continuity source.
+
+## Recovery Decision
+
+A Recovery Decision selects one registered action for observed unhealthy state. Its option identifier binds to the exact pending request; it is not a free-form retry instruction.
+
+## Approval and External Effect
+
+An external approval grants one authorized actor permission for one exact action/effect. Changes to target, parameters, actor, or Environment require a new validation and possibly a new grant.
+
+## Budget
+
+A Budget governs spend. Durable allocations reserve, commit, release, and reconcile value with idempotent evidence.
+
+## Build Identity
+
+Build Identity combines product version with exact source revision and deployment artifacts. Hosted evidence also includes migrations, workers, and immutable image digests.

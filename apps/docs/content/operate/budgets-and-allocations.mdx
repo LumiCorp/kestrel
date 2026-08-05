@@ -1,0 +1,47 @@
+---
+title: Budgets and allocations
+summary: Operate Kestrel's durable budget allocation ledger, inspect evidence, and recover safely from exhaustion or reconciliation failures.
+section: operate
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+Use the budget ledger to make model and execution spend explicit before work is committed. A budget is an authority boundary; an allocation is the durable record of value reserved for one scope of work.
+
+## Budget model and ownership
+
+Identify the tenant or organization, governing budget, time or project scope, currency/unit, and actor allowed to allocate it. Provider configuration does not own budget authority.
+
+## Allocation lifecycle
+
+Allocations move through requested, reserved, committed, released, reconciled, or failed states. Each transition records its cause and source identity.
+
+## Reserve, commit, release, and reconcile
+
+Reserve before starting governed spend, commit measured usage, release unused value, and reconcile provider results without rewriting prior ledger entries.
+
+## Concurrency and idempotency
+
+Use stable operation identities and atomic repository transitions. Duplicate delivery must return the recorded result rather than allocate twice.
+
+## Provider and model implications
+
+Model authority checks qualification, policy, lease, and available budget independently. A ready model can still be denied by budget policy.
+
+## Evidence and ledger inspection
+
+Inspect budget identity, allocation identity, actor, run/turn, provider/model, reserved and committed amounts, state, timestamps, and correlation.
+
+## Alerts and exhaustion behavior
+
+Reject work before spend when no allocation can be reserved. Surface the owning budget and safe operator choices without silently selecting a cheaper or weaker model.
+
+## Failure recovery
+
+Reconcile uncertain provider usage before releasing or retrying an allocation. Never erase a ledger record to make capacity reappear.
+
+## Verification checklist
+
+Prove one reservation/commit, one partial release, one duplicate request, one concurrent exhaustion, one denial, and one reconciliation after an uncertain result.

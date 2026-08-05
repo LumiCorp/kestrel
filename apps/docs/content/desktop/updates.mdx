@@ -1,0 +1,43 @@
+---
+title: Update Kestrel Desktop
+summary: Install Kestrel Desktop 0.8 manually, preserve local state, verify the signed application, and understand the later OTA proof.
+section: desktop
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+Kestrel Desktop 0.8.0 is a signed, notarized manual download for macOS 13 or later on Apple silicon. Installing it over 0.7 preserves the application-owned settings, credentials, projects, sessions, and Local Core data used by the existing installation.
+
+## Current 0.8 distribution model
+
+Download Desktop from the unified [`v0.8.0` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.0). The release supplies the DMG, ZIP, checksum, and source revision. Do not use an updater feed to install 0.8.0.
+
+## Download and verify the release
+
+Compare the downloaded DMG with the published checksum, open it, and move Kestrel to Applications. macOS should report the Developer ID signature and notarization as valid. Stop if the checksum, signing identity, version, or release revision does not match.
+
+## Install over 0.7
+
+Quit Kestrel, replace the application in Applications, and reopen it. Do not delete application data or run the uninstall workflow as part of an upgrade.
+
+## What data is preserved
+
+The upgrade keeps provider settings, Keychain-backed credentials, registered projects, conversations, Mission Control records, and Local Core persistence. Schema migrations run against the existing owned stores; they do not create a replacement identity for the same project or session.
+
+## Confirm the installed version
+
+Confirm Desktop reports `0.8.0`, Local Core becomes ready, the existing project library appears, and one prior session can be opened before starting new work.
+
+## Why 0.8.0 does not use stable OTA
+
+The 0.8.0 release establishes the installed base. It does not move the stable Desktop update pointer, so existing installations will not receive it silently or through an automatic update check.
+
+## Planned 0.8.1 OTA proof
+
+The first 0.8 OTA exercise will test a controlled `0.8.0` to `0.8.1` update. That patch must prove download, signature verification, relaunch, state preservation, and cleanup before its metadata is promoted.
+
+## Troubleshooting and rollback
+
+If the new application does not open or Local Core cannot become ready, keep the existing data in place and use [Desktop troubleshooting](/desktop/troubleshooting). Reinstalling the previous signed application is safer than deleting state; do not reverse a data migration unless its compatibility has been proven.

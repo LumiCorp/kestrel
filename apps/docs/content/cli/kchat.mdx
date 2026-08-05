@@ -5,7 +5,7 @@ section: cli
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 Run `kestrel` or its `ks` alias to open the interactive terminal client. The
@@ -28,6 +28,10 @@ kestrel --profile kestrel
 Inside the client, `/status` shows the active profile, session, workspace,
 mode, waiting state, and relevant tool configuration. Do not infer those values
 from a sample prompt or folder name.
+
+## Choose interaction mode
+
+Use the visible typed control to select Chat, Plan, or Build. The mode is explicit operator intent and remains visible with the session; Kestrel does not silently infer it from the wording of a prompt.
 
 ## Sessions and history
 
@@ -54,6 +58,14 @@ These commands act on recorded work rather than creating an unrelated session:
 Inspect before acting so a reply, approval, retry, or cancellation stays
 attached to the correct run.
 
+## Waits and recovery decisions
+
+`/reply`, `/approve`, `/deny`, and recovery actions answer the exact pending request. Select recovery by its stable option identifier when one is offered; inspect before acting so stale terminal scrollback cannot authorize the wrong work.
+
+## Mission Control
+
+Use the project/task views for Mission Control work items, attempts, evidence, review, and acceptance. Keep those project decisions separate from `/retry`, `/steer`, or `/stop` runtime control.
+
 ## Activity and progress
 
 The terminal keeps conversation content separate from runtime and tool
@@ -70,3 +82,7 @@ they are not display preferences.
 Read [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp) before
 creating a custom profile, and [Operator control workflows](/operate/operator-control)
 for server-side equivalents.
+
+## Terminal outcomes and exit behavior
+
+The conversation ends each accepted operation with a completed, failed, cancelled, or waiting outcome. Scrollback/reconnect may render persisted events again, but it must not create a new run or duplicate the committed assistant message.

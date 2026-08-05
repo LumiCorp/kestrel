@@ -5,7 +5,7 @@ section: cli
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 A CLI **profile** is the saved configuration for Kestrel's runtime policy,
@@ -20,6 +20,10 @@ Older V2-V9 files are migrated automatically. Kestrel writes a byte-for-byte
 backup and a migration report, retains supported managed Kestrel settings, and
 omits legacy or custom profile authority. Use `/profiles` and `/status` to
 inspect the resolved configuration after migration.
+
+## Provider registry and capability readiness
+
+The profile resolves a versioned provider-registry entry and model whose qualified capabilities satisfy its requirements. Configured, reachable, compatible, and qualified are separate readiness states.
 
 ## Tools and code mode
 
@@ -37,6 +41,10 @@ or change it interactively with:
 Use code mode only when the task needs execution. Filesystem, shell, network,
 and dependency-install behavior remain governed by the configured sandbox and
 approval policy.
+
+## Tool descriptor and invocation rules
+
+Every visible tool uses a canonical descriptor and model-visible input contract. Activation comes from profile, Environment/workspace, MCP, network, and approval policy. Validate arguments before invocation and shape errors without leaking secrets.
 
 ## Reasoning policy
 
@@ -67,10 +75,15 @@ server discovery, tool inspection, connection configuration, and allowlisting:
 MCP authentication values should be referenced through environment variables,
 not placed directly in a profile committed to source control.
 
-Only enable MCP servers you trust. OCI MCP servers use full outbound networking
-by default, and container isolation does not restrict the destinations they can
-contact. They receive only the credentials and mounted data explicitly included
-in their configuration.
+Only enable MCP servers you trust. Network policy distinguishes isolated/default-deny egress from explicitly approved unrestricted access; container isolation alone does not authorize destinations. OCI services receive only the credentials and mounted data explicitly included in their configuration.
+
+## OAuth, grants, and approvals
+
+OAuth connection proves a credential relationship, not permission for every effect. Resolve user/workspace grants and bind external approval to the exact requested action immediately before invocation.
+
+## Troubleshooting
+
+Inspect profile revision, provider readiness/capabilities, tool descriptor, MCP health, network mode, credential owner, pending approval, and terminal result in that order.
 
 Read [CLI terminal client](/cli/kchat) for using a profile in a session and
 [Command suite](/cli/command-suite) for platform state locations.

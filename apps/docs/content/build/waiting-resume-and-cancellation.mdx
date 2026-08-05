@@ -5,11 +5,13 @@ section: build
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 A run may wait for a decision, approval, credential, or other input. Waiting is
 an explicit terminal event for the current run, not an inferred timeout.
+
+The waiting state names the prompt/request identity and the decision or input the runtime can accept. Display that state separately from assistant text.
 
 ## Resume the same work
 
@@ -32,6 +34,8 @@ a response to the blocked run and carries the request ID into the Execution
 Protocol. Validate browser input and authorize the requested action before
 calling `resume()`.
 
+For a recovery review, submit the exact `recoveryOptionId` exposed by the pending interaction. Option labels are explanatory text; the identifier is the binding. An action-bound external approval must also remain bound to its exact requested effect.
+
 Use `resumeStream()` with the same fields when the resumed work should stream.
 
 ## Cancellation
@@ -42,6 +46,14 @@ terminal promise resolves with `run.cancelled`.
 
 Cancellation remains in history as its own terminal outcome. It is not a
 generic failure and does not erase earlier events.
+
+## Timeout and disconnect
+
+A browser timeout or lost connection does not erase the durable session. Reconnect to persisted events and inspect the terminal or waiting state before deciding whether any retry is safe. Never create a replacement session merely because the transport disconnected.
+
+## Verify
+
+Resume or cancel the original work and confirm the resulting event history retains the same session, pending request, and run lineage without a duplicate operation.
 
 <Outcome>
   <p>A response continues the exact pending interaction, while cancellation ends and records the exact upstream run.</p>

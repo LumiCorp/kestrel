@@ -1,38 +1,41 @@
 ---
 title: Store and replay
-summary: Inspect the durable sessions, runs, events, memory revisions, artifacts, and checkpoints behind Kestrel work.
+summary: Build and verify a replay bundle from Kestrel's durable identities, policy decisions, events, outcomes, and evidence.
 section: operate
 audience: integrators
-status: stable
+status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
-Kestrel stores run state separately from the live connection that created it.
-That lets a person inspect or continue work after a terminal, browser, or
-network request has ended.
+Use replay to explain or compare recorded work after the live connection ends. Replay does not replace the original terminal result or silently rerun a provider.
 
 ## Durable records
 
-The store keeps:
+Kestrel retains session, thread, run, turn, request and correlation identities; profile/provider revisions; budgets; approvals and external-effect results; recovery decisions; evaluation evidence; ordered events; terminal outcomes; memory provenance; Mission Control links; artifacts; and workspace checkpoints.
 
-- session, thread, and run identities
-- ordered events and terminal outcomes
-- versioned session memory and task state
-- tool results and linked artifacts
-- workspace checkpoints and operator actions
+## Replay bundle
+
+A bundle contains the canonical inputs and persisted outputs needed by the selected replay contract, plus release/build identity. It excludes provider credentials, active leases, encrypted continuation state, private reasoning, and unrelated tenant data.
 
 ## Replay
 
-Replay reads recorded evidence to explain or compare what happened. It does not
-rerun the model, replace the original terminal result, or turn a partial live
-stream into a new source of truth.
+Deterministic runtime reducers, parsers, state transitions, and recorded tool results can be replayed exactly from canonical evidence. A fresh provider request is provider-dependent and must be labeled as a new execution, not proof that the original run behaved the same way.
 
-When investigating an outcome, inspect the terminal event first, then the
-events, memory revision, tool results, artifacts, and checkpoints attached to
-the same run. This keeps diagnosis tied to recorded work rather than to a new
-prompt that may behave differently.
+## Compare live and replayed outcomes
 
-Continue with [Reliability](/operate/reliability),
-[Artifact inspection](/operate/observability), and
-[Evaluations](/operate/evaluations).
+Compare input fingerprint, event order, terminal taxonomy, assistant text, structured output, policy decisions, evidence, and artifact identity. Explain every disagreement by its first owning boundary.
+
+## Security and retention
+
+Authorize bundle creation and inspection by tenant, Project, actor, and resource. Apply normal deletion/retention policy and record who exported or inspected the evidence.
+
+## Verify replay evidence
+
+Replay a known bundle twice and confirm deterministic records agree. Then remove or alter a required record and confirm validation fails rather than filling the gap heuristically.
+
+<Outcome>
+  <p>An operator can reproduce the deterministic record, identify provider-dependent behavior, and prove the bundle's authority and completeness.</p>
+</Outcome>
+
+Continue with [Reliability](/operate/reliability), [Observability](/operate/observability), and [Evaluations](/operate/evaluations).

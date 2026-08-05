@@ -5,7 +5,7 @@ section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 ## Application-to-runner settings
@@ -16,6 +16,10 @@ updatedAt: 2026-07-20
 | `KESTREL_RUNNER_SERVICE_TOKEN` | Trusted application server only | Authenticates calls to the runner |
 
 Never expose the runner token through a public environment variable or browser bundle.
+
+## Provider registry and profile settings
+
+Profiles select runtime policy and required capabilities. Versioned provider-registry entries declare endpoints, models, capabilities, and qualification. Store the resolved profile and registry revision with run evidence.
 
 ## Provider and tool settings
 
@@ -33,6 +37,26 @@ missing or invalid. Do not log, expose, or reuse this key as provider
 credentials. Local runtimes generate a private key file when no environment
 key is configured.
 
+## Memory and persistence
+
+Configure session/run persistence separately from governed Memory backends and Kestrel One Knowledge. Each store needs an explicit tenant boundary, source of truth, retention policy, and migration owner.
+
+## MCP, network, and execution-boundary settings
+
+Environment policy owns MCP visibility, tool activation, local/remote execution, full or isolated networking, and OCI egress. Credentials never imply that a service or tool is authorized for the active profile.
+
+## Budgets and evaluation
+
+Budget/allocation services own reserve, commit, release, and reconciliation. Evaluation configuration names evaluator versions, triggers, delivery consequences, and evidence retention.
+
 ## Kestrel One services
 
 Kestrel One production operation also requires application authentication, PostgreSQL, Redis, object storage, queue workers, email, and any enabled billing or managed-deployment services. Those deployment settings belong to authorized operators, not end-user onboarding.
+
+## Release and build identity
+
+Record product version, commit SHA, Vercel deployment, Local Core/runner build identity, migration state, and immutable worker/image digests. Do not treat a mutable alias or version label as complete provenance.
+
+## Secret ownership and validation
+
+Keep provider credentials, runner tokens, reasoning keys, leases, OAuth material, and external-service secrets in the narrowest trusted service. Validate format and ownership at startup, fail closed, and redact them from logs, traces, support bundles, and model-visible context.

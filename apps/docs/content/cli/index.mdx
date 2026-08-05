@@ -5,11 +5,13 @@ section: reference
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 The CLI and TUI are Local Core clients. They use the same Runtime, Execution
 Protocol, persistence, and terminal-result contracts as Desktop and the SDK.
+
+**Support:** Kestrel CLI/TUI 0.8.0 is Beta and supports Node.js 22 on macOS arm64 and Linux x64. The canonical distribution is `npm install -g @kestrel-agents/kestrel@0.8.0`; a macOS arm64 archive is secondary.
 
 ## Choose a reference
 
@@ -19,6 +21,26 @@ Protocol, persistence, and terminal-result contracts as Desktop and the SDK.
 - [Workspace workflows](/cli/workspace-workflows) covers workspace discovery and registration.
 - [kcron availability](/cli/kcron) explains the implemented commands and deferred execution status.
 - [Local Core HTTP bridge](/cli/runner-service) connects a trusted local server application to Local Core.
+
+## CLI versus TUI
+
+Command mode is suited to scripts, status, setup, jobs, and structured output. The TUI is the conversation-first interactive client. Both use Local Core and the same durable sessions and Mission Control state.
+
+## Local Core relationship
+
+The CLI is a client and operator surface; Local Core owns configuration, credentials, conversations, events, recovery state, and execution. `kestrel web` adds an authenticated loopback bridge, not another Runtime.
+
+## State and configuration locations
+
+See [Command suite](/cli/command-suite) for platform state roots and isolation variables. Use isolated roots for development/testing; do not point cleanup at an unresolved or broad path.
+
+## Supported platforms and limitations
+
+0.8.0 does not support Intel macOS or Windows. Scheduling records evaluation state but workspace execution remains deferred as documented under kcron.
+
+## Standalone archive
+
+The GitHub release includes a checksum-bearing macOS arm64 archive. Prefer npm for upgrades and package-manager provenance; use the archive when a standalone installation is required.
 
 Start with `kestrel status` to inspect Local Core, or run `kestrel` to open an
 interactive session.

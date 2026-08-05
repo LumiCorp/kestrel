@@ -5,7 +5,7 @@ section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Step 1" title="Use the shipped Kestrel profile">
@@ -18,7 +18,7 @@ loopback HTTP bridge to Local Core.
 
 ## Before you start
 
-You need Node.js 20 or newer and a configured local Kestrel installation. Run:
+You need Node.js 22, a configured local Kestrel installation, and a provider/model that satisfies the canonical profile's required capabilities. Run:
 
 ```bash
 kestrel setup --profile kestrel
@@ -35,7 +35,7 @@ applications do not invent alternate profile or agent identities.
 ## Install the SDK
 
 ```bash
-pnpm add @kestrel-agents/sdk@0.7.0
+pnpm add @kestrel-agents/sdk@0.8.0
 pnpm add -D tsx
 ```
 
@@ -99,6 +99,8 @@ canonical text to show a person. Structured application data remains in
 
 Reuse `kestrel-session-001` for a follow-up that belongs to the same
 conversation. Choose a new session ID for unrelated work.
+
+If the prior result is waiting, resume its exact pending request instead of starting a replacement run. Verify the follow-up retains the same session identity while receiving a new request and run correlation.
 
 <Outcome>
   <p>Your server-side script can run the canonical Kestrel profile, display the canonical answer, and retain the session identity for the next turn.</p>

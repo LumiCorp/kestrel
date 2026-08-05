@@ -1,59 +1,115 @@
 ---
-title: Add session memory
-summary: Store versioned findings, decisions, questions, next actions, and artifact links for later turns in one session.
+title: Add authorized memory
+summary: Add governed, provenance-bearing memory reads without widening tenant, subject, or document authority.
 section: build
 audience: integrators
-status: stable
+status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Step 3">
-Session memory gives later turns an inspectable application-owned summary without reconstructing continuity from prompt text.
+Kestrel Memory is authorized application knowledge, not hidden prompt text or a substitute for durable conversation history.
 </GuideNote>
 
-Each memory snapshot has a revision. Updates name the revision they observed so
-concurrent writes cannot silently overwrite one another.
+By the end of this guide, a trusted server will query one authorized memory namespace and reject a cross-boundary read.
+
+## Memory model
+
+A memory policy names the namespace, read and write authorities, source of truth, retention, and lifecycle. A read binding narrows that policy to one tenant, user, agent, task, scope, and optional document set. Results retain backend, policy, source, and document provenance.
+
+## Install
+
+```bash
+pnpm add @kestrel-agents/memory@0.8.0
+```
+
+Keep memory access server-side. The issuer and actor fields must come from trusted application context, not browser input.
+
+## Choose a backend and gateway
+
+Use `InMemoryMemoryBackend` for local development and tests. In production, implement `MemoryBackendAdapterV1` over application-owned persistence and place `MemoryGateway` in front of it. The gateway validates the binding, query, backend descriptor, and returned provenance.
 
 ## Read memory
 
 ```ts
-const session = agent.session("kestrel-session-001");
-const memory = await session.memory.get(context);
+import {
+  InMemoryMemoryBackend,
+  MemoryGateway,
+  createMemoryTierPolicyV1,
+  parseMemoryQueryV1,
+} from "@kestrel-agents/memory";
 
-console.log(memory.revision, memory.value.nextAction);
+const policy = createMemoryTierPolicyV1({
+  tierPolicyId: "project-knowledge",
+  namespace: "semantic_knowledge",
+  writerAuthorities: ["knowledge-ingest"],
+  readerAuthorities: ["agent-runtime"],
+  sourceOfTruth: "application_knowledge_store",
+  retention: { mode: "indefinite" },
+  lifecyclePolicyId: "project-knowledge-lifecycle",
+});
+
+const backend = new InMemoryMemoryBackend({
+  backendId: "local-memory",
+  policyRevision: policy.revision,
+});
+
+const result = await new MemoryGateway().query({
+  context: {
+    tenantId: "acme",
+    userId: "user-1",
+    agentId: "agent-1",
+    taskId: "task-1",
+    issuerKind: "trusted_runtime",
+    issuerAuthorityId: "agent-runtime",
+    policyRevision: policy.revision,
+    now: "2026-08-04T00:00:00.000Z",
+  },
+  binding: {
+    version: "memory_read_binding_v1",
+    bindingId: "binding-1",
+    tenantId: "acme",
+    userId: "user-1",
+    agentId: "agent-1",
+    taskId: "task-1",
+    policyRevision: policy.revision,
+    permittedNamespaces: ["semantic_knowledge"],
+    permittedScopes: [{ kind: "tenant", tenantId: "acme" }],
+    documentAccess: { mode: "scope" },
+    issuer: { kind: "trusted_runtime", authorityId: "agent-runtime" },
+    issuedAt: "2026-08-04T00:00:00.000Z",
+  },
+  query: parseMemoryQueryV1({
+    version: "memory_query_v1",
+    queryId: "query-1",
+    namespace: "semantic_knowledge",
+    scope: { kind: "tenant", tenantId: "acme" },
+    text: "deployment policy",
+    limit: 10,
+  }),
+  backend,
+});
 ```
 
 ## Update memory
 
-```ts
-const updated = await session.memory.update(
-  {
-    expectedRevision: memory.revision,
-    patch: {
-      goal: "Understand the current project",
-      findings: "The runner boundary and package contracts need review.",
-      decisions: "Keep the next change limited to public documentation.",
-      openQuestions: "Which integration should be verified first?",
-      nextAction: "Review the runner service example.",
-      linkedArtifacts: ["docs/review-notes.md"],
-    },
-  },
-  context,
-);
+The public 0.8 gateway owns authorized reads. Your application owns ingestion and mutation through its backend boundary. Validate content before persistence, require the policy's writer authority, retain source provenance, and use an idempotency key so a retried write cannot create a second logical record. Do not write through a read binding.
 
-console.log(updated.revision);
-```
+## Attach memory to an agent
 
-The supported memory fields are `goal`, `currentPlan`, `findings`, `decisions`,
-`openQuestions`, `nextAction`, and `linkedArtifacts`.
+Resolve the read binding from trusted actor and task context before a run. Pass only the authorized canonical results into the agent's context. Keep the binding and query identifiers in trace correlation so an operator can prove why a result was available.
 
-If another process updates the session first, read the newest snapshot, review
-the competing change, and submit an intentional patch using the new revision.
+## Security and retention
+
+Tenant, issuer, scope, document access, policy revision, and expiry are independent checks. Deletion and retention belong to the application-owned source of truth. A conversation transcript, Kestrel One Knowledge document, and runtime memory record may refer to the same subject, but they have different ownership and lifecycle.
+
+## Verify
+
+Query an allowed scope and inspect result provenance. Then change the tenant, widen the document set, or use an expired binding and confirm `MemoryAuthorizationError` denies the read before the backend result is returned.
 
 <Outcome>
-  <p>A later turn can read a structured, versioned memory snapshot and the artifacts associated with it.</p>
+  <p>The agent can recall authorized, provenance-bearing memory while cross-boundary retrieval is denied.</p>
 </Outcome>
 
-Continue with [Next.js integration](/build/integrating-with-nextjs) or the
-[SDK reference](/reference/sdk).
+Continue with [Next.js integration](/build/integrating-with-nextjs) or the [Memory reference](/reference/memory).

@@ -5,10 +5,14 @@ section: build
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-15
+updatedAt: 2026-08-04
 ---
 
 Request streams report activity before delivering one terminal result.
+
+## Event envelope
+
+Validate type, request, correlation, session, run, turn, sequence, and timestamp before updating application state. Ordering comes from the protocol sequence and replay cursor, not wall-clock arrival.
 
 ## Public stream events
 
@@ -23,6 +27,28 @@ Request streams report activity before delivering one terminal result.
 
 Treat events as protocol data: validate the envelope before updating application state and correlate every event to its command, session, and run.
 
+Group them in the interface by lifecycle, visible output, tools, waits/recovery, approvals, evaluation/budget signals, and terminal outcome. Provider reasoning and `run.agent_progress` remain different sources even when both are visible.
+
+## Persisted versus presentation events
+
+Persist only events the protocol marks as durable and retain their canonical envelope. UI-only loading states, partially rendered deltas, and provider-private continuation data are not replay records.
+
 ## Finish from the terminal event
 
 Operational progress, provider reasoning, and agent progress may be useful to display, but they do not own the final answer. Provider deltas are live-only by default and should be discarded after the active run. Read `assistantText`, structured `output`, and any operator state from the terminal result.
+
+## Reconnect rules
+
+Resume from the last committed cursor, tolerate duplicate delivery, and apply events idempotently. A reconnect must not manufacture a new run or another terminal event.
+
+## Consumer checklist
+
+- Handle every exported public event name and preserve unknown future names safely.
+- Keep progress, tools, waits, approvals, and assistant text separate.
+- Require exactly one terminal outcome per accepted run.
+- Persist sequence/cursor state atomically with the consumer's application update.
+- Correlate events before displaying, evaluating, or replaying them.
+
+<Outcome>
+  <p>The consumer can stream, persist, reconnect, and terminate a 0.8 run without confusing presentation state with protocol truth.</p>
+</Outcome>

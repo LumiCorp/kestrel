@@ -5,7 +5,7 @@ section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-06-16
+updatedAt: 2026-08-04
 ---
 
 Use Kestrel's operator controls when work is already running or waiting for human input. Three API calls support that workflow:
@@ -23,6 +23,8 @@ read inbox -> open thread -> apply control action -> inspect operator.controlled
 ```
 
 Use that loop when a run is blocked, a child thread needs attention, or the next step needs human direction.
+
+Before acting, record the explicit Chat, Plan, or Build interaction mode, the current cursor, terminal/waiting state, and any exact pending-request or recovery-option identifier.
 
 ## SDK example
 
@@ -110,13 +112,13 @@ Kestrel One provides the same controls through `/api/kchat/control`. It can:
 - read `operator.inbox`
 - load `operator.thread`
 - submit `operator.control`
-- inspect `task.graph`
-- read or update `project.snapshot`
-- request `project.review`
+- inspect the authoritative Mission Control Project
+- execute a versioned Mission Control action
+- answer the exact pending request or recovery option
 
 This gives browser users the same run controls as the CLI alongside run details and artifacts.
 
-For task graphs, project snapshots, and reviews, continue to [Review and state workflows](/operate/review-and-state).
+For project work, attempts, evidence, review, and acceptance, continue to [Mission Control review and state](/operate/review-and-state).
 
 ## What to inspect before you control a thread
 
@@ -124,6 +126,7 @@ For task graphs, project snapshots, and reviews, continue to [Review and state w
 2. inspect the thread view and the next action or blocker
 3. confirm whether a child thread or fan-in checkpoint is involved
 4. pick the narrowest control action that moves the workflow forward
+5. verify the resulting event, cursor, and terminal or waiting state belong to the same work
 
 ## Continue the original work
 

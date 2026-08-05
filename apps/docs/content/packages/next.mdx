@@ -5,7 +5,7 @@ section: reference
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Next.js reference">
@@ -17,7 +17,7 @@ Use this package to expose a server-side Kestrel agent through JSON, streaming, 
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/next@0.7.0 @kestrel-agents/sdk@0.7.0
+pnpm add @kestrel-agents/next@0.8.0 @kestrel-agents/sdk@0.8.0
 ```
 
 ## Route helpers
@@ -37,7 +37,7 @@ You usually choose between two patterns:
 | route-helper integration | Next.js app wants typed Kestrel turns | clean server-only route code, built-in correlation handling, easy transition into SDK features |
 | OpenAI-compatible proxying | app already speaks OpenAI chat or responses | preserves the existing client request format while routing through Kestrel |
 
-Use compatibility mode to preserve an existing client. Move to route helpers when the application needs typed sessions, memory, and operator behavior.
+Use compatibility mode to preserve an existing client. Move to route helpers when the application needs typed sessions, waiting/recovery, terminal results, Memory, and operator behavior.
 
 ## Route example
 
@@ -112,7 +112,9 @@ Use it when your product is already in Next.js and you want to keep:
 - Kestrel request correlation explicit
 - route code small and repeatable
 
-Move deeper into the SDK and custom protocol when the app needs operator inbox/thread/control, task graph, project snapshot, or filtered `/events/stream` subscriptions. That is the line between "proxying Kestrel" and "building directly on Kestrel."
+Move deeper into the SDK and native protocol when the app needs operator inbox/thread/control, Mission Control, exact recovery/approval decisions, or filtered durable subscriptions. That is the line between "proxying Kestrel" and "building directly on Kestrel."
+
+Waiting and cancellation remain terminal/runtime states rather than assistant messages. Route helpers propagate request cancellation and return the validated terminal result; retain its session/run correlation when persisting UI state.
 
 ## Put the helpers to work
 

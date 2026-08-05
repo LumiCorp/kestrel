@@ -5,12 +5,12 @@ section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 ## Which Kestrel product should I start with?
 
-Use Desktop for work in local folders and repositories. Use Kestrel One when an invited team needs shared Threads, Projects, and Knowledge. Use the SDK or HTTP interfaces when Kestrel should run behind an application you already own. The [journey chooser](/start/quickstart) compares the first steps.
+Use Desktop for work in local folders and repositories. Use Kestrel One source for inspection and local development, or the invitation-only Lumi-hosted service for shared Threads, Projects, and Knowledge. Use the CLI/TUI for supported terminal work. Use the SDK or HTTP interfaces when Kestrel should run behind an application you own. The [journey chooser](/start/quickstart) compares the first steps.
 
 ## Do I need to run a database for Desktop?
 
@@ -18,7 +18,39 @@ No. Kestrel Desktop includes Local Core and manages its own persistence. You cho
 
 ## Can anyone sign up for Kestrel One?
 
-Kestrel One is currently available to invited teams. Use the invitation from your organization administrator to sign in or create the invited-email account, then explicitly join the organization. Public signup and self-hosted consumer onboarding are not currently documented.
+The Lumi-hosted service is available to invited teams. Use the invitation from your organization administrator to sign in or create the invited-email account, then explicitly join the organization. Kestrel One source remains available from the release tag; hosted signup and turnkey production self-hosting are separate questions.
+
+## How is Kestrel One downloadable if hosted access is invitation-only?
+
+Kestrel One is a versioned source product. You may clone `v0.8.0`, build it, test it, and run its development environment. Lumi hosting is one operated deployment of that source and requires an organization invitation. See [Source and hosting](/kestrel-one/source-and-hosting).
+
+## Which platforms does the 0.8 CLI support?
+
+Release verification covers macOS arm64 and Linux x64 with Node.js 22. Install it with `npm install -g @kestrel-agents/kestrel@0.8.0`. Other platforms are not release-verified for 0.8.
+
+## Does installing Desktop 0.8 preserve existing data?
+
+Yes. Replacing the signed application preserves Desktop and Local Core settings, Keychain credentials, projects, sessions, conversations, Mission Control records, and owned persistence. Do not uninstall or delete application data as part of the upgrade.
+
+## Why is Desktop 0.8.0 manual-install only?
+
+The 0.8.0 release establishes the installed base without moving stable OTA metadata. The first OTA proof is a controlled `0.8.0` to `0.8.1` patch that must verify signature, relaunch, state preservation, and cleanup.
+
+## Why must Kestrel packages use the exact same version?
+
+Runtime, Protocol, SDK, Memory, adapters, and clients exchange exact fields, events, terminal states, approvals, and recovery decisions. Mixed lines can compile while disagreeing at runtime, so Kestrel does not promise 0.7/0.8 shims.
+
+## What are profiles and provider capabilities?
+
+A Profile selects registered runtime policy. A Provider Registry entry identifies a provider/model path and qualified capabilities such as tool or structured-input support. A configured model is not ready until reachability, compatibility, qualification, authority, and budget checks pass.
+
+## What happens when Kestrel needs approval or recovery input?
+
+Kestrel records a waiting request with registered options. Your response binds to the exact request and, for external effects, the exact proposed action. The original session or Thread continues after the decision.
+
+## How do I verify which hosted Kestrel revision is running?
+
+Record product version, source revision, Vercel deployment, migration state, worker revision, and immutable Fly image digests. A semantic version without those deployed identities is incomplete evidence.
 
 ## Why not call a model directly?
 
