@@ -39,7 +39,7 @@ Kestrel One carries product/source version 0.8.0. Source is cloneable from the r
 
 ## Mission Control
 
-Legacy Board/Task and project snapshot write surfaces are retired. Current clients inspect a project through `mission_control.project.get` and execute supported changes through `mission_control.action.execute`.
+Legacy Board/Task action types and the `project.snapshot.update` write surface are retired. Current clients inspect Mission Control state through `mission_control.project.get` and execute supported changes through `mission_control.action.execute`. The read-only `project.snapshot.get` command and Git-only `project.action` command remain available for their distinct contracts.
 
 ## Recovery, approvals, security, and budgets
 
@@ -51,7 +51,7 @@ Trace context connects request, conversation, run, turn, provider, tool/effect, 
 
 ## Breaking changes and migration
 
-Upgrade all Kestrel packages and clients together. Remove legacy project actions, `project.snapshot.update`, and SDK `updateProjectSnapshot`. Update event consumers, waiting/resume input, recovery options, approvals, Mission Control calls, and Memory integrations. See [Upgrading to 0.8](/build/upgrading-to-0-8).
+Upgrade all Kestrel packages and clients together. Remove legacy Board/Task action callers, `project.snapshot.update`, and SDK `updateProjectSnapshot`. Update event consumers, waiting/resume input, recovery options, approvals, Mission Control calls, and Memory integrations. See [Upgrading to 0.8](/build/upgrading-to-0-8).
 
 ## Artifacts and evidence
 

@@ -12,6 +12,7 @@ import {
 import { getRenderedPageBySlug } from "@/lib/content";
 import { pageRegistry } from "@/lib/content-registry";
 import { DOCS_RELEASE } from "@/lib/release";
+import { MISSION_CONTROL_ITEM_CREATE_COMMAND } from "@/lib/examples/mission-control";
 import { resolveRepoRoot } from "@/lib/site";
 import { buildCliContractMatrixV1 } from "../../../cli/contractMatrix.js";
 
@@ -116,6 +117,45 @@ test("runner ping documentation uses a valid canonical command envelope", async 
   assert.match(page.rawContent, /"metadata": \{/u);
   assert.match(page.rawContent, /"payload": \{/u);
   assert.doesNotMatch(page.rawContent, /curl -I/u);
+});
+
+test("Mission Control action documentation is backed by typed parsers", async () => {
+  const missionControlModulePath = [
+    "..",
+    "..",
+    "..",
+    "src",
+    "missionControl",
+    "projectAuthority.js",
+  ].join("/");
+  const { parseMissionControlProjectAction } = (await import(
+    missionControlModulePath
+  )) as {
+    parseMissionControlProjectAction: (value: unknown) => unknown;
+  };
+  assert.deepEqual(
+    parseRunnerCommandV2(MISSION_CONTROL_ITEM_CREATE_COMMAND),
+    MISSION_CONTROL_ITEM_CREATE_COMMAND,
+  );
+  assert.deepEqual(
+    parseMissionControlProjectAction(
+      MISSION_CONTROL_ITEM_CREATE_COMMAND.payload.action,
+    ),
+    MISSION_CONTROL_ITEM_CREATE_COMMAND.payload.action,
+  );
+
+  const page = await getRenderedPageBySlug(["operate", "review-and-state"]);
+  assert.ok(page);
+  const jsonBlocks = [...page.rawContent.matchAll(/```json\n([\s\S]*?)\n```/gu)];
+  const actionBlock = jsonBlocks
+    .map((match) => JSON.parse(match[1]) as unknown)
+    .find(
+      (value) =>
+        typeof value === "object" &&
+        value !== null &&
+        (value as { type?: string }).type === "mission_control.action.execute",
+    );
+  assert.deepEqual(actionBlock, MISSION_CONTROL_ITEM_CREATE_COMMAND);
 });
 
 test("resume documentation names the current SDK input", async () => {

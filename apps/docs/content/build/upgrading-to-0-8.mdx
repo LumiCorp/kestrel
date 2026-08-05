@@ -24,7 +24,7 @@ Use exact versions, not mixed minor lines. Install only the packages the applica
 
 ## Removed project and SDK APIs
 
-Legacy Board/Task project actions, `project.snapshot.update`, and SDK `updateProjectSnapshot` are not 0.8 write surfaces. Remove callers instead of adding a compatibility shim.
+Legacy Board/Task project action types, `project.snapshot.update`, and SDK `updateProjectSnapshot` are not 0.8 write surfaces. Remove those callers instead of adding a compatibility shim. The read-only `project.snapshot.get` command, SDK `getProjectSnapshot`, and Git-only `project.action` command remain available and should not be removed as part of this migration.
 
 ## Adopt Mission Control
 

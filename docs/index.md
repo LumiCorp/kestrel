@@ -30,7 +30,7 @@ task instead of reading the repository as one long manual.
 - [Kestrel One](../apps/docs/content/apps/web.mdx)
 - [CLI and TUI](../apps/docs/content/cli/index.mdx)
 - [Workspace skills](workspace-skills.md)
-- [0.7 release status](../apps/docs/content/start/release-status.mdx)
+- [0.8 release status](../apps/docs/content/start/release-status.mdx)
 
 ### Build an Integration
 
@@ -57,6 +57,7 @@ task instead of reading the repository as one long manual.
 - [Architecture](../ARCHITECTURE.md)
 - [Design principles](../DESIGN.md)
 - [Plans index](PLANS.md)
+- [Architecture decisions](decisions/0001-unified-suite-version-and-release-channels.md)
 - [CI validation](ci-validation.md)
 - [Contributor guardrails](../AGENTS.md)
 
