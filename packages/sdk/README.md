@@ -196,13 +196,14 @@ const events = agent.subscribe(
   },
   context,
 );
+await events.ready;
 
 for await (const event of events) {
   console.log(event.type, event.sessionId);
 }
 ```
 
-Subscriptions are explicit and filter-scoped. The root SDK does not expose a global event firehose.
+Subscriptions are explicit and filter-scoped. Await `events.ready` before triggering work whose events must be observed. The root SDK does not expose a global event firehose.
 
 ## Advanced Runner Access
 

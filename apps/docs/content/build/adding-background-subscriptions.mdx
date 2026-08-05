@@ -26,6 +26,7 @@ const events = agent.subscribe(
   },
   context,
 );
+await events.ready;
 
 for await (const event of events) {
   console.log(event.type, event.sessionId);
@@ -34,6 +35,9 @@ for await (const event of events) {
 
 Every subscription must include a session, run, thread, or event filter. The
 root SDK does not expose an unfiltered global event stream.
+Await `events.ready` before triggering work whose events must be observed; it
+settles only after the remote runner or Local Core has accepted the filtered
+subscription.
 
 | Filter | Use it for |
 | --- | --- |

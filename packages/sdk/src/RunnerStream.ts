@@ -3,6 +3,7 @@ import type { RunnerStream } from "./contracts.js";
 export class BufferedRunnerStream<TEvent, TTerminal>
   implements RunnerStream<TEvent, TTerminal>, AsyncIterator<TEvent>
 {
+  readonly ready: Promise<void>;
   readonly result: Promise<TTerminal>;
 
   private readonly cancelImpl: () => Promise<void>;
@@ -17,7 +18,9 @@ export class BufferedRunnerStream<TEvent, TTerminal>
   constructor(
     result: Promise<TTerminal>,
     cancelImpl: () => Promise<void>,
+    ready: Promise<void> = Promise.resolve(),
   ) {
+    this.ready = ready;
     this.result = result;
     this.cancelImpl = cancelImpl;
     void result.catch((error) => {

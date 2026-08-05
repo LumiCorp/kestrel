@@ -75,6 +75,7 @@ test("core SDK e2e covers run, resume, subscribe, cancel, and revisioned memory"
     },
     sdkE2eContext,
   );
+  await subscription.ready;
   const firstSubscriptionEvent = (async () => {
     for await (const event of subscription) {
       return event;
@@ -178,6 +179,7 @@ test("core SDK e2e isolates concurrent subscriptions and rejects stale concurren
     },
     sdkE2eContext,
   );
+  await Promise.all([subscriptionA.ready, subscriptionB.ready]);
 
   const eventA = (async () => {
     for await (const event of subscriptionA) {
@@ -277,6 +279,7 @@ test("core SDK e2e stream lifecycle and subscription delivery stay consistent fo
     },
     sdkE2eContext,
   );
+  await subscription.ready;
   const firstSubscriptionEvent = (async () => {
     for await (const event of subscription) {
       return event;
@@ -475,6 +478,7 @@ const subscription = agent.subscribe({
   sessionId: "fixture-run",
   eventTypes: ["task.updated"],
 }, context);
+await subscription.ready;
 const firstEvent = (async () => {
   for await (const event of subscription) {
     return event;
