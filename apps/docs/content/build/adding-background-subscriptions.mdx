@@ -5,12 +5,18 @@ section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Step 4">
 Use `stream()` for one active request and `subscribe()` for filtered observation that has its own lifetime.
 </GuideNote>
+
+## When to subscribe
+
+Subscribe when completion or durable activity must remain observable after the request that started the work has ended. Keep the live `stream()` for request-scoped rendering.
+
+## Create the subscription
 
 ```ts
 const events = agent.subscribe(
@@ -20,6 +26,7 @@ const events = agent.subscribe(
   },
   context,
 );
+await events.ready;
 
 for await (const event of events) {
   console.log(event.type, event.sessionId);
@@ -28,6 +35,9 @@ for await (const event of events) {
 
 Every subscription must include a session, run, thread, or event filter. The
 root SDK does not expose an unfiltered global event stream.
+Await `events.ready` before triggering work whose events must be observed; it
+settles only after the remote runner or Local Core has accepted the filtered
+subscription.
 
 | Filter | Use it for |
 | --- | --- |
@@ -39,6 +49,30 @@ root SDK does not expose an unfiltered global event stream.
 The subscription observes persisted events independently of the browser or
 request that started the work. It does not replace the live stream used to
 respond to that request.
+
+## Use cursors
+
+Persist the last accepted cursor with the consumer's own checkpoint. Cursors define the restart position; event sequence and identity define ordering. Do not treat a cursor as user-supplied authority.
+
+## Consume idempotently
+
+Record processed event identifiers, tolerate duplicate delivery, and make terminal handling idempotent. Unknown event names must be retained or skipped safely rather than coerced into a known event.
+
+## Reconnect safely
+
+Reconnect from the last committed cursor, not the last event merely received in memory. This prevents missing an event after a consumer crashes between receipt and persistence.
+
+## Authorize the subscriber
+
+Resolve tenant, actor, and allowed session, run, or thread filters on the server. The root SDK intentionally exposes no unfiltered global stream.
+
+## Verify
+
+Stop a consumer after persisting an event, restart from its cursor, and confirm no durable work is missed or applied twice.
+
+<Outcome>
+  <p>A server-owned subscriber can reconnect to filtered durable activity without missing or duplicating logical work.</p>
+</Outcome>
 
 Continue with [observability](/build/adding-observability) or the
 [SDK reference](/reference/sdk).

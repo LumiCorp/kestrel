@@ -25,6 +25,14 @@ test(
     const environmentId = environments.environments?.[0]?.id;
     expect(environmentId).toBeTruthy();
 
+    const installation = await page.evaluate(async () => {
+      const result = await fetch("/api/apps/email/installation", {
+        method: "POST",
+      });
+      return { ok: result.ok, status: result.status };
+    });
+    expect(installation).toMatchObject({ ok: true, status: 200 });
+
     await page.goto(
       `/settings/organization/environments/${environmentId}/apps/email`,
     );

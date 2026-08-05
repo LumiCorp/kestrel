@@ -5,7 +5,7 @@ section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Step 6">
@@ -15,7 +15,7 @@ Wrap the same Reference-agent client so callers keep the same API while traces r
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/observability@0.7.0 @kestrel-agents/sdk@0.7.0
+pnpm add @kestrel-agents/observability@0.8.0 @kestrel-agents/sdk@0.8.0
 ```
 
 ## Create a tracer and wrap the agent
@@ -37,6 +37,14 @@ The wrapper instruments `run()`, `stream()`, `resume()`, and `subscribe()` while
 preserving their SDK contracts. Traces carry the Kestrel identities needed to
 connect a request with its session, run, actor, tenant, and terminal outcome.
 
+## Create trace context
+
+Carry actor, tenant, request, correlation, session, thread, run, turn, and operation identifiers from the trusted request boundary. Generate missing request/correlation values once and propagate them; do not let downstream services silently replace them.
+
+## What gets instrumented
+
+Record model attempts, tool invocations, terminal outcomes, waits, recovery decisions, external approvals, and evaluation results as separate spans or events. Keep provider reasoning and concise agent progress distinguishable from committed assistant output.
+
 ## OpenTelemetry export
 
 Kestrel's trace model can be exported through the package's OpenTelemetry
@@ -51,6 +59,14 @@ const exporter = new OpenTelemetryTraceExporter();
 The export layer does not replace Kestrel's durable run events or terminal
 results. It makes the same operation easier to find in an external tracing
 system.
+
+## Retention and security
+
+Do not export credentials, authorization grants, continuation state, private provider reasoning, or unrestricted tool payloads. Apply the same tenant and retention controls to trace storage that protect the underlying run.
+
+## Verify correlation
+
+Trace one request from application route through runner and worker to its terminal result. Confirm all services agree on request, correlation, session, and run identity and that a recovery or approval event remains attached to the same work.
 
 <Outcome>
   <p>A completed, waiting, failed, or cancelled run can be located by its durable session and run identities.</p>

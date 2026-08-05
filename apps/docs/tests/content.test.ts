@@ -13,8 +13,8 @@ import { DOCS_RELEASE } from "@/lib/release";
 import { CONTENT_ARCHETYPES, DOCS_NAV_SECTIONS, PRODUCT_SURFACES } from "@/lib/types";
 
 
-const PACKAGE_VERSION = "0.7.0";
-const DESKTOP_VERSION = "0.7.0";
+const PACKAGE_VERSION = "0.8.0";
+const DESKTOP_VERSION = "0.8.0";
 
 test("navigation exposes exactly six ordered public journeys", async () => {
   const navigation = await getNavigation();
@@ -63,7 +63,7 @@ test("every navigation, related, and Markdown link resolves to a public docs pag
   }
 });
 
-test("the complete 0.7 package baseline is represented", async () => {
+test("the complete 0.8 documentation surface is represented", async () => {
   const required = [
     "start/quickstart",
     "desktop/providers",
@@ -84,6 +84,19 @@ test("the complete 0.7 package baseline is represented", async () => {
     "reference/terminal-results",
     "reference/compatibility",
     "reference/ai-sdk",
+    "start/runtime-model",
+    "desktop/updates",
+    "kestrel-one/source-and-hosting",
+    "build/upgrading-to-0-8",
+    "operate/migrations",
+    "operate/budgets-and-allocations",
+    "operate/release-management",
+    "reference/runtime-profiles-and-providers",
+    "reference/recovery",
+    "reference/approvals-and-effects",
+    "reference/tool-contracts",
+    "reference/reasoning-and-agent-progress",
+    "cli/install",
   ];
   for (const slug of required) {
     assert.ok(await getRenderedPageBySlug(slug.split("/")), `missing /${slug}`);
@@ -146,20 +159,46 @@ test("release metadata separates packages from product availability", async () =
   assert.equal(DOCS_RELEASE.packages.version, PACKAGE_VERSION);
   assert.equal(DOCS_RELEASE.packages.channel, "Stable");
   assert.equal(DOCS_RELEASE.products.desktop.version, DESKTOP_VERSION);
-  assert.equal(DOCS_RELEASE.products.desktop.channel, "Stable");
+  assert.equal(DOCS_RELEASE.products.desktop.channel, "Beta");
   assert.equal(
     DOCS_RELEASE.products.desktop.releasesUrl,
-    "https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0",
+    "https://github.com/LumiCorp/kestrel/releases/tag/v0.8.0",
   );
   assert.equal(
     DOCS_RELEASE.products.desktop.downloadUrl,
-    "https://github.com/LumiCorp/kestrel/releases/download/desktop-v0.7.0/Kestrel-0.7.0-mac-arm64.dmg",
+    "https://github.com/LumiCorp/kestrel/releases/download/v0.8.0/Kestrel-0.8.0-mac-arm64.dmg",
   );
-  assert.equal(DOCS_RELEASE.products.kestrelOne.version, "Managed");
-  assert.equal(DOCS_RELEASE.products.kestrelOne.channel, "Invitation");
+  assert.equal(DOCS_RELEASE.products.cli.version, PACKAGE_VERSION);
+  assert.equal(DOCS_RELEASE.products.cli.installCommand, "npm install -g @kestrel-agents/kestrel@0.8.0");
+  assert.equal(DOCS_RELEASE.products.kestrelOne.version, PACKAGE_VERSION);
+  assert.equal(DOCS_RELEASE.products.kestrelOne.channel, "Beta");
+  assert.equal(DOCS_RELEASE.products.kestrelOne.hostedAccess, "Invitation");
   assert.doesNotMatch(corpus, /\b\d+\.\d+\.\d+-beta\.\d+\b/gu);
-  assert.match(corpus, /\b0\.7\.0\b/u);
+  assert.match(corpus, /\b0\.8\.0\b/u);
   assert.doesNotMatch(corpus, /\b0\.6\.0\b/u);
+});
+
+test("current 0.8 pages exclude retired project APIs and unversioned Kestrel One claims", async () => {
+  const pages = await getPublicPages();
+  const allowedHistory = new Set([
+    "/build/upgrading-to-0-8",
+    "/reference/releases",
+  ]);
+
+  for (const page of pages) {
+    if (!allowedHistory.has(page.meta.url)) {
+      assert.doesNotMatch(
+        page.rawContent,
+        /task\.graph|project\.snapshot|updateProjectSnapshot/u,
+        `${page.meta.url} exposes a retired project API`,
+      );
+    }
+    assert.doesNotMatch(
+      page.rawContent,
+      /Kestrel One.{0,40}(?:version|release).{0,10}Managed|Managed.{0,10}(?:version|release).{0,40}Kestrel One/isu,
+      `${page.meta.url} treats Managed as the Kestrel One version`,
+    );
+  }
 });
 
 test("all seven product screenshots exist and have descriptive alt text and captions", async () => {
@@ -199,7 +238,8 @@ test("public code fences name their language and package installs pin the stable
 
     for (const line of page.rawContent.split("\n").filter((candidate) => candidate.includes("pnpm add @kestrel-agents/"))) {
       for (const packageName of line.match(/@kestrel-agents\/[a-z-]+(?:@[^\s\\]+)?/gu) ?? []) {
-        assert.match(packageName, /@0\.7\.0$/u, `${page.meta.url} has an unpinned package install`);
+        const expectedVersion = page.meta.url === "/build/upgrading-to-0-7" ? "0.7.0" : "0.8.0";
+        assert.ok(packageName.endsWith(`@${expectedVersion}`), `${page.meta.url} has an unpinned package install`);
       }
     }
   }

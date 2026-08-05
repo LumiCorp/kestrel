@@ -5,7 +5,7 @@ section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 Use this reference when your server already speaks an OpenAI-style HTTP contract. For an adoption walkthrough, use [the integration tutorial](/build/openai-compatible-http).
@@ -30,6 +30,10 @@ Content-Type: application/json
 
 Do not expose this token to browser code. Resolve the authenticated user, tenant, and session in your application server before forwarding the request.
 
+## Request and response shapes
+
+Chat Completions and Responses requests follow their compatible HTTP shapes after server-side validation. The Kestrel terminal result remains the canonical source for committed assistant text and structured output; compatibility responses are a mapping, not a second runtime contract.
+
 ## Model identifiers
 
 The compatibility layer accepts only `kestrel`. `/v1/models` lists that
@@ -40,6 +44,10 @@ Unknown model IDs are rejected.
 
 Streaming responses use server-sent events. A client disconnect must cancel the exact upstream run rather than leaving anonymous work active. The terminal event remains the source for the final result.
 
+## Terminal and error mapping
+
+Compatible success, validation, authentication, provider, cancellation, waiting, and terminal failure map into the closest supported HTTP response. OpenAI-style clients cannot express every Kestrel recovery, approval, Mission Control, evaluation, or budget state; use the native Protocol/SDK when the application needs those contracts.
+
 ## Kestrel metadata
 
 Compatible runner responses include session, run, thread, and model headers.
@@ -48,3 +56,7 @@ Preserve them when your application needs replay, support, or observability.
 The Next.js route helpers separately generate `x-kestrel-request-id` and
 `x-kestrel-correlation-id` for application-route correlation. Those headers do
 not come from the runner's OpenAI compatibility layer.
+
+## Compatibility limitations
+
+This surface preserves existing OpenAI-style clients, not 0.7 Kestrel wire compatibility. It exposes the canonical `kestrel` model and a subset of native control. Runtime, server, and compatibility adapter must still use the exact 0.8 line.

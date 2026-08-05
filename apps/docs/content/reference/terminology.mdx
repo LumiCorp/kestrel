@@ -5,7 +5,7 @@ section: reference
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 ## Agent
@@ -37,7 +37,63 @@ authenticated Unix socket.
 ## Operator
 
 A person or authorized service responsible for inspecting, steering, stopping,
-resuming, retrying, or recovering agent work.
+resuming, retrying, recovering, reviewing, or accepting agent work under explicit authority.
+
+## Profile
+
+A canonical runtime policy that selects agent behavior, required provider capabilities, tools, recovery rules, evaluation, budgets, memory, and telemetry.
+
+## Provider Registry
+
+The versioned authority for provider endpoints, models, declared capabilities, qualification, and readiness.
+
+## Provider Capability
+
+A declared and qualified ability that a profile may require before model selection.
+
+## Environment
+
+Kestrel One's compute and capability boundary: runtime image, workspace, tools, Apps, MCP services, network policy, credentials, and activity.
+
+## Mission Control
+
+The Project authority for work items, execution attempts, evidence, review, and acceptance.
+
+## Work Item and Attempt
+
+A work item names an intended result and completion contract. An attempt records execution and linked runs toward that item.
+
+## Recovery Decision
+
+An operator-authorized choice from the runtime's policy registry, bound to one pending request by a stable option identifier.
+
+## Pending Request
+
+The exact durable interaction a waiting run can accept next.
+
+## External Approval and Effect
+
+An approval authorizes one canonical action under a grant; the effect is the separately recorded external change and result.
+
+## Memory and Knowledge
+
+Memory is policy-bound, provenance-bearing runtime/application recall. Knowledge is governed Kestrel One material attached to a Project context revision.
+
+## Budget and Allocation
+
+A budget owns a spend or usage boundary. An allocation reserves part of it for an authorized subject, provider/model, or operation and follows reserve, commit, release, and reconciliation.
+
+## Build Identity
+
+The exact version, source revision, configuration, deployment, and artifact provenance of a running product or service.
+
+## Image Digest
+
+An immutable content identity for a worker or runtime image.
+
+## Terminal Outcome
+
+The single completed, failed, cancelled, or waiting result that closes an accepted run operation.
 
 ## Replay
 
@@ -62,15 +118,12 @@ tool work, persists evidence, and produces terminal results.
 
 ## Session
 
-A durable line of continuity connecting related turns, memory, events, and
-evidence.
+A durable local conversation identity connecting related turns, events, recovery state, and evidence. It is not a hosted Project or Environment.
 
 ## Thread
 
-The product-facing history of a durable piece of work. Kestrel One Threads also
-retain authorship, files, artifacts, sharing, and Project context.
+The hosted product-facing conversation and collaboration history. A Project Thread also retains its context revision and access authority.
 
 ## Workspace
 
-A local project folder known to Desktop or the CLI and used to keep sessions
-and automation attached to the correct project.
+A local folder and prepared execution context known to Desktop or the CLI. It is distinct from a hosted Environment and from the Project authority that owns coordinated work.

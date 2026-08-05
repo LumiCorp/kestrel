@@ -5,7 +5,7 @@ section: reference
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Observability reference">
@@ -17,7 +17,7 @@ The package starts with a Kestrel-native trace model and offers OTEL export as a
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/observability@0.7.0 @kestrel-agents/sdk@0.7.0
+pnpm add @kestrel-agents/observability@0.8.0 @kestrel-agents/sdk@0.8.0
 ```
 
 ## Core APIs
@@ -28,6 +28,10 @@ pnpm add @kestrel-agents/observability@0.7.0 @kestrel-agents/sdk@0.7.0
 | `InMemoryTraceProcessor` | keep traces in process | local debugging and tests |
 | `wrapAgent()` | instrument one agent | add trace coverage without changing route logic |
 | `toOpenTelemetrySpans()` | bridge to OTEL-compatible records | vendor-neutral export |
+
+## Trace context and attributes
+
+Trace context connects actor, tenant, request, correlation, session, thread, run, turn, operation, tool/effect, and terminal identities. Resolve trusted actor fields at the application boundary and propagate identifiers unchanged.
 
 ## Wrap an agent
 
@@ -48,9 +52,19 @@ const tracedAgent = tracer.wrapAgent(agent);
 | `resume()` | `resume` |
 | `subscribe()` | `subscription` |
 
+Model/tool operations, terminal outcomes, waits, recovery choices, external approvals/effects, and evaluations remain separately identifiable within the trace. Provider reasoning and agent-authored progress keep their declared source and retention boundary.
+
+## Propagation and correlation
+
+Generate request/correlation identity once, carry it across application, runner, worker, provider/tool, and result, and verify all records agree before joining them.
+
 ## Use the trace data
 
 Your application continues to work with runs, sessions, and subscriptions while exporters translate trace records for external observability tools.
+
+## Retention and security
+
+Do not export credentials, active leases, approval secrets, provider continuation state, private reasoning, or unrestricted tool payloads. Apply tenant authorization and retention to trace inspection.
 
 ## Common failure cases
 

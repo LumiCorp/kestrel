@@ -512,6 +512,7 @@ function createFakeAgent(): KestrelAgent {
         },
       };
       return {
+        ready: Promise.resolve(),
         result: Promise.resolve(terminal),
         async cancel() {},
         async *[Symbol.asyncIterator]() {
@@ -538,6 +539,7 @@ function createFakeAgent(): KestrelAgent {
       _context: KestrelRequestContext,
     ): RunnerStream<RunnerEventEnvelope, void> {
       return {
+        ready: Promise.resolve(),
         result: Promise.resolve(),
         async cancel() {},
         async *[Symbol.asyncIterator]() {
@@ -645,6 +647,7 @@ function createMetricAgent(): KestrelAgent {
         terminal,
       ];
       return {
+        ready: Promise.resolve(),
         result: Promise.resolve(terminal),
         async cancel() {},
         async *[Symbol.asyncIterator]() {

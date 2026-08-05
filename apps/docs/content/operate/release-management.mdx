@@ -1,0 +1,55 @@
+---
+title: Release Kestrel One safely
+summary: Prepare an exact-revision Kestrel One candidate, verify migrations and images, promote tested deployments, and retain rollback evidence.
+section: operate
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+Release Kestrel One as one identified candidate: product version, source revision, Vercel deployment, database state, worker revisions, and immutable image digests must agree.
+
+## Release identity and prerequisites
+
+Record the version and exact commit. Confirm credentials, project targets, registries, database access, and rollback identities before building anything.
+
+## Prepare an exact-revision candidate
+
+Build application, workers, and images from the same reviewed revision. Do not replace an artifact or rebuild a different commit under the same candidate identity.
+
+## Preflight database migrations
+
+Inspect the actual target, identify pending migrations, back up owned data, and verify forward/backward compatibility before application promotion.
+
+## Build and verify Vercel previews
+
+Build the docs and Kestrel One previews with production-shaped configuration. Test the preview deployment and inspect its build identity before promotion.
+
+## Build all five Fly image roles
+
+Build and smoke workspace-runtime, environment-router, preview-edge, turn-worker, and runpod-worker. Record each immutable digest and source revision.
+
+## Record immutable digests
+
+Store candidate identity before approval. A mutable tag is a pointer, not sufficient release evidence.
+
+## Approve and roll out
+
+Use the release approval record to bind the accepted candidate. Roll out only those digests and stop if the remote state changes.
+
+## Run canaries and user-path smoke tests
+
+Verify health, invitation sign-in, Project/Thread creation, one run, artifact delivery, operator control, and worker/image identity.
+
+## Promote the verified deployment
+
+Promote the exact Vercel preview that passed. Do not trigger a new production rebuild for the final alias move.
+
+## Roll back or fix forward
+
+Restore the prior Vercel deployment and approved Fly digests when migrations remain compatible. If data has crossed an irreversible boundary, stop and fix forward.
+
+## Retain release evidence
+
+Keep version, commit, deployment IDs, migration result, digests, approval, rollout, canaries, timestamps, and the operator identity.

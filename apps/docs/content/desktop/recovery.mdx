@@ -5,7 +5,7 @@ section: desktop
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 Start with the first visible problem rather than deleting application data. Keep the affected session and diagnostics until you know which part failed.
@@ -23,6 +23,34 @@ Start with the first visible problem rather than deleting application data. Keep
 3. Restart only the component identified as unhealthy.
 4. Reopen the original workspace and session.
 5. Confirm that the transcript and last terminal state are still present before retrying.
+
+## Startup and Local Core recovery
+
+Desktop supervises Local Core, verifies build/readiness identity, and can restart it when relevant configuration changes. Self-healing targets the unhealthy process while preserving application-owned state.
+
+## Provider recovery
+
+Resolve missing credentials, unreachable endpoints, unavailable model IDs, and profile capability mismatch through provider settings. Restarting Local Core cannot repair a denied or unqualified provider path.
+
+## Project and subscription recovery
+
+Repair folder permission, workspace bootstrap, Git preparation, or run-subscription reconnect in the existing Project. Confirm durable events resume from the last accepted cursor.
+
+## Waiting and decision recovery
+
+Choose a registered recovery option for the exact pending request. Continue the same session instead of copying the prompt into a new one.
+
+## When retry is safe
+
+Retry only when committed state and external effects are known. An uncertain external effect requires inspection and possibly a new action-bound approval before another attempt.
+
+## Collect a support bundle
+
+Include application and Local Core versions, source/build identity, health, timestamps, logs, project/session identifiers, and recent terminal/recovery evidence. Review the bundle for secrets before sharing it.
+
+## Confirm recovery
+
+The unhealthy state clears, the original project/session remains present, and a bounded continuation reaches one truthful terminal outcome.
 
 <Callout tone="warning" title="Do not erase state first">
   <p>Clearing Desktop data can remove the history and diagnostics needed to understand the failure. Use it only when a documented recovery step identifies unrecoverable local state.</p>

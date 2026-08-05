@@ -25,7 +25,7 @@ It is not a separate runtime implementation. It is the flagship local product su
 - browse registered project files and launch managed project scripts through typed IPC
 - discover local MCP servers without rendering discovered credentials
 - expose Local Core readiness, database recovery, support bundle, and runtime reset actions
-- inspect and update the authoritative Mission Control task queue and product board through runner-owned project snapshots
+- inspect and update the authoritative Mission Control Project through revision-checked runner commands
 - navigate from Mission Control work items into validated runtime thread details and bounded active-run diagnosis, provenance, plan, and replay timelines
 
 ## Supporting Architecture
@@ -40,7 +40,7 @@ Desktop is implemented as an Electron app over the shared Kestrel surfaces. On s
 
 The renderer does not receive runner or Local Core credentials. Desktop settings are projected into an explicit non-secret view; hosted provider keys use a write-only IPC command and are never returned to the renderer.
 
-The static renderer owns conversation, Mission Control task and product-board operations, project workspace, local MCP discovery, and diagnostics views. Mission Control reads runner-owned project snapshots, submits validated task and board actions, and projects runner-owned `operator.thread` and `operator.run` views through typed IPC; it does not maintain browser-local runtime state. The legacy embedded Next.js cockpit has been removed, and release checks reject Next.js or hosted-product source in packaged Desktop resources.
+The static renderer owns conversation, Mission Control Project operations, project workspace, local MCP discovery, and diagnostics views. Mission Control reads authoritative Project state, submits typed revision-checked actions, and projects runner-owned `operator.thread` and `operator.run` views through typed IPC; it does not maintain browser-local runtime state. The legacy embedded Next.js cockpit has been removed, and release checks reject Next.js or hosted-product source in packaged Desktop resources.
 
 ## 0.5.1 Upgrade Bridge
 
@@ -78,11 +78,12 @@ The Vite renderer owns one full-window launch experience from the first frame. T
 - Missing credentials or projects after completion route to the relevant repair step. Optional tools, Apps, local execution, MCP, storage, and permissions remain Settings-owned after onboarding.
 - The Vite renderer reports a generation-scoped readiness signal only after React commits and the launch stylesheet sentinel is present. Missing assets, renderer crashes, fatal bootstrap reports, and a ten-second bootstrap timeout open the static `boot.html` fallback, which exposes Restart and Diagnostics but no setup actions.
 
-## 0.7 Release Boundaries
+## 0.8 Release Boundaries
 
 - macOS is the first clean-machine proof target.
 - Release packaging fails unless the app is Developer ID signed, hardened, notarized, stapled, and accepted by Gatekeeper.
-- Updates are manual check, download, and explicit restart/install. Kestrel refuses restart while Desktop or Local Core work is active and never cancels that work to install.
+- Desktop 0.8.0 is a signed manual download. Stable OTA metadata remains on 0.7.0 until the separate 0.8.1 OTA proof.
+- Kestrel refuses restart while Desktop or Local Core work is active and never cancels that work to install.
 - Local Core owns PGlite storage and execution; Desktop does not launch independent Postgres or runner processes.
 - Developer-shell and Docker-backed code capabilities expose their prerequisites and runtime policies in Settings; `kcron` automation remains a companion surface.
 
@@ -149,7 +150,7 @@ model turn and persistence across relaunch, writes evidence under
 removes only the exact installation it created. It refuses to overwrite an
 existing application and is not a CI task.
 
-Desktop update publication has two explicit operator phases:
+Desktop update publication has two explicit operator phases, but neither phase is part of the 0.8.0 release. They are reserved for the later explicitly approved OTA patch proof:
 
 ```bash
 # Upload and verify immutable versioned artifacts. This cannot move stable.
@@ -158,7 +159,7 @@ pnpm run desktop:upload-update
 # After independent inspection and approval, move the stable channel pointer.
 KESTREL_DESKTOP_PROMOTION_APPROVED=1 \
 KESTREL_DESKTOP_UPDATE_CHANNEL=stable \
-pnpm run desktop:promote-update -- --version 0.7.1
+pnpm run desktop:promote-update -- --version <approved-patch-version>
 ```
 
 Upload validates every updater file entry against the local artifact's

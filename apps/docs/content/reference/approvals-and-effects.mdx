@@ -1,0 +1,47 @@
+---
+title: Approvals and external effects
+summary: Reference action-bound approval grants, validation, execution evidence, expiry, revocation, and safe retry behavior.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+An approval authorizes one described external effect under a specific actor and resource boundary. It is not a reusable permission to perform similar actions later.
+
+## Approval, grant, action, and effect
+
+The request describes the proposed action and effect. An authorized actor may issue a grant. Execution validates that grant against the exact action before the effect crosses its boundary.
+
+## Requesting approval
+
+Include action identity, target/resource, intended effect, actor/tenant context, and any material parameters the approver must understand.
+
+## Binding approval to an exact action
+
+Bind the grant to immutable action data. Reject parameter, target, actor, environment, or operation changes instead of broadening the grant.
+
+## Grant lifecycle
+
+Grants move through requested, approved or denied, consumed, expired, or revoked states. Consumption is recorded with the execution result.
+
+## Expiry and revocation
+
+Validate time and revocation immediately before execution. An approval that was valid when displayed may be invalid when the effect begins.
+
+## Validating before execution
+
+Parse the action, resolve authority, verify grant binding, and enforce execution-boundary policy before invoking the external system.
+
+## Recording results and evidence
+
+Record action identity, grant identity, validator decision, execution attempt, terminal result, and correlation without exposing credentials.
+
+## Failure and retry behavior
+
+Do not retry an uncertain external effect automatically. Inspect whether it occurred, then require a safe registered recovery action or new approval.
+
+## Security invariants
+
+No keyword inference, target substitution, cross-tenant use, model-issued self-approval, or reusable blanket authorization.

@@ -684,6 +684,7 @@ class EnvironmentRoutedRunnerStream
     RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent>,
     AsyncIterator<RunnerRunStreamEvent>
 {
+  readonly ready = Promise.resolve();
   readonly result: Promise<RunnerRunTerminalEvent>;
   private resolveResult!: (value: RunnerRunTerminalEvent) => void;
   private rejectResult!: (error: unknown) => void;

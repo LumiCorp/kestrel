@@ -170,6 +170,19 @@ try {
     packedManifest.version,
     "packed runtime must depend on the exact matching memory version",
   );
+  for (const bundledManifestPath of [
+    "node_modules/@kestrel-agents/memory/package.json",
+    "node_modules/@lumi/kestrel-environment-auth/package.json",
+  ]) {
+    const bundledManifest = JSON.parse(
+      readFileSync(path.join(extractDir, "package", bundledManifestPath), "utf8"),
+    ) as { name?: string; version?: string };
+    assert.equal(
+      bundledManifest.version,
+      packedManifest.version,
+      `bundled ${bundledManifest.name ?? bundledManifestPath} manifest must match the runtime version`,
+    );
+  }
 
   console.log(`runtime release-check passed (${filePaths.size} files)`);
 } finally {

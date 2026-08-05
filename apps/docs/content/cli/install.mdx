@@ -1,0 +1,63 @@
+---
+title: Install the Kestrel CLI and TUI
+summary: Install Kestrel 0.8 from npm on a supported platform, verify the runtime, and start the terminal interface.
+section: cli
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+Install the Kestrel CLI/TUI when you want the same 0.8 runtime and project workflows from a terminal. The supported 0.8 targets are macOS arm64 and Linux x64 with Node.js 22.
+
+## Support matrix
+
+| Platform | Installation | 0.8 status |
+| --- | --- | --- |
+| macOS arm64 | npm or standalone archive | supported |
+| Linux x64 | npm | supported |
+| Other platforms | source evaluation only | not release-verified |
+
+## Prerequisites
+
+Install Node.js 22 and npm, confirm the terminal can run global npm binaries, and choose a project directory you are allowed to inspect and modify.
+
+## Install from npm
+
+```bash
+npm install -g @kestrel-agents/kestrel@0.8.0
+```
+
+## Verify version and runtime
+
+```bash
+kestrel --version
+kestrel status
+```
+
+The version must report `0.8.0`. Resolve provider, Local Core, or workspace readiness failures before starting real work.
+
+## Start the TUI
+
+```bash
+cd /path/to/project
+kestrel
+```
+
+Start with one bounded task and confirm that the terminal shows progress and one truthful terminal outcome.
+
+## Upgrade from 0.7
+
+Run the exact install command again. Keep the existing local configuration and project/session stores; do not remove them as part of the package upgrade.
+
+## Install the macOS standalone archive
+
+The unified GitHub release also provides `kestrel-cli-0.8.0-darwin-arm64.tar.gz` and its checksum. Verify the checksum, unpack it into an owned location, and ensure it is earlier on `PATH` than an older installation.
+
+## Uninstall safely
+
+Remove the global npm package or standalone files separately from local Kestrel state. Use the explicit uninstall workflow if you intend to inspect and remove owned state.
+
+## Troubleshooting
+
+If the binary is missing, inspect npm’s global binary path. If startup fails, run `kestrel status`, verify Node.js 22, and continue with the [CLI reference](/reference/cli) or [Local Core bridge](/cli/runner-service).

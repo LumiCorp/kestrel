@@ -67,6 +67,7 @@ export type RunnerJobStreamEvent = Extract<
 >;
 
 export interface RunnerStream<TEvent, TTerminal> extends AsyncIterable<TEvent> {
+  readonly ready: Promise<void>;
   result: Promise<TTerminal>;
   cancel(): Promise<void>;
 }

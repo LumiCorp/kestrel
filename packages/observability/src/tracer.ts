@@ -872,7 +872,11 @@ function wrapRunnerStream<TEvent extends RunnerEventEnvelope, TTerminal>(
       input.onFinally();
     });
 
-  mirrored = new MirroredRunnerStream(result, () => input.stream.cancel());
+  mirrored = new MirroredRunnerStream(
+    result,
+    () => input.stream.cancel(),
+    input.stream.ready,
+  );
   for (const event of pendingEvents) {
     mirrored.push(event);
   }
@@ -887,6 +891,7 @@ function wrapRunnerStream<TEvent extends RunnerEventEnvelope, TTerminal>(
 class MirroredRunnerStream<TEvent, TTerminal>
   implements RunnerStream<TEvent, TTerminal>, AsyncIterator<TEvent>
 {
+  readonly ready: Promise<void>;
   readonly result: Promise<TTerminal>;
 
   private readonly cancelImpl: () => Promise<void>;
@@ -898,7 +903,12 @@ class MirroredRunnerStream<TEvent, TTerminal>
   private closed = false;
   private failure: unknown;
 
-  constructor(result: Promise<TTerminal>, cancelImpl: () => Promise<void>) {
+  constructor(
+    result: Promise<TTerminal>,
+    cancelImpl: () => Promise<void>,
+    ready: Promise<void>,
+  ) {
+    this.ready = ready;
     this.result = result;
     this.cancelImpl = cancelImpl;
   }

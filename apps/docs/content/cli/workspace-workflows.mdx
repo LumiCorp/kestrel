@@ -5,7 +5,7 @@ section: cli
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 A Kestrel workspace is a durable catalog entry for a local project folder. The
@@ -38,6 +38,22 @@ Inside the interactive client, the equivalent commands are:
 `detached` removes the active workspace binding for the session. Selecting a
 workspace does not copy, upload, or move its folder.
 
+## Select or register a project
+
+Select an existing catalog identity when possible. Registration resolves the canonical root, permissions, and Git identity before the session binds; a folder name alone is not a Project identity.
+
+## Workspace preparation and Git
+
+Preparation verifies the folder, repository/worktree state, configured skills, and writable execution boundary. Surface bootstrap failures to the operator instead of silently switching folders or creating an unrelated repository.
+
+## Managed worktrees
+
+Managed worktrees are isolated execution locations attached to their source project. Inspect active sessions and unmerged changes before cleanup; never infer that an idle or clean worktree is disposable.
+
+## Sessions and Mission Control
+
+Sessions preserve local conversation continuity. Mission Control owns project work, attempts, evidence, review, and acceptance across those runs.
+
 ## Profiles and scheduling
 
 Profiles are selected through the normal CLI profile configuration; a workspace
@@ -51,3 +67,7 @@ scheduler is implemented.
 Read [Profiles, code mode, and MCP](/cli/profiles-code-mode-and-mcp) for runtime
 configuration and [kcron availability](/cli/kcron) for the exact scheduling
 status.
+
+## Safe cleanup boundaries
+
+Resolve the exact workspace/worktree target, preserve user changes, and prefer the owning Kestrel cleanup command. Never use an unresolved environment variable or broad home/root path as a recursive deletion target.

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import nextConfig, {
   kestrelBuildIdentity,
 } from "../../next.config";
@@ -9,6 +10,11 @@ import { resolveKestrelBuildIdentity } from "./build-identity";
 const vercelRevision = "1".repeat(40);
 const gitRevision = "2".repeat(40);
 const legacyRevision = "3".repeat(40);
+const currentManifestVersion = (
+  JSON.parse(
+    readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+  ) as { version: string }
+).version;
 
 function resolve(
   env: Record<string, string | undefined>,
@@ -96,12 +102,13 @@ test("non-production identity uses an explicit development marker", () => {
 });
 
 test("Next configuration embeds non-placeholder build identity", () => {
-  assert.equal(nextConfig.env?.KESTREL_APP_VERSION, "0.6.0");
+  assert.equal(nextConfig.env?.KESTREL_APP_VERSION, currentManifestVersion);
   assert.equal(
     nextConfig.env?.KESTREL_BUILD_REVISION,
     kestrelBuildIdentity.revision
   );
   assert.match(kestrelBuildIdentity.revision, /^[0-9a-f]{40}$/u);
   assert.notEqual(kestrelBuildIdentity.version, "unknown");
+  assert.equal(kestrelBuildIdentity.version, currentManifestVersion);
   assert.notEqual(kestrelBuildIdentity.revision, "unknown");
 });

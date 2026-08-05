@@ -5,13 +5,15 @@ section: kestrel-one
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 An **Environment** is an organization boundary for execution and inference. It
 groups the Runtime configuration, persistent Workspaces, shared Apps, maximum
 capability policy, and recorded activity used by Projects and standalone
 Threads.
+
+It is the compute and capability boundary, not the collaboration boundary. Projects group people and shared work; Environments supply execution, Workspaces, images, Apps/MCP, network policy, credentials, and activity.
 
 Every organization has a default Environment. New work uses that Environment
 unless an authorized workflow selects another one.
@@ -47,12 +49,9 @@ The Apps section lets an administrator configure shared App connections and
 enable or deny individual capabilities. A custom MCP server can be added as a
 private App. Newly reported capabilities remain disabled until approved.
 
-OCI MCP servers have full outbound networking by default because their required
-destinations are often not predictable. The administrator is responsible for
-selecting the server. Container isolation protects the host and limits mounted
-workspace data; it does not restrict outbound destinations. Choose no network
-only for a server designed to run offline, and provide only the credentials and
-read-only mounts that server requires.
+## Network modes and OCI egress
+
+An Environment explicitly chooses full or isolated network behavior. OCI/MCP egress is default-deny unless policy allows the required destination. Container isolation protects the host and limits mounted workspace data; it does not independently authorize outbound destinations. Provide only the credentials and mounts the server requires.
 
 Personal App connections are managed from `/apps` and remain associated with
 the person who connected them. Environment connections are shared
@@ -69,6 +68,14 @@ available.
 Private inference appears only in deployments where that capability is
 enabled. Its absence does not prevent an Environment from hosting Workspaces,
 Apps, or normal managed execution.
+
+## Runtime image and release identity
+
+Record the Kestrel version, source revision, workspace-runtime image, supporting service images, immutable digests, and rollout state. A mutable image tag alone is not sufficient evidence.
+
+## Verify readiness
+
+Confirm Workspace provisioning, runtime/image identity, approved model path, required Apps/MCP and grants, network policy, queue/worker health, activity visibility, and a successful Project Thread before assigning production work.
 
 <Outcome>
   <p>You can tell which Environment supplies a Project's execution boundary, who may change it, and where its shared capabilities and activity are controlled.</p>

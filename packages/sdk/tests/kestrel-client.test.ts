@@ -1446,6 +1446,7 @@ test("KestrelClient subscribe uses filtered SSE subscriptions", async () => {
     },
     context,
   );
+  await stream.ready;
 
   const iterator = stream[Symbol.asyncIterator]();
   const first = await iterator.next();
@@ -1471,6 +1472,11 @@ test("KestrelClient subscribe preserves non-SSE HTTP failures", async () => {
   });
 
   const stream = client.subscribe({ threadId: "thread-sdk-1" }, context);
+  await assert.rejects(
+    stream.ready,
+    (error: unknown) =>
+      error instanceof KestrelHttpError && error.status === 403,
+  );
   await assert.rejects(
     stream.result,
     (error: unknown) =>

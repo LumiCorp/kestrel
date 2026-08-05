@@ -1,238 +1,103 @@
 ---
-title: Review and state workflows
-summary: Inspect task graph and project projections, mutate project Git state, and apply project review actions from the browser or SDK when a run becomes larger than a transcript.
+title: Mission Control review and state
+summary: Inspect authoritative project work, execute versioned actions, and accept evidence-backed results through Mission Control.
 section: operate
 audience: integrators
-status: stable
+status: active
 sourceKind: curated
-updatedAt: 2026-03-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Operator manual">
-Use these APIs when an application needs tasks, project status, and review decisions that people can inspect and update.
+Use Mission Control when the reader's question is about project work, attempts, evidence, review, or acceptance. Use runtime operator control for an active or waiting run.
 </GuideNote>
 
-This is the missing middle layer between “an agent replied” and “an operator can actually manage ongoing work.” Kestrel exposes several stateful control-plane surfaces for that job:
+By the end of this guide, an operator can read one Project, execute an action against its expected revision, and verify the persisted evidence and review state.
 
-- `task.graph.get`
-- `task.graph.update`
-- `project.snapshot.get`
-- `project.action`
-- `project.review.get`
-- `project.review.action`
-- `mission_control.project.get`
-- `mission_control.action.execute`
+## Mission Control state model
 
-Use them when a conversation and memory record are no longer enough to show the current plan, project status, or review decision.
+- A **Project** is the authority boundary for coordinated work.
+- A **work item** records one intended result and its completion contract.
+- An **attempt** records execution toward that item, including linked runs.
+- **Evidence** freezes the change, validation, and required conditional proof used for review.
+- **Review** admits evidence and records requested changes.
+- **Acceptance** is the authorized final decision for the reviewed item.
 
-## Choose the right state record
+Conversation text may explain this state, but it is not the authoritative project record.
 
-| Record | Use it for | Do not use it for |
-| --- | --- | --- |
-| task graph | durable structured task state tied to threads and sessions | general project metadata |
-| Mission Control project | the project-scoped work-item lifecycle, attempts, evidence, and acceptance | session-scoped task or board state |
-| project snapshot | read-only workspace, policy, review, and activity projection | work-item lifecycle authority |
-| project action | explicit project Git mutations | task or work-item lifecycle editing |
-| project review | code/file review workflows tied to the active session | broad project state storage |
+## Choose the owning authority
 
-## Browser workflow through `/api/kchat/control`
+| Question | Owning surface |
+| --- | --- |
+| What work exists and what evidence supports it? | Mission Control Project |
+| What is this run doing or waiting for? | Runtime operator control |
+| May this evidence be reviewed or accepted? | Mission Control review authority |
+| How is old project state imported? | Migration tooling |
 
-The Kestrel One can use the control route to move through the full inspection path.
+## Inspect a Project
 
-```ts
-const inbox = await sendRunnerControl({
-  command: "operator.inbox",
-  sessionId: "kestrel-session-001",
-});
-
-const thread = await sendRunnerControl({
-  command: "operator.thread",
-  threadId: "thread-main",
-});
-
-const graph = await sendRunnerControl({
-  command: "task.graph.get",
-  sessionId: "kestrel-session-001",
-  threadId: "thread-main",
-});
-
-const snapshot = await sendRunnerControl({
-  command: "project.snapshot.get",
-  sessionId: "kestrel-session-001",
-});
-
-const review = await sendRunnerControl({
-  command: "project.review.get",
-  sessionId: "kestrel-session-001",
-  reviewTarget: {
-    taskId: "task:thread:thread-main",
-    filePath: "src/project/workspace.ts",
-  },
-});
-```
-
-That flow matches the current browser state-sync code: read the operator signals first, then fetch task graph, project snapshot, and review detail as needed. The browser is using the same runtime model the SDK uses, which is why inspection and control stay aligned across surfaces.
-
-## Browser review action example
-
-When an operator wants to leave or apply a review action, the control route accepts a structured payload:
+Send `mission_control.project.get` through the authenticated runner control boundary:
 
 ```json
 {
-  "command": "project.review.action",
-  "sessionId": "kestrel-session-001",
-  "reviewAction": {
-    "type": "review.comment.create",
-    "sessionId": "kestrel-session-001",
-    "target": {
-      "taskId": "task:thread:thread-main",
-      "pullRequestNumber": 42,
-      "filePath": "src/project/workspace.ts"
-    },
-    "body": "Please tighten this parser.",
-    "path": "src/project/workspace.ts",
-    "line": 12,
-    "side": "RIGHT"
+  "command": "mission_control.project.get",
+  "projectId": "11111111-1111-4111-8111-111111111111"
+}
+```
+
+The `mission_control.project` response includes the current revision and canonical Project document. Validate it before rendering. Present work items, attempts, linked runs, evidence, review, and acceptance as separate concepts.
+
+## Execute an action
+
+All writes use `mission_control.action.execute` with the Project, action identity, expected revision, and typed action payload:
+
+```json
+{
+  "id": "cmd-create-release-work-item",
+  "type": "mission_control.action.execute",
+  "payload": {
+    "action": {
+      "type": "item.create",
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "actionId": "22222222-2222-4222-8222-222222222222",
+      "actionTs": "2026-08-04T16:00:00.000Z",
+      "expectedRevision": 3,
+      "itemId": "33333333-3333-4333-8333-333333333333",
+      "title": "Verify the 0.8 package release",
+      "instructions": "Run every packed-package gate and record immutable evidence.",
+      "createdBy": "operator",
+      "order": 4
+    }
   }
 }
 ```
 
-The response includes a `project.review` event so other clients and subscribers can observe the same saved review decision.
+Use the action contract from the exact 0.8 source and send it through the matching Protocol command envelope. Revision conflicts require a fresh read and an intentional retry; action identifiers make safe duplicate delivery observable.
 
-## SDK workflow with `KestrelClient`
+## Review and accept
 
-If the product is server-owned rather than browser-driven, use the runner client directly.
+Admission freezes the candidate, completion contract, change evidence, validation results, conditional proof, and linked runs. The authorized reviewer may then accept or request changes. Acceptance never follows from a status label alone.
 
-```ts
-import { KestrelClient } from "@kestrel-agents/sdk/runner";
+## Recover an attempt
 
-const client = new KestrelClient({
-  target: {
-    kind: "remote",
-    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
-    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
-  },
-});
+Runtime recovery owns interrupted or blocked execution. Select the exact recovery option on the pending request, resume the same work, and let Mission Control record the resulting attempt/run evidence. Do not repair a run by directly editing the Project document.
 
-const context = {
-  actor: {
-    actorId: "user-123",
-    actorType: "operator",
-    displayName: "Taylor Example",
-    tenantId: "acme",
-  },
-  tenantId: "acme",
-};
+## Migrate legacy state
 
-const graph = await client.getTaskGraph(
-  {
-    sessionId: "kestrel-session-001",
-    threadId: "thread-main",
-  },
-  context,
-);
+The 0.8 migration boundary may read older project records and bind them to a Mission Control Project. Current clients have no legacy write API. Keep legacy names in migration evidence only and do not create a side store that competes with Mission Control.
 
-const snapshot = await client.getProjectSnapshot(
-  { sessionId: "kestrel-session-001" },
-  context,
-);
+## SDK and HTTP examples
 
-const detail = await client.getProjectReview(
-  {
-    sessionId: "kestrel-session-001",
-    target: {
-      taskId: "task:thread:thread-main",
-      filePath: "src/project/workspace.ts",
-    },
-  },
-  context,
-);
-```
+At the HTTP boundary, send only the two protocol commands shown above through an authenticated, server-owned control route. In the SDK, use the exact 0.8 Mission Control command payload and response types; do not call project-snapshot update helpers removed by the 0.8 package line. Resolve actor, Project access, and review authority before dispatch.
 
-## Updating state through the SDK
+## Persist and replay
 
-Reading the surfaces is only half the workflow. The same client can update them with explicit payloads:
-
-```ts
-await client.updateTaskGraph(
-  {
-    sessionId: "kestrel-session-001",
-    threadId: "thread-main",
-    graph: {
-      tasks: {
-        "task:thread:thread-main": {
-          status: "in_review",
-          summary: "Waiting on operator review for the workspace parser changes.",
-        },
-      },
-    },
-  },
-  context,
-);
-
-await client.runProjectAction(
-  {
-    type: "branch.create",
-    sessionId: "kestrel-session-001",
-    branchName: "docs/search-hardening",
-  },
-  context,
-);
-```
-
-## Example control responses
-
-Task graph response:
-
-```json
-{
-  "type": "task.graph",
-  "sessionId": "kestrel-session-001",
-  "threadId": "thread-main",
-  "graph": {
-    "taskId": "task:thread:thread-main",
-    "status": "in_review",
-    "summary": "Waiting on operator review for the workspace parser changes."
-  }
-}
-```
-
-Project snapshot response:
-
-```json
-{
-  "type": "project.snapshot",
-  "sessionId": "kestrel-session-001",
-  "snapshot": {
-    "branch": "docs/search-hardening",
-    "focus": "review-state and search behavior",
-    "nextMilestone": "ship the docs example pass"
-  }
-}
-```
-
-## Choose where to store the state
-
-Use these records in this order:
-
-1. read `operator.thread` if the operator needs thread context first
-2. read `task.graph` when the question is "what work items exist and what state are they in?"
-3. read `project.snapshot` when the question is "what is the higher-level project state right now?"
-4. read or apply `project.review` when the question is "what review work or comment actions are attached to this state?"
-5. use `project.action` only for intentional project-level mutations
-
-That keeps the state model legible. It stops teams from forcing every state question into one oversized snapshot object or a transcript-only workflow.
-
-## What these records enable
-
-Task graphs, project snapshots, and project reviews let your application manage plans, project status, and review decisions without burying them in conversation text.
-
-## Keep state out of transcripts and side stores
-
-Store task and review state in these shared records instead of burying it in transcripts or prompts. The browser, CLI, and server integrations can then read and update the same information.
+The Project store persists canonical state, idempotent action receipts, revision history, and external-effect outbox records. Replay restores that authoritative sequence. Transcripts and local UI caches are projections and must not become alternate write authorities.
 
 ## Continue with operator control
 
-- [Operator control workflows](/operate/operator-control)
-- [Kestrel One](/kestrel-one)
-- [@kestrel-agents/sdk](/reference/sdk)
+Use [Operator control workflows](/operate/operator-control) for active runs, [Recovery](/reference/recovery) for pending decisions, and [Migrations](/operate/migrations) for imported state.
+
+<Outcome>
+  <p>The operator can inspect, change, review, and accept Project work through one authoritative, revisioned Mission Control record.</p>
+</Outcome>

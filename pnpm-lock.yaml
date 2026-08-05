@@ -274,6 +274,9 @@ importers:
 
   apps/docs:
     dependencies:
+      '@kestrel-agents/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@mdx-js/loader':
         specifier: ^3.1.0
         version: 3.1.1(webpack@5.105.4)
@@ -313,6 +316,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      shiki:
+        specifier: 3.23.0
+        version: 3.23.0
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.1.12
@@ -474,22 +480,22 @@ importers:
         specifier: ^13.7.0
         version: 13.13.0(react@19.2.4)
       '@kestrel-agents/ai-sdk':
-        specifier: 0.7.0
+        specifier: 0.8.0
         version: link:../../packages/ai-sdk
       '@kestrel-agents/memory':
-        specifier: 0.7.0
+        specifier: 0.8.0
         version: link:../../packages/memory
       '@kestrel-agents/next':
-        specifier: 0.7.0
+        specifier: 0.8.0
         version: link:../../packages/next
       '@kestrel-agents/protocol':
-        specifier: 0.7.0
+        specifier: 0.8.0
         version: link:../../packages/protocol
       '@kestrel-agents/sdk':
-        specifier: 0.7.0
+        specifier: 0.8.0
         version: link:../../packages/sdk
       '@kestrel-agents/workspace-skills':
-        specifier: 0.7.0
+        specifier: 0.8.0
         version: link:../../packages/workspace-skills
       '@kestrel/mcp-security':
         specifier: workspace:*

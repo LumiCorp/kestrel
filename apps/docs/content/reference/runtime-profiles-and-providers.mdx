@@ -1,0 +1,47 @@
+---
+title: Runtime profiles and provider capabilities
+summary: Reference the canonical Kestrel profile, versioned provider registry, capability declarations, readiness, and selection evidence.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+A profile selects the runtime behavior and policies for a turn. A provider registry entry describes a provider/model path and the capabilities Kestrel can safely rely on.
+
+## Profile contract
+
+The profile identifies runtime policy for tools, recovery, evaluation, models, memory, budgets, and telemetry. Callers select a known profile identifier; they do not assemble undocumented policy fragments at the request boundary.
+
+## Canonical Kestrel profile
+
+The shipped public profile identifier is `kestrel`. Desktop, CLI/TUI, Kestrel One, SDK examples, and hosted workers use this profile unless an application explicitly owns another registered profile.
+
+## Provider registry entries
+
+Registry entries carry stable identity, provider/model configuration, declared capabilities, qualification state, and version evidence. Credentials remain in the trusted provider or gateway boundary.
+
+## Capability declarations
+
+Capabilities describe behavior such as tool calling, structured inputs, reasoning formats, context limits, and other model features. A model name alone does not prove a capability.
+
+## Qualification and readiness
+
+Configured, reachable, compatible, and qualified are separate states. Selection is ready only when credentials, endpoint/model availability, capability requirements, and governing policy all pass.
+
+## Model selection
+
+Applications and organizations select approved registry identities. The runtime records the effective profile and provider/model identity with the run.
+
+## Version and compatibility
+
+Profiles, registry entries, runtime contracts, and clients must agree on the 0.8 contract. Reject unknown identifiers or unsupported fields rather than guessing.
+
+## Validation errors
+
+Return the first owned failure: missing profile, unknown provider entry, unavailable credential, failed reachability, capability mismatch, policy denial, or unqualified model.
+
+## Security and evidence
+
+Do not expose raw provider credentials to browsers or models. Retain the effective identifiers, capability decision, readiness result, and source revision as evidence.

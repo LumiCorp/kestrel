@@ -77,6 +77,7 @@ const fixturesRoot = path.join(outDir, "ota-fixtures");
 const evidenceDir = path.join(outDir, "ota-smoke");
 const evidencePath = path.join(evidenceDir, "evidence.json");
 const finalVersion = readDesktopVersion();
+const approvedTargetVersion = process.env.KESTREL_DESKTOP_OTA_TARGET_VERSION;
 const runId = `${Date.now()}-${process.pid}`;
 const installedAppPath = resolveDesktopOtaInstalledAppPath({ runId });
 const installedExecutablePath = path.join(
@@ -110,7 +111,16 @@ assert.equal(
   "1",
   "The Desktop OTA gate requires KESTREL_DESKTOP_RELEASE=1.",
 );
-assert.equal(finalVersion, "0.7.0", "The final Desktop OTA target must be 0.7.0.");
+assert.match(
+  approvedTargetVersion ?? "",
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u,
+  "Set KESTREL_DESKTOP_OTA_TARGET_VERSION to the explicit OTA target.",
+);
+assert.equal(
+  finalVersion,
+  approvedTargetVersion,
+  "The packaged Desktop version must match the explicit OTA target.",
+);
 assert.equal(
   existsSync(installedAppPath),
   false,
@@ -418,6 +428,7 @@ try {
   activeLaunch = undefined;
   const updaterLog = collectUpdaterLogs(smokeRoot, coreHome);
   pendingEvidence = {
+    finalVersion,
     sourceCommit: runChecked("git", ["rev-parse", "HEAD"]).stdout.trim(),
     artifactEvidence: [
       ...artifactEvidence,

@@ -28,11 +28,11 @@ It is not the runtime's internal observability system. It is the application-fac
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/observability@0.7.0 \
-  @kestrel-agents/sdk@0.7.0
+pnpm add @kestrel-agents/observability@0.8.0 \
+  @kestrel-agents/sdk@0.8.0
 ```
 
-Check [0.7 release status](../../apps/docs/content/start/release-status.mdx)
+Check [0.8 release status](../../apps/docs/content/start/release-status.mdx)
 before pinning a production dependency.
 
 ## Create a Tracer

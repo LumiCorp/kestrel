@@ -267,6 +267,7 @@ test("Desktop OTA evidence is bounded and excludes unselected log content", () =
     runStillActive: true,
   });
   const evidence = shapeDesktopOtaEvidence({
+    finalVersion: "0.7.0",
     sourceCommit: "a".repeat(40),
     artifactEvidence: [],
     transitions: [blocked],

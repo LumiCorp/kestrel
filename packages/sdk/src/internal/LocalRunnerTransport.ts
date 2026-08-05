@@ -111,6 +111,7 @@ export class LocalRunnerTransport implements ProtocolTransport {
     metadata: RunnerCommandMetadata,
     controller: AbortController,
     onEvent: (event: RunnerEvent) => void,
+    onReady: () => void,
   ): Promise<void> {
     const response = await this.openRequest({
       method: "POST",
@@ -142,6 +143,7 @@ export class LocalRunnerTransport implements ProtocolTransport {
       });
     }
 
+    onReady();
     await consumeIncomingSse(response, (eventType, data) => {
       const event = parseRunnerEvent(data);
       if (event === undefined) {

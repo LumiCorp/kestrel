@@ -5,7 +5,7 @@ section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Execution target">
@@ -28,7 +28,7 @@ This arrangement keeps three responsibilities clear:
 
 - the browser only speaks to the application
 - the application server owns user authentication and runner credentials
-- Local Core or the remote runner service owns durable execution
+- Local Core or the remote runner service owns durable execution, provider/profile authority, and action-bound approvals
 
 Do not call either execution target from browser code. Doing so would expose
 the runner credential and allow browser input to define trusted user or tenant
@@ -56,7 +56,7 @@ export KESTREL_RUNNER_SERVICE_TOKEN=dev-secret
 pnpm dev
 ```
 
-With those values in place, the shared `workspaceCopilotAgent` can serve:
+With those values in place, the shared `kestrelAgent` can serve:
 
 - `/api/copilot/run`
 - `/api/copilot/stream`
@@ -67,7 +67,7 @@ The local request path is:
 ```text
 Browser
   -> Next.js server route
-    -> workspaceCopilotAgent
+    -> kestrelAgent
       -> kestrel web bridge
         -> Local Core
           -> Execution Protocol and runtime
@@ -102,7 +102,7 @@ echo "$KESTREL_RUNNER_SERVICE_TOKEN"
 curl -sS "$KESTREL_RUNNER_SERVICE_URL/health"
 ```
 
-The health check should succeed before you spend time on route-level debugging.
+The health contract should report the expected 0.8 compatibility line, build identity, readiness, and profile/provider capabilities before you spend time on route-level debugging.
 A healthy application with an unreachable execution target is still a broken
 Kestrel deployment.
 
@@ -163,8 +163,10 @@ Use this order when the application looks broken:
 1. confirm the configured runner URL points to the intended local or remote target
 2. confirm `/health`
 3. confirm `GET /v1/models`
-4. confirm `/commands` with `runner.ping`
-5. only then inspect the application routes
+4. confirm canonical profile and provider readiness
+5. confirm `/commands` with `runner.ping`
+6. compare version/revision with the intended release
+7. only then inspect the application routes
 
 For a local bridge failure, inspect Local Core before restarting the
 application. For a remote failure, inspect the deployed runner service and its

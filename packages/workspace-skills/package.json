@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/workspace-skills",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Secure workspace-scoped SKILL.md installation and provenance for Kestrel agents",
   "license": "MIT",
   "repository": {
@@ -37,7 +37,8 @@
     "build": "pnpm run build:self",
     "build:self": "pnpm run clean && tsc -p tsconfig.json",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "release:check": "pnpm run build && node --import tsx scripts/release-check.ts"
   },
   "dependencies": {
     "yaml": "2.8.2"

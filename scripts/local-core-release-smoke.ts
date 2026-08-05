@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   LocalCoreClient,
@@ -13,7 +15,13 @@ import {
 import { WorkspaceStore } from "../cli/workspace/WorkspaceStore.js";
 import { SessionStore } from "../cli/session/SessionStore.js";
 
-const VERSION = "0.7.0";
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const VERSION = (
+  JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
+    version?: string;
+  }
+).version ?? "";
+assert.match(VERSION, /^\d+\.\d+\.\d+$/u, "root package version must be numeric");
 const SMOKE_TEMP_ROOT = process.platform === "darwin" ? "/tmp" : os.tmpdir();
 
 async function main(): Promise<void> {

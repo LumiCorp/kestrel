@@ -128,7 +128,6 @@ test("waiting prompt and request identity survive reload and resume exactly", as
   ).toBeVisible();
 
   await postStream(page, testInfo, `/api/threads/${created.threadId}`, {
-    messages: [],
     interactionResponse: {
       requestId: interaction.requestId,
       eventType: interaction.eventType,

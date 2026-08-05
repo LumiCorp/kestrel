@@ -367,6 +367,7 @@ function streamFromEvents(
   terminal: KestrelOneRunnerTerminalEvent
 ): KestrelOneRunnerStream {
   return {
+    ready: Promise.resolve(),
     result: Promise.resolve(terminal),
     async cancel() {},
     async *[Symbol.asyncIterator]() {

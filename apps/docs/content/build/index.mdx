@@ -12,6 +12,36 @@ Create an agent in TypeScript and point it at a local or remote Kestrel runtime.
 
 The Build journey follows the shipped Reference agent throughout. Every guide extends the same agent, profile, and session model, so you keep working code at each step instead of assembling disconnected examples.
 
+## Choose a package
+
+Use exact `0.8.0` versions throughout one integration:
+
+| Package | Reader job |
+| --- | --- |
+| `@kestrel-agents/kestrel` | Run the Runtime or install the CLI/TUI |
+| `@kestrel-agents/protocol` | Validate commands, events, health, and terminal results |
+| `@kestrel-agents/sdk` | Create agents and call a runner from TypeScript |
+| `@kestrel-agents/memory` | Govern authorized memory reads and persistence |
+| `@kestrel-agents/next` | Own identity and Kestrel routes in Next.js |
+| `@kestrel-agents/ai-sdk` | Map Kestrel results into AI SDK messages |
+| `@kestrel-agents/observability` | Carry trace and run correlation |
+| `@kestrel-agents/workspace-skills` | Discover and install project-owned skills |
+
+## Choose a package
+
+Use exact `0.8.0` versions throughout one integration:
+
+| Package | Reader job |
+| --- | --- |
+| `@kestrel-agents/kestrel` | Run the Runtime or install the CLI/TUI |
+| `@kestrel-agents/protocol` | Validate commands, events, health, and terminal results |
+| `@kestrel-agents/sdk` | Create agents and call a runner from TypeScript |
+| `@kestrel-agents/memory` | Govern authorized memory reads and persistence |
+| `@kestrel-agents/next` | Own identity and Kestrel routes in Next.js |
+| `@kestrel-agents/ai-sdk` | Map Kestrel results into AI SDK messages |
+| `@kestrel-agents/observability` | Carry trace and run correlation |
+| `@kestrel-agents/workspace-skills` | Discover and install project-owned skills |
+
 ## Start building
 
 1. [Build your first agent](/build/building-your-first-agent) and inspect its terminal result.
@@ -25,4 +55,24 @@ Begin with [Build your first agent](/build/building-your-first-agent). Run it su
 
 ## Handle results correctly
 
-Before shipping, read [Protocol and results](/build/protocol-and-results). A terminal result always contains `assistantText: string | null`; human-facing text is not inferred from structured finalized data. Use [Runner events](/build/runner-events) for the exact streaming vocabulary and [Upgrading to 0.7](/build/upgrading-to-0-7) for compatibility changes.
+Before shipping, read [Protocol and results](/build/protocol-and-results). A terminal result always contains `assistantText: string | null`; human-facing text is not inferred from structured finalized data. Use [Runner events](/build/runner-events) for the exact streaming vocabulary and [Upgrading to 0.8](/build/upgrading-to-0-8) for compatibility changes.
+
+Waiting, recovery, approval, cancellation, and failure are runtime states, not assistant prose. Keep them separate from committed output and carry correlation identifiers through every adapter.
+
+## Choose a deployment boundary
+
+Use Local Core when the application and execution boundary belong on the same machine. Use a remote runner when a trusted service owns identity, provider access, tools, persistence, and external-effect approvals. Browsers may call an application route, but they must not supply trusted actor identity or runner credentials.
+
+<Outcome>
+  <p>You have chosen an exact 0.8 package set, a server-owned execution boundary, and the next runnable guide.</p>
+</Outcome>
+
+Waiting, recovery, approval, cancellation, and failure are runtime states, not assistant prose. Keep them separate from committed output and carry correlation identifiers through every adapter.
+
+## Choose a deployment boundary
+
+Use Local Core when the application and execution boundary belong on the same machine. Use a remote runner when a trusted service owns identity, provider access, tools, persistence, and external-effect approvals. Browsers may call an application route, but they must not supply trusted actor identity or runner credentials.
+
+<Outcome>
+  <p>You have chosen an exact 0.8 package set, a server-owned execution boundary, and the next runnable guide.</p>
+</Outcome>

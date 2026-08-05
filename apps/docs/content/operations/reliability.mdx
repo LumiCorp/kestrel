@@ -5,14 +5,30 @@ section: operate
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 A reliable Kestrel deployment does more than answer a health check. It preserves session continuity, gives every run a clear outcome, leaves useful history, and recovers without hiding the original failure.
 
 ## Record the healthy baseline
 
-Before an incident, keep a repeatable request that confirms runner health, authentication, model access, streaming or terminal behavior, and persistence for one known session. Record the Kestrel version and expected result.
+Before an incident, keep a repeatable request that confirms runner health, authentication, profile/provider readiness, model access, migrations, workers/images, streaming or terminal behavior, and persistence for one known session. Record version, revision, image digests, and expected result.
+
+## Durable conversation and terminal delivery
+
+An accepted run retains its conversation identity and produces one terminal outcome. A transport disconnect may interrupt presentation, but it must not erase the run or cause a second logical operation.
+
+## Policy-bound recovery
+
+Recovery actions come from the runtime registry and policy. Bind the operator's selection to the exact pending request and option identifier, and revalidate authority before resuming.
+
+## Compaction and replay integrity
+
+Compaction may reduce model-visible context but cannot rewrite committed messages, terminal outcomes, approvals, budgets, or evidence. Replay uses the saved canonical records and labels provider-dependent behavior honestly.
+
+## Local Core and worker self-healing
+
+Readiness and build identity must agree before automated restart. Content-aware restart may replace an unhealthy or stale process; it must not hide a schema, provider, or policy mismatch behind repeated restarts.
 
 ## Investigate an incident
 

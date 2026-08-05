@@ -280,20 +280,45 @@ export class KestrelClient {
     let settled = false;
     let stream!: BufferedRunnerStream<RunnerEvent, void>;
     const pendingEvents: RunnerEvent[] = [];
+    let readySettled = false;
+    let resolveReady!: () => void;
+    let rejectReady!: (error: unknown) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    void ready.catch(() => {});
+    const markReady = () => {
+      if (readySettled) return;
+      readySettled = true;
+      resolveReady();
+    };
+    const markReadyFailed = (error: unknown) => {
+      if (readySettled) return;
+      readySettled = true;
+      rejectReady(error);
+    };
 
     const abortHandler = () => {
       void stream.cancel();
     };
     options.signal?.addEventListener("abort", abortHandler, { once: true });
 
-    const result = this.openSubscription(filter, context, controller, (event) => {
-      if (stream === undefined) {
-        pendingEvents.push(event);
-        return;
-      }
-      stream.push(event);
-    })
+    const result = this.openSubscription(
+      filter,
+      context,
+      controller,
+      (event) => {
+        if (stream === undefined) {
+          pendingEvents.push(event);
+          return;
+        }
+        stream.push(event);
+      },
+      markReady,
+    )
       .then(() => {
+        markReady();
         if (settled) {
           return;
         }
@@ -303,6 +328,7 @@ export class KestrelClient {
         stream.finish();
       })
       .catch((error) => {
+        markReadyFailed(error);
         if (settled) {
           throw error;
         }
@@ -316,6 +342,7 @@ export class KestrelClient {
     stream = new BufferedRunnerStream<RunnerEvent, void>(
       result,
       async () => {
+        markReady();
         if (settled) {
           return;
         }
@@ -325,6 +352,7 @@ export class KestrelClient {
         controller.abort();
         stream.finish();
       },
+      ready,
     );
 
     for (const event of pendingEvents) {
@@ -675,6 +703,7 @@ export class KestrelClient {
     context: KestrelRequestContext,
     controller: AbortController,
     onEvent: (event: RunnerEvent) => void,
+    onReady: () => void,
   ): Promise<void> {
     if (this.target.kind === "local") {
       try {
@@ -683,6 +712,7 @@ export class KestrelClient {
           toCommandMetadata(context),
           controller,
           onEvent,
+          onReady,
         );
       } catch (error) {
         if (controller.signal.aborted) {
@@ -735,6 +765,7 @@ export class KestrelClient {
       });
     }
 
+    onReady();
     try {
       await consumeSseEventPayloads(response, (eventType, data) => {
         const event = parseRunnerEvent(data);

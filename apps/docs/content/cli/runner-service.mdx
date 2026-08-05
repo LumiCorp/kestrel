@@ -5,7 +5,7 @@ section: cli
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-07-20
+updatedAt: 2026-08-04
 ---
 
 <GuideNote step="Local integration">
@@ -15,6 +15,10 @@ Give a trusted local application server an authenticated HTTP connection to Loca
 `kestrel web` exposes Local Core's Execution Protocol through an authenticated
 loopback HTTP endpoint. It is a bridge for trusted local server applications,
 not a second runtime.
+
+## Build identity and compatibility
+
+The bridge and Local Core must report the exact 0.8 line and intended build identity. Stop when the bridge targets a stale or incompatible Core.
 
 ## Start the bridge
 
@@ -47,6 +51,16 @@ curl -sS "$KESTREL_RUNNER_SERVICE_URL/health"
 
 If you provided a custom host, port, or token, confirm the printed exports match
 the values used by the local application server.
+
+Health should also show readiness, build identity, and profile/provider capability status. A successful socket/HTTP check alone does not prove the selected model or tools are ready.
+
+## Content-aware restart
+
+Local Core compares the running build identity with the required content and may replace an unhealthy or stale process. Restart is recovery for process ownership, not a workaround for invalid configuration, migrations, or provider authority.
+
+## Shutdown and reconnect behavior
+
+Closing the bridge removes the HTTP transport but does not erase Local Core sessions or runs. Reconnect with the newly printed token and inspect durable state before retrying work.
 
 ## When to use this guide
 

@@ -1,0 +1,51 @@
+---
+title: Tool contracts
+summary: Reference canonical tool descriptors, model-visible inputs, activation, invocation, MCP, network policy, and result shaping.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-04
+---
+
+Kestrel exposes tools through explicit descriptors and registered invocation paths. Tool availability, input validation, execution authority, and results remain separate decisions.
+
+## Canonical tool descriptor
+
+A descriptor names the capability, gives the model-visible description and input contract, and identifies the registered execution owner. Descriptions must state consequential behavior and prerequisites.
+
+## Registry and conformance
+
+Descriptors are registered once and checked for identity and schema conformance. Reject duplicate, unknown, or unsupported definitions.
+
+## Model-visible input contract
+
+Parse and validate input before use. Strengthen field descriptions, examples, and result shapes before adding heuristic interpretation.
+
+## Tool visibility and activation
+
+The effective profile, Environment, App/MCP installation, actor, resource, and readiness determine whether a tool is visible and active.
+
+## Invocation lifecycle
+
+Validate input, resolve activation, enforce policy, acquire required approval or credentials, execute through the owning boundary, and shape a model-visible result.
+
+## Result and error shaping
+
+Return useful structured results and explicit owned errors. Do not expose secrets, raw internal exceptions, or ambiguous success.
+
+## MCP services
+
+Remote and environment-installed MCP servers use the same descriptor and authority model. OAuth, connection ownership, health, and capability snapshots remain explicit.
+
+## Network and OCI policy
+
+Full and isolated network modes are policy choices. OCI/MCP egress is default-deny unless the owning Environment and execution policy allow the destination.
+
+## External effects and approvals
+
+Tools that cross an external-effect boundary require an action-bound grant when policy says approval is necessary.
+
+## Security invariants
+
+No symlink escape, hidden credential return, unregistered fallback, target inference, or execution outside the resolved workspace and network boundary.

@@ -1,6 +1,6 @@
 ---
 title: Get Kestrel Desktop
-summary: Download Kestrel Desktop 0.7.0 for macOS arm64 and prepare for your first run.
+summary: Download, verify, and install the signed Kestrel Desktop 0.8.0 application on a supported Mac.
 section: desktop
 audience: everyone
 status: active
@@ -8,29 +8,35 @@ sourceKind: curated
 updatedAt: 2026-08-04
 ---
 
-Kestrel Desktop packages the local runtime and its managed database into one application. You will not need to install PostgreSQL or run services from a source checkout.
-
 <DesktopDownload />
+
+## Requirements
+
+Use macOS 13 or later on a Mac with Apple silicon. You need permission to install an application in Applications and to open the project folders you give Kestrel. Desktop includes Local Core; you do not need to configure a separate database or runner for the first local task.
 
 ## Install the application
 
-The Desktop `0.7.0` DMG is published with the Desktop-specific `desktop-v0.7.0` release. It requires macOS 13 or later on Apple silicon.
+1. Open the unified [`v0.8.0` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.0).
+2. Download `Kestrel-0.8.0-mac-arm64.dmg` and its checksum.
+3. Verify the checksum, open the DMG, and move Kestrel to Applications.
+4. Open Kestrel from Applications.
 
-1. Download the macOS arm64 DMG above.
-2. Confirm that the version is `0.7.0` and read the release notes.
-3. Open the DMG and move Kestrel to your Applications folder.
-4. Open Kestrel from Applications. The release is signed with a Developer ID certificate, notarized by Apple, and accepted by Gatekeeper.
+## Verify the application
 
-<Outcome>
-  <p>After installing Kestrel 0.7.0, Desktop opens to provider setup. You should not be asked to configure a database, runner service, or repository checkout.</p>
-</Outcome>
+macOS should accept the Developer ID signature and notarization. Confirm the application reports `0.8.0`. Stop if the checksum, signer, version, or release revision does not match the published record.
+
+## Upgrade from 0.7
+
+Quit the existing application and replace it in Applications. Do not remove its data. The upgrade preserves provider settings, Keychain credentials, projects, sessions, conversations, Mission Control records, and Local Core persistence.
 
 ## Update Desktop
 
-Choose **Kestrel → Check for Updates…** or open the Desktop update panel in Diagnostics. Updates are manual: Kestrel checks only when you ask, downloads only after confirmation, and installs only after you choose **Restart and Install**.
-
-If Desktop or Local Core work is active, Kestrel blocks the restart and leaves that work running. Finish the active work, then retry the installation. Kestrel does not cancel work to install an update.
+Kestrel 0.8.0 is a manual installation and does not move stable OTA metadata. Read [Update Kestrel Desktop](/desktop/updates) before replacing an existing installation.
 
 ## If the application does not open
 
-Return to the [Desktop 0.7.0 release notes](https://github.com/LumiCorp/kestrel/releases/tag/desktop-v0.7.0) and confirm that you downloaded the macOS arm64 DMG. Do not disable operating-system security controls globally. If the documented flow still fails, capture the warning and report it through the release issue tracker.
+Confirm the platform and checksum, reopen the DMG, and inspect the exact Gatekeeper or LaunchServices message. Do not disable macOS security controls globally or delete application data. Continue with [Desktop troubleshooting](/desktop/troubleshooting) and collect the version, warning, timestamp, and support bundle.
+
+<Outcome title="Desktop is ready to configure">
+  <p>Kestrel 0.8.0 opens from Applications, Local Core becomes ready, and the provider setup path is visible.</p>
+</Outcome>

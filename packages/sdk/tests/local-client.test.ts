@@ -341,6 +341,7 @@ test("KestrelClient cancellation closes local subscriptions without rejecting th
   t.after(async () => client.close());
 
   const stream = client.subscribe({ sessionId: "session-local" }, context);
+  await stream.ready;
   const first = await stream[Symbol.asyncIterator]().next();
   assert.equal(first.done, false);
   assert.equal(first.value?.type, "task.updated");

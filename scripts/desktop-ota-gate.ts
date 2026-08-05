@@ -152,6 +152,7 @@ export function sanitizeDesktopUpdaterLog(value: string): string[] {
 }
 
 export function shapeDesktopOtaEvidence(input: {
+  finalVersion: string;
   sourceCommit: string;
   artifactEvidence: readonly Record<string, unknown>[];
   transitions: readonly DesktopUpdateState[];
@@ -166,6 +167,9 @@ export function shapeDesktopOtaEvidence(input: {
 }): Record<string, unknown> {
   if (!/^[a-f0-9]{40}$/u.test(input.sourceCommit)) {
     throw new Error("Desktop OTA evidence requires a full source commit SHA.");
+  }
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(input.finalVersion)) {
+    throw new Error("Desktop OTA evidence requires an explicit target version.");
   }
   if (input.finalFeedUrl !==
     "https://updates.lumicorp.ai/desktop/stable/arm64") {
@@ -197,7 +201,7 @@ export function shapeDesktopOtaEvidence(input: {
     },
     screenshots: input.screenshots.map((entry) => ({ ...entry })),
     final: {
-      version: "0.7.0",
+      version: input.finalVersion,
       feedUrl: input.finalFeedUrl,
     },
     cleanup: {

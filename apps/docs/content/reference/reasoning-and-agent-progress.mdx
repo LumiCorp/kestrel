@@ -1,51 +1,52 @@
 ---
 title: Provider reasoning and agent progress
-summary: Display provider-returned reasoning truthfully, persist only committed agent progress, and keep encrypted continuation state out of every visible surface.
+summary: Keep provider-returned reasoning, committed agent progress, encrypted continuation state, tool activity, and terminal outcomes truthful and separate.
 section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-07-15
+updatedAt: 2026-08-04
 ---
 
-Kestrel has two distinct semantic activity channels:
+Kestrel exposes distinct activity channels so a UI or operator does not mistake provider data, engine logs, or tool timing for agent-authored narration.
+
+## Provider reasoning versus agent progress
 
 | Channel | Source | Durability | Display rule |
 | --- | --- | --- | --- |
-| `run.model.reasoning.*` | provider-returned summary or visible thinking | live-only by default | label the declared format and attempt |
+| `run.model.reasoning.*` | provider-returned summary or visible thinking | live-only by default | label the provider-declared format and attempt |
 | `run.agent_progress` | primary agent decision after validation and commit | durable | show as concise Agent progress |
 
-Do not turn `run.progress`, logs, model timing, Environment activation, or tool
-lifecycle events into agent-authored narration.
+Tool lifecycle events, model timing, Environment activation, and service logs remain technical activity rather than agent progress.
 
 ## Provider truthfulness
 
-- OpenAI content is a **Provider reasoning summary**, never raw reasoning.
-- Anthropic thinking is **Provider-visible thinking**; signatures continue back
-  to Anthropic but never render.
-- OpenRouter reasoning details preserve provider order and declared format.
-- Unsupported or empty provider output is **Provider reasoning unavailable**.
-- Encrypted or opaque continuation state never appears in events, UI, logs,
-  traces, prompts, conversation history, or retained-visible records.
+OpenAI reasoning summaries are summaries, Anthropic visible thinking retains its provider identity, and OpenRouter details preserve declared ordering and format. Unsupported or empty output is unavailable, not reconstructed.
 
-Visible attempts have separate attempt IDs. Once a visible reasoning or output
-event begins, Kestrel does not automatically retry that call.
+## Visible progress lifecycle
 
-## Retention and inspection
+Progress becomes durable only after Kestrel validates and commits the agent-authored update. A reconnect may show the last committed progress; it must not invent narration for work that produced no committed update.
 
-Provider-visible content is live-only unless a profile or Environment
-explicitly enables encrypted `provider_visible` retention. The allowed window
-is 1–30 days and defaults to seven. Organization administrators inspect
-retained content outside normal conversation history; every policy change,
-view, and deletion is audited. Disabling or shortening the policy removes or
-clamps existing scoped content before the next runtime command.
+## Retention and encryption
 
-Hosted runtimes must have a valid 32-byte
-`KESTREL_REASONING_MASTER_KEY`. Runtime startup and retained inspection fail
-closed when encryption readiness is unavailable.
+Encrypted signatures, opaque continuation material, and provider-private state may continue back to the owning provider. They never render in events, UI, logs, traces, prompts, conversation history, or retained-visible records.
 
 ## Reconnect behavior
 
-Same-process reconnect can replay the live overlay once by event ID. After a
-runner restart, only redacted `not_retained` metadata remains. Agent progress
-and final answers remain durable across reloads.
+Consumers resume from durable event or conversation cursors. Live-only provider reasoning may be absent after reconnect; committed agent progress and terminal outcomes remain available.
+
+## Inspection and authorization
+
+Retained reasoning inspection is an authorized operator surface, not a general member feed. Apply organization, Environment, actor, and retention policy before returning any retained material.
+
+## Trace correlation
+
+Carry session/thread, run, turn, attempt, provider/model, and trace identifiers without merging the semantic channels. Correlation proves related activity; it does not change who authored it.
+
+## Failure and terminal behavior
+
+Failure, waiting, cancellation, and recovery are explicit runtime states. Do not turn an error string or retry status into agent progress. Finish presentation from the terminal result or exact waiting contract.
+
+## Consumer rules
+
+Label sources, preserve order, render only declared formats, keep secrets and continuation state hidden, resume from durable cursors, and tolerate a provider that returns no visible reasoning.

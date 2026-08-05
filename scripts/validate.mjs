@@ -67,6 +67,7 @@ async function runValidation(validationRequest) {
 
 async function runFullValidation() {
   await phase("preflight", [
+    task("suite version", PNPM, ["run", "version:check"]),
     task("public boundary", PNPM, ["run", "check:public-boundary"]),
   ]);
 

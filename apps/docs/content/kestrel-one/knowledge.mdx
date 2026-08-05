@@ -5,10 +5,14 @@ section: kestrel-one
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 **Knowledge** is reusable source material owned by your organization. A Project can select relevant Knowledge without copying the same document into every Thread.
+
+## Knowledge versus runtime memory
+
+Knowledge contains organization or Project documents selected through revisioned context. Runtime memory contains governed durable facts with subject, issuer, provenance, and query authority. Conversation history remains the Thread itself.
 
 <ProductFigure
   src="/product/kestrel-one/knowledge.png"
@@ -32,6 +36,22 @@ updatedAt: 2026-07-13
 | `ready` | The document is searchable | Add it to the intended Project |
 | `partial` | Some material is usable, with warnings | Review the warning before relying on it |
 | `failed` | Processing did not complete | Correct the source problem or request a reindex |
+
+## Governed retrieval
+
+Kestrel resolves the signed-in actor, organization, Project, selected revision, and query authority before returning grouped results. Each result retains document and section provenance.
+
+## Use Knowledge in a Thread
+
+Select the material in the Project, start a turn under the resulting context revision, and inspect cited sources. Adding a document to the organization does not make it available to every Project automatically.
+
+## Remove or replace material
+
+Changes affect future revisions. Historical turns retain the source identity they actually used even if the current Project selects a replacement.
+
+## Troubleshoot retrieval
+
+Inspect processing state, organization/Project access, selection in the current revision, indexing warnings, and query authority before requesting a reindex.
 
 <Outcome>
   <p>The document is ready, selected by the intended Project, and appears as a cited source when an authorized Thread retrieves it.</p>

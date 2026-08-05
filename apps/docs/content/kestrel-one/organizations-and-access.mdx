@@ -5,7 +5,7 @@ section: kestrel-one
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-07-13
+updatedAt: 2026-08-04
 ---
 
 An **organization** is the top-level home for people, Projects, Knowledge, model access, and administrative policy. Project membership can narrow access further inside that organization.
@@ -13,6 +13,24 @@ An **organization** is the top-level home for people, Projects, Knowledge, model
 ## How access is decided
 
 Kestrel One checks the signed-in person and active organization before returning a Project, Thread, message, file, artifact, Knowledge result, or model deployment. Being an organization member does not automatically make someone a member of every private Project.
+
+The decision may also include Environment access, App or MCP grants, approved model authority, context/resource grants, and an action-bound external approval.
+
+## Organization roles
+
+Owners and administrators manage organization-wide people and shared resources. Members use the Projects and capabilities granted to them. Administrative access does not replace Project membership or exact external-effect approval.
+
+## Project and context grants
+
+Project roles own project membership and routine context changes. Narrower grants can authorize a specific resource or operation without broadening the person’s organization role.
+
+## Environment, App, and model access
+
+Environment policy sets execution and shared capability ceilings. App/MCP connections, provider/model authority, readiness, and Project policy are evaluated separately.
+
+## External approval authority
+
+An approver may authorize only actions within their owned scope. The grant binds actor, target, parameters, Environment, and effect identity.
 
 ## Common access paths
 
@@ -22,3 +40,7 @@ Kestrel One checks the signed-in person and active organization before returning
 - Public share links expose only the approved read-only representation identified by that link.
 
 If someone receives an access-denied message, confirm the active organization and Project membership before changing broader roles.
+
+## Diagnose denied access
+
+Inspect the resource’s organization, Project membership, Environment, App connection/grant, provider/model decision, external approval, and current actor in that order. Repair the first owned denial rather than assigning a broader role.

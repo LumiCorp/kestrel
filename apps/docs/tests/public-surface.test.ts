@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 import nextConfig from "../next.config";
 import { getNavigation, getPageMetaBySlug, getPublicPages, getSearchDocuments } from "@/lib/content";
+import { resolveDocsAppRoot, resolveRepoRoot } from "@/lib/site";
 
 
 test("public surfaces never expose excluded content or Studio", async () => {
@@ -16,6 +19,21 @@ test("public surfaces never expose excluded content or Studio", async () => {
   assert.ok(search.every((document) => pages.some(({ meta }) => meta.url === document.url)));
   assert.equal(await getPageMetaBySlug(["archive"]), null);
   assert.equal(await getPageMetaBySlug(["runtime", "governance-and-invariants"]), null);
+});
+
+test("docs chrome and README identify Lumi maintenance and support", async () => {
+  const docsRoot = resolveDocsAppRoot();
+  const [chrome, shell, readme] = await Promise.all([
+    fs.readFile(path.join(docsRoot, "components", "SiteChrome.tsx"), "utf8"),
+    fs.readFile(path.join(docsRoot, "components", "DocsShell.tsx"), "utf8"),
+    fs.readFile(path.join(resolveRepoRoot(), "README.md"), "utf8"),
+  ]);
+
+  assert.equal((chrome.match(/https:\/\/www\.lumicorp\.ai/gu) ?? []).length, 2);
+  assert.match(shell, /Kestrel is maintained and supported by/u);
+  assert.match(shell, /https:\/\/www\.lumicorp\.ai/u);
+  assert.match(readme, /Kestrel is maintained and supported by/u);
+  assert.match(readme, /https:\/\/www\.lumicorp\.ai/u);
 });
 
 test("superseded product and operations URLs are permanent redirects", async () => {
