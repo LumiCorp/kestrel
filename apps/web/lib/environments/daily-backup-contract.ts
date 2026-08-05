@@ -1,7 +1,11 @@
 const UTC_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
 
-export const DAILY_BACKUP_MAX_ATTEMPTS = 5;
+export const DAILY_BACKUP_MAX_ATTEMPTS = 4;
 export const DAILY_BACKUP_RETRY_LIMIT = DAILY_BACKUP_MAX_ATTEMPTS - 1;
+
+export function workspaceBackupRetryDelaySeconds(attempt: number) {
+  return [30, 120, 300][attempt - 1] ?? 300;
+}
 
 export function workspaceDailyBackupDay(now: Date) {
   const day = now.toISOString().slice(0, 10);

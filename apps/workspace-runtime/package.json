@@ -17,10 +17,12 @@
   "dependencies": {
     "@kestrel-agents/sdk": "workspace:*",
     "@kestrel-agents/workspace-skills": "workspace:*",
-    "@lumi/kestrel-environment-auth": "workspace:*"
+    "@lumi/kestrel-environment-auth": "workspace:*",
+    "tar-stream": "^3.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
+    "@types/tar-stream": "^3.1.4",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }

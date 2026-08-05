@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
@@ -68,6 +68,7 @@ export async function reconcileHostedEnvironments() {
   let workspaceCount = 0;
   let adoptedVolumeCount = 0;
   let degradedWorkspaceCount = 0;
+  let volumeBackupPolicyFailureCount = 0;
   const organizations = await knowledgeDb
     .selectDistinct({ organizationId: schema.environments.organizationId })
     .from(schema.environments)
@@ -91,9 +92,10 @@ export async function reconcileHostedEnvironments() {
     workspaceCount += result.workspaceCount;
     adoptedVolumeCount += result.adoptedVolumeCount;
     degradedWorkspaceCount += result.degradedWorkspaceCount;
+    volumeBackupPolicyFailureCount += result.volumeBackupPolicyFailureCount;
   }
   const finalizedPreviewCount = await reconcileClosingWorkspacePreviews(now);
-  await expireWorkspaceBackups(now);
+  const backupLifecycle = await expireWorkspaceBackups(now);
   await createDueDailyBackup(now);
   return {
     operationCount: recoverableOperations.length,
@@ -103,7 +105,9 @@ export async function reconcileHostedEnvironments() {
     workspaceCount,
     adoptedVolumeCount,
     degradedWorkspaceCount,
+    volumeBackupPolicyFailureCount,
     finalizedPreviewCount,
+    backupLifecycle,
   };
 }
 
@@ -181,6 +185,7 @@ async function reconcileOrganizationEnvironments(input: {
   >();
   let adoptedVolumeCount = 0;
   let degradedWorkspaceCount = 0;
+  let volumeBackupPolicyFailureCount = 0;
   for (const { workspace, environment } of workspaces) {
     if (!(workspace.flyMachineId && environment.flyAppName)) continue;
     if (
@@ -242,6 +247,28 @@ async function reconcileOrganizationEnvironments(input: {
         });
         if (!adopted) continue;
         adoptedVolumeCount += 1;
+      }
+      const policyVolumeId =
+        assessment.status === "adopt"
+          ? assessment.newVolumeId
+          : workspace.flyVolumeId;
+      if (policyVolumeId && provider.reconcileWorkspaceVolumeBackupPolicy) {
+        try {
+          await provider.reconcileWorkspaceVolumeBackupPolicy({
+            appName: environment.flyAppName,
+            volumeId: policyVolumeId,
+          });
+        } catch (error) {
+          volumeBackupPolicyFailureCount += 1;
+          console.error(
+            "Workspace Volume backup policy reconciliation failed.",
+            {
+              workspaceId: workspace.id,
+              volumeId: policyVolumeId,
+              message: error instanceof Error ? error.message : "Unknown error",
+            },
+          );
+        }
       }
       const appName = environment.flyAppName;
       const machineId = workspace.flyMachineId;
@@ -312,6 +339,7 @@ async function reconcileOrganizationEnvironments(input: {
     workspaceCount: workspaces.length,
     adoptedVolumeCount,
     degradedWorkspaceCount,
+    volumeBackupPolicyFailureCount,
   };
 }
 
@@ -571,10 +599,7 @@ async function cleanupOrphanedEnvironmentResources(
             eq(table.environmentId, environment.id),
             eq(table.type, "workspace.restore"),
             eq(table.status, "failed"),
-            eq(
-              table.stage,
-              "workspace.restore.post_cutover_validation_failed",
-            ),
+            eq(table.stage, "workspace.restore.post_cutover_validation_failed"),
           ),
         columns: { result: true },
       });
@@ -590,14 +615,12 @@ async function cleanupOrphanedEnvironmentResources(
         workspace.flyMachineId ? [workspace.flyMachineId] : [],
       ),
     ]);
-    const activeVolumeIds = new Set(
-      [
-        ...retainedResources.volumeIds,
-        ...workspaces.flatMap((workspace) =>
-          workspace.flyVolumeId ? [workspace.flyVolumeId] : [],
-        ),
-      ],
-    );
+    const activeVolumeIds = new Set([
+      ...retainedResources.volumeIds,
+      ...workspaces.flatMap((workspace) =>
+        workspace.flyVolumeId ? [workspace.flyVolumeId] : [],
+      ),
+    ]);
     const inventory = await provider.listEnvironmentResources({
       appName: environment.flyAppName,
     });
@@ -692,20 +715,126 @@ async function cleanupReplacedWorkspaceResources(
   }
 }
 
-async function expireWorkspaceBackups(now: Date) {
-  const expired = await knowledgeDb.query.workspaceBackups.findMany({
-    where: (table, { and, eq, lt }) =>
-      and(eq(table.status, "available"), lt(table.expiresAt, now)),
-  });
+export async function expireWorkspaceBackups(now: Date, limit = 100) {
+  const boundedLimit = Math.max(1, Math.min(limit, 100));
+  const counters = {
+    inspected: 0,
+    unchanged: 0,
+    created: 0,
+    reused: 0,
+    expired: 0,
+    deletionFailed: 0,
+    oversized: 0,
+  };
+  const expiredProtectionRows =
+    await knowledgeDb.query.workspaceBackupProtections.findMany({
+      where: (table, { lt }) => lt(table.expiresAt, now),
+      columns: { id: true },
+      orderBy: (table, { asc }) => [asc(table.expiresAt), asc(table.id)],
+      limit: boundedLimit,
+    });
+  counters.inspected += expiredProtectionRows.length;
+  if (expiredProtectionRows.length > 0) {
+    await knowledgeDb.delete(schema.workspaceBackupProtections).where(
+      inArray(
+        schema.workspaceBackupProtections.id,
+        expiredProtectionRows.map((row) => row.id),
+      ),
+    );
+  }
+  const artifactLimit = remainingBackupLifecycleBatchBudget(
+    boundedLimit,
+    counters.inspected,
+  );
+  const expired =
+    artifactLimit === 0
+      ? []
+      : await knowledgeDb
+          .select({ backup: schema.workspaceBackups })
+          .from(schema.workspaceBackups)
+          .leftJoin(
+            schema.workspaceBackupProtections,
+            and(
+              eq(
+                schema.workspaceBackupProtections.backupId,
+                schema.workspaceBackups.id,
+              ),
+              gt(schema.workspaceBackupProtections.expiresAt, now),
+            ),
+          )
+          .where(
+            and(
+              inArray(schema.workspaceBackups.status, [
+                "available",
+                "deleting",
+                "delete_failed",
+              ]),
+              isNull(schema.workspaceBackupProtections.id),
+            ),
+          )
+          .orderBy(schema.workspaceBackups.expiresAt, schema.workspaceBackups.id)
+          .limit(artifactLimit);
+  counters.inspected += expired.length;
   const storage = getStorageAdapter();
-  for (const backup of expired) {
-    if (backup.objectKey)
-      await storage.deleteObject(backup.objectKey).catch(() => {});
+  for (const { backup } of expired) {
     await knowledgeDb
       .update(schema.workspaceBackups)
-      .set({ status: "expired", updatedAt: now })
+      .set({ status: "deleting", updatedAt: now })
       .where(eq(schema.workspaceBackups.id, backup.id));
+    try {
+      if (backup.objectKey) await storage.deleteObject(backup.objectKey);
+      await knowledgeDb
+        .update(schema.workspaceBackups)
+        .set({ status: "expired", updatedAt: now })
+        .where(eq(schema.workspaceBackups.id, backup.id));
+      counters.expired += 1;
+    } catch {
+      await knowledgeDb
+        .update(schema.workspaceBackups)
+        .set({ status: "delete_failed", updatedAt: now })
+        .where(eq(schema.workspaceBackups.id, backup.id));
+      counters.deletionFailed += 1;
+    }
   }
+  const tombstoneCutoff = new Date(now.getTime() - 30 * 86_400_000);
+  const tombstoneLimit = remainingBackupLifecycleBatchBudget(
+    boundedLimit,
+    counters.inspected,
+  );
+  const tombstones =
+    tombstoneLimit === 0
+      ? []
+      : await knowledgeDb.query.workspaceBackups.findMany({
+          where: (table, { and, inArray, lt }) =>
+            and(
+              inArray(table.status, ["failed", "expired"]),
+              lt(table.updatedAt, tombstoneCutoff),
+            ),
+          columns: { id: true },
+          orderBy: (table, { asc }) => [asc(table.updatedAt), asc(table.id)],
+          limit: tombstoneLimit,
+        });
+  counters.inspected += tombstones.length;
+  if (tombstones.length > 0) {
+    await knowledgeDb.delete(schema.workspaceBackups).where(
+      inArray(
+        schema.workspaceBackups.id,
+        tombstones.map((row) => row.id),
+      ),
+    );
+  }
+  console.info("Workspace backup lifecycle reconciliation completed.", {
+    batchLimit: boundedLimit,
+    ...counters,
+  });
+  return counters;
+}
+
+export function remainingBackupLifecycleBatchBudget(
+  batchLimit: number,
+  inspected: number,
+) {
+  return Math.max(0, Math.min(100, batchLimit) - inspected);
 }
 
 async function createDueDailyBackup(now: Date) {

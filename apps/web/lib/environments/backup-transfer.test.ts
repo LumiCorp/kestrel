@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { uploadBackupArchive } from "./backup-transfer";
 
 
@@ -31,13 +32,14 @@ test("backup transfer stays within bounded gateway requests and refreshes ticket
       ? Response.json({ id: "import-1" }, { status: 201 })
       : Response.json({ ok: true });
   }) as typeof fetch;
+  const archive = Buffer.alloc(1_200_000, 1);
   await uploadBackupArchive({
     route: () => ({
       baseUrl: "https://router.example",
       authToken: `ticket-${++ticket}`,
     }),
-    archive: Buffer.alloc(1_200_000, 1),
-    checksumSha256: "a".repeat(64),
+    archive,
+    checksumSha256: createHash("sha256").update(archive).digest("hex"),
     fetchImpl,
   });
   const chunks = requests.filter((request) => request.method === "PUT");

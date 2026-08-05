@@ -12,6 +12,17 @@ type WorkspaceBackupActionsProps = {
   workspaceStatus: string;
 };
 
+type ProtectedWorkspaceBackup = WorkspaceBackup & {
+  protectionReasons: string[];
+  retainedUntil: string;
+  archiveRecoveryAvailable: boolean;
+  snapshotRecoveryAvailable: boolean;
+  failure: {
+    errorCode: string | null;
+    errorMessage: string | null;
+  } | null;
+};
+
 async function responseError(response: Response, fallback: string) {
   const payload = (await response.json().catch(() => null)) as {
     error?: string;
@@ -25,22 +36,24 @@ export function WorkspaceBackupActions({
   workspaceStatus,
 }: WorkspaceBackupActionsProps) {
   const router = useRouter();
-  const [backups, setBackups] = useState<WorkspaceBackup[]>([]);
+  const [backups, setBackups] = useState<ProtectedWorkspaceBackup[]>([]);
   const [busy, setBusy] = useState<"backup" | "restore" | "retry" | null>(null);
   const [restoreConfirmation, setRestoreConfirmation] = useState<string | null>(
-    null
+    null,
   );
 
   const refreshBackups = useCallback(async () => {
     const response = await fetch(
-      `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/backups`
+      `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/backups`,
     );
     if (!response.ok) {
       throw new Error(
-        await responseError(response, "Workspace backups could not be loaded.")
+        await responseError(response, "Workspace backups could not be loaded."),
       );
     }
-    const payload = (await response.json()) as { backups?: WorkspaceBackup[] };
+    const payload = (await response.json()) as {
+      backups?: ProtectedWorkspaceBackup[];
+    };
     setBackups(payload.backups ?? []);
   }, [environmentId, workspaceId]);
 
@@ -51,11 +64,11 @@ export function WorkspaceBackupActions({
   }, [refreshBackups]);
 
   const availableBackups = backups.filter(
-    (backup) => backup.status === "available"
+    (backup) => backup.status === "available",
   );
   const latestBackup = availableBackups[0];
   const failedDailyBackup = backups.find(
-    (backup) => backup.reason === "daily" && backup.status === "failed"
+    (backup) => backup.reason === "daily" && backup.status === "failed",
   );
 
   async function createBackup() {
@@ -67,18 +80,20 @@ export function WorkspaceBackupActions({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ reason: "checkpoint" }),
-        }
+        },
       );
       if (!response.ok) {
         throw new Error(
-          await responseError(response, "Workspace backup failed.")
+          await responseError(response, "Workspace backup failed."),
         );
       }
       await refreshBackups();
-      toast.success("Workspace backup available.");
+      toast.success(
+        "Backup check queued; unchanged content will reuse its protected revision.",
+      );
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Workspace backup failed."
+        error instanceof Error ? error.message : "Workspace backup failed.",
       );
     } finally {
       setBusy(null);
@@ -90,7 +105,7 @@ export function WorkspaceBackupActions({
     if (restoreConfirmation !== latestBackup.id) {
       setRestoreConfirmation(latestBackup.id);
       toast.warning(
-        "Select Confirm restore to continue. Kestrel creates a pre-restore backup first."
+        "Select Confirm restore to continue. Kestrel creates a pre-restore backup first.",
       );
       return;
     }
@@ -99,18 +114,18 @@ export function WorkspaceBackupActions({
     try {
       const response = await fetch(
         `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/backups/${latestBackup.id}/restore`,
-        { method: "POST" }
+        { method: "POST" },
       );
       if (!response.ok) {
         throw new Error(
-          await responseError(response, "Workspace restore failed.")
+          await responseError(response, "Workspace restore failed."),
         );
       }
       setRestoreConfirmation(null);
       toast.success("Workspace restored from backup.");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Workspace restore failed."
+        error instanceof Error ? error.message : "Workspace restore failed.",
       );
     } finally {
       setBusy(null);
@@ -122,14 +137,11 @@ export function WorkspaceBackupActions({
     try {
       const response = await fetch(
         `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/retry`,
-        { method: "POST" }
+        { method: "POST" },
       );
       if (!response.ok) {
         throw new Error(
-          await responseError(
-            response,
-            "Workspace provisioning retry failed."
-          )
+          await responseError(response, "Workspace provisioning retry failed."),
         );
       }
       toast.success("Workspace provisioning retry queued.");
@@ -138,7 +150,7 @@ export function WorkspaceBackupActions({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Workspace provisioning retry failed."
+          : "Workspace provisioning retry failed.",
       );
     } finally {
       setBusy(null);
@@ -151,11 +163,11 @@ export function WorkspaceBackupActions({
     try {
       const response = await fetch(
         `/api/organization/environments/${environmentId}/workspaces/${workspaceId}/backups/${failedDailyBackup.id}/retry`,
-        { method: "POST" }
+        { method: "POST" },
       );
       if (!response.ok) {
         throw new Error(
-          await responseError(response, "Daily Workspace backup retry failed.")
+          await responseError(response, "Daily Workspace backup retry failed."),
         );
       }
       await refreshBackups();
@@ -164,7 +176,7 @@ export function WorkspaceBackupActions({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Daily Workspace backup retry failed."
+          : "Daily Workspace backup retry failed.",
       );
     } finally {
       setBusy(null);
@@ -172,10 +184,30 @@ export function WorkspaceBackupActions({
   }
 
   return (
-    <div className="flex items-center justify-end gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       <span className="text-muted-foreground text-xs tabular-nums">
-        {availableBackups.length} {availableBackups.length === 1 ? "backup" : "backups"}
+        {availableBackups.length}{" "}
+        {availableBackups.length === 1 ? "backup" : "backups"}
       </span>
+      {latestBackup ? (
+        <span className="basis-full text-right text-muted-foreground text-xs">
+          {formatBytes(latestBackup.sizeBytes)} ·{" "}
+          {latestBackup.protectionReasons.join(", ")} · retained until{" "}
+          {new Date(latestBackup.retainedUntil).toLocaleDateString()} · archive{" "}
+          {latestBackup.archiveRecoveryAvailable ? "ready" : "unavailable"} ·
+          snapshot{" "}
+          {latestBackup.snapshotRecoveryAvailable ? "ready" : "unavailable"}
+        </span>
+      ) : null}
+      {backups.find((backup) => backup.status === "failed")?.failure
+        ?.errorMessage ? (
+        <span className="basis-full text-right text-destructive text-xs">
+          {
+            backups.find((backup) => backup.status === "failed")?.failure
+              ?.errorMessage
+          }
+        </span>
+      ) : null}
       {workspaceStatus === "failed" ? (
         <Button
           disabled={busy !== null}
@@ -220,4 +252,12 @@ export function WorkspaceBackupActions({
       ) : null}
     </div>
   );
+}
+
+function formatBytes(value: number | null) {
+  if (value === null) return "size unknown";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`;
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
+  return `${(value / 1024 ** 3).toFixed(1)} GiB`;
 }

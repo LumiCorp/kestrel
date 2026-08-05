@@ -1,10 +1,24 @@
 import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
+import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 
 const BACKUP_CHUNK_BYTES = 512 * 1024;
 
 export async function uploadBackupArchive(input: {
   route: () => { baseUrl: string; authToken: string };
   archive: Buffer;
+  checksumSha256: string;
+  fetchImpl?: typeof fetch | undefined;
+}) {
+  return uploadBackupArchiveStream({
+    ...input,
+    archive: Readable.from(input.archive),
+  });
+}
+
+export async function uploadBackupArchiveStream(input: {
+  route: () => { baseUrl: string; authToken: string };
+  archive: NodeJS.ReadableStream;
   checksumSha256: string;
   fetchImpl?: typeof fetch | undefined;
 }) {
@@ -20,7 +34,7 @@ export async function uploadBackupArchive(input: {
       },
       body: JSON.stringify({ checksumSha256: input.checksumSha256 }),
       cache: "no-store",
-    }
+    },
   );
   const created = (await createResponse.json().catch(() => null)) as {
     id?: string;
@@ -31,16 +45,14 @@ export async function uploadBackupArchive(input: {
   const importId = created.id;
   try {
     let chunkIndex = 0;
-    for (
-      let offset = 0;
-      offset < input.archive.length;
-      offset += BACKUP_CHUNK_BYTES
-    ) {
+    let pending = Buffer.alloc(0);
+    const checksum = createHash("sha256");
+    const uploadChunk = async (chunk: Buffer, index: number) => {
       const chunkRoute = input.route();
       const response = await fetchImpl(
         new URL(
-          `/v1/backups/imports/${importId}/chunks/${chunkIndex}`,
-          chunkRoute.baseUrl
+          `/v1/backups/imports/${importId}/chunks/${index}`,
+          chunkRoute.baseUrl,
         ),
         {
           method: "PUT",
@@ -48,26 +60,40 @@ export async function uploadBackupArchive(input: {
             authorization: `Bearer ${chunkRoute.authToken}`,
             "content-type": "application/octet-stream",
           },
-          body: new Uint8Array(
-            input.archive.subarray(offset, offset + BACKUP_CHUNK_BYTES)
-          ),
+          body: new Uint8Array(chunk),
           cache: "no-store",
-        }
+        },
       );
       if (!response.ok) throw new Error("Workspace backup chunk was rejected.");
-      chunkIndex += 1;
+    };
+    for await (const value of input.archive) {
+      const incoming = Buffer.isBuffer(value) ? value : Buffer.from(value);
+      checksum.update(incoming);
+      pending = Buffer.concat([pending, incoming]);
+      while (pending.length >= BACKUP_CHUNK_BYTES) {
+        await uploadChunk(pending.subarray(0, BACKUP_CHUNK_BYTES), chunkIndex);
+        pending = pending.subarray(BACKUP_CHUNK_BYTES);
+        chunkIndex += 1;
+      }
+    }
+    if (pending.length > 0) await uploadChunk(pending, chunkIndex);
+    if (checksum.digest("hex") !== input.checksumSha256) {
+      throw Object.assign(
+        new Error("Workspace backup checksum verification failed."),
+        { code: "WORKSPACE_BACKUP_CHECKSUM_MISMATCH" },
+      );
     }
     const completeRoute = input.route();
     const completeResponse = await fetchImpl(
       new URL(
         `/v1/backups/imports/${importId}/complete`,
-        completeRoute.baseUrl
+        completeRoute.baseUrl,
       ),
       {
         method: "POST",
         headers: { authorization: `Bearer ${completeRoute.authToken}` },
         cache: "no-store",
-      }
+      },
     );
     if (!completeResponse.ok) {
       throw new Error("Workspace backup import did not complete.");
@@ -80,7 +106,7 @@ export async function uploadBackupArchive(input: {
         method: "DELETE",
         headers: { authorization: `Bearer ${abortRoute.authToken}` },
         cache: "no-store",
-      }
+      },
     ).catch(() => {});
     throw error;
   }
@@ -92,7 +118,7 @@ export async function waitForWorkspaceService(
     fetchImpl?: typeof fetch | undefined;
     timeoutMs?: number | undefined;
     pollIntervalMs?: number | undefined;
-  } = {}
+  } = {},
 ) {
   const fetchImpl = input.fetchImpl ?? fetch;
   const deadline =
@@ -105,7 +131,7 @@ export async function waitForWorkspaceService(
     }).catch(() => null);
     if (response?.ok) return;
     await new Promise((resolve) =>
-      setTimeout(resolve, input.pollIntervalMs ?? 500)
+      setTimeout(resolve, input.pollIntervalMs ?? 500),
     );
   }
   throw new Error("Replacement Workspace service did not become healthy.");

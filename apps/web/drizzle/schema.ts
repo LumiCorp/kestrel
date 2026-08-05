@@ -2472,7 +2472,15 @@ export const workspaceBackups = pgTable(
       enum: ["checkpoint", "daily", "pre_destructive", "pre_promotion"],
     }).notNull(),
     status: text("status", {
-      enum: ["queued", "creating", "available", "failed", "expired"],
+      enum: [
+        "queued",
+        "creating",
+        "available",
+        "deleting",
+        "delete_failed",
+        "failed",
+        "expired",
+      ],
     })
       .notNull()
       .default("queued"),
@@ -2496,6 +2504,55 @@ export const workspaceBackups = pgTable(
       table.createdAt,
     ),
     index("workspace_backups_expiry_idx").on(table.status, table.expiresAt),
+    uniqueIndex("workspace_backups_active_revision_idx")
+      .on(table.workspaceId, table.sourceRevision)
+      .where(
+        sql`${table.sourceRevision} is not null and ${table.status} in ('queued', 'creating', 'available', 'deleting', 'delete_failed')`,
+      ),
+  ],
+);
+
+export const releaseControllerHeartbeats = pgTable(
+  "release_controller_heartbeats",
+  {
+    id: text("id").primaryKey(),
+    contractRevision: integer("contract_revision").notNull(),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("release_controller_heartbeats_age_idx").on(table.heartbeatAt)],
+);
+
+export const workspaceBackupProtections = pgTable(
+  "workspace_backup_protections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    backupId: text("backup_id")
+      .notNull()
+      .references(() => workspaceBackups.id, { onDelete: "cascade" }),
+    kind: text("kind", {
+      enum: ["checkpoint", "daily", "pre_destructive", "pre_promotion"],
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("workspace_backup_protections_backup_expiry_idx").on(
+      table.backupId,
+      table.expiresAt,
+    ),
+    index("workspace_backup_protections_kind_expiry_idx").on(
+      table.kind,
+      table.expiresAt,
+    ),
+    uniqueIndex("workspace_backup_protections_backup_kind_idx").on(
+      table.backupId,
+      table.kind,
+    ),
   ],
 );
 
@@ -5905,6 +5962,9 @@ export type EnvironmentApplication = InferSelectModel<
   typeof environmentApplications
 >;
 export type WorkspaceBackup = InferSelectModel<typeof workspaceBackups>;
+export type WorkspaceBackupProtection = InferSelectModel<
+  typeof workspaceBackupProtections
+>;
 export type ToolConnectionResource = InferSelectModel<
   typeof toolConnectionResources
 >;
