@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,10 +24,10 @@ const repoRoot = path.resolve(scriptDir, "..");
 const npmCacheDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-pack-cache-"));
 const packDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-pack-"));
 const extractDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-extract-"));
+const consumerDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-consumer-"));
 
 const forbiddenPrefixes = [
   "apps/",
-  "packages/",
   "tests/",
   "docs/",
   ".github/",
@@ -33,6 +39,8 @@ const bundledDependencyPrefixes = [
   "node_modules/@kestrel-agents/memory/",
   "node_modules/@lumi/kestrel-environment-auth/",
 ] as const;
+
+const allowedWorkspacePackagePrefixes = ["packages/mcp-security/"] as const;
 
 const requiredFiles = [
   "package.json",
@@ -47,6 +55,9 @@ const requiredFiles = [
   "db/migrations/001_sessions_runs.sql",
   "db/migrations/023_runner_protocol_events.sql",
   "db/migrations/024_provider_reasoning_state.sql",
+  "packages/mcp-security/package.json",
+  "packages/mcp-security/src/index.ts",
+  "packages/mcp-security/dist/index.js",
   "cli/runner/RunnerServiceEventJournal.ts",
   "cli/runner/RunnerServiceHost.ts",
   "src/localCore/credentialStore.ts",
@@ -88,6 +99,12 @@ try {
         `runtime package contains unexpected bundled dependency '${filePath}'`,
       );
       continue;
+    }
+    if (filePath.startsWith("packages/")) {
+      assert.ok(
+        allowedWorkspacePackagePrefixes.some((prefix) => filePath.startsWith(prefix)),
+        `runtime package contains unexpected workspace package '${filePath}'`,
+      );
     }
     const forbiddenPrefix = forbiddenPrefixes.find((prefix) => filePath.startsWith(prefix));
     assert.equal(
@@ -148,10 +165,25 @@ try {
     (entry) => entry.startsWith("kestrel-agents-kestrel-") && entry.endsWith(".tgz"),
   );
   assert.ok(tarballName, "pnpm pack did not produce a runtime tarball.");
-  execFileSync("tar", ["-xzf", path.join(packDir, tarballName), "-C", extractDir], {
+  const tarballPath = path.join(packDir, tarballName);
+  execFileSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
     cwd: repoRoot,
     stdio: "pipe",
   });
+  const packedWorkspaceFiles = listFilesRecursively(path.join(extractDir, "package")).filter(
+    (filePath) => filePath.startsWith("packages/"),
+  );
+  for (const packedFilePath of packedWorkspaceFiles) {
+    assert.ok(
+      allowedWorkspacePackagePrefixes.some((prefix) => packedFilePath.startsWith(prefix)),
+      `pnpm-packed runtime contains unexpected workspace package '${packedFilePath}'`,
+    );
+    assert.equal(
+      isSensitiveOrTestPath(packedFilePath),
+      false,
+      `pnpm-packed runtime contains unsafe path '${packedFilePath}'`,
+    );
+  }
   const packedManifest = JSON.parse(
     readFileSync(path.join(extractDir, "package", "package.json"), "utf8"),
   ) as { dependencies?: Record<string, string>; version?: string };
@@ -184,11 +216,49 @@ try {
     );
   }
 
+  writeFileSync(
+    path.join(consumerDir, "package.json"),
+    `${JSON.stringify({ name: "kestrel-runtime-package-smoke", private: true })}\n`,
+  );
+  execFileSync(
+    resolveNpmCommand(),
+    ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath],
+    {
+      cwd: consumerDir,
+      stdio: "pipe",
+      env: {
+        ...process.env,
+        npm_config_cache: npmCacheDir,
+      },
+      maxBuffer: 20 * 1024 * 1024,
+    },
+  );
+  const cliCommand = path.join(
+    consumerDir,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "kestrel.cmd" : "kestrel",
+  );
+  const cliVersion = execFileSync(cliCommand, ["--version"], {
+    cwd: consumerDir,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      KESTREL_HOME: path.join(consumerDir, ".kestrel"),
+    },
+  });
+  assert.equal(
+    cliVersion.trim(),
+    `kestrel ${packedManifest.version ?? "unknown"}`,
+    "clean-installed runtime CLI must report the packed version",
+  );
+
   console.log(`runtime release-check passed (${filePaths.size} files)`);
 } finally {
   rmSync(npmCacheDir, { recursive: true, force: true });
   rmSync(packDir, { recursive: true, force: true });
   rmSync(extractDir, { recursive: true, force: true });
+  rmSync(consumerDir, { recursive: true, force: true });
 }
 
 function isSensitiveOrTestPath(filePath: string): boolean {
@@ -203,6 +273,14 @@ function isSensitiveOrTestPath(filePath: string): boolean {
     /\/__pycache__(?:\/|$)/u.test(normalized) ||
     /\.pyc$/u.test(normalized)
   );
+}
+
+function listFilesRecursively(rootPath: string, relativePath = ""): string[] {
+  const directoryPath = path.join(rootPath, relativePath);
+  return readdirSync(directoryPath, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(relativePath, entry.name);
+    return entry.isDirectory() ? listFilesRecursively(rootPath, entryPath) : [entryPath];
+  });
 }
 
 function resolveNpmCommand(): string {

@@ -67,9 +67,17 @@ test("requires latest to match only for cutover evidence", () => {
   candidate.phase = "cutover";
   assert.throws(() => validateUnifiedReleaseEvidence(candidate), /latest dist-tag mismatch/u);
   for (const packageEvidence of candidate.npm.packages) {
-    packageEvidence.distTags.latest = "0.8.0";
+    packageEvidence.distTags.latest = packageEvidence.version;
   }
   assert.doesNotThrow(() => validateUnifiedReleaseEvidence(candidate));
+});
+
+test("requires the explicit Runtime npm patch version", () => {
+  const evidence = validEvidence();
+  const runtime = evidence.npm.packages.find(({ name }) => name === "@kestrel-agents/kestrel");
+  assert.ok(runtime);
+  runtime.version = "0.8.0";
+  assert.throws(() => validateUnifiedReleaseEvidence(evidence), /kestrel version mismatch/u);
 });
 
 function validEvidence() {
@@ -78,16 +86,20 @@ function validEvidence() {
     version: "0.8.0",
     sourceSha,
     npm: {
+      runtimeVersion: "0.8.1",
       packages: packageNames.map((name) => ({
         name,
-        version: "0.8.0",
+        version: name === "@kestrel-agents/kestrel" ? "0.8.1" : "0.8.0",
         gitHead: sourceSha,
         integrity: "sha512-YWJjZA==",
-        distTags: { "release-0.8.0": "0.8.0", latest: "0.7.0" },
+        distTags: {
+          "release-0.8.0": name === "@kestrel-agents/kestrel" ? "0.8.1" : "0.8.0",
+          latest: "0.7.0",
+        },
       })),
       consumerSmokes: ["darwin-arm64", "linux-x64"].map((platform) => ({
         platform,
-        version: "0.8.0",
+        version: "0.8.1",
         status: "passed",
         completedAt: timestamp,
       })),

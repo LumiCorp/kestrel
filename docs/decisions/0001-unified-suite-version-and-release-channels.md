@@ -28,6 +28,8 @@ A shared version does not imply one distribution mechanism or one access policy:
 
 The unified annotated `v0.8.0` tag identifies the source for every artifact and deployment. There is no separate Desktop tag.
 
+A published distribution may receive a packaging-only patch without changing the suite contract version. That exception must be explicit in release metadata and evidence, keep first-party dependencies pinned to the canonical suite version, and must not imply a product-wide bump. For this release, `@kestrel-agents/kestrel@0.8.1` corrects the immutable 0.8.0 npm package while the suite contracts and products remain 0.8.0.
+
 ## Consequences
 
 - Mixed first-party release lines fail the version or packed-consumer gates.
@@ -35,6 +37,7 @@ The unified annotated `v0.8.0` tag identifies the source for every artifact and 
 - Candidates are built from one frozen revision before any stable channel changes.
 - Desktop OTA promotion is a separate proof and may remain behind the suite version.
 - Hosted access restrictions do not restrict repository cloning or tagged source availability.
+- Release evidence records a packaging-only distribution patch separately from the suite version.
 
 ## Release control
 

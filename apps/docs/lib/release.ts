@@ -1,6 +1,7 @@
 export const DOCS_RELEASE = {
   packages: {
     version: "0.8.0",
+    runtimeNpmVersion: "0.8.1",
     line: "0.8",
     channel: "Stable",
     releasedPackageNames: [
@@ -20,7 +21,8 @@ export const DOCS_RELEASE = {
       version: "0.8.0",
       channel: "Stable",
       mode: "npm-and-archive",
-      installCommand: "npm install -g @kestrel-agents/kestrel@0.8.0",
+      npmVersion: "0.8.1",
+      installCommand: "npm install -g @kestrel-agents/kestrel@0.8.1",
       releasesUrl: "https://github.com/LumiCorp/kestrel/releases/tag/v0.8.0",
       archiveUrl: "https://github.com/LumiCorp/kestrel/releases/download/v0.8.0/kestrel-cli-0.8.0-darwin-arm64.tar.gz",
       supportedPlatforms: ["macOS arm64", "Linux x64"],
@@ -46,7 +48,7 @@ export const DOCS_RELEASE = {
     },
   },
   compatibility: [
-    { surface: "Runtime", version: "0.8.0", channel: "Stable", note: "Owns execution, recovery, evaluation, budgets, and the runner service" },
+    { surface: "Runtime", version: "0.8.0", channel: "Stable", note: "The 0.8.1 npm artifact packages the 0.8.0 runtime contracts and the complete MCP Security runtime" },
     { surface: "Protocol", version: "0.8.0", channel: "Stable", note: "Owns execution, conversations, approvals, recovery, Mission Control, and events" },
     { surface: "SDK", version: "0.8.0", channel: "Stable", note: "Consumes the exact matching runner and protocol contracts" },
     { surface: "Memory", version: "0.8.0", channel: "Stable", note: "Provides governed memory contracts, backends, and retrieval helpers" },
@@ -54,7 +56,7 @@ export const DOCS_RELEASE = {
     { surface: "AI SDK", version: "0.8.0", channel: "Stable", note: "Adapts runner streams to AI SDK presentation events" },
     { surface: "Observability", version: "0.8.0", channel: "Stable", note: "Carries compatible trace context and correlation" },
     { surface: "Workspace skills", version: "0.8.0", channel: "Stable", note: "Installs and verifies portable workspace guidance" },
-    { surface: "CLI", version: "0.8.0", channel: "Stable", note: "Supports macOS arm64 and Linux x64 on Node.js 22" },
+    { surface: "CLI", version: "0.8.0", channel: "Stable", note: "Install the 0.8.1 npm artifact on macOS arm64 or Linux x64 with Node.js 22; the standalone archive remains 0.8.0" },
     { surface: "Desktop", version: "0.8.0", channel: "Beta", note: "Signed, notarized, manual-install macOS arm64 application" },
     { surface: "Kestrel One", version: "0.8.0", channel: "Beta", note: "Versioned source plus an invitation-only Lumi-hosted deployment" },
   ],
