@@ -235,6 +235,7 @@ function createFakeAgent(seen: Array<{ input: KestrelAgentTurnInput; context: Ke
         },
       };
       return {
+        ready: Promise.resolve(),
         result: Promise.resolve(terminal),
         async cancel() {},
         async *[Symbol.asyncIterator]() {
@@ -257,6 +258,7 @@ function createFakeAgent(seen: Array<{ input: KestrelAgentTurnInput; context: Ke
     },
     subscribe() {
       return {
+        ready: Promise.resolve(),
         result: Promise.resolve(),
         async cancel() {},
         async *[Symbol.asyncIterator]() {},

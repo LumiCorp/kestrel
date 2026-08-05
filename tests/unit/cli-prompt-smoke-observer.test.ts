@@ -142,6 +142,7 @@ function fakeClient(events: RunnerEvent[]) {
   return {
     subscribe() {
       return {
+        ready: Promise.resolve(),
         result: Promise.resolve(undefined),
         async cancel() {},
         async *[Symbol.asyncIterator]() {
