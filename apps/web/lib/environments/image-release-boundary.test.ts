@@ -184,3 +184,27 @@ test("hosted Workspace Runtime consumers request the canonical Kestrel profile",
   assert.match(environmentExample, /^KESTREL_ONE_PROFILE_ID=kestrel$/mu);
   assert.match(webReadme, /^KESTREL_ONE_PROFILE_ID=kestrel$/mu);
 });
+
+test("Workspace Runtime image smoke requires its advertised contract revision", async () => {
+  const [workspaceSmoke, workspaceServer] = await Promise.all([
+    readFile(
+      new URL("../../../workspace-runtime/scripts/image-smoke.sh", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../workspace-runtime/src/server.ts", import.meta.url),
+      "utf8",
+    ),
+  ]);
+  const contractRevision = workspaceServer.match(
+    /const WORKSPACE_RUNTIME_CONTRACT_REVISION = (\d+);/u,
+  )?.[1];
+  assert.ok(contractRevision);
+  assert.match(
+    workspaceSmoke,
+    new RegExp(
+      `health\\.runtimeContractRevision !== ${contractRevision}`,
+      "u",
+    ),
+  );
+});
