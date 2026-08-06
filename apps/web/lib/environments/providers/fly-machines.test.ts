@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import {
   FlyMachinesClient,
   flyEnvironmentAppName,
@@ -9,6 +10,16 @@ import {
   EnvironmentProviderError,
   KESTREL_WORKSPACE_STOP_CONFIG,
 } from "./contracts";
+
+const environmentTicketPublicKey = generateKeyPairSync("ed25519")
+  .publicKey.export({ type: "spki", format: "pem" })
+  .toString();
+const rotatedEnvironmentTicketPublicKey = generateKeyPairSync("ed25519")
+  .publicKey.export({ type: "spki", format: "pem" })
+  .toString();
+const nonEd25519PublicKey = generateKeyPairSync("x25519")
+  .publicKey.export({ type: "spki", format: "pem" })
+  .toString();
 
 
 test("Fly resource names are deterministic and provider-safe", () => {
@@ -735,8 +746,7 @@ test("Environment gateway owns public ingress while Workspace Machines remain pr
     environmentId: "environment-1",
     region: "iad",
     runtimeImage: "registry.fly.io/router@sha256:abc",
-    ticketPublicKey:
-      "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+    ticketPublicKey: environmentTicketPublicKey.trim(),
     controlPlaneUrl: "https://kestrel.example",
   });
   assert.equal(gateway.routerUrl, "https://kestrel-env-abc.fly.dev");
@@ -757,6 +767,10 @@ test("Environment gateway owns public ingress while Workspace Machines remain pr
   assert.equal(
     machineBody.config.env.KESTREL_ENVIRONMENT_APP_NAME,
     "kestrel-env-abc"
+  );
+  assert.equal(
+    machineBody.config.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY,
+    environmentTicketPublicKey
   );
 });
 
@@ -798,11 +812,146 @@ test("Environment gateway rejects an existing Machine with stale immutable confi
       environmentId: "environment-1",
       region: "iad",
       runtimeImage: "registry.fly.io/router@sha256:current",
-      ticketPublicKey: "current-key",
+      ticketPublicKey: environmentTicketPublicKey,
       controlPlaneUrl: "https://kestrel.example",
     }),
     /immutable ingress contract/u
   );
+});
+
+test("Environment gateway reuses semantically identical canonical ticket keys", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      const path = String(url);
+      requests.push({ method: init?.method ?? "GET", url: path });
+      if (path.endsWith("/ip_assignments")) {
+        return Response.json({
+          ips: [{ ip: "203.0.113.1", shared: true }],
+        });
+      }
+      return Response.json([
+        {
+          id: "gateway-machine-1",
+          state: "started",
+          region: "iad",
+          config: {
+            image: "registry.fly.io/router@sha256:current",
+            env: {
+              KESTREL_ENVIRONMENT_APP_NAME: "kestrel-env-abc",
+              KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:
+                environmentTicketPublicKey,
+              KESTREL_CONTROL_PLANE_URL: "https://kestrel.example",
+              KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN: "service-token",
+            },
+            metadata: {
+              kestrel_environment_gateway: "true",
+              kestrel_environment_id: "environment-1",
+            },
+            services: [{}],
+          },
+        },
+      ]);
+    }) as typeof fetch,
+  });
+
+  await client.ensureEnvironmentGateway({
+    appName: "kestrel-env-abc",
+    environmentId: "environment-1",
+    region: "iad",
+    runtimeImage: "registry.fly.io/router@sha256:current",
+    ticketPublicKey: environmentTicketPublicKey.trim(),
+    controlPlaneUrl: "https://kestrel.example",
+  });
+
+  assert.deepEqual(
+    requests.map(({ method }) => method),
+    ["GET", "GET"]
+  );
+});
+
+test("Environment gateway rejects different or invalid existing ticket keys", async () => {
+  for (const existingTicketPublicKey of [
+    rotatedEnvironmentTicketPublicKey,
+    "invalid-existing-key",
+  ]) {
+    const client = new FlyMachinesClient({
+      token: "test-token",
+      organizationSlug: "kestrel-test",
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith("/ip_assignments")) {
+          return Response.json({
+            ips: [{ ip: "203.0.113.1", shared: true }],
+          });
+        }
+        return Response.json([
+          {
+            id: "gateway-machine-1",
+            state: "started",
+            region: "iad",
+            config: {
+              image: "registry.fly.io/router@sha256:current",
+              env: {
+                KESTREL_ENVIRONMENT_APP_NAME: "kestrel-env-abc",
+                KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:
+                  existingTicketPublicKey,
+              },
+              metadata: {
+                kestrel_environment_gateway: "true",
+                kestrel_environment_id: "environment-1",
+              },
+              services: [{}],
+            },
+          },
+        ]);
+      }) as typeof fetch,
+    });
+
+    await assert.rejects(
+      client.ensureEnvironmentGateway({
+        appName: "kestrel-env-abc",
+        environmentId: "environment-1",
+        region: "iad",
+        runtimeImage: "registry.fly.io/router@sha256:current",
+        ticketPublicKey: environmentTicketPublicKey,
+        controlPlaneUrl: "https://kestrel.example",
+      }),
+      (error: unknown) =>
+        error instanceof EnvironmentProviderError &&
+        error.code === "FLY_RESOURCE_CONFLICT"
+    );
+  }
+});
+
+test("Environment gateway rejects invalid desired ticket keys before Fly access", async () => {
+  for (const ticketPublicKey of ["invalid-key", nonEd25519PublicKey]) {
+    let requests = 0;
+    const client = new FlyMachinesClient({
+      token: "test-token",
+      organizationSlug: "kestrel-test",
+      fetchImpl: (async () => {
+        requests += 1;
+        return Response.json({});
+      }) as typeof fetch,
+    });
+
+    await assert.rejects(
+      client.ensureEnvironmentGateway({
+        appName: "kestrel-env-abc",
+        environmentId: "environment-1",
+        region: "iad",
+        runtimeImage: "registry.fly.io/router@sha256:current",
+        ticketPublicKey,
+        controlPlaneUrl: "https://kestrel.example",
+      }),
+      (error: unknown) =>
+        error instanceof EnvironmentProviderError &&
+        error.code === "FLY_PROVIDER_REJECTED"
+    );
+    assert.equal(requests, 0);
+  }
 });
 
 test("Fly rejection discards provider response bodies", async () => {

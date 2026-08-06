@@ -1,20 +1,46 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type {
-  EnvironmentProviderInventory,
-  EnvironmentProviderMachine,
+import {
+  EnvironmentProviderError,
+  type EnvironmentProviderInventory,
+  type EnvironmentProviderMachine,
 } from "./providers/contracts";
 import {
   assessWorkspaceMachineReadiness,
   assessWorkspaceVolumeBinding,
+  describeEnvironmentGatewayReconcileFailure,
   mountedVolumeIdsFromInventory,
   retainedFailedRestoreResourceIds,
   selectOrphanVolumeIds,
 } from "./reconcile-contract";
 
-
 const workspaceId = "87408a50-5dc3-448a-b099-aada6811996a";
 const expectedVolumeName = "ws_87408a505dc3448ab099";
+
+test("gateway reconciliation preserves safe provider failure details", () => {
+  assert.deepEqual(
+    describeEnvironmentGatewayReconcileFailure(
+      new EnvironmentProviderError(
+        "FLY_PROVIDER_REJECTED",
+        "Fly Machines API rejected the request (408).",
+        408
+      )
+    ),
+    {
+      code: "FLY_PROVIDER_REJECTED",
+      message: "Fly Machines API rejected the request (408).",
+      status: 408,
+    }
+  );
+});
+
+test("gateway reconciliation keeps unknown failures generic", () => {
+  assert.deepEqual(describeEnvironmentGatewayReconcileFailure(new Error("secret")), {
+    code: "ENVIRONMENT_GATEWAY_RECONCILE_FAILED",
+    message: "Environment gateway reconciliation failed.",
+    status: null,
+  });
+});
 
 test(
   "started Workspace Machines become ready only after their health check passes",

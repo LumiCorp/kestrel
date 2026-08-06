@@ -26,6 +26,7 @@ import {
 import {
   assessWorkspaceMachineReadiness,
   assessWorkspaceVolumeBinding,
+  describeEnvironmentGatewayReconcileFailure,
   retainedFailedRestoreResourceIds,
   selectOrphanVolumeIds,
 } from "./reconcile-contract";
@@ -547,13 +548,19 @@ async function reconcileEnvironmentGateways(
           updatedAt: now,
         })
         .where(eq(schema.environments.id, environment.id));
-    } catch {
+    } catch (error) {
+      const failure = describeEnvironmentGatewayReconcileFailure(error);
+      console.error("Environment gateway reconciliation failed.", {
+        environmentId: environment.id,
+        code: failure.code,
+        status: failure.status,
+      });
       await knowledgeDb
         .update(schema.environments)
         .set({
           status: "degraded",
-          failureCode: "ENVIRONMENT_GATEWAY_RECONCILE_FAILED",
-          failureMessage: "Environment gateway reconciliation failed.",
+          failureCode: failure.code,
+          failureMessage: failure.message,
           updatedAt: now,
         })
         .where(eq(schema.environments.id, environment.id));
